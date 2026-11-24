@@ -1,0 +1,38 @@
+---
+title: Find and organize your files
+description: Search your computer's files by words or meaning, tag them, group them in collections, spot duplicates and get summaries, all without waking the computer.
+---
+
+Files can search inside your documents, not only their names. Everything is indexed on the computer that owns the files, and only while that computer is already awake. Searching never wakes a sleeping computer, and a sleeping computer searches by file name only.
+
+## Search
+
+Type in the Files search box and choose **Names**, **Words** or **Meaning**.
+
+- **Names** finds files whose name contains what you typed.
+- **Words** finds files that contain your words. Put them in quotes to find an exact phrase, such as "revenue growth". The matching text shows under each result.
+- **Meaning** finds files about the same thing even when the words differ. It needs the local embedding model on that computer. If the model is not running you see a message, and Words keeps working.
+
+When a computer has just started, a banner says the index is still building. Results fill in as it catches up.
+
+## What gets indexed
+
+Text files and code, PDFs (the first 50 pages) and the text of Word documents, up to 2 MiB of text each. Spreadsheets, slides and audio are not read yet. Pictures get a thumbnail. The Memory Drive and any other protected folder are not indexed unless you turn it on for that folder. Turning it off removes what was indexed.
+
+Indexing is slow on purpose. It uses a quarter of one core at most, so your agents and your own work come first.
+
+## Tags and collections
+
+Add tags to a file to group it across folders. Make a collection to keep a hand-picked set together, such as everything for one project. Tags and collections live on the computer with the files.
+
+## Duplicates
+
+The duplicates report lists files with identical content and how much space keeping one copy would save. It only reports; it deletes nothing.
+
+## Summaries
+
+Choose **Summarize** on a text file to get a short summary made from the file's own sentences. You can also set a folder rule so new files in a folder are summarized. Nothing is summarized unless you ask or set a rule. Transcribing audio is not available yet.
+
+## AI-generated files
+
+Files an agent made carry an **AI-generated** label, with the agent that made them.

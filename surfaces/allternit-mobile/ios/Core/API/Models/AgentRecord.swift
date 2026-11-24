@@ -53,6 +53,10 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
     let topLevelSecretRefs: [SecretRef]?
     let topLevelIdentityChannels: IdentityChannels?
     let topLevelVMOperator: VMOperatorConfig?
+    /// Read-only `botKind` from `GET /agents/:id` (platform #2776): "allternit"
+    /// or "connected". Nil from servers before it; then the Connected check
+    /// falls back to `config.botProfile.vendorPackId`.
+    let botKind: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, type, model, provider, status, avatar, category, mode, config
@@ -71,6 +75,7 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
         case topLevelSecretRefs = "secret_refs"
         case topLevelIdentityChannels = "identity_channels"
         case topLevelVMOperator = "vm_operator"
+        case botKind
     }
 
     /// Optional first-message greeting for a fresh chat with this agent
@@ -237,6 +242,7 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
         topLevelSecretRefs = try container.decodeIfPresent([SecretRef].self, forKey: .topLevelSecretRefs)
         topLevelIdentityChannels = try container.decodeIfPresent(IdentityChannels.self, forKey: .topLevelIdentityChannels)
         topLevelVMOperator = try container.decodeIfPresent(VMOperatorConfig.self, forKey: .topLevelVMOperator)
+        botKind = (try? container.decodeIfPresent(String.self, forKey: .botKind)) ?? nil
 
         if let modes = try? container.decode([String].self, forKey: .enabledModes) {
             enabledModes = modes
@@ -287,7 +293,8 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
          connectorBindings: [ConnectorBinding]? = nil,
          secretRefs: [SecretRef]? = nil,
          identityChannels: IdentityChannels? = nil,
-         vmOperator: VMOperatorConfig? = nil) {
+         vmOperator: VMOperatorConfig? = nil,
+         botKind: String? = nil) {
         self.id = id
         self.name = name
         self.description = description
@@ -314,6 +321,7 @@ struct AgentRecord: Decodable, Sendable, Identifiable, Equatable, Hashable {
         self.topLevelSecretRefs = secretRefs
         self.topLevelIdentityChannels = identityChannels
         self.topLevelVMOperator = vmOperator
+        self.botKind = botKind
     }
 
     #if DEBUG

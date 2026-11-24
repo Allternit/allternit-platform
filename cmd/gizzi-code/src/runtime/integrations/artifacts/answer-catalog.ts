@@ -39,6 +39,8 @@ const UPSTREAM_COMMIT = 'd168487e7a753a1527256c7e4c79344377f3d092';
 const upstream = (path: string) => `https://github.com/CopilotKit/CopilotKit/blob/${UPSTREAM_COMMIT}/${path}`;
 const skin = (name: string) => upstream(`examples/showcases/reskinnable-demo/src/skins/${name}/catalog/${['airline','bookstore','keel','myelin'].includes(name) ? 'index.tsx' : 'definitions.ts'}`);
 const sample = 'Synthetic example; replace with verified data';
+/** Provider credit: always shown when supplied, linked when the provider asks for a link. */
+const credited = (credit?: string, url?: string) => credit ? [caption(credit),...(url?[call('Link','Data source',url)]:[])] : [];
 
 export type CatalogCategory = 'Display' | 'Research' | 'Travel' | 'Finance' | 'Commerce' | 'People' | 'Operations' | 'Agents' | 'Development' | 'Planning';
 export interface CatalogEntry<T extends string = string> {
@@ -83,9 +85,11 @@ export const CATALOG_TEMPLATES = [
   define('source-list','Source list','Research','Named HTTPS references with evidence notes.',
     z.strictObject({sources:z.array(z.strictObject({title:word,url:https,note:text})).max(50)}),{sources:[{title:'Example source',url:'https://example.com',note:sample}]},
     d=>d.sources.flatMap(s=>[call('Link',s.title,s.url),caption(s.note)])),
-  define('image-gallery','Image gallery','Display','Captioned images with supplied HTTPS URLs.',
-    z.strictObject({images:z.array(z.strictObject({url:https,alt:word,caption:text})).max(20)}),{images:[{url:'https://example.com/example.png',alt:'Example image',caption:sample}]},
-    d=>[call('Grid',d.images.map(i=>call('Image',i.url,i.alt,i.caption)),2,'md')]),
+  define('image-gallery','Image gallery','Display','Captioned images with supplied HTTPS URLs. From the lookup tool (kind images) every image keeps its credit, licence and source page; always show them.',
+    z.strictObject({images:z.array(z.strictObject({url:https,alt:word,caption:text,credit:word.optional(),license:word.optional(),sourceUrl:https.optional()})).max(20)}),{images:[{url:'https://example.com/example.png',alt:'Example image',caption:sample}]},
+    d=>[call('Grid',d.images.map(i=>i.credit||i.license||i.sourceUrl
+      ? call('Stack',[call('Image',i.url,i.alt,i.caption),...(i.credit||i.license?[caption([i.credit,i.license].filter(Boolean).join(' · '))]:[]),...(i.sourceUrl?[call('Link','Image source',i.sourceUrl)]:[])],'vertical','sm')
+      : call('Image',i.url,i.alt,i.caption)),2,'md')]),
   define('tabbed-report','Tabbed report','Display','Fixed tabbed sections with labelled facts.',
     z.strictObject({tabs:z.array(z.strictObject({title:word,facts,summary:text})).min(1).max(8)}),{tabs:[{title:'Overview',facts:[{label:'State',value:'Draft'}],summary:sample}]},
     d=>[call('Tabs',d.tabs.map(t=>call('Tab',t.title,[paragraph(t.summary),factSheet(t.facts)])))]),
@@ -103,10 +107,13 @@ export const CATALOG_TEMPLATES = [
     z.strictObject({quote:text,attribution:word,url:https,context:text}),{quote:'Example quotation.',attribution:'Example author',url:'https://example.com',context:sample},
     d=>[call('Quote',d.quote,d.attribution),call('Link','Source',d.url),caption(d.context)]),
 
-  define('weather','Weather','Travel','Weather observations for a place and time.',
-    z.strictObject({location:word,observedAt:word,temperature:number,unit:z.enum(['C','F']),conditions:word,humidity:number.min(0).max(100),wind:word,source:note}),
+  define('weather','Weather','Travel','Current weather and an optional daily forecast (up to 7 days) for one place. Use only with numbers from the lookup tool (kind weather) or another source in this turn; show its credit.',
+    z.strictObject({location:word,observedAt:word,temperature:number,unit:z.enum(['C','F']),conditions:word,humidity:number.min(0).max(100),wind:word,source:note,
+      forecast:z.array(z.strictObject({day:word,high:number,low:number,conditions:word,precipitation:word.optional()})).max(7).optional(),credit:note.optional(),creditUrl:https.optional()}),
     {location:'Example city',observedAt:'Example observation',temperature:21,unit:'C',conditions:'Clear',humidity:40,wind:'Light',source:sample},
-    d=>[call('Metric',d.location,d.temperature,'number',`°${d.unit}`,d.observedAt),factSheet([{label:'Conditions',value:d.conditions},{label:'Humidity',value:`${d.humidity}%`},{label:'Wind',value:d.wind}]),caption(d.source)],
+    d=>[call('Metric',d.location,d.temperature,'number',`°${d.unit}`,d.observedAt),factSheet([{label:'Conditions',value:d.conditions},{label:'Humidity',value:`${d.humidity}%`},{label:'Wind',value:d.wind}]),
+      ...(d.forecast?.length?[section('Forecast',[table(['Day','High','Low','Conditions','Precipitation'],d.forecast.map(f=>[f.day,`${f.high}°${d.unit}`,`${f.low}°${d.unit}`,f.conditions,f.precipitation??'']))])]:[]),
+      caption(d.source),...credited(d.credit,d.creditUrl)],
     upstream('examples/showcases/generative-ui-playground/src/app/components/static-tools/WeatherCard.tsx')),
   define('stock','Stock summary','Finance','An observed price and historical points; no trading action.',
     z.strictObject({symbol:word,company:word,price:number.min(0),currency:word,asOf:word,history:points,source:note}),
@@ -333,6 +340,35 @@ export const CATALOG_TEMPLATES = [
     z.strictObject({events:z.array(z.strictObject({title:word,start:word,end:word,location:word,owner:word})).max(100),timezone:word,source:note}),
     {events:[{title:'Example review',start:'09:00',end:'09:30',location:'Example location',owner:'Example owner'}],timezone:'Example timezone',source:sample},
     d=>[caption(d.timezone),table(['Event','Start','End','Location','Owner'],d.events.map(e=>[e.title,e.start,e.end,e.location,e.owner])),caption(d.source)]),
+
+  // Fact cards the lookup tool fills (runtime/primitives/lookup). The reply text states the fact too.
+  define('time-zones','Time zones','Travel','Clock times for one moment across places ("what time is it in…", "when is 9 AM Chicago in Tokyo"). Use only with times from the lookup tool (kind time) or current_time, never worked out by hand.',
+    z.strictObject({reference:word,zones:z.array(z.strictObject({place:word,zone:word,time:word,date:word,offset:word})).min(1).max(12),credit:note}),
+    {reference:'Now',zones:[{place:'Example city',zone:'Etc/UTC',time:'12:00',date:'Example date',offset:'UTC+00:00'}],credit:sample},
+    d=>[caption(d.reference),table(['Place','Time','Date','UTC offset','Zone'],d.zones.map(t=>[t.place,t.time,t.date,t.offset,t.zone])),caption(d.credit)]),
+  define('conversion','Conversion','Finance','One unit or currency conversion with its rate. Use for "how much is 100 USD in EUR" or "5 miles in km" with numbers from the lookup tool (kind convert); currency shows the rate date.',
+    z.strictObject({kind:z.enum(['unit','currency']),from:z.strictObject({value:number,unit:word}),to:z.strictObject({value:number,unit:word}),rate:number.optional(),asOf:word.optional(),
+      also:z.array(z.strictObject({value:number,unit:word})).max(8).optional(),credit:note,creditUrl:https.optional()}),
+    {kind:'unit',from:{value:5,unit:'mi'},to:{value:8.04672,unit:'km'},rate:1.609344,credit:sample},
+    d=>[call('Metric',`${d.from.value} ${d.from.unit}`,d.to.value,'number',d.to.unit,d.asOf??d.credit),
+      ...(d.rate!==undefined?[factSheet([{label:'Rate',value:`1 ${d.from.unit} = ${d.rate} ${d.to.unit}`},...(d.asOf?[{label:'As of',value:d.asOf}]:[])])]:[]),
+      ...(d.also?.length?[table(['Value','Unit'],d.also.map(a=>[a.value,a.unit]))]:[]),...credited(d.credit,d.creditUrl)]),
+  define('link-preview','Link preview','Research','Title, site, summary and image of one HTTPS page from the lookup tool (kind link). Use when the user shares or asks about a single link; not for search results.',
+    z.strictObject({url:https,title:word,siteName:word.optional(),description:text.optional(),image:https.optional(),imageAlt:word.optional(),published:word.optional(),credit:note}),
+    {url:'https://example.com',title:'Example page',siteName:'Example site',description:sample,credit:sample},
+    d=>[call('Panel',d.title,[...(d.image?[call('Image',d.image,d.imageAlt??d.title)]:[]),...(d.siteName||d.published?[caption([d.siteName,d.published].filter(Boolean).join(' · '))]:[]),...(d.description?[paragraph(d.description)]:[]),call('Link','Open page',d.url)]),caption(d.credit)]),
+  define('places','Places','Travel','Up to 10 places for a search ("coffee near the station", "where is…") from the lookup tool (kind places), with address, distance and a map link. "Here" needs the shared location; otherwise ask for a place.',
+    z.strictObject({query:word,near:word.optional(),places:z.array(z.strictObject({name:word,address:word,category:word.optional(),distance:word.optional(),lat:number.min(-90).max(90).optional(),lon:number.min(-180).max(180).optional(),url:https.optional()})).max(10),credit:note,creditUrl:https.optional()}),
+    {query:'Example search',near:'Example city',places:[{name:'Example place',address:'1 Example Street',category:'Cafe',distance:'300 m',url:'https://example.com'}],credit:sample},
+    d=>[caption(d.near?`${d.query} · near ${d.near}`:d.query),call('Grid',d.places.map(p=>call('Panel',p.name,[...(p.category||p.distance?[caption([p.category,p.distance].filter(Boolean).join(' · '))]:[]),paragraph(p.address),...(p.url?[call('Link','Open map',p.url)]:[])])),2,'md'),...credited(d.credit,d.creditUrl)]),
+  // A draft the user sends themselves. The app offers Copy, Edit, Open in Mail/Messages and Save as doc; nothing here can send.
+  define('writing','Writing draft','Display','A draft the user will send or keep: an email, text message, social post, document or note, with up to 2 labelled alternatives. No send action exists; the user sends it.',
+    z.strictObject({variant:z.enum(['email','text_message','social_post','document','note']),to:word.optional(),subject:word.optional(),body:text.min(1),
+      alternatives:z.array(z.strictObject({label:word,body:text.min(1)})).max(2).optional()}),
+    {variant:'email',to:'Example recipient',subject:'Example subject',body:'Draft message for review.'},
+    d=>[call('Badge',{email:'Email',text_message:'Text message',social_post:'Social post',document:'Document',note:'Note'}[d.variant],'neutral'),
+      ...(d.to||d.subject?[factSheet([...(d.to?[{label:'To',value:d.to}]:[]),...(d.subject?[{label:'Subject',value:d.subject}]:[])])]:[]),
+      paragraph(d.body),...(d.alternatives??[]).map(a=>call('Collapsible',a.label,[paragraph(a.body)],false))]),
 ] as const;
 
 export type CatalogTemplateId = typeof CATALOG_TEMPLATES[number]['id'];
@@ -345,12 +381,19 @@ for (const entry of CATALOG_TEMPLATES) {
 }
 export const CATALOG_BY_ID = new Map<string, CatalogEntry>(CATALOG_TEMPLATES.map(t=>[t.id,t]));
 export const CatalogAnswerContract = z.union(CATALOG_TEMPLATES.map(t=>z.strictObject({version:z.literal(1),template:z.literal(t.id),title:word,summary:text.optional(),data:t.schema})) as unknown as [z.ZodType,...z.ZodType[]]) as z.ZodType<CatalogEnvelope>;
-function shape(schema: Record<string, any>, depth = 0): unknown {
-  if (depth > 4) return schema.type ?? 'value';
-  if (schema.enum) return schema.enum;
-  if (schema.anyOf) return schema.anyOf.map((s: Record<string, any>) => shape(s,depth+1));
-  if (schema.type === 'array') return [shape(schema.items,depth+1)];
-  if (schema.properties) return Object.fromEntries(Object.entries(schema.properties).map(([k,v])=>[k+(schema.required?.includes(k)?'':'?'),shape(v as Record<string, any>,depth+1)]));
+/** A JSON Schema as the manual's compact notation: {key,count:number,tags:[string],kind:a|b,note?}. Strings are implied. */
+function shape(schema: Record<string, any>, depth = 0): string {
+  if (depth > 6) return schema.type ?? 'value';
+  if (schema.enum) return schema.enum.join('|');
+  if (schema.anyOf) return schema.anyOf.map((s: Record<string, any>) => shape(s, depth + 1)).join('|');
+  if (schema.type === 'array') return `[${shape(schema.items, depth + 1)}]`;
+  if (schema.properties) {
+    return `{${Object.entries(schema.properties).map(([k, v]) => {
+      const key = k + (schema.required?.includes(k) ? '' : '?');
+      const type = shape(v as Record<string, any>, depth + 1);
+      return type === 'string' ? key : `${key}:${type}`;
+    }).join(',')}}`;
+  }
   return schema.type ?? 'value';
 }
-export const catalogManual = () => CATALOG_TEMPLATES.map(t=>`${t.id}: ${t.description} Data: ${JSON.stringify(shape(z.toJSONSchema(t.schema)))}`).join('\n');
+export const catalogManual = () => CATALOG_TEMPLATES.map(t=>`${t.id}: ${t.description} Data: ${shape(z.toJSONSchema(t.schema))}`).join('\n');

@@ -1,0 +1,35 @@
+---
+title: 'Add a device to your Files key'
+description: 'Approve a new phone, browser or computer for your Files drive with a 6-digit code, remove a device, and what happens when the key is rotated.'
+---
+
+Your Files drive copies are sealed with a **Files key** that only your own devices hold. Allternit servers keep only sealed copies of it and cannot open them. A new device needs one of your existing devices to approve it before it can read your files.
+
+<Note>
+This ships dark with the Files drive. It works only when the `files_drive` flag is on for your account.
+</Note>
+
+## Your first device
+
+Open Files on your first device. It makes the key on its own; there is nothing to approve.
+
+## Add a new device
+
+1. Sign in on the new device and open Files. It shows **Waiting for approval** and a 6-digit code.
+2. Open Files, then **Devices**, on a device that already has the key. Under **Approve devices** you see the new device's name and a code. On iPhone this is **Settings > Files > Devices**. On Android, open Files settings and tap **Files key**.
+3. Check that the two codes are the same, then click **Approve**. Click **Decline** if you don't recognize the device. Decline ends the request on all your devices and is recorded in your account's audit log. The device can ask again.
+4. The new device unlocks by itself within a few seconds.
+
+Only a device that has the key can approve or decline. A request that waits more than 10 minutes expires; ask again from the new device. If a request is marked **Invalid code**, the device's code does not match its key. You can't approve it, so decline it and try again.
+
+## Give a computer the key
+
+Open **Devices** in the computer's Files tab and click **Give key** next to **This computer**. The computer must be awake. The app takes the computer's request, approves it, and sends the key to the computer over its secure connection.
+
+## Remove a device
+
+Open **Devices** in Files and click **Remove** next to a device. It loses access, and Files shows **Rotate key**. Click it on a device that has the key: Files makes a new key and seals it to every device still listed.
+
+## If a protected folder is locked
+
+A folder marked protected asks you to click **Unlock** each time. The click, not a background task, is what unlocks it.

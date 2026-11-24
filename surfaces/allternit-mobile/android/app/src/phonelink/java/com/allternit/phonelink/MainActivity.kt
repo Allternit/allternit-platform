@@ -75,11 +75,13 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ServerController.addListener(refresh)
+        AppLink.addListener(refresh)
         render()
     }
 
     override fun onPause() {
         ServerController.removeListener(refresh)
+        AppLink.removeListener(refresh)
         super.onPause()
     }
 
@@ -116,11 +118,11 @@ class MainActivity : Activity() {
         val a11y = when {
             ServerController.ops != null -> "Accessibility: connected"
             accessibilityOn() -> "Accessibility: enabled, waiting for Android to connect it"
-            else -> "Accessibility: off — run setup from Allternit Desktop (USB cable, once)"
+            else -> "Accessibility: off — finish setup from Allternit on your Mac or PC (Settings › Connections › Your phone)"
         }
         root.addView(text(a11y, 14f))
         root.addView(text("This phone: ${s.deviceName}  ·  id ${s.deviceId.take(8)}", 13f, color = muted))
-        if (!s.provisioned) root.addView(text("Not set up yet. Open Allternit Desktop › Phone Link and plug this phone in once.", 14f))
+        if (!s.provisioned) root.addView(text("Not set up yet. On your Mac or PC, open Allternit › Settings › Connections › Phones › Let Allternit use your phone, with this phone on the same Wi-Fi. It walks you through Wireless debugging, so no cable is needed.", 14f))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         if (ServerController.isRunning) row.addView(button("Stop") { ServerController.stopByUser(this) })
@@ -150,8 +152,30 @@ class MainActivity : Activity() {
             root.addView(button("Revoke") { ServerController.auth.revokeSession(sess.id); render() })
         }
         if (sessions.size > 1) root.addView(button("Revoke all") { ServerController.auth.revokeAll(); render() })
+        renderScreenShare()
         renderErrorHelp()
         root.addView(View(this).apply { minimumHeight = dp(24) })
+    }
+
+    // ── Screen share through the account (fallback lane) ────────────────────
+
+    /**
+     * The live screen normally comes from the scrcpy shell server Allternit
+     * Desktop starts over adb. Without it (no Desktop, after a reboot away from
+     * home) the screen can still be shared through the account with Android's
+     * own screen-share prompt (ScreenShareActivity, same as the Google Play build).
+     */
+    private fun renderScreenShare() {
+        AppLink.init(this)
+        root.addView(text("Share screen through your account", 17f, bold = true))
+        val state = when {
+            !AppLink.isPaired -> "Not connected. Use this when Allternit Desktop can't start the live screen."
+            AppLink.session.isLive -> "Sharing. Someone in your Allternit account is watching."
+            AppLink.session.isOn -> "Ready. Nobody is watching right now."
+            else -> "Connected. Not sharing."
+        }
+        root.addView(text(state, 14f))
+        root.addView(button("Open screen sharing") { startActivity(Intent(this, ScreenShareActivity::class.java)) })
     }
 
     // ── Error help (pet offers) ─────────────────────────────────────────────

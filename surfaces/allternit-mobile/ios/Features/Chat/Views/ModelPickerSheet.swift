@@ -9,7 +9,19 @@ struct ModelPickerSheet: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject private var quotas = ProviderQuotaStore.shared
     @ObservedObject private var usage = UsageStore.shared
+    /// Connected plans (plan/…, copilot/…) and ChatGPT on this phone feed
+    /// `modelStore.personModels`; observed so new rows show at once.
+    @ObservedObject private var connections = ConnectionsStore.shared
+    @ObservedObject private var chatgpt = ChatGPTDeviceStore.shared
+    /// Allternit Cloud entitlement (`cloud_models`): locked rows follow it.
+    @ObservedObject private var plan = AccountPlanStore.shared
+    /// Models on this iPhone (W7 runtime) and on the owner's other devices
+    /// (model-host relay). The relay section hides itself on any failure.
+    @ObservedObject private var onDevice = OnDeviceRuntime.shared
+    @ObservedObject private var otherDevices = OtherDevicesStore.shared
     @Environment(\.dismiss) private var dismiss
+
+    private enum ModelFilter: String, CaseIterable, Hashable { case reasoning = "Reasoning", local = "Local" }
 
     private enum Scope: Hashable { case all, favorites, provider(String) }
 
@@ -17,6 +29,10 @@ struct ModelPickerSheet: View {
     @State private var scope: Scope = .all
     @State private var favorites: [String] = ModelFavorites.load()
     @State private var isConnectPresented = false
+    /// Desktop FILTERS that the phone catalog can answer (Vision and Tools need
+    /// capability flags the catalog does not send yet).
+    @State private var filters: Set<ModelFilter> = []
+    @State private var creditsRequest: CloudCreditsRequest? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +48,7 @@ struct ModelPickerSheet: View {
                         currentModel(current)
                             .padding(.bottom, 6)
                     }
+                    if scope == .all { deviceSections }
                     modelList
                 }
                 .padding(.horizontal, 10)
@@ -45,9 +62,21 @@ struct ModelPickerSheet: View {
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usage.fetchUsageIfNeeded()
+            // Re-read the Cloud entitlement on every open (credits bought on the web).
+            plan.load(force: true)
             quotas.load(providerIds)
+            // Plans connect on cloud-api, so they show with no computer at all.
+            Task {
+                if !connections.loaded { await connections.load() }
+                await chatgpt.loadModels()
+            }
+            onDevice.refreshInstalls()
+            Task { await otherDevices.refresh() }
         }
         .onChange(of: modelStore.models) { _, _ in quotas.load(providerIds) }
+        .sheet(item: $creditsRequest) { request in
+            CloudCreditsSheet(request: request)
+        }
         .sheet(isPresented: $isConnectPresented) {
             NavigationStack {
                 ModelManagementView()
@@ -74,10 +103,30 @@ struct ModelPickerSheet: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .accessibilityLabel("Search models")
+                    .accessibilityIdentifier("modelPickerSearch")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(Color("FillNeutral"), in: Capsule())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ModelFilter.allCases, id: \.self) { f in
+                        let on = filters.contains(f)
+                        Button {
+                            if on { filters.remove(f) } else { filters.insert(f) }
+                        } label: {
+                            Text(f.rawValue)
+                                .font(.system(size: 12))
+                                .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
+                                .padding(.horizontal, 10).padding(.vertical, 3)
+                                .background(on ? Color("FillNeutral") : Color.clear, in: Capsule())
+                                .overlay(Capsule().stroke(on ? Color("AccentPrimary").opacity(0.5) : Color("BorderSubtle"), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? [.isSelected] : [])
+                    }
+                }
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 7) {
                     overviewChip(icon: AnyView(Image(systemName: "square.grid.2x2").font(.system(size: 14))), title: "All", detail: "\(offered.count) models", active: scope == .all) { scope = .all }
@@ -86,9 +135,10 @@ struct ModelPickerSheet: View {
                         let worst = quotas.worst(pid)
                         let count = offered.filter { $0.provider == pid }.count
                         overviewChip(
-                            icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }),
+                            icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }
+                                .overlay(alignment: .bottomTrailing) { statusDot(pid) }),
                             title: ModelProviderNames.name(pid),
-                            detail: worst.map { $0.usedRatio >= 0.95 ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
+                            detail: worst.map { $0.usedRatio >= UsageThresholds.landAt ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
                             active: scope == .provider(pid)
                         ) { scope = .provider(pid) }
                     }
@@ -99,6 +149,31 @@ struct ModelPickerSheet: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+    }
+
+    /// Desktop RailItem status: green = connected, amber = needs sign-in.
+    private enum ProviderStatus { case active, expired }
+
+    private func providerStatus(_ pid: String) -> ProviderStatus {
+        let vendor = ModelProviderNames.mark(pid).lowercased()
+        let tokens: [String: String] = ["C": "claude", "G": "chatgpt", "X": "grok", "K": "kimi"]
+        if PersonModels.providerNames[pid] != nil, let token = tokens[vendor.uppercased()] {
+            let expired = connections.rows.values.contains {
+                ($0.reasonCode == "login_expired" || $0.state == .needs) && $0.id.lowercased().contains(token)
+            }
+            if expired { return .expired }
+        }
+        return .active
+    }
+
+    @ViewBuilder
+    private func statusDot(_ pid: String) -> some View {
+        let status = providerStatus(pid)
+        Circle()
+            .fill(status == .active ? Theme.statusSuccess : Theme.statusWarning)
+            .frame(width: 7, height: 7)
+            .overlay(Circle().stroke(Color("BgPrimary"), lineWidth: 1.5))
+            .accessibilityLabel(status == .active ? "Connected" : "Needs sign-in")
     }
 
     private func overviewChip(icon: AnyView, title: String, detail: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -184,11 +259,110 @@ struct ModelPickerSheet: View {
         .padding(.top, 10)
     }
 
+    // MARK: - On this iPhone + My other devices
+
+    private struct DeviceRow: Identifiable {
+        let id: String
+        let name: String
+        let detail: String
+        let offline: Bool
+        var available = true
+    }
+
+    private var localRows: [DeviceRow] {
+        var rows = onDevice.installs.map { i in
+            DeviceRow(id: OnDeviceModelId.make(i), name: i.modelId.split(separator: "/").last.map(String.init) ?? i.modelId,
+                      detail: "On this iPhone · \(i.quant) · \(i.engine == .mlx ? "MLX" : "llama.cpp")", offline: true)
+        }
+        if onDevice.runtimes.contains(where: { $0.id == .appleFM && $0.state == .ready }) {
+            rows.append(DeviceRow(id: OnDeviceModelId.appleFM, name: "Apple Intelligence", detail: "On this iPhone · built in", offline: true))
+        }
+        return rows.filter(matchesQuery)
+    }
+
+    private var remoteRows: [DeviceRow] {
+        guard otherDevices.status == .ok else { return [] }
+        let live = otherDevices.online.flatMap { h in h.models.map {
+            DeviceRow(id: OtherDeviceModelId.make(hostId: h.hostId, modelId: $0.id), name: $0.name, detail: h.name, offline: false)
+        } }
+        let gone = otherDevices.offline.flatMap { h in h.models.map {
+            DeviceRow(id: OtherDeviceModelId.make(hostId: h.hostId, modelId: $0.id), name: $0.name, detail: "\(h.name) · offline", offline: false, available: false)
+        } }
+        return (live + gone).filter(matchesQuery)
+    }
+
+    private func matchesQuery(_ row: DeviceRow) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty || "\(row.name) \(row.detail)".lowercased().contains(q)
+    }
+
+    @ViewBuilder
+    private var deviceSections: some View {
+        if !localRows.isEmpty { deviceGroup("On this iPhone", icon: "iphone", rows: localRows) }
+        if !remoteRows.isEmpty { deviceGroup("My other devices", icon: "laptopcomputer.and.iphone", rows: remoteRows) }
+    }
+
+    private func deviceGroup(_ title: String, icon: String, rows: [DeviceRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12)).foregroundColor(Color("TextSecondary")).frame(width: 15)
+                Text(title.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundColor(Color("TextSecondary"))
+                Spacer()
+                Text("\(rows.count)").font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+            }
+            .padding(.horizontal, 6).padding(.top, 14).padding(.bottom, 4)
+            VStack(spacing: 0) {
+                ForEach(rows) { row in
+                    deviceRow(row)
+                    if row.id != rows.last?.id { Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.leading, 44) }
+                }
+            }
+            .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    private func deviceRow(_ row: DeviceRow) -> some View {
+        let selected = modelStore.selectedModelId == row.id
+        return HStack(spacing: 10) {
+            Image(systemName: row.offline ? "iphone" : "laptopcomputer")
+                .font(.system(size: 12)).foregroundColor(Color("TextPrimary"))
+                .frame(width: 24, height: 24)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(row.name).font(.system(size: 14)).foregroundColor(Color("TextPrimary").opacity(row.available ? 1 : 0.5)).lineLimit(1)
+                    if row.offline {
+                        HStack(spacing: 3) {
+                            Circle().fill(Theme.statusSuccess).frame(width: 5, height: 5)
+                            Text("works offline").font(.system(size: 10.5)).foregroundColor(Color("TextTertiary"))
+                        }
+                    }
+                }
+                Text(row.detail).font(.system(size: 11)).foregroundColor(Color("TextTertiary")).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if selected {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("AccentPrimary"))
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard row.available else { return }
+            Haptics.light()
+            modelStore.userSelectedModel(row.id)
+            dismiss()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel([row.name, row.detail, row.available ? nil : "not connected"].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
+    }
+
     // MARK: - Every model, grouped by provider
 
     private var providerIds: [String] {
         var ids: [String] = []
-        for model in modelStore.models where !ids.contains(model.provider) { ids.append(model.provider) }
+        for model in modelStore.chatModels where !ids.contains(model.provider) { ids.append(model.provider) }
         return ids.sorted { a, b in
             let ra = ModelProviderNames.rank(a), rb = ModelProviderNames.rank(b)
             return ra != rb ? ra < rb : ModelProviderNames.name(a) < ModelProviderNames.name(b)
@@ -197,7 +371,7 @@ struct ModelPickerSheet: View {
 
     /// Catalog rows the picker offers: hidden (retired) ones only when current.
     private var offered: [RuntimeModel] {
-        modelStore.models.filter { !$0.isHidden || $0.id == modelStore.selectedModelId }
+        modelStore.chatModels.filter { !$0.isHidden || $0.id == modelStore.selectedModelId }
     }
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -211,16 +385,59 @@ struct ModelPickerSheet: View {
             case .provider(let pid): if model.provider != pid { return false }
             case .all: break
             }
+            if filters.contains(.reasoning), model.thinking == nil { return false }
+            if filters.contains(.local), !Self.localProviders.contains(model.provider) { return false }
             guard !q.isEmpty else { return true }
             let hay = "\(model.name) \(model.id) \(ModelProviderNames.name(model.provider)) \(model.thinking?.term ?? "")".lowercased()
             return hay.contains(q)
         }
     }
 
-    private var groups: [(provider: String, rows: [RuntimeModel])] {
-        let rows = Dictionary(grouping: matches, by: \.provider)
-        return providerIds.compactMap { pid in rows[pid].map { (pid, Self.rankOrdered($0)) } }
+    private struct ModelGroup { let key: String; let provider: String; let logo: String; let title: String; let rows: [RuntimeModel] }
+
+    /// Desktop grouping: provider -> rows, with Allternit Cloud split by the
+    /// upstream vendor ("Anthropic · via Allternit Cloud"). Cloud first, the
+    /// person's plans before it, local last.
+    private var groups: [ModelGroup] {
+        var out: [ModelGroup] = []
+        for pid in providerIds {
+            let rows = Self.rankOrdered(matches.filter { $0.provider == pid })
+            guard !rows.isEmpty else { continue }
+            if pid == "allternit" {
+                var order: [String] = []
+                for m in rows { let v = Self.inferVendor(m); if !order.contains(v) { order.append(v) } }
+                order.sort { ($0 == "other" ? "Allternit" : ModelProviderNames.name($0)) < ($1 == "other" ? "Allternit" : ModelProviderNames.name($1)) }
+                for v in order {
+                    out.append(ModelGroup(key: "allternit:\(v)", provider: pid, logo: v == "other" ? "allternit" : v,
+                                          title: "\(v == "other" ? "Allternit" : ModelProviderNames.name(v)) · via Allternit Cloud",
+                                          rows: rows.filter { Self.inferVendor($0) == v }))
+                }
+            } else {
+                out.append(ModelGroup(key: pid, provider: pid, logo: pid, title: ModelProviderNames.name(pid), rows: rows))
+            }
+        }
+        return out
     }
+
+    /// Upstream vendor of a Cloud model (web inferVendor).
+    private static func inferVendor(_ m: RuntimeModel) -> String {
+        let s = "\(m.id) \(m.name)".lowercased()
+        let table: [(String, [String])] = [
+            ("anthropic", ["claude", "anthropic", "opus", "sonnet", "haiku"]),
+            ("openai", ["gpt", "openai", "codex"]),
+            ("google", ["gemini", "gemma", "google"]),
+            ("xai", ["grok", "xai"]),
+            ("deepseek", ["deepseek"]),
+            ("mistral", ["mistral", "mixtral", "codestral", "magistral"]),
+            ("kimi", ["kimi", "moonshot"]),
+            ("qwen", ["qwen", "qwq"]),
+            ("zai", ["glm", "zhipu", "z-ai"]),
+            ("meta", ["llama"]),
+        ]
+        return table.first { _, keys in keys.contains { s.contains($0) } }?.0 ?? "other"
+    }
+
+    private static let localProviders: Set<String> = ["ollama", "omlx", "allternit-sidecar", "local-brain"]
 
     /// Ranked models first by ascending rank; unranked keep their order after.
     private static func rankOrdered(_ rows: [RuntimeModel]) -> [RuntimeModel] {
@@ -237,9 +454,9 @@ struct ModelPickerSheet: View {
 
     @ViewBuilder
     private var modelList: some View {
-        if modelStore.isLoading && modelStore.models.isEmpty {
+        if modelStore.isLoading && modelStore.chatModels.isEmpty {
             ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
-        } else if modelStore.models.isEmpty, let loadError = modelStore.loadError {
+        } else if modelStore.chatModels.isEmpty, let loadError = modelStore.loadError {
             FriendlyStateView(
                 style: .offline,
                 icon: "wifi.slash",
@@ -255,10 +472,10 @@ struct ModelPickerSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
         } else {
-            ForEach(groups, id: \.provider) { group in
+            ForEach(groups, id: \.key) { group in
                 HStack(spacing: 6) {
-                    ModelProviderMark(providerId: group.provider, size: 15)
-                    Text(groupTitle(group.provider).uppercased())
+                    ModelProviderMark(providerId: group.logo, size: 15)
+                    Text(group.title.uppercased())
                         .font(.system(size: 11, weight: .semibold))
                         .tracking(0.8)
                         .foregroundColor(Color("TextSecondary"))
@@ -282,13 +499,10 @@ struct ModelPickerSheet: View {
         }
     }
 
-    private func groupTitle(_ pid: String) -> String {
-        pid == "allternit" ? "Allternit · via Allternit Cloud" : ModelProviderNames.name(pid)
-    }
-
     private func modelRow(_ model: RuntimeModel) -> some View {
         let selected = modelStore.selectedModelId == model.id
         let favorite = favorites.contains(model.id)
+        let locked = modelStore.isCloudLocked(model.id)
         return HStack(spacing: 10) {
             ModelProviderMark(providerId: model.provider, size: 24)
             VStack(alignment: .leading, spacing: 2) {
@@ -297,19 +511,23 @@ struct ModelPickerSheet: View {
                         .font(.system(size: 14))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
-                    if model.isDefault {
-                        Text("Default")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(Color("TextTertiary"))
-                            .accessibilityHidden(true)
-                    }
+                    if model.isDefault { rowBadge("Default") }
                 }
+                // Desktop row: the one-line description, else the provider.
+                Text(rowSubtitle(model))
+                    .font(.system(size: 11))
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(model.shortName)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(Color("TextTertiary"))
-                        .lineLimit(1)
+                    if PersonModels.providerNames[model.provider] != nil { rowBadge("Subscription") }
                     if let thinking = model.thinking { ThinkingChip(thinking: thinking) }
+                }
+                if locked {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill").font(.system(size: 9.5, weight: .semibold))
+                        Text("Needs credits").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(Color("TextSecondary"))
                 }
             }
             Spacer(minLength: 4)
@@ -331,12 +549,32 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(model.isDefault ? "\(model.name), default" : model.name)
+        .accessibilityLabel([model.name, model.isDefault ? "default" : nil, locked ? "needs credits" : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 
+    private func rowBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10))
+            .foregroundColor(Color("TextSecondary"))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 4))
+            .accessibilityHidden(true)
+    }
+
+    private func rowSubtitle(_ m: RuntimeModel) -> String {
+        if let d = m.description, !d.isEmpty, d != "Allternit Cloud" { return d }
+        return m.provider == "allternit" ? "via Allternit Cloud" : ModelProviderNames.name(m.provider)
+    }
+
     private func choose(_ model: RuntimeModel) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
+        // A locked Cloud row opens the credits sheet and keeps the old selection.
+        if modelStore.isCloudLocked(model.id) {
+            creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)
+            return
+        }
         modelStore.userSelectedModel(model.id)
         // Stay open on a pick from the full list so the level can be set too.
         scope = .all
@@ -349,9 +587,22 @@ struct ModelPickerSheet: View {
     }
 
     private func accountSummary(_ pid: String) -> String {
+        if PersonModels.providerNames[pid] != nil {
+            return pid == "chatgpt-phone"
+                ? "Your ChatGPT plan, from this iPhone · only messages you send"
+                : "Your own plan · only messages you send in chat"
+        }
         if pid == "allternit" {
-            let left = usage.percentUsed.map { "\(max(0, 100 - Int($0.rounded())))% of allowance left" }
-            let parts = ["Allternit Cloud", usage.planLabel, left].compactMap { $0 }
+            // Balance or "Needs credits": there is no free allowance (D1).
+            let funds: String?
+            if let cloud = plan.cloudModels, !cloud.allowed {
+                funds = "Needs credits"
+            } else if let balance = plan.credits?.balanceUsd {
+                funds = "\(CloudCreditsCopy.money(balance)) credits"
+            } else {
+                funds = nil
+            }
+            let parts = ["Allternit Cloud", usage.planLabel, funds].compactMap { $0 }
             return parts.joined(separator: " · ")
         }
         if ModelProviderNames.rank(pid) == 2 { return "Runs on this computer · no limits" }
@@ -388,11 +639,27 @@ enum ModelProviderNames {
         "omlx": "oMLX",
         "local-brain": "Local Brain",
         "allternit-sidecar": "Local Brain",
-    ]
+    ].merging(PersonModels.providerNames) { a, _ in a }
     private static let local: Set<String> = ["ollama", "omlx", "allternit-sidecar", "local-brain"]
 
     static func name(_ pid: String) -> String { names[pid] ?? pid.capitalized }
-    static func rank(_ pid: String) -> Int { pid == "allternit" ? 0 : local.contains(pid) ? 2 : 1 }
+    /// The person's own plans first, then Allternit Cloud, providers, local.
+    static func rank(_ pid: String) -> Int {
+        if PersonModels.providerNames[pid] != nil { return -1 }
+        return pid == "allternit" ? 0 : local.contains(pid) ? 2 : 1
+    }
+
+    /// The letter on a provider's tile: the vendor's, not "Your …".
+    static func mark(_ pid: String) -> String {
+        switch pid {
+        case "plan-claude", "claude-org": return "C"
+        case "plan-chatgpt", "chatgpt-phone": return "G"
+        case "plan-grok": return "X"
+        case "plan-kimi": return "K"
+        case "copilot": return "G"
+        default: return String(name(pid).prefix(1))
+        }
+    }
 }
 
 /// Provider mark: the A:// matrix for Allternit Cloud, else the provider's
@@ -409,7 +676,7 @@ struct ModelProviderMark: View {
                     .scaledToFit()
                     .padding(size * 0.08)
             } else {
-                Text(String(ModelProviderNames.name(providerId).prefix(1)))
+                Text(ModelProviderNames.mark(providerId))
                     .font(.system(size: size * 0.55, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
             }
@@ -417,5 +684,150 @@ struct ModelProviderMark: View {
         .frame(width: size, height: size)
         .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: size * 0.28))
         .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Composer runtime / brain / bot chips
+
+private struct ChatBotOpenKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable (AgentRecord) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    /// Opens another bot's chat (the Bot chip in a bot chat's composer).
+    var chatBotOpen: (@MainActor @Sendable (AgentRecord) -> Void)? {
+        get { self[ChatBotOpenKey.self] }
+        set { self[ChatBotOpenKey.self] = newValue }
+    }
+}
+
+/// The composer's chips in a bot chat (Harness & Bots 2.0 step 26; web
+/// ComposerAgentChips, approved mockup a2): runtime (mark + name), brain
+/// (mark + name) and bot (avatar + name), where a plain chat shows the model
+/// chip. Each chip opens the layered picker (`BotBrainPickerSheet`) on that
+/// layer. On a narrow row the runtime and bot chips drop their names, as the
+/// web does at phone width. A Connected bot shows locked "Run by <Vendor>"
+/// chips for runtime and brain.
+struct ComposerAgentChips: View {
+    let bot: AgentRecord
+
+    @ObservedObject private var registry = RuntimeRegistryStore.shared
+    @ObservedObject private var modelStore = ModelStore.shared
+    @ObservedObject private var hubStore = AgentHubStore.shared
+    @Environment(\.chatBotOpen) private var openBot
+    @State private var openLayer: BotBrainPickerSheet.Layer?
+
+    /// The freshest copy of the bot (a picker save refreshes the hub row).
+    private var current: AgentRecord { hubStore.agents.first { $0.id == bot.id } ?? bot }
+    private var vendor: String? { BotBrainPickerSheet.connectedVendor(current) }
+
+    private var brain: [String: JSONValue] {
+        var b = current.config?["botBrain"]?.jObject ?? [:]
+        if b["modelRef"] == nil, !current.model.isEmpty, !current.provider.isEmpty {
+            b["modelRef"] = .object(["providerID": .string(current.provider), "modelID": .string(current.model)])
+        }
+        return RuntimeRegistry.resolveRuntime(b, in: registry.runtimes)
+    }
+    private var runtimeId: String { brain["runtime"]?.jString ?? "allternit" }
+    private var runtimeName: String {
+        runtimeId == "custom" ? "Custom harness" : (registry.runtime(runtimeId)?.name ?? runtimeId)
+    }
+    private var providerId: String? { brain["modelRef"]?.jObject?["providerID"]?.jString }
+    private var brainName: String {
+        guard let ref = brain["modelRef"]?.jObject,
+              let p = ref["providerID"]?.jString, let m = ref["modelID"]?.jString else { return "Default model" }
+        let name = modelStore.models.first { $0.id == "\(p)/\(m)" }?.name ?? m
+        let trimmed = name.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+        return trimmed.isEmpty ? name : trimmed
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            row(namedRuntime: true, namedBrain: true, namedBot: true)
+            row(namedRuntime: false, namedBrain: true, namedBot: false)
+            row(namedRuntime: false, namedBrain: false, namedBot: false)
+        }
+        .sheet(item: $openLayer) { layer in
+            BotBrainPickerSheet(agent: current, open: layer, onPickBot: openBot)
+        }
+        .task {
+            registry.refreshIfNeeded()
+            modelStore.fetchModelsIfNeeded()
+        }
+    }
+
+    private func row(namedRuntime: Bool, namedBrain: Bool, namedBot: Bool) -> some View {
+        HStack(spacing: 4) {
+            chip(.runtime, named: namedRuntime)
+            chip(.brain, named: namedBrain)
+            chip(.bot, named: namedBot)
+        }
+        .fixedSize()
+    }
+
+    static func short(_ s: String, _ max: Int) -> String {
+        s.count > max ? String(s.prefix(max - 1)) + "…" : s
+    }
+
+    private func text(_ layer: BotBrainPickerSheet.Layer) -> String {
+        if let vendor, layer != .bot { return "Run by \(vendor)" }
+        switch layer {
+        case .runtime: return runtimeName
+        case .brain: return brainName
+        case .bot: return current.botDisplayName
+        }
+    }
+
+    @ViewBuilder
+    private func icon(_ layer: BotBrainPickerSheet.Layer) -> some View {
+        if vendor != nil && layer != .bot {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 18, height: 18)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityHidden(true)
+        } else {
+            switch layer {
+            case .runtime: ModelProviderMark(providerId: runtimeId, size: 18)
+            case .brain: ModelProviderMark(providerId: providerId ?? runtimeId, size: 18)
+            case .bot: BotAvatarView(bot: current, size: 18).accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func chip(_ layer: BotBrainPickerSheet.Layer, named: Bool) -> some View {
+        let locked = vendor != nil && layer != .bot
+        let label = text(layer)
+        return Button {
+            guard !locked else { return }
+            Haptics.selection()
+            openLayer = layer
+        } label: {
+            HStack(spacing: 4) {
+                icon(layer)
+                if named || locked {
+                    // Long names are cut by length: the row is measured at
+                    // its ideal width (ViewThatFits), where truncation never runs.
+                    Text(Self.short(label, layer == .brain ? 16 : 13))
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                }
+                if !locked {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.7)
+                }
+            }
+            .foregroundColor(Color(locked ? "TextTertiary" : "TextSecondary"))
+            .padding(.horizontal, 4)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(locked)
+        .accessibilityLabel("\(layer.rawValue): \(label)\(locked ? ", locked" : "")")
+        .accessibilityHint(locked ? "" : "Shows the \(layer.rawValue.lowercased()) choices")
+        .accessibilityIdentifier("composerChip-\(layer.rawValue.lowercased())")
     }
 }

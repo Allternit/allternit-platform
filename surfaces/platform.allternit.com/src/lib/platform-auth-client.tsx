@@ -88,7 +88,7 @@ function getClerkAppearance(resolved: "light" | "dark") {
   return {
     variables: {
       colorBackground: bg,
-      colorPrimary: isLight ? "#1A1916" : "#9A7658",
+      colorPrimary: isLight ? "#1A1916" : "#ECECEB",
       colorText: text,
       colorTextSecondary: textSecondary,
       colorInputBackground: bgInput,
@@ -113,13 +113,13 @@ function getClerkAppearance(resolved: "light" | "dark") {
       formFieldInputShowPasswordButton: { color: textSecondary },
       formFieldInputShowPasswordButtonIcon: { color: textSecondary },
       footerActionText: { color: textSecondary },
-      footerActionLink: { color: "#9A7658" },
+      footerActionLink: { color: isLight ? "#1F1E1D" : "#ECECEB" },
       footer: { background: "transparent", padding: "20px 0 0", margin: "0" },
       form: { gap: "14px" },
       main: { gap: "18px" },
       formButtonPrimary: { background: buttonBg, color: buttonText, boxShadow: "none", fontWeight: 700 },
       identityPreviewText: { color: text },
-      formResendCodeLink: { color: "#9A7658" },
+      formResendCodeLink: { color: isLight ? "#1F1E1D" : "#ECECEB" },
       otpCodeFieldInput: { background: bgInput, border: `1px solid ${borderInput}`, color: text },
       alertText: { color: text },
       alertClerkError: { background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.24)" },
@@ -303,35 +303,24 @@ function ClerkPlatformAuthBridge({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Register the Clerk token provider so every API request gets a fresh
-    // JWT on demand. This avoids race conditions where a page's useEffect
-    // fires before the first token sync completes. We read from the Clerk
-    // instance's active session because it is always available once signed in.
-    api.setTokenProvider(async () => {
+    // Register the Clerk token provider. The api client calls it on every
+    // request; Clerk's getToken() caches the JWT and refreshes it before it
+    // expires, so no copy is held here. (A timer-synced copy went stale:
+    // Clerk tokens live 60 s and background tabs throttle timers, so idle
+    // tabs sent expired JWTs.) On a 401 the client asks again with
+    // skipCache for a newly minted token.
+    api.setTokenProvider(async (options) => {
       try {
-        return (await clerk.session?.getToken()) ?? null;
+        const token = options?.skipCache
+          ? await clerk.session?.getToken({ skipCache: true })
+          : await clerk.session?.getToken();
+        return token ?? null;
       } catch {
         return null;
       }
     });
 
-    let active = true;
-    const syncToken = async () => {
-      try {
-        const token = await clerk.session?.getToken();
-        if (!active) return;
-        if (token) api.setToken(token);
-        else api.clearToken();
-      } catch {
-        if (active) api.clearToken();
-      }
-    };
-
-    void syncToken();
-    const interval = setInterval(syncToken, 50_000);
     return () => {
-      active = false;
-      clearInterval(interval);
       api.clearTokenProvider();
     };
   }, [clerkAuth.isSignedIn, clerk.session]);

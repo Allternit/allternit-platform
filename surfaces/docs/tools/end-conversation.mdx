@@ -1,0 +1,28 @@
+---
+title: 'end_conversation'
+description: 'End a chat after sustained abuse or on request'
+---
+
+## Overview
+
+`end_conversation` ends one of Gizzi's own chats. It is used only after a warning and failed redirects, or after you ask and confirm. It is never used when someone may be in crisis. You can always start a new chat.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `reason` | `sustained_abuse` or `user_requested` | Why the chat ends |
+| `warned` | boolean | True when the assistant warned you in an earlier reply |
+| `summary` | string, optional | One neutral line for the record, up to 500 characters |
+
+## Result
+
+The reason and `ended: true`. An ended chat refuses new messages (HTTP 409, "This chat has ended. Start a new chat."), and the apps show **Start a new chat**.
+
+## Permission
+
+It is on for Gizzi's own chats only, never for bots or customer channels. It is allowed in every mode.
+
+## Surfaces
+
+Desktop, web, phone layout, PWA, iOS and the terminal show the ended state. Android follows the PWA. Family: `session`.

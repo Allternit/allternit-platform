@@ -20,7 +20,7 @@ import {
   ResourceCard,
   SkeletonCard,
 } from "@/components/console-ui";
-import { getOrgCreditsBalance, type OrgCreditsBalance } from "@/lib/credits";
+import { getConsoleCredits, type ConsoleCredits } from "@/lib/credits";
 import { getSpendLimit, type SpendLimit } from "@/lib/spend-limits";
 import { isCloudGateway, isHiddenOnCloud } from "@/lib/availability";
 import {
@@ -28,6 +28,8 @@ import {
   formatTokenCount,
   getGatewayCaching,
   getGatewayUsage,
+  getUsageReport,
+  sumReportRows,
   microdollarsToUsd,
   tomorrowDate,
   type CachingResponse,
@@ -136,27 +138,27 @@ export function DashboardPage(): React.ReactNode {
   const { organization, membership } = usePlatformOrganization();
   const navigate = useNavigate();
 
-  const [credits, setCredits] = useState<LoadState<OrgCreditsBalance>>({ status: "loading" });
+  const [credits, setCredits] = useState<LoadState<ConsoleCredits>>({ status: "loading" });
   const [spend, setSpend] = useState<LoadState<SpendLimit>>(
     isCloudGateway() ? { status: "hidden" } : { status: "loading" },
   );
-  const [caching, setCaching] = useState<LoadState<CachingResponse>>({ status: "loading" });
+  // Caching is a paired-runtime route; on cloud the card is hidden.
+  const [caching, setCaching] = useState<LoadState<CachingResponse>>(
+    isHiddenOnCloud("caching") ? { status: "hidden" } : { status: "loading" },
+  );
   const [usage, setUsage] = useState<LoadState<UsageResponse>>({ status: "loading" });
   const [models, setModels] = useState<LoadState<ConsoleModel[]>>({ status: "loading" });
 
   useEffect(() => {
     let active = true;
-    getOrgCreditsBalance()
-      .then((data) => active && setCredits(data ? { status: "ok", data } : { status: "hidden" }))
-      .catch((err) => {
+    // Cloud wallet first (cloud-api, works for every account); the device
+    // (org fabric) ledger only shows when a paired node answers.
+    getConsoleCredits()
+      .then((data) => {
         if (!active) return;
-        // 403/404 = no active org — hide the org-scoped card.
-        if (err instanceof AllternitApiError && (err.statusCode === 403 || err.statusCode === 404)) {
-          setCredits({ status: "hidden" });
-        } else {
-          setCredits({ status: "error" });
-        }
-      });
+        setCredits(data.cloud || data.device ? { status: "ok", data } : { status: "error" });
+      })
+      .catch(() => active && setCredits({ status: "error" }));
     return () => {
       active = false;
     };
@@ -183,6 +185,7 @@ export function DashboardPage(): React.ReactNode {
   }, []);
 
   useEffect(() => {
+    if (isHiddenOnCloud("caching")) return;
     let active = true;
     getGatewayCaching("30d")
       .then((data) => active && setCaching({ status: "ok", data }))
@@ -194,7 +197,32 @@ export function DashboardPage(): React.ReactNode {
 
   useEffect(() => {
     let active = true;
-    getGatewayUsage({ from: dateDaysAgo(7), to: tomorrowDate() })
+    // Cloud reads the per-user report; the relayed /api/v1/gateway/usage needs a paired runtime.
+    const request: Promise<UsageResponse> = isCloudGateway()
+      ? getUsageReport({ from: dateDaysAgo(7), to: tomorrowDate(), groupBy: "day" }).then((rows) => {
+          const totals = sumReportRows(rows);
+          return {
+            from: dateDaysAgo(7),
+            to: tomorrowDate(),
+            group_by: "day" as const,
+            usage: rows.map((r) => ({
+              day: r.group,
+              prompt_tokens: r.prompt_tokens,
+              completion_tokens: r.completion_tokens,
+              requests: r.requests,
+            })) as unknown as UsageDayRow[],
+            totals: {
+              requests: totals.requests,
+              prompt_tokens: totals.prompt_tokens,
+              completion_tokens: totals.completion_tokens,
+              reasoning_tokens: 0,
+              cached_tokens: 0,
+              spend_microdollars: Math.round(totals.cost_usd * 1_000_000),
+            },
+          };
+        })
+      : getGatewayUsage({ from: dateDaysAgo(7), to: tomorrowDate() });
+    request
       .then((data) => active && setUsage({ status: "ok", data }))
       .catch(() => active && setUsage({ status: "error" }));
     return () => {
@@ -215,24 +243,39 @@ export function DashboardPage(): React.ReactNode {
   const firstName =
     user?.firstName || user?.primaryEmailAddress?.emailAddress?.split("@")[0] || "there";
 
-  // ─── Card 1: organization credits ──────────────────────────────────────────
+  // ─── Card 1: credits (Cloud wallet, plus device ledger when paired) ────────
   const creditsCard = useMemo(() => {
     if (credits.status === "loading") return <SkeletonCard rows={2} className="h-full" />;
-    if (credits.status === "error") return <CardFallback label="Organization credits" message="Balance is unavailable right now." />;
+    if (credits.status === "error") return <CardFallback label="Cloud credits" message="Balance is unavailable right now." />;
     if (credits.status === "hidden" || !credits.data) return null;
-    const balanceUsd = credits.data.balance_cents / 100;
+    const { cloud, device } = credits.data;
+    const deviceUsd = device ? device.balance_cents / 100 : null;
     return (
       <div className="flex h-full flex-col rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
         <span className="text-[12px] font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
-          Organization credits
+          {cloud ? "Cloud credits" : "Device credits"}
         </span>
         <div className="mt-2 text-[24px] font-semibold tracking-tight text-[var(--text-primary)]">
-          {formatUsd(balanceUsd)}
+          {formatUsd(cloud ? cloud.balance_usd : deviceUsd ?? 0)}
         </div>
-        <p className="m-0 mt-1 flex-1 text-[12px] text-[var(--text-tertiary)]">
-          {organization?.name ?? "Your organization"}
-          {membership?.role ? ` · ${membership.role}` : ""}
-        </p>
+        <div className="mt-1 flex-1 space-y-0.5 text-[12px] text-[var(--text-tertiary)]">
+          {cloud && (
+            <p className="m-0">
+              {formatUsd(cloud.month_to_date_usage_usd)} used this month
+            </p>
+          )}
+          {cloud && deviceUsd !== null && (
+            <p className="m-0">
+              Device credits · <span className="text-[var(--text-secondary)]">{formatUsd(deviceUsd)}</span>
+            </p>
+          )}
+          {!cloud && (
+            <p className="m-0">
+              {organization?.name ?? "Your organization"}
+              {membership?.role ? ` · ${membership.role}` : ""}
+            </p>
+          )}
+        </div>
         <ActionLink to="/billing" label="Add funds" />
       </div>
     );
@@ -496,11 +539,13 @@ export function DashboardPage(): React.ReactNode {
               action={{ label: "Go to Batches", to: "/batches" }}
             />
           )}
-          <ResourceCard
-            title="Prompt caching"
-            description="Reuse long prefixes and context caches to cut repeat input cost on every request."
-            action={{ label: "Go to caching", to: "/analytics/caching" }}
-          />
+          {!isHiddenOnCloud("caching") && (
+            <ResourceCard
+              title="Prompt caching"
+              description="Reuse long prefixes and context caches to cut repeat input cost on every request."
+              action={{ label: "Go to caching", to: "/analytics/caching" }}
+            />
+          )}
           <ResourceCard
             title="Cloud Agents"
             description="Build, deploy, and monitor agents that run in the Allternit cloud."

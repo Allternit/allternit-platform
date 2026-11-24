@@ -122,6 +122,10 @@ impl NodeKind {
 /// Who decided an edge.
 pub const ORIGIN_INCUMBENT: &str = "incumbent_llm";
 pub const ORIGIN_USER: &str = "user";
+/// An insight link Sleep REM proposed and kept (D11).
+pub const ORIGIN_REM: &str = "rem";
+/// A back-pointer from a kept Dream lesson to its evidence turns (D11).
+pub const ORIGIN_DREAM_LESSON: &str = "dream_lesson";
 
 /// Write one typed edge into `memory_relationships` (canonical) and mirror it
 /// into `memory_edges`. `updates`/`contradicts` onto a fact also end that

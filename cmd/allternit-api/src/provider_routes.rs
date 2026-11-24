@@ -1752,7 +1752,7 @@ pub(crate) fn connect_card_meta(id: &str) -> Option<(String, String, String)> {
     })
 }
 
-fn home_file(parts: &[&str]) -> std::path::PathBuf {
+pub(crate) fn home_file(parts: &[&str]) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
     for part in parts {
         p.push(part);
@@ -1794,7 +1794,7 @@ fn claude_cli_logged_in(binary: &str) -> bool {
 
 /// `(logged in, email)` from `claude auth status`. `home` points the CLI at an
 /// added account's config dir (`CLAUDE_CONFIG_DIR`); `None` is the stock home.
-fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
+pub(crate) fn claude_cli_status(binary: &str, home: Option<&std::path::Path>) -> (bool, Option<String>) {
     let mut cmd = std::process::Command::new(binary);
     cmd.args(["auth", "status"])
         .stdout(std::process::Stdio::piped())
@@ -1866,7 +1866,7 @@ fn antigravity_keychain_signed_in() -> bool {
         .unwrap_or(false)
 }
 
-fn subscription_auth_check(id: &str, binary: &str) -> bool {
+pub(crate) fn subscription_auth_check(id: &str, binary: &str) -> bool {
     match id {
         "claude" | "claude-cli" => claude_cli_logged_in(binary),
         "codex" | "codex-cli" => {
@@ -1936,16 +1936,16 @@ struct ConnectBody {
 }
 
 /// How to run a provider's sign-in: argv, a hint shown beside it, and env.
-struct LoginCmd {
-    argv: Vec<&'static str>,
-    hint: Option<String>,
-    env: Vec<(&'static str, &'static std::ffi::OsStr)>,
+pub(crate) struct LoginCmd {
+    pub(crate) argv: Vec<&'static str>,
+    pub(crate) hint: Option<String>,
+    pub(crate) env: Vec<(&'static str, &'static std::ffi::OsStr)>,
 }
 
 /// The sign-in for a provider: the catalog's headless variant when the user is
 /// remote and the CLI has one (`loginRemote` + `loginRemoteEnv`); Claude's own
 /// flow already works remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
+pub(crate) fn login_argv(provider: &str, default: &'static [String], remote: bool) -> LoginCmd {
     // A remote computer has no browser next to the CLI: use the catalog's
     // headless / device-code sign-in (`loginRemote`) when the tool has one.
     if remote {
@@ -2707,6 +2707,139 @@ struct HuggingFaceModelResult {
     repo_id: String,
     downloads: u64,
     likes: u64,
+    /// Whether the Freeweights catalog lists the repo. `null` when the
+    /// catalog could not be reached (unknown, not "not listed").
+    freeweights: Option<freeweights::Listing>,
+}
+
+/// Freeweights catalog lookups for allternit-api (search annotations and the
+/// Ollama pull verification in local_brain_routes). The catalog is
+/// `{ALLTERNIT_FREEWEIGHTS_URL or https://freeweights.allternit.com}/api/catalog`
+/// (base URL from `allternit-model-source`), cached in memory for 5 minutes.
+pub(crate) mod freeweights {
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Mutex;
+
+    const TTL: Duration = Duration::from_secs(5 * 60);
+    /// After a failed fetch, wait this long before trying again.
+    const RETRY_AFTER: Duration = Duration::from_secs(30);
+
+    /// `freeweights` annotation on a search row.
+    #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+    pub struct Listing {
+        pub listed: bool,
+        /// SPDX id (or LicenseRef) from the catalog.
+        pub license: Option<String>,
+        /// Catalog section, e.g. `alt.freeweights.qwen`.
+        pub section: Option<String>,
+        /// Freeweights page for the repo.
+        pub detail_url: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Row {
+        id: String,
+        #[serde(default)]
+        license_id: Option<String>,
+        #[serde(default)]
+        section: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Catalog {
+        models: Vec<Row>,
+    }
+
+    type Index = Arc<HashMap<String, Listing>>;
+
+    struct Cached {
+        at: Instant,
+        /// `None` = the last fetch failed and nothing good was cached before.
+        index: Option<Index>,
+    }
+
+    fn cache() -> &'static Mutex<Option<Cached>> {
+        static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    pub fn base_url() -> String {
+        allternit_model_source::Client::new()
+            .map(|c| c.base_url().to_string())
+            .unwrap_or_else(|_| allternit_model_source::DEFAULT_BASE_URL.to_string())
+    }
+
+    fn build_index(base: &str, rows: Vec<Row>) -> Index {
+        Arc::new(
+            rows.into_iter()
+                .map(|r| {
+                    let detail_url = r.section.as_ref().map(|s| format!("{base}/{s}/{}/", r.id));
+                    (
+                        r.id,
+                        Listing {
+                            listed: true,
+                            license: r.license_id,
+                            section: r.section,
+                            detail_url,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    async fn fetch(base: &str) -> Result<Index, String> {
+        let res = crate::net_client::client()
+            .get(format!("{base}/api/catalog"))
+            .timeout(allternit_model_source::NETWORK_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("HTTP {}", res.status()));
+        }
+        let c: Catalog = res.json().await.map_err(|e| e.to_string())?;
+        Ok(build_index(base, c.models))
+    }
+
+    /// The catalog index, or `None` when it cannot be reached and nothing is
+    /// cached. A stale index is served when a refresh fails.
+    pub async fn index() -> Option<Index> {
+        let mut guard = cache().lock().await;
+        if let Some(c) = guard.as_ref() {
+            let ttl = if c.index.is_some() { TTL } else { RETRY_AFTER };
+            if c.at.elapsed() < ttl {
+                return c.index.clone();
+            }
+        }
+        let base = base_url();
+        let index = match fetch(&base).await {
+            Ok(index) => Some(index),
+            Err(err) => {
+                tracing::warn!("Freeweights catalog unreachable: {err}");
+                guard.as_ref().and_then(|c| c.index.clone())
+            }
+        };
+        *guard = Some(Cached {
+            at: Instant::now(),
+            index: index.clone(),
+        });
+        index
+    }
+
+    /// Annotation for `repo` against an index (`None` index = unknown).
+    pub fn listing(index: Option<&Index>, repo: &str) -> Option<Listing> {
+        let index = index?;
+        Some(index.get(repo).cloned().unwrap_or(Listing {
+            listed: false,
+            license: None,
+            section: None,
+            detail_url: None,
+        }))
+    }
 }
 
 /// Searches HuggingFace's public model API for GGUF-tagged repos, so the
@@ -2770,6 +2903,7 @@ async fn search_huggingface(
         }
     };
 
+    let fw_index = freeweights::index().await;
     let results: Vec<HuggingFaceModelResult> = body
         .as_array()
         .map(|arr| {
@@ -2781,6 +2915,7 @@ async fn search_huggingface(
                         .and_then(|v| v.as_str())?
                         .to_string();
                     Some(HuggingFaceModelResult {
+                        freeweights: freeweights::listing(fw_index.as_ref(), &repo_id),
                         repo_id,
                         downloads: m.get("downloads").and_then(|v| v.as_u64()).unwrap_or(0),
                         likes: m.get("likes").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -2790,7 +2925,11 @@ async fn search_huggingface(
         })
         .unwrap_or_default();
 
-    Json(json!({ "models": results })).into_response()
+    Json(json!({
+        "models": results,
+        "freeweights_catalog": if fw_index.is_some() { "ok" } else { "unreachable" },
+    }))
+    .into_response()
 }
 
 #[cfg(test)]

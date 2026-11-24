@@ -1,4 +1,5 @@
 import type { Command } from '../../commands'
+import { consoleEnabled } from '@/cli/work/console'
 
 /** Work views from Desktop, in the terminal: decisions, PR checks, projects, routines. */
 export const decisions = {
@@ -28,4 +29,12 @@ export const routines = {
   aliases: ['routine'],
   description: 'Your routines with next and last runs (p pauses or resumes)',
   load: () => import('./routines.js'),
+} satisfies Command
+
+export const computers = {
+  type: 'local-jsx',
+  name: 'computers',
+  description: 'Your computers grouped, with status and meters; open one for its snapshot, services and ports (read-only)',
+  isEnabled: () => consoleEnabled(),
+  load: () => import('./computers.js'),
 } satisfies Command

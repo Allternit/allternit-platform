@@ -5,9 +5,10 @@
  * A bot turn is the bot, not the coding agent and not the user's own Claude
  * Code / gizzi setup:
  *
- * - Identity: the bot's persona leads the system prompt and the "Allternit
- *   Shell … coding agent" header is replaced by neutral operating guidance
- *   (see `system-header.ts`).
+ * - Identity: the bot's persona leads the system prompt and the base header
+ *   (chat or Gizzi Code identity) is replaced by neutral operating guidance,
+ *   the shared safety block and, on chat surfaces, the capabilities block
+ *   (SystemPrompt.bot; see `system-header.ts`).
  * - Instructions: no personal instruction files. The user's ~/.claude/CLAUDE.md,
  *   ~/.gizzi/* identity and legacy prompts, and CLAUDE.md / AGENTS.md /
  *   GIZZI.md found by walking up from the session folder are not loaded. The
@@ -16,9 +17,9 @@
  * - Skills: no personal skills (~/.claude/skills, ~/.agents/skills,
  *   ~/.openclaw/skills, project .claude/skills).
  * - Claude CLI brain: settings isolation (`--setting-sources ""`,
- *   `--disable-slash-commands`, `--strict-mcp-config`), the persona as the
- *   system prompt, and the bot's tool allowlist / approval gates instead of
- *   `bypassPermissions`.
+ *   `--disable-slash-commands`, `--strict-mcp-config`), the persona appended
+ *   to Claude Code's own system prompt (`--append-system-prompt`), and the
+ *   bot's tool allowlist / approval gates instead of `bypassPermissions`.
  *
  * This module is dependency-light on purpose (zod only) so the policy can be
  * unit tested without the runtime.
@@ -162,6 +163,8 @@ const CLAUDE_TOOLS: Record<string, string[]> = {
   // Served by gizzi's own session tools over the CLI bridge (always allowed).
   memory: [],
   computer: [],
+  // gizzi's sandboxed Python tool, also over the CLI bridge; never Claude's Bash.
+  run_code: [],
 }
 
 /** Claude Code tool names for a list of platform / vendor tool ids. */

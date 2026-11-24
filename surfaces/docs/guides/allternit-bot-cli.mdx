@@ -3,7 +3,7 @@ title: Give a shell agent your bot's phone with allternit-bot
 description: Install the allternit-bot command so a vendor agent that runs in its own sandbox can read threads, text, call, draft email and work tickets through your bot, under the same rules.
 ---
 
-Claude and ChatGPT reach your bot through a [connector](/guides/vendor-bots-use-your-phone) they sign in to. An agent that runs in **its own sandbox with a shell** (a coding agent in a container, a hosted worker) has no browser to sign in with. It uses `allternit-bot` instead: one small command, one key you issue and can revoke.
+Claude and ChatGPT reach your bot through a [connector](/guides/connected-bots-use-your-phone) they sign in to. An agent that runs in **its own sandbox with a shell** (a coding agent in a container, a hosted worker) has no browser to sign in with. It uses `allternit-bot` instead: one small command, one key you issue and can revoke.
 
 Everything the command does goes through the same server-side checks as the connector. It can't do more than the connector can:
 
@@ -14,13 +14,13 @@ Everything the command does goes through the same server-side checks as the conn
 
 ## Set it up
 
-1. In Allternit, open the vendor bot, then **Use the phone**, then **Shell access**. The panel works the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app.
+1. In Allternit, open the connected bot, then **Use the phone**, then **Shell access**. The panel works the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app.
 2. Choose **Issue a key**. The key (it starts with `abk_`) is shown once. Copy it now: only a fingerprint is kept, so it can't be shown again.
 3. In the agent's shell, install the command and save the key:
 
 ```bash
 curl -fsSL https://install.allternit.com/bot | sh
-echo "abk_…your key…" | allternit-bot login <vendor bot id>
+echo "abk_…your key…" | allternit-bot login <connected bot id>
 allternit-bot help
 ```
 
@@ -41,18 +41,18 @@ To cut an agent off, choose **Revoke** next to its key. Its next call is refused
 | `allternit-bot email <to> <subject> <body…>` | Drafts an email. It waits for your OK. |
 | `allternit-bot post <provider> <target-json> <text…>` | Starts a conversation on telegram, slack, discord, teams or whatsapp. |
 | `allternit-bot ask <text…>` | Hands off to your bot and prints its reply. |
-| `allternit-bot tickets` / `ticket <T-n>` / `result <T-n> <summary…> [--data json]` | Lists, reads and finishes [tickets](/guides/how-vendor-bots-connect). |
+| `allternit-bot tickets` / `ticket <T-n>` / `result <T-n> <summary…> [--data json]` | Lists, reads and finishes [tickets](/guides/how-connected-bots-connect). |
 | `allternit-bot help` | Prints plain instructions an agent can follow. |
 
 Put `-` as the last argument to read long text from standard input, and add `--json` to any command for raw output. The exit code is `0` when it worked, `1` when Allternit refused (the reason is printed, so tell the person; don't retry around it) and `2` when Allternit couldn't be reached or the command was wrong. If your computer is asleep, Allternit wakes it first; if that takes too long the command says so and you can run it again.
 
-An agent that can fetch a URL can also read the same instructions from `https://mcp.allternit.com/bots/<vendor bot id>/instructions`, sending its key as `Authorization: Bearer abk_…`.
+An agent that can fetch a URL can also read the same instructions from `https://mcp.allternit.com/bots/<connected bot id>/instructions`, sending its key as `Authorization: Bearer abk_…`.
 
 ## For developers
 
 **The CLI** is `cmd/allternit-bot` (Rust, `reqwest` with rustls, no OpenSSL). Each command is one JSON-RPC `tools/call` to `<url>/bots/<id>` with the key as Bearer, where `<url>` defaults to `https://mcp.allternit.com/mcp` (`ALLTERNIT_BOT_URL` or `--url` overrides it, for example to point at a local runtime). Its `help` text is `cmd/allternit-api/assets/vendor-bot-instructions.txt`, the same file the instructions route serves; a test checks it names every tool.
 
-**Keys** live in cloud-api (migration `040_vendor_bot_keys.sql`, `cmd/allternit-cloud-api/src/routes/vendor_bot_keys.rs`), because the public edge has to check them. Only the SHA-256 is stored. A key opens exactly one vendor bot, at most 10 live keys per bot. Routes, authenticated as the signed-in owner (Clerk session or a `compute`-scoped API key):
+**Keys** live in cloud-api (migration `040_vendor_bot_keys.sql`, `cmd/allternit-cloud-api/src/routes/vendor_bot_keys.rs`), because the public edge has to check them. Only the SHA-256 is stored. A key opens exactly one connected bot, at most 10 live keys per bot. Routes, authenticated as the signed-in owner (Clerk session or a `compute`-scoped API key):
 
 | Route | Result |
 | --- | --- |

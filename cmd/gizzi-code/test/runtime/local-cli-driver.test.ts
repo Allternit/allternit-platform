@@ -12,6 +12,7 @@ import { SUBPROCESS_PROVIDERS } from "@/runtime/providers/discovery/subprocess"
 
 const EXPECTED_ACP_CLIS = [
   "kimi-cli",
+  "antigravity",
   "mcode",
   "hermes",
   "grok",

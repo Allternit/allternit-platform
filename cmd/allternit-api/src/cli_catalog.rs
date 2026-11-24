@@ -19,15 +19,15 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use once_cell::sync::Lazy;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 
 use crate::auth::get_user;
 use crate::AppState;
@@ -37,6 +37,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/cli-tools/catalog", get(get_catalog))
         .route("/cli-tools/custom", post(create_custom))
         .route("/cli-tools/custom/:custom_id", delete(delete_custom))
+        // POST/GET/DELETE /api/v1/runtimes/:id/live (owner only).
+        .merge(crate::runtime_live::router())
+}
+
+/// `GET /api/v1/runtimes`: the runtime registry. Public (no sign-in), so it
+/// is mounted on the public router in `main.rs`, outside `auth_middleware`.
+/// The handler checks owner auth itself before it adds `installed`.
+pub fn runtimes_public_router() -> Router<Arc<AppState>> {
+    Router::new().route("/api/v1/runtimes", get(get_runtimes))
 }
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
@@ -214,6 +223,237 @@ pub(crate) fn find(id: &str) -> Option<&'static CliTool> {
     CATALOG
         .iter()
         .find(|t| t.id == id || t.aliases.iter().any(|a| a == id))
+}
+
+// ─── Runtime registry (catalog v3 `runtimes[]`) ───────────────────────────────
+//
+// Contract: CONTRACT-harness-bots-2.md, "Registry entry". The typed fields are
+// the ones the server reads (ids, aliases, adapter kind, legacy ids); the rest
+// stay `Value` so look tokens and any field added later pass through as-is.
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct RuntimeAdapter {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub(crate) struct RuntimeLegacy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uhp: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeEntry {
+    pub id: String,
+    pub name: String,
+    pub vendor: String,
+    pub category: String,
+    /// The `tools[].id` this runtime runs; null for the native Allternit runtime.
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<Vec<String>>,
+    pub adapter: RuntimeAdapter,
+    /// `"any"` or a list of provider ids.
+    pub brains: Value,
+    #[serde(default)]
+    pub access: Vec<String>,
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<Value>,
+    pub system_layer: Value,
+    /// Look tokens (data only). Never read by the server; served unchanged.
+    pub look: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_ui: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy: Option<RuntimeLegacy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs: Option<String>,
+    /// Fields this server does not know yet, kept so they reach clients.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl RuntimeEntry {
+    pub(crate) fn legacy_harness(&self) -> Option<&str> {
+        self.legacy.as_ref().and_then(|l| l.harness.as_deref())
+    }
+
+    pub(crate) fn legacy_uhp(&self) -> &[String] {
+        self.legacy
+            .as_ref()
+            .and_then(|l| l.uhp.as_deref())
+            .unwrap_or(&[])
+    }
+}
+
+/// The parsed v3 registry: `{version, runtimes}`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub(crate) struct RuntimeRegistry {
+    pub version: u32,
+    #[serde(default)]
+    pub runtimes: Vec<RuntimeEntry>,
+}
+
+impl RuntimeRegistry {
+    /// A runtime by id or alias, case-insensitive (id match wins), like
+    /// `getRuntime` in gizzi's `runtime-registry.ts`.
+    pub(crate) fn get(&self, id_or_alias: &str) -> Option<&RuntimeEntry> {
+        if id_or_alias.is_empty() {
+            return None;
+        }
+        let key = id_or_alias.to_lowercase();
+        self.runtimes
+            .iter()
+            .find(|r| r.id.to_lowercase() == key)
+            .or_else(|| {
+                self.runtimes.iter().find(|r| {
+                    r.aliases
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .any(|a| a.to_lowercase() == key)
+                })
+            })
+    }
+}
+
+pub(crate) fn parse_runtime_registry(text: &str) -> RuntimeRegistry {
+    match serde_json::from_str::<RuntimeRegistry>(text) {
+        Ok(registry) => registry,
+        Err(error) => {
+            tracing::warn!(%error, "cli-catalog.json runtimes[] did not parse");
+            RuntimeRegistry::default()
+        }
+    }
+}
+
+static RUNTIME_REGISTRY: Lazy<RuntimeRegistry> = Lazy::new(|| parse_runtime_registry(CATALOG_JSON));
+
+/// The runtime registry embedded in this binary.
+pub(crate) fn runtime_registry() -> &'static RuntimeRegistry {
+    &RUNTIME_REGISTRY
+}
+
+/// `{version, runtimes}` as served, built once. Byte-identical on
+/// allternit-api and cloud-api because both serialize the same structs' shape
+/// from the same file.
+static RUNTIMES_BODY: Lazy<Value> = Lazy::new(|| {
+    let registry = runtime_registry();
+    json!({ "version": registry.version, "runtimes": registry.runtimes })
+});
+
+/// Strong ETag: the first 16 bytes of SHA-256 over the embedded catalog JSON,
+/// so it changes exactly when the file changes (same value on cloud-api).
+static RUNTIMES_ETAG: Lazy<String> = Lazy::new(|| runtimes_etag(CATALOG_JSON));
+
+pub(crate) fn runtimes_etag(catalog_json: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(catalog_json.as_bytes());
+    format!("\"rt-{}\"", hex::encode(&digest[..16]))
+}
+
+/// True when an `If-None-Match` header names `etag` (or is `*`).
+pub(crate) fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|v| v.trim().trim_start_matches("W/"))
+        .any(|v| v == "*" || v == etag)
+}
+
+/// The caller owns this gateway: the runtime belongs to one person (Desktop
+/// sidecar or self-hosted, the same test custom tools use) and the request
+/// proves it — the Desktop access token, or a verified Clerk session.
+pub(crate) async fn caller_is_owner(state: &AppState, headers: &HeaderMap) -> bool {
+    if !custom_tools_allowed(state) {
+        return false;
+    }
+    if crate::auth::verify_desktop_access_token(headers, &state.config) {
+        return true;
+    }
+    let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    crate::auth::verify_token(&state.jwks, token, &state.auth_config)
+        .await
+        .is_ok()
+}
+
+/// `installed: {id: {installed, signedIn, version}}` from the same CLI
+/// detection the provider rows and `/cli-tools/catalog` use
+/// (`provider_routes::cli_status_by_id`). That detection reads no version, so
+/// `version` is null until it does.
+fn installed_map(status: &std::collections::HashMap<String, (bool, bool)>) -> Value {
+    let mut out = Map::new();
+    for runtime in &runtime_registry().runtimes {
+        let (installed, signed_in) = match runtime.tool.as_deref() {
+            // The native runtime ships with Allternit; the caller is signed in.
+            None => (true, true),
+            Some(tool) => status.get(tool).copied().unwrap_or((false, false)),
+        };
+        out.insert(
+            runtime.id.clone(),
+            json!({ "installed": installed, "signedIn": installed && signed_in, "version": Value::Null }),
+        );
+    }
+    Value::Object(out)
+}
+
+async fn get_runtimes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let vary = (header::VARY, "Authorization, x-allternit-desktop-access-token");
+    if caller_is_owner(&state, &headers).await {
+        // Per-machine and per-owner: never a shared cache, never a 304.
+        let connected = crate::gizzi_provider_auth::connected_provider_ids().await;
+        let status = tokio::task::spawn_blocking(move || crate::provider_routes::cli_status_by_id(&connected))
+            .await
+            .unwrap_or_default();
+        let mut body = RUNTIMES_BODY.clone();
+        body["installed"] = installed_map(&status);
+        return (
+            [(header::CACHE_CONTROL, "private, no-cache"), vary],
+            Json(body),
+        )
+            .into_response();
+    }
+    let etag = RUNTIMES_ETAG.as_str();
+    if etag_matches(&headers, etag) {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::ETAG, etag),
+                (header::CACHE_CONTROL, "public, max-age=3600"),
+                vary,
+            ],
+        )
+            .into_response();
+    }
+    (
+        [
+            (header::ETAG, etag),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+            vary,
+        ],
+        Json(RUNTIMES_BODY.clone()),
+    )
+        .into_response()
 }
 
 pub(crate) fn license_requires_terms(license: &str) -> bool {
@@ -1246,5 +1486,76 @@ mod tests {
         assert_eq!(row["status"], "not_installed");
         assert_eq!(row["custom"], true);
         assert_eq!(row["install"], Value::Null);
+    }
+
+    #[test]
+    fn runtime_registry_parses_and_points_at_real_tools() {
+        let registry = runtime_registry();
+        assert!(registry.version >= 3, "catalog version {}", registry.version);
+        assert!(registry.runtimes.len() >= 30, "{} runtimes", registry.runtimes.len());
+        let mut seen = std::collections::HashSet::new();
+        for runtime in &registry.runtimes {
+            assert!(seen.insert(runtime.id.clone()), "duplicate runtime {}", runtime.id);
+            if let Some(tool) = runtime.tool.as_deref() {
+                assert!(find(tool).is_some(), "runtime {} points at unknown tool {tool}", runtime.id);
+            }
+        }
+        assert_eq!(registry.get("allternit").and_then(|r| r.tool.clone()), None);
+        assert_eq!(registry.get("AGY").map(|r| r.id.as_str()), Some("antigravity"));
+    }
+
+    #[test]
+    fn runtimes_body_passes_look_tokens_through_unchanged() {
+        let raw: Value = serde_json::from_str(CATALOG_JSON).unwrap();
+        assert_eq!(RUNTIMES_BODY["version"], raw["version"]);
+        assert_eq!(RUNTIMES_BODY["runtimes"], raw["runtimes"], "served runtimes differ from cli-catalog.json");
+        assert!(RUNTIMES_BODY.get("installed").is_none());
+    }
+
+    #[test]
+    fn runtimes_etag_tracks_the_file_and_if_none_match() {
+        assert_eq!(runtimes_etag("a"), runtimes_etag("a"));
+        assert_ne!(runtimes_etag("a"), runtimes_etag("b"));
+        let etag = runtimes_etag(CATALOG_JSON);
+        let mut headers = HeaderMap::new();
+        assert!(!etag_matches(&headers, &etag));
+        headers.insert(header::IF_NONE_MATCH, format!("\"other\", W/{etag}").parse().unwrap());
+        assert!(etag_matches(&headers, &etag));
+    }
+
+    #[tokio::test]
+    async fn runtimes_route_is_public_cached_and_has_no_installed() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let temp = crate::beta_session_routes::tests::temp_dir("runtimes-route");
+        let state = crate::beta_session_routes::tests::test_app_state(&temp).await;
+        let router = runtimes_public_router().with_state(state);
+
+        let response = router
+            .clone()
+            .oneshot(Request::get("/api/v1/runtimes").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag = response.headers()[header::ETAG].to_str().unwrap().to_string();
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "public, max-age=3600");
+        let body: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert!(body["runtimes"].as_array().is_some_and(|r| r.len() >= 30));
+        assert!(body.get("installed").is_none(), "anonymous callers never see installed");
+
+        let response = router
+            .oneshot(
+                Request::get("/api/v1/runtimes")
+                    .header(header::IF_NONE_MATCH, etag)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
     }
 }

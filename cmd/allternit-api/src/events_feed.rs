@@ -77,6 +77,15 @@ pub enum Kind {
     PhoneApprovalRequested,
     /// A phone hold was approved, denied, expired or changed (`phone_guard`).
     PhoneApprovalResolved,
+    /// A file landed in Inbox and its task was created (`files_v2::inbox`).
+    FilesInboxDropped,
+    /// An Inbox or folder-rule task succeeded, failed or was rejected.
+    FilesTaskResult,
+    /// A Files write landed as a conflict copy.
+    FilesConflict,
+    /// An agent sent its user a message and asked for a push
+    /// (`send_user_message`, `agent_user_tools`).
+    AgentMessageSent,
 }
 
 impl Kind {
@@ -87,6 +96,7 @@ impl Kind {
             Kind::CallEnded { missed: true } => Some("missed_call"),
             Kind::NeedsUser => Some("needs_you"),
             Kind::InboxChanged => Some("inbox_changed"),
+            Kind::AgentMessageSent => Some("agent_message"),
             _ => None,
         }
     }
@@ -113,6 +123,10 @@ impl Kind {
             Kind::PhoneRunCompleted => Some("phone.run.completed"),
             Kind::PhoneApprovalRequested => Some("phone.approval.requested"),
             Kind::PhoneApprovalResolved => Some("phone.approval.resolved"),
+            Kind::FilesInboxDropped => Some("files.inbox.dropped"),
+            Kind::FilesTaskResult => Some("files.task.result"),
+            Kind::FilesConflict => Some("files.conflict"),
+            Kind::AgentMessageSent => Some("agent.message.sent"),
         }
     }
 }
@@ -152,13 +166,17 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "phone.run.completed" => Some(Kind::PhoneRunCompleted),
         "phone.approval.requested" => Some(Kind::PhoneApprovalRequested),
         "phone.approval.resolved" => Some(Kind::PhoneApprovalResolved),
+        "files.inbox.dropped" => Some(Kind::FilesInboxDropped),
+        "files.task.result" => Some(Kind::FilesTaskResult),
+        "files.conflict" => Some(Kind::FilesConflict),
+        "agent.message.sent" => Some(Kind::AgentMessageSent),
         _ => None,
     }
 }
 
 /// The ledger types the Desktop feed reads (an index filter, kept in step
 /// with [`Kind::feed`] by `feed_types_match_classify`).
-const FEED_TYPES: &[&str] = &["channel.message.received", "bot.message.posted", "call.ended", "thread.needs_user", "inbox.changed"];
+const FEED_TYPES: &[&str] = &["channel.message.received", "bot.message.posted", "call.ended", "thread.needs_user", "inbox.changed", "agent.message.sent"];
 
 fn max_rowid(conn: &Connection, user_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
@@ -324,6 +342,7 @@ mod tests {
             ("call.ended", json!({ "reason": "no_answer" })),
             ("thread.needs_user", json!({})),
             ("inbox.changed", json!({})),
+            ("agent.message.sent", json!({ "text": "Your report is ready" })),
         ];
         for (ty, payload) in &samples {
             assert!(classify(ty, payload).and_then(Kind::feed).is_some(), "{ty}");

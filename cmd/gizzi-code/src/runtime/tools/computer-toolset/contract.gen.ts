@@ -667,7 +667,7 @@ export const COMPUTER_CONTRACT = {
 } as const;
 
 // ---- allternit.computer.v2 (computer_toolset_20260801) ----
-export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills"] as const;
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills","resolve_access","request_access"] as const;
 export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
 /** Take a screenshot of the screen. */
 export type ComputerV2ScreenshotInput = Record<string, never>;
@@ -723,6 +723,10 @@ export type ComputerV2RunParallelInput = { subtasks: Array<{ computer?: string |
 export type ComputerV2RunSkillInput = { name: string; inputs?: Array<{ name: string; value: string }> | null; app?: string | null; pid?: number | null; window_id?: number | null; max_steps?: number | null; budget_ms?: number | null };
 /** List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first. */
 export type ComputerV2SkillsInput = { forget?: string | null };
+/** Look up apps before asking for access: for each app name or bundle id, returns its name, bundle_id, category and max_tier (the highest tier it can be granted). Browsers top out at read, terminals and IDEs at click, other apps at full. An app that cannot be identified comes back as category unknown with max_tier read. Sandbox and cloud computers return full for every app. Call it, then request_access with the tiers you need. */
+export type ComputerV2ResolveAccessInput = { apps: Array<string> };
+/** Ask the person to let you use apps at a tier: read (see the app: screenshots, read_ui, zoom), click (also click, scroll and move the pointer), full (also type, press keys and fill fields). The person always approves. A grant lasts for this session only (at most 12 hours) and is held in memory. Without a grant an app is read only. Ask for the lowest tier that does the job and say why in reason. A tier above the app's max_tier from resolve_access fails with tier_exceeded. Sandbox and cloud computers need no grant. */
+export type ComputerV2RequestAccessInput = { entries: Array<{ bundle_id: string; tier: "read" | "click" | "full" }>; reason: string };
 export interface ComputerV2MemberInputs {
   screenshot: ComputerV2ScreenshotInput;
   zoom: ComputerV2ZoomInput;
@@ -751,6 +755,8 @@ export interface ComputerV2MemberInputs {
   run_parallel: ComputerV2RunParallelInput;
   run_skill: ComputerV2RunSkillInput;
   skills: ComputerV2SkillsInput;
+  resolve_access: ComputerV2ResolveAccessInput;
+  request_access: ComputerV2RequestAccessInput;
 }
 export const COMPUTER_V2_CONTRACT = {
   "id": "allternit.computer.v2",
@@ -796,7 +802,9 @@ export const COMPUTER_V2_CONTRACT = {
       "safety_denied",
       "safety_paused",
       "approval_required",
-      "redaction_unavailable"
+      "redaction_unavailable",
+      "access_required",
+      "tier_exceeded"
     ],
     "run_subtask_statuses": [
       "needs_confirmation",
@@ -2367,9 +2375,204 @@ export const COMPUTER_V2_CONTRACT = {
         "required": [],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "resolve_access",
+      "description": "Look up apps before asking for access: for each app name or bundle id, returns its name, bundle_id, category and max_tier (the highest tier it can be granted). Browsers top out at read, terminals and IDEs at click, other apps at full. An app that cannot be identified comes back as category unknown with max_tier read. Sandbox and cloud computers return full for every app. Call it, then request_access with the tiers you need.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Resolved access for {count} apps.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "apps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "App names or bundle ids (e.g. 'Safari', 'com.apple.Terminal')."
+          }
+        },
+        "required": [
+          "apps"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "bundle_id",
+                "category",
+                "max_tier"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "bundle_id": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "browser",
+                    "terminal",
+                    "ide",
+                    "other",
+                    "unknown"
+                  ]
+                },
+                "max_tier": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "click",
+                    "full"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "request_access",
+      "description": "Ask the person to let you use apps at a tier: read (see the app: screenshots, read_ui, zoom), click (also click, scroll and move the pointer), full (also type, press keys and fill fields). The person always approves. A grant lasts for this session only (at most 12 hours) and is held in memory. Without a grant an app is read only. Ask for the lowest tier that does the job and say why in reason. A tier above the app's max_tier from resolve_access fails with tier_exceeded. Sandbox and cloud computers need no grant.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "always",
+      "result_kind": "none",
+      "ack_text": "Access granted for {count} apps.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "bundle_id": {
+                  "type": "string",
+                  "description": "The bundle id from resolve_access."
+                },
+                "tier": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "click",
+                    "full"
+                  ],
+                  "description": "read, click or full."
+                }
+              },
+              "required": [
+                "bundle_id",
+                "tier"
+              ],
+              "additionalProperties": false
+            },
+            "description": "The apps and the tier wanted for each."
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Why you need this access, shown to the person (at most 200 characters)."
+          }
+        },
+        "required": [
+          "entries",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "granted"
+        ],
+        "properties": {
+          "granted": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "bundle_id",
+                "tier"
+              ],
+              "properties": {
+                "bundle_id": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "click",
+                    "full"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        "access_required",
+        "tier_exceeded"
+      ]
     }
   ],
-  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 10 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 10 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image). Two access members (resolve_access, request_access) run in allternit-api itself, not in the driver: they look up and grant per-app access tiers (see access).",
+  "access": {
+    "doc": "surfaces/docs/tools/computer-safety.mdx",
+    "tiers": {
+      "read": "See the app: screenshot, zoom, read_ui, verify, cursor_position, wait.",
+      "click": "read, plus pointer input: the click members, left_click_drag, left_mouse_down/up, scroll, mouse_move, and act ops click, menu and focus.",
+      "full": "click, plus keyboard and text entry: type, key, hold_key, act ops set_value, select and press, run_batch steps that use them, and use_credential."
+    },
+    "category_ceilings": {
+      "browser": "read",
+      "terminal": "click",
+      "ide": "click",
+      "other": "full",
+      "unknown": "read"
+    },
+    "rules": [
+      "Tiers apply to targets outside the sandbox (this-device and paired computers). Sandbox and cloud computers are exempt and always run at full.",
+      "assess() checks every call against the app actually in front, not the app the model named. A call above that app's granted tier fails with access_required.",
+      "An app with no grant is read only. An app that cannot be identified fails closed: it is treated as unknown with ceiling read.",
+      "A grant lasts for one session, is held in memory only and expires after 12 hours. Nothing is stored, so there is no migration.",
+      "Existing allow_apps entries in the computer's safety settings count as standing grants, capped at the category ceiling.",
+      "Deny lists win over grants.",
+      "request_access for a tier above the app's category ceiling fails with tier_exceeded."
+    ],
+    "error_codes": {
+      "access_required": "The app in front has no grant for this action's tier. Call resolve_access, then request_access.",
+      "tier_exceeded": "The requested tier is above the app's category ceiling (max_tier)."
+    },
+    "routes": "GET/DELETE /api/v1/computers/:id/access"
+  }
 } as const;
 
 // ---- allternit.browser.v1 (browser_toolset_20260801) ----

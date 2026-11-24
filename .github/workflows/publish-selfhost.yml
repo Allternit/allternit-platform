@@ -1,0 +1,243 @@
+name: Publish Self-Hosted Agents
+
+# Manual only. Actions minutes are rationed: this never runs on push, PR, tag or
+# schedule. Default run (publish=false) is a dry run: it builds both images and
+# the release archive, uploads the archive as a workflow artifact, and pushes
+# nothing. Images go to ghcr.io/allternit only when publish is true, which is
+# release gate G3 and needs Eoj's go-ahead.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push images to ghcr.io/allternit (gate G3). false = dry run."
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Version tag, e.g. 1.0.0. Empty = 0.0.0-<short sha> (dry runs)."
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: "Image platforms"
+        required: false
+        type: choice
+        default: linux/amd64
+        options:
+          - linux/amd64
+          - linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-selfhost
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/allternit
+  SERVER_IMAGE: allternit-agents-server
+  WORKER_IMAGE: allternit-selfhost-worker
+
+jobs:
+  meta:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          v="${INPUT_VERSION#v}"
+          if [ -z "$v" ]; then v="0.0.0-${GITHUB_SHA::7}"; fi
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version must look like 1.2.3 or 1.2.3-rc.1, got '$v'"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version: $v  publish: ${{ inputs.publish }}"
+
+  archive:
+    name: Release archive
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Lint charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd deploy/selfhost/charts
+          helm lint agents-server --set secret.existingSecret=lint
+          helm lint sandboxes --set server.url=http://agents-server:8400 \
+            --set 'environments[0].name=default' --set 'environments[0].id=env_lint' \
+            --set 'environments[0].keySecret.name=lint' --set 'environments[0].network=limited' \
+            --set 'environments[0].allowedEgress[0].cidr=203.0.113.0/24'
+          helm template t agents-server --set secret.existingSecret=lint >/dev/null
+          # Both AppArmor paths: the securityContext field (1.30+) and the annotation (older).
+          for kv in 1.31.0 1.29.0; do
+            helm template t sandboxes --kube-version "$kv" --set server.url=http://agents-server:8400 \
+              --set 'environments[0].name=default' --set 'environments[0].id=env_lint' \
+              --set 'environments[0].keySecret.name=lint' --set 'environments[0].network=full' \
+              --set 'environments[0].autoscaling.enabled=true' >/dev/null
+          done
+          helm template t agents-server --set secret.existingSecret=lint \
+            --set metrics.enabled=true --set metrics.serviceMonitor.enabled=true >/dev/null
+
+      - name: Check settings examples against the schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'jsonschema==4.23.0' 'PyYAML==6.0.2'
+          python3 - <<'EOF'
+          import json, sys, yaml, jsonschema
+          schema = json.load(open("cmd/allternit-api/openapi/selfhost-settings.schema.json"))
+          v = jsonschema.Draft202012Validator(schema)
+          bad = 0
+          for f in ["deploy/selfhost/settings.example.yaml",
+                    "deploy/selfhost/compose/airgap/settings.airgap.yaml"]:
+              for e in v.iter_errors(yaml.safe_load(open(f))):
+                  bad = 1
+                  print(f"{f}: {list(e.path)}: {e.message}")
+          sys.exit(bad)
+          EOF
+
+      - name: Build archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="allternit-selfhost-${VERSION}"
+          stage="$RUNNER_TEMP/$name"
+          mkdir -p "$stage"
+          cp -R deploy/selfhost/compose deploy/selfhost/charts "$stage/"
+          cp deploy/selfhost/OPERATOR-GUIDE.md deploy/selfhost/settings.example.yaml "$stage/"
+          # Never ship a filled-in env or settings file.
+          rm -f "$stage/compose/.env" "$stage/compose/settings.yaml"
+          # Pin the archive's compose and charts to this version.
+          sed -i "s/^ALLTERNIT_VERSION=latest$/ALLTERNIT_VERSION=${VERSION}/" "$stage/compose/.env.example"
+          for c in agents-server sandboxes; do
+            sed -i "s/^version: .*/version: ${VERSION}/; s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$stage/charts/$c/Chart.yaml"
+          done
+          echo "${VERSION}" > "$stage/VERSION"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
+          (cd "$RUNNER_TEMP" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          tar -tzf "$RUNNER_TEMP/$name.tar.gz" | sort
+          echo "ARCHIVE=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: allternit-selfhost-${{ needs.meta.outputs.version }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  images:
+    name: Image ${{ matrix.image }}
+    needs: meta
+    runs-on: ubuntu-24.04
+    # Rust release build plus a full pnpm workspace install: allow the time.
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: server
+            dockerfile: deploy/selfhost/Dockerfile.server
+          - image: worker
+            dockerfile: deploy/selfhost/Dockerfile.worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # The image builds need more than the runner's default free space.
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      - name: Add swap
+        # allternit-api's release build can exceed the runner's RAM.
+        if: matrix.image == 'server'
+        shell: bash
+        run: |
+          sudo fallocate -l 12G /swapfile2 && sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2 && sudo swapon /swapfile2
+          free -h
+
+      - uses: docker/setup-qemu-action@v3
+        if: contains(inputs.platforms, 'arm64')
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name and tags
+        id: tags
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          IMAGE: ${{ matrix.image == 'server' && env.SERVER_IMAGE || env.WORKER_IMAGE }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE}"
+          tags="${ref}:${VERSION}"
+          # :latest only for a real release version (no pre-release suffix).
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then tags="${tags},${ref}:latest"; fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Tags: $tags"
+
+      - name: Build${{ inputs.publish && ' and push' || ' (dry run, no push)' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.publish }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            CARGO_BUILD_JOBS=2
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.title=${{ matrix.image == 'server' && 'Allternit Agents Server' || 'Allternit self-hosted sandbox worker' }}
+          cache-from: type=gha,scope=selfhost-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=selfhost-${{ matrix.image }}
+          provenance: false
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.image }}"
+            echo ""
+            echo "- tags: \`${{ steps.tags.outputs.tags }}\`"
+            echo "- pushed: ${{ inputs.publish }}"
+          } >> "$GITHUB_STEP_SUMMARY"

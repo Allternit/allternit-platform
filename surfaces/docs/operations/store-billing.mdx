@@ -1,0 +1,74 @@
+---
+title: "Store billing"
+description: "Turning on Apple In-App Purchase and Google Play Billing in the Allternit Cloud API"
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+Store purchases let people buy Plus, Max, Ultra and credit packs in the iPhone app (Apple) and the Play app (Google). The API reference is in [Cloud billing, Store purchases](/api/cloud-billing#store-purchases-apple-and-google). This page is the setup and operations side.
+
+Store buttons stay dark until the secrets below are set. A store counts as on only when every one of its secrets is non-empty; `GET /billing/plans` and `/packs` then report `store.apple.enabled` or `store.google.enabled` as true. Merging the code changes nothing for users while the secrets are unset, and the store routes answer 503 `store_billing_not_configured`.
+
+## Environment variables
+
+Set these on the production Cloud API (api.allternit.com) host.
+
+| Variable | Store | Where it comes from |
+| --- | --- | --- |
+| `APPLE_IAP_ISSUER_ID` | Apple | App Store Connect, Users and Access, Integrations, In-App Purchase. The issuer id shown on that page |
+| `APPLE_IAP_KEY_ID` | Apple | The same page. The key named "Allternit Server" has key id `87N65U8U7Y` |
+| `APPLE_IAP_PRIVATE_KEY` | Apple | The `.p8` private key (P-256 PEM) for that key id. Apple lets you download it once. Ours is stored in the macOS Keychain, service `allternit-apple-iap`, account `87N65U8U7Y`. Copy it from there into the host secret store. Never put it in docs, git or chat |
+| `APPLE_BUNDLE_ID` | Apple, optional | The iPhone app bundle id. Default `com.allternit.mobile`. A purchase from another bundle is refused with `wrong_app` |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Google | The JSON key of a Google Cloud service account that is invited in Play Console, Users and permissions, with permission to view financial data and manage orders |
+| `GOOGLE_PLAY_RTDN_TOKEN` | Google | A random string of at least 16 characters that you choose. It goes in the Pub/Sub push URL as `?token=` |
+| `GOOGLE_PLAY_PACKAGE_NAME` | Google, optional | The Play app package. Default `com.allternit.app`. Used in the manage-subscription link |
+| `STORE_SANDBOX_GRANT_USER_IDS` | both, optional | Comma separated account ids allowed to receive credits from sandbox and test purchases: the App Review demo account and the internal test account. Everyone else gets `sandbox_not_granted` |
+
+Apple turns on with the first three. Google turns on with the service account JSON and the push token. `APPLE_BUNDLE_ID`, `GOOGLE_PLAY_PACKAGE_NAME` and `STORE_SANDBOX_GRANT_USER_IDS` do not switch anything on.
+
+## Apple
+
+1. In App Store Connect create the seven products from the [product table](/api/cloud-billing#products). The three plans are auto-renewing subscriptions in one subscription group so upgrades and downgrades replace each other. The four packs are consumables.
+2. In App Store Connect, App Information, App Store Server Notifications, set both URLs to version 2 notifications:
+   - Production: `https://api.allternit.com/api/v1/billing/store/apple/notifications`
+   - Sandbox: `https://api.allternit.com/api/v1/billing/store/apple/notifications/sandbox`
+3. Set the three `APPLE_IAP_*` variables.
+4. Check: buy a product in sandbox as a listed account and confirm `granted: true` from `POST /billing/store/apple/transactions`.
+
+The server asks the App Store Server API for every transaction before it grants. A notification only names a transaction; the server fetches it again.
+
+## Google
+
+1. In Play Console create the three subscriptions and four in-app products with the ids in the [product table](/api/cloud-billing#products).
+2. In Google Cloud create a service account, download its JSON key, and invite its email in Play Console, Users and permissions.
+3. In Play Console, Monetization setup, enable real-time developer notifications on a Pub/Sub topic. Create a push subscription on that topic with this endpoint, using the token you chose:
+
+   `https://api.allternit.com/api/v1/billing/store/google/rtdn?token=THE_TOKEN`
+
+4. Set `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` and `GOOGLE_PLAY_RTDN_TOKEN`.
+5. Check: send a test notification from Play Console. The route answers `{ "received": true, "kind": "test" }`.
+
+The Play app cannot attach an account id to a purchase. The first signed-in `POST /billing/store/google/purchases` for a token claims it for that account, and a second account claiming it gets 409 `owned_by_another_account`. A notification for a purchase nobody has claimed yet is stored as `unclaimed`. The Play app posts every purchase it finds on each launch, which claims leftovers. Google refunds a purchase that is not acknowledged within 3 days, so nobody pays for nothing. The server acknowledges (and consumes packs) only after the grant.
+
+## Migration 148
+
+`cmd/allternit-cloud-api/migrations_pg/148_store_billing.sql` is additive, so old code keeps running on it:
+
+- `billing_subscriptions` gains `provider` (default `stripe`), `store_product_id`, `store_environment`, `store_checked_at` and `store_purchase_token`.
+- `store_purchase_token` holds the Google purchase token on Google rows only, because the Play Developer API reads a subscription by its token and the row key holds only a hash. Apple and Stripe rows leave it empty. The token is useless without this server's service account.
+- `billing_store_accounts`: one account token (UUID) per person.
+- `billing_store_transactions`: the ledger, one row per store transaction. It is the idempotency key and the refund reference. It has no foreign key to users, so an erased account keeps its money trail.
+
+Production does not run migrations at start. The deploy applies it through `deploy-contabo.sh` and `ops_applied_migrations`; see [Cloud database migrations](/operations/database-migrations).
+
+## Day to day
+
+- **Missed notifications heal.** `GET /billing/subscription` re-reads a store plan from the store when its period end has passed, at most once per 10 minutes per plan. There is no scheduled job. The call waits for the store, up to 15 seconds.
+- **Refunds.** An Apple refund or revoke, or a Google voided purchase, takes back the credits granted by that transaction once and drops a refunded plan to the default tier. The balance can go negative. A reversal gives the credits back once. A refund recorded for a transaction that never granted anything takes nothing.
+- **Erased accounts keep paying the store.** Erasing an account closes it in Allternit, but Apple and Google keep charging the person until they cancel in App Store or Play subscription settings. Allternit cannot cancel a store subscription. Tell the person to cancel there. Later store notifications for that account answer `account_closed` and grant nothing.
+- **Double billing.** If an account ends up with a Stripe plan and a store plan, both are recorded, `conflict` is true and the team gets an alert. The person cancels one in its own billing page.
+- **Sandbox.** Sandbox and test purchases arrive on the production server. Only accounts in `STORE_SANDBOX_GRANT_USER_IDS` get credits.
+
+## Rollback
+
+Unset the store secrets. The store buttons go dark on the next plans and packs fetch, and the store routes answer 503. Existing store plans and the ledger stay in the database. Plans keep their state, but without the secrets the server cannot re-read them from the store or accept their notifications, so unset the secrets only as a short pause.

@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_SHARE_SCREEN_MESSAGE,
+  APP_TAPS_MESSAGE,
+  IPHONE_LIVE_VIEW_MESSAGE,
   AppPhoneBackend,
   AppPhoneViewerSession,
+  ANDROID_APP_ROUTE,
+  appWaitMessage,
+  httpAppPhoneNode,
   type AppPhoneNode,
   type AppRpcResult,
   type AppViewerSocket,
@@ -102,11 +107,13 @@ describe('iPhones with the Allternit app', () => {
     expect((res as { message: string }).message.startsWith(APP_SHARE_SCREEN_MESSAGE)).toBe(true);
   });
 
-  it('refuses taps with the Bluetooth board message', async () => {
+  it('refuses taps with the Phone Use tap routes, not the old board-only line', async () => {
     const { runner } = setup();
     const res = await runner.call('phone.tap', { serial: SERIAL, x: 10, y: 10 });
     expect(res).toMatchObject({ ok: false, error: 'not_supported' });
-    expect((res as { message: string }).message).toMatch(/^Taps on native apps need the Bluetooth board/);
+    const message = (res as { message: string }).message;
+    expect(message.startsWith(APP_TAPS_MESSAGE)).toBe(true);
+    for (const route of ['iPhone Mirroring', 'Android phone', 'second iPhone or iPad', 'USB Agent board']) expect(message).toContain(route);
   });
 
   it('phone.web.* tell the bot to open the app when it is closed', async () => {
@@ -136,5 +143,71 @@ describe('iPhones with the Allternit app', () => {
   it('rejects a non-web address for phone.web.open', async () => {
     const { runner } = setup();
     expect(await runner.call('phone.web.open', { serial: SERIAL, url: 'file:///etc/passwd' })).toMatchObject({ ok: false, error: 'invalid_args' });
+  });
+
+  it('lists an Android app phone as Android with its taps and screen state', async () => {
+    const node: AppPhoneNode = {
+      listPhones: async () => [
+        { serial: 'app:android-1', name: 'Pixel', model: 'Pixel 9', online: false, platform: 'android', canTap: true, consent: 'needed' },
+        { serial: SERIAL, name: 'Eoj iPhone', model: 'iPhone', online: true },
+      ],
+      rpc: async () => ({ ok: true, result: {} }),
+      openViewer: async () => fakeSocket().socket,
+      decidePair: async () => ({ ok: true }),
+    };
+    const apps = new AppPhoneBackend({ node, streams: {} as never, decodeStill: async () => ({ jpeg: Buffer.alloc(0), width: 1, height: 1 }) });
+    await apps.refresh(true);
+    const [android, ios] = apps.devices();
+    expect(android).toMatchObject({ platform: 'android', route: ANDROID_APP_ROUTE, canTap: true, screen: false });
+    expect(android.note).toContain('Tap Start on Pixel');
+    expect(ios).toMatchObject({ platform: 'ios', canTap: false, screen: true });
+    expect(appWaitMessage('android', 'Pixel')).toBe('Tap Start on Pixel to share its screen.');
+  });
+
+  it('forwards viewer taps for an Android phone only while taps are on; iPhones stay refused', () => {
+    const sent: string[] = [];
+    const socket = { ...fakeSocket().socket, send: (d: string) => void sent.push(d) };
+    let canTap = true;
+    const android = new AppPhoneViewerSession({ open: async () => socket, deviceName: 'Pixel', platform: 'android', canTap: () => canTap });
+    // Not started yet: no socket, so the tap is refused.
+    expect(android.sendControl([{ type: 'text', text: 'a' } as never]).ok).toBe(false);
+    const ios = new AppPhoneViewerSession({ open: async () => socket, deviceName: 'iPhone' });
+    expect(ios.sendControl([]).message).toBe(IPHONE_LIVE_VIEW_MESSAGE);
+    canTap = false;
+    expect(android.sendControl([]).message).toContain('Accessibility');
+    expect(sent).toEqual([]);
+  });
+  it('Android taps start refused, then swap to a full-control socket after Allow taps', async () => {
+    const readOnly = fakeSocket();
+    const control = fakeSocket();
+    const sent: string[] = [];
+    const ctlSock = { ...control.socket, send: (d: string) => void sent.push(d) };
+    const android = new AppPhoneViewerSession({ open: async () => readOnly.socket, openControl: async () => ctlSock, deviceName: 'Pixel', platform: 'android', canTap: () => true });
+    const started = android.start();
+    // start() attaches the socket after open() resolves: send the config packet after that.
+    await new Promise((r) => setTimeout(r, 0));
+    readOnly.packet(IOS_PACKET_CONFIG, { width: 1080, height: 2400, rotation: 0 });
+    await started;
+    expect(android.sendControl([]).message).toContain('Allow taps');
+    expect(await android.requestControl()).toEqual({ ok: true });
+    expect(android.sendControl([{ type: 'text', text: 'a' } as never]).ok).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('openViewer approves the confirmation grant for a full-control token, once', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url.replace('http://n', '')}`);
+      if (url.includes('/approve')) return new Response('{}', { status: 200 });
+      if (url.includes('approval_id=')) return new Response(JSON.stringify({ token: 't2' }), { status: 200 });
+      return new Response(JSON.stringify({ error: 'confirmation_required', approval_id: 'ap1' }), { status: 403 });
+    }) as unknown as typeof fetch;
+    const urls: string[] = [];
+    const node = httpAppPhoneNode({ apiUrl: () => 'http://n', headers: () => ({}), fetchImpl, createSocket: (u) => { urls.push(u); return fakeSocket().socket; } });
+    await node.openViewer('app:a1', { readOnly: false, approve: true });
+    expect(calls.some((c) => c.includes('/api/aci/handoff/ap1/approve'))).toBe(true);
+    expect(urls[0]).toContain('token=t2');
+    // Without the owner's click there is no approval: the refusal surfaces.
+    await expect(httpAppPhoneNode({ apiUrl: () => 'http://n', headers: () => ({}), fetchImpl }).openViewer('app:a1', { readOnly: false })).rejects.toThrow();
   });
 });

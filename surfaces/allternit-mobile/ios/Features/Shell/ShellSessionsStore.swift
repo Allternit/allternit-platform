@@ -29,19 +29,103 @@ final class ShellSessionsStore: ObservableObject {
 
     private static let seenKey = "allternit-phone-session-seen"
 
-    init() {
+    typealias SessionsFetch = @Sendable () async throws -> [AgentSession]
+    typealias PlanThreadsFetch = @Sendable () async throws -> [AgentSession]
+    typealias PlacesFetch = @Sendable () async -> [String: String]?
+
+    private let fetchComputerSessions: SessionsFetch
+    private let fetchPlanThreads: PlanThreadsFetch
+    private let fetchPlaces: PlacesFetch
+
+    /// The defaults read the live backend; tests pass stubs for the three fetches.
+    init(
+        fetchComputerSessions: @escaping SessionsFetch = {
+            // GET /api/v1/agent-sessions → { sessions: [...], count }
+            let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
+            return envelope.sessions
+        },
+        fetchPlanThreads: @escaping PlanThreadsFetch = {
+            try await PlanThreadClient.shared.list().compactMap(\.asSession)
+        },
+        fetchPlaces: @escaping PlacesFetch = {
+            struct Place: Decodable { let label: String }
+            struct Reply: Decodable { let placements: [String: Place] }
+            let reply: Reply? = try? await APIClient.shared.get(path: "teleports/placements")
+            return reply?.placements.mapValues { $0.label }
+        }
+    ) {
+        self.fetchComputerSessions = fetchComputerSessions
+        self.fetchPlanThreads = fetchPlanThreads
+        self.fetchPlaces = fetchPlaces
         if let raw = UserDefaults.standard.dictionary(forKey: Self.seenKey) as? [String: Double] {
             seen = raw.mapValues { Date(timeIntervalSince1970: $0) }
         }
     }
 
+    /// True when the failure only means "this account has no computer":
+    /// cloud-api answers 428 (Precondition Required) to a relayed call with
+    /// no computer to relay to, and the compute gate answers 409
+    /// `compute_required`. Plan chats still work then (contract C5).
+    static func isNoComputer(_ error: Error) -> Bool {
+        isComputeGateRefusal(error)
+    }
+
+    /// Computer sessions and cloud plan chats load independently: a computer
+    /// that is missing or failing never hides plan chats (the "brain runner"
+    /// path has no computer at all).
     func load() async {
         if !hasLoaded { isLoading = true }
         loadError = nil
-        do {
-            // GET /api/v1/agent-sessions → { sessions: [...], count }
-            let envelope: AgentSessionListResponse = try await APIClient.shared.get(path: "agent-sessions")
-            sessions = envelope.sessions.sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
+        async let computerResult: Result<[AgentSession], Error> = {
+            do { return .success(try await fetchComputerSessions()) } catch { return .failure(error) }
+        }()
+        async let planResult: Result<[AgentSession], Error> = {
+            do { return .success(try await fetchPlanThreads()) } catch { return .failure(error) }
+        }()
+        let computer = await computerResult
+        let plan = await planResult
+
+        if Task.isCancelled || isCancellation(computer) || isCancellation(plan) {
+            // View disappeared mid-flight: keep the current state.
+            isLoading = false
+            return
+        }
+
+        var merged: [AgentSession] = []
+        var computerError: Error?
+        var planError: Error?
+        switch computer {
+        case .success(let list): merged += list
+        case .failure(let error): computerError = error
+        }
+        switch plan {
+        case .success(let list): merged += list
+        case .failure(let error): planError = error
+        }
+
+        // No computer is not an error: its list is just empty. Any other
+        // computer failure only shows the error card when no plan chat loaded
+        // to fill the list; both failing always does.
+        let computerBroken = computerError.map { !Self.isNoComputer($0) } ?? false
+        let planFailed = planError != nil
+        let showError: Bool
+        if computerError != nil && planFailed { showError = true }
+        else if computerBroken && merged.isEmpty { showError = true }
+        else { showError = false }
+
+        // The no-computer chip reads the refusal; a computer that answered
+        // clears a stale one.
+        if let computerError, Self.isNoComputer(computerError) {
+            ComputeReadState.shared.noteRefused()
+        } else if computerError == nil {
+            ComputeReadState.shared.clear()
+        }
+
+        if showError {
+            let shown = (computerError.flatMap { Self.isNoComputer($0) ? nil : $0 }) ?? planError ?? computerError
+            loadError = plainErrorText(shown)
+        } else {
+            sessions = merged.sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
             // First sighting is the baseline: only activity after it counts
             // as unread. The chat on screen is always read.
             for session in sessions where seen[session.id] == nil || session.id == activeId {
@@ -49,23 +133,20 @@ final class ShellSessionsStore: ObservableObject {
             }
             saveSeen()
             hasLoaded = true
-            await loadPlaces()
-        } catch is CancellationError {
-            // View disappeared mid-flight — keep the current state.
-        } catch {
-            loadError = error.localizedDescription
+            if computerError == nil { await loadPlaces() } else { cloudPlaces = [:] }
         }
         isLoading = false
+    }
+
+    private func isCancellation(_ result: Result<[AgentSession], Error>) -> Bool {
+        if case .failure(let error) = result { return error is CancellationError }
+        return false
     }
 
     /// `GET /api/v1/teleports/placements` → { placements: { sessionId: { targetId, label } } }.
     /// An older backend has no route; every session then reads as local.
     func loadPlaces() async {
-        struct Place: Decodable { let label: String }
-        struct Reply: Decodable { let placements: [String: Place] }
-        if let reply: Reply = try? await APIClient.shared.get(path: "teleports/placements") {
-            cloudPlaces = reply.placements.mapValues { $0.label }
-        }
+        if let places = await fetchPlaces() { cloudPlaces = places }
     }
 
     /// Move a Code session between this Mac and the connected cloud computer

@@ -283,12 +283,19 @@ export function registerPhoneIpc(handle: Guarded): void {
   // In-app live view (scrcpy-server video + input). A stream starts only on
   // explicit renderer request, never by itself.
   // iPhones with the Allternit App Store app (`app:…`): listed and paired through the node.
+  // App maps + Explore (contract phone-app-map §4). Args are one object; results are { ok, … } with contract error codes.
+  handle('phone:maps-list', (_e, args: unknown) => phoneService.mapsCall('list', args));
+  handle('phone:maps-get', (_e, args: unknown) => phoneService.mapsCall('get', args));
+  handle('phone:maps-forget', (_e, args: unknown) => phoneService.mapsCall('forget', args));
+  handle('phone:maps-explore', (_e, args: unknown) => phoneService.mapsCall('explore', args));
+  handle('phone:maps-stop', (_e, args: unknown) => phoneService.mapsCall('stop', args));
   handle('phone:app-phones', () => phoneService.appPhones());
   handle('phone:app-pair-decision', (_e, phoneId: unknown, approve: unknown) => phoneService.appPairDecision(String(phoneId ?? ''), approve === true));
   handle('phone:stream-start', (_e, serial: unknown, opts: unknown) => phoneService.startStream(String(serial ?? ''), sanitizeStreamOpts(opts)));
   handle('phone:stream-stop', (_e, serial: unknown) => phoneService.stopStream(String(serial ?? '')));
   handle('phone:stream-status', (_e, serial: unknown) => phoneService.streamStatus(String(serial ?? '')));
   handle('phone:stream-input', (_e, serial: unknown, events: unknown) => phoneService.sendStreamInput(String(serial ?? ''), events));
+  handle('phone:stream-request-control', (_e, serial: unknown) => phoneService.requestStreamControl(String(serial ?? '')));
   handle('phone:stream-display-power', (_e, serial: unknown, on: unknown) => phoneService.setStreamDisplayPower(String(serial ?? ''), Boolean(on)));
   handle('phone:stream-audio-meta-get', (_e, serial: unknown) => phoneService.getStreamManager().audioMeta(String(serial ?? '')));
   handle('phone:stream-subscribe', (e, serial: unknown) => subscribeStream(e.sender, String(serial ?? '')));
@@ -355,6 +362,15 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:usb-calibrate', async (_e, boardId: unknown) => (await usb()).calibrate(String(boardId)));
   handle('phone:usb-stop', async (_e, boardId: unknown) => (await usb()).stop(String(boardId)));
   handle('phone:usb-forget', async (_e, boardId: unknown) => (await usb()).forget(String(boardId)));
+
+  // Phone Use: each route's health for one iPhone and the one a tap would use (the connect kit's route list).
+  handle('phone:routes', (_e, serial: unknown) => phoneService.phoneRoutes(serial));
+
+  // Control my iPhone by Bluetooth (bt-mac): this Mac as a Bluetooth keyboard and mouse for the person's iPhone.
+  // status never asks for Bluetooth permission; pair asks the first time.
+  handle('phone:bt-mac-status', () => phoneService.btMacStatus());
+  handle('phone:bt-mac-pair', () => phoneService.btMacPair());
+  handle('phone:bt-mac-disconnect', () => phoneService.btMacDisconnect());
 
   handle('phone:artemis-install', async () => {
     await phoneService.ensureReady();

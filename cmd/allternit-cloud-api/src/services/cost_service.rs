@@ -399,6 +399,80 @@ impl CostServiceImpl {
         transfer_gb * cost_per_gb
     }
 
+    /// The body of [`CostService::grant_subscription_credits`] with the
+    /// ledger key and source named by the caller: a plan's monthly credits
+    /// with the rollover cap, once per `ledger_key` (ON CONFLICT DO NOTHING).
+    /// Stripe invoices use `stripe-invoice-<id>` / `stripe_subscription`;
+    /// store renewals (`services::store_billing`) use
+    /// `apple-<transactionId>` / `google-<orderId>` with their own source, so
+    /// the ledger tells who billed each grant.
+    pub async fn grant_plan_credits_keyed(
+        &self,
+        user_id: &str,
+        ledger_key: &str,
+        source: &str,
+        amount_usd: f64,
+        rollover_cap_usd: f64,
+    ) -> Result<f64, ApiError> {
+        if amount_usd <= 0.0 {
+            return self.get_credit_balance(user_id).await;
+        }
+
+        let mut tx = self.db.begin().await.map_err(ApiError::DatabaseError)?;
+
+        // Idempotency: the ledger key is the grant key, so a replayed delivery
+        // for an already-granted invoice or transaction conflicts and touches
+        // nothing.
+        let ledger = sqlx::query(
+            r#"
+            INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (transaction_id) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(user_id)
+        .bind(amount_usd)
+        .bind(ledger_key)
+        .bind(source)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        if ledger.rows_affected() == 0 {
+            tx.commit().await.map_err(ApiError::DatabaseError)?;
+            return self.get_credit_balance(user_id).await;
+        }
+
+        // Rollover: only the capped remainder carries into the new month, then
+        // the full monthly grant is added on top. A fresh balance row starts at
+        // the grant itself — the cap clips leftovers, never the first grant.
+        sqlx::query(
+            r#"
+            INSERT INTO user_credits (user_id, balance_usd)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET
+                balance_usd = LEAST(user_credits.balance_usd, $3) + excluded.balance_usd
+            "#,
+        )
+        .bind(user_id)
+        .bind(amount_usd)
+        .bind(rollover_cap_usd)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        tx.commit().await.map_err(ApiError::DatabaseError)?;
+
+        let new_balance = self.get_credit_balance(user_id).await?;
+        info!(
+            "Granted ${:.2} subscription credits to user {} for {}; new balance ${:.2}",
+            amount_usd, user_id, ledger_key, new_balance
+        );
+        Ok(new_balance)
+    }
+
     /// Send alert notification (placeholder for actual notification logic)
     async fn send_alert(&self, alert: &CostAlert) -> Result<(), ApiError> {
         // TODO: Integrate with notification service (email, webhook, etc.)
@@ -1283,61 +1357,14 @@ impl CostService for CostServiceImpl {
         amount_usd: f64,
         rollover_cap_usd: f64,
     ) -> Result<f64, ApiError> {
-        if amount_usd <= 0.0 {
-            return self.get_credit_balance(user_id).await;
-        }
-
-        let mut tx = self.db.begin().await.map_err(ApiError::DatabaseError)?;
-
-        // Idempotency: the invoice id is the grant key, so a replayed Stripe
-        // delivery for an already-granted invoice conflicts and touches nothing.
-        let ledger = sqlx::query(
-            r#"
-            INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
-            VALUES ($1, $2, $3, $4, 'stripe_subscription', $5)
-            ON CONFLICT (transaction_id) DO NOTHING
-            "#,
+        self.grant_plan_credits_keyed(
+            user_id,
+            &format!("stripe-invoice-{invoice_id}"),
+            "stripe_subscription",
+            amount_usd,
+            rollover_cap_usd,
         )
-        .bind(Uuid::new_v4().to_string())
-        .bind(user_id)
-        .bind(amount_usd)
-        .bind(format!("stripe-invoice-{invoice_id}"))
-        .bind(Utc::now())
-        .execute(&mut *tx)
         .await
-        .map_err(ApiError::DatabaseError)?;
-
-        if ledger.rows_affected() == 0 {
-            tx.commit().await.map_err(ApiError::DatabaseError)?;
-            return self.get_credit_balance(user_id).await;
-        }
-
-        // Rollover: only the capped remainder carries into the new month, then
-        // the full monthly grant is added on top. A fresh balance row starts at
-        // the grant itself — the cap clips leftovers, never the first grant.
-        sqlx::query(
-            r#"
-            INSERT INTO user_credits (user_id, balance_usd)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET
-                balance_usd = LEAST(user_credits.balance_usd, $3) + excluded.balance_usd
-            "#,
-        )
-        .bind(user_id)
-        .bind(amount_usd)
-        .bind(rollover_cap_usd)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::DatabaseError)?;
-
-        tx.commit().await.map_err(ApiError::DatabaseError)?;
-
-        let new_balance = self.get_credit_balance(user_id).await?;
-        info!(
-            "Granted ${:.2} subscription credits to user {} for invoice {}; new balance ${:.2}",
-            amount_usd, user_id, invoice_id, new_balance
-        );
-        Ok(new_balance)
     }
 
     async fn debit_credits_for_transfer(
@@ -1414,6 +1441,111 @@ impl CostService for CostServiceImpl {
         );
         Ok(new_balance)
     }
+}
+
+/// Why [`debit_wallet_strict`] refused. Nothing was written in either case.
+#[derive(Debug)]
+pub enum StrictDebitError {
+    /// The wallet holds less than the amount, or the person has no wallet row.
+    Insufficient { balance_usd: f64 },
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for StrictDebitError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl From<StrictDebitError> for ApiError {
+    fn from(error: StrictDebitError) -> Self {
+        match error {
+            StrictDebitError::Insufficient { balance_usd } => {
+                ApiError::Internal(format!("strict wallet debit refused: balance ${balance_usd:.6} is short"))
+            }
+            StrictDebitError::Database(error) => ApiError::DatabaseError(error),
+        }
+    }
+}
+
+/// Strict wallet debit for "Sign in with Allternit" calls
+/// (CONTRACT-oauth-linked-billing-2026-11, A8 "Strict debit", D5), run inside
+/// the caller's transaction (`&mut *tx`).
+///
+/// Unlike [`CostService::deduct_credits_for_usage`], which clamps at zero and
+/// never refuses, this takes exactly `amount_usd` or refuses with
+/// [`StrictDebitError::Insufficient`]: the balance never goes below zero, and
+/// it never starts an auto top-up (an outside app must not cause a card
+/// charge). The `credit_transactions` row keyed by `transaction_id` makes it
+/// idempotent: a replayed key debits nothing and returns the current balance.
+/// The work runs under a savepoint, so a refusal leaves the caller's
+/// transaction exactly as it was. Returns the new balance.
+///
+/// Existing callers of the clamping debit are unchanged; only the OAuth spend
+/// path (`services::oauth_spend::settle`) calls this.
+pub async fn debit_wallet_strict(
+    conn: &mut sqlx::PgConnection,
+    user_id: &str,
+    transaction_id: &str,
+    amount_usd: f64,
+    source: &str,
+) -> Result<f64, StrictDebitError> {
+    use sqlx::Connection;
+
+    async fn balance(conn: &mut sqlx::PgConnection, user_id: &str) -> Result<f64, sqlx::Error> {
+        let balance: Option<f64> =
+            sqlx::query_scalar("SELECT COALESCE(balance_usd, 0)::float8 FROM user_credits WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        Ok(balance.unwrap_or(0.0))
+    }
+
+    if !(amount_usd > 0.0) || !amount_usd.is_finite() {
+        return Ok(balance(conn, user_id).await?);
+    }
+
+    let mut savepoint = conn.begin().await?;
+    let ledger = sqlx::query(
+        r#"
+        INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (transaction_id) DO NOTHING
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(user_id)
+    .bind(-amount_usd)
+    .bind(transaction_id)
+    .bind(source)
+    .bind(Utc::now())
+    .execute(&mut *savepoint)
+    .await?;
+    if ledger.rows_affected() == 0 {
+        // Already debited under this key.
+        let current = balance(&mut *savepoint, user_id).await?;
+        savepoint.commit().await?;
+        return Ok(current);
+    }
+
+    let debited: Option<f64> = sqlx::query_scalar(
+        "UPDATE user_credits SET balance_usd = balance_usd - $1 WHERE user_id = $2 AND balance_usd >= $1 RETURNING balance_usd::float8",
+    )
+    .bind(amount_usd)
+    .bind(user_id)
+    .fetch_optional(&mut *savepoint)
+    .await?;
+    let Some(new_balance) = debited else {
+        let current = balance(&mut *savepoint, user_id).await?;
+        savepoint.rollback().await?;
+        return Err(StrictDebitError::Insufficient { balance_usd: current });
+    };
+    savepoint.commit().await?;
+    info!(
+        "Strict debit ${:.6} from user {} for {} ({}); new balance ${:.6}",
+        amount_usd, user_id, source, transaction_id, new_balance
+    );
+    Ok(new_balance)
 }
 
 /// Emit `usage.threshold` into the event backbone for a crossed budget level,

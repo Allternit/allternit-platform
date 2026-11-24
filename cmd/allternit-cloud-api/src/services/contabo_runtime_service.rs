@@ -559,12 +559,14 @@ apt-get install -y -qq curl jq openssl ca-certificates nodejs npm
 echo "setup-stage: deps installed"
 
 # Install gizzi-code
-GIZZI_RELEASE="hosted-runtime-2026.07.16"
-GIZZI_SHA256="f1d29bad0b3903d77261e7706ff80fd292fefece3ebeaa4bb7f08a51ad2fc694"
+GIZZI_VERSION="2.9.0"
+GIZZI_SHA256="5aa323e4c5804a2d1747e6b2b29a7d6da0ce2fb4082c6ad8dc1f1da7ae8d7a3d"
 mkdir -p /opt/gizzi/bin
-curl -fsSL "https://github.com/Allternit/gizzi-code/releases/download/${{GIZZI_RELEASE}}/gizzi-code-linux-x64-native" -o /opt/gizzi/bin/gizzi-code
-echo "${{GIZZI_SHA256}}  /opt/gizzi/bin/gizzi-code" | sha256sum -c -
-chmod +x /opt/gizzi/bin/gizzi-code
+curl -fsSL "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code%2Fv${{GIZZI_VERSION}}/gizzi-code-v${{GIZZI_VERSION}}-linux-x64.tar.gz" -o /tmp/gizzi.tar.gz
+echo "${{GIZZI_SHA256}}  /tmp/gizzi.tar.gz" | sha256sum -c -
+tar -xzf /tmp/gizzi.tar.gz -C /opt/gizzi/bin gizzi-code allternit-factory
+rm -f /tmp/gizzi.tar.gz
+chmod +x /opt/gizzi/bin/gizzi-code /opt/gizzi/bin/allternit-factory
 echo "setup-stage: gizzi-code installed"
 
 # Install agent-daemon

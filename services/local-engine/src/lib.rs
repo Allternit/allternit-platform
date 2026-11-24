@@ -1,20 +1,25 @@
 //! # Allternit Local Engine
 //!
-//! Downloads models from Hugging Face and manages local inference runtimes.
+//! Downloads models (verified against the Freeweights manifest or the
+//! publisher's hashes, via `allternit-model-source`) and manages local
+//! inference runtimes.
 //!
 //! ## Modules
 //!
 //! - `cache`: metadata storage for downloaded models.
-//! - `download`: Hugging Face verification, file filtering, and background
-//!   download tasks.
+//! - `download`: file selection, verified background downloads and
+//!   `/models/verify` re-hashing.
 //! - `runtime`: process manager that launches backends such as llama.cpp and
 //!   polls their health endpoints.
+//! - `engine_packs`: signed per-OS engine downloads (llama-server builds,
+//!   the MLX sidecar) and the backend pick.
 //! - `routes`: axum HTTP handlers for `/models/download` and `/status`.
 
 pub mod assess;
 pub mod cache;
 pub mod catalog;
 pub mod download;
+pub mod engine_packs;
 pub mod hardware;
 pub mod recommend;
 pub mod routes;
@@ -27,7 +32,7 @@ use std::path::PathBuf;
 pub use assess::{AssessRequest, AssessResponse, Assessor};
 pub use cache::{CachedModel, ModelSource, ModelStatus, ModelStore};
 pub use catalog::{CatalogEntry, CatalogService, CatalogSource};
-pub use download::{build_cached_model, spawn_download_task, HuggingFaceError, TreeEntry};
+pub use download::{build_cached_model, spawn_download_task, HuggingFaceError, VerifyReport};
 pub use hardware::HardwareProfile;
 pub use recommend::{RecommendRequest, RecommendResponse, Recommender};
 pub use runtime::{ProcessManager, RuntimeInfo, RuntimeManagerError, RuntimeRecipe, RuntimeStatus};
@@ -38,6 +43,7 @@ pub use sampler::{SystemSample, SystemSampler};
 pub struct AppState {
     pub store: ModelStore,
     pub manager: ProcessManager,
+    pub packs: engine_packs::EnginePacks,
     pub models_dir: PathBuf,
     pub data_dir: PathBuf,
     pub hardware_profile: HardwareProfile,

@@ -148,9 +148,8 @@ Format: `Feature — description — size`. Grouped loosely. Desktop-only items 
 
 ## Marketplace / Plugins / Skills
 - Marketplace (top-level) — General marketplace for discoverable content/plugins — small-medium
-- Plugin Registry / Plugin Marketplace — Install/manage plugins, including a large built-in plugin catalog (Word/Excel/PowerPoint, video, image, code, slides, chrome, flow, data, assets, swarms, mirofish, research, website, claude-desktop vendor plugin) — very large (plugins dir, 480 files) — core extensibility subsystem
+- Plugin Registry / Plugin Marketplace — Install/manage plugins, including a large built-in plugin catalog (Word/Excel/PowerPoint, video, image, code, slides, chrome, flow, data, assets, swarms, research, website, claude-desktop vendor plugin) — very large (plugins dir, 480 files) — core extensibility subsystem
 - Team Skills panel — Org-level shared skills management — small
-- MiroFish simulation engine — Persona-driven multi-round social/world simulation product ("what would people say/do") layered on the swarm sandbox — medium, distinct product feature (15 files, own README)
 
 ## Products / Discovery / Learning
 - Products Discovery — Browse/discover other Allternit products/offerings — medium-large (1596 lines)

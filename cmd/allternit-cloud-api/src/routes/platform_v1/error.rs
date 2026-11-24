@@ -135,7 +135,16 @@ impl IntoResponse for PlatformError {
         if let Some(status) = self.refusal_status {
             body["error"]["status"] = json!(status);
         }
-        (self.status, Json(body)).into_response()
+        let retry_after = self.status == StatusCode::SERVICE_UNAVAILABLE
+            && matches!(self.code.as_str(), "runtime_starting" | "computer_capacity");
+        let mut response = (self.status, Json(body)).into_response();
+        if retry_after {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(crate::services::provisioning::CAPACITY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }
 
@@ -161,7 +170,7 @@ impl From<ApiError> for PlatformError {
             | ApiError::InvalidToken(m)
             | ApiError::TokenExpired(m) => Self::authentication("unauthorized", m),
             ApiError::TooManyRequests(m) => Self::rate_limit("rate_limited", m),
-            ApiError::ServiceUnavailable(m) if m.starts_with(crate::services::provisioning::HOSTED_POOL_FULL) => {
+            ApiError::ServiceUnavailable(m) if crate::services::provisioning::is_capacity_message(&m) => {
                 Self::service_unavailable("computer_capacity", m)
             }
             ApiError::ServiceUnavailable(m) => {

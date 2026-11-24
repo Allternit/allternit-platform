@@ -1,0 +1,54 @@
+---
+title: 'Browser pane (pane_browser)'
+description: 'How a bot works the page in your browser pane by element ref: read_page, find, page text, console, tabs, plan approval for listed sites, stale refs and untrusted page text'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED. Code: `cmd/gizzi-code/src/runtime/tools/builtins/pane-browser.ts` and `guard/untrusted.ts`; the app side is the browser pane in allternit-ai.
+</Note>
+
+## Overview
+
+`pane_browser` acts on the page you have open in the session's browser pane. It is the same page you see, in your own browser session with your own logins and cookies. It works only while the pane is open. If the pane does not answer, the bot asks you to open it, or uses a separate automation browser. iOS has no browser pane. For hidden parallel lookups see [Browser tasks](/tools/browser-tasks).
+
+## Checking a dev server
+
+After the assistant starts a dev server, it opens that server's URL in the preview pane with `goto` and checks the page there, using `read_page`, `get_page_text` and `read_console`.
+
+## Reading (never asks)
+
+| Action | What it returns |
+|---|---|
+| `read_page` | The page as a tree of elements. Each interactive element has a ref such as `[ref_7]`. Narrow it with `ref`, `depth` or `filter: "interactive"` |
+| `find` | Up to 20 elements matching words in the page (labels, names, visible text, roles such as "search box"), with refs. It matches words, not intent |
+| `get_page_text` | The readable text, 20,000 characters per page. Ask for page 2, 3 and so on |
+| `read_console` | Console lines since the pane attached, at most 200. `pattern` is a case-insensitive regex. Pages from another origin may not allow it |
+| `list_tabs` | The pane's tabs with `tab_id`, title and URL |
+| `read`, `screenshot` | The address, title and visible text; a picture of the visible page |
+
+The web console reader misses lines the page printed before it loaded in the pane. Only lines after attach appear.
+
+## Acting
+
+`click {ref}` and `fill {ref, text}` act on the element a ref names. `goto {target}` opens a URL, `new_tab {url}` opens a tab and `switch_tab {tab_id}` makes one active. A CSS selector or visible text also works as a target but is less reliable.
+
+Each action asks you once per site, unless an approved plan covers that site.
+
+### Refs go stale
+
+A ref belongs to the page that produced it. After a navigation or a large change, the tool answers `stale_ref`, and the bot calls `read_page` or `find` for fresh refs. If the page moved to a different host since the ref was made, the answer is `host_changed`. The bot never guesses a ref.
+
+## Plan approval
+
+For a job of several steps, the bot sends `plan` with a summary, the sites, three to seven steps and where it will check in. You approve once. Acting on the listed sites then stops asking per site for this session. The grant covers only the hosts listed in the plan. Other sites still ask. Payments, sign-ins, passwords, sends, uploads and deletes always ask, plan or not. If you edit the plan, the bot follows your version.
+
+## Page text is untrusted
+
+Everything read from a page (page text, console lines, tab titles) reaches the model between `<<untrusted …>>` markers. Instruction-like passages are removed and counted first, and the markers carry a fresh nonce so a page cannot close the block and speak as the runtime. It is data written by the site. The bot never follows requests inside it and tells you when a page tries to steer it.
+
+## Related
+
+- [Browser tasks](/tools/browser-tasks)
+- [Screen context](/tools/screen-context)
+- [Computer toolset](/tools/computer-toolset)
+- [Action review](/tools/action-review)

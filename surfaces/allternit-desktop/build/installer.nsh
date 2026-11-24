@@ -20,7 +20,7 @@
 
 ; ── Welcome page ──────────────────────────────────────────────────────────────
 !define MUI_WELCOMEPAGE_TITLE          "Welcome to Allternit  |  A://"
-!define MUI_WELCOMEPAGE_TEXT           "This wizard will guide you through the installation of Allternit Desktop.$\r$\n$\r$\nAllternit is a fully offline AI platform that runs entirely on your machine — no subscription, no cloud.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT           "This wizard will guide you through the installation of Allternit Desktop.$\r$\n$\r$\nAllternit Desktop runs your bots, chats, projects and code on this computer, paired with your Allternit account.$\r$\n$\r$\nClick Next to continue."
 
 ; ── Directory page ────────────────────────────────────────────────────────────
 !define MUI_DIRECTORYPAGE_TEXT_TOP     "Choose where to install Allternit Desktop."
@@ -50,4 +50,22 @@
 !macro customUnInstall
   Delete "$LOCALAPPDATA\Allternit\bin\gizzi.cmd"
   RMDir "$LOCALAPPDATA\Allternit\bin"
+!macroend
+
+; ── Uninstall: remove the Files drive sync roots ─────────────────────────────
+; The Files drive helper (native/files-win, resources\files-win) registers one
+; Cloud Files sync root per computer ("Allternit · <computer>" in Explorer).
+; Unregister them while the exe still exists: customUnInstall runs after
+; $INSTDIR is deleted, so this goes in un.onInit. Skipped on updates (the old
+; uninstaller runs with --updated), so an update keeps every sync root.
+; Files the user opened stay on disk as normal files; cloud-only placeholders go.
+!macro customUnInit
+  ${ifNot} ${isUpdated}
+    ${If} ${FileExists} "$INSTDIR\resources\files-win\allternit-files-win.exe"
+      nsExec::Exec 'taskkill /F /IM allternit-files-win.exe'
+      Pop $0
+      nsExec::Exec '"$INSTDIR\resources\files-win\allternit-files-win.exe" unregister-all'
+      Pop $0
+    ${EndIf}
+  ${endIf}
 !macroend

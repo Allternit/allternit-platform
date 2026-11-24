@@ -10,6 +10,8 @@ struct RunStep: Equatable, Hashable, Sendable, Identifiable {
     let n: Int
     var label: String
     var ok: Bool? = nil
+    /// Replayed from the app's map, no model call (App Maps). False on older runtimes.
+    var map: Bool = false
     var id: Int { n }
 
     /// `[{n, label, ok}]` from a ledger card. Malformed entries are dropped; sorted by `n`.
@@ -21,7 +23,9 @@ struct RunStep: Equatable, Hashable, Sendable, Identifiable {
             guard !label.isEmpty, n.isFinite else { return nil }
             var ok: Bool?
             if case .bool(let b)? = o["ok"] { ok = b }
-            return RunStep(n: Int(n), label: label, ok: ok)
+            var map = false
+            if case .bool(let m)? = o["map"] { map = m }
+            return RunStep(n: Int(n), label: label, ok: ok, map: map)
         }
         return steps.sorted { $0.n < $1.n }
     }
@@ -32,7 +36,7 @@ struct RunStep: Equatable, Hashable, Sendable, Identifiable {
         let steps = items.compactMap { o -> RunStep? in
             guard let n = (o["n"] as? NSNumber)?.intValue,
                   let label = (o["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty else { return nil }
-            return RunStep(n: n, label: label, ok: (o["ok"] as? NSNumber)?.boolValue)
+            return RunStep(n: n, label: label, ok: (o["ok"] as? NSNumber)?.boolValue, map: (o["map"] as? NSNumber)?.boolValue ?? false)
         }
         return steps.sorted { $0.n < $1.n }
     }
@@ -49,6 +53,86 @@ struct RunStep: Equatable, Hashable, Sendable, Identifiable {
             out.sort { $0.n < $1.n }
         }
         return out
+    }
+}
+
+/// One row of the step list: a plain step, or consecutive map steps folded into one (App Maps C1,
+/// web `groupSteps` in `PhoneRunsPanel.tsx`).
+enum RunStepRow: Equatable, Identifiable {
+    case step(RunStep)
+    case map(first: Int, last: Int, destination: String, count: Int)
+
+    var id: Int {
+        switch self {
+        case .step(let s): return s.n
+        case .map(let first, _, _, _): return first
+        }
+    }
+
+    /// "1–3. Went to Calls & SMS" (a single step reads "2. Went to Wi-Fi").
+    var mapLabel: String? {
+        guard case .map(let first, let last, let dest, _) = self else { return nil }
+        return "\(first == last ? "\(first)" : "\(first)–\(last)"). Went to \(dest)"
+    }
+
+    /// Consecutive successful map steps fold into one row. A failed step never folds, so a fallback
+    /// stays visible as its own row. Runs with no map flags come out unchanged.
+    static func fold(_ steps: [RunStep]) -> [RunStepRow] {
+        var out: [RunStepRow] = []
+        for s in steps {
+            guard s.isMapStep else { out.append(.step(s)); continue }
+            if case .map(let first, _, _, let count)? = out.last {
+                out[out.count - 1] = .map(first: first, last: s.n, destination: s.mapDestination, count: count + 1)
+            } else {
+                out.append(.map(first: s.n, last: s.n, destination: s.mapDestination, count: 1))
+            }
+        }
+        return out
+    }
+}
+
+extension RunStep {
+    var isMapStep: Bool { map && ok != false }
+
+    /// The screen a map step went to: "go to Calls & SMS" names it.
+    var mapDestination: String {
+        let stripped = label.replacingOccurrences(of: "^go to\\s+", with: "", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? label : stripped
+    }
+}
+
+/// The run-detail title meta and the task-card line (App Maps C1/C2). Both read nothing when the
+/// report has no `map_steps`, so older runs look as before.
+enum AppMapCopy {
+    /// "com.android.settings" becomes "Settings".
+    static func appName(fromPackage pkg: String?) -> String? {
+        guard let last = (pkg ?? "").split(separator: ".").last, let first = last.first else { return nil }
+        return first.uppercased() + last.dropFirst()
+    }
+
+    /// `app_label` as sent, else the short name of a package.
+    static func mapAppName(_ raw: String?) -> String? {
+        let t = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return nil }
+        return t.contains(".") ? appName(fromPackage: t) : t
+    }
+
+    /// "3 from the Settings map · 2 model calls", or nil without map steps.
+    static func runMeta(mapSteps: Int?, modelCalls: Int?, app: String?) -> String? {
+        guard let n = mapSteps, n > 0 else { return nil }
+        var out = "\(n) from the \(mapAppName(app) ?? "app") map"
+        if let m = modelCalls { out += " · \(m) model \(m == 1 ? "call" : "calls")" }
+        return out
+    }
+
+    /// "3 steps came from the Settings map, so only 2 needed the model."
+    static func cardLine(mapSteps: Int?, modelCalls: Int?, app: String?) -> String? {
+        guard let n = mapSteps, n > 0 else { return nil }
+        let from = mapAppName(app).map { "the \($0) map" } ?? "the app’s map"
+        var out = "\(n) step\(n == 1 ? "" : "s") came from \(from)"
+        if let m = modelCalls { out += ", so only \(m) needed the model" }
+        return out + "."
     }
 }
 
@@ -97,7 +181,7 @@ struct RunStatusPill: View {
     var onReview: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var kind: RunPillKind { RunPillKind(card.status) }
     private var text: String { kind.text(computer: card.kind == .computer) }
@@ -161,14 +245,14 @@ struct RunThoughtStream: View {
     let active: Bool
 
     @State private var showAll = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     static let maxRows = 6
 
     var body: some View {
         if !steps.isEmpty {
             let hidden = showAll ? 0 : max(0, steps.count - Self.maxRows)
-            let rows = Array(steps.suffix(steps.count - hidden))
+            let rows = RunStepRow.fold(Array(steps.suffix(steps.count - hidden)))
             let lastN = steps.last?.n
             VStack(alignment: .leading, spacing: 5) {
                 if hidden > 0 {
@@ -181,8 +265,13 @@ struct RunThoughtStream: View {
                     }
                     .buttonStyle(.plain)
                 }
-                ForEach(rows) { step in
-                    row(step, current: active && step.n == lastN)
+                ForEach(rows) { item in
+                    Group {
+                        switch item {
+                        case .step(let step): row(step, current: active && step.n == lastN)
+                        case .map(_, let last, _, _): mapRow(item, current: active && last == lastN)
+                        }
+                    }
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 4)))
                 }
             }
@@ -196,6 +285,30 @@ struct RunThoughtStream: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Steps")
         }
+    }
+
+    /// Folded map steps: no model, so one row with the map symbol. (No screen thumbnails: the iOS
+    /// run list keeps labels only.)
+    private func mapRow(_ item: RunStepRow, current: Bool) -> some View {
+        let label = item.mapLabel ?? ""
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "map")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 12, alignment: .center)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.system(size: 13, weight: current ? .medium : .regular))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("From the map · no model")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+        }
+        .foregroundColor(current ? Color("TextPrimary") : Color("TextSecondary"))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(current ? "Now" : "Done"): \(label), from the map, no model")
     }
 
     private func row(_ step: RunStep, current: Bool) -> some View {
@@ -283,6 +396,11 @@ struct PhoneRunSheet: View {
             .font(.system(size: 17, weight: .semibold))
             .foregroundColor(Color("TextPrimary"))
             .fixedSize(horizontal: false, vertical: true)
+        if let meta = AppMapCopy.runMeta(mapSteps: card.mapSteps, modelCalls: card.modelCalls, app: card.mapApp) {
+            Text(meta)
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextSecondary"))
+        }
         if let summary = card.summary, card.status.isFinal {
             Text(summary)
                 .font(.system(size: 15))

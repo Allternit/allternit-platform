@@ -55,6 +55,9 @@ Identity = TypedDict('Identity', {'id': str, 'object': Literal['identity'], 'acc
 IdentityList = TypedDict('IdentityList', {'data': List["Identity"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Phone = TypedDict('Phone', {'object': Literal['phone'], 'serial': str, 'name': Optional[str], 'model': Optional[str], 'online': bool, 'desktop_online': bool, 'last_seen_at': Optional[str], 'call_bridge': Optional[Dict[str, Any]]}, total=False)
 PhoneList = TypedDict('PhoneList', {'data': List["Phone"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+PhoneMapSummary = TypedDict('PhoneMapSummary', {'app': str, 'platform': Literal['android', 'ios'], 'app_version': str, 'name': str, 'screens': int, 'edges': int, 'routable_edges': int, 'stale_edges': int, 'truncated': Optional[Dict[str, Any]], 'last_seen': str}, total=False)
+PhoneMapList = TypedDict('PhoneMapList', {'ok': bool, 'maps': List["PhoneMapSummary"]}, total=False)
+PhoneMapResult = TypedDict('PhoneMapResult', {'ok': bool, 'map': Dict[str, Any]}, total=False)
 PhoneSkillList = TypedDict('PhoneSkillList', {'data': List[Dict[str, Any]], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneStep = TypedDict('PhoneStep', {'object': Literal['phone.step'], 'id': str, 'run_id': str, 'serial': str, 'at': str, 'tool': str, 'label': str, 'args': Dict[str, Any], 'ok': bool, 'error': Optional[str], 'duration_ms': int, 'source': Optional[str], 'snapshot': bool}, total=False)
 PhoneHistory = TypedDict('PhoneHistory', {'object': Literal['phone.history'], 'serial': str, 'steps': List["PhoneStep"], 'runs': List[Dict[str, Any]], 'retention_days': int, 'max_steps': int}, total=False)
@@ -68,12 +71,13 @@ DecisionRequest = TypedDict('DecisionRequest', {'input': Union[str, List[Dict[st
 DecisionAnswer = TypedDict('DecisionAnswer', {'name': str, 'type': Literal['predicate', 'choice', 'score', 'refusal'], 'probability': float, 'choice': str, 'score': float, 'probabilities': List[Dict[str, Any]], 'confidence': float, 'backend': str, 'reason': Literal['abstained', 'unavailable', 'budget_exhausted']}, total=False)
 DecisionOutcome = TypedDict('DecisionOutcome', {'status': Literal['success', 'failure', 'error', 'skipped'], 'label': str, 'detail': str}, total=False)
 Decision = TypedDict('Decision', {'id': str, 'object': Literal['decision'], 'created_at': str, 'answers': List["DecisionAnswer"], 'backend': str, 'latency_ms': int, 'usage': Dict[str, Any], 'outcomes': Dict[str, Any], 'metadata': Dict[str, Any]}, total=False)
+DecisionList = Dict[str, Any]
 ContentPart = TypedDict('ContentPart', {'type': Literal['input_text', 'output_text', 'input_image'], 'text': str, 'image_url': str}, total=False)
 ItemInput = TypedDict('ItemInput', {'type': Literal['message', 'function_call_output'], 'role': Literal['user', 'assistant', 'system', 'developer'], 'content': Union[str, List["ContentPart"]], 'call_id': str, 'output': str}, total=False)
 Item = TypedDict('Item', {'id': str, 'object': Literal['item'], 'type': Literal['message', 'function_call', 'function_call_output', 'tool_call', 'approval_request'], 'conversation_id': Optional[str], 'response_id': Optional[str], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'role': Optional[Literal['user', 'assistant', 'system', 'developer']], 'content': List["ContentPart"], 'call_id': str, 'name': str, 'arguments': str, 'output': Any, 'input': Any, 'error': Optional[str], 'approval_id': str, 'proposed_action': Dict[str, Any], 'created_at': str}, total=False)
 ItemList = Dict[str, Any]
 ResponseRequest = TypedDict('ResponseRequest', {'model': str, 'agent': str, 'input': Union[str, List["ItemInput"]], 'instructions': str, 'tools': List[Dict[str, Any]], 'tool_choice': Any, 'stream': bool, 'store': bool, 'conversation': str, 'previous_response_id': str, 'metadata': Dict[str, Any], 'max_output_tokens': int, 'temperature': float}, total=False)
-Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
+Response = TypedDict('Response', {'id': str, 'object': Literal['response'], 'status': Literal['in_progress', 'completed', 'failed', 'incomplete', 'requires_action'], 'model': Optional[str], 'agent_id': Optional[str], 'conversation_id': Optional[str], 'previous_response_id': Optional[str], 'output': List["Item"], 'incomplete_details': Optional[Dict[str, Any]], 'required_actions': List[Dict[str, Any]], 'usage': Dict[str, Any], 'error': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'created_at': str, 'completed_at': Optional[str]}, total=False)
 ModelMessageRequest = TypedDict('ModelMessageRequest', {'model': str, 'system': Union[str, List[Dict[str, Any]]], 'messages': List[Dict[str, Any]], 'tools': List[Dict[str, Any]], 'tool_choice': Dict[str, Any], 'max_tokens': int, 'temperature': float, 'stream': bool, 'metadata': Dict[str, Any], 'thread': Dict[str, Any]}, total=False)
 ModelMessage = TypedDict('ModelMessage', {'id': str, 'type': Literal['message'], 'role': Literal['assistant'], 'content': List[Dict[str, Any]], 'model': str, 'stop_reason': Literal['end_turn', 'tool_use', 'max_tokens'], 'usage': Dict[str, Any]}, total=False)
 Text = TypedDict('Text', {'id': str, 'object': Literal['text'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
@@ -424,7 +428,8 @@ class ConversationsResource:
         then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
         missing). Refusals before the stream starts are plain errors, as for messages:
         `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-        `503 runtime_starting`. The reply is stored and metered like any conversation message.
+        `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+        runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
 
         ``POST /v1/agents/{id}/ag-ui``
         """
@@ -486,7 +491,8 @@ class ConversationsResource:
         "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
         tools, then `message.completed` (the stored reply) or `error`. Clients should skip
         event names they don't know. The first message starts the
-        project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+        project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+        means retry after the `Retry-After` header (30 seconds).
         One message at a time per conversation (`409 conversation_busy`). A project at its
         monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
         `402 payment_method_required`. Each reply records `tokens_in` and
@@ -1522,6 +1528,34 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
+    def list_maps(self, *, serial: str = NOT_GIVEN, platform: Literal['android', 'ios'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneMapList":
+        """List learned App Maps
+
+        One summary per app Allternit has mapped on the owner's Desktop (read only; exploring and forgetting a map stay on the Desktop, web, app and Gizzi). Errors 503 `phone_desktop_offline` while the Desktop is offline, 404 `no_desktop` when none is paired.
+
+        ``GET /v1/phones/maps``
+        """
+        _query: Dict[str, Any] = {}
+        if serial is not NOT_GIVEN:
+            _query['serial'] = serial
+        if platform is not NOT_GIVEN:
+            _query['platform'] = platform
+        return self._client.request("GET", f"/v1/phones/maps", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_map(self, app: str, *, serial: str = NOT_GIVEN, platform: Literal['android', 'ios'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneMapResult":
+        """One app's map
+
+        The map file for one app. Errors 404 `map_not_found` (nothing learned yet), 403 `money_app` (money apps are never mapped), 503 `phone_desktop_offline`, 404 `no_desktop`.
+
+        ``GET /v1/phones/maps/{app}``
+        """
+        _query: Dict[str, Any] = {}
+        if serial is not NOT_GIVEN:
+            _query['serial'] = serial
+        if platform is not NOT_GIVEN:
+            _query['platform'] = platform
+        return self._client.request("GET", f"/v1/phones/maps/{_q(app)}", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
     def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, limit: int = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
         """A phone's run history
 
@@ -1556,7 +1590,7 @@ class PhonesResource:
             _body['hold_id'] = hold_id
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/tool", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
+    def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, vision: Literal['auto', 'always'] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
         """Give a phone a goal
 
         The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
@@ -1572,6 +1606,8 @@ class PhonesResource:
             _body['bot_id'] = bot_id
         if brain is not NOT_GIVEN:
             _body['brain'] = brain
+        if vision is not NOT_GIVEN:
+            _body['vision'] = vision
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/task", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get_live_view(self, serial: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneLiveView":
@@ -1583,16 +1619,31 @@ class PhonesResource:
         """
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/live", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def start_fleet_run(self, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def start_fleet_run(self, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
         """Run one task or skill on many phones
 
         Starts one background run per listed phone: a task (`goal`) or a saved skill (`skill`). Answers 202 with the fleet run; phones whose run could not start are in `not_started` with the error. Every run counts against the plan's concurrent phone-run limit (Sandbox 1, Pay as you go 5, Growth 25, Enterprise by contract); asking for more than the room left is 429 `phone_run_limit` and starts nothing. Each run ends with `phone.run.completed`; the whole fleet run with `phone.fleet_run.completed`.
 
         ``POST /v1/phones/runs``
         """
-        return self._client.request("POST", f"/v1/phones/runs", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        _body: Dict[str, Any] = {}
+        if serials is not NOT_GIVEN:
+            _body['serials'] = serials
+        if goal is not NOT_GIVEN:
+            _body['goal'] = goal
+        if skill is not NOT_GIVEN:
+            _body['skill'] = skill
+        if inputs is not NOT_GIVEN:
+            _body['inputs'] = inputs
+        if max_steps is not NOT_GIVEN:
+            _body['max_steps'] = max_steps
+        if bot_id is not NOT_GIVEN:
+            _body['bot_id'] = bot_id
+        if brain is not NOT_GIVEN:
+            _body['brain'] = brain
+        return self._client.request("POST", f"/v1/phones/runs", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def get_fleet_run(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
         """A fleet run
 
         The fleet run and each phone's run (status, ok, start and end).
@@ -1727,7 +1778,7 @@ class MailboxesResource:
             _body['since'] = since
         return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/otp", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def send_mail(self, id: str, *, serials: List[str], goal: str = NOT_GIVEN, skill: str = NOT_GIVEN, inputs: Dict[str, Any] = NOT_GIVEN, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneFleetRun":
+    def send_mail(self, id: str, *, to: str, subject: str, text: str = NOT_GIVEN, html: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Send an email from a mailbox
 
         Live projects only. The call is the approval, so the send is queued at once; `pending_approval` only when Allternit Mail held it and could not release it.
@@ -1735,20 +1786,14 @@ class MailboxesResource:
         ``POST /v1/mailboxes/{id}/send``
         """
         _body: Dict[str, Any] = {}
-        if serials is not NOT_GIVEN:
-            _body['serials'] = serials
-        if goal is not NOT_GIVEN:
-            _body['goal'] = goal
-        if skill is not NOT_GIVEN:
-            _body['skill'] = skill
-        if inputs is not NOT_GIVEN:
-            _body['inputs'] = inputs
-        if max_steps is not NOT_GIVEN:
-            _body['max_steps'] = max_steps
-        if bot_id is not NOT_GIVEN:
-            _body['bot_id'] = bot_id
-        if brain is not NOT_GIVEN:
-            _body['brain'] = brain
+        if to is not NOT_GIVEN:
+            _body['to'] = to
+        if subject is not NOT_GIVEN:
+            _body['subject'] = subject
+        if text is not NOT_GIVEN:
+            _body['text'] = text
+        if html is not NOT_GIVEN:
+            _body['html'] = html
         return self._client.request("POST", f"/v1/mailboxes/{_q(id)}/send", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
@@ -1834,6 +1879,38 @@ class IdentitiesResource:
 class DecisionsResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "DecisionList":
+        """List decisions
+
+        The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+
+        ``GET /v1/decisions``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        return self._client.request("GET", f"/v1/decisions", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Decision"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        if account_id is not NOT_GIVEN:
+            _query['account_id'] = account_id
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/decisions", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
     def create(self, *, input: Union[str, List[Dict[str, Any]]] = NOT_GIVEN, instructions: str = NOT_GIVEN, questions: Union[List["DecisionQuestion"], Dict[str, Any]] = NOT_GIVEN, latency_budget_ms: int = NOT_GIVEN, allow_abstain: bool = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, context: Any = NOT_GIVEN, options_: List[Dict[str, Any]] = NOT_GIVEN, kind: str = NOT_GIVEN, question: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Decision":
         """Ask one or more questions about some input
@@ -1922,21 +1999,22 @@ class ResponsesResource:
         `response.output_text.done`, `response.function_call_arguments.done`,
         `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
         (hosted tools, arguments and results cut at 8,000 characters),
-        `response.output_item.done`, then `response.completed` or `response.failed`, and `error`
+        `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
         for failures before the stream starts. Clients should skip event names they don't know.
-        Approvals never pause a turn: when an agent's action needs the owner's approval, that
-        tool call fails with a "try again once they approve" result and the turn still ends
-        `completed`. `required_actions` is reserved and always empty in this release. Approvals
-        are their own resource: subscribe to the `approval.requested` / `approval.resolved`
-        webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
-        same conversation. Errors before the stream starts are
+        When an agent's action needs the owner's approval, that tool call fails with a "try
+        again once they approve" result and the turn ends; this answer (and its stream) still
+        ends `completed`, because the approval is raised after the turn finishes. While it is
+        pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+        `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+        (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+        response with `previous_response_id`. Errors before the stream starts are
         plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
         `tools`, or mixing `model` and `agent` turns in one conversation;
         `400 missing_function_call_output` when a `function_call` of the previous response has no
         matching `function_call_output` in `input`; `409 previous_response_not_latest` when
         `previous_response_id` is not the latest response of its conversation;
         `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
-        `503 runtime_starting`. Token usage is recorded as
+        `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
         `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
         `agents` scope with `agent`.
 
@@ -2002,7 +2080,7 @@ class ResponsesResource:
     def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Response":
         """Retrieve a response
 
-        A stored response (`store` was not false) with its output items. Requires the `inference` or `agents` scope.
+        A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
 
         ``GET /v1/responses/{id}``
         """

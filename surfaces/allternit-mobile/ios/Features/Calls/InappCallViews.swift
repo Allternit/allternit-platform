@@ -68,7 +68,7 @@ final class CallWindow {
 /// Incoming call, the call itself, and how it ended.
 struct InappCallScreen: View {
     @ObservedObject private var store = InappCallStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         ZStack {

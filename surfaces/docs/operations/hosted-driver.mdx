@@ -17,6 +17,8 @@ Each computer is a free-lane cloud computer owned by a synthetic user `platform-
 
 ## Where they run (Eoj, 2026-10-08)
 
+Developer computers always run on our own Incus hosts, never on Orgo, whatever `ALLTERNIT_COMPUTE_PROVIDER_*` says: they need the egress-filtered network below. See [Compute providers](/operations/compute-providers).
+
 Developer computers run on the **Mail VPS** (`host_mail`, Incus at `https://127.0.0.1:8443` from cloud-api on the same host), not on allternit-standby. Customer cloud computers stay on standby. The split is `ALLTERNIT_HOSTED_DRIVER_HOSTS=host_mail`: that host takes only developer computers, and developer computers go only there.
 
 The Mail VPS also runs the prod Postgres, prod allternit-api, MinIO, the trading services and three qemu VMs, so the developer pool is hard-capped:
@@ -24,7 +26,7 @@ The Mail VPS also runs the prod Postgres, prod allternit-api, MinIO, the trading
 | Limit | Value | Where it's set |
 |---|---|---|
 | CPU | `limits.cpu=1`, `limits.cpu.priority=1` (Incus default is 10) | cloud-api `ALLTERNIT_HOSTED_DRIVER_CPU`, `_CPU_PRIORITY` |
-| Memory | `limits.memory=2048MiB`, no swap | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB`; profile `limits.memory.swap=false` |
+| Memory | `limits.memory=4096MiB` (the minimum), no swap | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB`; profile `limits.memory.swap=false` |
 | Disk | 10 GiB root quota on the btrfs pool `cow` (loop file `/var/lib/incus/disks/cow.img`); the `dir` pool can't enforce a quota | `ALLTERNIT_HOSTED_DRIVER_DISK_GB` |
 | Processes, disk I/O | `limits.processes=2000`, `limits.disk.priority=1` | profile `allternit-hosted-driver` |
 | Pool | at most 4 awake at once, across all projects; the 5th create or start answers `503 computer_capacity` and leaves no row behind | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` |
@@ -45,6 +47,19 @@ API_BINARY=/opt/allternit-api/bin/allternit-api bash cmd/allternit-computer-clou
 ```
 
 `bash cmd/allternit-computer-cloud/guest/validate-image.sh allternit-computer-headless` then proves the driver service, its `hello` capability report and a populated `read_ui` on the new image (it launches a throw-away local container; never run it against the fleet).
+
+## Internal service token (Desktop and cloud computers)
+
+gizzi adds its bundled `allternit-connectors` and `allternit-tools` MCP servers only when `ALLTERNIT_INTERNAL_SERVICE_TOKEN` is set (`cmd/gizzi-code/src/runtime/tools/mcp/bundled.ts`). Those servers carry the phone (`phone_text`, `phone_call`), mail (`allternit_mail_*`), `agent_knowledge_search` and `agent_channel_post` tools. allternit-api checks the same token on `/internal/connectors/mcp` and `/internal/tools/mcp` (`internal_auth.rs`). With no token, every call answers 401.
+
+The Allternit app sets it for every runtime it hosts: a personal Desktop, and every cloud computer, which runs the same app headless (this includes Orgo computers that host Platform API agents).
+
+- Desktop main makes one 32-byte token on first launch and saves it encrypted at `<userData>/auth/internal-service-token` (mode 0600). It reuses the token on every launch, so an API or gizzi that is already running and gets adopted still matches. An unreadable file is moved aside and replaced. An exported `ALLTERNIT_INTERNAL_SERVICE_TOKEN` takes priority over the saved one.
+- The same value goes to the allternit-api sidecar (first start, crash respawn and **Restart backend**) and to gizzi (`surfaces/allternit-desktop/src/main/internal-service-token.ts`).
+- gizzi also gets `ALLTERNIT_USER_ID` = the runtime's paired owner. That is the signed-in user's id on a personal Desktop and `platform:<project_id>` on a Platform API project computer. gizzi sends it as `x-allternit-user-id`. allternit-api lists `phone_text`/`phone_call` only for an owner who has a number, and finds Platform agents under that owner. Before the runtime is paired, the owner is not set, and gizzi falls back to `local-dev-user` until it restarts.
+- The fabric worker (`gizzi-code fabric-worker`) does not use MCP and does not get the token.
+
+To check it on a computer, run `curl -s 127.0.0.1:4096/mcp`. The output must list `allternit-connectors` and `allternit-tools`. If it shows `{}`, the runtime started without the token.
 
 ## Host setup (Mail VPS)
 
@@ -68,10 +83,34 @@ The public launch and the prices are Eoj's call.
 | `ALLTERNIT_HOSTED_DRIVER_HOSTS` | unset (shared pool) | Comma-separated fleet host ids. When set, only these hosts take hosted-driver computers, and they take nothing else. Prod: `host_mail`. |
 | `ALLTERNIT_HOSTED_DRIVER_IMAGE` | `allternit-computer-headless` | Image alias for developer computers. |
 | `ALLTERNIT_HOSTED_DRIVER_CPU` / `_CPU_PRIORITY` | `1` / `1` | `limits.cpu` and `limits.cpu.priority`. |
-| `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` / `_DISK_GB` | `2048` / `10` | `limits.memory` and the root disk quota. |
+| `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` / `_DISK_GB` | `4096` / `10` | `limits.memory` and the root disk quota. Memory below 4096 is raised to 4096. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` | `4` | Awake developer computers across the pool. Past it: `503 computer_capacity`. |
 | `ALLTERNIT_HOSTED_DRIVER_PER_KEY` | `2` | Default cap on live computers per API key. Projects can lower or raise it in settings, up to the max. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_PER_KEY` | `10` | Upper bound for that setting. |
+
+## Free pool memory and capacity
+
+Free computers, and the hosted runtime behind each Platform API project (owner `platform:<project_id>`), reserve only disk in the host ledger, so awake free computers are checked against host memory when they start. A create or wake is admitted only if the memory of paid computers on the host, plus the free computers that are running, waking or provisioning, plus this one, fits under the host total minus headroom. If it does not, the longest-idle running free computer on that host (idle at least 2 minutes, never the one being started) is put to sleep with reason `pool_full`, and the check runs once more. Still full: `503 computer_capacity` with `Retry-After: 30`. The Platform API sends the same code and header for `runtime_starting`.
+
+## 4 GB minimum
+
+No Allternit computer is created or woken with less than 4096 MB of memory. The floor is the constant `MIN_COMPUTER_MEMORY_MB`, and it applies to free computers, the hosted driver and project runtimes, and to paid and credits computers. An env value below 4096 is raised to 4096.
+
+A computer that already exists with less memory is raised to 4096 MB the next time it wakes, before the capacity check. If the resize fails, it wakes at its old size and the next wake tries again. The raise applies to free, project runtime and hosted driver computers on Incus. It does not apply to Orgo computers or to paid computers.
+
+The floor changes no price. A computer minute is a flat rate and does not depend on memory.
+
+Because each awake computer now reserves 4096 MB, a host fits fewer awake computers at once. Expect `computer_capacity` sooner when a host is full.
+
+A project runtime that never connected is replaced at most three times (after 5, 15 and 45 minutes), and not while a new one would be refused for capacity.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `ALLTERNIT_HOST_MEMORY_HEADROOM_MB` | `2048` | Memory kept free on each host. |
+| `ALLTERNIT_PLATFORM_RUNTIME_IMAGE` | the free image | Image for project runtimes (for example `allternit-computer-headless`). |
+| `ALLTERNIT_PLATFORM_RUNTIME_CPU` / `_MEMORY_MB` / `_DISK_GB` | the free size (`2` / `4096` / `10`) | Size of project runtimes. Memory below 4096 is raised to 4096. |
+
+The provisioned-instance view also returns `provider` (`incus`, or the endpoint scheme), `sleeps_when_idle`, `state_detail` (`waking` or null) and `retry_after_seconds` (null).
 
 ## Egress rules
 

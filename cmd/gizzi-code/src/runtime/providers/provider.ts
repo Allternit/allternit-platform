@@ -23,15 +23,25 @@ import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { BUNDLED_PROVIDERS, NoSuchModelError, type SDK, type LanguageModelV2 } from "@/runtime/providers/adapters/bundled"
 
 // Provider-specific loaders — each provider's config/auth/model logic in its own file
+import { SelfhostInference } from "@/runtime/providers/selfhost-inference"
 import { CUSTOM_LOADERS } from "@/runtime/providers/adapters/loaders"
 import type { CustomModelLoader } from "@/runtime/providers/types"
-import { Discovery, type DiscoveredProvider } from "@/runtime/providers/discovery"
+import {
+  ALLTERNIT_DEVICES_PROVIDER_ID,
+  Discovery,
+  scanAllternitDevices,
+  type DiscoveredProvider,
+} from "@/runtime/providers/discovery"
+import { Installation } from "@/shared/installation"
 import { cloudInferenceToken, getCachedAllternitPlan } from "@/runtime/providers/discovery/allternit-cloud"
 import { ModelList } from "@/runtime/providers/model-list"
 import { resolveDefaultBrain, type DefaultBrain } from "@/runtime/providers/default-brain"
 import { SubprocessLanguageModel } from "@/runtime/providers/adapters/loaders/subprocess"
 import { SubscriptionFabricLanguageModel } from "@/runtime/providers/fabric/language-model"
 import { fabricConfigured, isFabricProviderID } from "@/runtime/providers/fabric/client"
+import { PersonPlanLanguageModel } from "@/runtime/providers/person-plan/language-model"
+import { PERSON_PLAN_RUNTIME } from "@/runtime/providers/person-plan/discovery"
+import { isPersonOnlyProvider } from "@/runtime/providers/person-plan/rules"
 import { discoverSubscriptionFabric } from "@/runtime/providers/fabric/discovery"
 import { cliModel, stripProviderPrefix } from "@/runtime/providers/cli-model"
 import { tapRetryHint } from "@/runtime/providers/retry-hint"
@@ -200,7 +210,7 @@ export namespace Provider {
     token?: string
     authType: "api_key" | "none" | "bearer" | "subprocess"
     extraHeaders: Record<string, string>
-    source: "profile" | "config" | "env" | "auth" | "plugin" | "subprocess" | "none"
+    source: "profile" | "config" | "discovery" | "env" | "auth" | "plugin" | "subprocess" | "none"
     profileId?: string
   }
 
@@ -284,7 +294,60 @@ export namespace Provider {
     }
   }
 
+  function selfhostModel(cfg: SelfhostInference.Config, spec: SelfhostInference.Spec, name: string): Model {
+    const apiID = SelfhostInference.resolveModel(cfg, name)
+    return {
+      id: name,
+      providerID: spec.id,
+      name,
+      api: { id: apiID, url: spec.url, npm: spec.npm(apiID) },
+      status: "active",
+      headers: {},
+      options: {},
+      cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+      limit: { context: 200000, output: 32000 },
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      release_date: "",
+      variants: {},
+    }
+  }
+
+  /** Self-hosted inference: one provider, the model_map keys as its models, no catalog, no discovery. */
+  function selfhostState(cfg: SelfhostInference.Config) {
+    const spec = SelfhostInference.spec(cfg)
+    const info: Info = {
+      id: spec.id,
+      name: spec.name,
+      source: "config",
+      env: [],
+      options: spec.options,
+      models: {},
+    }
+    for (const name of SelfhostInference.listed(cfg)) info.models[name] = selfhostModel(cfg, spec, name)
+    return {
+      models: new Map<string, LanguageModelV2>(),
+      providers: { [spec.id]: info } as { [providerID: string]: Info },
+      sdk: new Map<number, SDK>(),
+      modelLoaders: {} as { [providerID: string]: CustomModelLoader },
+      // Self-hosted inference serves one fixed provider: no device relay.
+      devices: undefined as DevicesWatch | undefined,
+    }
+  }
+
   const state = Instance.state(async () => {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      log.info("self-hosted inference", { provider: selfhost.provider, models: SelfhostInference.listed(selfhost).length })
+      return selfhostState(selfhost)
+    }
     using _ = log.time("state")
     const config = await Config.get()
     const modelsDev = await ModelsDev.get()
@@ -531,6 +594,7 @@ export namespace Provider {
         }
         if (dp.subprocess_cmd && !existing.subprocess_cmd) existing.subprocess_cmd = dp.subprocess_cmd
         if (dp.auth_type && !existing.auth_type) existing.auth_type = dp.auth_type
+        if (dp.token && !existing.token) existing.token = dp.token
         log.info("discovered-merged", { providerID: dp.id, source: dp.source, models: Object.keys(dpModels).length })
         continue
       }
@@ -541,6 +605,8 @@ export namespace Provider {
         env: dp.id === "allternit" ? ["ALLTERNIT_API_KEY"] : [],
         key: dp.id === "allternit" ? await cloudInferenceToken() : undefined,
         auth_type: dp.auth_type,
+        // Discovered bearer providers (allternit-devices) carry their own token.
+        token: dp.token,
         subprocess_cmd: dp.subprocess_cmd,
         options: { ...(dp.base_url ? { baseURL: dp.base_url } : {}), ...(dp.options ?? {}) },
         models: dpModels,
@@ -593,12 +659,21 @@ export namespace Provider {
     // catalog in the background and add it to the live provider list.
     if (!Object.keys(providers).some(isFabricProviderID)) watchForFabricProviders(providers, isProviderAllowed)
 
+    // Phones serving a model through the cloud relay come and go while gizzi
+    // runs: re-scan just that hook so `GET /provider` tracks them.
+    const devices = isProviderAllowed(ALLTERNIT_DEVICES_PROVIDER_ID)
+      ? watchAllternitDevices(providers, languages)
+      : undefined
+
     return {
       models: languages,
       providers,
       sdk,
       modelLoaders,
+      devices,
     }
+  }, async (s) => {
+    s.devices?.stop()
   })
 
   const FABRIC_RECHECK_MS = 60_000
@@ -630,9 +705,116 @@ export namespace Provider {
     timer.unref?.()
   }
 
+  const DEVICES_RESCAN_MS = 30_000
+  /** `GET /provider` re-scans inline when the last scan is older than this. */
+  const DEVICES_ON_LIST_MAX_AGE_MS = 10_000
+  const DEVICES_ON_LIST_TIMEOUT_MS = 1_500
+
+  type DevicesWatch = {
+    /** Re-scan now (shared with an in-flight scan). */
+    refresh(timeoutMs?: number): Promise<void>
+    /** Re-scan only when the last scan is stale and did not fail (cheap enough for `GET /provider`). */
+    refreshIfStale(): Promise<void>
+    stop(): void
+  }
+
+  /**
+   * Keeps the `allternit-devices` provider's model list current. Online hosts
+   * become models; no hosts (or no/rejected credential) removes the provider so
+   * it drops out of `connected`; a network/server error keeps the last list.
+   */
+  function watchAllternitDevices(
+    providers: Record<string, Info>,
+    languages: Map<string, LanguageModelV2>,
+  ): DevicesWatch {
+    const id = ALLTERNIT_DEVICES_PROVIDER_ID
+    let running: Promise<void> | undefined
+    let lastAt = Date.now()
+    let lastFailed = false
+
+    const apply = (dp: DiscoveredProvider | undefined) => {
+      const models = dp ? discoveredModels(dp) : {}
+      for (const model of Object.values(models)) {
+        model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+      }
+      const before = providers[id]
+      if (!dp || Object.keys(models).length === 0) {
+        if (before) {
+          delete providers[id]
+          log.info("devices-gone", { providerID: id })
+        }
+      } else if (before) {
+        // Same object so holders of the provider map see the change.
+        before.models = models
+        before.token = dp.token
+        before.options = { ...before.options, baseURL: dp.base_url }
+      } else {
+        providers[id] = {
+          id,
+          name: dp.name,
+          source: "custom",
+          env: [],
+          auth_type: dp.auth_type,
+          token: dp.token,
+          options: { baseURL: dp.base_url },
+          models,
+        }
+        log.info("devices-found", { providerID: id, models: Object.keys(models).length })
+      }
+      // Cached language models hold the old token; drop them.
+      for (const key of languages.keys()) if (key.startsWith(`${id}/`)) languages.delete(key)
+    }
+
+    const refresh = (timeoutMs?: number): Promise<void> => {
+      running ??= scanAllternitDevices(timeoutMs)
+        .then((dp) => {
+          lastFailed = false
+          apply(dp)
+        })
+        .catch(() => {
+          lastFailed = true
+        })
+        .finally(() => {
+          lastAt = Date.now()
+          running = undefined
+        })
+      return running
+    }
+
+    const timer = setInterval(() => void refresh(), DEVICES_RESCAN_MS)
+    timer.unref?.()
+
+    return {
+      refresh,
+      async refreshIfStale() {
+        // Don't hold `GET /provider` on a slow background scan.
+        if (running)
+          return Promise.race([running, new Promise<void>((r) => setTimeout(r, DEVICES_ON_LIST_TIMEOUT_MS).unref?.())])
+        if (lastFailed || Date.now() - lastAt < DEVICES_ON_LIST_MAX_AGE_MS) return
+        await refresh(DEVICES_ON_LIST_TIMEOUT_MS)
+      },
+      stop: () => clearInterval(timer),
+    }
+  }
+
+  /**
+   * Re-scan the user's devices (phones serving a model through the cloud
+   * relay). `force` waits for a fresh scan; otherwise only a stale one runs.
+   */
+  export async function refreshAllternitDevices(opts: { force?: boolean } = {}): Promise<void> {
+    const devices = (await state()).devices
+    if (!devices) return
+    await (opts.force ? devices.refresh() : devices.refreshIfStale())
+  }
+
   /** Subscription lanes (web-chat fabric) don't run gizzi's tools or take temperature. */
   function isSubscriptionRuntime(runtime: unknown): boolean {
     return runtime === "fabric"
+  }
+
+  /** Lanes that run no gizzi tools: Subscription Fabric and the person's own plans (chat only). */
+  function isToollessRuntime(runtime: unknown): boolean {
+    return runtime === "fabric" || runtime === PERSON_PLAN_RUNTIME
   }
 
   function discoveredModels(dp: DiscoveredProvider): Record<string, Model> {
@@ -653,12 +835,12 @@ export namespace Provider {
         options: {},
         release_date: "",
         capabilities: {
-          temperature: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          temperature: !isToollessRuntime(dp.options?.["runtime"]),
           reasoning: false,
           attachment: false,
           // Fabric chat runs in the provider's web UI: gizzi's tools cannot be
           // called there. Also keeps these models out of auto-tier picks.
-          toolcall: !isSubscriptionRuntime(dp.options?.["runtime"]),
+          toolcall: !isToollessRuntime(dp.options?.["runtime"]),
           input:  { text: true, audio: false, image: false, video: false, pdf: false },
           // Fabric replies can carry files the provider made (images,
           // decks, documents); they arrive as file parts on the message.
@@ -717,11 +899,18 @@ export namespace Provider {
         const baseURL = loadBaseURL(model, options)
         if (baseURL !== undefined) options["baseURL"] = baseURL
         if (options["apiKey"] === undefined && provider?.key) options["apiKey"] = provider.key
+        if (options["apiKey"] === undefined && provider?.token) options["apiKey"] = provider.token
       }
       if (model.headers)
         options["headers"] = {
           ...options["headers"],
           ...model.headers,
+        }
+      // Lets the Cloud tell Gizzi Code traffic apart in usage reports (client=gizzi-code).
+      if (model.providerID === "allternit")
+        options["headers"] = {
+          ...options["headers"],
+          "X-Allternit-Client": `gizzi-code/${Installation.VERSION}`,
         }
 
       const key = Bun.hash.xxHash32(JSON.stringify({ providerID: model.providerID, npm: model.api.npm, options }))
@@ -853,6 +1042,17 @@ export namespace Provider {
 
   export async function getModel(providerID: string, modelID: string) {
     modelID = stripProviderPrefix(providerID, modelID)
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // A name outside model_map (or a provider this server did not register) fails here, before any network call.
+      const spec = SelfhostInference.spec(selfhost)
+      if (providerID !== spec.id) throw new SelfhostInference.ModelNotMappedError(modelID, SelfhostInference.listed(selfhost))
+      const s = await state()
+      const apiID = SelfhostInference.resolveModel(selfhost, modelID)
+      const provider = s.providers[spec.id]
+      // Own-id passthrough (non-gateway, empty model_map): remember the model on the provider.
+      return (provider.models[modelID] ??= { ...selfhostModel(selfhost, spec, modelID), api: { id: apiID, url: spec.url, npm: spec.npm(apiID) } })
+    }
     const s = await state()
     const provider = s.providers[providerID]
     if (!provider) {
@@ -873,6 +1073,8 @@ export namespace Provider {
   }
 
   export async function getLanguage(model: Model, plan?: AuthPlan): Promise<LanguageModelV2> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) SelfhostInference.resolveModel(selfhost, model.id)
     const s = await state()
     const key = `${model.providerID}/${model.id}`
     if (s.models.has(key)) return s.models.get(key)!
@@ -888,6 +1090,14 @@ export namespace Provider {
         fabricProvider,
         model.api.id,
       ) as unknown as LanguageModelV2
+      s.models.set(key, language)
+      return language
+    }
+
+    // The person's own plans (chatgpt/…, plan/…, copilot-plan/…): chat only,
+    // and only on a turn the person sent (person-plan/language-model.ts).
+    if (provider?.options?.["runtime"] === PERSON_PLAN_RUNTIME || isPersonOnlyProvider(model.providerID)) {
+      const language = new PersonPlanLanguageModel(model.providerID, model.api.id) as unknown as LanguageModelV2
       s.models.set(key, language)
       return language
     }
@@ -925,6 +1135,19 @@ export namespace Provider {
   }
 
   export async function prepareAuth(ref: ModelRef): Promise<AuthPlan> {
+    const selfhost = SelfhostInference.load()
+    if (selfhost) {
+      // Credentials come from the server's inference config only; stored auth, env keys and profiles never apply.
+      const model = await getModel(ref.providerID, ref.modelID)
+      return {
+        providerID: ref.providerID,
+        modelID: ref.modelID,
+        baseURL: model.api.url,
+        authType: "api_key",
+        extraHeaders: {},
+        source: "config",
+      }
+    }
     const [provider, model, cfg] = await Promise.all([
       getProvider(ref.providerID),
       getModel(ref.providerID, ref.modelID).catch(() => undefined),
@@ -988,6 +1211,12 @@ export namespace Provider {
       } else if (provider?.auth_type === "none") {
         plan.source = "none"
         plan.authType = "none"
+      } else if (provider?.token) {
+        // A discovered bearer provider (allternit-devices) or a config `token`
+        // merged onto the provider.
+        plan.source = "discovery"
+        plan.authType = "bearer"
+        plan.token = provider.token
       }
     }
 
@@ -1019,6 +1248,21 @@ export namespace Provider {
         plan.source = "auth"
         plan.authType = "api_key"
         plan.apiKey = stored.key
+      }
+    }
+
+    // 5c. Allternit Cloud: ALLTERNIT_API_TOKEN (the device token Desktop and every
+    // cloud computer hand gizzi) or this runtime's own paired device token. The
+    // provider was loaded with this key, but a turn always carries a plan and the
+    // SDK takes only the plan's key, so without this every Cloud turn on a computer
+    // with no ALLTERNIT_API_KEY (a Platform runtime, a cloud computer) went out
+    // unsigned and failed "Unauthorized". Read fresh: device tokens rotate.
+    if (!plan.source && ref.providerID === "allternit") {
+      const token = await cloudInferenceToken()
+      if (token) {
+        plan.source = "env"
+        plan.authType = "api_key"
+        plan.apiKey = token
       }
     }
 
@@ -1133,6 +1377,15 @@ export namespace Provider {
   /** Subscription Fabric models run only on a human send (D16): never pick one automatically. */
   export function isFabricModel(model: { providerID: string }): boolean {
     return isFabricProviderID(model.providerID)
+  }
+
+  /**
+   * Models that run only on the person's own send: Subscription Fabric (D16)
+   * and the person's plans (chatgpt/…, plan/…, copilot-plan/…). Never picked
+   * for a title, a summary, a small model or any other helper call.
+   */
+  export function isHumanSendOnly(model: { providerID: string }): boolean {
+    return isFabricProviderID(model.providerID) || isPersonOnlyProvider(model.providerID)
   }
 
   export async function getSmallModel(providerID: string) {

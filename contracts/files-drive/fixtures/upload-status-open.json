@@ -1,0 +1,17 @@
+{
+  "type": "UploadStatus",
+  "valid": true,
+  "case": "Chunked upload: computer already has chunk 1 (dedup), needs 2 and 3.",
+  "message": {
+    "session_id": "up_5512",
+    "state": "open",
+    "need": [
+      "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ],
+    "received_bytes": 1310720,
+    "total_bytes": 4252872,
+    "expires_at": "2026-11-16T14:05:00Z",
+    "max_request_bytes": 5242880
+  }
+}

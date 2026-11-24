@@ -104,6 +104,15 @@ func setupWithTimeout<T: Sendable>(_ seconds: Double, _ operation: @escaping @Se
 struct SetupModelRow: Sendable, Equatable, Identifiable {
     let id: String
     let name: String
+    /// Catalog fields of an Allternit Cloud row (`/v1/models`); nil/false elsewhere.
+    var provider: String? = nil
+    var isDefault: Bool = false
+    var isHidden: Bool = false
+    /// "standard" or "open" (the open lane has its own terms screen, D14).
+    var lane: String? = nil
+    /// Retail price per 1M tokens (`pricing`, D11), when the server sends it.
+    var inputPer1mUsd: Double? = nil
+    var outputPer1mUsd: Double? = nil
 }
 
 struct SetupProviderAuth: Sendable, Equatable {
@@ -333,10 +342,24 @@ enum SetupAPI {
         guard let (data, response) = try? await URLSession.shared.data(from: url),
               let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
               let json = try? JSONDecoder().decode(JSONValue.self, from: data) else { return [] }
-        return (json.at("data")?.jArray ?? []).compactMap { item in
+        return cloudModelRows(json)
+    }
+
+    /// Rows of a `/v1/models` body, every catalog field optional.
+    static func cloudModelRows(_ json: JSONValue) -> [SetupModelRow] {
+        (json.at("data")?.jArray ?? []).compactMap { item in
             guard let id = item.at("id")?.jString?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return nil }
             let name = item.at("name")?.jString ?? item.at("extra")?.at("name")?.jString ?? id
-            return SetupModelRow(id: id, name: name.isEmpty ? id : name)
+            return SetupModelRow(
+                id: id,
+                name: name.isEmpty ? id : name,
+                provider: item.at("provider")?.jString ?? item.at("owned_by")?.jString,
+                isDefault: item.at("default")?.jBool == true,
+                isHidden: item.at("hidden")?.jBool == true,
+                lane: item.at("lane")?.jString,
+                inputPer1mUsd: item.at("pricing")?.at("input_per_1m_usd")?.setupNumber,
+                outputPer1mUsd: item.at("pricing")?.at("output_per_1m_usd")?.setupNumber
+            )
         }
     }
 

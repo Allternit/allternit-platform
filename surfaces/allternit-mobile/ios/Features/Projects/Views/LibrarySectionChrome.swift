@@ -13,7 +13,7 @@ typealias LibraryLayout = OverviewLayout
 /// Opens the shell drawer with the shell's spring.
 @MainActor
 func openLibraryDrawer(_ isSidebarOpen: Binding<Bool>) {
-    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    Haptics.medium()
     withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
         isSidebarOpen.wrappedValue = true
     }
@@ -74,7 +74,8 @@ struct LibrarySectionHeader<Filter: View>: View {
                     .padding(.horizontal, 56)
             }
             HStack {
-                LibraryRoundButton(icon: "line.3.horizontal", label: "Open menu", action: onMenu)
+                // Tap opens the drawer; hold fans the modes out (step 24).
+                PhoneMenuButton(round: true, onOpen: onMenu)
                 Spacer()
                 filter()
             }
@@ -91,15 +92,7 @@ struct LibraryPlainHeader: View {
 
     var body: some View {
         HStack {
-            Button(action: onMenu) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open menu")
+            PhoneMenuButton(onOpen: onMenu)
             Spacer()
         }
         .frame(height: 52)

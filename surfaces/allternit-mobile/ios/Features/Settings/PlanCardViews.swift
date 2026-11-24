@@ -163,48 +163,98 @@ struct PlanTicketView: View {
     }
 }
 
-/// Settings → Usage: one card per connected account that reports a plan or
-/// limit windows, with its ring, plan and
-/// windows (`/api/v1/providers/:id/quota`), plus Allternit Cloud's allowance.
+/// Settings → Usage → Connected accounts: the Allternit Cloud card (its
+/// monthly window is also the top of the page; the card stays, as on the
+/// web) and one card per connected account that reports a plan or limit
+/// windows (`/api/v1/providers/:id/quota`), each with its ring, plan and
+/// every window as a bar with its reset (5-hour and weekly where the
+/// provider reports them). Accounts closest to a limit first; Cloud leads
+/// ties. A provider whose read fails (no computer, a gate refusal) has no
+/// card; with no card at all the section says so in one line.
 struct AccountUsageCardsView: View {
     @ObservedObject private var quotas = ProviderQuotaStore.shared
     @ObservedObject private var usage = UsageStore.shared
     @ObservedObject private var models = ModelStore.shared
+    @ObservedObject private var auth = AuthManager.shared
 
     private var providerIds: [String] {
+        // The person's own plans (Claude, ChatGPT, Copilot …) and the
+        // computer's providers, as in the model picker; local ones have no
+        // limits.
         var ids = ["allternit"]
-        for m in models.models where !ids.contains(m.provider) && ModelProviderNames.rank(m.provider) != 2 { ids.append(m.provider) }
+        for m in models.chatModels where !ids.contains(m.provider) && ModelProviderNames.rank(m.provider) != 2 { ids.append(m.provider) }
+        #if DEBUG
+        for id in SampleUsage.accountProviderIds where !ids.contains(id) { ids.append(id) }
+        #endif
         return ids
     }
 
+    private func windows(_ pid: String) -> [ProviderLimitWindow] {
+        pid == "allternit" ? cloudUsageWindows(usage.snapshot) : (quotas.byProvider[pid]?.windows ?? [])
+    }
+
     private func hasSomethingToShow(_ pid: String) -> Bool {
-        if pid == "allternit" { return true }
+        if pid == "allternit" { return auth.isSignedIn }
         guard let q = quotas.byProvider[pid] else { return false }
         return q.plan != nil || !q.windows.isEmpty
     }
 
+    /// Cards to show, closest to a limit first (stable, so Cloud leads ties).
+    private var shown: [String] {
+        providerIds.filter(hasSomethingToShow).enumerated()
+            .sorted { a, b in
+                let ra = worstUsageWindow(windows(a.element))?.usedRatio ?? -1
+                let rb = worstUsageWindow(windows(b.element))?.usedRatio ?? -1
+                return ra != rb ? ra > rb : a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    private var isLoading: Bool {
+        models.isLoading || !quotas.pending.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 10) {
-            // A card only when the account has something to show: a plan or a limit window.
-            ForEach(providerIds.filter(hasSomethingToShow), id: \.self) { pid in
-                card(pid)
+            let cards = shown
+            if cards.isEmpty {
+                if isLoading {
+                    card("allternit", placeholder: true)
+                        .redacted(reason: .placeholder)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Loading connected accounts")
+                } else {
+                    UsageCard {
+                        UsageNote(text: "No connected account reports usage. Subscriptions and API keys you connect show their limits here.")
+                    }
+                }
+            } else {
+                ForEach(cards, id: \.self) { pid in
+                    card(pid)
+                }
             }
         }
         .onAppear {
             models.fetchModelsIfNeeded()
-            quotas.load(providerIds)
+            // Plans connect on cloud-api: their rows fill `personModels`.
+            Task { if !ConnectionsStore.shared.loaded { await ConnectionsStore.shared.load() } }
         }
+        // The model list loads after the page opens: read each account's
+        // limits as soon as it is known, not only on first appear.
+        .task(id: providerIds) { quotas.load(providerIds) }
     }
 
-    private func card(_ pid: String) -> some View {
-        let windows = pid == "allternit" ? [ProviderQuotaStore.cloudWindow()].compactMap { $0 } : (quotas.byProvider[pid]?.windows ?? [])
-        let sorted = windows.sorted { $0.usedRatio > $1.usedRatio }
+    private func card(_ pid: String, placeholder: Bool = false) -> some View {
+        let rows = placeholder
+            ? [ProviderLimitWindow(id: "5h", label: "5-hour", usedRatio: 0.4, resetAt: nil)]
+            : sortUsageWindows(windows(pid))
+        let byUse = rows.sorted { $0.usedRatio > $1.usedRatio }
         let plan = pid == "allternit" ? usage.planLabel : quotas.byProvider[pid]?.plan
         return HStack(alignment: .top, spacing: 12) {
-            LimitRingView(window: sorted.first, inner: sorted.count > 1 ? sorted[1] : nil, size: 54) {
+            LimitRingView(window: byUse.first, inner: byUse.count > 1 ? byUse[1] : nil, size: 54) {
                 ModelProviderMark(providerId: pid, size: 22)
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(ModelProviderNames.name(pid)).font(.system(size: 14.5, weight: .semibold)).foregroundColor(Color("TextPrimary"))
                     if let plan {
@@ -213,24 +263,17 @@ struct AccountUsageCardsView: View {
                             .background(Color("FillNeutral"), in: Capsule())
                     }
                 }
-                if windows.isEmpty {
+                if rows.isEmpty {
                     Text("This account doesn't report limits.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                        .padding(.top, 4)
                 }
-                ForEach(windows) { w in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(w.displayLabel).font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
-                            Spacer()
-                            Text("\(Int((w.usedRatio * 100).rounded()))%\(w.resetDate.map { " · resets " + $0.formatted(.dateTime.weekday().hour().minute()) } ?? "")")
-                                .font(.system(size: 12)).foregroundColor(Color("TextPrimary")).monospacedDigit()
-                        }
-                        ProgressView(value: w.usedRatio).tint(LimitRingView<EmptyView>.color(w.usedRatio))
-                    }
+                ForEach(rows) { w in
+                    UsageWindowBar(label: usageWindowTitle(w), fraction: w.usedRatio, reset: usageResetsText(w.resetDate), compact: true)
                 }
             }
         }
         .padding(12)
-        .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
     }
 }

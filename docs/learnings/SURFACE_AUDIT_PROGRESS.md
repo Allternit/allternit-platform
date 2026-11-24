@@ -124,7 +124,6 @@ Living checklist for the 121 actionable items (83 GAP + 38 PARTIAL) from `docs/l
 - [ ] **Marketplace (top-level)** _(`PARTIAL` → iOS)_
 - [ ] **Plugin Registry / Plugin Marketplace (480-file built-in catalog)** _(`PARTIAL` → iOS)_
 - [ ] **Team Skills panel (org-level shared skills)** _(`GAP` → iOS)_
-- [ ] **MiroFish simulation engine** _(`GAP` → iOS, gizzi-code)_ — A genuinely distinct product feature with no equivalent elsewhere; no fundamental blocker to at least a text-based CLI version.
 
 ## Products/Discovery
 

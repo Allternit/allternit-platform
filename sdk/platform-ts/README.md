@@ -75,12 +75,52 @@ for await (const agent of client.agents.listAll()) { … }     // every agent, p
 
 `new AllternitPlatform({ apiKey, baseUrl, timeout, defaultHeaders, fetch })`. Every method takes a last `options` argument: `{ idempotencyKey, signal, timeout, headers, query }`.
 
+## Self-hosted Agents Server
+
+`SelfHostClient` talks to an Agents Server you run yourself (`allternit-agents-server`, private beta). It makes no calls to `*.allternit.com`. Its resources are generated from `cmd/allternit-api/openapi/selfhost-v1.yaml`; import them from `@allternit/platform/selfhost` (the package root exports only `SelfHostClient`, `runCustomToolWorker`, `isTurnEnd` and the `selfhost` namespace, because the generated names overlap with the Platform ones).
+
+```ts
+import { SelfHostClient, isTurnEnd } from "@allternit/platform";
+
+const client = new SelfHostClient(); // ALLTERNIT_SERVER_URL (default http://127.0.0.1:8400) + ALLTERNIT_SERVER_API_KEY (ask_…)
+const agent = await client.agents.create({ name: "Helper", model: process.env.ALLTERNIT_MODEL! });
+const env = await client.environments.create({ name: "default", network: "none" });
+const session = await client.sessions.create({ agent_id: agent.id, environment_id: env.id });
+const sent = await client.sessions.sendMessage(session.id, { content: "Hello" });
+for await (const ev of client.sessions.streamEvents(session.id, { afterSeq: sent.seq, until: isTurnEnd })) {
+  console.log(ev.type, ev.data);
+}
+```
+
+`streamEvents` reconnects with `Last-Event-ID` after a dropped connection. Full script: `examples/selfhost-session.ts`.
+
+### Custom-tool worker
+
+`runCustomToolWorker` claims work for one environment with an environment key (`aek_…`), renews the lease every 20 seconds, takes tool calls with the per-session secret, runs your handler and posts the result (cut to 100 KiB). A stale lease stops the item without posting; aborting `signal` hands the item back with `/release`. Built-in sandbox tools (bash, file edits) are run by `gizzi worker`, so give agents with custom tools their own environment.
+
+```ts
+import { runCustomToolWorker } from "@allternit/platform";
+
+await runCustomToolWorker({
+  environmentId: "env_…",
+  environmentKey: process.env.ALLTERNIT_ENVIRONMENT_KEY,
+  tools: { lookup_order: async (input) => ({ id: input.order_id, status: "shipped" }) },
+});
+```
+
+Protocol: `docs/SELFHOST_WORKER_PROTOCOL.md`. Docs: https://docs.allternit.com/self-hosted/sdks
+
 ## Regenerate and test
 
 ```bash
 python3 scripts/platform-sdk/generate.py           # from the repo root, after editing platform-v1.yaml
 python3 scripts/platform-sdk/generate.py --check   # fails if the generated code is stale
+python3 scripts/platform-sdk/generate.py \
+  --spec cmd/allternit-api/openapi/selfhost-v1.yaml \
+  --out sdk/platform-ts/src/selfhost \
+  --out-py sdk/platform-python/allternit_platform/_selfhost_generated.py \
+  --client-name SelfHostClient   # self-hosted client
 cd sdk/platform-ts && node --test test/*.test.ts   # Node 22.6+ (runs the .ts sources directly)
 ```
 
-`src/generated/` is generated; edit `src/client.ts`, `src/core.ts` and `src/errors.ts` by hand.
+`src/generated/` and `src/selfhost/{types,operations}.ts` are generated; edit `src/selfhost/{client,worker,index}.ts`, `src/client.ts`, `src/core.ts` and `src/errors.ts` by hand.

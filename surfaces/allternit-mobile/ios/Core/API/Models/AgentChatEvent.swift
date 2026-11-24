@@ -10,6 +10,8 @@ import Foundation
 //   {"type":"message_start", messageId, modelId, runtimeModelId}
 //   {"type":"content_block_delta", messageId, partId, delta:{type:"text_delta", text}}
 //   {"type":"finish", messageId, status:"complete"|"error", metadata:{status, error?}}
+//   {"type":"tool_result", toolCallId, toolName, result, metadata?}  — metadata
+//     only for card tools (send_user_message, lookup: `{kind, card?, credit?}`)
 //
 // Additional frames TOLERATED (mirroring the web parser,
 // native-agent-api.ts:661-807, which accepts them for other Gizzi daemon
@@ -57,6 +59,10 @@ enum AgentChatEvent: Decodable, Sendable {
     /// `error` comes from `metadata.error` (v1_routes.rs:267-309).
     case finish(Finish)
 
+    /// `{"type":"session_status","status":{"type":"busy","phase","note"}}`:
+    /// the run's one-line status. `busy == false` (idle) clears it.
+    case sessionStatus(SessionStatus)
+
     /// Non-terminal error (`{"type":"error"}` or `chunk_type:"error"`).
     /// Note: the web surfaces `chunk_type:"error"` chunks as plain message
     /// text via its blanket `onChunk` call; we map them here instead (see
@@ -70,12 +76,27 @@ enum AgentChatEvent: Decodable, Sendable {
     /// Answered in place from the message's question card.
     case question(AgentQuestionRequest)
 
+    /// A question was answered or dismissed (`question.replied` /
+    /// `question.rejected`, payload `{sessionID, requestID}`).
+    case questionClosed(requestID: String)
+
     /// The agent is waiting on a permission (session-worker `permission.asked`).
     /// The tool calls rail draws Deny / Allow on the matching tool row.
     case permissionAsked(AgentPermissionAsk)
 
+    /// `{"type":"control",language?,speed?,reply_mode?,end_call?}`: a voice_control
+    /// tool part asked the voice session to change.
+    case control(VoiceControl)
+
     /// Known-but-unrendered or unknown frame — parser tolerance.
     case ignored
+
+    struct VoiceControl: Sendable, Equatable {
+        var language: String? = nil
+        var speed: Double? = nil
+        var replyMode: String? = nil
+        var endCall: Bool = false
+    }
 
     struct MessageStart: Decodable, Sendable {
         let messageId: String?
@@ -100,6 +121,19 @@ enum AgentChatEvent: Decodable, Sendable {
         var finishedAt: Date? = nil
         /// The tool's result text (the message_agent delivery receipt is read from it).
         var output: String? = nil
+        /// send_user_message: the message card (the tool part's `metadata`).
+        var userMessage: AgentUserMessage? = nil
+        /// automation: the scheduled-task card (the tool part's `metadata`).
+        var automation: AgentAutomationResult? = nil
+        /// lookup: the answer card from the tool part's `metadata.card`.
+        var lookupCard: AnswerCardEnvelope? = nil
+        /// worktree_enter/exit, second_opinion, pr_comments, status_update,
+        /// feedback_note, user_location, voice_control, end_conversation:
+        /// the tool part's `metadata` (gizzi runtime/primitives/gap-types.ts).
+        var gap: GapToolMetadata? = nil
+        /// The tool part's `metadata` object as raw JSON text (connector_suggest
+        /// and settings cards ride there; v1_routes.rs METADATA_CARD_TOOLS).
+        var metadata: String? = nil
     }
 
     struct ToolCall: Sendable {
@@ -108,10 +142,23 @@ enum AgentChatEvent: Decodable, Sendable {
         var detail: ToolDetail? = nil
     }
 
+    struct SessionStatus: Sendable, Equatable {
+        var busy: Bool
+        var phase: String? = nil
+        var note: String? = nil
+        /// "phase - note", or nil when neither is set.
+        var line: String? {
+            let text = [phase, note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{2014} ")
+            return text.isEmpty ? nil : text
+        }
+    }
+
     struct ToolResult: Sendable {
         let toolCallId: String
         let toolName: String
         var detail: ToolDetail? = nil
+        /// run_code: produced files + run summary (top-level `files` / `run`).
+        var runCode: RunCodeResult? = nil
     }
 
     struct ToolError: Sendable {
@@ -134,6 +181,22 @@ enum AgentChatEvent: Decodable, Sendable {
             let status: String?
             let error: String?
             let errorDetails: ErrorDetails?
+            /// Memories the reply used or changed. The v1 stream does not send
+            /// this today (history does); decoded so a frame that carries it
+            /// shows the chip live. A bad entry is dropped, never the frame.
+            let memoryRefs: [MemoryRef]?
+
+            private enum CodingKeys: String, CodingKey {
+                case status, error, errorDetails, memoryRefs
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                status = try? c.decodeIfPresent(String.self, forKey: .status)
+                error = try? c.decodeIfPresent(String.self, forKey: .error)
+                errorDetails = try? c.decodeIfPresent(ErrorDetails.self, forKey: .errorDetails)
+                memoryRefs = (try? c.decodeIfPresent(LossyArray<MemoryRef>.self, forKey: .memoryRefs))??.elements
+            }
         }
 
         let messageId: String?
@@ -184,7 +247,16 @@ enum AgentChatEvent: Decodable, Sendable {
         case status, metadata
         // artifact
         case artifactId, id, kind, title, url, content
+        // tool_result: the tool's output text (v1_routes.rs `result`)
+        case result
+        // connector_suggest / settings tool results
+        case output
     }
+
+    /// Tools whose live card reads the result text (history reads it from
+    /// the part): browser_tasks → task cards, capture_screen_context → the
+    /// "Looked at your screen" chip.
+    static let resultCardTools: Set<String> = ["browser_tasks", "capture_screen_context"]
 
     private struct DeltaPayload: Decodable {
         let type: String?
@@ -270,9 +342,57 @@ enum AgentChatEvent: Decodable, Sendable {
             }
 
         case "tool_result":
+            let toolName = try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool"
+            // send_user_message: the card, when the frame carries the part's `metadata`.
+            let userMessage = toolName == AgentUserMessage.toolName
+                ? ((try? container.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil)
+                : nil
+            // automation: the scheduled-task card, from the same `metadata`.
+            let automation = toolName == AgentAutomationResult.toolName
+                ? ((try? container.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil)
+                : nil
+            // lookup: the fact card (`metadata.card`), drawn under the reply.
+            let lookupCard = toolName == LookupToolMetadata.toolName
+                ? ((try? container.decodeIfPresent(LookupToolMetadata.self, forKey: .metadata)) ?? nil)?.card
+                : nil
+            // Gap tools: the `*Metadata` object (all fields optional).
+            let gap = GapToolMetadata.isGapTool(toolName)
+                ? ((try? container.decodeIfPresent(GapToolMetadata.self, forKey: .metadata)) ?? nil)
+                : nil
+            // `metadata.label`: the model's own short title for this call.
+            struct LabelMeta: Decodable { let label: String? }
+            let label = ((try? container.decodeIfPresent(LabelMeta.self, forKey: .metadata)) ?? nil)?.label?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            var detail: ToolDetail? = nil
+            if userMessage != nil || automation != nil || lookupCard != nil || gap != nil {
+                detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard, gap: gap)
+            }
+            if let label, !label.isEmpty {
+                detail = detail ?? ToolDetail()
+                detail?.title = label
+            }
+            if Self.resultCardTools.contains(toolName),
+               let result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? nil {
+                detail = detail ?? ToolDetail()
+                detail?.output = result
+            }
+            // The part's `metadata` as raw JSON (connector_suggest and settings
+            // cards read it; v1_routes.rs METADATA_CARD_TOOLS). The card tools
+            // also keep their result text as a fallback.
+            let metadata = AgentToolCards.jsonText((try? container.decodeIfPresent(AnyCodable.self, forKey: .metadata)) ?? nil)
+            let cardOutput = AgentToolCards.isCardTool(toolName)
+                ? ((try? container.decodeIfPresent(String.self, forKey: .output)) ?? nil)
+                : nil
+            if cardOutput != nil || metadata != nil {
+                detail = detail ?? ToolDetail()
+                if detail?.output == nil { detail?.output = cardOutput }
+                detail?.metadata = metadata
+            }
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
-                toolName: try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool"
+                toolName: toolName,
+                detail: detail,
+                runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
 
         case "tool_error":
@@ -281,6 +401,25 @@ enum AgentChatEvent: Decodable, Sendable {
                 toolName: try container.decodeIfPresent(String.self, forKey: .toolName),
                 error: try container.decodeIfPresent(String.self, forKey: .error) ?? "Tool execution failed"
             ))
+
+        case "session_status":
+            struct StatusBody: Decodable { let type: String?; let phase: String?; let note: String? }
+            let body = (try? container.decodeIfPresent(StatusBody.self, forKey: .status)) ?? nil
+            self = .sessionStatus(SessionStatus(
+                busy: body?.type == "busy",
+                phase: body?.phase,
+                note: body?.note
+            ))
+
+        case "control":
+            struct ControlBody: Decodable {
+                let language: String?; let speed: Double?
+                let replyMode: String?; let endCall: Bool?
+                enum CodingKeys: String, CodingKey { case language, speed, replyMode = "reply_mode", endCall = "end_call" }
+            }
+            let body = try ControlBody(from: decoder)
+            self = .control(VoiceControl(language: body.language, speed: body.speed,
+                                         replyMode: body.replyMode, endCall: body.endCall ?? false))
 
         case "finish":
             self = .finish(try Finish(from: decoder))
@@ -296,6 +435,24 @@ enum AgentChatEvent: Decodable, Sendable {
         case "artifact", "artifact.created", "artifact-created":
             if let artifact = Self.decodeArtifact(container) {
                 self = .artifact(artifact)
+            } else {
+                self = .ignored
+            }
+
+        case "question.asked":
+            struct Envelope: Decodable { let properties: AgentQuestionRequest? }
+            if let req = (try? Envelope(from: decoder).properties) ?? (try? AgentQuestionRequest(from: decoder)) {
+                self = .question(req)
+            } else {
+                self = .ignored
+            }
+
+        case "question.replied", "question.rejected":
+            struct Ids: Decodable { let requestID: String? }
+            struct Envelope: Decodable { let properties: Ids? }
+            if let id = ((try? Envelope(from: decoder).properties?.requestID) ?? nil)
+                ?? (try? Ids(from: decoder).requestID) ?? nil {
+                self = .questionClosed(requestID: id)
             } else {
                 self = .ignored
             }
@@ -380,4 +537,410 @@ enum AgentChatEvent: Decodable, Sendable {
         "image", "svg", "mermaid", "jsx", "html", "document",
         "slides", "sheet", "audio", "video", "podcast"
     ]
+}
+
+// MARK: - connector_suggest and settings cards (Primitives Wave D, D2)
+
+/// Reads the card data of the `connector_suggest` and `settings` tools. The
+/// card rides in the tool part's `metadata` (ToolCallRecord.metadata: live
+/// agent-chat frames, session-worker parts and reloaded chats); the tool's
+/// own result text (`output`, gizzi runtime/tools/builtins/connector.ts and
+/// settings.ts) is the fallback for runtimes that don't send metadata.
+enum AgentToolCards {
+    static func isCardTool(_ name: String) -> Bool {
+        let n = ToolDescriber.normalized(name)
+        return n == "connectorsuggest" || n == "settings"
+    }
+
+    static func json(_ output: String?) -> [String: Any]? {
+        guard let output, let data = output.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    static func string(_ value: Any?) -> String? {
+        guard let s = value as? String else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    /// A decoded `metadata` object as raw JSON text; nil when it isn't an object.
+    static func jsonText(_ value: AnyCodable?) -> String? {
+        guard let object = value?.value as? [String: Any] else { return nil }
+        let clean = plain(object)
+        guard JSONSerialization.isValidJSONObject(clean),
+              let data = try? JSONSerialization.data(withJSONObject: clean) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// AnyCodable keeps JSON null as a sentinel; JSONSerialization needs NSNull.
+    private static func plain(_ value: Any) -> Any {
+        switch value {
+        case let d as [String: Any]: return d.mapValues(plain)
+        case let a as [Any]: return a.map(plain)
+        case is String, is Bool, is Int, is Double, is NSNumber: return value
+        default: return NSNull()
+        }
+    }
+
+    /// The card's JSON: the metadata when it has the card, else the result text.
+    static func source(metadata: String?, output: String?, has: ([String: Any]) -> Bool) -> [String: Any]? {
+        if let meta = json(metadata), has(meta) { return meta }
+        return json(output)
+    }
+}
+
+/// What `connector_suggest` offered (gizzi primitives/connectors.ts
+/// `SuggestCard`, carried as metadata `card`: `{type: "connector_suggest",
+/// connectors: [{id, name, group}], reason}`; `state` is connected |
+/// available | unavailable when present). No link, code or token, ever: the
+/// user's tap connects through the app's own Connect flow.
+struct AgentConnectorSuggestion: Equatable, Sendable {
+    struct Connector: Equatable, Sendable, Identifiable {
+        let id: String
+        let name: String
+        let group: String?
+        /// "connected", "available" or "unavailable"; nil when not sent.
+        let state: String?
+    }
+
+    let connectors: [Connector]
+    let reason: String?
+
+    static func isTool(_ name: String) -> Bool { ToolDescriber.normalized(name) == "connectorsuggest" }
+
+    /// `metadata` is the part's metadata (`{shown, reason, card}`); `output`
+    /// the tool's result text (`{shown, dropped?}`), the fallback; `input` is
+    /// the call's string input (`reason`), `title` the call title
+    /// ("Suggested Gmail, Slack").
+    static func parse(
+        toolName: String, metadata: String? = nil, output: String?, input: [String: String] = [:], title: String? = nil
+    ) -> AgentConnectorSuggestion? {
+        guard isTool(toolName),
+              let json = AgentToolCards.source(metadata: metadata, output: output, has: { $0["card"] is [String: Any] })
+        else { return nil }
+        let card = (json["card"] as? [String: Any]) ?? json
+        var connectors: [Connector] = []
+        if let list = card["connectors"] as? [[String: Any]] {
+            connectors = list.compactMap { item in
+                guard let id = AgentToolCards.string(item["id"]) else { return nil }
+                return Connector(
+                    id: id,
+                    name: AgentToolCards.string(item["name"]) ?? ConnectionsCatalog.entry(id)?.name ?? id,
+                    group: AgentToolCards.string(item["group"]),
+                    state: AgentToolCards.string(item["state"])
+                )
+            }
+        }
+        if connectors.isEmpty {
+            // The tool's own result: ids only. Names come from the call title,
+            // in the same order, else the app's catalog, else the id.
+            let ids = ((json["ids"] as? [String]) ?? (json["shown"] as? [String]) ?? []).filter { !$0.isEmpty }
+            var names: [String] = []
+            if let title, title.hasPrefix("Suggested ") {
+                names = title.dropFirst("Suggested ".count).components(separatedBy: ", ")
+            }
+            connectors = ids.enumerated().map { i, id in
+                let name = names.count == ids.count ? names[i] : (ConnectionsCatalog.entry(id)?.name ?? id)
+                return Connector(id: id, name: name, group: nil, state: nil)
+            }
+        }
+        guard !connectors.isEmpty else { return nil }
+        let reason = AgentToolCards.string(card["reason"]) ?? AgentToolCards.string(json["reason"]) ?? AgentToolCards.string(input["reason"])
+        return AgentConnectorSuggestion(connectors: connectors, reason: reason)
+    }
+}
+
+/// A setting's value as the `settings` tool reports it.
+enum AgentSettingValue: Equatable, Sendable {
+    case bool(Bool)
+    case string(String)
+    case number(Double)
+    case list([String])
+
+    init?(json: Any?) {
+        switch json {
+        case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): self = .bool(n.boolValue)
+        case let b as Bool: self = .bool(b)
+        case let n as NSNumber: self = .number(n.doubleValue)
+        case let s as String: self = .string(s)
+        case let a as [Any]: self = .list(a.compactMap { $0 as? String })
+        default: return nil
+        }
+    }
+
+    /// What the card says: "On", "Off", "Dark", "a, b".
+    var display: String {
+        switch self {
+        case .bool(let b): return b ? "On" : "Off"
+        case .string(let s):
+            guard let first = s.first else { return "Empty" }
+            return first.uppercased() + s.dropFirst().replacingOccurrences(of: "_", with: " ")
+        case .number(let d): return d.rounded() == d ? String(Int(d)) : String(d)
+        case .list(let l): return l.isEmpty ? "None" : l.joined(separator: ", ")
+        }
+    }
+
+    var boolValue: Bool? {
+        switch self {
+        case .bool(let b): return b
+        case .string(let s):
+            switch s.lowercased() {
+            case "true", "on": return true
+            case "false", "off": return false
+            default: return nil
+            }
+        default: return nil
+        }
+    }
+
+    var stringValue: String? {
+        if case .string(let s) = self { return s }
+        return nil
+    }
+}
+
+/// What a `settings` write did, one row per change (gizzi
+/// primitives/settings.ts `ChangeResult`; allternit-api
+/// `/bot-routing/settings/write`): `{key, outcome, label?, scope?, value?,
+/// previous?, reason?, code?, settings_path?}`. Scopes: account (the server
+/// applies it), device (the app that sent the turn), runtime (gizzi.* keys,
+/// Gizzi Code applies them). Keys and labels: contracts/settings/definitions.json.
+struct AgentSettingsResult: Equatable, Sendable {
+    enum Status: String, Sendable {
+        case applied
+        case applyOnDevice = "apply_on_device"
+        case needsConfirmation = "needs_confirmation"
+        case locked
+        case invalid
+    }
+
+    enum Scope: String, Sendable {
+        case account
+        case device
+        case runtime
+    }
+
+    struct Change: Equatable, Sendable, Identifiable {
+        let key: String
+        let label: String
+        /// Nil when the result didn't say; runtime keys (gizzi.*) are Gizzi Code's.
+        var scope: Scope? = nil
+        let value: AgentSettingValue?
+        let previous: AgentSettingValue?
+        let status: Status
+        /// The Settings screen (`settings/<section>`) or a link.
+        let link: String?
+        let reason: String?
+        var id: String { key }
+    }
+
+    let changes: [Change]
+
+    static func isTool(_ name: String) -> Bool { ToolDescriber.normalized(name) == "settings" }
+
+    /// `metadata` is the part's metadata (`{action, toolCallId, changes}`);
+    /// `output` the tool's result text (`{action, changes}`), the fallback.
+    static func parse(toolName: String, metadata: String? = nil, output: String?) -> AgentSettingsResult? {
+        guard isTool(toolName),
+              let json = AgentToolCards.source(metadata: metadata, output: output, has: { $0["changes"] is [[String: Any]] }),
+              json["action"] as? String != "read",
+              let list = json["changes"] as? [[String: Any]] else { return nil }
+        let changes: [Change] = list.compactMap { item in
+            guard let key = AgentToolCards.string(item["key"]),
+                  let raw = AgentToolCards.string(item["outcome"]),
+                  let status = Status(rawValue: raw) else { return nil }
+            return Change(
+                key: key,
+                label: AgentToolCards.string(item["label"]) ?? labels[key] ?? key,
+                scope: AgentToolCards.string(item["scope"]).flatMap(Scope.init(rawValue:))
+                    ?? (key.hasPrefix("gizzi.") ? .runtime : nil),
+                value: AgentSettingValue(json: item["value"]),
+                previous: AgentSettingValue(json: item["previous"]),
+                status: status,
+                link: AgentToolCards.string(item["settings_path"]),
+                reason: AgentToolCards.string(item["reason"])
+            )
+        }
+        return changes.isEmpty ? nil : AgentSettingsResult(changes: changes)
+    }
+
+    /// Labels from contracts/settings/definitions.json, for results that
+    /// carry only the key.
+    static let labels: [String: String] = [
+        "appearance.theme": "Theme",
+        "appearance.chat_font": "Chat font",
+        "appearance.reduce_motion": "Reduce motion",
+        "notifications.response": "Notify when a reply is ready",
+        "notifications.approvals": "Notify when an approval is needed",
+        "notifications.scheduled": "Notify about scheduled tasks",
+        "notifications.handoffs": "Notify about handoffs",
+        "notifications.sound": "Notification sound",
+        "chat.answer_style": "Answer style",
+        "browser.preferred": "Browser for agents",
+        "browser.open_links_in_app": "Open links in the app",
+        "gizzi.tui_theme": "Terminal theme",
+        "gizzi.model": "Model",
+        "gizzi.verbose": "Verbose output",
+        "instructions.global": "Global instructions",
+        "instructions.custom": "Custom instructions",
+        "memory.capture.channels": "Remember from channels",
+        "memory.capture.gizzi": "Remember from Gizzi Code",
+        "memory.capture.agent_folders": "Remember from agent folders",
+        "memory.capture.vendors": "Remember from assistant logins",
+        "memory.dreaming": "Memory dreaming",
+        "security.require_trusted_devices": "Require trusted devices",
+        "files.trusted_folders": "Trusted folders",
+        "browser.allowed_sites": "Allowed sites",
+        "gizzi.permission_mode": "Permission mode",
+        "account.plan": "Plan",
+        "account.billing": "Billing",
+        "account.email": "Email",
+        "account.password": "Password",
+        "account.keys": "API keys",
+    ]
+}
+
+// MARK: - Gap tools (worktree, second opinion, PR comments, status, feedback, location, voice, end chat)
+
+/// The result `metadata` of the nine prompt-gap tools, one union of the
+/// `*Metadata` schemas in gizzi runtime/primitives/gap-types.ts. Every field
+/// is optional, so a runtime that sends fewer fields still decodes. G4-G7
+/// fill in the cards that read it.
+struct PrCommentItem: Decodable, Equatable, Sendable {
+    var id: String? = nil
+    var author: String? = nil
+    var body: String? = nil
+    var path: String? = nil
+    var line: Int? = nil
+}
+
+struct GapToolMetadata: Decodable, Equatable, Sendable {
+    static let worktreeEnter = "worktree_enter"
+    static let worktreeExit = "worktree_exit"
+    static let secondOpinion = "second_opinion"
+    static let prComments = "pr_comments"
+    static let statusUpdate = "status_update"
+    static let feedbackNote = "feedback_note"
+    static let userLocation = "user_location"
+    static let voiceControl = "voice_control"
+    static let endConversation = "end_conversation"
+
+    static let toolNames: Set<String> = [
+        worktreeEnter, worktreeExit, secondOpinion, prComments, statusUpdate,
+        feedbackNote, userLocation, voiceControl, endConversation,
+    ]
+
+    static func isGapTool(_ name: String) -> Bool { toolNames.contains(name) }
+
+    /// Reads the raw metadata JSON text (the record keeps it for every tool).
+    static func decode(toolName: String, json: String?) -> GapToolMetadata? {
+        guard isGapTool(toolName), let data = json?.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(GapToolMetadata.self, from: data)
+    }
+
+    var ok: Bool? = nil
+    /// worktree_enter / worktree_exit / pr_comments / voice_control.
+    var action: String? = nil
+    var path: String? = nil
+    var branch: String? = nil
+    var base: String? = nil
+    var createdBy: String? = nil
+    /// worktree_exit: "kept", "removed" or "refused".
+    var result: String? = nil
+    /// worktree_exit / end_conversation: why.
+    var reason: String? = nil
+    /// second_opinion ("plan" | "diff") and feedback_note ("bug" | ...).
+    var kind: String? = nil
+    /// second_opinion: "agree", "concerns" or "disagree".
+    var verdict: String? = nil
+    var reasons: [String]? = nil
+    var tier: String? = nil
+    /// pr_comments.
+    var pr: Int? = nil
+    var url: String? = nil
+    var commentCount: Int? = nil
+    var comments: [PrCommentItem]? = nil
+    var replyId: String? = nil
+    /// status_update.
+    var phase: String? = nil
+    var note: String? = nil
+    var at: Double? = nil
+    /// feedback_note.
+    var noteId: String? = nil
+    /// feedback_note: the one-line summary and when it was saved (ms).
+    var summary: String? = nil
+    var createdAt: Double? = nil
+    /// user_location.
+    var precision: String? = nil
+    var status: String? = nil
+    var city: String? = nil
+    var region: String? = nil
+    var country: String? = nil
+    var timeZone: String? = nil
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    var accuracy: Double? = nil
+    /// voice_control.
+    var language: String? = nil
+    var speed: Double? = nil
+    var replyMode: String? = nil
+    /// end_conversation.
+    var ended: Bool? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, action, path, branch, base, result, reason, kind, verdict, reasons, tier
+        case pr, url, comments, phase, note, at, precision, status, city, region, country
+        case latitude, longitude, accuracy, language, speed, ended, summary
+        case createdAt = "created_at"
+        case createdBy = "created_by"
+        case replyId = "reply_id"
+        case noteId = "note_id"
+        case timeZone = "time_zone"
+        case replyMode = "reply_mode"
+    }
+
+    private struct Ignored: Decodable {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func opt<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            (try? c.decodeIfPresent(type, forKey: key)) ?? nil
+        }
+        ok = opt(Bool.self, .ok)
+        action = opt(String.self, .action)
+        path = opt(String.self, .path)
+        branch = opt(String.self, .branch)
+        base = opt(String.self, .base)
+        createdBy = opt(String.self, .createdBy)
+        result = opt(String.self, .result)
+        reason = opt(String.self, .reason)
+        kind = opt(String.self, .kind)
+        verdict = opt(String.self, .verdict)
+        reasons = opt([String].self, .reasons)
+        tier = opt(String.self, .tier)
+        pr = opt(Int.self, .pr)
+        url = opt(String.self, .url)
+        comments = opt([PrCommentItem].self, .comments)
+        commentCount = comments?.count
+        replyId = opt(String.self, .replyId)
+        phase = opt(String.self, .phase)
+        note = opt(String.self, .note)
+        at = opt(Double.self, .at)
+        noteId = opt(String.self, .noteId)
+        summary = opt(String.self, .summary)
+        createdAt = opt(Double.self, .createdAt)
+        precision = opt(String.self, .precision)
+        status = opt(String.self, .status)
+        city = opt(String.self, .city)
+        region = opt(String.self, .region)
+        country = opt(String.self, .country)
+        timeZone = opt(String.self, .timeZone)
+        latitude = opt(Double.self, .latitude)
+        longitude = opt(Double.self, .longitude)
+        accuracy = opt(Double.self, .accuracy)
+        language = opt(String.self, .language)
+        speed = opt(Double.self, .speed)
+        replyMode = opt(String.self, .replyMode)
+        ended = opt(Bool.self, .ended)
+    }
 }

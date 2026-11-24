@@ -3,8 +3,8 @@ import SwiftUI
 // MARK: - Chat surface (Home)
 
 /// Home chrome (allternit-ai src/fabric-session/phone/screens/ChatsScreen.tsx):
-/// the phone header — ☰, the open chat's name (else "Allternit"), the
-/// open-chats count button and New chat — above the shared chat content.
+/// the phone header — ☰, the open chat's name (blank on a new chat), the chat
+/// ⋯ menu and New chat — above the shared chat content.
 /// The Code tab hosts the same `ChatContentView` inside its own navigation
 /// chrome (CodeModeView), so code threads reuse the chat UI.
 struct ChatView: View {
@@ -13,12 +13,33 @@ struct ChatView: View {
 
     @StateObject private var viewModel = ChatViewModel()
     @ObservedObject private var sessions = ShellSessionsStore.shared
+    @ObservedObject private var pins = RailPinsStore.shared
+    @ObservedObject private var brain = BrainStore.shared
+    @State private var isShareLinkPresented = false
+    /// The chat ⋯ menu (phone calm pass step 22; web PhoneChatMenu).
+    @State private var isChatMenuOpen = false
+    /// A ⋯ row that opens a sheet waits for the menu to close first.
+    @State private var pendingMenuItem: ChatMenuItem?
+    @State private var isBrainCapturePresented = false
+    @State private var menuError: String?
 
-    /// The open chat's name, else "Allternit" (ChatsScreen `activeChat?.name`).
+    private var menuItems: [ChatMenuItem] {
+        let id = viewModel.currentSessionId
+        return chatMenuItems(ChatMenuInput(
+            hasSession: id != nil,
+            hasMessages: !viewModel.messages.isEmpty,
+            pinned: id.map { pins.isPinned($0) } ?? false,
+            allowsPhoneRun: true,
+            hasBrain: brain.hasBrain
+        ))
+    }
+
+    /// The open chat's name, else no title (ChatsScreen `activeChat?.name`).
+    /// Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
     private var title: String {
         let id = viewModel.currentSessionId ?? selectedSessionId
         if let name = sessions.session(id: id)?.name, !name.isEmpty { return name }
-        return "Allternit"
+        return ""
     }
 
     var body: some View {
@@ -28,8 +49,19 @@ struct ChatView: View {
                 wideSides: true,
                 onMenu: { isSidebarOpen = true }
             ) {
-                PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
-                    startNewChat()
+                HStack(spacing: 0) {
+                    // Share link moved into ⋯ so ⋯ fits beside New chat.
+                    PhoneIconButton(systemName: "ellipsis", label: "Chat options") {
+                        isChatMenuOpen = true
+                    }
+                    .popover(isPresented: $isChatMenuOpen, arrowEdge: .top) {
+                        ChatMenuPopover(items: menuItems, onSelect: selectMenuItem, onClose: { isChatMenuOpen = false })
+                            .presentationCompactAdaptation(.popover)
+                    }
+                    PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
+                        startNewChat()
+                    }
+                    .accessibilityIdentifier("chatNewChat")
                 }
             }
             .zIndex(1)
@@ -37,10 +69,50 @@ struct ChatView: View {
             ChatContentView(
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
-                launchStyle: true
+                launchStyle: true,
+                chatMenuHoldsExtras: true,
+                onNewChat: startNewChat
             )
         }
         .background(Color("BgPrimary"))
+        .sheet(isPresented: $isShareLinkPresented) {
+            ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title.isEmpty ? "Allternit" : title, messages: viewModel.messages)
+        }
+        .sheet(isPresented: $isBrainCapturePresented) {
+            BrainCaptureSheet()
+        }
+        .onChange(of: isChatMenuOpen) { _, open in
+            guard !open, let item = pendingMenuItem else { return }
+            pendingMenuItem = nil
+            Task { @MainActor in
+                // Let the popover finish closing before a sheet comes up.
+                try? await Task.sleep(for: .milliseconds(300))
+                switch item {
+                case .shareLink: isShareLinkPresented = true
+                case .captureToBrain: isBrainCapturePresented = true
+                default: break
+                }
+            }
+        }
+        .alert("Couldn't archive this chat", isPresented: Binding(
+            get: { menuError != nil },
+            set: { if !$0 { menuError = nil } }
+        )) {
+            Button("OK", role: .cancel) { menuError = nil }
+        } message: {
+            Text(menuError ?? "")
+        }
+        .onAppear {
+            #if DEBUG
+            // `-open-chat-menu` (DEBUG only): the ⋯ menu for screenshots.
+            if launchArgumentEnabled(LaunchArgument.openChatMenu) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(600))
+                    isChatMenuOpen = true
+                }
+            }
+            #endif
+        }
         // The drawer's New chat / New pill: start fresh even when the
         // selection was already nil (a just-sent chat has no selection).
         .onReceive(NotificationCenter.default.publisher(for: .shellNewChat)) { _ in
@@ -64,6 +136,96 @@ struct ChatView: View {
         selectedSessionId = nil
         viewModel.startNewSession()
     }
+
+    private func selectMenuItem(_ item: ChatMenuItem) {
+        switch item {
+        case .runOnPhone:
+            // RunOnPhoneRow draws and runs itself inside the menu.
+            break
+        case .captureToBrain, .shareLink:
+            pendingMenuItem = item
+            isChatMenuOpen = false
+        case .pin, .unpin:
+            guard let id = viewModel.currentSessionId else { return }
+            Haptics.selection()
+            pins.toggle(id: id, kind: "chat", mode: "chat")
+            isChatMenuOpen = false
+        case .archive:
+            guard let id = viewModel.currentSessionId else { return }
+            Haptics.light()
+            isChatMenuOpen = false
+            Task {
+                do {
+                    try await sessions.archive(id: id)
+                    startNewChat()
+                } catch {
+                    menuError = plainErrorText(error)
+                }
+            }
+        }
+    }
+}
+
+/// The chat ⋯ menu's rows (web PhoneChatMenu): Run on my phone and Capture
+/// to brain (moved from the + sheet), Share link (from the header), then
+/// Pin / Unpin and Archive while a saved chat is open. A popover, so it
+/// grows from ⋯; glass on iOS 26.
+private struct ChatMenuPopover: View {
+    let items: [ChatMenuItem]
+    let onSelect: (ChatMenuItem) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(items, id: \.self) { item in
+                if item == .runOnPhone {
+                    RunOnPhoneRow(onArmed: onClose)
+                } else {
+                    Button(action: { onSelect(item) }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: icon(item))
+                                .font(.system(size: 16))
+                                .foregroundColor(Color("TextPrimary"))
+                                .frame(width: 24)
+                                .accessibilityHidden(true)
+                            Text(label(item))
+                                .font(.system(size: 15))
+                                .foregroundColor(Color("TextPrimary"))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 300)
+    }
+
+    private func label(_ item: ChatMenuItem) -> String {
+        switch item {
+        case .runOnPhone: return "Run on my phone"
+        case .captureToBrain: return "Capture to brain"
+        case .shareLink: return "Share link"
+        case .pin: return "Pin"
+        case .unpin: return "Unpin"
+        case .archive: return "Archive"
+        }
+    }
+
+    private func icon(_ item: ChatMenuItem) -> String {
+        switch item {
+        case .runOnPhone: return "iphone"
+        case .captureToBrain: return "brain.head.profile"
+        case .shareLink: return "link"
+        case .pin: return "pin"
+        case .unpin: return "pin.slash"
+        case .archive: return "archivebox"
+        }
+    }
 }
 
 // MARK: - Shared chat content
@@ -76,6 +238,9 @@ struct ChatView: View {
 struct ChatContentView: View {
     let sessionId: String?
     @ObservedObject var viewModel: ChatViewModel
+    /// Scroll-to-bottom button: the transcript is more than one screen above its end.
+    @State private var jumpFar = false
+    @ReducedMotion private var reducedMotion
     /// Home: the web chat launch screen (greeting, composer with its full
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
@@ -100,6 +265,12 @@ struct ChatContentView: View {
     var artifactStudio: ArtifactStudioSession? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
+    /// The host has a chat ⋯ menu (ChatView), so Run on my phone and Capture
+    /// to brain leave the + sheet. Other hosts keep them in the sheet.
+    var chatMenuHoldsExtras: Bool = false
+    /// "Start a new chat" on an ended chat. The host clears its selected session; nil starts one in place.
+    var onNewChat: (() -> Void)? = nil
+    @ObservedObject private var sessions = ShellSessionsStore.shared
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -118,6 +289,7 @@ struct ChatContentView: View {
     @StateObject private var attachmentStore = AttachmentStore()
     @ObservedObject private var usageStore = UsageStore.shared
     @State private var inputText: String = ""
+    @State private var isShareLinkPresented = false
     @StateObject private var voiceHost = VoiceHost()
     /// Edit-resend: id of the last user bubble whose "Edit" filled the
     /// composer; non-nil routes the next send through
@@ -179,6 +351,13 @@ struct ChatContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: voiceHost.presentation)
+        .sheet(isPresented: $isShareLinkPresented) {
+            ThreadShareSheet(
+                sessionId: viewModel.currentSessionId,
+                title: ShellSessionsStore.shared.session(id: viewModel.currentSessionId)?.name ?? "Chat",
+                messages: viewModel.messages
+            )
+        }
         .voiceHostWiring(voiceHost, chat: viewModel)
         .fullScreenCover(isPresented: Binding(
             get: { voiceHost.presentation == .full && voiceHost.viewModel != nil },
@@ -287,6 +466,9 @@ struct ChatContentView: View {
             viewModel.needsBrainPick = false
             isModelPickerPresented = true
         }
+        .sheet(item: $viewModel.cloudCreditsRequest) { request in
+            CloudCreditsSheet(request: request)
+        }
         .onChange(of: viewModel.draftToRestore) { _, draft in
             // A send that never landed hands its text back so the user can
             // retry without retyping.
@@ -349,6 +531,39 @@ struct ChatContentView: View {
 
     // MARK: Session
 
+    private var showJumpButton: Bool {
+        guard !viewModel.messages.isEmpty else { return false }
+        #if DEBUG
+        if launchArgumentEnabled(LaunchArgument.calmJumpButton) { return true }
+        #endif
+        return jumpFar
+    }
+
+    /// The 40 pt glass scroll-to-bottom button. Smooth scroll, instant under reduced motion.
+    private func jumpButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 40, height: 40)
+                .glassSurface(cornerRadius: 20)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scroll to latest message")
+        .accessibilityIdentifier("chatJumpToBottom")
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        Haptics.light()
+        guard let lastId = viewModel.messages.last?.id else { return }
+        if reducedMotion {
+            proxy.scrollTo(lastId, anchor: .bottom)
+        } else {
+            withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(lastId, anchor: .bottom) }
+        }
+    }
+
     private var sessionLayout: some View {
         VStack(spacing: 0) {
             // Transient load/send failure banner (dismissible).
@@ -387,10 +602,26 @@ struct ChatContentView: View {
                             PhoneTaskCardsSection(sessionId: viewModel.currentSessionId, bot: chatBot,
                                                   hostedRunIds: Set(runHosts.values.map(\.runId)))
                         }
+                        // iOS 17 has no scroll geometry callback: this marker leaving the
+                        // lazy stack's window means the end is far away.
+                        if #unavailable(iOS 18) {
+                            Color.clear.frame(height: 1)
+                                .onAppear { jumpFar = false }
+                                .onDisappear { jumpFar = true }
+                        }
                     }
                     .padding(.vertical, 16)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .modifier(JumpDistanceTracker(far: $jumpFar))
+                .overlay(alignment: .bottom) {
+                    if showJumpButton {
+                        jumpButton { scrollToBottom(scrollProxy) }
+                            .padding(.bottom, 12)
+                            .transition(reducedMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.85)))
+                    }
+                }
+                .animation(Motion.pick(Motion.deck, reduced: reducedMotion), value: showJumpButton)
                 .onChange(of: viewModel.messages.last) { _, _ in
                     // Fires on new messages AND on streamed content changes;
                     // the view model's ~50ms flush coalescing bounds the rate.
@@ -473,11 +704,40 @@ struct ChatContentView: View {
         .padding(.bottom, 4)
         .background(backdropUnderneath ? Color.clear : (terminal ? TerminalPalette.background : Color("BgPrimary")))
         .sheet(isPresented: $isCodePlusSheetPresented) {
-            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId)
+            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId, showsPermission: false)
         }
     }
 
+    /// The chat was ended: session `metadata.ended`, an end_conversation tool
+    /// part in the feed, or a send that failed with "This chat has ended".
+    private var chatEnded: Bool {
+        if let id = viewModel.currentSessionId,
+           sessions.sessions.first(where: { $0.id == id })?.ended != nil { return true }
+        return viewModel.messages.contains { message in
+            if let err = message.error, [err.title, err.detail, err.raw].contains(where: { $0.localizedCaseInsensitiveContains("This chat has ended") }) { return true }
+            return message.toolCalls.contains { $0.toolName == GapToolMetadata.endConversation && $0.gap?.ok != false && $0.gap != nil }
+        }
+    }
+
+    @ViewBuilder
     private func composer(deck: ComposerDeckVariant) -> some View {
+        if chatEnded {
+            VStack(spacing: 8) {
+                Text("This chat has ended")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                Button("Start a new chat") { if let onNewChat { onNewChat() } else { viewModel.startNewSession() } }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(16)
+            .accessibilityElement(children: .contain)
+        } else {
+            liveComposer(deck: deck)
+        }
+    }
+
+    private func liveComposer(deck: ComposerDeckVariant) -> some View {
         ComposerView(
             inputText: $inputText,
             attachmentStore: attachmentStore,
@@ -487,7 +747,8 @@ struct ChatContentView: View {
             sessionId: viewModel.currentSessionId,
             // Hard usage wall: at/above 100% the composer locks until the
             // window resets or the user adds credits / upgrades.
-            isUsageLocked: usageStore.isAtLimit,
+            // The person's own plans and Copilot don't use the Cloud allowance.
+            isUsageLocked: usageStore.isAtLimit && !PersonModels.isPersonOnly(modelStore.selectedModelId),
             isVoiceModeEnabled: !viewModel.isStreaming && !usageStore.isAtLimit,
             deck: deck,
             // A plain chat with no model picked opens the picker instead of
@@ -530,6 +791,7 @@ struct ChatContentView: View {
             artifactKind: artifactStudio?.kind,
             onAllArtifacts: onAllArtifacts,
             allowsPhoneRun: artifactStudio == nil,
+            chatMenuHoldsExtras: chatMenuHoldsExtras,
             armedPhoneName: phoneRuns.armed?.name,
             onClearPhone: { phoneRuns.armed = nil }
         )
@@ -540,6 +802,13 @@ struct ChatContentView: View {
     /// Which reply hosts which phone or computer run (pill + stream on the reply).
     private var phoneRunHosts: [String: PhoneTaskCardModel] {
         PhoneRunHosting.hosts(messages: viewModel.messages, cards: phoneRuns.cards(for: viewModel.currentSessionId))
+    }
+
+    /// The credits button shows only when a Cloud model is listed.
+    private var errorActionKinds: Set<ChatErrorAction.Kind> {
+        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain]
+        if modelStore.creditsFallbackModelId != nil { kinds.insert(.useCredits) }
+        return kinds
     }
 
     private func messageRow(_ message: MessageRecord, hostedRun: PhoneTaskCardModel? = nil) -> some View {
@@ -554,17 +823,31 @@ struct ChatContentView: View {
             onRetry: { failedMessageId in
                 viewModel.retryFailedMessage(failedMessageId, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
             },
+            availableErrorActions: errorActionKinds,
+            onErrorAction: { failedMessageId, action in
+                switch action.kind {
+                case .useCredits:
+                    if let cloudId = modelStore.creditsFallbackModelId {
+                        viewModel.resendOnCloudModel(failedMessageId, cloudModelId: cloudId)
+                    }
+                case .manageClaudeOrg, .linkAgain:
+                    // Settings › Connections holds the Claude organization row.
+                    DeepLinkRouter.shared.enqueue(.settings("subscriptions"))
+                }
+            },
             isLastAssistant: message.id == viewModel.lastAssistantMessageId,
             isLastUser: message.id == viewModel.lastUserMessageId,
             onRegenerate: {
                 viewModel.regenerateLastResponse(runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
             },
+            onShareLink: viewModel.currentSessionId == nil ? nil : { isShareLinkPresented = true },
             onEdit: {
                 // "Edit" on the last user message: the composer loads the
                 // text; sending truncates + re-sends (onSend above).
                 editingMessageId = message.id
                 inputText = message.content
             },
+            editedVersions: viewModel.editedVersions[message.id] ?? [],
             sessionId: viewModel.currentSessionId,
             onSendPrompt: { prompt in
                 viewModel.sendMessage(prompt, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
@@ -655,16 +938,19 @@ struct ChatLaunchGreeting: View {
     /// The bot stands on its stage above this chat: no second face here.
     @Environment(\.chatBotOnStage) private var botOnStage
     @State private var revealed = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     @MainActor private static var cachedTitle: String?
+    /// The day + time-of-day bucket the cached title was made in; a new one rebuilds it.
+    @MainActor private static var cachedBucket: String?
     @MainActor private static var didAnimate = false
 
     @MainActor
     private static func sessionTitle() -> String {
-        if let cachedTitle { return cachedTitle }
-        let name = AuthManager.shared.firstName
         let now = Date()
+        let bucket = titleBucket(now)
+        if let cachedTitle, cachedBucket == bucket { return cachedTitle }
+        let name = AuthManager.shared.firstName
         let weekday = now.formatted(.dateTime.weekday(.wide))
         let hour = Calendar.current.component(.hour, from: now)
         let timeOfDay = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
@@ -680,7 +966,16 @@ struct ChatLaunchGreeting: View {
         ]
         let picked = pool.randomElement() ?? "How can I help you today?"
         cachedTitle = picked
+        cachedBucket = bucket
         return picked
+    }
+
+    /// Date + time-of-day bucket (night / morning / afternoon / evening).
+    static func titleBucket(_ date: Date, calendar: Calendar = .current) -> String {
+        let hour = calendar.component(.hour, from: date)
+        let part = hour < 5 ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        return "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)-\(part)"
     }
 
     var body: some View {
@@ -1093,7 +1388,7 @@ private struct TerminalWorkingLine: View {
     let since: Date?
     @State private var start = Date()
     @State private var lit = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -1166,5 +1461,23 @@ private struct TerminalQuestionCards: View {
             }
         }
         return list.filter { !asks.isResolved($0.id) || message.questions.contains($0) }
+    }
+}
+
+/// Reports whether the transcript's end is more than one screen below the
+/// visible area (iOS 18 and later; iOS 17 uses the end marker in the stack).
+private struct JumpDistanceTracker: ViewModifier {
+    @Binding var far: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height > geometry.containerSize.height
+            } action: { _, isFar in
+                far = isFar
+            }
+        } else {
+            content
+        }
     }
 }

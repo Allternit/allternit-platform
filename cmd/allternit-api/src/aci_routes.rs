@@ -1144,6 +1144,10 @@ async fn aci_stop(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
             return Json(json!({"run_id": id, "status": "cancelled"})).into_response();
         }
     }
+    // A phone task, skill or App Map Explore run: its loop checks the flag before each step.
+    if crate::phone_runs::request_stop(&id) {
+        return Json(json!({"run_id": id, "status": "cancelled"})).into_response();
+    }
     let acu = acu_base(&state);
     let client = crate::net_client::client();
     match client

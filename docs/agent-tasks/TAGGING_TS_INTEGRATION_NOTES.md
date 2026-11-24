@@ -37,7 +37,7 @@ remaining: []
 
 - Ran `bun typecheck` from `surfaces/ai.allternit.com`.
 - The touched files (`useTags.ts`, `TagPicker.tsx`, `TagManagerView.tsx`, `AgentGalleryGrid.tsx`) produced **no new errors**.
-- The surface still reports a large number of **pre-existing type errors** in unrelated modules (`ai-elements`, `agent.types`, `mirofish`, plugins, `tokenlens`, etc.). These are out of scope for the tagging integration task and were left untouched.
+- The surface still reports a large number of **pre-existing type errors** in unrelated modules (`ai-elements`, `agent.types`, plugins, `tokenlens`, etc.). These are out of scope for the tagging integration task and were left untouched.
 
 ## Remaining work
 

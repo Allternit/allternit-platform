@@ -368,7 +368,7 @@ struct SpriteAvatar: View {
     let size: CGFloat
     let live: Bool
     @State private var sprite: SpriteFrames?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     init(url: URL, size: CGFloat, live: Bool) {
         self.url = url

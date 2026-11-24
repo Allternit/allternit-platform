@@ -116,6 +116,13 @@ describe('approval hold at dispatch', () => {
     expect(rt.bodies[0]).toMatchObject({ tool: 'phone.tap', args, pass: 'pass_ok', runId: 'run-7' });
   });
 
+  it('never sends the map marker (_via, _map_screen) to the device', async () => {
+    const rt = fakeRuntime(() => passed);
+    const { r, phone } = setup(rt.client);
+    expect(await r.call('phone.tap', { x: 300, y: 2100, _pass: 'pass_ok', _via: 'map', _map_screen: 'Wi-Fi' })).toEqual({ ok: true });
+    expect(phone.taps()).toEqual([['shell', 'input', 'tap', '300', '2100']]);
+  });
+
   it('drops a wrong pass, reads the screen and holds a tap on "Delete"', async () => {
     // The runtime never classifies a pass-carrying request: bad_pass, and no hold.
     const rt = fakeRuntime((b) => (b.pass || b.args._pass ? { decision: 'bad_pass' } : /delete/i.test(b.el?.label ?? '') ? hold('h2') : allow));

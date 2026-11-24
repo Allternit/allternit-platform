@@ -172,6 +172,15 @@ struct RuntimeDeviceView {
     preferred: bool,
 }
 
+/// Every column `PairingRow` reads. Each `query_as::<_, PairingRow>` selects
+/// exactly this list: a query that left out `machine_id` failed every pairing
+/// lookup with "no column found for name: machine_id" (500), which broke
+/// sign-in for new Desktop and iPhone pairings.
+const PAIRING_ROW_COLUMNS: &str = "id, user_code, challenge, public_key, public_key_fingerprint, \
+     name, runtime_type, hostname, platform, version, machine_id, capabilities, \
+     status, user_id, organization_id, hosted_instance_id, \
+     byo_bootstrap_token_id, provisioned_instance_id, expires_at";
+
 #[derive(Debug, FromRow)]
 struct PairingRow {
     id: String,
@@ -542,16 +551,9 @@ async fn exchange_pairing(
     State(state): State<Arc<ApiState>>,
     Json(request): Json<ExchangePairingRequest>,
 ) -> Result<Response, ApiError> {
-    let pairing = sqlx::query_as::<_, PairingRow>(
-        r#"
-        SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, machine_id, capabilities,
-               status, user_id, organization_id, hosted_instance_id,
-               byo_bootstrap_token_id, provisioned_instance_id, expires_at
-        FROM runtime_pairings
-        WHERE id = $1 AND device_code_hash = $2
-        "#,
-    )
+    let pairing = sqlx::query_as::<_, PairingRow>(&format!(
+        "SELECT {PAIRING_ROW_COLUMNS} FROM runtime_pairings WHERE id = $1 AND device_code_hash = $2"
+    ))
     .bind(&request.pairing_id)
     .bind(sha256_hex(request.device_code.as_bytes()))
     .fetch_optional(&state.db)
@@ -861,7 +863,8 @@ async fn exchange_pairing(
 /// the relay can wake (same states `wake_for_device` wakes from). A sleeping
 /// one reads "offline", so clients need this to keep it as a runtime and let
 /// the first relayed request wake it. Only each device's newest instance
-/// counts; a free computer replaced by a paid one is left out.
+/// counts; a free computer replaced by a paid one is left out. Paid and
+/// credit computers on Orgo sleep too (30 idle minutes) and wake the same way.
 async fn wakeable_instances_by_device(
     db: &PgPool,
     user_id: &str,
@@ -869,7 +872,7 @@ async fn wakeable_instances_by_device(
     let rows = sqlx::query_as::<_, (String, String, bool)>(
         r#"
         SELECT DISTINCT ON (device_id) device_id, id,
-               (tier = 'free' AND replaced_by IS NULL
+               (((tier = 'free' AND replaced_by IS NULL) OR tier IN ('paid', 'credit'))
                 AND status IN ('sleeping', 'waking', 'provisioning'))
         FROM provisioned_instances
         WHERE user_id = $1 AND device_id IS NOT NULL AND status <> 'deleted'
@@ -1005,10 +1008,14 @@ async fn set_default_runtime_device(
     Ok(Json(serde_json::json!({ "id": id, "preferred": true })))
 }
 
+/// The body is optional (agent-daemon sends none): a JSON object with a
+/// `hostSample` (computers console D4) is stored as that runtime's sample;
+/// anything else is ignored and the heartbeat still succeeds.
 async fn runtime_heartbeat(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let runtime = authenticate_runtime(&state, &headers, &id).await?;
     sqlx::query(
@@ -1017,6 +1024,18 @@ async fn runtime_heartbeat(
     .bind(&runtime.id)
     .execute(&state.db)
     .await?;
+    if !body.is_empty() && body.len() <= 64 * 1024 {
+        if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&body) {
+            super::computer_metrics::store_from_heartbeat(
+                &state.db,
+                super::computer_metrics::KIND_DEVICE,
+                &runtime.id,
+                &parsed,
+                Utc::now(),
+            )
+            .await;
+        }
+    }
     Ok(Json(serde_json::json!({
         "runtimeId": runtime.id,
         "userId": runtime.user_id,
@@ -1058,6 +1077,7 @@ async fn rotate_credential(
             previous_credential_expires_at = $1,
             credential_hash = $2,
             credential_expires_at = $3,
+            status = 'online',
             last_seen_at = CURRENT_TIMESTAMP
         WHERE id = $4
         "#,
@@ -1314,15 +1334,9 @@ async fn approver_from_headers(state: &ApiState, headers: &HeaderMap) -> Result<
 }
 
 async fn pairing_by_code(state: &ApiState, code: &str) -> Result<PairingRow, ApiError> {
-    sqlx::query_as::<_, PairingRow>(
-        r#"
-        SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, capabilities,
-               status, user_id, organization_id, hosted_instance_id,
-               byo_bootstrap_token_id, provisioned_instance_id, expires_at
-        FROM runtime_pairings WHERE user_code = $1
-        "#,
-    )
+    sqlx::query_as::<_, PairingRow>(&format!(
+        "SELECT {PAIRING_ROW_COLUMNS} FROM runtime_pairings WHERE user_code = $1"
+    ))
     .bind(code)
     .fetch_optional(&state.db)
     .await?
@@ -1636,6 +1650,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pairing_row_columns_cover_every_pairing_row_field() {
+        let columns: Vec<&str> = PAIRING_ROW_COLUMNS.split(',').map(str::trim).collect();
+        let source = include_str!("runtime_pairing.rs");
+        let start = source.find("struct PairingRow {").unwrap();
+        let body = &source[start..start + source[start..].find('}').unwrap()];
+        let fields: Vec<&str> = body
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.trim().split(':').next())
+            .filter(|name| !name.is_empty())
+            .collect();
+        assert!(fields.len() > 10, "parsed PairingRow fields: {fields:?}");
+        for field in &fields {
+            assert!(columns.contains(field), "PAIRING_ROW_COLUMNS is missing {field}");
+        }
+        assert_eq!(columns.len(), fields.len());
+    }
+
+    #[test]
     fn desktop_handshake_gets_local_kind_never_null() {
         assert_eq!(runtime_device_kind("desktop", None), crate::services::NodeKind::LOCAL);
         assert_eq!(runtime_device_kind("vps", None), crate::services::NodeKind::PAIRED);
@@ -1744,6 +1777,8 @@ mod tests {
             ("pi_waking", "user_1", Some("dev_waking"), "free", "waking", None, 0),
             ("pi_running", "user_1", Some("dev_running"), "free", "running", None, 0),
             ("pi_paid", "user_1", Some("dev_paid"), "paid", "stopped", None, 0),
+            // Orgo paid and credit computers sleep and wake like free ones.
+            ("pi_credit", "user_1", Some("dev_credit"), "credit", "sleeping", None, 0),
             ("pi_replaced", "user_1", Some("dev_replaced"), "free", "sleeping", Some("pi_paid"), 0),
             ("pi_nodev", "user_1", None, "free", "sleeping", None, 0),
             ("pi_other", "user_2", Some("dev_other"), "free", "sleeping", None, 0),
@@ -1772,7 +1807,10 @@ mod tests {
         let mut got: Vec<(&str, &str)> =
             wakeable.iter().map(|(d, i)| (d.as_str(), i.as_str())).collect();
         got.sort();
-        assert_eq!(got, vec![("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]);
+        assert_eq!(
+            got,
+            vec![("dev_credit", "pi_credit"), ("dev_sleep", "pi_sleep"), ("dev_waking", "pi_waking")]
+        );
     }
 
     #[tokio::test]

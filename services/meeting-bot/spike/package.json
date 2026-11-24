@@ -1,0 +1,21 @@
+{
+  "name": "@allternit/meeting-bot-spike",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Step 0.3 spike: one Chrome pod joins a Meet call as a guest (tile + mic override, Pulse capture, speaker timeline).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "local-test": "tsc -p tsconfig.json && node dist/local-test/run.js",
+    "join": "node dist/join.js"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "5.9.3"
+  }
+}

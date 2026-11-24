@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files drive status badge (design 5C colour badges): uploading to the computer (info) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@color/files_status_info"
+        android:pathData="M12,2A10,10 0,1 1,12,22A10,10 0,1 1,12,2Z" />
+    <path
+        android:fillColor="@color/files_badge_glyph"
+        android:pathData="M12,6.5L16.5,11H13.25V17H10.75V11H7.5Z" />
+</vector>

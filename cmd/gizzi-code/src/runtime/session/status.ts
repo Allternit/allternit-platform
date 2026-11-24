@@ -2,6 +2,7 @@ import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import { Instance } from "@/runtime/context/project/instance"
 import z from "zod/v4"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
 
 export namespace SessionStatus {
   export const Info = z
@@ -17,6 +18,9 @@ export namespace SessionStatus {
       }),
       z.object({
         type: z.literal("busy"),
+        /** Set by the status_update tool: short phase label and one-line note. */
+        phase: z.string().optional(),
+        note: z.string().optional(),
       }),
     ])
     
@@ -61,6 +65,11 @@ export namespace SessionStatus {
   }
 
   export function set(sessionID: string, status: Info) {
+    // Plain busy re-sets keep the phase the agent last reported.
+    if (status.type === "busy" && status.phase === undefined) {
+      const prev = state()[sessionID]
+      if (prev?.type === "busy" && prev.phase) status = { ...status, phase: prev.phase, note: prev.note }
+    }
     Bus.publish(Event.Status, {
       sessionID,
       status,
@@ -71,6 +80,9 @@ export namespace SessionStatus {
         sessionID,
       })
       delete state()[sessionID]
+      // Allternit Sleep: a quiet session starts its idle timer (cache TTL).
+      // No-op for sessions without a top-level prompt here (subagents).
+      SleepTriggers.sessionIdle(sessionID)
       return
     }
     state()[sessionID] = status

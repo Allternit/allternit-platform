@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn:
+    id: "modeDial"
+- tapOn:
+    id: "modeFanCardcode"
+- takeScreenshot: code_list
+- tapOn:
+    id: "phoneMenuButton"
+- takeScreenshot: code_sidebar_open
+- stopApp

@@ -13,6 +13,22 @@ description: 'Move a live Code session between your Mac and your cloud computer 
 
 Teleport to the cloud stops with a clear message only when the workspace has no reachable git remote to clone from.
 
+## Secrets stay behind
+
+Files that look like secrets never travel, whether git tracks them or not:
+
+- files named like `.env`, `.env.local`, `*.pem`, `*.key`, `id_ed25519`, `token.json` or `credentials.json`
+- anything inside a folder such as `.ssh`, `.aws`, `.gnupg` or `.kube`
+- text files that hold a private key or a well-known API token (GitHub, Anthropic, OpenAI, Stripe, AWS, Slack, Google)
+
+The command lists every file it left out and why. To see what would travel before you move anything, run a dry run:
+
+```bash
+gizzi teleport <session> --to cloud --dry-run
+```
+
+Set up secrets on the cloud computer itself (for example in its own `.env`). The list is the same one the Files drive uses to keep secret folders off other devices.
+
 ## What happens on arrival
 
 The cloud computer installs the conversation, applies your code, and resumes the session with the same model and effort. It sends a short handoff note first, then replays any prompts you had queued, in order. The transfer only counts as done once the resumed session produces its first new output; until then the badge stays Local. If the resume fails, nothing is lost: run the same teleport again to retry the resume.
@@ -32,7 +48,7 @@ gizzi teleport <session> --to cloud
 gizzi teleport <session> --to local --base <commit>
 ```
 
-`<session>` is the gizzi session id or the Claude or Codex session id. Add `--harness codex` for a Codex session, `--target` when you have more than one computer connected, and `--model` when the session has no model recorded. When bringing a session back, `--base` is the commit the session left your Mac on, so the cloud changes can be applied as a patch.
+`<session>` is the gizzi session id or the Claude or Codex session id. Add `--harness codex` for a Codex session, `--target` when you have more than one computer connected, `--model` when the session has no model recorded, and `--dry-run` (with `--to cloud`) to list what would be sent without sending it. When bringing a session back, `--base` is the commit the session left your Mac on, so the cloud changes can be applied as a patch.
 
 The command prints how to resume natively, for example `claude --resume <id>`.
 

@@ -8,6 +8,7 @@ import {
   isEmergencyNumber,
   parseSmsRows,
   normalizeNumber,
+  PHONE_TOOLS,
   PhoneToolRunner,
   resolveApp,
   SMS_LIMITS,
@@ -15,8 +16,13 @@ import {
   type AdbCall,
   type ApprovalDecision,
   type ApprovalRequest,
+  type AppPhoneLane,
   type RateStore,
+  type ToolResult,
+  parseForegroundActivity,
+  parseVersionName,
 } from './phone-tools.js';
+import type { PhoneLane } from './phone-route.js';
 import { PhoneApiUnavailable, type PhoneApi } from './phone-runs.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -309,7 +315,7 @@ describe('screen reading over adb (uiautomator dump)', () => {
   it('phone.read_ui turns the dump into the shared text form', async () => {
     const { r, calls } = dumpRunner(DUMP);
     const res = await r.call('phone.read_ui', {});
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       ok: true,
       text: [
         'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
@@ -320,15 +326,87 @@ describe('screen reading over adb (uiautomator dump)', () => {
     expect(calls[0]).toEqual(['exec-out', 'uiautomator', 'dump', '/dev/tty']);
   });
 
+  it('phone.read_ui adds app, activity and nodes[] beside the unchanged text', async () => {
+    const xml = `<hierarchy>
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="false" password="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="Name" resource-id="com.example.app:id/name" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="true" scrollable="false" password="false" bounds="[24,96][1056,180]" />
+    <node index="1" text="Secret" resource-id="com.example.app:id/pw" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="false" scrollable="false" password="true" bounds="[24,200][1056,280]" />
+    <node index="2" text="Wi-Fi" resource-id="com.example.app:id/sw" class="android.widget.Switch" package="com.example.app" content-desc="" checkable="true" clickable="true" focused="false" scrollable="false" password="false" bounds="[0,300][1080,420]" />
+    <node index="3" text="" resource-id="com.example.app:id/list" class="androidx.recyclerview.widget.RecyclerView" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="true" password="false" bounds="[0,420][1080,2400]" />
+  </node>
+</hierarchy>`;
+    const { r, calls } = dumpRunner(xml);
+    const res = (await r.call('phone.read_ui', {})) as unknown as { text: string; app: string; activity: unknown; nodes: Record<string, unknown>[] };
+    expect(res.text).toBe(
+      [
+        'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
+        'android.widget.EditText "Name" [com.example.app:id/name] {{24, 96}, {1032, 84}}',
+        'android.widget.EditText "Secret" [com.example.app:id/pw] {{24, 200}, {1032, 80}}',
+        'android.widget.Switch "Wi-Fi" [com.example.app:id/sw] {{0, 300}, {1080, 120}}',
+        'androidx.recyclerview.widget.RecyclerView [com.example.app:id/list] {{0, 420}, {1080, 1980}}',
+      ].join('\n'),
+    );
+    expect(res.app).toBe('com.example.app');
+    expect(res.activity).toBeNull();
+    expect(res.nodes).toHaveLength(5);
+    expect(res.nodes[1]).toEqual({
+      index: 1, class: 'android.widget.EditText', label: 'Name', resource_id: 'com.example.app:id/name',
+      bounds: [24, 96, 1056, 180], clickable: true, scrollable: false, checkable: false, editable: true, password: false, focused: true,
+    });
+    expect(res.nodes[2]).toMatchObject({ editable: true, password: true });
+    expect(res.nodes[3]).toMatchObject({ checkable: true, clickable: true, editable: false });
+    expect(res.nodes[4]).toMatchObject({ scrollable: true, bounds: [0, 420, 1080, 2400] });
+    expect(calls).toHaveLength(1); // no extra adb call unless with_activity / with_version
+    const capped = (await r.call('phone.read_ui', { filter: { type: 'switch' } })) as unknown as { nodes: { index: number; label: string }[] };
+    expect(capped.nodes).toHaveLength(1);
+    expect(capped.nodes[0]).toMatchObject({ index: 0, label: 'Wi-Fi' });
+  });
+
+  it('phone.read_ui with_activity and with_version make one extra adb call each', async () => {
+    const calls: string[][] = [];
+    const adb = (async (args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(' ');
+      if (cmd.includes('topResumedActivity')) {
+        return { stdout: '  topResumedActivity=ActivityRecord{1a2b u0 com.openai.chat/.MainActivity t42}\n', stderr: '', code: 0 };
+      }
+      if (cmd.includes('versionName')) return { stdout: '    versionName=1.2.3\n', stderr: '', code: 0 };
+      return { stdout: '', stderr: '', code: 0 };
+    }) as AdbCall;
+    adb.binary = async () => Buffer.from(DUMP, 'utf8');
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => ['10.0.0.7:5555'],
+    });
+    const res = (await r.call('phone.read_ui', { with_activity: true, with_version: true })) as unknown as Record<string, unknown>;
+    expect(res).toMatchObject({ ok: true, app: 'com.openai.chat', activity: 'com.openai.chat.MainActivity', app_version: '1.2.3' });
+    // The dump goes through adb.binary; the two opt-ins add exactly one adb call each.
+    expect(calls.map((c) => c.join(' '))).toEqual([
+      expect.stringContaining('topResumedActivity'),
+      expect.stringContaining('com.openai.chat'),
+    ]);
+  });
+
+  it('parses activity and version lines', () => {
+    expect(parseForegroundActivity('mResumedActivity: ActivityRecord{x u0 com.android.settings/com.android.settings.Settings$WifiSettingsActivity t9}')).toBe('com.android.settings.Settings$WifiSettingsActivity');
+    expect(parseForegroundActivity('topResumedActivity=ActivityRecord{x u0 com.whatsapp/.HomeActivity t1}')).toBe('com.whatsapp.HomeActivity');
+    expect(parseForegroundActivity('nothing')).toBeNull();
+    expect(parseVersionName('    versionName=14\n')).toBe('14');
+    expect(parseVersionName('')).toBe('');
+  });
+
   it('phone.read_ui filters by label and type and caps max_elements', async () => {
     const { r } = dumpRunner(DUMP);
-    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toEqual({
+    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toMatchObject({
       ok: true,
       text: 'android.widget.Button "Sign in" [com.openai.chat:id/login] {{24, 836}, {312, 48}}',
     });
     expect(await r.call('phone.read_ui', { filter: { type: 'textview' } })).toMatchObject({ ok: true });
     expect(((await r.call('phone.read_ui', { filter: { type: 'textview' } })) as unknown as { text: string }).text).not.toContain('Button');
-    expect(await r.call('phone.read_ui', { max_elements: 1 })).toEqual({
+    expect(await r.call('phone.read_ui', { max_elements: 1 })).toMatchObject({
       ok: true,
       text: 'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
     });
@@ -575,5 +653,216 @@ describe('phone.sms.read', () => {
     const { r, calls } = runner({ decision: 'denied', handler: (a) => (a.includes('content') ? { stdout: raw } : {}) });
     expect(await r.call('phone.sms.read', { bot_id: 'bot-1' })).toMatchObject({ error: 'approval_denied' });
     expect(calls.some((c) => c.includes('content'))).toBe(false);
+  });
+});
+
+describe('Phone Use tools (contract §3)', () => {
+  const NEW_TOOLS = ['phone.describe', 'phone.shortcuts.run', 'phone.actions.list', 'phone.actions.run', 'phone.home.list', 'phone.home.set', 'phone.home.scene'];
+  const tool = (name: string) => PHONE_TOOLS.find((t) => t.name === name) as unknown as { inputSchema: { properties: Record<string, any>; required?: string[]; additionalProperties: boolean } };
+
+  it('advertises the new tools with closed schemas and the contract\'s required fields', () => {
+    for (const name of NEW_TOOLS) expect(tool(name)?.inputSchema.additionalProperties).toBe(false);
+    expect(tool('phone.shortcuts.run').inputSchema.required).toEqual(['name']);
+    expect(tool('phone.shortcuts.run').inputSchema.properties.timeout_s).toMatchObject({ minimum: 1, maximum: 120, default: 30 });
+    expect(tool('phone.actions.run').inputSchema.required).toEqual(['app', 'action']);
+    expect(tool('phone.actions.list').inputSchema.properties.kind.enum).toEqual(['create', 'send', 'open', 'search', 'read', 'control', 'other']);
+    expect(tool('phone.home.set').inputSchema.required).toEqual(['id', 'state']);
+    expect(tool('phone.home.scene').inputSchema.required).toEqual(['id']);
+    expect(Object.keys(tool('phone.describe').inputSchema.properties)).toEqual(['serial']);
+  });
+
+  it('adds an optional route to every tap tool, with the seven route ids', () => {
+    for (const name of ['phone.screenshot', 'phone.tap', 'phone.type', 'phone.read_ui', 'phone.find_and_tap', 'phone.swipe', 'phone.home', 'phone.back', 'phone.key', 'phone.open_app']) {
+      expect(tool(name).inputSchema.properties.route.enum).toEqual(['official', 'mirror', 'bt-mac', 'bt-android', 'bt-apple', 'usb-agent', 'legacy-helper']);
+      expect(tool(name).inputSchema.required ?? []).not.toContain('route');
+    }
+  });
+
+  const IPHONE = 'app:iphone-1';
+  function appPhones(platform: 'ios' | 'android' = 'ios'): AppPhoneLane & { calls: string[] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      has: (s) => s === IPHONE,
+      serials: () => [IPHONE],
+      call: async (name) => (calls.push(name), { ok: false, error: 'not_supported', message: 'no taps here' }),
+      refresh: async () => {},
+      devices: () => [{ serial: IPHONE, platform, via: 'allternit-app', route: 'iphone-app-store', name: 'iPhone', canTap: false, screen: true, note: '' }] as never,
+    };
+  }
+  function officialLane(result: ToolResult = { ok: true, detail: { output: 'done', returned_via: 'app_intent' } }) {
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+    const lane: PhoneLane = {
+      id: 'official',
+      covers: ['shortcuts', 'actions', 'home'],
+      verify: 'self',
+      health: async () => ({ state: 'healthy' }),
+      act: async (t, _s, args) => (calls.push({ tool: t, args }), result),
+    };
+    return { lane, calls };
+  }
+  function iphoneRunner(opts: { decision?: ApprovalDecision; lanes?: Record<string, PhoneLane>; platform?: 'ios' | 'android' } = {}) {
+    const { adb, calls: adbCalls } = makeAdb();
+    const asked: ApprovalRequest[] = [];
+    const apps = appPhones(opts.platform);
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async (req) => (asked.push(req), opts.decision ?? 'approved') },
+      rates: memoryRates(),
+      artemis: () => null,
+      onlineSerials: () => [],
+      apps: () => apps,
+      lanes: opts.lanes,
+    });
+    return { r, asked, apps, adbCalls };
+  }
+
+  it('runs a shortcut on the official route after the owner approves it', async () => {
+    const official = officialLane();
+    const { r, asked } = iphoneRunner({ lanes: { official: official.lane } });
+    const res = await r.call('phone.shortcuts.run', { name: 'Send standup', input: { text: 'hi' } });
+    expect(res).toMatchObject({ ok: true, route: 'official', detail: { output: 'done', returned_via: 'app_intent' } });
+    expect(official.calls).toEqual([{ tool: 'phone.shortcuts.run', args: { name: 'Send standup', input: { text: 'hi' } } }]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ kind: 'device_write', serial: IPHONE });
+    expect(asked[0].summary).toContain('Send standup');
+  });
+
+  it('a denied send never reaches the phone and says denied', async () => {
+    const official = officialLane();
+    const { r } = iphoneRunner({ decision: 'denied', lanes: { official: official.lane } });
+    const res = await r.call('phone.actions.run', { app: 'slack', action: 'SendMessageIntent', params: { text: 'hi' } });
+    expect(res).toMatchObject({ ok: false, error: 'approval_denied', route: 'official', detail: { error: 'denied' } });
+    expect(official.calls).toHaveLength(0);
+  });
+
+  it('the real official lane asks the owner before a send reaches the phone, and not for a light', async () => {
+    const rpcs: Array<{ method: string; params: Record<string, unknown> }> = [];
+    for (const decision of ['denied', 'approved'] as const) {
+      const { adb } = makeAdb();
+      const asked: ApprovalRequest[] = [];
+      const apps: AppPhoneLane = {
+        ...appPhones(),
+        officialState: () => ({ appOpen: true, screen: false, deviceAccess: { shortcuts: true, home: true } }),
+        rpc: async (_s, method, params) => (rpcs.push({ method, params }), { ok: true, result: { ok: true, route: 'official', verified: true, detail: { output: null, returned_via: 'x_callback' } } }),
+      };
+      const r = new PhoneToolRunner({ adb, gate: { request: async (req) => (asked.push(req), decision) }, rates: memoryRates(), artemis: () => null, onlineSerials: () => [], apps: () => apps });
+      const res = await r.call('phone.shortcuts.run', { name: 'Text Mom', input: 'on my way' });
+      expect(asked).toHaveLength(1);
+      if (decision === 'denied') {
+        expect(res).toMatchObject({ ok: false, error: 'approval_denied', route: 'official', detail: { error: 'denied' } });
+        expect(rpcs).toHaveLength(0);
+      } else {
+        expect(res).toMatchObject({ ok: true, route: 'official', verified: true });
+        expect(rpcs).toEqual([{ method: 'device.shortcuts.run', params: { name: 'Text Mom', input: 'on my way' } }]);
+        expect(await r.call('phone.home.set', { id: 'lamp', state: { on: true } })).toMatchObject({ ok: true, route: 'official' });
+        expect(asked).toHaveLength(1);
+        expect(rpcs.at(-1)).toEqual({ method: 'device.home.set', params: { device_id: 'lamp', state: { on: true } } });
+      }
+    }
+  });
+
+  it('turning on a light runs without asking', async () => {
+    const official = officialLane({ ok: true, detail: { id: 'lamp', state: { on: true } } });
+    const { r, asked } = iphoneRunner({ lanes: { official: official.lane } });
+    expect(await r.call('phone.home.set', { id: 'lamp', state: { on: true } })).toMatchObject({ ok: true, route: 'official', detail: { state: { on: true } } });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('checks the new tools\' arguments before routing', async () => {
+    const official = officialLane();
+    const { r } = iphoneRunner({ lanes: { official: official.lane } });
+    expect(await r.call('phone.shortcuts.run', { name: '' })).toMatchObject({ ok: false, error: 'invalid_args', route: 'official' });
+    expect(await r.call('phone.home.set', { id: 'lamp', state: 'on' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(await r.call('phone.actions.run', { app: 'slack', action: 'x', timeout_s: 500 })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(await r.call('phone.tap', { x: 1, y: 2, route: 'teleport' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(official.calls).toHaveLength(0);
+  });
+
+  it('says the official route is not available yet when the app cannot run it', async () => {
+    const { r, asked } = iphoneRunner();
+    const res = await r.call('phone.shortcuts.run', { name: 'Note' });
+    expect(res).toMatchObject({ ok: false, error: 'route_unavailable', route: 'official', verified: false });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('phone.describe reports every route for an App Store iPhone', async () => {
+    const { r } = iphoneRunner();
+    const res = await r.call('phone.describe', {});
+    expect(res).toMatchObject({ ok: true, verified: true, detail: { locked: null, foreground_app: null } });
+    expect(((res as unknown as { detail: { routes: Array<{ route: string }> } }).detail.routes).map((x) => x.route)).toEqual(['official', 'mirror', 'bt-mac', 'bt-apple', 'bt-android', 'usb-agent', 'legacy-helper']);
+  });
+
+  it('an App Store iPhone with no tap route keeps its own screen path', async () => {
+    const { r, apps } = iphoneRunner();
+    expect(await r.call('phone.tap', { x: 1, y: 2 })).toMatchObject({ ok: false, error: 'not_supported', message: 'no taps here' });
+    expect(apps.calls).toEqual(['phone.tap']);
+  });
+
+  it('Android is untouched: the new tools are refused, route is refused, taps go to adb as before', async () => {
+    const { r, calls } = runner();
+    expect(await r.call('phone.describe', {})).toMatchObject({ ok: false, error: 'not_supported' });
+    expect(await r.call('phone.home.list', {})).toMatchObject({ ok: false, error: 'not_supported' });
+    expect(await r.call('phone.tap', { x: 3, y: 4, route: 'mirror' })).toMatchObject({ ok: false, error: 'invalid_args' });
+    expect(calls).toHaveLength(0);
+    expect(await r.call('phone.tap', { x: 3, y: 4 })).toEqual({ ok: true });
+
+    const android = iphoneRunner({ platform: 'android' });
+    expect(await android.r.call('phone.shortcuts.run', { name: 'x' })).toMatchObject({ ok: false, error: 'not_supported' });
+  });
+});
+
+describe('phone.maps, phone.explore_app, phone.task vision', () => {
+  const tool = (name: string) => PHONE_TOOLS.find((t) => t.name === name) as unknown as { description: string; inputSchema: { properties: Record<string, any>; required?: string[]; additionalProperties: boolean } };
+
+  it('lists both tools with the contract schemas', () => {
+    expect(tool('phone.maps').inputSchema).toMatchObject({ additionalProperties: false });
+    expect(Object.keys(tool('phone.maps').inputSchema.properties).sort()).toEqual(['app', 'serial']);
+    expect(tool('phone.maps').inputSchema.required).toBeUndefined();
+    expect(tool('phone.explore_app').inputSchema.required).toEqual(['app']);
+    expect(tool('phone.explore_app').inputSchema.additionalProperties).toBe(false);
+    expect(tool('phone.explore_app').inputSchema.properties.minutes).toMatchObject({ minimum: 1, maximum: 30, default: 10 });
+    expect(tool('phone.explore_app').inputSchema.properties.max_screens).toMatchObject({ minimum: 1, maximum: 300, default: 60 });
+    expect(tool('phone.explore_app').description).toMatch(/Android only/);
+    expect(tool('phone.explore_app').description).toMatch(/money apps are refused/);
+    expect(tool('phone.task').inputSchema.properties.vision.enum).toEqual(['auto', 'always']);
+  });
+
+  it('phone.maps reads the list or one map and never needs a phone', async () => {
+    const maps = vi.fn(async () => ({ ok: true, maps: [{ app: 'com.x' }] }));
+    const map = vi.fn(async () => ({ ok: true, map: { app: 'com.x' } }));
+    const { r } = runner({ api: { maps, map } as unknown as PhoneApi, online: [] });
+    expect(await r.call('phone.maps', {})).toMatchObject({ ok: true, maps: [{ app: 'com.x' }] });
+    expect(await r.call('phone.maps', { app: 'com.x' })).toMatchObject({ ok: true, map: { app: 'com.x' } });
+    expect(map).toHaveBeenCalledWith('com.x');
+    const missing = { map: async () => ({ ok: false, error: 'map_not_found', message: 'none', status: 404 }) } as unknown as PhoneApi;
+    expect(await runner({ api: missing }).r.call('phone.maps', { app: 'com.y' })).toMatchObject({ ok: false, error: 'map_not_found' });
+    expect(await runner().r.call('phone.maps', {})).toMatchObject({ ok: false, error: 'unsupported' });
+  });
+
+  it('phone.explore_app passes the body through and returns run_id', async () => {
+    const explore = vi.fn(async () => ({ ok: true, status: 'running', run_id: 'explore-1' }));
+    const { r } = runner({ api: { explore } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: 'com.android.settings', minutes: 5, max_screens: 20 })).toMatchObject({ ok: true, run_id: 'explore-1', status: 'running' });
+    expect(explore).toHaveBeenCalledWith('com.android.settings', { serial: '192.168.1.20:41234', minutes: 5, max_screens: 20 });
+  });
+
+  it('phone.explore_app validates arguments and passes 403 money_app and 409 phone_busy through', async () => {
+    const { r } = runner({ api: { explore: async () => ({ ok: false, error: 'money_app', message: 'no', status: 403 }) } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: '' })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', minutes: 31 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', max_screens: 0 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.bank' })).toMatchObject({ ok: false, error: 'money_app', status: 403 });
+    const busy = runner({ api: { explore: async () => ({ ok: false, error: 'phone_busy', message: 'busy', status: 409 }) } as unknown as PhoneApi }).r;
+    expect(await busy.call('phone.explore_app', { app: 'com.x' })).toMatchObject({ ok: false, error: 'phone_busy', status: 409 });
+  });
+
+  it('phone.task passes vision through and rejects other values', async () => {
+    const task = vi.fn(async () => ({ ok: true, status: 'done' }));
+    const { r } = runner({ api: { task } as unknown as PhoneApi });
+    await r.call('phone.task', { task: 'x', vision: 'always' });
+    expect(task).toHaveBeenCalledWith('192.168.1.20:41234', expect.objectContaining({ goal: 'x', vision: 'always' }));
+    expect(await r.call('phone.task', { task: 'x', vision: 'never' })).toMatchObject({ error: 'invalid_args' });
+    expect(task).toHaveBeenCalledTimes(1);
   });
 });

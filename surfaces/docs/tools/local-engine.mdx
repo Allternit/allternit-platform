@@ -1,11 +1,11 @@
 ---
 title: 'Local Engine'
-description: 'Download models from the Hugging Face Hub and manage local inference runtimes behind a standard chat completions proxy'
+description: 'Download verified models from Freeweights or the Hugging Face Hub and manage local inference runtimes behind a standard chat completions proxy'
 ---
 
 ## Overview
 
-The **Allternit Local Engine** is a self-hosted service that downloads model weights from the Hugging Face Hub, keeps them in a local cache, and manages the lifecycle of local inference backends. It exposes a small HTTP API for model download/import, runtime launch/stop, hardware status, and a `/v1/chat/completions` proxy that routes requests to a healthy backend serving the requested model.
+The **Allternit Local Engine** is a self-hosted service that downloads model weights (through Freeweights, falling back to the Hugging Face Hub), keeps them in a local cache, and manages the lifecycle of local inference backends. It exposes a small HTTP API for model download/import, runtime launch/stop, hardware status, and a `/v1/chat/completions` proxy that routes requests to a healthy backend serving the requested model.
 
 <Note>
 Models, runtime logs, and inference traffic stay on the host. Nothing is sent to Allternit-managed inference endpoints unless you explicitly route traffic through them.
@@ -29,8 +29,8 @@ The host and port can be changed with environment variables:
 ## What it does
 
 1. **Model cache** — tracks downloaded and imported models with their byte-level progress, status, and local paths.
-2. **Hugging Face downloads** — verifies the repo, filters out non-essential files, resumes partial downloads, and validates safe filesystem paths.
-3. **Local imports** — registers models already on disk, including exports produced by Unsloth training jobs.
+2. **Verified downloads** — every file is fetched through the [model source contract](/tools/freeweights): Freeweights first, then the publisher (Hugging Face), checked by sha256 or the git blob id. Partial downloads resume. Each model in `GET /models` carries a `verification` state, and `POST /models/verify` re-hashes the files on disk. Data with no hash is refused unless the request sets `allow_unverified`. Set `ALLTERNIT_FREEWEIGHTS_URL` to point at a different Freeweights base. See [Freeweights](/tools/freeweights).
+3. **Local imports** — registers models already on disk, including exports produced by Studio training jobs.
 4. **Runtime manager** — spawns inference backends on a free port, polls their health endpoint, and captures logs.
 5. **Chat proxy** — forwards `/v1/chat/completions` requests to the correct healthy runtime using the `model` field.
 6. **Host diagnostics** — reports CPU, RAM, disk, and GPU information so clients can pick compatible models.
@@ -72,7 +72,8 @@ The service creates two directories on startup:
 | GET | `/health` | Service health |
 | GET | `/status` | Service and host diagnostics |
 | GET | `/models` | List cached models |
-| POST | `/models/download` | Queue a Hugging Face download |
+| POST | `/models/download` | Queue a verified download (`repo_id`, `revision`, `quantization`, `allow_unverified`) |
+| POST | `/models/verify` | Re-hash a downloaded model's files |
 | POST | `/models/import` | Register a local model directory |
 | GET | `/runtimes` | List runtimes |
 | POST | `/runtimes/launch` | Launch a backend runtime |
@@ -160,7 +161,7 @@ The download runs in the background. Poll `/models` to watch `downloaded_bytes` 
 
 ## Import a local model
 
-Use this for weights already on disk or for Unsloth exports.
+Use this for weights already on disk or for Studio training exports.
 
 ```bash
 curl -X POST http://127.0.0.1:3015/models/import \

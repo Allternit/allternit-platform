@@ -27,6 +27,11 @@ final class VoiceHost: ObservableObject {
         if viewModel == nil {
             let model = VoiceModeViewModel(chatViewModel: chat, runtimeModelId: runtimeModelId, effort: effort)
             model.botVoice = bot?.kokoroVoiceId
+            chat.voiceModel = model
+            // end_call: the normal end flow, including the "Voice chat ended" card.
+            model.onEndCall = { [weak self, weak chat] in
+                if let seconds = self?.end() { chat?.appendVoiceSummary(durationSeconds: seconds) }
+            }
             viewModel = model
             model.begin(dictation: dictation, speaker: speaker)
         }
@@ -80,7 +85,8 @@ extension View {
 }
 
 /// Quick voice bar: orb + status + mute / expand / end. Sits above the
-/// composer while a voice conversation runs.
+/// composer while a voice conversation runs. A plain chat shows the thinking
+/// mark in a small version of the default live mode look.
 struct VoiceQuickBar: View {
     @ObservedObject var viewModel: VoiceModeViewModel
     /// Bot conversations: the bot's face in a small version of its live mode look.
@@ -99,10 +105,11 @@ struct VoiceQuickBar: View {
                 }
                 .frame(width: 34, height: 34)
             } else {
-                ThinkingOrb(state: orbState, size: .avatar, paused: viewModel.state == .idle)
-                    .scaleEffect(0.5)
-                    .frame(width: 34, height: 34)
-                    .accessibilityHidden(true)
+                VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette,
+                                 botColor: nil, size: 28, compact: true) {
+                    VoiceMarkFace(state: viewModel.state, size: 28)
+                }
+                .frame(width: 34, height: 34)
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -146,11 +153,14 @@ struct VoiceQuickBar: View {
         }
     }
 
-    private var orbState: ThinkingOrbState {
+    /// `Phase` is nested in the generic view, so the mark face has its own.
+    private var markPhase: VoiceSpeakerView<VoiceMarkFace>.Phase {
+        if viewModel.isConnecting { return .connecting }
         switch viewModel.state {
-        case .idle, .listening: return .listening
-        case .thinking: return .breathing
-        case .speaking: return .composing
+        case .idle: return .idle
+        case .listening: return .listening
+        case .thinking: return .thinking
+        case .speaking: return .speaking
         }
     }
 
@@ -173,7 +183,7 @@ struct VoiceQuickBar: View {
 
     private func barButton(_ systemName: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         }) {
             Image(systemName: systemName)

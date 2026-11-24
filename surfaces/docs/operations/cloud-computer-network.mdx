@@ -1,0 +1,97 @@
+---
+title: "Cloud computers: network and sandbox"
+description: "Runbook for cloud computers that lose network or can't start, the inotify limit on Incus hosts, and why containers run with security.nesting"
+---
+
+**Status: AVAILABLE.** See [status labels](/architecture#status-labels).
+
+Cloud computers are unprivileged Incus containers (image `allternit-cloud-computer`, profile `default`). Each gets its IPv4 address from the dnsmasq that Incus runs for the `incusbr0` bridge. This page covers two host-level problems: dnsmasq stops (computers lose network or never come up) and the sandbox can't start inside a computer.
+
+## Cloud computers lose network or can't start
+
+### Symptoms
+
+- New computers stay in provisioning or end in `error`; existing ones show no IPv4 address in `incus list`.
+- Inside a computer, DNS and outbound traffic fail.
+- `GET https://api.allternit.com/api/v1/health/computers` may report `recent_provisioning_failures`.
+
+### Check
+
+On the Incus host (`allternit-standby` today), as root:
+
+```bash
+incus network list                                   # incusbr0 must be CREATED
+journalctl -u incus --since -2d | grep -i inotify    # "failed to create inotify: Too many open files"
+sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+```
+
+Or run the host checks from the fleet script, which change nothing:
+
+```bash
+CHECK_ONLY=1 bash infrastructure/vps-desktop-cloud/apply-nesting.sh
+```
+
+### Cause
+
+Unprivileged containers map root to the same host uid, so every container shares one `fs.inotify.max_user_instances` budget. At the Ubuntu default of 128 the host runs out, and the next daemon that starts fails. On 2026-11-10 that was dnsmasq for `incusbr0`, and no computer had network until 2026-11-12. The host had an older `/etc/sysctl.d/10-incus-inotify.conf` with 1024, but the live value was back at 128; we did not find what reset it.
+
+### Fix
+
+```bash
+cat > /etc/sysctl.d/90-incus-inotify.conf <<'EOF'
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 1048576
+EOF
+sysctl -p /etc/sysctl.d/90-incus-inotify.conf
+# No restart: Incus retries the bridge every minute. On 2026-11-12 dnsmasq
+# came back within about 60 s of the sysctl change.
+incus network list               # incusbr0 back to CREATED
+```
+
+If `incusbr0` is still not `CREATED` after two minutes, read the newest error with `journalctl -u incus --since -5min`. Restarting Incus is a last resort and was not tested on a host with running computers.
+
+The `90-` prefix sorts after older `10-*.conf` files, so it wins at boot. `infrastructure/vps-desktop-cloud/bootstrap-host.sh` writes the same file on every new host. After the fix, computers renew their lease on their own; restart one with `incus restart` if it still has no address after a few minutes.
+
+## Why containers run with security.nesting
+
+Gizzi's bash tool and the `run_code` sandbox run `bwrap` inside the computer. In an unprivileged container without nesting, the default AppArmor profile blocks the mounts bwrap makes, and it fails with `Failed to make / slave: Permission denied`.
+
+`security.nesting=true` relaxes those mount rules. It is safe on an unprivileged container: root inside is still an unprivileged uid on the host. Containers keep `security.privileged=false`, and nesting must never be set on a privileged container. A test container from the same image with nesting ran bwrap as root with run_code's strict arguments (`--tmpfs /tmp --unshare-pid --unshare-ipc --new-session --unshare-net`), and the network was blocked inside it.
+
+cloud-api sets both keys on every new computer (`CONTAINER_SECURITY_CONFIG` in `cmd/allternit-cloud-api/src/services/provisioning.rs`). It sets them again after a customer restores a restore point, because an Incus restore brings back the snapshot's config. A resize changes only the limits and the root disk.
+
+### Existing computers
+
+Computers made before this change need nesting turned on once. `infrastructure/vps-desktop-cloud/apply-nesting.sh` does it one computer at a time. It is a dry run unless `DRY_RUN=0` is set.
+
+```bash
+bash apply-nesting.sh                          # dry run: what it would change
+DRY_RUN=0 ONLY=allternit-user-abc bash apply-nesting.sh   # one computer
+DRY_RUN=0 bash apply-nesting.sh                # every customer and free computer
+```
+
+For each computer it:
+
+1. skips it if nesting is already on, if the computer is privileged, or if Gizzi is running a session (`FORCE=1` overrides the last one);
+2. takes snapshot `pre-nesting-YYYYMMDD` and sets `security.nesting=true`;
+3. restarts a running computer and waits for an IPv4 address, `:8013/health` reporting healthy, and `bwrap --ro-bind / / --unshare-net true` succeeding as root. A stopped computer only gets the setting, which applies at its next start;
+4. on failure, unsets nesting, restarts the computer, keeps the snapshot and sends an ops alert. On success it deletes the snapshot (`KEEP_SNAPSHOT=1` keeps it), because on a `dir` pool a snapshot is a full copy of the disk.
+
+When the inotify limit or `incusbr0` check fails, it changes no computer. Running it on production hosts needs the operator's approval; restarting a computer interrupts its user.
+
+### Check a computer
+
+```bash
+incus config get <name> security.nesting          # true
+incus exec <name> -- bwrap --ro-bind / / --unshare-net true && echo ok
+```
+
+## Monitoring
+
+The status page watches cloud computers through `GET /api/v1/health/computers` ([Status page](/operations/status-page)). That endpoint reads the database only, so a stopped dnsmasq shows up late, as provisioning failures. The host-side check is `CHECK_ONLY=1 apply-nesting.sh`: it exits 1 and sends an ops alert (when `ALLTERNIT_OPS_ALERT_URL` and `_TOKEN` are in `/etc/allternit-backup/backup.env`) if `fs.inotify.max_user_instances` is under 8192 or `incusbr0` is not CREATED. See the status page doc for how to run it every few minutes.
+
+## Related
+
+- [Status page](/operations/status-page)
+- [Recovery](/operations/recovery)
+- [Hosted driver](/operations/hosted-driver)

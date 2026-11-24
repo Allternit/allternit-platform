@@ -2,16 +2,21 @@ package com.allternit.app
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.google.android.play.core.review.ReviewManagerFactory
-import com.google.androidbrowserhelper.trusted.LauncherActivity
+import com.google.androidbrowserhelper.trusted.LauncherActivityMetadata
+import com.allternit.ondevice.BridgedLauncherActivity
 
 /**
  * The Google Play build's launcher: androidbrowserhelper's LauncherActivity
  * (m.allternit.com as a Trusted Web Activity) plus the Play in-app review sheet.
+ * Since W9 it extends [BridgedLauncherActivity] (module :ondevice), which is
+ * LauncherActivity launching the TWA on an app-wide session so the on-device
+ * engine can talk to the page; everything below is unchanged.
  * The web content cannot call Play In-App Review, so the ask happens here,
  * natively, before the TWA opens. The phonelink build keeps the stock launcher.
  *
@@ -27,8 +32,16 @@ import com.google.androidbrowserhelper.trusted.LauncherActivity
  *    TWA right away and never ask again; the base class already finishes when
  *    its saved state says the browser was launched. The old instance's
  *    callbacks and timeout are dropped once it is destroyed.
+ *
+ * Play Billing marker (store purchases D15): every URL this build opens carries
+ * `src=play` ([PlayLaunchUrl]). [getLaunchingUrl] adds it to the default URL, deep
+ * links and launcher shortcuts. A text share is turned into a plain VIEW of the share
+ * target URL (with the marker) before the base class sees it, because Chrome's own
+ * share path rebuilds the share URL's query and would drop the marker. Notifications
+ * are opened by Chrome itself, not by this activity; when Chrome hands a notification
+ * URL to the app (VIEW on m.allternit.com) it arrives here as a deep link.
  */
-class ReviewLauncherActivity : LauncherActivity() {
+class ReviewLauncherActivity : BridgedLauncherActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var twaLaunchRequested = false
@@ -45,9 +58,47 @@ class ReviewLauncherActivity : LauncherActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         recreated = savedInstanceState != null
+        shareAsMarkedView()
         // Calls shouldLaunchImmediately(), unless the base class finishes early
         // (app already open, restart in a new task): those are not counted.
         super.onCreate(savedInstanceState)
+    }
+
+    /** Default URL, deep link or shortcut URL, with `src=play` added (existing params kept). */
+    override fun getLaunchingUrl(): Uri {
+        val url = super.getLaunchingUrl()
+        val marked = PlayLaunchUrl.withPlayMarker(url.toString())
+        return if (marked == url.toString()) url else Uri.parse(marked)
+    }
+
+    /**
+     * ACTION_SEND (text) -> ACTION_VIEW of the share target URL with the marker, flags
+     * kept. Left alone when the share has no text, carries a file, or the share target
+     * metadata is missing or not GET (Chrome then handles it as before, without the marker).
+     */
+    private fun shareAsMarkedView() {
+        val share = intent ?: return
+        if (share.action != Intent.ACTION_SEND) return
+        if (share.hasExtra(Intent.EXTRA_STREAM)) return
+        val metadata = try {
+            LauncherActivityMetadata.parse(this)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "No launcher metadata, leaving the share to Chrome", e)
+            return
+        }
+        val url = PlayLaunchUrl.shareUrl(
+            metadata.defaultUrl,
+            metadata.shareTarget,
+            share.getStringExtra(Intent.EXTRA_SUBJECT),
+            share.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString(),
+        ) ?: return
+        intent = Intent(share).apply {
+            action = Intent.ACTION_VIEW
+            // setType() would clear the data again, so both in one call.
+            setDataAndType(Uri.parse(url), null)
+            removeExtra(Intent.EXTRA_SUBJECT)
+            removeExtra(Intent.EXTRA_TEXT)
+        }
     }
 
     override fun shouldLaunchImmediately(): Boolean {

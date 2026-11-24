@@ -1,0 +1,35 @@
+---
+title: 'tool_search'
+description: 'How gizzi loads tools on demand so the model sees a short list'
+---
+
+## Overview
+
+Sending every tool on every step is slow, costly and confusing for weaker models. Gizzi defers some tools. They are not sent until the model asks for them with `tool_search`. This works for every provider.
+
+## Always loaded
+
+File, shell and search tools, `task`, `todowrite`, `question`, web tools, `skill`, `tool_search`, the ask-later tools, `wait_agents` and `agent_control`.
+
+## Deferred families
+
+Skill growth, scratchpad, goals, artifacts, vault and memory, email, automation, notebook and graph, threads, projects, computers, context, and MCP tools.
+
+## Using it
+
+| Input | Meaning |
+|---|---|
+| `query` | Keywords, or `select:a,b` to load exact tools. |
+
+It returns `loaded`, `already` (loaded before) and `unknown`. The description lists tool names only, so it stays short.
+
+If the model calls a deferred tool by name without searching, gizzi loads that tool's family and tells the model to call again. Loading a family changes the tool list once, so the prompt cache resets once. The loaded set is kept across restarts.
+
+## Turning it off
+
+Set `GIZZI_DISABLE_TOOL_SEARCH=1` to send every tool on every step. `tool_search` replaces the old `select_tools` tool, which covered MCP tools only.
+
+## Related
+
+- [Tool belt](/tools/tool-belt)
+- [MCP](/tools/mcp)

@@ -7,7 +7,7 @@
 //
 // Flag.GIZZI_PLATFORM_API_URL and the refresh interval are read at module
 // load, so the fake registry and the env are set up once for the whole file.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -20,6 +20,7 @@ type RecordedPut = { authorization: string | null; body: any }
 let home: string
 let server: ReturnType<typeof Bun.serve>
 let recorded: RecordedPut[] = []
+let putStatus = 200
 let previousPlatformUrl: string | undefined
 let previousXdg: { XDG_DATA_HOME?: string; XDG_CONFIG_HOME?: string } = {}
 
@@ -56,6 +57,7 @@ beforeAll(async () => {
       const url = new URL(req.url)
       if (req.method === "PUT" && url.pathname === "/api/v1/gizzi-instances/self") {
         recorded.push({ authorization: req.headers.get("authorization"), body: await req.json() })
+        if (putStatus !== 200) return new Response("nope", { status: putStatus })
         return Response.json({ id: "gi_test", name: "byo-vps-1", status: "online" })
       }
       return new Response("not found", { status: 404 })
@@ -68,6 +70,11 @@ beforeAll(async () => {
   // PUTs to the default platform URL instead of the recorder. The Flag
   // namespace is runtime-mutable — point it at the recorder and restore in
   // afterAll.
+  // Global.Path is frozen at first import too, so a real `gizzi pair` on the
+  // dev machine would otherwise win over the env token. Pretend not paired.
+  const { Pairing } = await import("../../src/runtime/services/pairing/pairing")
+  spyOn(Pairing, "load").mockResolvedValue(undefined as any)
+  spyOn(Pairing, "rotateIfNeeded").mockResolvedValue(undefined as any)
   const { Flag } = await import("../../src/runtime/context/flag/flag")
   previousPlatformUrl = Flag.GIZZI_PLATFORM_API_URL
   Flag.GIZZI_PLATFORM_API_URL = process.env.GIZZI_PLATFORM_API_URL
@@ -123,5 +130,58 @@ describe("InstanceRegistration env token precedence", () => {
 
     expect(recorded.length).toBe(1)
     expect(recorded[0].authorization).toBe("Bearer clerk-like-opaque-token")
+  })
+})
+
+describe("InstanceRegistration rejected credential", () => {
+  test("a 401 stops the refresh loop (no second PUT)", async () => {
+    recorded = []
+    putStatus = 401
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_revoked"
+    const { InstanceRegistration } = await import("../../src/runtime/server/instance-registration")
+    await InstanceRegistration.register({ url: "http://100.64.0.7:4096", name: "byo-vps-1" })
+    await wait(300) // several 40ms intervals
+    InstanceRegistration.stop()
+    putStatus = 200
+    expect(recorded.length).toBe(1)
+  })
+
+  test("a 401 on a refresh tick stops the loop after that PUT", async () => {
+    recorded = []
+    putStatus = 200
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_revoked_later"
+    const { InstanceRegistration } = await import("../../src/runtime/server/instance-registration")
+    await InstanceRegistration.register({ url: "http://100.64.0.7:4096", name: "byo-vps-1" })
+    putStatus = 401
+    await waitForCount(2)
+    await wait(300)
+    InstanceRegistration.stop()
+    putStatus = 200
+    expect(recorded.length).toBe(2)
+  })
+
+  test("a 500 keeps the loop going", async () => {
+    recorded = []
+    putStatus = 500
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_flaky"
+    const { InstanceRegistration } = await import("../../src/runtime/server/instance-registration")
+    await InstanceRegistration.register({ url: "http://100.64.0.7:4096", name: "byo-vps-1" })
+    const count = await waitForCount(3)
+    InstanceRegistration.stop()
+    putStatus = 200
+    expect(count).toBeGreaterThanOrEqual(3)
+  })
+
+  test("register() works again after a rejection", async () => {
+    recorded = []
+    putStatus = 401
+    process.env.ALLTERNIT_API_TOKEN = "allternit_runtime_repaired"
+    const { InstanceRegistration } = await import("../../src/runtime/server/instance-registration")
+    await InstanceRegistration.register({ url: "http://100.64.0.7:4096", name: "byo-vps-1" })
+    putStatus = 200
+    await InstanceRegistration.register({ url: "http://100.64.0.7:4096", name: "byo-vps-1" })
+    const count = await waitForCount(3)
+    InstanceRegistration.stop()
+    expect(count).toBeGreaterThanOrEqual(3)
   })
 })

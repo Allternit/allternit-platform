@@ -158,7 +158,8 @@ export async function* handleStopHooks(
     if (!toolUseContext.agentId) {
       // Memory Drive: commit + sync any memory lines the agent edited this turn.
       void commitMemoryDriveEdits('Save memory edits from gizzi')
-      void captureUserTurn(messagesForQuery)
+      // Includes this turn's assistant messages so Sleep (when on) gets the reply and tool calls.
+      void captureUserTurn([...messagesForQuery, ...assistantMessages])
       void executeAutoDream(stopHookContext, toolUseContext.appendSystemMessage)
     }
   }

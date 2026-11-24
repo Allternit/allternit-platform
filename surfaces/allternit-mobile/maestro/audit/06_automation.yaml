@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn:
+    id: "drawerRowautomation-tasks"
+- takeScreenshot: automation_cron
+- tapOn:
+    id: "automationTabroutine"
+- takeScreenshot: automation_routines
+- tapOn:
+    id: "automationTabloop"
+- takeScreenshot: automation_loops
+- stopApp

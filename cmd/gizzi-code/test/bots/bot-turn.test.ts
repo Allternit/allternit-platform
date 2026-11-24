@@ -61,9 +61,10 @@ describe("bot turn system prompt", () => {
     }
   })
 
-  test("non-bot sessions are unchanged: provider header first, instructions loaded, + text last", async () => {
+  test("non-bot sessions: provider header first, instructions loaded, + text last", async () => {
     const { header, loaded } = await turnPrompt({ userSystem: "+standing instructions" })
-    expect(header.startsWith("You are Allternit Shell (allternit-shell), an AI coding agent.")).toBe(true)
+    // No surface (gizzi CLI) gets the Gizzi Code stack.
+    expect(header.startsWith("You are Gizzi Code, Allternit's coding agent.")).toBe(true)
     expect(loaded).toEqual(["instructions", "workspace", "mcpInstructions"])
     expect(header).toContain("my name is Eoj")
     expect(header.trimEnd().endsWith("standing instructions")).toBe(true)
@@ -117,6 +118,14 @@ describe("claude-cli bot spawn args", () => {
     expect(args).not.toContain("--system-prompt")
   })
 
+  test("a code bot's run_code goes over the bridge, never as Claude's Bash or a raw name", () => {
+    const codeBot: BotTurn.BotTurnInfo = { id: "agent-code", allowedTools: ["file_read", "run_code"] }
+    const allowed = after(argv({ bot: codeBot }), "--allowedTools") ?? ""
+    expect(allowed.split(",")).not.toContain("run_code")
+    expect(allowed.split(",")).not.toContain("Bash")
+    expect(allowed).toContain("Read")
+  })
+
   test("a gated bot is isolated, gets its allowlist and no bypassPermissions", () => {
     const gatedBot: BotTurn.BotTurnInfo = {
       id: "agent-1",
@@ -135,9 +144,9 @@ describe("claude-cli bot spawn args", () => {
     expect(allowed).toEqual(expect.arrayContaining(["WebSearch", "Read", "Glob", "Grep", "mcp__allternit"]))
     // ask-each-time tools are not pre-approved
     expect(allowed).not.toContain("Bash")
-    // persona replaces Claude Code's own prompt instead of being appended
-    expect(after(args, "--system-prompt").startsWith(PERSONA)).toBe(true)
-    expect(args).not.toContain("--append-system-prompt")
+    // the persona is appended: Claude Code's own prompt stays (D10)
+    expect(after(args, "--append-system-prompt").startsWith(PERSONA)).toBe(true)
+    expect(args).not.toContain("--system-prompt")
   })
 
   test("a bot with no allowlist asks for anything beyond reading, still isolated", () => {

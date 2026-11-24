@@ -1,12 +1,78 @@
 ---
 title: "Office view"
-description: "Enter the whole Allternit facility, choose your avatar, roam the campus, and work with your bots upstairs."
+description: "Open the Workspace to see your bots grouped into work pods, or enter the full Allternit facility to roam the campus."
 ---
 
-Office opens the full Allternit facility inside the app. On first entry, choose
-**Create my avatar** or walk as a bot from **My bots**. Your main avatar stays
-available when you switch to a bot's appearance. **Browse characters** opens the
-existing character library and editor.
+Office opens the Workspace, a floor that shows your bots working in groups.
+**Open the full facility** switches the same view to the whole Allternit
+facility, where you can choose an avatar and roam. The sections below on
+avatars, rooms and saved state apply to the full facility.
+
+## The Workspace
+
+The Workspace shows each of your bots at a desk and what it is doing now. It
+opens in 3D. A switch in the floor controls changes it to 2D, and the choice is
+kept. If 3D cannot start on your device, or the first frame is too slow, the
+Workspace shows the 2D floor and says why.
+
+### Work pods
+
+Bots sit in work pods, one pod per project:
+
+- Each project that has bots gets its own pod, named after the project.
+- Your main bot sits in the **Chief** pod in the middle of the floor.
+- Bots that belong to no project sit in the **Team** pod. If you have no
+  projects, you see only the Team pod and a link to group bots into a project.
+- The Workspace shows at most 8 project pods, those with the most recent work.
+  Bots from the other projects sit in the Team pod.
+- A pod seats 2, 4, 6 or 8 bots, and grows up to 12. After that it shows a
+  badge such as "+3" for the bots that do not fit.
+
+A bot keeps its seat when it is idle, and is drawn dimmer. A bot working on a
+thread sits in that thread's project pod.
+
+### Bot thread
+
+Tap a bot to open its thread. On desktop it opens as a panel beside the floor.
+On a phone it opens as a sheet under the floor. The **Thread** tab shows the
+bot's recent work as short receipts, its results, and the composer. The
+**Screen** tab shows the bot's computer, with **Take over** and **Hand back**.
+
+### Approvals
+
+When bots need you, a pill on the floor reads "1 needs you" or "N need you".
+Open it to see the approval cards. Each card has **Approve**, **Not now** and
+**Answer**. **Not now** on a permission declines it, so the bot is not left
+waiting. After you approve, a short done bubble shows on the floor.
+
+### Your main bot's dock
+
+Your main bot has a dock on the floor:
+
+- Hold the mic to talk. Tap it to switch listening on or off.
+- Suggestion cards offer **Yes, do it** and **Not now**.
+- The **Autopilot** switch turns Autopilot on or off. See
+  [Bot autonomy](/guides/bot-autonomy).
+- If no main bot is set, the dock shows **Pick your main bot**.
+
+### While you were away
+
+When you open the Office after 30 minutes or more away, and something happened
+in that time, a **While you were away** card lists it. It shows once.
+
+### Open the full facility
+
+Choose **Open the full facility** to leave the Workspace for the whole campus.
+A back control returns you to the Workspace. Your avatar and room position are
+kept for the next visit to the full facility. The full facility is also
+available at 3dfacility.allternit.com.
+
+### On a phone
+
+On a phone the Workspace fits the pods in portrait. When the bots would be too
+small to tap, it frames one pod, starting with a pod that has something waiting
+on you, and shows a row of pod chips. Tap a chip to frame that pod. Drag to pan
+and pinch to zoom. The top mode bar stays in place; there are no bottom tabs.
 
 On a return visit, Office resumes your saved character and a valid room position.
 The host app stores this state per account and organization on this device.
@@ -30,11 +96,12 @@ roaming or avatar selection to build 13.
 
 ## Roam and work
 
-All Office controls sit in one thin toolbar across the top. The room you are in
-is on the left, with a back arrow while you walk. On desktop the toolbar shows
-**Rooms**, **Open** (when the room has a product site), **Character**,
-**Workspace**, **Artifacts** and a sound button. On a phone the same actions are
-in the menu button at the right.
+In the full facility, the Office shows the same floating controls as the public facility. At the top
+left are a round back button (while you walk) and the name of the room you are
+in. At the top right is a round menu button. The menu holds **Open** (when the
+room has a product site), **Rooms**, **Character**, **Workspace**,
+**Artifacts**, **Camera follow** (phone) and **Sound**. It looks the same on
+desktop and phone.
 
 Use WASD, drag to look, and Shift to run on a keyboard. Phones use the facility's
 touch controls. **Rooms** lists all destinations. Walk between connected rooms
@@ -55,7 +122,7 @@ tested through TestFlight.
 
 ## Switch character
 
-Choose **Character** in the toolbar to restore **My avatar**, edit it, or select one of **My bots**.
+Choose **Character** in the menu to restore **My avatar**, edit it, or select one of **My bots**.
 Search finds a bot by name or role. Public avatar-library choices are also
 available in the editor. A:// uses the living orb; builder characters retain
 their recipe rig, and sprite-only avatars retain their artwork. The app's vector
@@ -89,7 +156,7 @@ Turn the link off and it stops working at once. If Allternit can't reach the clo
 
 ### Floor routes on the runtime
 
-`allternit-api` serves four routes under `/api/v1/floor` (`cmd/allternit-api/src/floor_routes.rs`). Field names are camelCase and match `src/lib/office/floor-types.ts` in allternit-ai.
+`allternit-api` serves the floor routes under `/api/v1/floor` (`cmd/allternit-api/src/floor_routes.rs`). Field names are camelCase and match `src/lib/office/floor-types.ts` in allternit-ai.
 
 | Route | Answer |
 | --- | --- |
@@ -109,7 +176,7 @@ Migration `V283__floor_share.sql` adds an index on `bot_events(event_type, occur
 
 ### Frame messages
 
-Full Office loads `?embed=facility`. The version-1 `allternit:facility` handshake
+The default Office view loads `?embed=workspace` and draws its own scene, without the campus. The v2 messages (pods, needs, bubbles, focus and anchors) are described in [Frame contract v2](/architecture/facility-workspace#frame-contract-v2), and the routes that feed them in the [Floor API](/api/floor). Choosing **Open the full facility** loads `?embed=facility`. The version-1 `allternit:facility` handshake
 carries the host-owned visitor config and saved main character. Visitor updates
 carry appearance, room and validated pose; panel state stops movement while the
 host's bot conversation is open. No account token enters the frame.

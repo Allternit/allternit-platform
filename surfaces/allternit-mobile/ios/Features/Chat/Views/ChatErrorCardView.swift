@@ -18,6 +18,9 @@ struct ChatError: Equatable, Sendable {
     /// True for provider/model resolution failures — the card's primary
     /// action becomes "Choose a model" instead of "Retry".
     var isModelError: Bool
+    /// Extra buttons for the card (e.g. the Claude organization refusals).
+    /// Empty for every other error.
+    var actions: [ChatErrorAction] = []
 
     /// Builds a card from the finish frame's metadata fields.
     init(name: String?, message: String?, raw: String) {
@@ -50,6 +53,44 @@ struct ChatError: Equatable, Sendable {
     }
 }
 
+/// A button a specific error adds to its card. The chat decides what each
+/// kind does; the card only draws it.
+struct ChatErrorAction: Equatable, Sendable, Identifiable {
+    enum Kind: Equatable, Sendable {
+        /// Re-send the same message once on an Allternit Cloud model, on tap.
+        case useCredits
+        /// Open Settings › Connections (the Claude organization row).
+        case manageClaudeOrg
+        /// Open Settings › Connections to link the organization again.
+        case linkAgain
+    }
+    let kind: Kind
+    let title: String
+    let systemImage: String
+    var id: Kind { kind }
+
+    /// The actions for a `claude_link_*` refusal code; none for other codes.
+    static func forClaudeLink(code: String) -> [ChatErrorAction] {
+        guard code.hasPrefix("claude_link_") else { return [] }
+        var list = [ChatErrorAction(kind: .useCredits, title: "Use Allternit credits for this message", systemImage: "sparkles")]
+        if code == "claude_link_disconnected" {
+            list.append(ChatErrorAction(kind: .linkAgain, title: "Link again", systemImage: "link"))
+        }
+        list.append(ChatErrorAction(kind: .manageClaudeOrg, title: "Manage Claude organization", systemImage: "gearshape"))
+        return list
+    }
+}
+
+/// Which Allternit Cloud model the credits button re-sends on: the person's
+/// most recent Cloud model when it is still listed, else the first listed
+/// Cloud model, else none (the button is hidden).
+enum CreditsFallback {
+    static func modelId(recent: String?, listed: [String]) -> String? {
+        if let recent, listed.contains(recent) { return recent }
+        return listed.first
+    }
+}
+
 /// Inline error card rendered under an assistant message (Claude-style
 /// status card instead of raw JSON in the bubble). Primary action is
 /// contextual: model errors offer "Choose a model", everything else offers
@@ -58,6 +99,14 @@ struct ChatErrorCardView: View {
     let error: ChatError
     let onChooseModel: () -> Void
     let onRetry: () -> Void
+    /// Draws only these kinds from `error.actions` (the credits button is
+    /// left out when no Cloud model is listed).
+    var availableActions: Set<ChatErrorAction.Kind> = []
+    var onAction: (ChatErrorAction) -> Void = { _ in }
+
+    private var visibleActions: [ChatErrorAction] {
+        error.actions.filter { availableActions.contains($0.kind) }
+    }
 
     @State private var showRaw = false
 
@@ -77,12 +126,18 @@ struct ChatErrorCardView: View {
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
 
+            ForEach(visibleActions) { item in
+                actionButton(title: item.title, systemImage: item.systemImage,
+                             primary: item.kind == .useCredits, action: { onAction(item) })
+                    .accessibilityLabel(item.title)
+            }
+
             HStack(spacing: 10) {
                 if error.isModelError {
                     actionButton(title: "Choose a model", systemImage: "cpu", action: onChooseModel)
                 }
                 actionButton(title: "Retry", systemImage: "arrow.clockwise",
-                             primary: !error.isModelError, action: onRetry)
+                             primary: !error.isModelError && visibleActions.isEmpty, action: onRetry)
             }
 
             Button(action: {
@@ -118,8 +173,7 @@ struct ChatErrorCardView: View {
 
     private func actionButton(title: String, systemImage: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             HStack(spacing: 5) {

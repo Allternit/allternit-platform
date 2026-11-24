@@ -1,24 +1,25 @@
 /**
  * TUI parity features switched on in script/features.mjs (2026-09-26):
  * gate defaults, auto-mode classifier prompt + model allowlist, small-model
- * resolution for side calls, and the cron tools. Run with the shipped flags
+ * resolution for side calls, and the automation tool's in-session queue. Run with the shipped flags
  * (script/ci-smoke-test.sh passes them as --feature=…).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { gizziGateDefault } from '../src/constants/gizziGates'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../src/cli/ui/ink-app/services/analytics/growthbook'
 import { modelSupportsAutoMode } from '../src/cli/ui/ink-app/utils/betas'
+import '../src/cli/devMacro' // getSystemPrompt reads the build-time MACRO global
+import { getSystemPrompt } from '../src/cli/ui/ink-app/constants/prompts'
 import {
   buildDefaultExternalSystemPrompt,
   getDefaultExternalAutoModeRules,
 } from '../src/cli/ui/ink-app/utils/permissions/yoloClassifier'
 import { getSmallFastModel } from '../src/cli/ui/ink-app/utils/model/model'
-import { CronCreateTool } from '../src/cli/ui/ink-app/tools/ScheduleCronTool/CronCreateTool'
-import { CronDeleteTool } from '../src/cli/ui/ink-app/tools/ScheduleCronTool/CronDeleteTool'
-import { CronListTool } from '../src/cli/ui/ink-app/tools/ScheduleCronTool/CronListTool'
+import { AutomationTool } from '../src/cli/ui/ink-app/tools/AutomationTool/AutomationTool'
+import { getProjectRoot, setProjectRoot } from '../src/cli/ui/ink-app/bootstrap/state'
 import { getBuiltInAgents } from '../src/cli/ui/ink-app/tools/AgentTool/builtInAgents'
 
 describe('gate defaults', () => {
@@ -34,6 +35,18 @@ describe('gate defaults', () => {
       getFeatureValue_CACHED_MAY_BE_STALE<{ enabled?: string }>('tengu_auto_mode_config', {})
         .enabled,
     ).toBe('enabled')
+  })
+})
+
+describe('system prompt vendor strip', () => {
+  test('default external prompts name no outside vendor', async () => {
+    const classifier = buildDefaultExternalSystemPrompt()
+    // The REPL prompt lists commands, which needs a credential to be configured (any value).
+    process.env.GIZZI_CODE_OAUTH_TOKEN ??= 'test-token'
+    const repl = (await getSystemPrompt([] as never, 'gizzi-test-model')).join('\n')
+    for (const text of [classifier, repl]) {
+      expect(text).not.toMatch(/Claude|Anthropic|Allternit Shell/)
+    }
   })
 })
 
@@ -102,36 +115,87 @@ describe('small model for side calls', () => {
   })
 })
 
-// The typed tool defs hide the (input, context) call signature; the cron
-// tools never read context, so call them loosely.
+// The typed tool def hides the (input, context) call signature; the paths
+// tested here never read context, so call it loosely.
 type LooseTool = {
-  validateInput: (input: unknown, ctx: unknown) => Promise<{ result: boolean }>
+  validateInput: (input: unknown, ctx: unknown) => Promise<{ result: boolean; message?: string }>
   call: (input: unknown, ctx: unknown) => Promise<{ data: any }>
 }
-const create = CronCreateTool as unknown as LooseTool
-const del = CronDeleteTool as unknown as LooseTool
-const list = CronListTool as unknown as LooseTool
+const automation = AutomationTool as unknown as LooseTool
 
-describe('cron tools', () => {
-  test('create, list, and delete a session-only job', async () => {
-    const invalid = await create.validateInput({ cron: 'not a cron', prompt: 'x' }, {})
-    expect(invalid.result).toBe(false)
+describe('automation tool over the old cron file store', () => {
+  const legacy = { id: '0a1b2c3d', cron: '7 9 * * 1-5', prompt: 'standup check', createdAt: Date.now(), recurring: true }
+  let dir: string
+  let file: string
+  let savedRoot: string
+  const savedFetch = globalThis.fetch
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'gizzi-automation-'))
+    mkdirSync(join(dir, '.claude'))
+    file = join(dir, '.claude', 'scheduled_tasks.json')
+    writeFileSync(file, JSON.stringify({ tasks: [legacy] }, null, 2) + '\n')
+    savedRoot = getProjectRoot()
+    setProjectRoot(dir)
+    // No account and no engine on this machine: both are network edges.
+    globalThis.fetch = (async () => {
+      throw new TypeError('fetch failed')
+    }) as unknown as typeof fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = savedFetch
+    setProjectRoot(savedRoot)
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const ids = (data: { rows: Array<{ id: string; where: string }> }) => data.rows.map(r => `${r.where}:${r.id}`)
 
-    const created = await create.call(
-      { cron: '7 9 * * 1-5', prompt: 'standup check', recurring: true, durable: false },
-      {},
-    )
-    const id = created.data.id
-    expect(created.data.durable).toBe(false)
-    expect(created.data.nextFireAt).toBeGreaterThan(Date.now())
+  test("an old task lists, can't be changed, and deletes from the file", async () => {
+    const listed = (await automation.call({ action: 'list' }, {})).data
+    expect(ids(listed)).toEqual([`legacy:${legacy.id}`])
+    expect(listed.text).toContain(legacy.id)
+    // The account and the computer scheduler are unreachable: said, not hidden.
+    expect(listed.note).toContain("aren't listed")
 
-    const listed = await list.call({}, {})
-    expect(listed.data.jobs.map((j: { id: string }) => j.id)).toContain(id)
+    const update = await automation.validateInput({ action: 'update', id: legacy.id, title: 'x' }, {})
+    expect(update.result).toBe(false)
+    expect(update.message).toContain("can't be changed")
 
-    expect((await del.validateInput({ id }, {})).result).toBe(true)
-    await del.call({ id }, {})
-    const after = await list.call({}, {})
-    expect(after.data.jobs.map((j: { id: string }) => j.id)).not.toContain(id)
+    const deleted = (await automation.call({ action: 'delete', id: legacy.id }, {})).data
+    expect(deleted.where).toBe('legacy')
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks).toEqual([])
+    expect(ids((await automation.call({ action: 'list' }, {})).data)).toEqual([])
+  })
+
+  test('a new this-thread task stays in the session and never touches the file', async () => {
+    const before = readFileSync(file, 'utf8')
+    const created = (
+      await automation.call({ action: 'create', prompt: 'check the deploy', schedule: { delay_minutes: 30 } }, {})
+    ).data
+    expect(created.status).toBe('ok')
+    expect(created.where).toBe('session')
+    expect(created.text).toContain('ends with the session')
+    expect(readFileSync(file, 'utf8')).toBe(before)
+
+    const listed = (await automation.call({ action: 'list' }, {})).data
+    const session = listed.rows.find((r: { where: string }) => r.where === 'session')
+    expect(session.title).toBe('check the deploy')
+    expect(new Date(session.nextRunAt).getTime()).toBeGreaterThan(Date.now() + 29 * 60_000)
+
+    await automation.call({ action: 'delete', id: session.id }, {})
+    expect(ids((await automation.call({ action: 'list' }, {})).data)).toEqual([`legacy:${legacy.id}`])
+    expect(readFileSync(file, 'utf8')).toBe(before)
+  })
+
+  test('a new-session task with no account and no engine is not scheduled anywhere', async () => {
+    const before = readFileSync(file, 'utf8')
+    const created = (
+      await automation.call(
+        { action: 'create', prompt: 'weekly brief', target: 'new_session', schedule: { cron: '0 9 * * 1' } },
+        {},
+      )
+    ).data
+    expect(created.status).toBe('no_scheduler')
+    expect(created.text).toContain('Not scheduled')
+    expect(readFileSync(file, 'utf8')).toBe(before)
   })
 })
 

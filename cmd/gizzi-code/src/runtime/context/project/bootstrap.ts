@@ -33,6 +33,10 @@ export async function InstanceBootstrap() {
   Vcs.init()
   Snapshot.init()
   Truncate.init()
+  // ask_user_later: start the hourly expiry sweep at boot.
+  void import("@/runtime/integrations/question")
+    .then(({ Question }) => Question.init())
+    .catch((e) => Log.Default.warn("question init failed", { error: e instanceof Error ? e.message : String(e) }))
   // Who is editing what across Code sessions (GET /file-editors, file.contended).
   void import("@/runtime/session/file-editors")
     .then(({ FileEditors }) => FileEditors.init())
@@ -57,6 +61,16 @@ export async function InstanceBootstrap() {
       Bus.subscribe(FileWatcher.Event.Updated, (payload) => RepoMap.queue([payload.properties.file]))
     })
     .catch((e) => Log.Default.warn("repo map hook failed", { error: e instanceof Error ? e.message : String(e) }))
+  // The local runtime's ledger of agent-written files: lets the owner's web
+  // and phone open a bot thread's file cards (read-only). Own hook, so a
+  // repo-map failure can't stop it.
+  void import("@/runtime/session/bot-writes")
+    .then(({ BotWrites }) =>
+      Bus.subscribe(File.Event.Edited, (payload) => {
+        void BotWrites.report(payload.properties.file, payload.properties.sessionID)
+      }),
+    )
+    .catch((e) => Log.Default.warn("bot-writes hook failed", { error: e instanceof Error ? e.message : String(e) }))
   // Sessions paused before a usage limit resume on their own (P3.17).
   void import("@/runtime/session/pause")
     .then(({ SessionPause }) => SessionPause.restore())

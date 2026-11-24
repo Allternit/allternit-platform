@@ -7,6 +7,7 @@ import { Provider } from "@/runtime/providers/provider"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { LLM } from "@/runtime/session/llm"
+import { SystemPrompt } from "@/runtime/session/system"
 import { Agent } from "@/runtime/loop/agent"
 import { Config } from "@/runtime/context/config/config"
 import { SessionTrace } from "@/runtime/session/trace"
@@ -224,6 +225,11 @@ export namespace SessionHandoff {
     return { session: await Session.get(next.id), baton }
   }
 
+  /**
+   * The checkpoint call's own prompt. It runs as the compaction agent (its
+   * model, options and deny-all tools) but with this prompt in place of
+   * compaction.txt, so it gets one instruction (JSON), not two.
+   */
   const SYSTEM = `You write the checkpoint an assistant needs to continue this conversation in a fresh context window.
 Reply with ONE JSON object and nothing else:
 {"summary":"<goal and where things stand, 2-6 sentences>","decisions":["<decisions made and instructions the user gave>"],"openItems":["<what is still open or blocked>"],"artifacts":["<files, links, commands or outputs produced or relied on>"],"nextSteps":["<the next concrete actions>"]}
@@ -250,12 +256,14 @@ Keep facts, numbers, names and paths exactly as they appear. No advice, no fille
     }
     if (!input.user || input.messages.length === 0) return fallback()
     try {
-      const agent = await Agent.get("compaction")
-      const model = agent?.model
+      const compaction = await Agent.get("compaction")
+      if (!compaction) return fallback()
+      const agent: Agent.Info = { ...compaction, prompt: SYSTEM }
+      const model = agent.model
         ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
         : await Provider.getModel(input.user.model.providerID, input.user.model.modelID)
       // Subscription (fabric) models run only on a human send (D16).
-      if (Provider.isFabricModel(model)) return fallback()
+      if (Provider.isHumanSendOnly(model)) return fallback()
       const ask = [
         input.context ? `Context from the caller:\n${input.context}` : "",
         input.todos.length ? `Current TODO list:\n${input.todos.join("\n")}` : "",
@@ -266,12 +274,13 @@ Keep facts, numbers, names and paths exactly as they appear. No advice, no fille
       const limit = AbortSignal.timeout(batonLimitMs())
       const answer = (async () => {
         const result = await LLM.stream({
-          agent: agent!,
+          agent,
           user: input.user!,
-          system: [SYSTEM],
+          system: [],
           tools: {},
           callType: "extraction",
           model,
+          surface: await SystemPrompt.effectiveSurface(input.session, (id) => Session.get(id)),
           abort: limit,
           sessionID: input.session.id,
           retries: 2,

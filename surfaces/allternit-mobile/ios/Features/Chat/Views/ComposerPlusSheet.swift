@@ -4,36 +4,60 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The composer "+" sheet (web ComposerPlusSheet, phone form): an icon grid
-/// (Files · GitHub · Web · Project · Connectors), the GitHub URL field and
-/// project list inline, the Web search / Research toggles, then Capture to
-/// brain · Plugins · Skills · Permission settings. Picks stage into the
-/// shared `AttachmentStore` and show as previews above the composer text.
+/// The composer "+" sheet, "Add to chat" (phone calm pass step 22, contract
+/// C2, brief item 5; web ComposerPlusSheet). A Claude-style grouped list:
+/// a strip of recent photos with a Photos link in the title row, then
+/// 1. Camera · Add files · GitHub link · Sketch,
+/// 2. Permission › · Computer › · Project ›,
+/// 3. Web search · Research · Memory (toggles) · Connectors › · Skills › · Plugins ›.
+/// Permission, Computer and Project push a page inside the sheet. Run on my
+/// phone and Capture to brain live in the chat's ⋯ menu; hosts without one
+/// (`chatMenuHoldsExtras` false) keep them here in a fourth group. Picks
+/// stage into the shared `AttachmentStore` and show above the composer text.
 struct ComposerPlusSheet: View {
     @ObservedObject var attachmentStore: AttachmentStore
-    /// The chat on screen — Permission settings acts on it (or the pending
-    /// choice for a new chat).
+    /// The chat on screen. Permission acts on it (or on the pending choice
+    /// for a chat that doesn't exist yet).
     var sessionId: String? = nil
-    /// Chats that can send to a linked phone show "Run on my phone".
+    /// Chats that can send to a linked phone show "Run on my phone" (in the
+    /// fourth group, only when the host has no chat ⋯ menu).
     var allowsPhoneRun: Bool = false
+    /// "Permission · Auto ›" (a chat that has the choice). Off (bot threads,
+    /// Code), the row is "Permission settings ›" as before.
+    var showsPermission: Bool = true
+    /// The host's ⋯ menu holds Run on my phone and Capture to brain.
+    var chatMenuHoldsExtras: Bool = false
+    /// Reduced motion: the host presents with no slide and the sheet fades in.
+    var fadesIn: Bool = false
 
     @StateObject private var toolOptions = ToolOptionsStore.shared
     @StateObject private var projectStore = ProjectStore.shared
     @StateObject private var brainStore = BrainStore.shared
+    @StateObject private var recentPhotos = RecentPhotosLoader()
+    @ObservedObject private var permissionStore = ChatPermissionStore.shared
+    @ObservedObject private var chipStore = ComputerChipStore.shared
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ObservedObject private var settings = SettingsStore.shared
+    @ReducedMotion private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+
+    @State private var page: ComposerPlusPage
+    /// Which way the last page change went (push = forward).
+    @State private var pushing = true
+    @State private var appeared = false
 
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isPhotosPickerPresented = false
     @State private var isCameraPresented = false
     @State private var isFilePickerPresented = false
     @State private var isSketchPresented = false
-    /// Files: iOS offers the same three sources a web file input does.
-    @State private var isFileSourceDialogPresented = false
     @State private var isConnectorsPresented = false
     @State private var isBrainCapturePresented = false
     @State private var isNewProjectPresented = false
     @State private var capabilitiesKind: CapabilitiesClient.Kind? = nil
     @State private var isPermissionSettingsPresented = false
+    @State private var isConnectComputerPresented = false
+    @State private var isComputeGatePresented = false
     /// Set to present the app-owned priming sheet before a system prompt.
     @State private var primingPermission: AppPermission? = nil
     /// Non-permission failures (camera unavailable, unreadable file).
@@ -42,109 +66,47 @@ struct ComposerPlusSheet: View {
     @State private var githubUrl = ""
     @State private var isGitHubInputVisible = false
     @State private var isGitHubLoading = false
-    @State private var isProjectMenuOpen = false
+
+    init(
+        attachmentStore: AttachmentStore,
+        sessionId: String? = nil,
+        allowsPhoneRun: Bool = false,
+        showsPermission: Bool = true,
+        chatMenuHoldsExtras: Bool = false,
+        fadesIn: Bool = false
+    ) {
+        self.attachmentStore = attachmentStore
+        self.sessionId = sessionId
+        self.allowsPhoneRun = allowsPhoneRun
+        self.showsPermission = showsPermission
+        self.chatMenuHoldsExtras = chatMenuHoldsExtras
+        self.fadesIn = fadesIn
+        _page = State(initialValue: Self.initialPage(permissionAvailable: showsPermission))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                Capsule()
-                    .fill(Color("BorderStrong"))
-                    .frame(width: 36, height: 5)
-                HStack {
-                    Spacer()
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(Color("TextSecondary"))
-                            .frame(width: 32, height: 32)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+            header
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let pickerError {
-                        FriendlyInlineStateView(
-                            style: .error,
-                            icon: "exclamationmark.triangle.fill",
-                            title: "Something went wrong",
-                            message: pickerError
-                        )
-                    }
-
-                    iconGrid
-
-                    if isGitHubInputVisible {
-                        githubPanel
-                    }
-
-                    if isProjectMenuOpen {
-                        projectPanel
-                    }
-
-                    VStack(spacing: 4) {
-                        toggleRow(
-                            icon: "globe",
-                            title: "Web search",
-                            subtitle: "Let the agent search the web for current information",
-                            isOn: $toolOptions.webSearch
-                        )
-                        Rectangle()
-                            .fill(Color("BorderSubtle"))
-                            .frame(height: 1)
-                            .padding(.leading, 44)
-                        toggleRow(
-                            icon: "pencil.tip",
-                            title: "Research",
-                            subtitle: "Deeper, multi-source research before answering",
-                            isOn: $toolOptions.research
-                        )
-                    }
-                    .plusPanel()
-
-                    VStack(spacing: 8) {
-                        if allowsPhoneRun {
-                            RunOnPhoneRow(onArmed: { dismiss() })
-                        }
-                        if brainStore.hasBrain {
-                            listRow(
-                                icon: "brain",
-                                title: "Capture to brain",
-                                subtitle: brainStore.pendingPush
-                                    ? "Waiting to sync — will retry automatically"
-                                    : "Save an idea or pain to your second brain"
-                            ) { isBrainCapturePresented = true }
-                        }
-                        listRow(icon: "puzzlepiece", title: "Plugins", subtitle: "Browse and manage plugins") {
-                            capabilitiesKind = .plugin
-                        }
-                        listRow(icon: "graduationcap", title: "Skills", subtitle: "Browse and manage skills") {
-                            capabilitiesKind = .skill
-                        }
-                        listRow(icon: "checkmark.shield", title: "Permission settings", subtitle: "Review permission defaults") {
-                            isPermissionSettingsPresented = true
-                        }
-                    }
+                ZStack(alignment: .top) {
+                    pageContent
+                        .id(page)
+                        .transition(pageTransition)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 20)
             }
         }
-        .background(Color("BgPrimary").ignoresSafeArea())
+        .opacity(fadesIn && !appeared ? 0 : 1)
+        .onAppear {
+            // The + itself plays the light haptic as it opens the sheet.
+            if fadesIn { withAnimation(Motion.fade) { appeared = true } } else { appeared = true }
+        }
+        .modifier(PlusSheetBackground())
         .presentationDetents(Self.sheetDetents)
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
-        .confirmationDialog("Add files", isPresented: $isFileSourceDialogPresented, titleVisibility: .hidden) {
-            Button("Photo Library") { photosTapped() }
-            Button("Take Photo") { cameraTapped() }
-            Button("Choose File") { isFilePickerPresented = true }
-        }
         .photosPicker(
             isPresented: $isPhotosPickerPresented,
             selection: $selectedPhotoItems,
@@ -190,6 +152,12 @@ struct ComposerPlusSheet: View {
         .sheet(isPresented: $isPermissionSettingsPresented) {
             PermissionDefaultsSheet(sessionId: sessionId)
         }
+        .sheet(isPresented: $isConnectComputerPresented) {
+            ConnectComputerSheet()
+        }
+        .sheet(isPresented: $isComputeGatePresented) {
+            ComputeGateSheet()
+        }
         .sheet(item: $primingPermission) { permission in
             PermissionPrimingSheet(permission: permission) {
                 handlePrimingContinue(permission)
@@ -202,102 +170,225 @@ struct ComposerPlusSheet: View {
         }
     }
 
-    /// DEBUG: `-open-plus-sheet` pins the sheet to .large so screenshot
-    /// verification can see every section (simctl can't scroll sheets).
+    /// DEBUG: the `-open-plus-*` launch arguments pin the sheet to .large so
+    /// screenshot verification sees every group (simctl can't scroll sheets).
     private static var sheetDetents: Set<PresentationDetent> {
         #if DEBUG
-        if launchArgumentEnabled("open-plus-sheet") { return [.large] }
+        if launchArgumentEnabled(LaunchArgument.openPlusSheet)
+            || launchArgumentEnabled(LaunchArgument.openPlusPermission)
+            || launchArgumentEnabled(LaunchArgument.openPlusComputer) {
+            return [.large]
+        }
         #endif
         return [.medium, .large]
     }
 
-    // MARK: - Icon grid
+    private static func initialPage(permissionAvailable: Bool) -> ComposerPlusPage {
+        #if DEBUG
+        return ComposerPlusPage.initial(
+            openPermission: launchArgumentEnabled(LaunchArgument.openPlusPermission),
+            openComputer: launchArgumentEnabled(LaunchArgument.openPlusComputer),
+            permissionAvailable: permissionAvailable
+        )
+        #else
+        return .root
+        #endif
+    }
 
-    private var iconGrid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-        return LazyVGrid(columns: columns, spacing: 8) {
-            gridButton(icon: "photo", label: "Files") {
-                isFileSourceDialogPresented = true
-            }
-            gridButton(icon: "chevron.left.forwardslash.chevron.right", label: "GitHub", isActive: isGitHubInputVisible) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isGitHubInputVisible.toggle()
-                    isProjectMenuOpen = false
+    // MARK: - Pages
+
+    private var pageTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: pushing ? .trailing : .leading).combined(with: .opacity),
+            removal: .move(edge: pushing ? .leading : .trailing).combined(with: .opacity)
+        )
+    }
+
+    private func go(_ next: ComposerPlusPage) {
+        guard next != page else { return }
+        Haptics.light()
+        pushing = next != .root
+        withAnimation(Motion.pick(.easeOut(duration: 0.2), reduced: reduceMotion)) { page = next }
+    }
+
+    /// A pick on a sub-page shows its check, then returns to the list.
+    private func returnToRoot() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(220))
+            go(.root)
+        }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch page {
+        case .root: rootPage
+        case .permission: permissionPage
+        case .computer: computerPage
+        case .project: projectPage
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            Capsule()
+                .fill(Color("BorderStrong"))
+                .frame(width: 36, height: 5)
+            ZStack {
+                Text(page.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .accessibilityAddTraits(.isHeader)
+                HStack {
+                    Button(action: {
+                        if page == .root { dismiss() } else { go(.root) }
+                    }) {
+                        Image(systemName: page == .root ? "xmark" : "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color("TextPrimary"))
+                            .frame(width: 34, height: 34)
+                            .background(Color("FillNeutral"), in: Circle())
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(page == .root ? "Close" : "Back")
+                    .accessibilityIdentifier(page == .root ? "plusSheetClose" : "")
+                    Spacer()
+                    if page == .root {
+                        Button(action: {
+                            Haptics.light()
+                            photosTapped()
+                        }) {
+                            Text("Photos")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(Color("TextSecondary"))
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("plusSheetPhotos")
+                    }
                 }
             }
-            gridButton(icon: "globe", label: "Web", isActive: toolOptions.webSearch, showCheck: toolOptions.webSearch) {
-                toolOptions.webSearch.toggle()
-                isProjectMenuOpen = false
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: - Root
+
+    private var rootPage: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RecentPhotosStrip(loader: recentPhotos, onPick: stageRecentPhoto, onOpenLibrary: photosTapped)
+
+            if let pickerError {
+                FriendlyInlineStateView(
+                    style: .error,
+                    icon: "exclamationmark.triangle.fill",
+                    title: "Something went wrong",
+                    message: pickerError
+                )
             }
-            gridButton(icon: "folder", label: "Project", isActive: isProjectMenuOpen || projectStore.selectedProjectId != nil) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isProjectMenuOpen.toggle()
-                    isGitHubInputVisible = false
+
+            // Group 1: add something.
+            PlusGroup {
+                PlusRow(icon: "camera", title: "Camera", testId: "plusSheetCamera") { cameraTapped() }
+                PlusDivider()
+                PlusRow(icon: "doc.badge.plus", title: "Add files", testId: "plusSheetAddFiles") { isFilePickerPresented = true }
+                PlusDivider()
+                PlusRow(icon: "link", title: "GitHub link", isActive: isGitHubInputVisible, testId: "plusSheetGithub") {
+                    withAnimation(Motion.pick(Motion.deck, reduced: reduceMotion)) { isGitHubInputVisible.toggle() }
                 }
+                if isGitHubInputVisible {
+                    githubField
+                }
+                PlusDivider()
+                PlusRow(icon: "scribble.variable", title: "Sketch") { isSketchPresented = true }
             }
-            gridButton(icon: "bolt", label: "Connectors") {
-                isConnectorsPresented = true
+
+            // Group 2: how and where this chat runs.
+            PlusGroup {
+                if showsPermission {
+                    PlusRow(
+                        icon: "checkmark.shield",
+                        title: "Permission",
+                        value: permissionStore.mode(for: sessionId).shortLabel,
+                        chevron: true
+                    ) { go(.permission) }
+                } else {
+                    PlusRow(icon: "checkmark.shield", title: "Permission settings", chevron: true) {
+                        isPermissionSettingsPresented = true
+                    }
+                }
+                PlusDivider()
+                PlusRow(
+                    icon: "desktopcomputer",
+                    title: "Computer",
+                    value: computerRowValue(chipStore.state, activeName: relay.activeDevice?.displayName),
+                    chevron: true,
+                    showsDot: chipStore.showsDot
+                ) { go(.computer) }
+                PlusDivider()
+                PlusRow(icon: "folder", title: "Project", value: selectedProjectTitle, chevron: true) { go(.project) }
             }
-            gridButton(icon: "scribble.variable", label: "Sketch") {
-                isSketchPresented = true
+
+            // Group 3: tools.
+            PlusGroup {
+                Group {
+                    PlusToggleRow(icon: "globe", title: "Web search",
+                                  hint: "Let the agent search the web for current information",
+                                  isOn: $toolOptions.webSearch)
+                    PlusDivider()
+                    PlusToggleRow(icon: "magnifyingglass", title: "Research",
+                                  hint: "Deeper, multi-source research before answering",
+                                  isOn: $toolOptions.research)
+                    PlusDivider()
+                    PlusToggleRow(icon: "brain", title: "Memory",
+                                  hint: "Let Allternit learn from your chats to personalize replies",
+                                  isOn: $settings.generateMemoryFromHistory)
+                }
+                PlusDivider()
+                PlusRow(icon: "bolt", title: "Connectors", chevron: true, testId: "plusSheetConnectors") { isConnectorsPresented = true }
+                PlusDivider()
+                PlusRow(icon: "graduationcap", title: "Skills", chevron: true) { capabilitiesKind = .skill }
+                PlusDivider()
+                PlusRow(icon: "puzzlepiece", title: "Plugins", chevron: true) { capabilitiesKind = .plugin }
+            }
+
+            // Hosts with no chat ⋯ menu keep these here.
+            if !chatMenuHoldsExtras {
+                if allowsPhoneRun {
+                    RunOnPhoneRow(onArmed: { dismiss() })
+                }
+                if brainStore.hasBrain {
+                    PlusGroup {
+                        PlusRow(
+                            icon: "brain.head.profile",
+                            title: "Capture to brain",
+                            value: brainStore.pendingPush ? "Waiting to sync" : nil,
+                            chevron: true
+                        ) { isBrainCapturePresented = true }
+                    }
+                }
             }
         }
     }
 
-    private func gridButton(
-        icon: String,
-        label: String,
-        isActive: Bool = false,
-        showCheck: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: {
-            hapticLight()
-            action()
-        }) {
-            VStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 18))
-                    .foregroundColor(isActive ? Color("TextPrimary") : Color("TextSecondary"))
-                    .frame(width: 36, height: 36)
-                    .background(isActive ? Color("BorderStrong") : Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 8))
-                Text(label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(8)
-            .background(isActive ? Color("FillNeutral") : Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isActive ? Color("BorderStrong") : Color.clear, lineWidth: 1)
-            )
-            .overlay(alignment: .topTrailing) {
-                if showCheck {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(Color("OnAccent"))
-                        .frame(width: 14, height: 14)
-                        .background(Color("AccentPrimary"), in: Circle())
-                        .padding(6)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+    private var selectedProjectTitle: String {
+        guard let id = projectStore.selectedProjectId else { return "None" }
+        return projectStore.projects.first(where: { $0.id == id })?.title ?? "None"
     }
 
     // MARK: - GitHub
 
-    private var githubPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var githubField: some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: "link")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextSecondary"))
                 TextField("github.com/user/repo/blob/main/file", text: $githubUrl)
                     .font(.system(size: 16))
                     .foregroundColor(Color("TextPrimary"))
@@ -313,18 +404,23 @@ struct ComposerPlusSheet: View {
                     let empty = githubUrl.trimmingCharacters(in: .whitespaces).isEmpty
                     Button(action: fetchGitHubFile) {
                         Text("Add")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(Color("TextPrimary"))
+                            .frame(minWidth: 44, minHeight: 36)
                     }
                     .disabled(empty)
                     .opacity(empty ? 0.4 : 1)
                 }
             }
+            .padding(.horizontal, 10)
+            .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             Text("Paste a GitHub file URL to fetch its raw contents as an attachment.")
                 .font(.system(size: 11))
                 .foregroundColor(Color("TextSecondary"))
         }
-        .plusPanel()
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
+        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
     }
 
     private func fetchGitHubFile() {
@@ -353,22 +449,164 @@ struct ComposerPlusSheet: View {
         }
     }
 
-    // MARK: - Project
+    // MARK: - Permission page (C2)
 
-    private var projectPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("ADD TO PROJECT")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(0.8)
-                .foregroundColor(Color("TextTertiary"))
-            VStack(spacing: 4) {
-                projectRow(id: nil, title: "None")
+    private var permissionPage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PlusGroup {
+                let current = permissionStore.mode(for: sessionId)
+                ForEach(Array(ChatPermissionMode.allCases.enumerated()), id: \.element) { index, option in
+                    if index > 0 { PlusDivider() }
+                    Button(action: {
+                        Haptics.selection()
+                        permissionStore.choose(option, sessionId: sessionId)
+                        returnToRoot()
+                    }) {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(option.label)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(Color("TextPrimary"))
+                                Text(option.description)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color("TextSecondary"))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            if option == current {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Color("TextPrimary"))
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(option == current ? [.isSelected] : [])
+                }
+            }
+            Text(sessionId == nil ? "Applies when this chat starts." : "Applies to this chat.")
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 6)
+            // The defaults page stays reachable ("Permission settings").
+            Button(action: {
+                Haptics.light()
+                isPermissionSettingsPresented = true
+            }) {
+                Text("Permission settings")
+                    .font(.system(size: 13))
+                    .underline()
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Computer page (C4 fix place)
+
+    private var computerPage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let state = chipStore.state
+            if state.kind != .none {
+                PlusGroup {
+                    HStack(spacing: 12) {
+                        Image(systemName: "desktopcomputer")
+                            .font(.system(size: 16))
+                            .foregroundColor(Color("TextSecondary"))
+                            .frame(width: 24)
+                            .accessibilityHidden(true)
+                        Text(state.text)
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextPrimary"))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if state.showsProgress {
+                            ProgressView().controlSize(.small)
+                        } else if let label = state.actionLabel, let action = state.action {
+                            Button(action: {
+                                Haptics.light()
+                                if action == .gate { isComputeGatePresented = true } else { isConnectComputerPresented = true }
+                            }) {
+                                Text(label)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(Color("TextPrimary"))
+                                    .padding(.horizontal, 12)
+                                    .frame(minHeight: 36)
+                                    .background(Color("BgPrimary"), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+
+            PlusGroup {
+                if relay.devices.isEmpty {
+                    if relay.isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                    } else {
+                        PlusPickRow(icon: "desktopcomputer", title: "No computer",
+                                    subtitle: "Plan chats work without one", isSelected: true) {}
+                    }
+                } else {
+                    PlusPickRow(icon: "sparkles", title: "Automatic",
+                                subtitle: "Your default computer, else the first one online",
+                                isSelected: relay.selectedRuntimeId == nil) { pickComputer(nil) }
+                    ForEach(relay.devices) { device in
+                        PlusDivider()
+                        PlusPickRow(
+                            icon: device.isWakeable ? "cloud" : "desktopcomputer",
+                            title: device.displayName,
+                            subtitle: computerStatusLabel(status: device.status, wakeable: device.isWakeable),
+                            isSelected: relay.selectedRuntimeId == device.id
+                        ) { pickComputer(device.id) }
+                    }
+                }
+            }
+
+            PlusGroup {
+                PlusRow(icon: "plus", title: "Add a computer", chevron: true) { isConnectComputerPresented = true }
+            }
+            Text("Open Allternit Desktop and sign in with this account, or run `gizzi pair` in a terminal.")
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 6)
+        }
+        .onAppear {
+            // The dot on + leads here: bring the closed chip back.
+            chipStore.restore()
+        }
+        .task { await relay.refresh() }
+    }
+
+    private func pickComputer(_ id: String?) {
+        Haptics.selection()
+        relay.select(id)
+        chipStore.restore()
+        returnToRoot()
+    }
+
+    // MARK: - Project page
+
+    private var projectPage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PlusGroup {
+                PlusPickRow(icon: "tray", title: "None", subtitle: nil,
+                            isSelected: projectStore.selectedProjectId == nil) { pickProject(nil) }
                 if projectStore.isLoading && projectStore.projects.isEmpty {
+                    PlusDivider()
                     ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: 52)
                 } else if let loadError = projectStore.loadError, projectStore.projects.isEmpty {
+                    PlusDivider()
                     FriendlyInlineStateView(
                         style: .error,
                         icon: "exclamationmark.triangle",
@@ -377,115 +615,44 @@ struct ComposerPlusSheet: View {
                         actionTitle: "Retry",
                         action: { projectStore.fetchProjectsIfNeeded(force: true) }
                     )
+                    .padding(10)
                 }
                 ForEach(projectStore.projects) { project in
-                    projectRow(id: project.id, title: project.title)
+                    PlusDivider()
+                    PlusPickRow(icon: "folder", title: project.title, subtitle: nil,
+                                isSelected: projectStore.selectedProjectId == project.id) { pickProject(project.id) }
                 }
-                Button(action: {
-                    hapticLight()
-                    isProjectMenuOpen = false
-                    isNewProjectPresented = true
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("New project")
-                            .font(.system(size: 14))
-                        Spacer()
-                    }
-                    .foregroundColor(Color("TextPrimary"))
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            }
+            PlusGroup {
+                PlusRow(icon: "plus", title: "New project", chevron: true) { isNewProjectPresented = true }
             }
         }
-        .plusPanel()
         .onAppear { projectStore.fetchProjectsIfNeeded() }
     }
 
-    private func projectRow(id: String?, title: String) -> some View {
-        let selected = projectStore.selectedProjectId == id
-        return Button(action: {
-            hapticLight()
-            projectStore.selectedProjectId = id
-            isProjectMenuOpen = false
+    private func pickProject(_ id: String?) {
+        Haptics.selection()
+        projectStore.selectedProjectId = id
+        returnToRoot()
+    }
+
+    // MARK: - Recent photo strip
+
+    private func stageRecentPhoto(_ id: String) {
+        Task {
+            guard let picked = await recentPhotos.imageData(for: id) else {
+                pickerError = "Couldn't read that photo."
+                return
+            }
+            let type = UTType(picked.uti) ?? .jpeg
+            attachmentStore.add(StagedAttachment(
+                thumbnail: UIImage(data: picked.data),
+                data: picked.data,
+                filename: "photo.\(type.preferredFilenameExtension ?? "jpg")",
+                mediaType: type.preferredMIMEType ?? "image/jpeg"
+            ))
             dismiss()
-        }) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .bold))
-                }
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Rows
-
-    private func toggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
-            rowIcon(icon)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            Spacer(minLength: 8)
-            Toggle(title, isOn: isOn)
-                .labelsHidden()
-                .tint(Color("AccentPrimary"))
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func listRow(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
-        Button(action: {
-            hapticLight()
-            action()
-        }) {
-            HStack(spacing: 12) {
-                rowIcon(icon)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                    .opacity(0.6)
-            }
-            .contentShape(Rectangle())
-            .plusPanel()
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func rowIcon(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 15))
-            .foregroundColor(Color("TextPrimary"))
-            .frame(width: 32, height: 32)
-            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Permission flows
@@ -505,7 +672,10 @@ struct ComposerPlusSheet: View {
             return
         }
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { _ in
-            Task { @MainActor in isPhotosPickerPresented = true }
+            Task { @MainActor in
+                recentPhotos.load()
+                isPhotosPickerPresented = true
+            }
         }
     }
 
@@ -606,31 +776,349 @@ struct ComposerPlusSheet: View {
         ))
         dismiss()
     }
-
-    private func hapticLight() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    }
 }
 
-// MARK: - Panels
+// MARK: - Grouped list parts (white + neutral fill, never tan)
 
-private extension View {
-    /// Quiet grouped panel (web GlassPanel / ListRow chrome).
-    func plusPanel() -> some View {
-        self
-            .padding(12)
+/// One rounded group of rows (Claude's grouped list).
+private struct PlusGroup<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) { content() }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color("FillNeutral").opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
+
+private struct PlusDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color("BorderSubtle"))
+            .frame(height: 1)
+            .padding(.leading, 48)
+    }
+}
+
+/// Icon, title, an optional value and chevron. The whole row is the button.
+private struct PlusRow: View {
+    let icon: String
+    let title: String
+    var value: String? = nil
+    var chevron: Bool = false
+    var isActive: Bool = false
+    /// The folded computer chip's dot, on the Computer row.
+    var showsDot: Bool = false
+    /// Shared Maestro/Android test id (maestro/ids.md); empty = none.
+    var testId: String = ""
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            Haptics.light()
+            action()
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 24)
+                    .overlay(alignment: .topTrailing) {
+                        if showsDot {
+                            Circle()
+                                .fill(Color("TextPrimary"))
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: -2)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                Text(title)
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let value {
+                    Text(value)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if chevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color("TextSecondary"))
+                        .opacity(0.7)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 48)
+            .background(isActive ? Color("BorderSubtle").opacity(0.6) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(value.map { "\(title), \($0)" } ?? title)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityIdentifier(testId)
+    }
+}
+
+/// A toggle row. The old subtitle is the VoiceOver hint.
+private struct PlusToggleRow: View {
+    let icon: String
+    let title: String
+    let hint: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            Toggle(isOn: $isOn) {
+                Text(title)
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextPrimary"))
+            }
+            .tint(Color("AccentPrimary"))
+            .accessibilityHint(hint)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+        .onChange(of: isOn) { _, _ in Haptics.selection() }
+    }
+}
+
+/// A choice on a sub-page: title, optional subtitle, a check when picked.
+private struct PlusPickRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String?
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+/// Glass sheet: Liquid Glass on iOS 26 (the system sheet), a thick material
+/// before, solid under Reduce Transparency.
+private struct PlusSheetBackground: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.presentationBackground(Color("BgPrimary"))
+        } else {
+            modern(content)
+        }
+    }
+
+    @ViewBuilder private func modern(_ content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            content
+        } else {
+            content.presentationBackground(.thickMaterial)
+        }
+        #else
+        content.presentationBackground(.thickMaterial)
+        #endif
+    }
+}
+
+// MARK: - Grow from the + (iOS 18 zoom; plain sheet before)
+
+private let composerPlusZoomID = "composer-plus"
+
+extension View {
+    /// Marks the composer's + as the place the sheet grows from.
+    @ViewBuilder
+    func composerPlusZoomSource(_ namespace: Namespace.ID, enabled: Bool) -> some View {
+        if #available(iOS 18.0, *), enabled {
+            self.matchedTransitionSource(id: composerPlusZoomID, in: namespace)
+        } else {
+            self
+        }
+    }
+
+    /// The sheet side of the zoom from the +.
+    @ViewBuilder
+    func composerPlusZoomDestination(_ namespace: Namespace.ID, enabled: Bool) -> some View {
+        if #available(iOS 18.0, *), enabled {
+            self.navigationTransition(.zoom(sourceID: composerPlusZoomID, in: namespace))
+        } else {
+            self
+        }
+    }
+}
+
+// MARK: - Recent photos
+
+/// The newest photos for the strip at the top of the sheet. Reads the
+/// library only when access was already given; otherwise the strip shows one
+/// tile that runs the normal priming → system prompt → picker flow.
+@MainActor
+final class RecentPhotosLoader: ObservableObject {
+    @Published private(set) var ids: [String] = []
+    @Published private(set) var thumbs: [String: UIImage] = [:]
+    private var assets: [String: PHAsset] = [:]
+
+    static var hasAccess: Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        return status == .authorized || status == .limited
+    }
+
+    func load(limit: Int = 12) {
+        guard Self.hasAccess else {
+            ids = []
+            return
+        }
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.fetchLimit = limit
+        let result = PHAsset.fetchAssets(with: .image, options: options)
+        var found: [PHAsset] = []
+        for index in 0..<result.count { found.append(result.object(at: index)) }
+        assets = Dictionary(found.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
+        ids = found.map(\.localIdentifier)
+
+        let request = PHImageRequestOptions()
+        request.deliveryMode = .opportunistic
+        request.resizeMode = .fast
+        request.isNetworkAccessAllowed = true
+        let side: CGFloat = 234
+        for asset in found {
+            let id = asset.localIdentifier
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: CGSize(width: side, height: side),
+                contentMode: .aspectFill,
+                options: request
+            ) { @Sendable [weak self] image, _ in
+                guard let image else { return }
+                Task { @MainActor in self?.thumbs[id] = image }
+            }
+        }
+    }
+
+    /// The full image for a tapped tile, with its type identifier.
+    func imageData(for id: String) async -> (data: Data, uti: String)? {
+        guard let asset = assets[id] else { return nil }
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .highQualityFormat
+        return await withCheckedContinuation { continuation in
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { @Sendable data, uti, _, _ in
+                if let data {
+                    continuation.resume(returning: (data, uti ?? UTType.jpeg.identifier))
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+}
+
+private struct RecentPhotosStrip: View {
+    @ObservedObject var loader: RecentPhotosLoader
+    let onPick: (String) -> Void
+    let onOpenLibrary: () -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                if loader.ids.isEmpty {
+                    Button(action: {
+                        Haptics.light()
+                        onOpenLibrary()
+                    }) {
+                        VStack(spacing: 6) {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: 20))
+                            Text(RecentPhotosLoader.hasAccess ? "Photos" : "Allow photos")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 112, height: 78)
+                        .background(Color("FillNeutral"))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    ForEach(loader.ids, id: \.self) { id in
+                        Button(action: {
+                            Haptics.light()
+                            onPick(id)
+                        }) {
+                            ZStack {
+                                Color("FillNeutral")
+                                if let thumb = loader.thumbs[id] {
+                                    Image(uiImage: thumb)
+                                        .resizable()
+                                        .scaledToFill()
+                                }
+                            }
+                            .frame(width: 78, height: 78)
+                            .clipped()
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Recent photo")
+                    }
+                }
+            }
+        }
+        .frame(height: 78)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onAppear { loader.load() }
+    }
+}
+
 
 extension CapabilitiesClient.Kind: Identifiable {
     public var id: String { String(describing: self) }
 }
 
-/// "Permission settings": how freely this chat (or the next new one) works —
-/// the same three choices as the composer's pill.
+/// "Permission settings": how freely this chat (or the next new one) works.
+/// The defaults page the + sheet's Permission page links to (C2), and the
+/// whole row where the chat has no Permission choice.
 private struct PermissionDefaultsSheet: View {
     let sessionId: String?
     @ObservedObject private var store = ChatPermissionStore.shared

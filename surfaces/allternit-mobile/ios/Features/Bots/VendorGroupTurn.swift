@@ -1,7 +1,7 @@
 import Foundation
 
 // -----------------------------------------------------------------------------
-// Vendor bots as real group-chat members (allternit-ai
+// Connected bots as real group-chat members (allternit-ai
 // src/lib/bots/vendor-group-turn.ts). A vendor-bound bot (execution binding
 // `vendor`: Grok, OpenMausBot, Poke…) never answers with a native brain. In a
 // room it answers through the subscription gateway on one standing thread
@@ -146,7 +146,7 @@ enum VendorGroupTurn {
         UserDefaults.standard.set(map, forKey: roomThreadsKey)
     }
 
-    /// The room's standing thread (and session) for this vendor bot: the one
+    /// The room's standing thread (and session) for this Connected bot: the one
     /// this device used, else the one another device made (same title, made
     /// by "group"), else a new one.
     private static func roomThreadSession(room: BotGroupChat, member: GroupChatMember) async throws -> (threadId: String, sessionId: String) {

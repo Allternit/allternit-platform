@@ -1,0 +1,12 @@
+Load a specialized skill that provides domain-specific instructions and workflows.
+
+When a task matches one of the available skills listed below, use this tool to load the full skill instructions.
+
+The skill will inject detailed instructions, workflows, and access to bundled resources (scripts, references, templates) into the conversation context.
+
+Tool output includes a `<skill_content name="...">` block with the loaded content.
+
+Rules:
+- Only skills in the listing are valid names. Never guess a name.
+- Built-in commands (like /help or /clear) are not skills. Do not call this tool for them.
+- Do not reload a skill that is already loaded this turn. Follow the instructions you already have.

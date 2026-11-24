@@ -73,6 +73,12 @@ pub struct Step {
     pub thumbnail: Option<String>,
     #[serde(default)]
     pub snapshot: bool,
+    /// `map` when an App Map replay made this call (a `go_to` edge), not the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// The map screen a `via: map` step went to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_screen: Option<String>,
 }
 
 /// What Desktop posts.
@@ -100,6 +106,11 @@ pub struct StepIn {
     pub image_base64: Option<String>,
     #[serde(default)]
     pub at: Option<String>,
+    /// `map` for a go_to replay step (also read from `args._via`).
+    #[serde(default)]
+    pub via: Option<String>,
+    #[serde(default)]
+    pub map_screen: Option<String>,
 }
 
 pub fn root(data_dir: &FsPath) -> PathBuf {
@@ -167,6 +178,10 @@ fn label_of(tool: &str, args: &Value) -> String {
         "phone.swipe" => args.get("direction").and_then(Value::as_str).map(str::to_string),
         "phone.find_and_tap" => args.get("match").or_else(|| args.get("element_id")).and_then(Value::as_str).map(str::to_string),
         "phone.task" => args.get("goal").or_else(|| args.get("task")).and_then(Value::as_str).map(|s| clip(s, 80)),
+        // Phone Use, official route (contract §3.1).
+        "phone.shortcuts.run" => args.get("name").and_then(Value::as_str).map(|s| clip(s, 80)),
+        "phone.actions.run" => args.get("action").and_then(Value::as_str).map(|s| clip(s, 80)),
+        "phone.home.set" | "phone.home.scene" => args.get("id").and_then(Value::as_str).map(|s| clip(s, 80)),
         _ => None,
     };
     match detail {
@@ -347,6 +362,10 @@ pub fn ingest(data_dir: &FsPath, serial: &str, body: StepIn) -> Result<Step, Str
         .at
         .filter(|a| chrono::DateTime::parse_from_rfc3339(a).is_ok())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    // Only `map` is a known marker; the screen name is a short label.
+    let arg = |k: &str| body.args.get(k).and_then(Value::as_str).map(str::to_string);
+    let via = body.via.clone().or_else(|| arg("_via")).filter(|v| v == "map");
+    let map_screen = if via.is_some() { body.map_screen.clone().or_else(|| arg("_map_screen")).map(|n| clip(n.trim(), 80)).filter(|n| !n.is_empty()) } else { None };
     let step = Step {
         id: uuid::Uuid::new_v4().to_string(),
         run_id,
@@ -363,6 +382,8 @@ pub fn ingest(data_dir: &FsPath, serial: &str, body: StepIn) -> Result<Step, Str
         source: body.source.map(|s| clip(&s, 20)),
         thumbnail: None,
         snapshot: false,
+        via,
+        map_screen,
     };
     save(data_dir, step, image)
 }
@@ -557,9 +578,42 @@ async fn get_run_thumb(State(state): State<Arc<AppState>>, Extension(user): Exte
     }
 }
 
+/// What a task or skill run spent and saved (contract section 6). Every run
+/// report carries the five fields; `run_event` copies them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunTally {
+    /// Input tokens summed over the model replies (0 when the brain reports none).
+    pub tokens_in: u64,
+    /// Output tokens, the same way.
+    pub tokens_out: u64,
+    /// App Map edges replayed with no model call.
+    pub map_steps: u64,
+    /// Screenshots attached to model calls.
+    pub screenshots_sent: u64,
+    /// `go_to` replays that stopped (mismatch, no route, a changed screen), so the loop fell back.
+    pub fallbacks: u64,
+}
+
+impl RunTally {
+    pub fn add_usage(&mut self, u: &crate::gizzi_completion::Usage) {
+        self.tokens_in += u.tokens_in;
+        self.tokens_out += u.tokens_out;
+    }
+
+    /// Write the five fields into a run report.
+    pub fn write(&self, report: &mut Value) {
+        report["tokens_in"] = json!(self.tokens_in);
+        report["tokens_out"] = json!(self.tokens_out);
+        report["map_steps"] = json!(self.map_steps);
+        report["screenshots_sent"] = json!(self.screenshots_sent);
+        report["fallbacks"] = json!(self.fallbacks);
+    }
+}
+
 /// The owner ledger row of a finished task / skill run, from its report.
 pub fn run_event(report: &Value, source: &str) -> Value {
     let steps = report.get("steps").and_then(Value::as_array);
+    let n = |k: &str| report.get(k).and_then(Value::as_u64).unwrap_or(0);
     json!({
         "run_id": report.get("run_id"),
         "serial": report.get("serial"),
@@ -580,6 +634,15 @@ pub fn run_event(report: &Value, source: &str) -> Value {
         "thread_id": report.get("thread_id"),
         "session_id": report.get("session_id"),
         "reason": report.get("reason"),
+        // App Maps and spend (contract section 6); 0 on an old report.
+        "tokens_in": n("tokens_in"),
+        "tokens_out": n("tokens_out"),
+        "map_steps": n("map_steps"),
+        "screenshots_sent": n("screenshots_sent"),
+        "fallbacks": n("fallbacks"),
+        // The map app the run used (package, and its label when known).
+        "app": report.get("app").filter(|v| v.is_string()),
+        "app_label": report.get("app_label").filter(|v| v.is_string()),
     })
 }
 
@@ -607,6 +670,81 @@ pub fn record_event(db: &crate::db::DbHandle, event_type: &str, payload: Value, 
 pub fn record_run_completed(db: &crate::db::DbHandle, report: &Value, source: &str) {
     let Some(run) = report.get("run_id").and_then(Value::as_str).filter(|r| !r.is_empty()) else { return };
     record_event(db, "phone.run.completed", run_event(report, source), format!("phone-run:{run}:completed"));
+}
+
+// ─── Active runs: the stop flag and the busy check (contract sections 4, 7) ─
+
+struct Active {
+    serial: String,
+    kind: &'static str,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Phone runs in flight, by run id. `POST /api/aci/stop/:id` sets the flag
+/// ([`request_stop`]); a task, skill or Explore loop checks it before each
+/// step. The same table answers "is something already running on this phone"
+/// ([`busy_on`]).
+static ACTIVE: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<String, Active>>> = once_cell::sync::Lazy::new(Default::default);
+
+/// A registered run. The entry goes when this drops, whatever way the run ends.
+pub struct RunReg {
+    run_id: String,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RunReg {
+    /// Register `run_id` on `serial` (`None` = the only phone). `flag` lets the
+    /// caller share its own cancel flag (tests do); otherwise a fresh one.
+    pub fn enter(run_id: &str, serial: Option<&str>, kind: &'static str, flag: Option<Arc<std::sync::atomic::AtomicBool>>) -> RunReg {
+        let flag = flag.unwrap_or_default();
+        if let Ok(mut m) = ACTIVE.lock() {
+            m.insert(run_id.to_string(), Active { serial: serial.unwrap_or_default().to_string(), kind, flag: flag.clone() });
+        }
+        RunReg { run_id: run_id.to_string(), flag }
+    }
+
+    pub fn flag(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        &self.flag
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for RunReg {
+    fn drop(&mut self) {
+        if let Ok(mut m) = ACTIVE.lock() {
+            m.remove(&self.run_id);
+        }
+    }
+}
+
+/// [`RunReg::enter`] unless a run is already active on `serial`: then
+/// `Err((run_id, kind))` of that run. Check and insert happen under one lock.
+pub fn try_enter(run_id: &str, serial: &str, kind: &'static str) -> Result<RunReg, (String, &'static str)> {
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut m = ACTIVE.lock().map_err(|_| (String::new(), "unknown"))?;
+    if let Some((id, a)) = m.iter().find(|(_, a)| a.serial == serial || a.serial.is_empty()) {
+        return Err((id.clone(), a.kind));
+    }
+    m.insert(run_id.to_string(), Active { serial: serial.to_string(), kind, flag: flag.clone() });
+    Ok(RunReg { run_id: run_id.to_string(), flag })
+}
+
+/// Ask a running phone run to stop. `false` for an unknown or finished id.
+pub fn request_stop(run_id: &str) -> bool {
+    match ACTIVE.lock() {
+        Ok(m) => m.get(run_id).map(|a| a.flag.store(true, std::sync::atomic::Ordering::SeqCst)).is_some(),
+        Err(_) => false,
+    }
+}
+
+/// The run active on `serial`, as `(run_id, kind)`. A run that named no
+/// serial (Desktop picks the only phone) counts for every serial.
+pub fn busy_on(serial: &str) -> Option<(String, &'static str)> {
+    let m = ACTIVE.lock().ok()?;
+    m.iter().find(|(_, a)| a.serial == serial || a.serial.is_empty()).map(|(id, a)| (id.clone(), a.kind))
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────
@@ -755,6 +893,26 @@ mod tests {
     }
 
     #[test]
+    fn a_map_step_keeps_its_marker_and_an_old_step_still_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let from_args = ingest(tmp.path(), "link:m", StepIn { run_id: Some("task-m".into()), tool: "phone.tap".into(), args: json!({ "x": 1, "y": 2, "_via": "map", "_map_screen": "Wi-Fi", "_pass": "pass_x" }), ok: true, ..Default::default() }).unwrap();
+        assert_eq!((from_args.via.as_deref(), from_args.map_screen.as_deref()), (Some("map"), Some("Wi-Fi")));
+        // Other underscored args are not stored.
+        assert!(from_args.args.get("_pass").is_none() && from_args.args.get("_via").is_none(), "{:?}", from_args.args);
+        let top = ingest(tmp.path(), "link:m", StepIn { tool: "phone.back".into(), via: Some("map".into()), map_screen: Some("Home".into()), ok: true, ..Default::default() }).unwrap();
+        assert_eq!((top.via.as_deref(), top.map_screen.as_deref()), (Some("map"), Some("Home")));
+        // A model tap, or any other `via`, is unmarked.
+        let plain = ingest(tmp.path(), "link:m", StepIn { tool: "phone.tap".into(), via: Some("x".into()), ok: true, ..Default::default() }).unwrap();
+        assert!(plain.via.is_none() && plain.map_screen.is_none());
+        // The wire row round-trips with the fields; an old row without them parses.
+        let j = serde_json::to_value(&from_args).unwrap();
+        assert_eq!((j["via"].as_str(), j["map_screen"].as_str()), (Some("map"), Some("Wi-Fi")));
+        let old: Step = serde_json::from_value(json!({ "id": "i", "run_id": "r", "serial": "s", "at": "t", "tool": "phone.tap", "label": "tap", "ok": true })).unwrap();
+        assert!(old.via.is_none());
+        assert!(serde_json::to_value(&plain).unwrap().get("via").is_none());
+    }
+
+    #[test]
     fn ingest_groups_runs_and_bounds_the_path() {
         let tmp = tempfile::tempdir().unwrap();
         for tool in ["phone.read_ui", "phone.tap"] {
@@ -778,6 +936,19 @@ mod tests {
         assert_eq!(ev["holds"][0]["state"], "expired");
         // An old report with no hold fields still makes a complete event.
         assert_eq!((run_event(&json!({ "run_id": "x" }), "task")["held_ms"].as_u64(), run_event(&json!({}), "task")["holds"].clone()), (Some(0), json!([])));
+        // The App Map and spend fields ride along; an old report reads 0.
+        let mut tallied = json!({ "run_id": "task-t1", "steps": [] });
+        RunTally { tokens_in: 1200, tokens_out: 40, map_steps: 3, screenshots_sent: 1, fallbacks: 1 }.write(&mut tallied);
+        let ev = run_event(&tallied, "task");
+        assert_eq!(
+            (ev["tokens_in"].as_u64(), ev["tokens_out"].as_u64(), ev["map_steps"].as_u64(), ev["screenshots_sent"].as_u64(), ev["fallbacks"].as_u64()),
+            (Some(1200), Some(40), Some(3), Some(1), Some(1))
+        );
+        assert_eq!(run_event(&json!({ "run_id": "x" }), "task")["map_steps"].as_u64(), Some(0));
+        // The app the run used rides along; a run with no app leaves it null.
+        let ev = run_event(&json!({ "run_id": "x", "app": "com.android.settings", "app_label": "Settings" }), "task");
+        assert_eq!((ev["app"].as_str(), ev["app_label"].as_str()), (Some("com.android.settings"), Some("Settings")));
+        assert!(run_event(&json!({ "run_id": "x" }), "task")["app"].is_null());
 
         let tmp = tempfile::tempdir().unwrap();
         let step = ingest(tmp.path(), "link:w", StepIn { run_id: Some("task-live-h1".into()), tool: "phone.read_ui".into(), args: json!({}), ok: true, ..Default::default() }).unwrap();

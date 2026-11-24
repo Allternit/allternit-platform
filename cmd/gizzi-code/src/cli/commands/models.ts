@@ -4,6 +4,9 @@ import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { ModelList } from "@/runtime/providers/model-list"
 import { currentDefaultBrain } from "@/runtime/providers/default-brain"
+import { CloudContinue } from "@/runtime/session/cloud-continue"
+import { cloudEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
+import { cloudCreditsDisclosure } from "@/shared/util/provider-error"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
@@ -15,6 +18,12 @@ import {
   downloadRepo,
   type RecommendationIntent,
 } from "@/runtime/services/localEngine"
+import { describeVerification } from "@/runtime/services/modelVerification"
+import { pullModel, verifyModel } from "@/cli/commands/models-pull"
+import { fitModel, runModel, psModels, stopModel } from "@/cli/commands/models-run"
+import { fetchFreeweightsCatalog } from "@/runtime/services/freeweightsCatalog"
+import { freeweightsKey, publishModel } from "@/runtime/services/freeweightsUpload"
+import { Sidecar } from "@/runtime/sidecar"
 
 const SOURCE_BADGE: Record<string, string> = {
   subprocess: UI.Style.TEXT_INFO_BOLD + "[cli]" + UI.Style.TEXT_NORMAL,
@@ -24,12 +33,27 @@ const SOURCE_BADGE: Record<string, string> = {
 }
 
 export const ModelsCommand = cmd({
-  command: "models [provider]",
+  command: "models [provider] [repo]",
   describe: "list, assess, and manage local models",
   builder: (yargs: Argv) => {
     return yargs
+      .positional("repo", {
+        describe: "Hugging Face repo id (org/repo) for `models pull` / `models verify`, or the query for `models search`",
+        type: "string",
+      })
+      .option("allow-unverified", {
+        describe: "pull: accept a model with no hash to check against (otherwise exits non-zero)",
+        type: "boolean",
+        default: false,
+      })
+      .option("catalog-source", {
+        describe: "search: where to search",
+        type: "string",
+        choices: ["all", "freeweights"],
+        default: "all",
+      })
       .positional("provider", {
-        describe: "provider ID to filter models by",
+        describe: "provider ID to filter models by, or: pull | verify | search | fit | run | ps | stop | publish",
         type: "string",
         array: false,
       })
@@ -88,12 +112,104 @@ export const ModelsCommand = cmd({
         describe: "download and run a model by Hugging Face repo id",
         type: "string",
       })
+      .option("as", {
+        describe: "publish: target repo id (handle/name); the third word also works",
+        type: "string",
+      })
+      .option("revision", {
+        describe: "pull/verify: branch, tag or commit (default main)",
+        type: "string",
+      })
       .option("quant", {
         describe: "quantization tag (e.g. Q4_K_M)",
         type: "string",
       })
+      .option("prompt", {
+        describe: "run: send one prompt, print the reply and exit (default: open a chat)",
+        type: "string",
+      })
   },
   handler: async (args) => {
+    // gizzi models publish <path> <handle/name>: upload a local folder to Freeweights.
+    if (args.provider === "publish") {
+      const src = args.repo
+      const repoId = args.as ?? (args._ as unknown[]).map(String).find((w) => w.includes("/") && w !== src)
+      if (!src || !repoId) {
+        UI.error("Usage: gizzi models publish <path> <handle/name>   (needs an Allternit key: ALLTERNIT_API_KEY or FREEWEIGHTS_TOKEN)")
+        process.exit(1)
+      }
+      const key = freeweightsKey()
+      if (!key) {
+        UI.error("No Allternit key found. Create one with the Freeweights upload scope at platform.allternit.com/api-keys?create=freeweights, then set FREEWEIGHTS_TOKEN.")
+        process.exit(1)
+      }
+      try {
+        const r = await publishModel(src, String(repoId), { key, log: (l) => process.stderr.write(l + "\n") })
+        UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Uploaded ${r.files} file${r.files === 1 ? "" : "s"}.` + UI.Style.TEXT_NORMAL)
+        UI.println("Files are scanned before they are served. The repo shows as scanning until then.")
+        UI.println(r.repoUrl)
+        process.exit(0)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : "Publish failed")
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "pull" || args.provider === "verify") {
+      const repo = args.repo
+      if (!repo || !repo.includes("/")) {
+        UI.error(`Usage: gizzi models ${args.provider} <org/repo>${args.provider === "pull" ? " [--quant Q4_K_M] [--allow-unverified]" : ""}`)
+        process.exit(1)
+      }
+      try {
+        if (args.provider === "verify") process.exit(await verifyModel(repo, args.quant, args.revision))
+        process.exit(await pullModel(repo, args.quant, Boolean(args["allow-unverified"]), args.revision))
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "fit" || args.provider === "run" || args.provider === "ps" || args.provider === "stop") {
+      try {
+        const code =
+          args.provider === "fit" ? await fitModel(args.repo, Boolean(args.json))
+          : args.provider === "run" ? await runModel(args.repo, { quant: args.quant, prompt: args.prompt, allowUnverified: Boolean(args["allow-unverified"]) })
+          : args.provider === "ps" ? await psModels(Boolean(args.json))
+          : await stopModel(args.repo)
+        process.exit(code)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : `Failed to ${args.provider}`)
+        process.exit(1)
+      }
+      return
+    }
+
+    if (args.provider === "search") {
+      const q = (args.repo ?? "").trim().toLowerCase()
+      try {
+        const fw = await fetchFreeweightsCatalog()
+        const fwHits = fw.filter((e) => !q || e.id.toLowerCase().includes(q))
+        const badge = UI.Style.TEXT_SUCCESS_BOLD + "[freeweights]" + UI.Style.TEXT_NORMAL
+        for (const e of fwHits.slice(0, args.limit)) UI.println(`  ${e.id}  ${badge}${e.section ? " " + e.section : ""}`)
+        if (args["catalog-source"] !== "freeweights") {
+          const seen = new Set(fwHits.map((e) => e.id.toLowerCase()))
+          const hf = await Sidecar.searchHuggingFace(q, args.limit)
+          for (const m of hf) {
+            if (seen.has(m.repoId.toLowerCase())) continue
+            UI.println(`  ${m.repoId}  ${m.downloads.toLocaleString()} downloads${m.freeweights ? " " + badge : ""}`)
+          }
+        }
+        process.exit(0)
+      } catch (err) {
+        UI.error(err instanceof Error ? err.message : "Search failed")
+        process.exit(1)
+      }
+      return
+    }
+
     // Local-engine actions take precedence over the provider listing.
     if (args.catalog) {
       try {
@@ -213,6 +329,13 @@ export const ModelsCommand = cmd({
         }
 
         const dim = (text: string) => UI.Style.TEXT_DIM + text + UI.Style.TEXT_NORMAL
+        // Cloud rows stay listed; on an account with no Cloud credits they read "needs credits".
+        const listsCloud = sections.some((s) =>
+          s.providers.some((p) => p.id === CloudContinue.PROVIDER_ID && (!args.provider || p.id === args.provider)),
+        )
+        const entitlement = listsCloud ? await cloudEntitlement() : undefined
+        const locked = await CloudContinue.lockCheck(entitlement).catch(() => () => false)
+        let anyLocked = false
         for (const section of sections) {
           const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
           if (providers.length === 0) continue
@@ -223,6 +346,10 @@ export const ModelsCommand = cmd({
               if (row.default) tags.push("default")
               if (row.current) tags.push("current")
               if (provider.signedIn === false) tags.push("not signed in")
+              if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
+                tags.push("needs credits")
+                anyLocked = true
+              }
               const ref = row.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
               process.stdout.write(ref + (tags.length ? "  " + dim(tags.join(" ")) : "") + EOL)
               if (args.verbose) {
@@ -233,6 +360,8 @@ export const ModelsCommand = cmd({
             }
           }
         }
+
+        if (anyLocked) UI.println(dim(cloudCreditsDisclosure(entitlement?.reason)))
 
         if (!args.provider) {
           const brain = await currentDefaultBrain().catch(() => ({ model: null, reason: "", pinned: false }))

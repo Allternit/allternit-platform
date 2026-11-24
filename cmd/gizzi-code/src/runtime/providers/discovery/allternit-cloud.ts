@@ -7,6 +7,7 @@
  */
 
 import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import type { DiscoveredModel, DiscoveredProvider } from "./index"
 
 export type AllternitPlan = {
@@ -97,6 +98,11 @@ function authHeaders(): Record<string, string> {
 }
 
 export async function refreshAllternitPlan(): Promise<AllternitPlan | null> {
+  // Self-hosted: no Allternit account, no plan lookup.
+  if (isSelfHosted()) {
+    cachedPlan = null
+    return null
+  }
   const token = cloudAuthToken()
   if (!token) {
     cachedPlan = null
@@ -185,6 +191,8 @@ export function cloudModels(rows: CloudModel[]): DiscoveredModel[] {
 }
 
 export async function discoverAllternitCloud(): Promise<DiscoveredProvider[]> {
+  // Self-hosted: the model list comes from the server's own provider, never api.allternit.com.
+  if (isSelfHosted()) return []
   const planTask = refreshAllternitPlan()
   try {
     const res = await fetch(`${cloudOrigin()}/v1/models`, {

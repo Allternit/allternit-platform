@@ -7,16 +7,42 @@ typealias SessionContextCategory = SessionContextBreakdown.Category
 
 /// `GET /api/v1/agent-sessions/:id/context?limits=false` (fetchSessionContext).
 enum SessionContextClient {
+    /// The envelope with the runtime's compaction count (gizzi
+    /// `ContextUsage.Result.compactions`; 0 on runtimes that omit it).
+    struct Usage: Decodable, Sendable {
+        let breakdown: SessionContextBreakdown?
+        let compactions: Int
+
+        private enum CodingKeys: String, CodingKey { case breakdown, compactions }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            breakdown = try c.decodeIfPresent(SessionContextBreakdown.self, forKey: .breakdown)
+            compactions = max(0, ((try? c.decodeIfPresent(Int.self, forKey: .compactions)) ?? nil) ?? 0)
+        }
+    }
+
     static func fetch(sessionId: String) async throws -> SessionContextBreakdown? {
+        try await fetchUsage(sessionId: sessionId).breakdown
+    }
+
+    static func fetchUsage(sessionId: String) async throws -> Usage {
         let escaped = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
-        let usage: SessionContextResponse = try await APIClient.shared.get(path: "agent-sessions/\(escaped)/context?limits=false")
-        return usage.breakdown
+        return try await APIClient.shared.get(path: "agent-sessions/\(escaped)/context?limits=false")
     }
 
     /// A session the runtime knows (useSessionContext isRuntimeSessionId).
     static func isRuntimeSession(_ sessionId: String?) -> Bool {
         guard let sessionId, !sessionId.isEmpty else { return false }
         return !sessionId.hasPrefix("temp-")
+    }
+}
+
+/// "Compacted 3 times" (ContextWindowCard compaction line); nil at 0.
+enum ContextCompactions {
+    static func label(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "Compacted 1 time" : "Compacted \(count) times"
     }
 }
 
@@ -48,6 +74,7 @@ struct ComposerUsageMeter: View {
 
     @ObservedObject private var usage = UsageStore.shared
     @State private var breakdown: SessionContextBreakdown? = nil
+    @State private var compactions = 0
     @State private var isDetailsPresented = false
 
     private var hasSession: Bool { SessionContextClient.isRuntimeSession(sessionId) }
@@ -59,6 +86,7 @@ struct ComposerUsageMeter: View {
         if let breakdown, let pct = contextPercent {
             parts.append("Context: \(pct)% used (\(ContextTokens.format(breakdown.usedTokens)) of \(ContextTokens.format(breakdown.contextWindow)))")
         }
+        if let compacted = ContextCompactions.label(compactions) { parts.append(compacted) }
         if let text = usage.percentText { parts.append("Plan usage: \(text)") }
         return parts.isEmpty ? "Context and usage" : parts.joined(separator: ". ")
     }
@@ -85,7 +113,7 @@ struct ComposerUsageMeter: View {
         }
         .task(id: "\(sessionId ?? "")|\(refreshKey)") { await load() }
         .sheet(isPresented: $isDetailsPresented) {
-            ContextUsageSheet(breakdown: breakdown)
+            ContextUsageSheet(breakdown: breakdown, compactions: compactions)
         }
     }
 
@@ -93,11 +121,13 @@ struct ComposerUsageMeter: View {
         usage.fetchUsageIfNeeded()
         guard hasSession, let sessionId else {
             breakdown = nil
+            compactions = 0
             return
         }
         // Keep the last good breakdown on a transient failure.
-        if let fresh = try? await SessionContextClient.fetch(sessionId: sessionId) {
-            breakdown = fresh
+        if let fresh = try? await SessionContextClient.fetchUsage(sessionId: sessionId) {
+            breakdown = fresh.breakdown
+            compactions = fresh.compactions
         }
     }
 }
@@ -129,6 +159,7 @@ struct UsageHudBlocks: View {
 /// who measured it, then the plan's usage limits.
 private struct ContextUsageSheet: View {
     let breakdown: SessionContextBreakdown?
+    var compactions: Int = 0
     @Environment(\.dismiss) private var dismiss
 
     /// The panel's rows in order; a brain that does not fill one is left out.
@@ -159,6 +190,20 @@ private struct ContextUsageSheet: View {
         return breakdown.basis == "estimated" ? "Estimated" : "Measured by the provider"
     }
 
+    private func compactionRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                .foregroundColor(Color("TextTertiary"))
+                .accessibilityHidden(true)
+            Text(text)
+            Spacer()
+        }
+        .font(.subheadline)
+        .foregroundColor(Color("TextSecondary"))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Older messages were summarized to make room.")
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -180,6 +225,9 @@ private struct ContextUsageSheet: View {
                                     .monospacedDigit()
                             }
                             .font(.subheadline)
+                        }
+                        if let compacted = ContextCompactions.label(compactions) {
+                            compactionRow(compacted)
                         }
                     } else {
                         Text("The context window shows once this chat has a reply.")

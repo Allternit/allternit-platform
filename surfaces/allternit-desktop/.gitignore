@@ -9,6 +9,10 @@ resources/office-engine/
 resources/connector-sidecar/dist/
 resources/subs-gateway/
 
+# Staged Meetings bot + its per-OS rtc-node binding (prepare:meeting-bot)
+resources/meeting-bot/
+resources/meeting-bot-native/
+
 # Staged Cua Driver binary (prepare:cua-driver downloads this at build time)
 resources/computer-use/cua-driver
 

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "allternit-tune"
+version = "0.1.0"
+description = "Allternit's fine-tuning engine for Freeweights Studio (engine API v1; TRL + PEFT on torch, mlx-lm on Apple Silicon)"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.5,<3",
+  "transformers>=4.56,<6",
+  "peft>=0.17,<1",
+  "trl>=0.24,<2",
+  "accelerate>=1.0,<2",
+  "datasets>=3.0,<6",
+  "safetensors>=0.4,<1",
+  "huggingface_hub>=0.30,<3",
+  "bitsandbytes>=0.50,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+# MLX backend (Apple Silicon). Per-hardware torch builds: requirements-<hardware>.txt.
+mlx = ["mlx==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'", "mlx-lm==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.setuptools.packages.find]
+include = ["allternit_tune*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

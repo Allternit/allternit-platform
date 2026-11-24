@@ -4,8 +4,12 @@
 
 FROM oven/bun:1.2-debian AS builder
 
-ARG GIZZI_RELEASE=hosted-runtime-2026.07.16
-ARG GIZZI_LINUX_X64_SHA256=f1d29bad0b3903d77261e7706ff80fd292fefece3ebeaa4bb7f08a51ad2fc694
+# A gizzi-code/v* release of Allternit/allternit-platform. 2.2.4+ names the
+# calling session on connector tool calls (`_meta["allternit/session"]`), which
+# hosted agents' phone tools and approvals need. The checksum is the release's
+# linux-x64 tarball (its checksums.txt), not the binary inside it.
+ARG GIZZI_VERSION=2.9.0
+ARG GIZZI_LINUX_X64_SHA256=5aa323e4c5804a2d1747e6b2b29a7d6da0ce2fb4082c6ad8dc1f1da7ae8d7a3d
 
 WORKDIR /app
 
@@ -17,9 +21,11 @@ RUN apt-get update \
 # checksum makes the hosted image reproducible without compiling desktop-only
 # Gizzi sources inside the container build.
 RUN curl -fsSL \
-      "https://github.com/Allternit/gizzi-code/releases/download/${GIZZI_RELEASE}/gizzi-code-linux-x64-native" \
-      -o /app/gizzi-code \
-    && echo "${GIZZI_LINUX_X64_SHA256}  /app/gizzi-code" | sha256sum -c - \
+      "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code%2Fv${GIZZI_VERSION}/gizzi-code-v${GIZZI_VERSION}-linux-x64.tar.gz" \
+      -o /tmp/gizzi.tar.gz \
+    && echo "${GIZZI_LINUX_X64_SHA256}  /tmp/gizzi.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/gizzi.tar.gz -C /app gizzi-code \
+    && rm /tmp/gizzi.tar.gz \
     && chmod +x /app/gizzi-code
 
 # Install and bundle only the relay daemon. The compiled Gizzi artifact already
@@ -41,10 +47,9 @@ RUN cd cmd/agent-daemon \
 # allternit-factory: the Allternit Factory engine. Its pane engine owns Gizzi's
 # PTYs (cmd/gizzi-code/src/runtime/integrations/pty/index.ts finds it next to
 # gizzi-code and starts it with `allternit-factory pane tty ensure`); it
-# replaced allternit-mux. The pinned Gizzi above (2026.07.16) still runs its
-# PTYs in-process (bun-pty) and never started mux; a Gizzi pinned from a
-# release that has the pane-engine PTY uses this binary. Built from the same
-# workspace, not downloaded: there's no pinned release artifact for it.
+# replaced allternit-mux. The pinned Gizzi above has the pane-engine PTY and
+# uses this binary. Built from the same workspace rather than taken from the
+# release tarball, so it always matches this checkout's pane engine.
 FROM rust:1.97-slim AS factory-builder
 
 # The pane engine links libghostty-vt, built by Zig 0.15.2 (factory/pane/build.rs).
@@ -55,9 +60,11 @@ ARG ZIG_AARCH64_LINUX_SHA256=958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b
 WORKDIR /app
 
 # libssl-dev: openssl-sys. protobuf-compiler: the engine's build.rs compiles
-# proto/verification.proto with tonic-build, which needs protoc.
+# proto/verification.proto with tonic-build, which needs protoc. perl + make:
+# allternit-factory vendors OpenSSL (openssl-src, #2587), whose Configure needs the
+# full perl (FindBin, IPC::Cmd), not the perl-base in the slim image.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler ca-certificates curl xz-utils \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler ca-certificates curl xz-utils perl make \
     && rm -rf /var/lib/apt/lists/*
 
 RUN arch="$(uname -m)" \
@@ -75,6 +82,16 @@ RUN arch="$(uname -m)" \
     && zig version
 
 COPY . .
+
+# Fetch libghostty-vt's Zig packages (lazy ones too) before cargo runs build.rs, with
+# retries: one dropped download (HttpConnectionClosing on dcimgui, 2026-11-19) failed
+# the whole image. build.rs then finds them in the global Zig cache.
+RUN cd factory/pane/vendor/libghostty-vt \
+    && for i in 1 2 3 4 5; do \
+         zig build --fetch=all && break; \
+         [ "$i" = 5 ] && exit 1; \
+         echo "zig fetch failed (try $i), retrying" >&2; sleep $((i * 10)); \
+       done
 
 RUN cargo build --release -p allternit-factory
 

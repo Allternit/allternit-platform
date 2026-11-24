@@ -27,6 +27,13 @@ struct BotChatSessionView: View {
     @ObservedObject private var colors = BotColorStore.shared
     @ObservedObject private var backdrops = StageBackdropStore.shared
     @ObservedObject private var folders = ProjectFolderStore.shared
+    @ObservedObject private var registry = RuntimeRegistryStore.shared
+    @ObservedObject private var hubStore = AgentHubStore.shared
+    /// The View switch (Allternit / Runtime) and the look (terminal /
+    /// desktop), saved to `config.agentView`; nil until changed here.
+    @State private var viewChoice: String? = nil
+    @State private var lookChoice: String? = nil
+    @State private var viewSaveError: String? = nil
     @EnvironmentObject private var navigator: BotNavigator
     @State private var isBackgroundPresented = false
     @State private var isEditFormPresented = false
@@ -40,7 +47,7 @@ struct BotChatSessionView: View {
     /// The bot has flown off its stage into the thread top.
     @State private var docked = false
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var isMainChat: Bool { explicitSessionId == nil }
 
@@ -73,7 +80,7 @@ struct BotChatSessionView: View {
     }
 
     /// The bot stands on its stage (the thread tab, not yet docked).
-    private var onStage: Bool { deckTab == .thread && !docked && sessionId != nil }
+    private var onStage: Bool { deckTab == .thread && !docked && sessionId != nil && runtimeTokens == nil }
 
     private var placeholder: String {
         switch deckTab {
@@ -181,6 +188,8 @@ struct BotChatSessionView: View {
             VStack(spacing: 0) {
                 BotThreadsOverview(botId: bot.id) { open($0) }
                 BotTabComposer(placeholder: placeholder, topDeck: AnyView(deck), onSend: startThread)
+                    .environment(\.chatBot, bot)
+                    .environment(\.chatBotOpen, { other in navigator.open(.chat(botId: other.id, sessionId: nil)) })
             }
         case .tasks:
             VStack(spacing: 0) {
@@ -190,6 +199,8 @@ struct BotChatSessionView: View {
                     deckTab = .thread
                     viewModel.sendMessage(text)
                 }
+                .environment(\.chatBot, bot)
+                .environment(\.chatBotOpen, { other in navigator.open(.chat(botId: other.id, sessionId: nil)) })
             }
         case .bot:
             VStack(spacing: 0) {
@@ -270,6 +281,30 @@ struct BotChatSessionView: View {
                                 composerTopDeck: AnyView(deck), composerPlaceholder: placeholder)
                     .environment(\.chatBot, bot)
                     .environment(\.chatBotOnStage, onStage)
+                    .environment(\.chatBotOpen, { other in navigator.open(.chat(botId: other.id, sessionId: nil)) })
+                    // The Runtime view draws over the chat, which stays mounted:
+                    // remounting it reloads the session and stops a running reply.
+                    .opacity(runtimeTokens == nil ? 1 : 0)
+                    .allowsHitTesting(runtimeTokens == nil)
+                    .accessibilityHidden(runtimeTokens != nil)
+                    .overlay {
+                        if let runtime = threadRuntime, let tokens = runtimeTokens {
+                            RuntimeLookView(
+                                runtime: runtime, tokens: tokens,
+                                messages: viewModel.messages, isStreaming: viewModel.isStreaming,
+                                onSend: { text in
+                                    let models = ModelStore.shared
+                                    viewModel.sendMessage(text, runtimeModelId: models.didManuallySelectModel ? models.selectedModelId : nil,
+                                                          effort: models.effortForSend)
+                                },
+                                onStop: { viewModel.stopStreaming() }
+                            )
+                            .transition(reduceMotion ? .identity : .opacity)
+                        }
+                    }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if threadLooks.isEmpty == false { viewSwitch }
             }
         } else if let resolveError {
             FriendlyStateView(
@@ -297,6 +332,99 @@ struct BotChatSessionView: View {
     private var stageStatus: String? {
         let live = liveText
         return live.live ? live.text : nil
+    }
+
+    // MARK: - View switch (Allternit / Runtime)
+
+    /// The freshest copy of the bot (a picker save refreshes the hub row).
+    private var currentBot: AgentRecord { hubStore.agents.first { $0.id == bot.id } ?? bot }
+
+    private var savedAgentView: [String: JSONValue] { currentBot.config?["agentView"]?.jObject ?? [:] }
+
+    /// The thread's runtime, from the bot's brain (contract normalizer).
+    private var threadRuntime: RuntimeEntry? {
+        let brain = RuntimeRegistry.resolveRuntime(currentBot.config?["botBrain"]?.jObject ?? [:], in: registry.runtimes)
+        return registry.runtime(brain["runtime"]?.jString)
+    }
+
+    /// Looks the runtime has; none (Allternit) means no switch.
+    private var threadLooks: [String] { RuntimeLookTokens.looks(threadRuntime) }
+
+    private var viewMode: String {
+        let v = viewChoice ?? savedAgentView["view"]?.jString ?? "allternit"
+        // Split is not offered on a phone; a saved Split shows the Runtime view.
+        return v == "split" ? "runtime" : v
+    }
+
+    private var lookMode: String {
+        let want = lookChoice ?? savedAgentView["look"]?.jString ?? threadRuntime?.defaultLook ?? "terminal"
+        return threadLooks.contains(want) ? want : (threadLooks.first ?? "terminal")
+    }
+
+    /// The look to draw, only while the Runtime view is on.
+    private var runtimeTokens: RuntimeLookTokens? {
+        guard viewMode == "runtime", deckTab == .thread else { return nil }
+        return RuntimeLookTokens.of(threadRuntime, look: lookMode)
+    }
+
+    private var viewSwitch: some View {
+        HStack(spacing: 8) {
+            Text(threadRuntime?.name ?? "")
+                .font(.footnote)
+                .foregroundColor(Color("TextTertiary"))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if viewMode == "runtime", threadLooks.count > 1 {
+                Picker("Look", selection: Binding(get: { lookMode }, set: { saveView(view: viewMode, look: $0) })) {
+                    Image(systemName: "terminal").accessibilityLabel("Terminal").tag("terminal")
+                    Image(systemName: "macwindow").accessibilityLabel("Desktop").tag("desktop")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 96)
+                .accessibilityLabel("Look")
+            }
+            Picker("View", selection: Binding(get: { viewMode }, set: { saveView(view: $0, look: lookMode) })) {
+                Text("Allternit").tag("allternit")
+                Text("Runtime").tag("runtime")
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .accessibilityLabel("View")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .frame(minHeight: 44)
+        .overlay(alignment: .bottomLeading) {
+            if let viewSaveError {
+                Text(viewSaveError)
+                    .font(.caption2)
+                    .foregroundColor(Theme.statusWarning)
+                    .padding(.horizontal, 14)
+                    .offset(y: 12)
+                    .accessibilityAddTraits(.isStaticText)
+            }
+        }
+    }
+
+    /// Shows the choice at once and saves it to `config.agentView` (whole
+    /// config, unknown keys kept), as the picker's View switch does.
+    private func saveView(view: String, look: String) {
+        Haptics.selection()
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+            viewChoice = view
+            lookChoice = look
+        }
+        viewSaveError = nil
+        var config = currentBot.config ?? [:]
+        config["agentView"] = .object(["view": .string(view), "look": .string(look)])
+        let id = bot.id
+        Task {
+            do {
+                try await hubStore.updateAgent(id: id, config: config)
+            } catch {
+                viewSaveError = "Couldn't save the view. \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
     }
 
     // MARK: - Deck

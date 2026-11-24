@@ -7,11 +7,13 @@
  */
 import { getSessionId } from '../../bootstrap/state.js'
 import type { Message } from '../../types/message.js'
-import { getUserMessageText } from '../../utils/messages.js'
+import { getAssistantMessageText, getUserMessageText } from '../../utils/messages.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { platformRequest, platformSignedIn } from '../../../../../runtime/bots/platform-api.js'
+import { sleepEnabled } from '../../../../../runtime/memory/sleep/client.js'
 
 const sent = new Set<string>()
+const sentRows = new Set<string>()
 
 /** The text of the last thing the person typed, if it's a real message. */
 export function lastUserText(messages: readonly Message[]): { id: string; text: string } | null {
@@ -26,6 +28,83 @@ export function lastUserText(messages: readonly Message[]): { id: string; text: 
   return null
 }
 
+export type TurnRow = {
+  turnId: string
+  role: 'assistant' | 'tool'
+  text?: string
+  toolName?: string
+  toolInput?: string
+  toolOutput?: string
+}
+
+function stringify(v: unknown): string {
+  if (typeof v === 'string') return v
+  try {
+    return JSON.stringify(v) ?? ''
+  } catch {
+    return String(v)
+  }
+}
+
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map(b => (b && typeof b === 'object' && (b as { type?: string }).type === 'text' ? String((b as { text?: string }).text ?? '') : ''))
+      .filter(Boolean)
+      .join('\n')
+  }
+  return content == null ? '' : stringify(content)
+}
+
+/**
+ * The assistant's text reply and each tool call (with its result) since the
+ * person's last real message. Ids come from message uuids and tool_use ids,
+ * so a re-run of the same turn sends the same ids.
+ */
+export function turnRows(messages: readonly Message[]): TurnRow[] {
+  let start = -1
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i] as Message & { isMeta?: boolean }
+    if (m.type !== 'user' || m.isMeta) continue
+    const text = getUserMessageText(m)?.trim()
+    if (!text || text.startsWith('<') || text.startsWith('/')) continue
+    start = i
+    break
+  }
+  if (start < 0) return []
+  const calls = new Map<string, TurnRow>()
+  const rows: TurnRow[] = []
+  let lastReply: TurnRow | null = null
+  for (let i = start + 1; i < messages.length; i += 1) {
+    const m = messages[i] as Message & { uuid?: string; message?: { content?: unknown } }
+    const content = m.message?.content
+    if (!Array.isArray(content)) continue
+    if (m.type === 'assistant') {
+      const text = getAssistantMessageText(m)
+      if (text) lastReply = { turnId: `${m.uuid ?? i}:a`, role: 'assistant', text }
+      for (const b of content as Array<{ type?: string; id?: string; name?: string; input?: unknown }>) {
+        if (b.type !== 'tool_use' || !b.id) continue
+        const row: TurnRow = { turnId: `${b.id}:t`, role: 'tool', toolName: b.name, toolInput: stringify(b.input ?? {}), toolOutput: '' }
+        calls.set(b.id, row)
+        rows.push(row)
+      }
+    } else if (m.type === 'user') {
+      for (const b of content as Array<{ type?: string; tool_use_id?: string; content?: unknown }>) {
+        if (b.type === 'tool_result' && b.tool_use_id) {
+          const row = calls.get(b.tool_use_id)
+          if (row) row.toolOutput = resultText(b.content)
+        }
+      }
+    }
+  }
+  return lastReply ? [lastReply, ...rows] : rows
+}
+
+// Whether Sleep is on: runtime/memory/sleep/client.ts (one status call per
+// process, kept five minutes; off, 404 or any failure means off). No tool in
+// Gizzi is flagged sensitive today, so tool output is sent as is when Sleep is on.
+
 export async function captureUserTurn(messages: readonly Message[]): Promise<void> {
   const turn = lastUserText(messages)
   if (!turn || sent.has(turn.id)) return
@@ -34,11 +113,33 @@ export async function captureUserTurn(messages: readonly Message[]): Promise<voi
   try {
     if (!(await platformSignedIn())) return
     const session = String(getSessionId() ?? '').replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 128) || 'cli'
+    const label = `gizzi:session/${session}`
+    // With Sleep on the server keeps the full text (its own cap); off, it
+    // clips to 4000 itself, so the older client cap stays for older runtimes.
+    const on = await sleepEnabled()
     await platformRequest('POST', '/api/v1/memory/drive/capture/turn', {
       source: 'gizzi',
-      label: `gizzi:session/${session}`,
-      text: turn.text.slice(0, 4000),
+      label,
+      text: on ? turn.text.slice(0, 64_000) : turn.text.slice(0, 4000),
+      role: 'user',
+      turn_id: turn.id,
     }, { timeoutMs: 10_000 })
+    if (!on) return
+    for (const row of turnRows(messages)) {
+      if (sentRows.has(row.turnId)) continue
+      sentRows.add(row.turnId)
+      if (sentRows.size > 2000) sentRows.clear()
+      await platformRequest('POST', '/api/v1/memory/drive/capture/turn', {
+        source: 'gizzi',
+        label,
+        role: row.role,
+        turn_id: row.turnId,
+        text: row.text?.slice(0, 64_000) ?? '',
+        tool_name: row.toolName,
+        tool_input: row.toolInput?.slice(0, 8_000),
+        tool_output: row.toolOutput?.slice(0, 32_000),
+      }, { timeoutMs: 10_000 })
+    }
   } catch (error) {
     logForDebugging(`[memoryDrive] capture skipped: ${error instanceof Error ? error.message : String(error)}`)
   }

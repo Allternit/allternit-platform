@@ -1,0 +1,31 @@
+---
+title: 'second_opinion'
+description: 'An advisory review of a plan or a diff on a deeper model tier'
+---
+
+## Overview
+
+`second_opinion` asks a reviewer on a deeper model tier to check a plan before building, or a diff before the assistant says it is done. It is advice. It never blocks the assistant.
+
+The plan, or the diff with its evidence, goes to the read-only code-reviewer at the deepest thinking level the model supports. If the verdict is `disagree`, the assistant shows you both views instead of picking one.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `kind` | `plan` or `diff` | What is reviewed |
+| `subject` | string | The plan text, or a summary of the change (up to 40,000 characters) |
+| `evidence` | string, optional | Test output, commands run, or the diff itself |
+| `question` | string, optional | What you most want checked (up to 2,000 characters) |
+
+## Result
+
+A verdict of `agree`, `concerns` or `disagree`, short reasons with the most important first, and the tier the review ran on.
+
+## Permission
+
+Read-only: the review changes nothing, so it is allowed in every mode, including Read-only.
+
+## Surfaces
+
+Desktop, web, phone layout, PWA and iOS draw a second-opinion card. The terminal uses an adapter over the same review agent. Android follows the PWA. Delivered by the review PR (PR6). Family: `code-review`.

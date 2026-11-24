@@ -40,7 +40,6 @@ use allternit_api::cloud_agents_routes::cloud_agents_router;
 use allternit_api::user_profile_routes::{enrollment_router, user_profile_router};
 use allternit_api::agent_workspace_routes::agent_workspace_router;
 use allternit_api::agents_v1_routes::agents_v1_router;
-use allternit_api::alabs_routes::alabs_router;
 use allternit_api::analytics_routes::analytics_router;
 use allternit_api::artifact_routes::artifact_router;
 use allternit_api::audit_log_routes::audit_log_router;
@@ -71,7 +70,6 @@ use allternit_api::file_routes::file_router;
 use allternit_api::h5i_routes::h5i_router;
 use allternit_api::har_api_routes::har_api_router;
 use allternit_api::bot_event_routes::bot_event_router;
-use allternit_api::model_training_routes::model_training_router;
 use allternit_api::photon_routes::photon_router;
 use allternit_api::health::health_router;
 use allternit_api::inference_router_routes::inference_router_router;
@@ -493,6 +491,10 @@ async fn main() {
     // to the REST run surface within one tick (same contract as the route
     // mirror in fabric_transport_routes::submit_intent).
     spawn_al_orchestrator(db.clone(), cowork_run_manager.clone());
+    // Phone calm 9a: Code session status flags (needsInput, readyForReview)
+    // from gizzi's global event stream, whether or not a client is on
+    // `/agent-sessions/sync`.
+    allternit_api::code_session_status::spawn(db.clone());
     // Consumer-packaged Cowork P4.2: routines tick — due routines fire one
     // canonical intent each onto Fabric Transport (claimed/leased like any
     // other run).
@@ -686,6 +688,8 @@ async fn main() {
     }
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
+    // Adopt projects and bots made with no computer (inert until paired).
+    allternit_api::account_sync::spawn(state.db.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 
     // BYOK credential revalidation sweep (P1.7): re-probe every active
@@ -1024,13 +1028,29 @@ async fn main() {
         });
     }
 
+    // Freeweights Studio: training jobs on this computer (`/api/v1/studio`).
+    // Jobs left running by an earlier process are reattached or marked failed.
+    let studio_host = allternit_api::studio::StudioHost::new(
+        allternit_api::studio::StudioConfig::from_data_dir(&data_dir),
+    );
+    {
+        let studio_host = studio_host.clone();
+        tokio::spawn(async move { studio_host.recover().await });
+    }
+
     // ── Build V1 API routes (all merged, then nested under /api/v1) ───────────
     let v1_routes = provider_router()
+        .merge(allternit_api::connections_routes::connections_router())
         .merge(inbox_router())
         .merge(allternit_api::bots_pause::router())
         .merge(allternit_api::messages_mac::router())
         .merge(file_router())
+        // Files drive v2 (`/api/v1/files/v2`, contracts/files-drive). Off unless
+        // ALLTERNIT_FILES_DRIVE=1; nothing is created on disk until first use.
+        .merge(allternit_api::files_v2::router(&state.data_dir, state.db.clone()))
         .merge(memory_router())
+        // Allternit Sleep (`/memory/sleep/*`, `/memory/disputes*`); every stage off by default.
+        .merge(allternit_api::sleep::routes::sleep_router())
         .merge(me_router())
         .merge(setup_router())
         .merge(local_brain_router())
@@ -1125,6 +1145,11 @@ async fn main() {
         .merge(allternit_api::bot_routing::bot_routing_router())
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())
         .merge(allternit_api::thread_bot_tools::thread_bot_tools_router())
+        .merge(allternit_api::thread_read_tools::thread_read_tools_router())
+        .merge(allternit_api::agent_connector_tools::agent_connector_tools_router())
+        .merge(allternit_api::agent_settings_tools::agent_settings_tools_router())
+        .merge(allternit_api::agent_user_tools::agent_user_tools_router())
+        .merge(allternit_api::agent_automation_tools::agent_automation_tools_router())
         .merge(allternit_api::worker_bot_tools::worker_bot_tools_router())
         .merge(allternit_api::project_send_tools::project_send_tools_router())
         .merge(allternit_api::events_feed::events_feed_router())
@@ -1152,7 +1177,7 @@ async fn main() {
         .merge(allternit_api::morning_brief::brief_router())
         .merge(allternit_api::main_bot_reach_out::reach_out_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
-        .merge(model_training_router())
+        .merge(allternit_api::studio::router(studio_host.clone()))
         .merge(photon_router())
         .merge(allternit_api::enterprise_auth::router())
         .merge(allternit_api::eval_routes::router())
@@ -1198,6 +1223,10 @@ async fn main() {
         .merge(allternit_api::phone_task::router())
         // Phone approval holds: guard check, hold read, hold crop.
         .merge(allternit_api::phone_guard::router())
+        // App Maps: per-app screen graphs (list, read, forget).
+        .merge(allternit_api::phone_map::router())
+        // App Map Explore: a bounded Android walk that grows a map (never taps sensitive).
+        .merge(allternit_api::phone_map_explore::router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())
@@ -1236,7 +1265,6 @@ async fn main() {
         .merge(office_router())
         .merge(office_cli_router())
         .merge(office_engine_v1_router())
-        .merge(alabs_router())
         .merge(automation_router())
         .merge(brain_router())
         .merge(memory_drive_router())
@@ -1473,8 +1501,17 @@ async fn main() {
         // peer gateways carry the internal service token, not a Clerk JWT —
         // the inbox handler gates itself per-handler, same as internal_routes.
         .merge(allternit_api::content_artifact_relay::content_artifact_relay_inbox_router())
+        // Allternit Meetings in-call turns (/api/v1/meeting-turns/*): the pod's runner
+        // has no Clerk session; each handler checks the internal service token.
+        .merge(allternit_api::meeting_turn_stream::meeting_turns_router())
+        // Allternit Meetings bot on this runtime: cloud-api relays status/start/stop
+        // (/webhooks/meeting-bot/*) signed with the device token (RelayedAuth verifies).
+        .merge(allternit_api::meeting_bot_host::meeting_bot_host_router(data_dir.clone(), app_config.api_port()))
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
+        // Runtime registry (GET /api/v1/runtimes): public; owner auth, checked
+        // in the handler, adds `installed`.
+        .merge(allternit_api::cli_catalog::runtimes_public_router())
         // Private Fabric node daemon enrollment and heartbeat.
         .merge(allternit_api::fabric_node_routes::public_router())
         // Brain git smart-HTTP: git clients carry no Clerk JWT — they use
@@ -1585,6 +1622,9 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
+    // Allternit Sleep (step 5.1): runs queued sleep units as cycles. For users
+    // with the `orchestrator` stage on, the three clocks above only queue naps.
+    allternit_api::sleep::cycle::spawn(state.clone());
     allternit_api::memory_capture::spawn(state.db.clone());
     // Memory Drive: read saved memories and new chats from the person's own
     // assistant logins on their Sessions computer (read-only, every 6 h).
@@ -1790,6 +1830,16 @@ async fn main() {
 
         // Stop the background loops first, then let in-flight requests finish.
         let _ = shutdown_tx.send(());
+        // Meetings bot runners live in their own process groups; stop them
+        // (and the PulseAudio the host started) before the process exits.
+        allternit_api::meeting_bot_host::shutdown().await;
+        // Runtime web apps (POST /api/v1/runtimes/:id/live) run in their own
+        // process groups too: SIGTERM, SIGKILL after 3 s.
+        allternit_api::runtime_live::shutdown().await;
+        // Files drive: SIGTERM is the sleep notice (a cloud computer being
+        // stopped, Desktop quitting). Leave the asleep snapshot current so the
+        // computer still lists while it sleeps. Bounded to a few seconds.
+        allternit_api::files_v2::before_sleep().await;
         tokio::time::sleep(DRAIN_TIMEOUT).await;
         let _ = server_shutdown_tx.send(());
         // Graceful shutdown waits for every open connection, and the UI's

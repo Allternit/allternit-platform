@@ -8,6 +8,19 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Screen share fallback (ProjectionService) when the scrcpy shell server isn't running. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Control my iPhone by Bluetooth (Phone Use `bt-android`, BluetoothRemote):
+         this phone as a Bluetooth keyboard and mouse (BluetoothHidDevice) for
+         the person's own iPhone. No BLUETOOTH_SCAN: nothing here scans, the
+         iPhone starts the pairing. Bluetooth is optional so Play does not
+         filter out phones without it. -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- terminate_app (best effort): killBackgroundProcesses. Normal permission. -->
@@ -48,6 +61,41 @@
             android:exported="true"
             android:label="@string/phone_link_label"
             android:launchMode="singleTop" />
+
+        <!-- Screen share through the account (src/phoneshare, same as the Google
+             Play build; keep in step with src/play/AndroidManifest.xml). The
+             fallback when the scrcpy shell server isn't running, and the only
+             lane with no Allternit Desktop. -->
+        <activity
+            android:name="com.allternit.phonelink.ScreenShareActivity"
+            android:exported="true"
+            android:label="Share screen"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="allternit" android:host="phone-share" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="com.allternit.phonelink.ProjectionConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name="com.allternit.phonelink.ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Keeps Control my iPhone by Bluetooth on while the app is in the background.
+             Started only from the person's tap in Share screen. -->
+        <service
+            android:name="com.allternit.phonelink.BluetoothRemoteService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- The hands and eyes. Enabled over adb with
              settings put secure enabled_accessibility_services com.allternit.app/com.allternit.phonelink.PhoneLinkAccessibilityService -->

@@ -25,7 +25,7 @@ struct LiveModeLookSection: View {
             Text(bot.map { "\($0.botDisplayName)'s live mode look" } ?? "Live mode")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color("TextPrimary"))
-            Text("What moves around a bot's avatar while you talk by voice.")
+            Text("What moves around the A:// mark or a bot's avatar while you talk by voice.")
                 .font(.caption)
                 .foregroundColor(Color("TextSecondary"))
 
@@ -92,7 +92,7 @@ struct LiveModeLookSection: View {
 
     private func tile<P: View>(title: String, subtitle: String?, selected: Bool, action: @escaping () -> Void, @ViewBuilder preview: () -> P) -> some View {
         Button(action: {
-            UISelectionFeedbackGenerator().selectionChanged()
+            Haptics.selection()
             action()
         }) {
             VStack(alignment: .leading, spacing: 6) {
@@ -126,7 +126,7 @@ struct LiveModeLookSection: View {
 
     private func chip(name: String, colors: [Color]?, neutral: Bool, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UISelectionFeedbackGenerator().selectionChanged()
+            Haptics.selection()
             action()
         }) {
             HStack(spacing: 6) {

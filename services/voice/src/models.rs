@@ -7,6 +7,7 @@
 //! upstream URLs); hashes are pinned here
 //! in code and verified before a file is considered usable.
 
+use allternit_model_source::VerificationState;
 use serde::Serialize;
 use sha2::Digest;
 use std::collections::BTreeMap;
@@ -202,6 +203,10 @@ pub struct PackStatus {
     pub pct: Option<f32>,
     pub error: Option<String>,
     pub size_bytes: Option<u64>,
+    /// How the pack's files were checked (contract `VerificationState`):
+    /// `pinned` once ready, since every file matched the sha256 pinned in
+    /// this file before it was moved into place. `None` until then.
+    pub verification_state: Option<VerificationState>,
 }
 
 impl PackStatus {
@@ -212,6 +217,7 @@ impl PackStatus {
             pct: None,
             error: None,
             size_bytes: None,
+            verification_state: None,
         }
     }
 }
@@ -279,6 +285,7 @@ impl PackManager {
                         pct: None,
                         error: None,
                         size_bytes: Some(dir_size(&self.pack_dir(p.name))),
+                        verification_state: Some(VerificationState::Pinned),
                     }
                 } else {
                     PackStatus::missing(p.name)
@@ -350,6 +357,7 @@ impl PackManager {
                     pct: None,
                     error: Some(e.clone()),
                     size_bytes: None,
+                    verification_state: None,
                 })
                 .await;
                 return Err(e);
@@ -361,6 +369,7 @@ impl PackManager {
             pct: None,
             error: None,
             size_bytes: Some(dir_size(&dir)),
+            verification_state: Some(VerificationState::Pinned),
         })
         .await;
         Ok(dir)
@@ -542,6 +551,7 @@ impl PackManager {
             pct,
             error: None,
             size_bytes: None,
+            verification_state: None,
         })
         .await;
     }

@@ -60,6 +60,17 @@ gizzi computers stop cmp_7fe9…
 - **Computers**: the ones in Desktop's Computers view (this machine, paired machines, cloud desktops). `start` and `stop` take a name or an id from this list.
 - **Paired runtimes**: every runtime signed in to your account (Desktops, cloud computers, VPSs, phones), online first.
 
+### Computers console in the terminal
+
+When the Computers console is on for your account (set `GIZZI_COMPUTERS_CONSOLE=1` until the account flag can be read from the terminal), `/computers` opens it in the session:
+
+- The list is grouped, with **Needs attention** first (status offline or error, or CPU, memory or disk at 90% or more; a computer that is asleep is never flagged). Each row shows its status and CPU, memory and disk meters from the last sample.
+- `↑` and `↓` choose a computer, `enter` opens it, `r` refreshes, `esc` goes back or closes.
+- An open computer shows an overview (`o`), its services (`s`) and its listening ports (`p`).
+- The view only reads. An asleep computer shows its last sample and is never woken. To wake, sleep, snapshot or restore, use `gizzi computers wake`, `sleep`, `snapshot` and `restore`, which ask first.
+
+Agents get five read-only tools with the same flag: `computers_console_list`, `computer_snapshot`, `computer_services`, `computer_ports` and `computer_logs_tail` (at most 200 lines, 50 by default; log lines are masked on the computer). There are no action tools: anything that changes a computer needs your approval in the app.
+
 ### Run a session on another computer
 
 ```bash
@@ -73,9 +84,17 @@ The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_
 ## Phone tasks
 
 ```bash
+gizzi phone list                  # your phones, their platform, screen state and taps
 gizzi phone task "open Settings and turn on Do Not Disturb"
 gizzi phone task "order my usual" --phone "Joe's Pixel"
 gizzi phone runs                  # recent runs and their status
+gizzi phone task "open Settings" --vision always  # a screenshot with every model call (default: auto)
+gizzi phone maps                  # App Maps: one line per app
+gizzi phone maps --app com.android.settings  # one app's screens and routes (add --json)
+gizzi phone explore com.android.settings --minutes 5 --max-screens 40
+gizzi phone explore com.android.settings --stop <run_id>
+gizzi phone stop <run_id>         # stop a task, a skill or an Explore run
+gizzi phone forget-map com.android.settings  # delete a map (--yes skips the question)
 ```
 
 `task` sends your goal to a linked phone and prints each step as the run moves. `--phone` takes a serial or a name; with one phone linked, or only one online, you can leave it out. Inside a session, `$GIZZI_THREAD_ID` and `$GIZZI_SESSION_ID` (or `--thread` and `--session`) tie the task to that conversation, so its card shows there.
@@ -94,6 +113,8 @@ When the run reaches a sensitive step (a payment, a delete, a text, a call, a pa
 - `d` denies.
 
 Approving is the same act as in the app, by you, signed in. Nothing in the terminal approves for you: with no terminal to ask (a pipe or a script), the hold is left for the app, and the run ends as timed out if nobody answers. API keys can't approve.
+
+`maps`, `explore`, `stop` and `forget-map` work with [App Maps](/guides/phone-app-maps). `explore` is Android only, starts a run and prints its `run_id`, and prints why it stopped early when it did. `--minutes` is 1 to 30 (default 10) and `--max-screens` 1 to 300 (default 60). Banking and payment apps are refused, a phone busy with a task is refused, and so is a second Explore on the same phone. The task's last line adds how many steps came from the map and how many tokens it used, when the runtime reports them.
 
 A refusal is printed as it comes: your bots are paused, or the conversation's latest message didn't come from you. With no phone linked, an offline phone or a signed-out terminal you get one plain line saying so. See [Phone approval holds](/api/phone-holds).
 

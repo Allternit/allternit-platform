@@ -20,7 +20,7 @@ Served by the cloud API at `https://api.allternit.com`.
 | `DELETE` | `/api/v1/code-environments/:id/secrets/:name` | User | Delete a secret. |
 | `GET` | `/api/v1/code-environments/:id/resolve` | Runtime device only | The environment plus secret values. |
 
-**User** auth is a Clerk session JWT, an `allternit_*` API token with the `compute` scope, or a runtime device token (`Bearer allternit_runtime_…`) acting as its owner. Every row is scoped to the caller. Another user's environment id answers `404`.
+**User** auth is a Clerk session JWT, an Allternit API key (`alt_…`, created under ACI › Operator keys; legacy `allternit_*` tokens still work) with the `compute` scope, or a runtime device token (`Bearer allternit_runtime_…`) acting as its owner. Every row is scoped to the caller. Another user's environment id answers `404`.
 
 ## The environment object
 

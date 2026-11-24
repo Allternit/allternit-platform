@@ -24,6 +24,7 @@ struct AgentSelectionSheet: View {
                     // Section label — same caps style as the hub's.
                     HStack {
                         Text("CHOOSE AGENT | BOT")
+                            .accessibilityIdentifier("agentSheetTitle")
                             .font(.system(size: 11, weight: .bold))
                             .tracking(1)
                             .foregroundColor(Color("TextSecondary"))
@@ -66,6 +67,7 @@ struct AgentSelectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .accessibilityIdentifier("agentSheetDone")
                 }
             }
         }
@@ -80,8 +82,7 @@ struct AgentSelectionSheet: View {
     private func agentCard(agent: AgentRecord?) -> some View {
         let isSelected = agentModeStore.selectedAgentId(for: surface) == agent?.id
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             agentModeStore.selectAgent(agent, for: surface)
             dismiss()
         }) {
@@ -162,8 +163,7 @@ struct AgentSelectionSheet: View {
     /// Non-selectable action card (hub entry points), same card chrome.
     private func actionCard(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             HStack(spacing: 12) {

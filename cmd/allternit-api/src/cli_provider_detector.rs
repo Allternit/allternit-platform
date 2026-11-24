@@ -188,7 +188,7 @@ fn grok_info(binary_installed: bool, key_set: bool) -> CliProviderInfo {
     }
 }
 
-async fn detect_ollama() -> CliProviderInfo {
+pub(crate) async fn detect_ollama() -> CliProviderInfo {
     let binary = "ollama";
     let installed = command_exists(binary).await;
 

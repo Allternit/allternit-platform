@@ -6,6 +6,12 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { ToolRegistry } from "../../src/runtime/tools/builtins/registry"
 import { Flag } from "../../src/runtime/context/flag/flag"
+import { WORKER_BOT_TOOL_IDS } from "../../src/runtime/tools/builtins/worker-bot-tools"
+import { PROJECT_SEND_TOOL_IDS } from "../../src/runtime/tools/builtins/project-send"
+import { WAVE_B_TOOL_IDS } from "../../src/runtime/primitives/wave-b-types"
+import { GAP_CARD_TOOL_IDS, GAP_TOOL_IDS } from "../../src/runtime/primitives/gap-types"
+import { CliBridge } from "../../src/runtime/integrations/cli-bridge"
+import { CliBridgeResults } from "../../src/runtime/integrations/cli-bridge/results"
 
 describe("tool.registry", () => {
   test("loads tools from .gizzi/tool (singular)", async () => {
@@ -149,5 +155,189 @@ describe("tool.registry", () => {
         expect(await ToolRegistry.ids({ computer: false })).toEqual(without)
       },
     })
+  })
+
+  test("capture_screen_context is offered to app clients, never the terminal", async () => {
+    // A terminal has no app view to capture; the CLI bridge offers neither tool either.
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const [client, offered] of [["app", true], ["desktop", true], ["cli", false]] as const) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            if (offered) expect(ids).toContain("capture_screen_context")
+            else expect(ids).not.toContain("capture_screen_context")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("browser_tasks is offered only when an app client has a local executor", async () => {
+    // No executor answers in tests (or the API base is remote): the tool stays out.
+    const { browserTasksAvailable } = await import("../../src/runtime/tools/builtins/browser-tasks")
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            const available = (await browserTasksAvailable()).ok
+            if (client === "app" && available) expect(ids).toContain("browser_tasks")
+            else expect(ids).not.toContain("browser_tasks")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("current_time, send_user_message, lookup, sleep, agent_batch and folder_access reach every client, not only bot chats", async () => {
+    // Primitives Wave A (current_time, send_user_message) and Wave E (lookup, sleep, agent_batch), Wave C (folder_access):
+    // Gizzi Code and plain app chats need them. The bot-only
+    // lists are what SessionPrompt.resolveTools deletes outside an app bot's chat.
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of ["current_time", "send_user_message", "lookup", "sleep", "agent_batch", "folder_access"]) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("Wave B tools reach every client; select_tools is gone (tool_search replaces it)", async () => {
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            expect(WAVE_B_TOOL_IDS).toEqual(["wait_agents", "agent_control", "tool_search", "get_context_remaining", "history_recall"])
+            for (const id of WAVE_B_TOOL_IDS) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+            expect(ids).not.toContain("select_tools")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("Wave D recall tools and thread_search reach every client; only thread_update / thread_close stay bot-only", async () => {
+    // resolveTools deletes ToolRegistry.BOT_THREAD_TOOL_IDS outside an app bot's
+    // chat, so a plain chat or Gizzi Code session keeps thread_search (decision 8).
+    const recall = ["memory_list", "thread_search", "thread_read", "thread_recent", "thread_wait", "resource"]
+    expect([...ToolRegistry.BOT_THREAD_TOOL_IDS].sort()).toEqual(["thread_close", "thread_update"])
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of recall) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("Wave D connect and settings tools reach every client and are not bot-only", async () => {
+    const tools = ["connector_search", "connector_suggest", "settings"]
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of tools) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("prompt-gap tools: every id has one gated stub, and none is offered while its module says available = false", async () => {
+    // G3 contract: a stub module exports `available`; the registry and the CLI
+    // bridge list the tool only once its lane sets it to true.
+    expect(ToolRegistry.GAP_TOOLS.map((g) => g.tool.id).sort()).toEqual([...GAP_TOOL_IDS].sort())
+    const hidden = ToolRegistry.GAP_TOOLS.filter((g) => !g.module.available).map((g) => g.tool.id)
+    const bridged = CliBridge.TOOLS.map((t) => t.id)
+    for (const id of hidden) expect(bridged).not.toContain(id)
+    // Every gap tool draws a card, and the bridge merges each one's metadata.
+    expect([...GAP_CARD_TOOL_IDS].sort()).toEqual([...GAP_TOOL_IDS].sort())
+    for (const id of GAP_CARD_TOOL_IDS) expect(CliBridgeResults.isCanonical(id)).toBe(true)
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of hidden) expect(ids).not.toContain(id)
+            // user_location needs an app client even once it is available.
+            const location = ToolRegistry.GAP_TOOLS.find((g) => g.tool.id === "user_location")!
+            if (client === "cli" || !location.module.available) expect(ids).not.toContain("user_location")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
   })
 })

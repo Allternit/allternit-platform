@@ -1,0 +1,29 @@
+---
+title: Autopilot and Away
+description: Check or switch Autopilot and see what happened while you were away, with /autopilot and /away
+---
+
+## Overview
+
+Autopilot lets your main bot answer for you under rules you set in the Workspace. Two slash commands in Gizzi Code show the same thing the Workspace shows.
+
+| Command | What it does |
+|---|---|
+| `/autopilot` or `/autopilot status` | Shows whether Autopilot is on or off, your main bot, and each rule (need, scope and level) |
+| `/autopilot on` | Turns Autopilot on. Your rules are kept |
+| `/autopilot off` | Turns Autopilot off. Your rules are kept |
+| `/away` | Prints "While you were away": what was answered (marked "on autopilot"), what is waiting for you, what finished and what was suggested. Then marks it seen |
+
+Rule levels read in plain words: **Draft only**, **Ask first**, **Send and tell me** and **Act within limits**. Questions are always Draft only for now.
+
+If nothing happened, `/away` prints "Nothing happened while you were away."
+
+## Requirements
+
+You need to be signed in (`gizzi login`) and connected to a runtime that has Autopilot. On an older runtime the commands print "This runtime does not support Autopilot yet." The commands call `/api/v1/floor/autopilot`, `/api/v1/floor/digest` and `/api/v1/floor/seen` on the Allternit API.
+
+## Suggesting repeating work
+
+A bot's `suggest_task` tool accepts an optional `schedule` with a five-field `cron` and an IANA `tz` (for example `0 9 * * 1` and `America/Chicago`). The task still waits for your go-ahead before anything runs.
+
+For developers: the commands live in `cmd/gizzi-code/src/cli/ui/ink-app/commands/autopilot` and `away`; the client and plain-words formatting are in `src/runtime/bots/floor-autopilot.ts`.

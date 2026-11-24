@@ -59,7 +59,7 @@ const EMPTY_CURL = `curl ${gatewayBase()}/v1/batches \\
 
 const REQUESTS_PLACEHOLDER = `[
   {
-    "model": "kimi-k3",
+    "model": "deepseek-v4.1-flash",
     "messages": [{ "role": "user", "content": "Hello" }],
     "max_tokens": 100
   }

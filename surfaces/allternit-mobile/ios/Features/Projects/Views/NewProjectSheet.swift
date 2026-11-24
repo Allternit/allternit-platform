@@ -6,7 +6,13 @@ import SwiftUI
 struct NewProjectSheet: View {
     /// Called with the trimmed title and the (nil-when-empty) description.
     let onCreate: (String, String?) -> Void
+    /// "Cover and pad": creates the project and opens its cover and pad
+    /// editor. Nil hides the row (the sheet from the composer).
+    var onCreateAndStyle: ((String, String?) -> Void)? = nil
+    /// The project type; nil hides the picker (chat project).
+    var kind: Binding<LibraryProject.Mode>? = nil
 
+    @ReducedMotion private var reduced
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var descriptionText = ""
@@ -16,35 +22,71 @@ struct NewProjectSheet: View {
         case title, description
     }
 
+    /// Bot: the description is the bot's brief.
+    private var isBot: Bool { kind?.wrappedValue == .bot }
+
     private var canCreate: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header (matches ComposerPlusSheet / ProjectsListView chrome).
+            // Header: ✕ left, ✓ right (phone calm step 27).
             HStack {
-                Text("New project")
-                    .font(.system(.title3, design: .serif))
-                    .fontWeight(.medium)
-                    .foregroundColor(Color("TextPrimary"))
-                Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color("TextSecondary"))
-                        .frame(width: 32, height: 32)
-                        .background(Color("BgPanel"))
+                        .frame(width: 44, height: 44)
+                        .background(Color("FillNeutral"))
                         .clipShape(Circle())
                 }
                 .accessibilityLabel("Close")
+                .accessibilityIdentifier("newProjectClose")
+                Spacer()
+                Text("New project")
+                    .accessibilityIdentifier("newProjectTitle")
+                    .font(.system(.title3, design: .serif))
+                    .fontWeight(.medium)
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer()
+                Button(action: create) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(canCreate ? Color("BgPrimary") : Color("TextTertiary"))
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(canCreate ? Color("TextPrimary") : Color("FillNeutral")))
+                }
+                .disabled(!canCreate)
+                .accessibilityLabel("Create project")
+                .accessibilityIdentifier("newProjectCreate")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
 
             Divider().background(Color("BorderSubtle"))
 
+            ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // The folder cover, live with the typed name.
+                FolderCoverView(title: title.isEmpty ? "New project" : title,
+                                mode: kind?.wrappedValue.rawValue ?? "chat",
+                                appearance: nil, width: 120, flat: true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Folder cover for \(title.isEmpty ? "the new project" : title)")
+
+                if let kind {
+                    Picker("Type", selection: kind) {
+                        Text("Chat").tag(LibraryProject.Mode.chat)
+                        Text("Code").tag(LibraryProject.Mode.code)
+                        Text("Design").tag(LibraryProject.Mode.design)
+                        Text("Bot").tag(LibraryProject.Mode.bot)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
                 fieldBubble(
                     label: "Name",
                     placeholder: "Project name",
@@ -54,15 +96,40 @@ struct NewProjectSheet: View {
                 )
 
                 fieldBubble(
-                    label: "Description",
-                    placeholder: "What is this project about? (optional)",
+                    label: isBot ? "Brief" : "Description",
+                    placeholder: isBot ? "What should this bot do? (optional)" : "What is this project about? (optional)",
                     text: $descriptionText,
                     field: .description,
                     submitLabel: .done
                 )
 
+                if let onCreateAndStyle, (kind?.wrappedValue ?? .chat) == .chat {
+                    Button {
+                        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let d = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        Haptics.light()
+                        onCreateAndStyle(t, d.isEmpty ? nil : d)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text("Cover and pad")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(canCreate ? Color("TextPrimary") : Color("TextTertiary"))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 48)
+                        .background(Color("BgPanel"))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canCreate)
+                    .accessibilityHint("Creates the project, then opens its cover and pad editor")
+                }
+
                 Button(action: create) {
-                    Text("Create project")
+                    Text(isBot ? "Create bot" : "Create project")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(canCreate ? Color("BgPrimary") : Color("TextSecondary"))
                         .frame(maxWidth: .infinity)
@@ -76,13 +143,16 @@ struct NewProjectSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-
-            Spacer(minLength: 0)
+            }
         }
         .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .onAppear { focusedField = .title }
+        .onAppear {
+            Haptics.light()
+            focusedField = .title
+        }
+        .animation(reduced ? Motion.fade : nil, value: kind?.wrappedValue)
     }
 
     /// Rounded labeled input "bubble": caption above a soft-bg rounded field,
@@ -106,6 +176,7 @@ struct NewProjectSheet: View {
                 .textInputAutocapitalization(field == .title ? .words : .sentences)
                 .submitLabel(submitLabel)
                 .focused($focusedField, equals: field)
+                .accessibilityIdentifier(field == .title ? "newProjectName" : "")
                 .onSubmit {
                     if field == .title {
                         focusedField = .description
@@ -128,8 +199,7 @@ struct NewProjectSheet: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
         let trimmedDescription = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(trimmedTitle, trimmedDescription.isEmpty ? nil : trimmedDescription)
         dismiss()
     }

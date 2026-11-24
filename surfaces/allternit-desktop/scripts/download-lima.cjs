@@ -1,13 +1,12 @@
 /**
- * Downloads limactl for macOS and/or Linux and stages it for electron-builder.
+ * Downloads limactl for macOS and stages it for electron-builder.
  *
  * Usage:
- *   node scripts/download-lima.cjs                 # host OS (and Linux x86_64 when run on macOS)
+ *   node scripts/download-lima.cjs                 # macOS host: Darwin limactl; other hosts: nothing
  *   node scripts/download-lima.cjs arm64           # Darwin arm64 (CI universal lipo)
- *   node scripts/download-lima.cjs x86_64 linux    # Linux x86_64
- *   ALLTERNIT_PACK_OS=linux node scripts/download-lima.cjs
+ *   node scripts/download-lima.cjs x86_64 linux    # Linux x86_64, explicit only (not packaged)
  *
- * Windows builds do not bundle Lima.
+ * Windows and Linux builds do not bundle Lima (ALLTERNIT_PACK_OS=linux skips).
  */
 
 const https = require('https');
@@ -145,20 +144,21 @@ function fetchOne(platform, rawArch) {
   });
 }
 
+// Lima is bundled on macOS only. Linux Desktop has no Lima VM feature, and the
+// upstream Linux limactl needs glibc 2.34, above the Linux floor (2.27, see
+// scripts/build-linux-sidecars.sh), so it is neither downloaded nor packaged there.
+// Pass `x86_64 linux` explicitly to fetch it for local experiments.
 function targets() {
   const osArg = process.argv[3] || process.env.ALLTERNIT_PACK_OS;
   const archArg = process.argv[2];
   if (osArg) {
     const platform = osArg === 'mac' || osArg === 'macos' ? 'darwin' : osArg;
     if (platform === 'win32' || platform === 'windows') return [];
+    if (platform === 'linux' && !process.argv[3]) return [];
     return [{ platform, arch: archArg || process.arch }];
   }
-  if (process.platform === 'win32') return [];
-  const list = [{ platform: process.platform, arch: archArg || process.arch }];
-  if (process.platform === 'darwin' && !archArg) {
-    list.push({ platform: 'linux', arch: 'x64' });
-  }
-  return list;
+  if (process.platform !== 'darwin') return [];
+  return [{ platform: 'darwin', arch: archArg || process.arch }];
 }
 
 (async () => {
@@ -166,7 +166,7 @@ function targets() {
   fs.mkdirSync(path.join(outDir, 'linux'), { recursive: true });
   const planned = targets();
   if (planned.length === 0) {
-    console.log('Lima is not bundled on Windows — skipping download');
+    console.log('Lima is bundled on macOS only — skipping download');
     return;
   }
   for (const target of planned) {

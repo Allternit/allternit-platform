@@ -31,7 +31,7 @@ use crate::ApiError;
 const STALE_AFTER_SECS_ENV: &str = "ALLTERNIT_NODE_STALE_AFTER_SECS";
 const DEFAULT_STALE_AFTER_SECS: u64 = 600;
 
-fn staleness_window() -> Duration {
+pub fn staleness_window() -> Duration {
     std::env::var(STALE_AFTER_SECS_ENV)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())

@@ -41,9 +41,25 @@ scripts/provision.sh            the adb setup sequence below
 scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 ```
 
+## Files drive (both flavors)
+
+`app/src/main/java/com/allternit/app/files/` puts every Allternit computer in Android's file picker and Files app (a `DocumentsProvider`, one root per computer), adds **Save to computer** to the share sheet, and holds the wake prompt, the biometric unlock for protected roots and the sign-in hand-off. It speaks Files drive protocol v2 (`contracts/files-drive/SPEC.md`) over the cloud relay. The contract types compile straight from `contracts/files-drive/gen/FilesDriveContract.gen.kt` (a Gradle source dir in `app/build.gradle.kts`), so regenerate them with `node contracts/files-drive/generate.mjs`, never by hand. JVM tests: `ChunkerVectorsTest` (the pinned FastCDC + BLAKE3 against `contracts/files-drive/vectors/chunker-v1.json`) and `WireJsonFixturesTest` (every valid contract fixture round-trips). User and developer notes: `surfaces/docs/guides/android-app.mdx`.
+
+## Shared UI flows
+
+The Maestro audit flows live in `surfaces/allternit-mobile/maestro/audit/` and run on both
+platforms (`appId: ${APP_ID}`; Android is `com.allternit.app`). Selectors come from one list,
+`../maestro/ids.md`: set `Modifier.testTag(id)` with `testTagsAsResourceId = true` on the root,
+using the exact same strings iOS sets as `accessibilityIdentifier`.
+
+```bash
+surfaces/allternit-mobile/maestro/audit/run-audit.sh --platform android 02_home_chat.yaml
+surfaces/allternit-mobile/scripts/parity-shots.sh 02_home_chat   # iOS sim + Android emulator, side by side
+```
+
 ## Build and test
 
-You need JDK 17 and Android SDK 35 (platform `android-35`, build-tools 35.x). The wrapper jar is not committed. Generate it once with any Gradle 8.x: `gradle wrapper --gradle-version 8.10.2`.
+You need JDK 17 and Android SDK 36 (platform `android-36`, build-tools 36.x). The Gradle wrapper (8.11.1, jar included) is committed, so `./gradlew` works as is.
 
 **Prerequisite — the mesh AAR.** The app embeds the gomobile-bound tsnet node from `infrastructure/mesh/tsnet-ios`. Build it first and copy the result to `app/libs/` (gitignored):
 
@@ -65,7 +81,31 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 # -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
-Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
+Toolchain: AGP 8.9.1, Kotlin 2.3.21 (since step 7b: Clerk Android needs it), Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 18, versionName 0.7.2 (one versionCode for both TWA flavors). Versions for new modules live in `gradle/libs.versions.toml`.
+
+## Native app modules
+
+The native Kotlin + Jetpack Compose app that will replace the TWA launcher is built up in library modules (plan: `handoffs/android-native-2026-11-18/PLAN.md` in the workspace). Only `:app`'s `nativeapp` flavor depends on them (since step 7b), so the Play and sideload builds are unchanged until the cutover step.
+
+| Module | Namespace | What it holds today |
+|---|---|---|
+| `:core:design` | `com.allternit.core.design` | `AllternitTheme(themeMode = ThemeMode.Light)` (Light default; `System` follows the phone only when the user's setting says so), generated `AllternitColors.Light/Dark` (all 17 iOS colorsets), `AllternitRadii`, `AllternitGlass`, `ModeAccents`, `FriendlyState`, `ThinkingOrb`, `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks), `ph_*` icons |
+| `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `cloudBaseUrl` (`https://api.allternit.com`, device tokens), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor, and the generated client `gen/AllternitApi` + `gen/Models.gen.kt` (from `contracts/mobile-api`; every call returns `ApiResult`: `Ok` / `HttpError(status, code, message)` / `Network` / `Decode`) |
+| `:core:auth` | `com.allternit.core.auth` | `AllternitAuth` on Clerk Android 1.4.1: `start(context)`, `state: StateFlow<AuthState>`, email code (sign-in or sign-up), Google/GitHub OAuth, debug ticket sign-in, org auto-create (iOS `finishOrganizationTaskIfNeeded`), `signOut()`; `tokenProvider` (`ClerkTokenProvider`, a `TokenProvider` for `ApiClients.okHttp`) |
+| `:feature:onboarding` | `com.allternit.feature.onboarding` | `SignInScreen`, the twin of iOS `LoginGateView` (test ids `loginHeadline`, `loginContinueEmail`, `loginSkipAuth`) |
+| `:feature:shell` | `com.allternit.feature.shell` | `MainActivity` (the `nativeapp` launcher): sign-in gate, then a placeholder home with **Use web version** and **Sign out**; debug-only `--es ticket <sign_in_token>`. Drawer, mode dial, search and overview: step 7c |
+| `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest`; `AgentChatStream` (okhttp-sse → `Flow<ChatStreamEvent>`, the iOS `AgentChatEvent` frame types) |
+| `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
+
+**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.12.0, kotlinx-coroutines 1.11.0, OkHttp + okhttp-sse 5.4.0.
+
+Compose comes from the Compose BOM 2026.06.01 (the BOM Clerk Android resolves) with the Kotlin 2.3.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
+
+**Release signing.** `app/build.gradle.kts` signs release builds only when all four of `ALLTERNIT_ANDROID_KEYSTORE` (keystore path), `ALLTERNIT_ANDROID_KEYSTORE_PASSWORD`, `ALLTERNIT_ANDROID_KEY_ALIAS` and `ALLTERNIT_ANDROID_KEY_PASSWORD` are set. Otherwise the release build is unsigned, as before. Never put a keystore path or password in the repo.
+
+## Checks
+
+`scripts/android-check.sh` is what the build train runs for Android (there is no GitHub Actions workflow). It assembles the Play debug build, runs its unit tests and lint, runs the `:core:*` unit tests, builds and tests `phonelink` only when `app/libs/Mesh.aar` exists (otherwise it prints a skip), and fails if Play Billing ever shows up on the `phonelink` runtime classpath. `scripts/android-check.sh --dry-run` prints the commands without running them. Coding sessions do not run it.
 
 The app has no runtime dependencies beyond the Kotlin stdlib, the mesh AAR and `androidbrowserhelper` (the TWA launcher, Apache-2.0) (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
 
@@ -225,7 +265,8 @@ What had to adapt:
 ## Build flavors (0.5.2+)
 
 - `phonelink` (the default) is the sideloaded APK Allternit Desktop installs. It is `src/main` plus `src/phonelink`: all Phone Link code, `Mesh.aar`, the accessibility service, services, receivers, permissions and the **Phone Link** shortcut. Tests live in `src/testPhonelink`.
-- `play` is the Google Play bundle. It is `src/main` only: the Trusted Web Activity, with just the `INTERNET` permission. Nothing from Phone Link is packaged.
+- `play` is the Google Play bundle. It is `src/main` plus `src/play`: the Trusted Web Activity, the screen-share lane (`src/phoneshare`), the on-device engine (`:ondevice`), the rating prompt and Google Play Billing (see below). Nothing from the adb side of Phone Link is packaged.
+- `nativeapp` (step 7b) is the native Kotlin + Compose app tested by sideload (`adb install`) until the cutover, then shipped to Play production with a staged rollout. It is never uploaded to Play before it reaches parity: `versionCode` 1000+ (TWA builds keep 17-999), version name suffix `-native`, launcher `com.allternit.feature.shell.MainActivity`. It is `src/main` plus `src/nativeapp` plus `:feature:shell`; the TWA `LauncherActivity` stays without the launcher category (manifest placeholder `twaLauncherCategory`) as the **Use web version** target. No Play Billing, `:ondevice` or Phone Link yet.
 - The module namespace is `com.allternit.app`, so the generated `R` class carries no Phone Link name. Phone Link classes keep the `com.allternit.phonelink` package, and `src/phonelink/AndroidManifest.xml` names them in full.
 
 ## The Allternit app (Trusted Web Activity, 0.5.0+)
@@ -249,6 +290,33 @@ Code: `app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt` and `Revie
 
 To reset while testing, clear the app's data (`adb shell pm clear com.allternit.app`).
 
+## Google Play Billing (play flavor only, 0.7.0+)
+
+Inside the Play app, m.allternit.com sells plans and credit packs through Google Play Billing only (store purchases plan D15). Stripe checkout, the portal link and auto top-up are hidden there.
+
+- **Library.** `com.google.androidbrowserhelper:billing:1.2.0` (`playImplementation`). It brings Play Billing Library 8.3.0. Play needs PBL 8 or newer for new apps and updates (PBL 7's deadline was 2026-08-31, its extension 2026-11-01; PBL 8 is accepted until 2027-08-31; see developer.android.com/google/play/billing/deprecation-faq). It also lifts androidx.browser to 1.10.0 in this build.
+- **Digital Goods API.** `PlayDelegationService` (`src/play/java/com/allternit/app/`) is androidbrowserhelper's `DelegationService` plus `DigitalGoodsRequestHandler`. The play manifest removes the stock `DelegationService` from `src/main`, so Chrome finds one TWA service. Notification delegation works as before.
+- **Purchases.** The page calls `PaymentRequest` with the method `https://play.google.com/billing`. Chrome opens the library's `PaymentActivity`, and `PaymentService` answers `canMakePayment`. Both check at runtime that the caller is the browser the TWA was last launched in. The page then posts the purchase token to `POST /api/v1/billing/store/google/purchases`, and the server verifies it with Google.
+- **Permission.** `com.android.vending.BILLING` is in the play manifest only. The phonelink build never ships billing. Check its merged manifest (`app/build/intermediates/merged_manifest/phonelinkRelease/.../AndroidManifest.xml`) for no `BILLING`.
+
+### The `src=play` rule
+
+The web app turns on Play Billing when the URL has the exact query `src=play`. It reads it once and keeps it in sessionStorage. **Every URL the play build opens in the TWA must carry it.** `ReviewLauncherActivity` does this with `PlayLaunchUrl` (tests in `src/testPlay`):
+
+- The default URL, deep links (`https://m.allternit.com/...` VIEW intents) and the long-press shortcuts get `src=play` added in `getLaunchingUrl()`. Other parameters and the fragment stay.
+- A text share becomes a VIEW of `/share-target?title=..&text=..&src=play` before the launcher sees it. Chrome's own share path replaces the share target's query, so a marker put in the share target JSON would be lost.
+- Web Push notifications are opened by Chrome itself. When Chrome hands the notification URL to the app as a VIEW intent, it goes through `getLaunchingUrl()` like any deep link. When Chrome focuses or opens the page itself, the marker from the first launch is still in that tab's sessionStorage.
+
+A new launch path (a new activity, shortcut or intent filter that opens the TWA) must go through `ReviewLauncherActivity` or add the marker the same way.
+
+### Testing with a license tester
+
+1. In Play Console, add the test Google account under **Settings › License testing** and to the internal testing track's testers list.
+2. Upload the `bundlePlayRelease` build to the internal track and install it from the opt-in link with that account. Sideloaded or debug builds cannot buy: Play Billing needs the Play-installed, Play-signed app, and the TWA needs the asset-links check to pass.
+3. Open the app. In Chrome DevTools (`chrome://inspect`) check that the page URL has `src=play` and that `'getDigitalGoodsService' in window` is true.
+4. Buy a pack and a plan. License testers get test cards ("Test card, always approves", "...always declines", "...slow"); nothing is charged. Test subscriptions renew every few minutes, so renewals, grace and expiry can be checked in an hour.
+5. Check that the server granted it (`GET /api/v1/billing/subscription` shows `billing_provider: "google"`) and that a second launch does not claim the same purchase twice.
+
 ## Live conformance
 
 ```sh
@@ -259,3 +327,27 @@ scripts/conformance.sh 192.168.1.20:8200            # over Wi-Fi (pairing needs 
 ```
 
 The script checks `/whoami` and the device header, that an unsealed `/rpc` gets a 401, X25519 pairing, `device_info`, `is_locked`, `list_apps`, `config`, an unknown method, `page_source` (text and structured), `screen_text`, `find_element` and `screenshot`. It also confirms that a replayed nonce, a skewed timestamp and a forged tag are rejected, using `ictrl_rpc.py`'s own crypto. At the end it revokes its own key. It uses a throwaway `HOME`, so `~/.ictrl/token.json` is never touched.
+
+## Parity ledger
+
+`surfaces/allternit-mobile/PARITY.md` lists every iOS screen (`ios/Features/**`) and every web phone screen (allternit-ai `src/fabric-session/phone`) with its Android path, status (`todo` / `built` / `proved` / `N/A: <reason>`) and proof. It is generated by `scripts/parity-ledger.mjs`; hand-edit only the Android path, Status and Proof columns. The native cutover waits for 0 `todo` and 0 `built` rows.
+
+```sh
+# regenerate (merges, keeps your edits, adds new screens as todo)
+node surfaces/allternit-mobile/scripts/parity-ledger.mjs --web <allternit-ai path>   # or ALLTERNIT_AI_DIR
+# fail (exit 1) if any iOS or web screen has no row
+node surfaces/allternit-mobile/scripts/parity-ledger.mjs --web <allternit-ai path> --check
+```
+
+## Design tokens
+
+Colors, radii, glass opacities and mode accents come from the iOS design system, not from hand-copied hex.
+
+```sh
+node contracts/design-tokens/generate.mjs           # regenerate AllternitTokens.gen.kt
+node contracts/design-tokens/generate.mjs --check   # exit 1 if it is stale (runs in scripts/android-check.sh)
+node surfaces/allternit-mobile/android/scripts/convert-icons.mjs   # iOS PhIcons SVG -> res/drawable/ph_*.xml
+node surfaces/allternit-mobile/android/scripts/convert-logos.mjs --dry-run   # AppLogos -> WebP (not run in CI)
+```
+
+Never hand-edit `AllternitTokens.gen.kt` or the `ph_*` drawables: change the iOS colorset, `Color+Theme.swift` or `ModeTheme.swift`, then regenerate. The generator reads literals only and fails naming any value it cannot parse. `DeckIcons` are PDF-only on iOS, so no `deck_*` drawables exist yet. App logos (1,248 PNG, 5.6 MB) are converted to `assets/logos/*.webp` by `convert-logos.mjs` in the PR that wires Coil.

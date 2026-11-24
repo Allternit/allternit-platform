@@ -70,19 +70,12 @@ struct LoopsListView: View {
                 // Header (RoutinesListView's standalone-tab chrome: sidebar
                 // toggle + title + "+").
                 HStack {
-                    Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
+                    // Tap opens the drawer; hold fans the modes out (step 24).
+                    PhoneMenuButton {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
                             isSidebarOpen.toggle()
                         }
-                    }) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.title3)
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Open sidebar")
 
                     Menu {
                         ForEach(AutomationKind.allCases, id: \.self) { kind in
@@ -110,8 +103,7 @@ struct LoopsListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -122,6 +114,7 @@ struct LoopsListView: View {
                             .clipShape(Circle())
                     }
                     .accessibilityLabel("New loop")
+                    .accessibilityIdentifier("loopsNew")
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 10)
@@ -244,8 +237,7 @@ struct LoopsListView: View {
 
     private func loopRow(_ loop: Loop) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailLoop = loop
         }) {
             HStack(spacing: 12) {
@@ -287,8 +279,7 @@ struct LoopsListView: View {
             message: "Run a command on repeat until it exits clean or hits its iteration cap.",
             actionTitle: "Create loop",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

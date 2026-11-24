@@ -1,0 +1,12 @@
+{
+  "spec_version": 1,
+  "engine": "allternit-tune",
+  "engine_version": "0.1.0",
+  "base": { "path": "/opt/allternit/models/qwen2.5-0.5b-instruct" },
+  "dataset": { "path": "/opt/allternit/data/train.jsonl", "format": "chat" },
+  "method": "lora",
+  "params": { "rank": 16, "alpha": 32, "lr": 0.0002, "epochs": 1, "max_seq_len": 2048 },
+  "resources": { "place": "local", "backend": "auto", "max_hours": 1 },
+  "outputs": { "adapter": true, "merged": false, "gguf": [], "mlx": false },
+  "eval": { "sets": [], "baseline": "base" }
+}

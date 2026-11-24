@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- On-device models engine. Merged into the "play" flavor only (the app depends on this
+     module with playImplementation). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No foreground service (0.7.2, 2026-11-18): the model runs while the app is open,
+         like Google AI Edge Gallery and PocketPal. The "running" notification has Stop. -->
+
+    <application>
+        <!-- The phone's OpenCL driver (Adreno). Optional: phones without it run on the CPU.
+             Apps targeting API 31+ must name vendor libraries they load. -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+
+        <!-- TWA postMessage: Chrome binds to it to deliver page -> app messages and the
+             channel-ready signal (androidx.browser 1.6+). -->
+        <service
+            android:name="androidx.browser.customtabs.PostMessageService"
+            android:exported="true" />
+
+        <!-- The Stop action on the "running on this phone" notification. -->
+        <receiver
+            android:name="com.allternit.ondevice.EngineService$StopReceiver"
+            android:exported="false" />
+
+        <!-- DownloadManager sends ACTION_DOWNLOAD_COMPLETE to this package explicitly. -->
+        <receiver
+            android:name="com.allternit.ondevice.DownloadCompleteReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

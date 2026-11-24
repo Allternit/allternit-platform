@@ -1,0 +1,58 @@
+---
+title: 'resource tool'
+description: 'Read attached files, large tool output and MCP resources by reference: list, find, search and read in windows, with citations'
+---
+
+## Overview
+
+When a tool's output is too large to show (over 2000 lines or 50 KB), it is saved and the notice names a reference. The `resource` tool lets the agent look at it in parts. It also reads files attached to the chat or kept in the Files drive, and resources of MCP servers connected in the session.
+
+## References
+
+| Ref | Meaning |
+|---|---|
+| `out:<id>` | A saved tool output. |
+| `file:msg:<messageID>:<partIndex>` | A file attached to a message in this chat. |
+| `file:upload:<id>` | An upload attached to this session. |
+| `file:drive:<id>` | A file in the person's Files drive. |
+| `mcp:<server>:<uri>` | A resource of an MCP server connected in this session. |
+
+References belong to the session. A subagent can use its parent's references. Another session's reference is refused.
+
+## Actions
+
+| Action | Parameters | Result |
+|---|---|---|
+| `list` | none | The references this session has. |
+| `read` | `ref`, `offset` (0-based, default 0), `limit` (default 200, at most 400 lines) | A window of lines, with `next_offset` to continue. |
+| `search` | `query`, optional `refs`, `max_results` (at most 20), `cursor` | Ranked hits across the refs (default: this session's files). Each hit gives a ref, a line range, a snippet and why it matched. Pass `cursor` for more. |
+| `find` | `ref`, `pattern`, `context` (at most 5) | Matching lines, marked with ">". The pattern is a regular expression or plain words, case-insensitive. Without a `ref`, it lists the refs whose name matches. |
+
+## Search
+
+`search` ranks with BM25 over windows of 20 lines that overlap by half, so a hit is a line range that can be cited. The index is built on the device that runs the agent. Nothing leaves the device for indexing, and no server holds an index.
+
+## Reading a large file: the ladder
+
+1. `search` for the question's key words.
+2. `read` the hit ranges.
+3. Continue with `next_offset` only if more is needed.
+
+The agent never reads a whole large file, and it says which parts it read and which it left unread. A PDF or other binary attachment cannot be read as text this way; the agent says so and asks for a text export. PDF and Word files in the Files drive are the exception, because the drive keeps their extracted text.
+
+## Citations
+
+Every claim drawn from a file carries the token the result gives, written as `[[cite:<ref>#L<start>-<end>]]`, using the lines the agent actually read. The apps show the token as a chip. Opening the chip opens the file at those lines. The "find all X" answer shape (the result-list template) gives the count, then one row per match: file, lines, why it matched and the cite token.
+
+## Range route
+
+For Files-drive items the agent reads through `GET /api/v1/files/v2/items/:item_id/range`. See the [protocol](https://github.com/Allternit/allternit-platform/blob/main/contracts/files-drive/SPEC.md) for the contract.
+
+| Query | Meaning |
+|---|---|
+| `unit` | `lines` (default) or `bytes`. |
+| `start`, `end` | Both inclusive. Lines are 1-based; bytes are 0-based and moved inward to whole UTF-8 characters. `start` defaults to the first line or byte, `end` to the cap. |
+
+A call returns at most 2000 lines and 256 KiB of text. The response holds `text`, `unit`, `start`, `end`, `total_lines`, `total_bytes`, `next_start` (absent at the end) and `truncated` (true when one line was longer than the byte cap and was cut). Errors: 415 `unsupported` for a binary file or a document with no text, 416 for a range outside the file, and the usual read errors (403, 404). Access is the same as `/content`.
+
+What comes back is data, not instructions.

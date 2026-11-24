@@ -114,6 +114,7 @@ class RpcDispatcherTest {
         assertTrue(src, src.contains("EditText, id: 'com.openai.chatgpt:id/composer', {{20, 1400}, {580, 80}}, hint: 'Message', clickable editable"))
         assertTrue(src.startsWith("Window(application)"))
         assertEquals("pixels", r.getString("coordinate_space"))
+        assertEquals("com.openai.chatgpt.MainActivity", r.getString("activity"))
         assertFalse(r.has("nodes"))
     }
 
@@ -127,6 +128,8 @@ class RpcDispatcherTest {
         val structured = call("page_source", JSONObject().put("structured", true)).getJSONArray("nodes")
         assertEquals(FakeDeviceOps.defaultTree().size, structured.length())
         assertTrue(structured.getJSONObject(4).getString("ref").isNotEmpty())
+        assertFalse(structured.getJSONObject(4).getBoolean("checkable"))
+        assertTrue(structured.getJSONObject(3).getBoolean("editable"))
         val capped = call("page_source", JSONObject().put("max_elements", 2))
         assertTrue(capped.getBoolean("truncated"))
     }
@@ -278,6 +281,24 @@ class RpcDispatcherTest {
         assertEquals(true, up.getBoolean("running"))
         assertTrue(up.isNull("lastError"))
         assertTrue(up.isNull("launch"))
+        assertTrue(up.isNull("projection"))
+    }
+
+    @Test fun screenServiceReportsTheProjectionFallback() {
+        val share = ScreenShareSession()
+        share.start(DisplayInfo(720, 1600, 280, 0), 0)
+        share.control("resume", 0)
+        hooks.screen = ScreenServiceStatus(false, "not_set_up", null, null,
+            projection = share.report(1_000, paired = true, controlConnected = true, canTap = true))
+        val p = call("screen_service").getJSONObject("projection")
+        assertEquals("live", p.getString("state"))
+        assertEquals("granted", p.getString("consent"))
+        assertTrue(p.getBoolean("paired"))
+        assertTrue(p.getBoolean("control"))
+        assertTrue(p.getBoolean("canTap"))
+        assertEquals(576, p.getInt("width"))
+        assertEquals(1280, p.getInt("height"))
+        assertTrue(p.isNull("idleMs"))
     }
 
     // ── mesh_restart ────────────────────────────────────────────────────────

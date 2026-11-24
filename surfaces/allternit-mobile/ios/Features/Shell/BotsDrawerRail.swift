@@ -94,7 +94,7 @@ struct BotsDrawerRail: View {
                     isVendorPresented = false
                     hub.fetchAgentsIfNeeded(force: true)
                 }
-                .navigationTitle("Add a vendor bot")
+                .navigationTitle("Add a Connected bot")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Close") { isVendorPresented = false } }
@@ -139,7 +139,7 @@ struct BotsDrawerRail: View {
     private var topRow: some View {
         HStack(spacing: 4) {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 onOpen(nil)
             } label: {
                 HStack(spacing: 5) {
@@ -155,7 +155,7 @@ struct BotsDrawerRail: View {
             }
             .buttonStyle(.plain)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 onOpen(.office)
             } label: {
                 HStack(spacing: 5) {
@@ -172,10 +172,10 @@ struct BotsDrawerRail: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Office: your bots at their desks")
             Spacer(minLength: 0)
-            // One ⋯: Create bot · Add a vendor bot · Marketplace · Replay intro (BotRailOverflow).
+            // One ⋯: Create bot · Add a Connected bot · Marketplace · Replay intro (BotRailOverflow).
             Menu {
                 Button { isNewBotPresented = true } label: { Label("Create bot", systemImage: "plus") }
-                Button { isVendorPresented = true } label: { Label("Add a vendor bot…", systemImage: "powerplug") }
+                Button { isVendorPresented = true } label: { Label("Add a Connected bot…", systemImage: "powerplug") }
                 Button { isTemplatesPresented = true } label: { Label("Marketplace", systemImage: "storefront") }
                 Button {
                     onOpen(nil)

@@ -258,7 +258,7 @@ workflows.
 
 ### 6.10 Swarm / Teams
 
-**Existing roots:** Swarm ADE, Cowork teams, orchestrator, parallel-run, MiroFish.  
+**Existing roots:** Swarm ADE, Cowork teams, orchestrator, parallel-run.  
 **Role:** Multi-agent topology, delegation, consensus, simulation, and evaluation.  
 **Standalone:** Agent-team runtime and topology workbench.  
 **Interconnection:** Schedules specialist programs as workload participants.

@@ -12,6 +12,9 @@ committed and synced at the end of the turn.
 | Command | What it does |
 | --- | --- |
 | `gizzi memory` / `gizzi memory status` | Drive location, sync state, pending changes, last error. |
+| `gizzi memory list [--source twin\|facts] [--json]` | Your memories: twin items and learned facts. See the [Memory page](/guides/memory). |
+| `gizzi memory edit <id> "<text>"` | Change one memory. Editing a learned fact replaces it, so it gets a new id. |
+| `gizzi memory forget <id>` | Delete one memory. |
 | `gizzi memory sync` | Sync now. `--dismiss` clears the notice about edits that were refused. |
 | `gizzi memory log [-n N]` | Recent changes. |
 | `gizzi memory view <path>` | Print a file, e.g. `facts.md`. |
@@ -60,3 +63,25 @@ When you're signed in, Gizzi also sends what you type in each turn to your Memor
 capture intake, so the nightly Dream can learn from your terminal sessions. Gizzi skips slash
 commands and tool output. Turn it off in Settings → Memory → **Where your memories come from** →
 **Gizzi in the terminal**. Scripted `--bare` runs never send anything.
+
+## Sleep and memory conflicts
+
+`gizzi memory sleep` talks to Allternit Sleep on your account. Add `--json` to print the runtime's answer unchanged.
+
+| Command | What it does |
+| --- | --- |
+| `gizzi memory sleep status [--json]` | Sleep on or off, sleeping now, debt, last sleep, spend today against the daily cap, and how many conflicts need you |
+| `gizzi memory sleep run [--kind nap\|daydream]` | Start a sleep now |
+| `gizzi memory sleep report [id] [--json]` | What a sleep did; the latest one by default |
+| `gizzi memory sleep undo <id>` | Undo one sleep |
+| `gizzi memory sleep on` / `off` | Turn Sleep on or off |
+| `gizzi memory disputes [--json]` | List memory conflicts Sleep found |
+| `gizzi memory disputes resolve <id> a\|b\|both_scoped\|neither` | Settle one conflict |
+| `gizzi memory pages [topic] [--json]` | List the pages Sleep wrote, or show one topic |
+
+When Sleep is off, or the stage a command needs is not built yet, Gizzi says so plainly
+("Sleep is off. Turn it on with `gizzi memory sleep on`." or "Not built yet: disputes.") and exits with code 2.
+On a runtime without Sleep it prints "This runtime has no Sleep yet. Update Allternit." and exits 2.
+
+In the terminal app, `/memory` shows the same Sleep status line, "N memory conflicts need you" when there are any,
+and the switch (`/memory sleep on` or `/memory sleep off`).

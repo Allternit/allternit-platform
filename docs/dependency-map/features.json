@@ -47,15 +47,39 @@
         {
           "on": "2026-10-28",
           "note": "A:// orchestrates every chat (Eoj, reverses the main-bot part of ai #871): new chats bind to the main bot (mainBotChat) and get message_agent, so A:// hands work to the user's other bots as task threads (bot_routing::caller_for_session accepts mainBotChat). The chat is never adopted as a bot thread and shows no agent card (card deleted, ai #874). Picking another bot answers directly."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "System prompts modernized: chat and code stacks chosen by session surface, one model-family addendum, voice and phone blocks from turn metadata (reply_mode voice from allternit-api voice turns; form_factor phone from the phone layout, PWA and iOS). Docs: core/system-prompts.mdx."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Bot prompt blocks by signal: suggestions (duet.txt), delegation, project-thread and computer-use blocks join bot.txt from the turn's tool set; server hint project_role thread stamped by allternit-api agent_session_routes.rs from the session bag's projectRole; server-started bot turns keep the bot's own prompt first and the thread prompt under This thread. Docs: core/system-prompts.mdx, guides/project-delegate.mdx, guides/bot-threads.mdx."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "System prompts wave 3: the TUI prompt (cli/ui/ink-app/constants/prompts.ts) starts from the runtime base-code and safety text and keeps only TUI sections; built-in agent prompts (explore, plan, verification; runtime and TUI copies), the built-in catalog, both coordinator prompts, mission orchestrator and design critique prompts are rewritten as rules; the voice call persona is Gizzi (cloud-api voice_calls_cloud.rs) with a rewritten call summary prompt and coordinator worker prompts. Chat manuals load per turn (ai withInteractiveAnswers; gateway manual_for loads one template line). Guard: test/session/system-prompt-guard.test.ts. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/chat_routes.rs",
         "allternit/surfaces/docs/guides/chat-composer.mdx",
         "allternit/surfaces/docs/guides/chat-sessions.mdx",
         "allternit/surfaces/docs/api/cowork.mdx",
-        "allternit/surfaces/docs/api/cowork-teams.mdx"
+        "allternit/surfaces/docs/api/cowork-teams.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts",
+        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/AgentTool/built-in",
+        "allternit/cmd/gizzi-code/src/coordinator/coordinatorMode.ts",
+        "allternit/cmd/gizzi-code/src/cli/mission/orchestrator.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/critique.ts",
+        "allternit/cmd/gizzi-code/test/session/system-prompt-guard.test.ts",
+        "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
     {
@@ -155,6 +179,10 @@
         {
           "on": "2026-11-03",
           "note": "Eoj approved the live CI reference and interaction polish. Added an identity-only pull-request template backed by authenticated GitHub facts, reviewed revision/run-bound rerun and merge, same-card polling and repair handoff. Vendor/group responses are admitted before publication with durable turn policies; group and vendor skins render validated cards and retain complete envelopes in bounded projections. Source remains unshipped pending verification and release approval."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Chat manuals load per turn (system prompts wave 3): withInteractiveAnswers takes the turn; answer shapes always, the artifacts, app-screen, inline-app, dashboard, ops, motion and design manuals only when the turn signals call for them (plain question 36,242 to 16,590 bytes). The gateway (answer_contract.rs manual_for) sends the core manual plus the one template line it picked (14,308 to 2,846 bytes plus a line). Template schemas unchanged. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
@@ -210,6 +238,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/share-location.mdx",
+        "allternit/surfaces/docs/tools/lookup.mdx",
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/client_location.rs"
       ]
@@ -237,7 +266,9 @@
         "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers"
       ],
       "decisions": [
         {
@@ -355,6 +386,10 @@
         {
           "on": "2026-10-27",
           "note": "Threads carry a purpose, icon and colour (V281). With a purpose the bot greets and offers three starter tasks (POST /threads/:id/starters); runs started there wear the thread's colour tag. Borrowed from OpenDuet channels (MIT)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: a bot picks a runtime (how it works) and a brain (how it thinks); botBrain gains runtime/access/autoSwitchedFrom, normalized server-side from the registry (see Runtime registry and runtimes API, Runtime views)."
         }
       ],
       "evidence": [
@@ -614,11 +649,20 @@
         {
           "on": "2026-10-31",
           "note": "Memory and Learning page with a memory map (GET /memory-map) sits behind the bot Memory tile and in Settings; see feature:bot-hub-soul."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave D: memory entries have versions; append, replace and stale-edit refusal; two-device edits keep a conflict_of copy and show N memories need a look. thread_read, thread_recent and thread_wait read past chats in every session; resource reads large tool output and MCP resources by ref."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/memory-drive.mdx",
-        "allternit/surfaces/docs/api/memory-drive.mdx"
+        "allternit/surfaces/docs/api/memory-drive.mdx",
+        "allternit/surfaces/docs/tools/memory.mdx",
+        "allternit/surfaces/docs/tools/past-chats.mdx",
+        "allternit/surfaces/docs/tools/resources.mdx",
+        "allternit/surfaces/docs/tools/connectors.mdx",
+        "allternit/surfaces/docs/tools/settings.mdx"
       ]
     },
     {
@@ -658,10 +702,36 @@
         },
         {
           "on": "2026-11-04",
-          "note": "No hosted Cloud Voice minutes: Automatic = the device engine on web, PWA, Desktop and iOS; no cloud fallback. Optional BYOK in Settings > Voice (web/PWA/Desktop): your own OpenAI (Realtime transcription + speech) or ElevenLabs (TTS, listening on device), key kept on the device and sent only to the vendor (allternit-ai src/lib/voice/byok). iOS BYOK not built yet."
+          "note": "No hosted Cloud Voice minutes: Automatic = the device engine on web, PWA, Desktop and iOS; no cloud fallback. Optional BYOK in Settings > Voice (web/PWA/Desktop and iOS): your own OpenAI (Realtime transcription + speech) or ElevenLabs (TTS, listening on device), key kept on the device and sent only to the vendor (allternit-ai src/lib/voice/byok; iOS Core/Voice/ByokVoice.swift, keys in the Keychain)."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Voice keys: Connect + one-tap Paste with a live vendor check and an ElevenLabs voice picker; Send to my phone QR handoff (P-256 ECDH, two QR codes, 6-digit match, key never through Allternit); opt-in Save to my Allternit account (encrypted, account-wide). Eoj picked the B+C hybrid from mockups."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Voice-key handoff is one scan: after Codes match the computer PUTs the end-to-end encrypted key to /api/v1/voice/handoff/:sid/sealed (migration 135) and the iPhone takes it once (one-statement take, then delivered); QR2 stays as the fallback. The relay never sees the sender's public key (QR1 only), so it can't read the key or forge the 6-digit code. Eoj picked One scan."
         }
       ],
       "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/voice_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/voice_keys.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/128_voice_keys.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/135_voice_handoff_sealed.sql",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceVendorClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeyHandoff.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/Voice/VoiceKeySync.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/VoiceKeyScannerView.swift",
+        "allternit/surfaces/allternit-desktop/src/main/voice-keys-ipc.ts",
+        "allternit-ai/src/lib/voice/byok/keys.ts",
+        "allternit-ai/src/lib/voice/byok/vendors.ts",
+        "allternit-ai/src/lib/voice/byok/handoff.ts",
+        "allternit-ai/src/lib/voice/byok/accountSync.ts",
+        "allternit-ai/src/lib/voice/byok/desktopStore.ts",
+        "allternit-ai/src/components/settings/VoiceKeyConnect.tsx",
+        "allternit-ai/src/components/settings/VoicePicker.tsx",
+        "allternit-ai/src/components/settings/VoiceKeyHandoffCard.tsx",
+        "allternit-ai/scripts/fake-voice-vendor.mjs",
         "allternit/surfaces/docs/guides/voice.mdx",
         "allternit/surfaces/docs/api/voice-tickets.mdx",
         "allternit/surfaces/docs/surfaces/voice.mdx",
@@ -991,7 +1061,10 @@
         "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
         "allternit/cmd/allternit-cloud-api/src/services",
         "allternit-ai/src/components/chat",
-        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/keep-going"
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/keep-going",
+        "allternit/cmd/allternit-cloud-api/src/routes/me_usage.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifact_runtime.rs"
       ],
       "decisions": [
         {
@@ -1025,6 +1098,14 @@
         {
           "on": "2026-11-10",
           "note": "Cloud list checked against the real provider accounts. Added claude-sonnet-5.5, gpt-6.1-sol (OpenRouter) and kimi-k3.1-pro (Together); claude-sonnet-4.6 hidden. Fireworks rows now carry the 1.5\u00d7 retail markup (were billed at the provider price)."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Allternit Cloud models need credits (CONTRACT-cloud-credits-2026-11-15): the $2 a month free allowance, its email check and its rate limit are gone. /v1/chat/completions and the artifact-runtime model call allow a positive user_credits balance only; no row is 402 credits_required, a row at or below 0 is 402 credits_exhausted, with a billing_error body carrying the four packs and billing_url. GET /api/v1/billing/credits (free_inference removed) and GET /api/v1/me/usage carry the same cloud_models {allowed, reason, balance_usd, byok_providers}; /me/usage for a Free account with no row reports credits 0, weekly 0/0. /v1/models rows add pricing {input_per_1m_usd, output_per_1m_usd} (retail). Setup checks and the Connections Cloud row ('Free \u00b7 needs credits' / 'Free \u00b7 $X credits') follow the same rule."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Store purchases backend (PR-1): plans and credit packs can be bought through Apple In-App Purchase and Google Play Billing at store prices with the same credits. Routes /api/v1/billing/store/{preflight,apple/transactions,apple/notifications(+/sandbox),google/purchases,google/rtdn}; store plans live in billing_subscriptions (provider column), ledger billing_store_transactions, migration 148; additive store block on /billing/plans and /packs, billing_provider/manage_url/conflict on /billing/subscription, 409 store_billed on /billing/portal. Dark until APPLE_IAP_* / GOOGLE_PLAY_* secrets are set; sandbox grants only to STORE_SANDBOX_GRANT_USER_IDS."
         }
       ],
       "evidence": [
@@ -1034,7 +1115,8 @@
         "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
         "allternit/surfaces/docs/guides/subscriptions.mdx",
         "allternit/surfaces/docs/api/cloud-billing.mdx",
-        "allternit/surfaces/docs/operations/upstream-funding.mdx"
+        "allternit/surfaces/docs/operations/upstream-funding.mdx",
+        "allternit/surfaces/docs/operations/store-billing.mdx"
       ]
     },
     {
@@ -1408,7 +1490,9 @@
         "allternit/cmd/allternit-api",
         "allternit/domains/computer-use/driver/packaging",
         "allternit/cmd/allternit-computer-cloud/guest",
-        "allternit/drivers/firecracker"
+        "allternit/drivers/firecracker",
+        "allternit/contracts/action-classes",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/permission"
       ],
       "decisions": [
         {
@@ -1454,6 +1538,14 @@
         {
           "on": "2026-10-10",
           "note": "D1b (task K5): the Allternit Driver ships in every guest image (Linux systemd service, Windows logon task, container, tart VMs, Firecracker rootfs), and allternit-api routes the structured members (read_ui, act, run_batch, verify) for Target::Guest through the guest exec channel via the in-guest forwarder (cmd/allternit-api/src/guest_driver.rs). The static \"unimplemented until the guest driver image ships\" refusals are gone: a guest whose driver does not answer fails as driver_unavailable, and pixel members use the driver path first with xdotool/scrot/PowerShell as the explicit fallback."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C: per-app access tiers (read/click/full) with category ceilings and 12 h session grants (resolve_access, request_access); four action classes enforced in every permission path (confirm_now asks even in bypass); folder_access with a _to_delete redirect. Docs: tools/computer-access, tools/action-review."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C browser: pane_browser works by element ref (read_page, find, page text, console, tabs, plan approval scoped to listed hosts, spotlighted page text); browser_tasks runs up to 6 hidden isolated browser tasks (4 at once, 10 min each, any non-free step stops with needs_user); capture_screen_context sees the front window or the Allternit screen (asks once per session, redacted by the API, screen_context hint). Docs: tools/pane-browser, tools/browser-tasks, tools/screen-context."
         }
       ],
       "evidence": [
@@ -1467,6 +1559,9 @@
         "allternit/cmd/allternit-api/src/computer_safety.rs",
         "allternit/cmd/allternit-api/src/computer_ocr.rs",
         "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/surfaces/docs/tools/pane-browser.mdx",
+        "allternit/surfaces/docs/tools/browser-tasks.mdx",
+        "allternit/surfaces/docs/tools/screen-context.mdx",
         "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },
@@ -1517,6 +1612,7 @@
       "touches": [
         "allternit-ai/src/components/appearance",
         "allternit-ai/src/lib/appearance",
+        "allternit-ai/src/lib/projects",
         "allternit-ai/src/components/projects",
         "allternit-ai/src/components/threads",
         "allternit-ai/src/views/project",
@@ -1558,10 +1654,15 @@
         {
           "on": "2026-10-30",
           "note": "Eoj: a project's background is changed from the Customize appearance icon. The dialog has a Background section (Same as Settings, ASCII / Classic tiles) that saves one look per project on Save (BackdropScope project:<mode>:<id>); the banner and the bot project home show it. Cancel discards the pick."
+        },
+        {
+          "on": "2026-11-16",
+          "note": "Eoj approved project folders and the project pad: folder covers (optional cover object, cover.v 2, top-level version stays 1), a free-grid pad with 13 tiles and five starter templates, pad on the runtime (GET/PUT /api/v1/project-pad/:scope), templates and per-mode defaults on cloud-api (/api/v1/account/pad-templates, account_prefs table). Desktop, phone layout, PWA, iOS and Gizzi Code text view. Docs: guides/project-pad.mdx. Platform PRs 2457 2458 2459 2461 2464 2465 2466 2467; ai PRs 1093 1095-1100 1102-1104."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-appearance.mdx",
+        "allternit/surfaces/docs/guides/project-pad.mdx",
         "allternit/surfaces/docs/architecture/project-appearance.mdx",
         "allternit-ai/src/views/BaseProjectView.tsx",
         "allternit-ai/src/components/appearance/AppearanceQuickPicker.tsx",
@@ -1744,6 +1845,8 @@
       "status": "building",
       "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id. artifact_check has the app render a page or design at each width (pane_render kind check, allternit-ai src/lib/artifacts/check.ts) and returns pictures, problems and a likeness to a reference, and says stop when refining stalls.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives",
+        "allternit/cmd/allternit-api/src/agent_user_tools.rs",
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
@@ -2041,6 +2144,30 @@
       ]
     },
     {
+      "id": "feature:code-session-status-signals",
+      "label": "Code session status signals (needs input, ready for review)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Server-owned metadata flags needsInput and readyForReview on agent sessions, written by allternit-api's always-on watcher of gizzi /v1/global/event; clients clear readyForReview with PATCH markReviewed. Web and iOS filters (All, Needs input, Ready for review, Working, Done, Archived) read them.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/code_session_status.rs",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/AgentSession.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Code",
+        "allternit-ai/src/lib/code-session-state.ts",
+        "allternit-ai/src/components/session-overview"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-17",
+          "note": "Phone calm step 9a (amendment A1, contract C6). Change signal: gizzi file.edited (sessionID) plus completed artifact_create/artifact_update tool parts. Flags are stripped from client metadata writes; session_flags event on /agent-sessions/sync."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agent-sessions.mdx"
+      ]
+    },
+    {
       "id": "feature:code-linked-prs",
       "label": "Linked PRs on Code sessions",
       "product": "product:ai-allternit",
@@ -2308,7 +2435,7 @@
       "label": "iPhone through the Allternit app (screen + in-app browser)",
       "product": "product:computer-use",
       "status": "building",
-      "description": "Route iphone-app-store (serial app:<phoneId>): the App Store app pairs with Desktop (6-digit code, Approve/Deny on Desktop), its broadcast extension streams the screen out through the cloud relay to the node, and bots see it (phone.screenshot, live view on Desktop, ai.allternit.com phone layout and the PWA) and drive the app's own browser (phone.web.*, phone.screen.request). Screen only: taps on other apps need the Bluetooth board.",
+      "description": "Route iphone-app-store (serial app:<phoneId>): the App Store app pairs with Desktop (6-digit code, Approve/Deny on Desktop), its broadcast extension streams the screen out through the cloud relay to the node, and bots see it (phone.screenshot, live view on Desktop, ai.allternit.com phone layout and the PWA) and drive the app's own browser (phone.web.*, phone.screen.request). Taps on other apps go through a Phone Use route (iPhone Mirroring, or a Bluetooth keyboard from the Mac, an Android phone, a second iPhone/iPad or the USB Agent board).",
       "touches": [
         "allternit/surfaces/allternit-desktop",
         "allternit/cmd/allternit-api/src/phone_ws.rs",
@@ -2324,7 +2451,7 @@
       "decisions": [
         {
           "on": "2026-10-27",
-          "note": "Eoj approved the plan (SPEC-iphone-app-screen-2026-10-27.md): no XCTest, no Apple ID signing, no Developer Mode; the phone only dials out. Desktop is one more viewer of the node's app:<id> stream and reuses IosVideoPacketParser; phone.screenshot decodes the last keyframe with Chromium WebCodecs in a hidden window. phone.tap/swipe answer not_supported (\"Taps on native apps need the Bluetooth board\"); phone.web.* go to POST /api/v1/phones/app/:id/rpc. Pair approval is a Desktop card fed by phone_app.pair_request on the runtime events feed."
+          "note": "Eoj approved the plan (SPEC-iphone-app-screen-2026-10-27.md): no XCTest, no Apple ID signing, no Developer Mode; the phone only dials out. Desktop is one more viewer of the node's app:<id> stream and reuses IosVideoPacketParser; phone.screenshot decodes the last keyframe with Chromium WebCodecs in a hidden window. phone.tap/swipe on this lane answer not_supported (APP_TAPS_MESSAGE lists the Phone Use tap routes; the router in phone-route.ts takes taps first); phone.web.* go to POST /api/v1/phones/app/:id/rpc. Pair approval is a Desktop card fed by phone_app.pair_request on the runtime events feed."
         },
         {
           "on": "2026-10-30",
@@ -2335,6 +2462,42 @@
         "allternit/surfaces/docs/guides/iphone-app.mdx",
         "allternit/surfaces/docs/api/phone-stream-relay.mdx",
         "allternit/surfaces/allternit-desktop/src/main/phone-app-store.ts"
+      ]
+    },
+    {
+      "id": "feature:phone-use",
+      "label": "Phone Use: your assistant acts on your own iPhone (routes)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Route-based control of a user's own iPhone from the App Store Allternit app and the user's computer: official (Shortcuts, Home, screen read through the app), mirror (iPhone Mirroring on the Mac), bt-mac, bt-android and bt-apple (a Bluetooth keyboard and mouse), usb-agent, and the retiring legacy-helper. A router picks the first healthy route; every send is approved on the user's computer. The connect kit (Settings > Computers > Phones, the connect sheet's phone step, the phone layout's phones list) shows per-route health, the route in use, needs-you lines, the Control my iPhone by Bluetooth row (Desktop on a Mac), Keyboard for <name> for a second device, and a retirement notice for the old helper. Contract: docs/contracts/CONTRACT-phone-use-2026-11-16.md.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/allternit-api/src/phone_app.rs",
+        "allternit/cmd/allternit-api/src/phone_guard.rs",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/ios/Packages/AllternitBTHID",
+        "allternit/cmd/allternit-mirror",
+        "allternit/cmd/allternit-bthid",
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit-ai/src/components/phones",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/fabric-session"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-16",
+          "note": "Eoj approved the Phone Use plan: no iCTRL helper for new setups, routes chosen by health in a fixed order, every send approved on the user's computer. Web, the phone layout and the PWA have no Desktop bridge, so the Mac Bluetooth row there says Available in Allternit Desktop for Mac and route health comes from the runtime's phone listing when it sends one."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Eoj accepted the undocumented CoreBluetooth HID service (128-bit Base UUID) for bt-mac and bt-apple. Apple may stop allowing it; the settings row and the router fall back to another route."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/contracts/CONTRACT-phone-use-2026-11-16.md",
+        "allternit/surfaces/docs/guides/iphone-routes.mdx",
+        "allternit/surfaces/docs/guides/iphone-bridge-shortcuts.mdx"
       ]
     },
     {
@@ -2349,7 +2512,10 @@
         "allternit-ai/src/views/agent-view",
         "allternit/cmd/allternit-api",
         "allternit/services/subscription-gateway",
-        "allternit-ai/src/lib/bots"
+        "allternit-ai/src/lib/bots",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
       ],
       "decisions": [
         {
@@ -2375,10 +2541,14 @@
         {
           "on": "2026-10-27",
           "note": "Eoj approved dropping the last CopilotKit code dependency: OpenDots and OpenBot (CopilotKit) now run through the gateway's own Intelligence client (adapters/_shared/copilotkit-intelligence.ts, wire-compatible with @copilotkit/core 1.75.0 IntelligenceAgent run mode: POST /agent/:id/run receipt, Phoenix channel join with stream_mode run, ag_ui_event pushes). No /connect replay or reconnect; a dropped socket is reported as unconfirmed. @copilotkit/core is removed. The OpenBot default realtime origin is now wss:// (the old https:// default could never match a wss endpoint)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "User-facing name is Connected bot (wire name stays vendor). GET /agents/:id adds botKind connected when a vendor binding exists; runtime and brain pickers show 'Run by <Vendor>' and gizzi bot edit refuses --runtime/--brain."
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx",
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
@@ -2542,7 +2712,7 @@
       "label": "Sign-in screen",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop and native iPhone.",
+      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop, native iPhone and the native Android app (nativeapp flavor).",
       "touches": [
         "allternit-ai/src/components/auth",
         "allternit-ai/src/pages",
@@ -2552,7 +2722,8 @@
         "surface:pwa",
         "surface:desktop",
         "allternit/surfaces/allternit-mobile/ios/App/AllternitApp.swift",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/onboarding"
       ],
       "decisions": [
         {
@@ -2562,6 +2733,10 @@
         {
           "on": "2026-11-02",
           "note": "Eoj approved the full wordmark assembly, Gizzi arrival, website cast joining/leaving, Gizzi spark catch and dissolve loop. Replace sign-in product-demo scenes on iOS and shared web/PWA. Ship byte-identical self-contained network-free illustration assets; keep native/web Clerk authentication and a usable static fallback."
+        },
+        {
+          "on": "2026-11-18",
+          "note": "Native Android sign-in (nativeapp flavor) plays the same shared login-arrival.html (copied into :feature:onboarding assets at build time, WebView with network and navigation blocked) above Google, GitHub and Apple buttons with logos. All three use Clerk OAuth in a Custom Tab through the allternit.com/__clerk proxy; Google leads on Android the way Apple leads on iOS."
         }
       ],
       "evidence": [
@@ -2728,12 +2903,20 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/agent-run-tree.mdx",
-        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts"
+        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts",
+        "allternit/surfaces/docs/tools/agent-control.mdx",
+        "allternit/surfaces/docs/tools/tool-search.mdx",
+        "allternit/surfaces/docs/tools/context-remaining.mdx",
+        "allternit/surfaces/docs/tools/task-list.mdx"
       ],
       "decisions": [
         {
           "on": "2026-10-20",
           "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Primitives wave B: tasks get names, fork and effort; wait_agents and agent_control (interrupt, resume, followup, close); tool_search deferral; context notices, get_context_remaining and history_recall; todowrite ids, activeForm, blockedBy and cancelled/interrupted states."
         }
       ]
     },
@@ -3156,11 +3339,39 @@
       ]
     },
     {
+      "id": "feature:facility-campus",
+      "label": "Facility campus: twelve districts",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The 3D facility grows from one building to a 1,280 x 960 m campus of twelve districts, loaded by distance under a frame budget, with travel by map, cart and shuttle. Bots light Bot Quarter homes, projects fill Commons Loop studios and cloud computers light Compute Row halls through additive fields in the allternit:workspace payload. In review as websites PRs 147 to 160; not merged.",
+      "touches": [
+        "external:allternit-facility",
+        "allternit-ai/src/views/office/OfficeFloor.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+        "allternit/surfaces/docs/guides/facility.mdx",
+        "allternit/surfaces/docs/architecture/facility-campus.mdx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-17",
+          "note": "Eoj: campus of twelve districts replaces the neighbour blocks; no backend change, the stage manifest is a static file; project and computer names show only in the signed-in embed."
+        },
+        {
+          "on": "2026-11-19",
+          "note": "Docs written ahead of the websites PRs 147 to 160. Do not merge the docs before those PRs merge."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/facility-campus.mdx"
+      ]
+    },
+    {
       "id": "feature:waiting-games",
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory; plus the two full Gizzi games shown from their live sites in a frame: Gizzi RPG (gizzirpg.allternit.com) and Gizzi Brawl (brawl.allternit.com, turned sideways in a tall window because it is landscape-only). The iPhone app has the same ten (WKWebView for the two Gizzi games). When the bot that opened it finishes, the game pauses and says the reply is ready. Closing the window or switching games pauses a game; reopening picks up where you left it. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
+      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory; plus the two full Gizzi games shown from their live sites in a frame: Gizzi RPG (gizzirpg.allternit.com) and Gizzi Brawl (brawl.allternit.com, turned sideways in a tall window because it is landscape-only). The iPhone app has the same ten (WKWebView for the two Gizzi games), and so does the native Android app (a Compose canvas port of the iPhone engine; a locked-down WebView for the two Gizzi games, Settings \u2192 Advanced \u2192 Waiting games). When the bot that opened it finishes, the game pauses and says the reply is ready. Closing the window or switching games pauses a game; reopening picks up where you left it. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
       "touches": [
         "allternit-ai/src/components/waiting-games",
         "allternit-ai/src/components/threads/ThreadComposer.tsx",
@@ -3170,7 +3381,9 @@
         "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx",
         "allternit-ai/public/_headers",
         "allternit-ai/fabric-session-pwa-functions/_site-headers.js",
-        "allternit/surfaces/allternit-mobile/ios/Features/WaitingGames"
+        "allternit/surfaces/allternit-mobile/ios/Features/WaitingGames",
+        "allternit/surfaces/allternit-mobile/android/feature/chat/src/main/java/com/allternit/feature/chat/games",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/Composer.kt"
       ],
       "decisions": [
         {
@@ -3239,7 +3452,11 @@
       "evidence": [
         "allternit/surfaces/docs/cli/code-intelligence.mdx",
         "allternit/cmd/gizzi-code/test/codemap/repo-map.test.ts",
-        "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts"
+        "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
     {
@@ -3290,7 +3507,7 @@
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path. Non-blocking asks: gizzi's ask_user_later (1-3 questions plus a required assumption, saved in the question_async table, max 3 pending per thread, 7-day expiry, subagent asks go to the root session) shows in the thread dock with an Assumed line, in the iOS Decisions deck and the TUI (/answer <id>); the answer starts a new turn.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
@@ -3306,6 +3523,9 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/decisions.mdx",
+        "allternit/surfaces/docs/tools/ask-user-later.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/ask-user-later.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/question/question.sql.ts",
         "allternit-ai/src/components/agent-elements/question/decision-tree.tsx",
         "allternit-ai/src/components/decisions/DecisionsDeck.tsx"
       ]
@@ -3715,7 +3935,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/worker-bots.mdx",
-        "allternit/surfaces/docs/guides/connect-vendor-from-chat.mdx",
+        "allternit/surfaces/docs/guides/connect-from-chat.mdx",
         "allternit/cmd/allternit-api/migrations/V282__bot_owns.sql"
       ],
       "decisions": [
@@ -4159,6 +4379,35 @@
       ]
     },
     {
+      "id": "feature:mobile-store-links",
+      "label": "App Store and Google Play links on every surface",
+      "product": "product:allternit-ios",
+      "status": "live",
+      "description": "One set of store-link constants (IOS_LIVE, ANDROID_LIVE, the App Store and Google Play URLs) drives the store badges on allternit.com (/download cards, footer, /app device redirect, /ios and /play short links), the ai.allternit.com and m.allternit.com footer and first-run install sheet (InstallCoach; hidden inside the Android app and the iPhone app's web view), the docs Get the app and Android guides, and Gizzi Code's /mobile QR codes. allternit.com/android stays the sideloaded APK with Phone Link, which Desktop installs.",
+      "touches": [
+        "allternit-ai/src/lib/store-links.ts",
+        "allternit-ai/src/components/store/StoreBadge.tsx",
+        "allternit-ai/src/fabric-session/phone/installOffer.ts",
+        "allternit-ai/src/fabric-session/phone/InstallCoach.tsx",
+        "allternit-ai/src/components/auth/SiteFooter.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/mobile/mobile.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "iPhone app live on the App Store (id 6828841999); IOS_LIVE turned on."
+        },
+        {
+          "on": "2026-11-12",
+          "note": "Google Play listing for com.allternit.app checked live (0.5.2); ANDROID_LIVE turned on in the ai app and the www site, /play short link added, /android kept for the Phone Link APK."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/get-the-app.mdx",
+        "allternit/surfaces/docs/guides/android-app.mdx"
+      ]
+    },
+    {
       "id": "feature:pet-offers",
       "label": "Pet offers: the bot's pet notices errors and offers a fix",
       "product": "product:ai-allternit",
@@ -4192,22 +4441,90 @@
       ]
     },
     {
-      "id": "feature:share-thread-link",
-      "label": "Share a thread by link",
+      "id": "feature:memory-page",
+      "label": "Memory page: see and edit what the bot remembers",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. cloud-api stores and serves the snapshot; clients (web, iOS, gizzi) are recorded on feat/frontier-lane1 and merge into this entry.",
+      "description": "A settings page lists the facts the bot has stored and lets the user edit or delete one, on web, phone, iOS and in gizzi.",
       "touches": [
-        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs"
+        "allternit-ai/src/views/settings/MemorySettingsPanel.tsx",
+        "allternit-ai/src/lib/agents/memory-client.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/MemoryFactsClient.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/memory.ts"
       ],
       "decisions": [
         {
           "on": "2026-11-12",
-          "note": "cloud-api route built on feat/frontier-lane1-share, not yet released."
+          "note": "Built on feat/frontier-lane1, not yet released."
         }
       ],
       "evidence": [
-        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs"
+        "allternit-ai/src/views/settings/MemorySettingsPanel.tsx",
+        "allternit-ai/src/lib/agents/memory-client.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift"
+      ]
+    },
+    {
+      "id": "feature:share-thread-link",
+      "label": "Share a thread by link",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user creates a public link to a thread snapshot, opens it signed out, and can revoke it. The snapshot is built client-side and stored and served by cloud-api (thread_shares, migration 124).",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs",
+        "allternit-ai/src/components/chat/ThreadShareDialog.tsx",
+        "allternit-ai/src/pages/PublicThreadPage.tsx",
+        "allternit-ai/src/lib/chat/thread-snapshot.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/ThreadShareClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/ThreadShareSheet.swift",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/share/share.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Client side built on feat/frontier-lane1, not yet released; the cloud-api route ships in the share PR. The iOS sheet does not create a link until the user asks."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/thread_shares.rs",
+        "allternit-ai/src/lib/chat/thread-snapshot.ts",
+        "allternit-ai/src/pages/PublicThreadPage.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/ThreadShareClient.swift"
+      ]
+    },
+    {
+      "id": "feature:edit-sent-message",
+      "label": "Edit a sent message and keep its versions",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user edits a message already sent; the thread reverts to that point, resends, and the earlier versions stay in a persisted branch list the user can open. Retry-turn reuses the same revert path.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session/revert.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/session.sql.ts",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/components/chat/StreamingChatComposer.tsx",
+        "allternit-ai/src/lib/chat/message-versions.ts",
+        "allternit-ai/src/lib/chat/retry-turn.ts",
+        "allternit-ai/src/views/chat/SessionTranscript.tsx",
+        "allternit-ai/src/views/code/CodeCanvas.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/AgentChatClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/ViewModels/ChatViewModel.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/edit/edit.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Built on feat/frontier-lane1 (platform and ai), not yet released. Versions are the persisted message_branch rows listed by /agent-sessions/:id/branches."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/session/revert.ts",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit-ai/src/lib/chat/message-versions.ts",
+        "allternit-ai/src/lib/chat/retry-turn.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
       ]
     },
     {
@@ -4243,6 +4560,839 @@
         "allternit/cmd/allternit-api/src/phone_runs.rs",
         "allternit-ai/src/components/phones/RunStatus.tsx",
         "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift"
+      ]
+    },
+    {
+      "id": "feature:run-code-on-files",
+      "label": "Run code on uploaded files",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A user uploads a file in chat and the agent runs Python on it in the sandbox with the run_code tool. The API ingests the upload and writes a manifest, the sandbox gets the files, and the result card shows output and files the code produced. Running code asks the user for permission first.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/shell/sandbox.ts",
+        "allternit/cmd/allternit-api/src/gizzi_chat_stream.rs",
+        "allternit/cmd/allternit-api/src/upload_routes.rs",
+        "allternit/cmd/allternit-api/src/sandbox_routes.rs",
+        "allternit-ai/src/components/chat/RunCodeResultCard.tsx",
+        "allternit-ai/src/components/chat/run-code-model.ts",
+        "allternit-ai/src/components/chat/ComposerAttachments.tsx",
+        "allternit-ai/src/components/session-composer/session-permission-dock.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/RunCodeResult.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/RunCodeFilesView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/UploadFileCard.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Decisions/Views/PermissionAskView.swift",
+        "allternit/surfaces/docs/guides/analyze-files.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Lane 2 of the frontier gap work: run code on uploaded files, built on every surface in one change."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/env.ts",
+        "allternit/cmd/gizzi-code/src/runtime/python/requirements.lock.txt",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/shell/sandbox.ts",
+        "allternit/cmd/allternit-api/src/gizzi_chat_stream.rs",
+        "allternit/cmd/allternit-api/src/upload_routes.rs",
+        "allternit/cmd/allternit-api/src/sandbox_routes.rs",
+        "allternit-ai/src/components/chat/RunCodeResultCard.tsx",
+        "allternit-ai/src/components/chat/run-code-model.ts",
+        "allternit-ai/src/components/chat/ComposerAttachments.tsx",
+        "allternit-ai/src/components/session-composer/session-permission-dock.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/RunCodeResult.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/RunCodeFilesView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/UploadFileCard.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Decisions/Views/PermissionAskView.swift",
+        "allternit/surfaces/docs/guides/analyze-files.mdx"
+      ]
+    },
+    {
+      "id": "feature:self-hosted-agents",
+      "label": "Self-Hosted Agents server (customer-run, no calls to Allternit)",
+      "product": "product:allternit-api",
+      "status": "live",
+      "description": "A customer runs the whole agent service in their own environment: allternit-agents-server (API, agent loop via a gizzi child, Postgres or SQLite state) plus gizzi workers that poll a fleet work queue over outbound HTTPS and run shell/file tools in a sandbox. Model calls go to the customer's provider (Anthropic, Bedrock, Vertex, Foundry or a gateway with a model_map). Desktop, web, phone layout, PWA, iOS and gizzi connect to the server URL with a server API key.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/bin/allternit-agents-server.rs",
+        "allternit/cmd/allternit-api/src/selfhost/mod.rs",
+        "allternit/cmd/allternit-api/src/selfhost/loop.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_work.rs",
+        "allternit/cmd/allternit-api/src/selfhost/store/mod.rs",
+        "allternit/cmd/allternit-api/openapi/selfhost-v1.yaml",
+        "allternit/cmd/gizzi-code/src/runtime/tools/remote-host.ts",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/worker.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/selfhost-inference.ts",
+        "allternit/cmd/gizzi-code/src/shared/selfhost/offline.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/worker.ts",
+        "allternit-ai/src/components/settings/SelfHostedServerPanel.tsx",
+        "allternit-ai/src/lib/selfhost/client.ts",
+        "allternit-ai/src/pages/RuntimesPage.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/selfhost-credentials-ipc.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/SelfHosted/SelfHostedClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
+        "allternit/sdk/platform-ts/src/selfhost/client.ts",
+        "allternit/deploy/selfhost/compose/docker-compose.yml",
+        "allternit/surfaces/docs/self-hosted/overview.mdx",
+        "allternit/cmd/allternit-api/src/selfhost/replica.rs",
+        "allternit/cmd/allternit-api/src/selfhost/idempotency.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_sessions.rs",
+        "allternit/cmd/allternit-api/migrations_selfhost_pg/003_limits.sql",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/custom-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/selfhost.ts",
+        "allternit/deploy/selfhost/charts/agents-server/templates/pdb.yaml",
+        "allternit/deploy/selfhost/charts/sandboxes/templates/tools-configmap.yaml",
+        "allternit/cmd/allternit-api/tests/e2e/selfhost-replicas.sh"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-13",
+          "note": "Built from Eoj's request to match Anthropic's self-hosted Managed Agents; plan ~/.claude/plans/declarative-sprouting-catmull.md, contract approved (G1)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-A: an idle session releases its worker after 30 s; the worker keeps a 10 s affinity so the next turn prefers it (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-B: worker custom tools come from a tools file and are commands only (gizzi worker --tools-file) (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "D-C: reclaim_older_than_ms means also take a live lease last renewed at least N ms ago, clamped to at least 30000 (approved by Eoj)."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "Known limits lifted: several replicas on one Postgres, rotate-key while running, Idempotency-Key replay, custom-tool clash refused before store, custom tools in subagents and batch, CLI worker custom tools, idle worker release."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bin/allternit-agents-server.rs",
+        "allternit/cmd/allternit-api/src/selfhost/mod.rs",
+        "allternit/cmd/allternit-api/src/selfhost/loop.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_work.rs",
+        "allternit/cmd/allternit-api/src/selfhost/store/mod.rs",
+        "allternit/cmd/allternit-api/openapi/selfhost-v1.yaml",
+        "allternit/cmd/gizzi-code/src/runtime/tools/remote-host.ts",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/worker.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/selfhost-inference.ts",
+        "allternit/cmd/gizzi-code/src/shared/selfhost/offline.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/worker.ts",
+        "allternit-ai/src/components/settings/SelfHostedServerPanel.tsx",
+        "allternit-ai/src/lib/selfhost/client.ts",
+        "allternit-ai/src/pages/RuntimesPage.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/selfhost-credentials-ipc.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/SelfHosted/SelfHostedClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift",
+        "allternit/sdk/platform-ts/src/selfhost/client.ts",
+        "allternit/deploy/selfhost/compose/docker-compose.yml",
+        "allternit/surfaces/docs/self-hosted/overview.mdx",
+        "allternit/cmd/allternit-api/src/selfhost/replica.rs",
+        "allternit/cmd/allternit-api/src/selfhost/idempotency.rs",
+        "allternit/cmd/allternit-api/src/selfhost/routes_sessions.rs",
+        "allternit/cmd/allternit-api/migrations_selfhost_pg/003_limits.sql",
+        "allternit/cmd/gizzi-code/src/runtime/selfhost/custom-tools.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/selfhost.ts",
+        "allternit/deploy/selfhost/charts/agents-server/templates/pdb.yaml",
+        "allternit/deploy/selfhost/charts/sandboxes/templates/tools-configmap.yaml",
+        "allternit/cmd/allternit-api/tests/e2e/selfhost-replicas.sh"
+      ]
+    },
+    {
+      "id": "feature:meetings",
+      "label": "Allternit Meetings (Gizzi joins Meet, Zoom and Teams calls)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "Gizzi joins a Google Meet, Zoom or Teams call as a visible participant named \"Gizzi (Allternit)\", posts a consent notice, transcribes the call as text (no audio kept), answers \"Gizzi, ...\" in chat (voice is opt-in per meeting), and writes a recap with decisions and action items. The bot (services/meeting-bot: an Allternit Live voice session in the user's own Chrome; Zoom through the Meeting SDK for Web with an on-behalf-of token) runs on the user's own runtime, their cloud computer or Desktop, started by cloud-api over the signed runtime relay, and reports to cloud-api with a pod token; call audio goes over LiveKit to the voice meeting_worker for STT; the in-pod allternit-api answers turns. Calendars: Google OAuth and ICS links (no Microsoft sign-in). Surfaces: Home > Meetings on Desktop, web, phone layout and PWA, the Desktop tray and macOS menu bar, iOS (Settings > Meetings, Live Activity), gizzi `meetings`, and the meetings MCP tools. Behind the `meetings` flag (ALLTERNIT_MEETINGS_ENABLED / ALLTERNIT_MEETINGS_USER_IDS).",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/meetings.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/meeting_pod.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/meeting_notify.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/zoom.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/meeting_launcher.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/meeting_calendar.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/130_meetings.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/131_meeting_recap_email.sql",
+        "allternit/cmd/allternit-cloud-api/openapi/meetings.yaml",
+        "allternit/cmd/allternit-api/src/meeting_tools.rs",
+        "allternit/cmd/allternit-api/src/meeting_turn_stream.rs",
+        "allternit/cmd/allternit-api/src/meeting_bot_host.rs",
+        "allternit/cmd/allternit-api/src/meetings_mcp.rs",
+        "allternit/services/meeting-bot/src/runner.ts",
+        "allternit/services/meeting-bot/src/adapters/meet.ts",
+        "allternit/services/meeting-bot/src/adapters/teams.ts",
+        "allternit/services/meeting-bot/src/adapters/zoom/index.ts",
+        "allternit/services/meeting-bot/src/adapters/zoom/sidecar/src/bot.cpp",
+        "allternit/services/voice/src/meeting_worker/config.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/meetings.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/Calls/MeetingsStore.swift",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/MeetingsClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/AllternitWidgets/MeetingLiveActivity.swift",
+        "allternit/surfaces/docs/guides/meetings.mdx",
+        "allternit/surfaces/docs/api/meetings.mdx",
+        "allternit-ai/src/views/meetings/MeetingsView.tsx",
+        "allternit-ai/src/views/meetings/MeetingsHost.tsx",
+        "allternit-ai/src/views/meetings/MeetingLivePage.tsx",
+        "allternit-ai/src/views/settings/MeetingsSettingsPanel.tsx",
+        "allternit-ai/src/lib/meetings/client.ts",
+        "allternit-ai/src/pages/MeetingTilePage.tsx",
+        "allternit-ai/src/lib/app-screens/packs/meetings.json"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-12",
+          "note": "Own bot on own infrastructure (no vendor); Meet, Zoom and Teams together; chat replies by default, voice opt-in; all paid plans with metered bot-minutes. Zoom uses the Meeting SDK with an OBF token, because anonymous SDK joins stopped in March 2026. Plan ~/.claude/plans/nifty-hugging-falcon.md, contract docs/meetings/CONTRACT.md."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Microsoft sign-in dropped: Outlook calendars come in as ICS links. Merged behind the meetings flag (platform #2297, ai #1036)."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Meet bot Google profiles are sealed with a separate MEETINGS_BOT_PROFILE_KEY in cloud-api, not the credentials key. gizziioetrid@gmail.com is a test account only; the production bot pool is not decided."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "Allternit does not host user compute: the meeting bot runs on the user's cloud computer or Desktop (RuntimePodProvider over the signed relay); company pods and the standby bot image were removed. The bot is an Allternit Live voice session (real video over a local WebRTC loopback); Zoom joins via the Meeting SDK for Web so it works on macOS, Windows and Linux."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/meetings/CONTRACT.md",
+        "allternit/docs/meetings/BOT-ACCOUNTS.md",
+        "allternit/docs/meetings/ZOOM.md"
+      ]
+    },
+    {
+      "id": "feature:connect-kit",
+      "label": "Connect kit and day-one setup (one Connections page, four status words)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "One Connections page and one first-run setup on every surface, replacing the five duplicate connect screens. One registry of rows (ids, groups, ways, runs_on) in the client, one GET /api/v1/connections contract served by cloud-api (account rows) and allternit-api (rows on the active computer), merged by the app, with four status words only (Not connected, Connecting, Connected, Needs you), a plain reason and up to two fallbacks for a row the account cannot use, and the fewest-step sign-in each vendor allows (device code, link and paste-back, OAuth, key, QR). Works with no computer: Allternit Cloud, API keys (OpenAI, Anthropic, Google, xAI, OpenRouter and more), Gemini key, apps, channels, phone. Needs a computer: ChatGPT through Codex, Claude Code, Grok CLI, Kimi CLI, local brain. The brain runner (a private box per person on the mail host runs the vendor's own CLI for Claude, ChatGPT, Grok and Kimi plans, person-sent chat only, tools off, with a disclosure step and a kill switch ALLTERNIT_BRAIN_RUNNERS) lets those plans work with no computer, and plan chats are held in a cloud plan chat store so they sync across devices. ChatGPT also signs in directly on the person's device (Desktop, iOS, Gizzi Code). Copilot signs in through the GitHub App allternit-copilot-connect and stays Coming soon until the server has the App configured. Surfaces: Desktop, ai.allternit.com and its phone layout, the m.allternit.com PWA, iOS (Settings > Connections), Android through the PWA, gizzi connect, cloud-api, allternit-api, docs. New code lives in allternit-ai src/components/connect-kit (registry.ts, ConnectionsHub, ConnectSheet, KitSetup) and cloud-api routes/connections.rs; the touches below name the existing files the kit replaces or reuses.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/inference_keys.rs",
+        "allternit/cmd/allternit-api/src/cli_tools.rs",
+        "allternit/cmd/allternit-api/src/cli_provider_detector.rs",
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/cmd/allternit-api/src/design_connector_routes.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/connect.ts",
+        "allternit-ai/src/components/subscriptions/SubscriptionConnect.tsx",
+        "allternit-ai/src/components/gateway/ConnectionWizard.tsx",
+        "allternit-ai/src/components/settings/BrainsPanel.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneFirstRun.tsx",
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx",
+        "allternit/surfaces/docs/guides/use-your-plan.mdx",
+        "allternit/surfaces/docs/build-on-allternit/add-a-connection.mdx",
+        "allternit/surfaces/docs/operations/brain-runner.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/provisioning.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
+        "allternit-ai/src/components/connect-kit/ConnParts.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectSheet.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionRow.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+        "allternit-ai/src/components/connect-kit/KitBrainBanner.tsx",
+        "allternit-ai/src/components/connect-kit/PickerConnectPane.tsx",
+        "allternit-ai/src/components/connect-kit/open.ts",
+        "allternit-ai/src/components/connect-kit/index.ts",
+        "allternit-ai/src/components/connect-kit/registry.ts",
+        "allternit-ai/src/components/connect-kit/store.ts",
+        "allternit-ai/src/components/connect-kit/types.ts",
+        "allternit-ai/src/components/onboarding/setup/KitSetup.tsx",
+        "allternit-ai/src/components/onboarding/setup/FirstRunSetup.tsx",
+        "allternit-ai/src/components/onboarding/setup/connectedInventory.ts",
+        "allternit-ai/src/components/onboarding/setup/setupModel.ts",
+        "allternit-ai/src/components/onboarding/setup/setupSignals.ts",
+        "allternit-ai/src/lib/connections-api.ts",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/136_inference_key_models.sql",
+        "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/inference_keys.rs",
+        "allternit/cmd/allternit-api/src/connections_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/ConnectionsClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/Setup/SetupKitSteps.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/Setup/SetupModel.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectSheetView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionRowView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsCatalog.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsSettingsView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsStore.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/connect-flow.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/connect-model.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog_apps.json",
+        "allternit/services/open-connector/scripts/export-directory.ts",
+        "allternit-ai/src/components/connect-kit/ConnectionCard.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsBrowse.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsToolbar.tsx",
+        "allternit-ai/src/components/connect-kit/MoreConnections.tsx",
+        "allternit-ai/src/components/connect-kit/rowAction.ts",
+        "allternit-ai/src/components/connect-kit/view-state.ts",
+        "allternit-ai/src/lib/connections-catalog.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionCardView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsFilterPopover.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsMoreView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionCards.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionsMore.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/SettingsConnections.kt",
+        "allternit/surfaces/docs/cli/connect.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-14",
+          "note": "brain runner: plans with no computer. Eoj decided: no vendor letters; a disclosure the person accepts (the vendor could limit or close the account), the person signs in and manages their own account, and only person-sent chat reaches the plan, tools off, never bots, routines or agents. One box per person on the mail host, 4 GB runner RAM budget, kill switch ALLTERNIT_BRAIN_RUNNERS. ChatGPT also signs in directly on the person's device (Desktop, iOS, Gizzi Code). Plan chats sync through a cloud plan chat store. Copilot via the GitHub App. Disclosure wording still waits for Eoj's approval. Contract section 9. Docs: operations/brain-runner.mdx."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Connections view redesign (Eoj approved): one toolbar with search and a filter menu (List, Grid, Deck; Status with counts), an amber dot in place of the needs banner, a More tile per group (6 shown at a time) and a browse page, backed by GET /api/v1/connections/catalog (11 key-provider brains plus a committed apps snapshot from services/open-connector/scripts/export-directory.ts). A connected catalog app moves into Apps. Same view on Desktop, web, phone, PWA, iOS, Android and gizzi connect more. Contract: CONTRACT-connections-2026-11.md section 11."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "No-computer Cloud chats (CONTRACT-cloud-credits D6, D7): a signed-in Clerk session may send an Allternit Cloud catalog alias to /v1/chat/completions under the credits gate (direct BYOK refs such as xai/grok-4 stay 403), and the plan chat store accepts allternit/<alias> threads when the alias resolves in the catalog, hidden aliases included."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx"
+      ]
+    },
+    {
+      "id": "feature:freeweights-in-apps",
+      "label": "Freeweights in the apps (catalog, verified pulls, verification labels)",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Allternit apps read the Freeweights catalog and every downloaded model is checked by hash. The model-source contract (services/model-source) resolves a repo to sources in order (Freeweights Worker, manifest sources, then the publisher Hugging Face only when the catalog is down or the repo is not listed) and fetches each file with a sha256 or git blob id check. A manifest that fails its signature check is an error, never a silent fallback. Verification states: freeweights_signed, publisher_hash, pinned, unverified. local-engine downloads through it (POST /models/download with allow_unverified, POST /models/verify, a verification field on every model row); allternit-api annotates Hugging Face search with freeweights data, proxies /api/local-engine/models/verify and ends Ollama pulls with a verification event; voice packs report pinned. Surfaces: Desktop, web, phone and PWA (Model Lab renamed Freeweights Studio, view id model-lab unchanged), iPhone Models screen with Send to computer through the paired computer, Gizzi Code (gizzi models pull, verify, search --catalog-source freeweights, exit 2 on unverified), the status page Freeweights component. Paths in open PRs (allternit-ai src/lib/freeweights, iOS Core/API/FreeweightsClient.swift) are not listed until they merge.",
+      "touches": [
+        "allternit/services/model-source",
+        "allternit/services/local-engine/src/download",
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+        "allternit/cmd/allternit-api/src/local_brain_routes.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/sidecar",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models",
+        "allternit/services/status/contract",
+        "allternit-ai/src/views/model-lab",
+        "allternit-ai/src/components/models",
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/surfaces/docs/tools/local-engine.mdx",
+        "allternit/surfaces/docs/api/local-engine.mdx",
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit/surfaces/docs/surfaces/model-lab.mdx",
+        "allternit-ai/src/components/freeweights",
+        "allternit-ai/src/lib/freeweights",
+        "allternit-ai/src/lib/on-device",
+        "allternit-ai/src/vendor/fw-cards"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Freeweights Studio catalog and model page match freeweights.allternit.com (on-device W2, shipped ahead of the rest of the on-device lane): vendored site card faces (src/vendor/fw-cards, pinned, drift check in CI), per-device fit from the device index (C1 rule, src/lib/on-device), and the model page = the site model page head + the site action bar (actionsFor) + a build table with fit here."
+        },
+        {
+          "on": "2026-11-14",
+          "note": "Freeweights v3 Phase 1: every surface reads Freeweights through the one model-source contract (contracts/model-source). Source order Freeweights Worker, manifest sources, publisher; a bad manifest is an error, a down catalog falls back to publisher_hash. Data with no hash is refused unless the caller sets allow_unverified. Model Lab is renamed Freeweights Studio in the UI with the view id unchanged. iPhone gets a Freeweights section on the existing Models screen (no new tab) and pulls through the paired computer. Docs: tools/freeweights.mdx."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "id": "feature:freeweights-studio-training",
+      "label": "Freeweights Studio training jobs (engines, job spec v1, host API)",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Fine-tune jobs run on the person's own computer through engines. The contract crate services/studio-spec holds job spec v1, job states, the engine catalog and the host and engine OpenAPI. allternit-api serves /api/v1/studio (engines with install state and hardware fit, install, jobs, events?after=seq, cancel, outputs, outputs/register), stores jobs as JSON files under <data dir>/studio/jobs, runs one job per computer (409 job_running), fetches the base model with model-source fetch_verified, starts the engine as a venv process speaking engine API v1 over loopback with a per-launch token, and on restart reattaches to a live engine or marks the job failed. A finished output is registered in local-engine as source studio_output. The old /api/v1/model-training proxy (port 9020) is deleted.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/studio",
+        "allternit/services/studio-spec",
+        "allternit/services/local-engine/src/routes/models.rs",
+        "allternit/services/local-engine/src/cache/model.rs",
+        "allternit/services/model-training",
+        "allternit/cmd/gizzi-code/src/cli/commands/studio.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/hardware.ts",
+        "allternit/cmd/gizzi-code/src/runtime/services/studioClient.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/StudioJobsClient.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/StudioJobsSection.swift",
+        "allternit-ai/src/views/model-lab/TrainPanel.tsx",
+        "allternit-ai/src/views/model-lab/JobsMonitor.tsx",
+        "allternit-ai/src/lib/model-lab/studio-jobs.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Phase 4 hardware merged: studio-spec hardware ids (7, fit and error codes) in allternit-platform #2412; host hardware detection in allternit-api studio/hardware.rs #2418; allternit-tune MLX backend and requirements-<hardware>.txt in services/model-training #2413; gizzi studio, hardware and studioClient #2414; iOS StudioJobsClient and StudioJobsSection #2420; docs #2415; Train panel allternit-ai #1078. Engines are published at Allternit/studio-engines e520474 (Apache-2.0); see the Brain G3 record."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Train tab on Desktop, web, phone layout and PWA (allternit-ai #1068). Eoj chose to replace the Engine tab's Quantize, Merge LoRA and Evaluate cards (they called /api/model-lab/jobs, never served) with Also make outputs on the Train form: merged model (LoRA methods) and GGUF q4_k_m/q8_0/f16, sent as outputs.merged and outputs.gguf. Evaluation waits until allternit-tune runs evals."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Studio Phase 3 step 3: host in Rust inside allternit-api (Decision 1), engines as venv processes (4), host fetches base models with fetch_verified and passes a local path (5), jobs as JSON files (6), model_training_routes.rs and its mounts deleted (7). Hardware: Apple Silicon (torch/MPS for allternit-tune) and CUDA Linux; everything else refused with the reason."
+        }
+      ],
+      "evidence": [
+        "allternit/services/studio-spec/openapi/studio-api.yaml",
+        "allternit/cmd/allternit-api/src/studio/mod.rs"
+      ]
+    },
+    {
+      "id": "feature:freeweights-entitlement",
+      "label": "Freeweights entitlement claim (signed plan, orgs, perks, key scopes)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "cloud-api issues the claim the Freeweights Worker trusts for accounts (freeweights spec/accounts-v1.md section 3). GET /api/v1/freeweights/entitlement takes a Clerk session or alt_ key and answers a compact EdDSA JWS (kid entitlement-v1, application/jose): sub, plan (from billing_subscriptions current_plan_id, same as /billing/subscription), orgs from Clerk memberships, perks, addon_bytes, scopes, iss, aud, cred, iat, exp = iat+600. Signing key FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY (unset = 503 accounts_not_configured, server still boots; plan or Clerk failure = 503 entitlement_unavailable + Retry-After). Perks behind FREEWEIGHTS_PERKS_ENABLED (default off; claim perks stay {} while off). One draft perk table in freeweights.rs (DRAFT_PLAN_PERKS; FREEWEIGHTS_PLAN_PERKS replaces it) feeds both the claim and the freeweights block of GET /api/v1/billing/plans: status not_offered unless perks are on, and per plan (free, plus, super, ultra) lines of {key, label, value, unit} with unit bytes, count or bool. API keys accept freeweights.read, freeweights.write, freeweights.repo:rp_<id> (validated, id case kept). CORS lets freeweights.allternit.com and fw-preview.allternit.com reach only this namespace and /api/v1/billing/plans.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/api_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit/surfaces/docs/api/cloud-billing.mdx",
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/surfaces/docs/api/authentication.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "HF parity plan step 0.5: the claim names plans as cloud-api does (free, plus, super = Max, ultra). Perk numbers wait for Eoj's sign-off, so none are in code. Org plans are free and seats are omitted until team billing ships; addon_bytes stay zero until add-on Stripe products exist. A Clerk org read failure answers 503 rather than signing an empty org list. The production public key spec/keys/entitlement-v1.pub and the signing-key secret are Eoj's gate."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Uploads plan step 3 (U13): perks are listed, not offered. The draft table (Free 10 GB public / 0 private / 1,000 req / 2 webhooks; Plus 250 GB / 100 GB / 2,500 / 10; Max 1 TB / 500 GB / 5,000 / 50; Ultra 2 TB / 1 TB / 10,000 / 100; decimal bytes) now lives in code as the default and is shown on /billing/plans with status not_offered. It reaches the claim only when FREEWEIGHTS_PERKS_ENABLED=1, which stays off in production until Eoj signs the rows."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/surfaces/docs/api/cloud-billing.mdx"
+      ]
+    },
+    {
+      "id": "feature:files-drive",
+      "label": "Files drive: every Allternit computer as a location in Files, Finder, Explorer, Linux, the web Files tab and gizzi files",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "One protocol (files/2, /api/v1/files/v2/*) for every surface: roots under ~/Allternit plus Memory Drive, Code, Models and user folders; stable item IDs, revisions with keep-both conflicts, change feed, 4 MiB chunks under the 5 MiB relay cap. Transports: loopback, mesh (own devices), relay (baseline; cloud computers are relay-only), gateway (guests with signed capability tokens). Files traffic never wakes a computer or touches its idle timer; only the wake-consent call does. A sleeping computer is listed from a plain-names snapshot in the user's own R2. Lands dark behind the per-user flag files_drive.",
+      "touches": [
+        "allternit/contracts/files-drive",
+        "allternit/platform/types/allternit-files-core",
+        "allternit/platform/files/allternit-files-engine",
+        "allternit/cmd/allternit-api/src/file_routes.rs",
+        "allternit/cmd/allternit-api/src/files_v2",
+        "allternit/cmd/allternit-api/src/files_v2/intel",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/tools/files-stub",
+        "allternit/surfaces/docs/guides/files-drive.mdx",
+        "allternit/surfaces/docs/guides/files-sharing.mdx",
+        "allternit/surfaces/docs/api/files-drive.mdx",
+        "allternit/surfaces/docs/api/files-drive-runtime.mdx",
+        "allternit-ai/src/components/computers/files/FilesShareDialog.tsx",
+        "allternit-ai/src/components/computers/files/FilesShareRow.tsx",
+        "allternit-ai/src/components/computers/files/FilesHistory.tsx",
+        "allternit-ai/src/components/computers/files/FilesDashboard.tsx",
+        "allternit-ai/src/components/computers/files/FilesGuestView.tsx",
+        "allternit-ai/src/components/computers/files/useFilesShares.ts",
+        "allternit-ai/src/lib/files-drive/guest.ts",
+        "allternit-ai/src/lib/files-drive/sharing.ts",
+        "allternit-ai/src/pages/FilesGuestPage.tsx",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_gateway.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/files_tokens.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/144_files_shares.sql",
+        "allternit/platform/files/allternit-files-mount",
+        "allternit/cmd/gizzi-code/src/cli/commands/files.ts",
+        "allternit/cmd/gizzi-code/src/cli/files",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-files-mount.cjs",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/files",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/context/files-in-context.ts",
+        "allternit/surfaces/docs/cli/files.mdx",
+        "allternit/surfaces/allternit-desktop/native/files-win",
+        "allternit/surfaces/allternit-desktop/src/main/files-drive-win-manager.ts",
+        "allternit/surfaces/allternit-desktop/build/installer.nsh",
+        "allternit/.github/workflows/files-win-helper.yml",
+        "allternit/surfaces/docs/guides/files-windows.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/files_keys.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/files.rs",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/143_computer_files_wake.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/145_account_prefs.sql",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/146_files_keys.sql",
+        "allternit/cmd/allternit-api/src/files_v2/shares.rs",
+        "allternit/cmd/allternit-api/src/files_v2/mod.rs",
+        "allternit/surfaces/allternit-mobile/ios/Packages/AllternitFilesKit",
+        "allternit/surfaces/allternit-mobile/ios/AllternitFileProvider",
+        "allternit/surfaces/allternit-mobile/ios/Core/Files",
+        "allternit/surfaces/allternit-mobile/android/app/src/main/java/com/allternit/app/files",
+        "allternit/surfaces/docs/guides/files-keys.mdx",
+        "allternit-ai/src/lib/files-drive",
+        "allternit-ai/src/components/computers/files"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Full scope (all 17 uses + sharing, intelligence, replicas, dedup, portable workspaces); asleep cloud computer = ask before waking; the drive owns gizzi TUI /files (old files-in-context list folds into /context); asleep snapshot keeps plain names, names_encrypted reserved; no-wake covers v2 only until legacy /files/* callers move to v2."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Contract gaps closed: chunker pinned (fastcdc 3.2.1 v2020, level 1, gear seed 0, masks; vectors/chunker-v1.json); conflict HHmm = editing device local time via utc_offset_minutes; gone base_rev: keep_both re-creates, fail/replace not_found; keep_days counts from replacement, 0 = no limit, trash_days 0 = no trash; replica locator over raw hash bytes, AAD afc1|v|cipher|key_id|locator|plaintext_size; relay accepts bodyEncoding and body_encoding, streams raw, passes wake-ticket/range/if-match/unlock; computer_id = runtime_devices.id (pc_ ids resolved by cloud-api)."
+        }
+      ],
+      "evidence": [
+        "allternit/contracts/files-drive/SPEC.md",
+        "allternit/contracts/files-drive/generate.mjs"
+      ]
+    },
+    {
+      "id": "feature:on-device-models",
+      "label": "On-device models",
+      "product": "product:allternit-api",
+      "status": "building",
+      "description": "Run open-weights models on the device the person is using, with one fit rule everywhere. Freeweights serves per-model device data (GET /api/models/:org/:name/device and /api/device/index, from catalog/overlay/device.json). The Local Engine reports GET /hardware (device profile and the model budget). One fit function (spec/on-device/fit.md, 65 vectors) has three ports that must pass the same vectors: TypeScript (allternit-ai src/lib/on-device), Swift (iOS Core/OnDevice) and Rust (Gizzi, local-engine); labels Fits, May be slow, Tight fit, Won't fit, No WebGPU, No browser build, No build for this device, Size not checked. Runtimes share the DeviceRuntime shape: desktop-engine (Local Engine with signed engine packs), browser-webgpu (small models, 2 GB desktop and 0.45 GB phone caps), android-app (native engine in the app, streamed to the PWA over the Custom Tabs postMessage bridge), ios-mlx, ios-llama and apple-fm (iPhone Models tab, Catalog and On this iPhone), and gizzi models fit, run, ps and stop. Freeweights Studio gets a Grid, List and Deck catalog with fit badges and a This device tab. Devices can share a running model with the owner's other devices through the cloud-api model-host relay (model runs on the host; picker group My other devices). Paths not listed until they merge: allternit-ai src/lib/model-host, allternit-ai src/lib/local-models/runtimes and the browser budget, iOS Core/OnDevice and Packages/OnDeviceLLM, Android ondevice, Gizzi models-run.ts, the Freeweights device route (freeweights worker/src/routes/device.ts), engine packs (scripts/engine-packs).",
+      "touches": [
+        "allternit-ai/src/lib/on-device",
+        "allternit-ai/src/views/model-lab",
+        "allternit-ai/src/lib/local-models",
+        "allternit/services/local-engine",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Models",
+        "allternit/surfaces/allternit-mobile/android/app",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Eoj approved the plan (PLAN-on-device-models-2026-11-15.md). One fit spec with three ports and shared vectors; the Android app streams to the PWA over the Custom Tabs postMessage channel (spike passed on a Moto in airplane mode, 500 of 500 messages); the iPhone budget is 0.75 x os_proc_available_memory() measured at cold start (3,063 MB without and 4,088 MB with increased-memory-limit on an iPhone 15), and the build must work without the entitlement; engine packs are Developer-ID signed and notarized, with a Swift MLX server on Mac. Docs: guides/run-models-on-device.mdx, api/on-device-models.mdx, cli/models.mdx."
+        }
+      ],
+      "evidence": [
+        "allternit/spec/on-device/fit.md",
+        "allternit/spec/on-device/fit-vectors.json",
+        "allternit/surfaces/docs/guides/run-models-on-device.mdx",
+        "allternit/surfaces/docs/api/on-device-models.mdx",
+        "allternit/services/local-engine/src/routes/hardware.rs",
+        "allternit-ai/src/lib/on-device/fit.ts",
+        "allternit/surfaces/docs/guides/run-models-in-your-browser.mdx",
+        "allternit/surfaces/docs/guides/run-models-on-android.mdx",
+        "allternit/surfaces/docs/guides/use-models-on-your-other-devices.mdx",
+        "allternit/surfaces/docs/guides/run-models-on-desktop-and-iphone.mdx"
+      ]
+    },
+    {
+      "id": "feature:phone-model-host",
+      "label": "Run a model on your phone (model host relay)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A browser tab with WebGPU (phase 1: m.allternit.com / ai.allternit.com on a phone) runs LiquidAI LFM2.5-350M (q4f16, ~255 MB) with transformers.js and serves it to its owner's agents. The tab mints a single-use 60 s ticket and holds a WebSocket to cloud-api (routes/model_hosts.rs, in-memory hub keyed by user + host id); gizzi's allternit-devices discovery ('Your devices') calls the OpenAI-compatible /api/v1/model-hosts/v1 routes with the user's credential or runtime device token, and requests are forwarded as frames. Settings > Models > 'Serve a model from this device' on Desktop, phone layout and PWA; models show in the picker under Your devices.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/lib/model-host",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/providers",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-28",
+          "note": "Eoj chose 'Phone serves Gizzi': the on-phone model is served to gizzi through the cloud relay so chats keep tools, memory and handoff. Phase 1 is the browser (LFM2.5-350M only; models of 760 MB or more crash Safari tabs on iPhone 15); phase 2 is the Phone Link iOS helper with llama.cpp over the same relay."
+        },
+        {
+          "on": "2026-11-15",
+          "note": "Un-held for on-device models lane W12 ('Let my other devices use this model'): the host device runs the model and cloud-api only relays, only between the owner's own devices. The in-browser WebGPU worker moved to lane W5; the toggle lives in This device (desktop + phone), iOS after W7."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/run-a-model-on-your-phone.mdx",
+        "allternit/surfaces/docs/api/model-host-relay.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
+      ]
+    },
+    {
+      "id": "feature:freeweights-accounts",
+      "label": "Freeweights accounts: community uploads, keys, plan perks (console, gizzi CLI, docs)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "People publish models to Freeweights with an Allternit key. cloud-api signs the entitlement claim and lists plan perks in GET /api/v1/billing/plans under a freeweights block whose status stays not_offered until FREEWEIGHTS_PERKS_ENABLED=1. The console API keys page creates keys with freeweights.read, freeweights.write or freeweights.repo:<rp_id> scopes (/api-keys?create=freeweights[&repo=rp_...]); the console plan picker renders the perk lines only when status reads offered. `gizzi models publish <path> <handle/name>` uploads through the Freeweights Hugging Face compatible API (preupload, LFS batch, PUT or multipart, verify, commit); `gizzi models pull` checks community repos first; `gizzi usage` prints one Freeweights storage line from GET /api/fw/v1/limits. Caps live only in the Freeweights limits table.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/freeweights.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_subscriptions.rs",
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/surfaces/platform.allternit.com/src/components/PlanPicker.tsx",
+        "allternit/surfaces/platform.allternit.com/src/pages/BillingPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models-pull.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/usage.ts",
+        "allternit/surfaces/docs/tools/freeweights.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-15",
+          "note": "Uploads plan U14: purchase surfaces (console PlanPicker, AI billing, iOS plan tickets) get the perk rendering now, driven by the status field, and show nothing while it reads not_offered. gizzi usage gets a storage line only. Numbers are never fixed in code or docs; they are read from the limits route."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts"
+      ]
+    },
+    {
+      "id": "feature:agent-batch-sleep",
+      "label": "agent_batch and sleep",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "agent_batch runs one worker per CSV row with a flat output schema, sample mode first, resumable through a progress sidecar. sleep waits 1-900 s and wakes on a user message or cancel.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives/batch",
+        "allternit/cmd/gizzi-code/src/runtime/primitives/sleep.ts"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/surfaces/docs/tools/agent-batch.mdx",
+        "allternit/surfaces/docs/tools/sleep.mdx"
+      ]
+    },
+    {
+      "id": "feature:system-prompt-stack",
+      "label": "System prompt stack: base, safety, care, conditional blocks",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "system.ts picks base-chat+capabilities+safety+care (chat, bot turns) or base-code+safety (code), then one family addendum (gpt, gemini, open, on-device), mode-auto/mode-ask from the permission mode, unattended (automation_run), background-code (run_kind), memory-use (memory on), voice/voice-tags/phone. Byte caps and a vendor-name scan over prompts and tool text live in test/session/system-prompt-selection.test.ts. Hard limits also reach the brain_runner and the runtime route. Learning is an answer style composed by allternit-api answer_shapes.rs.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts",
+        "allternit/cmd/allternit-api/src/answer_shapes.rs",
+        "allternit/cmd/allternit-api/src/brain_runner/vendors.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Fix and build all 70 rows of the vendor prompt gap review (handoffs/system-prompts-2026-11-17/PLAN-gaps-2026-11-19.md)"
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/core/system-prompts.mdx",
+        "allternit/surfaces/docs/guides/learning-mode.mdx",
+        "allternit/surfaces/docs/guides/autonomy-modes.mdx"
+      ]
+    },
+    {
+      "id": "feature:gap-primitives",
+      "label": "Gap primitives: worktree, second opinion, PR comments, status, feedback note, location, voice control, end conversation, untrusted fences",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Typed contracts in runtime/primitives/gap-types.ts with gated stubs (available=false until each feature PR). Cards on ai (components/chat/gap-cards) and iOS (Features/Chat/Views/GapCards); TUI adapters per tool. fenceUntrusted (runtime/tools/guard/untrusted.ts) fences web, search, lookup, connector, past-chat, resource and MCP results on the model-facing text; the TUI WebFetch/WebSearch/MCP tools use it too. run_kind/voice_tags turn hints in allternit-api VALUED_TURN_HINTS; gizzi run --run-kind background_code and the GitHub action send run_kind.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives/gap-types.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/untrusted.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/message-v2.ts",
+        "allternit/cmd/allternit-api/src/v1_routes.rs",
+        "allternit/surfaces/gizzi-github-action/src",
+        "allternit-ai/src/components/chat/gap-cards",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/GapCards"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/surfaces/docs/tools/untrusted-content.mdx",
+        "allternit/surfaces/docs/cli/background-runs.mdx",
+        "allternit/surfaces/docs/tools/worktree.mdx"
+      ]
+    },
+    {
+      "id": "feature:sleep",
+      "label": "Allternit Sleep",
+      "product": "product:memory-drive",
+      "status": "building",
+      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, stricter intake while Sleep is behind, and a question to you when two memories conflict. Backend, gizzi-code runtime and CLI, iPhone settings and docs merged 2026-11-20 (train 20261119-2008); every stage ships off. Desktop, ai.allternit.com, the phone layout and the PWA have the Sleep section in Memory settings and the chat conflict card (allternit-ai #1191, #1192, merged 2026-11-20).",
+      "touches": [
+        "allternit/cmd/allternit-api/src/sleep",
+        "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/memoryDrive/sleep.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/memory.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep",
+        "allternit-ai/src/lib/agents/memory-sleep-client.ts",
+        "allternit-ai/src/lib/agents/memory-conflict-card.ts",
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Sleep is a feature of Memory Drive, not a new product. Everything ships off by default; the main switch alone turns no stage on."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Merged to main in train 20261119-2008 with every stage off. While sleep debt pauses fading, extraction skips new facts under debt_intake_min_attention (0.25); flagged facts always go in (Eoj decision 7)."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/mod.rs",
+        "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep/triggers.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep/SleepSection.tsx",
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx"
+      ]
+    },
+    {
+      "id": "feature:oauth-apps",
+      "label": "Sign in with Allternit (OAuth apps)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "Allternit is an OAuth 2.0 authorization server for outside apps. A developer registers an app in the console (platform.allternit.com, OAuth apps); a person approves it on a consent page and sets a monthly limit; the app gets an alt_oat_ token that calls only POST /v1/chat/completions (scope inference), /api/v1/oauth/usage and /oauth2/userinfo, billed to the person's credits with a reserve-then-settle cap and no auto top-up. Apps start in testing (test users, $50 cap) until an Allternit admin approves them. Tokens are opaque and hashed, refresh tokens rotate with a 30 s retry grace, and sub is per app. People see and change their apps in Settings > Connections > Apps with access (web, Desktop, phone, PWA), iPhone Settings > Privacy > Connected apps, and gizzi auth apps. New code (open PRs platform #2634 to #2643 and #2656, ai #1188 #1189, platform #2658 #2660) adds migration 150, cloud-api routes/oauth_server.rs, oauth_grants.rs, platform_v1/oauth_apps.rs and services oauth_apps.rs, oauth_tokens.rs, oauth_spend.rs; the touches below name the existing files they extend.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/cost_service.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit/surfaces/platform.allternit.com/src/App.tsx",
+        "allternit/surfaces/platform.allternit.com/src/components/console-ui/navConfig.ts",
+        "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+        "allternit-ai/src/routes.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/PrivacySettingsView.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Review policy: apps stay in testing (listed test users, monthly limit up to $50) until an Allternit admin approves them. App-driven spend never triggers auto top-up. ALLTERNIT_OAUTH_SUB_SECRET must never change after launch, because it changes every app's sub."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "id": "feature:claude-org-billing",
+      "label": "Claude organization linked billing",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "A person links their own Claude organization (Admin or Billing role, organization pays Anthropic directly) and their own chats with linked/claude/<model> models are billed to it through Anthropic's linked billing, not to Allternit credits. cloud-api is the client: it signs client assertions and a Workload Identity Federation token with one ES256 key under its own issuer (JWKS and discovery served at /oauth2/anthropic-client), links through auth.claude.com, and calls api.anthropic.com/v1/chat/completions with the person's user profile id read from the database. Person-only (no bots, routines, schedules, missions or sub-agents), no wallet debit (inference_usage.billed_to = claude_org), a refusal never falls back by itself and the client offers the button Use Allternit credits for this message. Behind ALLTERNIT_CLAUDE_LINK, default off; shows Not available yet until configured. Migration 151. Surfaces: Settings > Connections row and a Claude organization picker group on web, Desktop, phone and PWA; iPhone Settings > Connections; gizzi auth link claude-org. New code (open PRs platform #2645 #2647 #2649 #2651 #2652 #2658 #2660, ai #1186 #1187) adds auth/anthropic_client.rs, routes/anthropic_client_issuer.rs, routes/claude_link.rs and routes/model_router/anthropic_linked.rs; the touches below name the existing files they extend.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+        "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit-ai/src/components/chat/ModelPickerPopover.tsx",
+        "allternit-ai/src/lib/ai/rust-stream-adapter.ts",
+        "allternit-ai/src/components/connect-kit/registry.ts",
+        "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsSettingsView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/ModelManagementView.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/person-plan/turn.ts",
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Linked requests run under Allternit's Anthropic account, so its rate limits and retention apply and the organization's ZDR or BAA do not. Explicit model ids (linked/claude/<model>), never a silent switch. Real Anthropic traffic is unchecked until owner gates G1 to G5."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-registry",
+      "label": "Runtime registry and runtimes API",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "One list of runtimes a bot can run on (runtimes[] in cli-catalog.json v3): adapter, which brains fit, access, status, system layer and look tokens. gizzi reads it directly (gizzi runtime catalog, bot create/edit --runtime/--brain, /runtime in the TUI); allternit-api and cloud-api serve it as GET /api/v1/runtimes for Desktop, web and the phone apps. The local CLI driver uses it for adapters and append-only system layers.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: the registry is a top-level runtimes[] in cli-catalog.json (no second file). Runtime id = old native harness id. fits() accepts vendor, subs- and CLI provider ids; one rule for every client. Wire names stay (vendor, botBrain.mode/harness); new botBrain.runtime/access/autoSwitchedFrom are additive."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Gizzi: gizzi runtime catalog [--all] [--json], --runtime/--brain on bot create/edit (--model alias), /runtime picker in the TUI (Runtime then Brain, auto-switch note, Connected bots locked 'Run by <Vendor>')."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/RuntimePicker.tsx",
+        "allternit/cmd/allternit-api/src/cli_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/surfaces/docs/api/runtimes.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-views",
+      "label": "Runtime views",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Every runtime gets its own view of a bot's work: the View switch (Allternit / Runtime / Split, Split hidden below 900 px) draws the runtime's terminal or app look from the registry's data-only look tokens, or frames its live web app from the user's computer. The runtime/brain picker sits beside it. Same feature on Desktop, web, PWA, iOS, Android and Gizzi.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/runtime_live.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/lib/bots",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Look config is data only (palette, glyphs, banner lines, step verbs, footer slots) so Swift and Kotlin draw it; agentView {view, look} is a separate config key so old clients saving botBrain don't wipe it. Phones show the look pack plus 'Open on your computer' for live web apps."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs",
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
     }
   ],
@@ -4684,6 +5834,209 @@
         "allternit/surfaces/docs/surfaces/site-apis.mdx",
         "allternit/cmd/allternit-api/src/teach_routes.rs",
         "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts"
+      ]
+    },
+    {
+      "id": "journey:meeting-join-to-recap",
+      "label": "Gizzi joins a call and leaves a recap",
+      "description": "From a calendar event or a pasted link to the recap on every surface.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/views/meetings/MeetingsView.tsx",
+          "says": "The person pastes a link or turns on auto-join for calendar events; the web app calls POST /meetings and /meetings/:id/sessions."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/services/meeting_launcher.rs",
+          "says": "The launcher checks the caps, takes a bot account (Meet), and asks the user's own runtime (cloud computer, else an open Desktop, else wakes the cloud computer) to start the bot; none online ends no_runtime."
+        },
+        {
+          "at": "allternit/services/meeting-bot/src/runner.ts",
+          "says": "The pod joins the call, posts the notice, publishes call audio to LiveKit and posts state, chat and transcript batches to cloud-api with its pod token."
+        },
+        {
+          "at": "allternit/services/voice/src/meeting_worker/config.rs",
+          "says": "The voice meeting_worker transcribes the audio and labels speakers."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/meeting_turn_stream.rs",
+          "says": "The in-pod allternit-api answers \"Gizzi, ...\" turns and writes the summary."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/meeting_notify.rs",
+          "says": "cloud-api pushes state changes (iOS Live Activity, notifications) and emails the recap."
+        },
+        {
+          "at": "allternit-ai/src/views/meetings/MeetingsHost.tsx",
+          "says": "Desktop, web and PWA show the live pill and notifications; Desktop also shows the call in the tray and the macOS menu bar."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/meetings/CONTRACT.md"
+      ]
+    },
+    {
+      "id": "journey:connect-kit-day-one-setup",
+      "label": "Connect kit and day-one setup",
+      "description": "From a first sign-in to a connected AI, phone and main bot, with no computer step, then any later connection from Settings > Connections.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/fabric-session/phone/PhoneFirstRun.tsx",
+          "says": "First run on the phone or PWA walks Your AI, Your phone, Main bot, Connected. A failed step shows an error and Try again instead of skipping."
+        },
+        {
+          "at": "allternit-ai/src/components/subscriptions/SubscriptionConnect.tsx",
+          "says": "A row opens the connect sheet with the few steps for that vendor (code, link and paste-back, OAuth, key or QR); the row finishes by itself when the login is done."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/inference_keys.rs",
+          "says": "A pasted API key is checked with the vendor, stored encrypted, and the account row turns Connected."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/cli_tools.rs",
+          "says": "A plan on a computer (Codex, Grok, Claude Code, Kimi) starts the CLI login there; the runtime polls it and reports the login and the row."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/cli/commands/connect.ts",
+          "says": "gizzi connect lists the same rows with the same four words and runs the logins in the terminal."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/connections.mdx",
+        "allternit/surfaces/docs/api/connections.mdx"
+      ]
+    },
+    {
+      "id": "journey:freeweights-browse-pull-verify-run",
+      "label": "Browse the Freeweights catalog, pull a model, check it, run it",
+      "description": "From the catalog to a verified model running on the person's computer.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/views/model-lab",
+          "says": "Freeweights Studio lists the catalog with badges for source, license and size. Opening a model shows its details; entries marked From the publisher link out and have no pull button."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/provider_routes.rs",
+          "says": "Hugging Face search rows carry freeweights data (listed, license, section) so a listed repo is shown from Freeweights."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/local_engine_routes.rs",
+          "says": "The pull goes to the Local Engine on the person's computer through the allternit-api local-engine proxy (from the phone, through the cloud runtime relay)."
+        },
+        {
+          "at": "allternit/services/model-source",
+          "says": "The contract resolves the repo to sources in order, downloads each file and checks its sha256 or git blob id. A failing manifest is an error; a down catalog falls back to the publisher."
+        },
+        {
+          "at": "allternit/services/local-engine/src/download",
+          "says": "Verified files land in the model cache and the model row carries its verification state. POST /models/verify re-hashes them later."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/local_brain_routes.rs",
+          "says": "The model is served by a local runtime and shows in the model picker; the app shows its label (Verified by Freeweights, Matches the publisher's hash, Pinned by Allternit or Not verified)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/tools/freeweights.mdx",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "id": "journey:sleep-nap-and-ask",
+      "label": "Sleep consolidates memory and asks when memories conflict",
+      "description": "From turning Sleep on to a nap on idle, a question about a conflict, and a reminder.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/docs/guides/sleep.mdx",
+          "says": "The user turns Sleep on in memory settings (settings switch planned for Desktop, web, PWA and iPhone)."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/memory",
+          "says": "Gizzi sends an idle or turn signal to the backend when the session goes quiet."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/sleep",
+          "says": "The backend queues a nap, runs the cycle, scores memories and records any dispute between conflicting memories."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/sleep",
+          "says": "A conflict is put to the user as a question; resolving it updates the memory through the disputes route."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/memory",
+          "says": "A due reminder is surfaced in the session."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx",
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "id": "journey:oauth-app-sign-in",
+      "label": "An outside app signs in with Allternit and spends the person's credits",
+      "description": "From a developer's authorize link to a billed model call, a monthly limit and a revoke.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/platform.allternit.com/src/App.tsx",
+          "says": "The developer registers the app in the console (OAuth apps): client type, redirect URIs, test users. It starts in testing."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/lib.rs",
+          "says": "The app sends the browser to GET /oauth2/authorize with PKCE. A bad client or redirect shows an error page and never redirects; otherwise cloud-api stores the request and sends the person to the consent page."
+        },
+        {
+          "at": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+          "says": "The person signs in, reads the plain-word scopes, sets a monthly limit (at most $50 while the app is not live) and taps Allow. cloud-api returns the redirect with a single-use code."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+          "says": "The app trades the code at /oauth2/token for an alt_oat_ access token and an alt_ort_ refresh token; the token is hashed at rest and only the oauth routes and chat completions accept it."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+          "says": "A chat completion reserves the most it could cost under the grant's row lock. Over the limit answers 402 app_spend_cap_reached, low credits 402 user_credits_exhausted, with no model call; otherwise it runs and settles to the real cost."
+        },
+        {
+          "at": "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+          "says": "The person sees spend against the limit in Settings > Connections > Apps with access, changes the limit or revokes; revoke is immediate."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "id": "journey:link-claude-org",
+      "label": "Link a Claude organization and bill a chat to it",
+      "description": "From the Link your Claude organization row to a billed Claude message, a refusal and the credits button.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+          "says": "The person taps Link your Claude organization (feature on and configured, else Not available yet). The eligibility notes show first."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+          "says": "The claude-org row starts the link: cloud-api creates the user profile, makes a pushed authorization request at auth.claude.com and returns the browser URL. The callback exchanges the code, seals the refresh token and returns to the app."
+        },
+        {
+          "at": "allternit-ai/src/components/chat/ModelPickerPopover.tsx",
+          "says": "Linked models appear in their own Claude organization group, billed to the person's organization. The person picks one."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+          "says": "A person-sent message goes to Anthropic's chat completions with the operator token and the person's profile id from the database. No wallet debit; the usage event says claude_org."
+        },
+        {
+          "at": "allternit-ai/src/lib/ai/rust-stream-adapter.ts",
+          "says": "A refusal (spend limit, not billable, disconnected) shows a card. Use Allternit credits for this message resends once, only when the person taps."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
       ]
     }
   ]

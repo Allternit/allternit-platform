@@ -1,6 +1,6 @@
 ---
 title: "Explore the 3D facility"
-description: "Choose a character, find a room, and use the workspace floor."
+description: "Choose a character, find a room, get around the campus, and use the workspace floor."
 ---
 
 The facility is a walkable introduction to Allternit. Open [3dfacility.allternit.com](https://3dfacility.allternit.com) and choose a character before your first walk.
@@ -27,9 +27,82 @@ The shared walk, jog, run, strafe and turn clips (`clips.glb`, Mixamo bone names
 
 ## Find a room
 
-Use **Rooms** while walking, or the directory below the campus. The directory includes the main building, upper floor, South Block and grounds. **Visit** enters a room; **Website** opens its associated website in a new tab. A link with `?room=office-annex` takes you to that room after character creation.
+Open the menu (the round button at the top right) and choose **Rooms**, or use the directory below the campus. The directory includes the main building, upper floor, South Block and grounds. **Visit** enters a room; **Website** opens its associated website in a new tab. A link with `?room=office-annex` takes you to that room after character creation.
 
-Move with WASD, drag to look, and use Shift to run. Phone controls appear on the campus. Close an exhibit before returning to movement.
+## Move around
+
+The top of the screen shows only a back button, the room name and a menu button. The menu holds everything else: **Open** (the room's website), **Rooms**, **Campus map**, **Take a cart**, **Tour**, **Create a person**, **Bring an artifact**, **Camera follow** (phone), **Sound** and **Leave 3D view**. In the Allternit app's Office view, the menu also has **Character**, **Workspace** and **Artifacts**. While you walk, the site header moves out of the way.
+
+| | Phone and tablet | Computer |
+|---|---|---|
+| Walk | Put your thumb anywhere on the left half of the screen and push. The stick moves you in any direction; push further to go faster. | `W` `A` `S` `D` or the arrow keys |
+| Run | Push the stick to its edge for a moment, or tap **Run** | Hold `Shift`, or press `R` to keep running |
+| Look | Drag anywhere else on the screen. Your look finger and stick finger work at the same time. | Drag, or choose **Free look** to steer with the mouse (`Esc` releases it) |
+| Camera follow | When you walk without touching the view, the camera turns toward where you are heading. Turn it off in the menu: **Camera follow: on**. | Same, with `A` and `D`. Turn it off with **Camera follow** in the bar at the bottom. |
+
+Walking speed is 4.2 m/s. Running is 9 m/s inside buildings and 12 m/s on the grounds. Robot characters walk at the speed of their walk animation and run at full speed. Camera follow starts off when your device asks for reduced motion, and the choice is kept in this browser.
+
+Walls let you slide along them, and doors open as you reach them. If you are ever boxed in, the facility moves you to a clear spot after a moment. With a keyboard, Tab reaches four direction buttons that walk while held.
+
+You can walk between rooms without going back to the Lobby: the Office has a door to the Control Room, the Workshop opens into the Library through an aisle in its shelves, and upstairs the North Bay connects to the Apps Gallery. The Lobby glass is solid; use its doors.
+
+Close an exhibit before returning to movement.
+
+## The campus
+
+The campus is a 1,280 × 960 m site laid out as a grid of streets. The Core, with the lobby and the product rooms, sits near the middle. The districts sit round it: Commons Loop and Labs to the north-east, The Works and Compute Row along the east side, Canopy Quarter to the west, and Bot Quarter to the south. River Park runs along the bluff at the north-west edge, above the river. Four lots to the south are held in reserve, as open meadow, for districts that are not built yet.
+
+| District | What you find there | What fills it |
+|---|---|---|
+| Core | The lobby, the product rooms, the podium and the South Block | Fixed exhibits |
+| Commons Loop | A ring of two-storey project studios round a planted court | Your projects fill the studios |
+| The Works | A long daylit manufacturing shed: Husks work cells and the Link and Pack line | Fixed exhibit |
+| Compute Row | Twelve data halls with racks, and a cooling yard | Your cloud computers light the halls |
+| Canopy Quarter | Team lofts and meeting rooms under one roof | Fixed exhibit |
+| River Park | A bluff trail, overlooks and an amphitheatre | Fixed exhibit |
+| Academy Quarter | Lecture halls, library and labs for courses and guided demos | Fixed exhibit |
+| Labs | Pavilions round shared courts: Freeweights, on-device models, Device Pool, computer use | Fixed exhibit |
+| Market Street | Shopfronts for the Store, Front Desk and Digital Twin | Fixed exhibit |
+| Proving Range | An outdoor test track for the robotics programs | Fixed exhibit |
+| Bot Quarter | Courtyard homes, one for each bot | Your bots light their homes while they work |
+| Central Green | A park with an events lawn and a pond | Fixed exhibit |
+
+Your bots, projects and computers only appear in the Allternit app's Office view, where you are signed in. The public site shows a fixed mix of lit windows, so no district looks empty, and never shows your names. A district that has not been built yet shows as a plain outline or a solid block from a distance, and you cannot enter it.
+
+### Reaching a district
+
+| Way | Where it works |
+|---|---|
+| Walk | Every district. The whole campus is open ground, except the river channel. |
+| Cart | Any street, and it stops at buildings. |
+| Shuttle | Ten stops on the two lines. Bot Quarter has no stop. |
+| Campus map | Every district, from the menu. |
+
+See [Get around the campus](#get-around-the-campus) for the controls and the times.
+
+### On a phone
+
+The layout is the same on a phone. The facility draws fewer buildings in detail at once and shows distant districts only within a shorter distance, so far districts appear as plain blocks until you get closer. Interiors may take a moment to appear when you arrive by map, and the doors stay shut until they are ready.
+
+### Day and night
+
+The lighting follows the time of day. At night, windows, screens and ceiling panels glow and the paths show warm light pools. In Bot Quarter, Commons Loop and Compute Row, the lit windows show real activity in the Office view. Everywhere else they are a fixed mix and say nothing about your account.
+
+## Get around the campus
+
+The campus is 1,280 × 960 m with twelve districts on a grid of streets. Walking from one end to the other takes about five minutes, so there are three faster ways to travel.
+
+| | How | Speed |
+|---|---|---|
+| Campus map | Open the menu and choose **Campus map**, or open **Rooms** and choose the **Campus map** tab. Tap a district or a stop. The screen fades and you arrive on foot at the district's street side, facing it. | About 2 s |
+| Cart | Choose **Take a cart** in the menu, or take the parked cart at a shuttle stop. Steer with `W` `A` `S` `D` or the arrow keys, or with the thumb stick on a phone. The cart stays on the streets and stops at buildings. **Exit cart** puts you on foot beside it. | 18 m/s |
+| Shuttle | Walk up to a stop and choose to board. **Get off at next stop** leaves at the next stop. To ride straight to a stop farther along, choose it on the map while you ride. | 22 m/s |
+
+There are two shuttle lines. Line 1 runs along Campus Drive and Line 2 runs along Shuttle Avenue. They cross at the Commons / Green stop, where you can change lines. Ten stops serve the districts on the two lines. Bot Quarter is 250 m from both lines, so it has no stop: use the map or a cart to go there.
+
+Typical times from the Core to the east end of Compute Row (about 880 m): 3.5 minutes on foot, 49 s by cart, and 40 s of riding by shuttle (plus the change at Commons / Green).
+
+The map and the cart work without signing in, on the public site and in the Allternit app's Office view.
 
 ## Project Studio
 
@@ -38,6 +111,8 @@ The renewal adds a glass studio west of Spaces, connected through the pavilion's
 Reference links must use HTTP or HTTPS. If browser storage is unavailable, copy the text before closing. Open Allternit separately to continue the project in your account; the local brief is not transferred automatically.
 
 ## Workspace floor
+
+The Allternit app opens the Workspace, a floor of work pods, not the whole facility. The full facility stays at 3dfacility.allternit.com, and the Workspace has an **Open the full facility** control that leads to it. See [Office view](/guides/office-view).
 
 The public floor runs a labeled demo. In the Allternit app's [System drawer](/guides/system-drawer), the Workspace tab can display the roster supplied by the app. **Live** means the frame has received that roster; an empty connected floor says that no bots are present.
 
@@ -51,7 +126,7 @@ The arcade opens Gizzi Brawl in a new tab. Service exhibits link to current cont
 
 If graphics fail, retry the character preview or reload the campus. The workspace also offers a 2D view. Local saved character and project data remain in browser storage when that storage is available.
 
-<Note>The Project Studio and renewal changes are implemented locally and await release. The public site may still show the previous version.</Note>
+<Note>The campus districts are in review and the public site may not show them yet. The Project Studio and renewal changes are implemented locally and await release. The public site may still show the previous version.</Note>
 
 ## Updated human looks
 
@@ -68,3 +143,9 @@ model retain their own art. Choose **Human** to return to the person controls.
 If a bot model cannot download, the creator keeps the selected artwork visible.
 Choose **Retry 3D model** to retry the model download without losing your name or
 character choice.
+
+## Facility models and credits
+
+Desks, chairs, sofas, benches, lamps, shelves, planter pots and the reception counter in the facility are real 3D furniture models instead of simple built shapes. They come from the Sand3D dataset by Sandflow and are licensed CC BY 4.0. The models were adjusted to the campus colors and sized to fit each room. Screens, signs, books and glass are unchanged, and there are no new settings.
+
+The full list of authors, sources and licenses is on the credits page of the facility site, which loads the file `3d/campus/ATTRIBUTIONS.md`. Developers can read the build notes in the facility project's `docs/FV_SAND3D_NOTES.md`.

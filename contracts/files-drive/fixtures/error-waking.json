@@ -1,0 +1,12 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Waking: retry shortly.",
+  "message": {
+    "error": "waking",
+    "code": "waking",
+    "message": "The computer is starting.",
+    "retry_after_s": 5,
+    "computer_state": "waking"
+  }
+}

@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 await ShareOutboxDrainer.shared.drain()
                 // The iOS 26 widget push token the widget extension left.
                 await ActivityTokenRegistry.shared.syncWidgetToken()
+                // Files drive: one Files location per computer (File Provider).
+                await FilesDriveBridge.shared.sync()
             }
         }
         // Live Activities: intent registry, adopt running activities, token uploads.
@@ -71,6 +73,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 domain: "APNs", code: 0, userInfo: [NSLocalizedDescriptionKey: message]
             ))
         }
+    }
+
+    /// On-device model downloads run in a background URLSession: when one
+    /// finishes while the app is suspended or gone, iOS relaunches it here so
+    /// the files are moved into place (OnDeviceDownloader). A later Download
+    /// tap finds them on disk, checks them and installs without refetching.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        OnDeviceDownloader.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
     }
 
     /// Background pushes. `notification.revoke` removes the delivered
@@ -118,8 +132,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let data = userInfo["data"] as? [String: Any]
         let event = data?["event"] as? String
         let inboxId = data?["inboxId"] as? String
+        let sessionId = data?["sessionId"] as? String
+        // Computers console alerts: data = { type: "computer_alert", computerId, rule, value }.
+        let type = data?["type"] as? String
+        let computerId = data?["computerId"] as? String
         await MainActor.run {
-            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId)
+            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId, sessionId: sessionId,
+                                                     type: type, computerId: computerId)
         }
     }
 }

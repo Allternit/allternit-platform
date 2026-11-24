@@ -886,9 +886,7 @@
         "surface:ai",
         "surface:desktop"
       ],
-      "components": [
-        "allternit-ai/src/views/labs"
-      ],
+      "components": [],
       "uses": [
         "product:allternit-api"
       ],
@@ -896,7 +894,7 @@
       "path": "projects/labs.allternit.com",
       "evidence": [
         "websites/projects/labs.allternit.com",
-        "allternit/surfaces/docs/api/alabs.mdx"
+        "allternit/surfaces/docs/guides/labs-courses.mdx"
       ]
     },
     {

@@ -98,7 +98,7 @@ The App Store app (route `iphone-app-store`, serial `app:` plus the phone id) re
 
 - **Listing.** `GET /api/v1/phones` includes the app phones with `route: "iphone-app-store"` and `screen: true` while the broadcast extension's ingest socket is open.
 - **Pairing** (`WS /api/v1/phones/app/pair?phone=…`). After the app's `hello` the node answers `{"type":"pending","pub"}`, raises `phone_app.pair_request` `{phoneId, name, model, code}` on the runtime events feed, and Desktop shows the name and 6-digit code with Approve and Deny. Desktop answers with `POST /api/v1/phones/app/pair/:phoneId/decision` `{"approve": bool}` (desktop credential, loopback).
-- **Viewers.** The same `ws-token` and `/ws/phones/:serial/stream` as above. Binary frames are the broadcast's plaintext iCTRL packets, one per frame: `u8 type | u32 big-endian length | payload`, with 0 status, 1 config (`{width, height, scale, rotation}`), 2 one H.264 Annex-B access unit, 3 ended, 4 audio config (AAC), 5 one AAC frame. Viewers mint read-only tokens; input frames are ignored, because taps on other apps need the Bluetooth board.
+- **Viewers.** The same `ws-token` and `/ws/phones/:serial/stream` as above. Binary frames are the broadcast's plaintext iCTRL packets, one per frame: `u8 type | u32 big-endian length | payload`, with 0 status, 1 config (`{width, height, scale, rotation}`), 2 one H.264 Annex-B access unit, 3 ended, 4 audio config (AAC), 5 one AAC frame. Viewers mint read-only tokens; input frames are ignored. Taps on other apps go through a Phone Use route instead (iPhone Mirroring, or a Bluetooth keyboard from the Mac, an Android phone, a second iPhone or iPad, or the USB Agent board).
 - **The app's browser.** `POST /api/v1/phones/app/:id/rpc` `{method, params}` (desktop credential) forwards to the app's control socket. Methods: `web.open {url}`, `web.snapshot` (`{url, title, elements, jpegBase64, viewport}`), `web.click {ref}`, `web.type {ref, text, submit?}`, `web.scroll {dy}` (`{ok, scrollY}`), `web.back` (adds `wentBack`), `web.wait {ms}` and `screen.prompt` (`{shown, live}`). Errors: 409 `app_not_open` when the app isn't open, and the app's own codes `stopped_by_user`, `browser_not_open`, `stale_ref`, `not_editable`, `bad_params`, `unknown_method`, `script_error`, `internal`. Desktop exposes these to bots as `phone.web.*` and `phone.screen.request`.
 
 Desktop code: `surfaces/allternit-desktop/src/main/phone-app-store.ts` (the lane, viewer session and node client) and `phone-app-still.ts` (screenshots: the last keyframe decoded with Chromium's WebCodecs in a hidden window).
@@ -172,6 +172,18 @@ These need the Desktop access token and refuse relayed requests (`x-allternit-re
 | `GET` | `/api/v1/phones/app/pair/pending` | `{ "pairs": [ …pair_request payloads ] }`, for a Desktop that reconnects its event stream. |
 
 Viewers are unchanged: `POST /api/v1/phones/app:<phoneId>/ws-token`, then `/ws/phones/app:<phoneId>/stream`. In `GET /api/v1/phones` an app phone row also carries `"route": "iphone-app-store"`, `"screen": true`, `"appOpen"`, `"foreground"` and `"browserOpen"`.
+
+### Android via the Allternit app (`app:` serials, route `android-app`)
+
+An Android phone running the Allternit app uses the same app-phone lane, with the phone dialing out and sending the same sealed iCTRL packets (CONFIG, FRAME, ENDED) from MediaProjection and a MediaCodec H.264 Annex-B encoder. The cloud adds a one-time claim, so the phone needs no Desktop.
+
+- **Claim.** `POST /api/v1/app-phones/:phoneId/claim` (Clerk owner) returns a one-time 8 character code, held in memory for 120 s, single use. `POST /api/v1/app-phones/claim/redeem` trades the code for the app phone key. See [Phones API](/api/platform/phones#android-claim-and-pair).
+- **Pairing.** The pair `hello` carries `platform` (`ios` by default, or `android`), stored with the phone and included in `phone_app.pair_request`. `GET /api/v1/phones/app/pair/pending` and `POST /api/v1/phones/app/pair/:phoneId/decision` accept the local Desktop, or a request relayed by cloud-api (signed with the runtime relay key plus `x-allternit-owner`) whose owner is the runtime's paired owner and the caller. They stay refused for any other relayed caller (`403 desktop_only`).
+- **Listing.** `GET /api/v1/phones` rows for an Android app phone carry `platform: "android"`, `route: "android-app"`, `canTap`, `screen` and `consent` (`granted`, `needed`, `denied` or `unknown`).
+- **Viewers.** Same `ws-token` and `/ws/phones/app:<phoneId>/stream`. A viewer waiting on an Android phone with no ingest socket makes the node send `screen_request` on the phone's control socket (throttled to once per 10 s); tokens are minted for such a phone so the viewer can wait. Full-control viewer `input` frames become sealed `input.events` control RPCs. Read-only frames never reach the phone. iPhones still ignore input.
+- **Viewer only.** `input.events` is refused with `403 viewer_only` on `POST /api/v1/phones/app/:id/rpc`, the route bots use, so bot actions keep going through the approval hold.
+- **Ends.** Stop, revoke, lock (Android 15 and later), reboot or 10 idle minutes with no viewer send ENDED with a reason. With no viewer the encoder pauses but the projection stays open.
+- **Not on this lane.** No audio. Windows that set `FLAG_SECURE` show black.
 
 ### Bot runs in the in-app browser
 

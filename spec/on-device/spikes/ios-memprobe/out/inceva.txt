@@ -1,0 +1,22 @@
+Launched application with com.allternit.spike.memprobe.inceva bundle identifier.
+Waiting for the application to terminate…
+PROBE variant=MemProbe Inc+EVA model=iPhone15,4 iOS=27.2
+PROBE physicalMemory_MB=5688
+PROBE cold_available_MB=4088 (bytes=4287117664)
+PROBE footprint_MB=7
+PROBE touched_total_MB=256 avail_now_MB=3825 footprint_MB=270
+PROBE touched_total_MB=512 avail_now_MB=3568 footprint_MB=527
+PROBE touched_total_MB=768 avail_now_MB=3312 footprint_MB=783
+PROBE touched_total_MB=1024 avail_now_MB=3056 footprint_MB=1039
+PROBE touched_total_MB=1280 avail_now_MB=2800 footprint_MB=1295
+PROBE touched_total_MB=1536 avail_now_MB=2543 footprint_MB=1552
+PROBE touched_total_MB=1792 avail_now_MB=2287 footprint_MB=1808
+PROBE touched_total_MB=2048 avail_now_MB=2031 footprint_MB=2064
+PROBE touched_total_MB=2304 avail_now_MB=1775 footprint_MB=2320
+PROBE touched_total_MB=2560 avail_now_MB=1518 footprint_MB=2577
+PROBE touched_total_MB=2816 avail_now_MB=1262 footprint_MB=2833
+PROBE touched_total_MB=3072 avail_now_MB=1006 footprint_MB=3089
+PROBE touched_total_MB=3328 avail_now_MB=750 footprint_MB=3345
+PROBE touched_total_MB=3584 avail_now_MB=494 footprint_MB=3601
+PROBE STEPTEST_DONE touched_MB=3584 stop_limit_MB=3788 (avail-300)
+App terminated due to signal 15.

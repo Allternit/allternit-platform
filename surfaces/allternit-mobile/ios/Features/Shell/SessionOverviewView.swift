@@ -6,6 +6,12 @@ import UIKit
 /// Opened from the chat header's count button or "See all" over Recents in
 /// the drawer. Section-screen chrome: ☰ · title · filter, the List · Grid · Deck switch, floating
 /// search + New. Bots have their own (a bot's Threads tab).
+///
+/// ⋯ ("Recents options", phone calm step 25, web ai #1151): Select chats /
+/// Select threads, then the All · Pinned · Archived views. Select mode swaps
+/// to checkbox rows (chats and code threads only), Cancel + Select all / Clear
+/// up top and a glass bar of Archive (Unarchive) · Pin (Unpin) · Delete. The
+/// rules are `reduceOverviewSelect` in OverviewSelect.swift.
 struct SessionOverviewView: View {
     let mode: ShellMode
     let onOpen: (AgentSession) -> Void
@@ -17,6 +23,12 @@ struct SessionOverviewView: View {
 
     @ObservedObject private var store = ShellSessionsStore.shared
     @ObservedObject private var projects = ProjectStore.shared
+    @ObservedObject private var pins = RailPinsStore.shared
+    @State private var select = INITIAL_OVERVIEW_SELECT
+    @State private var optionsOpen = false
+    @State private var layoutOpen = false
+    @State private var confirmDelete = false
+    @State private var seeded = false
     /// The chosen layout, kept across launches (useOverviewLayout).
     @AppStorage("allternit-phone-overview-layout") private var layoutRaw = Layout.grid.rawValue
     @State private var query = ""
@@ -31,7 +43,17 @@ struct SessionOverviewView: View {
     @State private var swipeId: String? = nil
     @State private var swipeOffset: CGFloat = 0
 
-    private var layout: Layout { Layout(stored: layoutRaw) ?? .grid }
+    private var layout: Layout {
+        // Select mode is always the list (checkbox rows).
+        select.selecting ? .list : (Layout(stored: layoutRaw) ?? .grid)
+    }
+
+    /// ⋯ and select mode are for chats and code threads (web `PhoneChatMenu`).
+    private var hasOptions: Bool { mode == .home || mode == .code }
+
+    private func selectable(_ session: AgentSession) -> Bool { hasOptions && !session.isTerminal }
+
+    private var selectLabel: String { mode == .code ? "Select threads" : "Select chats" }
 
     private var title: String {
         switch mode {
@@ -50,6 +72,11 @@ struct SessionOverviewView: View {
     }
 
     private var emptyText: String {
+        switch select.view {
+        case .pinned: return "No pinned \(mode == .code ? "threads" : "chats") yet."
+        case .archived: return "Nothing archived."
+        case .all: break
+        }
         switch mode {
         case .code: return "No code threads yet. Start one and it shows here."
         case .aci: return "No agent runs yet."
@@ -59,14 +86,16 @@ struct SessionOverviewView: View {
 
     /// Working sessions first, then the most recent (useModeOverview `order`).
     private var items: [AgentSession] {
-        store.openSessions(for: mode).enumerated().sorted { a, b in
+        if select.view == .archived { return store.archivedSessions(for: mode) }
+        let open = store.openSessions(for: mode).filter { select.view != .pinned || pins.isPinned($0.id) }
+        return open.enumerated().sorted { a, b in
             let wa = store.isStreaming(a.element.id), wb = store.isStreaming(b.element.id)
             return wa != wb ? wa : a.offset < b.offset
         }.map(\.element)
     }
 
     /// Agent runs can't be closed or renamed here (web passes no onClose / onRename for ACI).
-    private var editable: Bool { mode != .aci }
+    private var editable: Bool { mode != .aci && !select.selecting && select.view != .archived }
 
     /// Group label: the session's project ("No project" otherwise).
     private func groupLabel(_ session: AgentSession) -> String {
@@ -99,17 +128,22 @@ struct SessionOverviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PhoneSectionHeader(title: title, onMenu: onMenu) {
-                if groups.count > 1 { filterMenu }
+            if select.selecting {
+                selectHeader
+            } else {
+                // ☰ stays tap-only here: the fan would draw under this cover.
+                PhoneHeader(title: title, wideSides: groups.count > 1, sectionStyle: true, onMenu: onMenu) {
+                    if groups.count > 1 { filterMenu }
+                    if hasOptions { optionsButton } else { layoutButton }
+                }
             }
             // The Bots home's List · Grid · Deck switch, on every mode's overview.
             HStack {
-                Text("\(shown.count) OPEN")
+                Text("\(shown.count) \(select.view == .archived ? "ARCHIVED" : (select.view == .pinned ? "PINNED" : "OPEN"))")
                     .font(.system(size: 12, weight: .semibold))
                     .tracking(0.72)
                     .foregroundColor(Color("TextTertiary"))
                 Spacer()
-                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
@@ -117,14 +151,36 @@ struct SessionOverviewView: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .animation(.spring(response: 0.35, dampingFraction: 0.86), value: shown.map(\.id))
-                PhoneFloatingBar(
-                    query: $query,
-                    placeholder: "Search \(title.lowercased())",
-                    newLabel: newLabel,
-                    wide: .search,
-                    onNew: onNew
-                )
+                if select.selecting {
+                    selectBar
+                } else {
+                    PhoneFloatingBar(
+                        query: $query,
+                        placeholder: "Search \(title.lowercased())",
+                        newLabel: newLabel,
+                        wide: .search,
+                        onNew: onNew
+                    )
+                }
             }
+        }
+        .onChange(of: shown.map(\.id)) { _, ids in
+            select = reduceOverviewSelect(select, .visible(ids))
+            seedForLaunchArguments()
+        }
+        .onAppear {
+            #if DEBUG
+            if launchArgumentEnabled(LaunchArgument.calmOverviewMenu) { optionsOpen = true }
+            seedForLaunchArguments()
+            #endif
+        }
+        .confirmationDialog(
+            "Delete \(select.selected.count) \(select.selected.count == 1 ? "item" : "items")? This can't be undone.",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .accessibilityIdentifier("phoneOverview")
@@ -183,7 +239,7 @@ struct SessionOverviewView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(shown) { session in
                             listRow(session)
-                                .onTapGesture { if editingId != session.id { open(session) } }
+                                .onTapGesture { if editingId != session.id { tap(session) } }
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
@@ -195,7 +251,7 @@ struct SessionOverviewView: View {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                         ForEach(shown) { session in
                             card(session, tall: false)
-                                .onTapGesture { if editingId != session.id { open(session) } }
+                                .onTapGesture { if editingId != session.id { tap(session) } }
                                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                         }
                     }
@@ -209,7 +265,7 @@ struct SessionOverviewView: View {
                         ForEach(shown) { session in
                             card(session, tall: true)
                                 .frame(width: OverviewDeck.width, height: OverviewDeck.height)
-                                .onTapGesture { if editingId != session.id { open(session) } }
+                                .onTapGesture { if editingId != session.id { tap(session) } }
                                 .offset(y: swipeId == session.id ? swipeOffset : 0)
                                 .opacity(swipeId == session.id ? Double(1 + swipeOffset / 400) : 1)
                                 .simultaneousGesture(swipeUpToClose(session))
@@ -227,6 +283,7 @@ struct SessionOverviewView: View {
 
     private func listRow(_ session: AgentSession) -> some View {
         HStack(spacing: 14) {
+            if select.selecting { checkbox(session) }
             Image(systemName: ShellSearchView.icon(for: session))
                 .font(.system(size: 17))
                 .foregroundColor(Color("TextSecondary"))
@@ -265,7 +322,9 @@ struct SessionOverviewView: View {
         .frame(minHeight: 60)
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
+        .opacity(select.selecting && !selectable(session) ? 0.45 : 1)
         .accessibilityLabel(accessibilityTitle(session))
+        .accessibilityValue(select.selecting && selectable(session) ? (select.selected.contains(session.id) ? "Selected" : "Not selected") : "")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -326,6 +385,214 @@ struct SessionOverviewView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityTitle(session))
         .accessibilityAddTraits(.isButton)
+    }
+
+    // MARK: - Select mode (OverviewSelect.swift)
+
+    private var optionsButton: some View {
+        Button {
+            Haptics.light()
+            optionsOpen = true
+        } label: {
+            PhoneFilterButtonLabel(active: select.view != .all, systemName: "ellipsis")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Recents options")
+        .accessibilityIdentifier("recentsOptions")
+        .popover(isPresented: $optionsOpen) {
+            optionsList.presentationCompactAdaptation(.popover)
+        }
+    }
+
+    /// Modes with no select/archive options still get the layout switch,
+    /// in a one-row popover behind a sliders button.
+    private var layoutButton: some View {
+        Button {
+            Haptics.light()
+            layoutOpen = true
+        } label: {
+            PhoneFilterButtonLabel(active: false, systemName: "slider.horizontal.3")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Layout")
+        .accessibilityIdentifier("overviewLayout")
+        .popover(isPresented: $layoutOpen) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(12)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var optionsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+            Divider().padding(.vertical, 4)
+            optionRow(selectLabel, icon: "checkmark.circle", on: false, disabled: shown.isEmpty) {
+                optionsOpen = false
+                select = reduceOverviewSelect(select, .start)
+            }
+            Divider().padding(.vertical, 4)
+            ForEach(OverviewView.allCases, id: \.self) { view in
+                optionRow(view.label, icon: nil, on: select.view == view, disabled: false) {
+                    optionsOpen = false
+                    select = reduceOverviewSelect(select, .view(view))
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 230)
+    }
+
+    private func optionRow(_ text: String, icon: String?, on: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                if let icon { Image(systemName: icon).frame(width: 20) }
+                Text(text)
+                Spacer(minLength: 0)
+                if on { Image(systemName: "checkmark") }
+            }
+            .font(.system(size: 16))
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 44)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+    }
+
+    /// Cancel · "N selected" · Select all / Clear.
+    private var selectHeader: some View {
+        let ids = shown.filter(selectable).map(\.id)
+        let all = !ids.isEmpty && ids.allSatisfy { select.selected.contains($0) }
+        return HStack {
+            Button("Cancel") {
+                Haptics.light()
+                select = reduceOverviewSelect(select, .cancel)
+            }
+            .frame(minWidth: 72, minHeight: 44, alignment: .leading)
+            Spacer()
+            Text(select.selected.isEmpty ? selectLabel : "\(select.selected.count) selected")
+                .font(.system(size: 17, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Button(all ? "Clear" : "Select all") {
+                Haptics.selection()
+                select = reduceOverviewSelect(select, .selectAll(ids))
+            }
+            .frame(minWidth: 72, minHeight: 44, alignment: .trailing)
+        }
+        .font(.system(size: 16))
+        .foregroundColor(Color("TextPrimary"))
+        .frame(height: 52)
+        .padding(.horizontal, 16)
+        .background(Color("BgPrimary"))
+    }
+
+    private func checkbox(_ session: AgentSession) -> some View {
+        let on = select.selected.contains(session.id)
+        return Image(systemName: on ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 22))
+            .foregroundColor(on ? Color("AccentPrimary") : Color("TextTertiary"))
+            .opacity(selectable(session) ? 1 : 0)
+            .frame(width: 26)
+            .accessibilityHidden(true)
+    }
+
+    /// Glass bottom bar: Archive (Unarchive) · Pin (Unpin) · Delete.
+    private var selectBar: some View {
+        let none = select.selected.isEmpty
+        let pinAction = bulkPinAction(select.selected, pinnedIds: Set(pins.pins.map(\.id)))
+        let archivedView = select.view == .archived
+        return GlassContainer(spacing: 8) {
+            HStack(spacing: 4) {
+                barButton(archivedView ? "Unarchive" : "Archive", icon: archivedView ? "tray.and.arrow.up" : "archivebox", disabled: none) { bulkArchive() }
+                barButton(pinAction == .pin ? "Pin" : "Unpin", icon: pinAction == .pin ? "pin" : "pin.slash", disabled: none) { bulkPin(pinAction) }
+                barButton("Delete", icon: "trash", disabled: none, destructive: true) { confirmDelete = true }
+            }
+            .padding(6)
+            .glassSurface(cornerRadius: 28)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .accessibilityIdentifier("overviewSelectBar")
+    }
+
+    private func barButton(_ text: String, icon: String, disabled: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: icon).font(.system(size: 18))
+                Text(text).font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(destructive ? Theme.statusError : Color("TextPrimary"))
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+    }
+
+    private func tap(_ session: AgentSession) {
+        if select.selecting {
+            guard selectable(session) else { return }
+            Haptics.selection()
+            select = reduceOverviewSelect(select, .toggle(session.id))
+        } else {
+            open(session)
+        }
+    }
+
+    /// Run `work` for each ticked row; the first failure is shown, then select mode ends.
+    private func bulk(_ work: @escaping (String) async throws -> Void) {
+        let ids = select.selected
+        select = reduceOverviewSelect(select, .done)
+        Task {
+            var failure: Error?
+            for id in ids {
+                do { try await work(id) } catch { failure = failure ?? error }
+            }
+            if let failure { actionError = FriendlyErrorMessage.from(failure.localizedDescription) }
+        }
+    }
+
+    private func bulkArchive() {
+        Haptics.light()
+        let unarchive = select.view == .archived
+        bulk { id in
+            if unarchive { try await store.unarchive(id: id) } else { try await store.archive(id: id) }
+        }
+    }
+
+    private func bulkPin(_ action: BulkPinAction) {
+        Haptics.selection()
+        let kind = mode == .code ? "code" : "chat"
+        for id in select.selected where pins.isPinned(id) == (action == .unpin) {
+            pins.toggle(id: id, kind: kind, mode: kind)
+        }
+        select = reduceOverviewSelect(select, .done)
+    }
+
+    private func bulkDelete() {
+        Haptics.warning()
+        bulk { id in try await store.delete(id: id) }
+    }
+
+    /// `-calm-recents-select`: enter select mode with the first two rows ticked.
+    private func seedForLaunchArguments() {
+        #if DEBUG
+        guard !seeded, launchArgumentEnabled(LaunchArgument.calmRecentsSelect) else { return }
+        let ids = shown.filter(selectable).map(\.id)
+        guard !ids.isEmpty else { return }
+        seeded = true
+        select = reduceOverviewSelect(reduceOverviewSelect(select, .start), .selectAll(Array(ids.prefix(2))))
+        #endif
     }
 
     // MARK: - Status, rename, close (SessionOverview OverviewCard)
@@ -415,7 +682,7 @@ struct SessionOverviewView: View {
 
     /// Teleport from ⋯: the session keeps its conversation and resumes on the other computer.
     private func teleport(_ session: AgentSession, toCloud: Bool) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         Task {
             do { try await store.teleport(id: session.id, toCloud: toCloud) }
             catch { actionError = FriendlyErrorMessage.from(error.localizedDescription) }
@@ -481,7 +748,7 @@ struct SessionOverviewView: View {
     }
 
     private func close(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         Task {
             // archive() takes the card out at once and puts it back if the write fails.
             do { try await store.archive(id: session.id) }
@@ -490,7 +757,7 @@ struct SessionOverviewView: View {
     }
 
     private func open(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         onOpen(session)
     }
 }

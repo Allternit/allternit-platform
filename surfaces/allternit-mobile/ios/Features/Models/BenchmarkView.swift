@@ -106,10 +106,9 @@ struct BenchmarkView: View {
                 let label = modelStore.models.first(where: { $0.id == selectedModelId })?.name ?? "Backend default"
                 let result = try await BenchmarkRunner.run(modelId: selectedModelId, modelLabel: label)
                 benchmarkStore.add(result)
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(.success)
+                Haptics.success()
             } catch {
-                runError = error.localizedDescription
+                runError = FriendlyErrorMessage.from(error.localizedDescription, doing: "run the benchmark")
             }
             isRunning = false
         }

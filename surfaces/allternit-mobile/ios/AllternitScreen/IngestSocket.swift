@@ -12,11 +12,15 @@ import Foundation
 /// so the socket keeps retrying (with backoff) for as long as the broadcast
 /// lives. Each binary frame is one LiveScreenPacket sealed in a SecureEnvelope.
 /// Text frames from the node are controls: `{"type":"resume"|"pause"|"keyframe"}`,
-/// plain or sealed. All members are used on the handler's queue.
+/// plain or sealed. A sealed frame with an `id` and a `device.*` type is a
+/// request (`device.screen.read`), answered with a `reply` packet; requests
+/// are never taken from plain frames. All members are used on the handler's queue.
 final class IngestSocket: NSObject, URLSessionWebSocketDelegate {
     var onReady: (() -> Void)?
     var onClosed: (() -> Void)?
     var onControl: ((String) -> Void)?
+    /// A sealed `{"type":"device.…","id":…}` request from the node.
+    var onRequest: (([String: Any]) -> Void)?
     /// The phone was revoked or removed: retrying can't help, end the broadcast.
     var onFatal: ((String) -> Void)?
 
@@ -134,9 +138,9 @@ final class IngestSocket: NSObject, URLSessionWebSocketDelegate {
                 guard let self, self.task === t else { return }
                 switch result {
                 case .success(.string(let text)):
-                    if let type = self.controlType(Data(text.utf8)) { self.onControl?(type) }
+                    self.dispatch(Data(text.utf8))
                 case .success(.data(let data)):
-                    if let type = self.controlType(data) { self.onControl?(type) }
+                    self.dispatch(data)
                 case .success:
                     break
                 case .failure:
@@ -148,14 +152,24 @@ final class IngestSocket: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// `{"type":…}`, either as is or inside a SecureEnvelope.
-    private func controlType(_ data: Data) -> String? {
+    private func dispatch(_ data: Data) {
+        guard let m = message(data), let type = m.object["type"] as? String else { return }
+        if type.hasPrefix("device."), m.object["id"] is String {
+            if m.sealed { onRequest?(m.object) }
+            return
+        }
+        onControl?(type)
+    }
+
+    /// The JSON object, either as is or inside a SecureEnvelope, and whether it was sealed.
+    private func message(_ data: Data) -> (object: [String: Any], sealed: Bool)? {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         if obj["ct"] != nil {
-            guard let opened = try? SecureEnvelope.open(data, key: key) else { return nil }
-            return controlType(opened.plaintext)
+            guard let opened = try? SecureEnvelope.open(data, key: key),
+                  let inner = try? JSONSerialization.jsonObject(with: opened.plaintext) as? [String: Any] else { return nil }
+            return (object: inner, sealed: true)
         }
-        return obj["type"] as? String
+        return (object: obj, sealed: false)
     }
 
     private func schedulePing(on t: URLSessionWebSocketTask) {

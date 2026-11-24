@@ -75,6 +75,10 @@ impl PgDataPlaneGateway {
 #[async_trait]
 impl DataPlaneGateway for PgDataPlaneGateway {
     async fn resolve_default_node(&self, user_id: &str) -> Result<ResolvedNode, ApiError> {
+        // Compute gate: an account with no computer gets the contract's 409
+        // `compute_required` here instead of the 428 "pair a device" below.
+        // A no-op unless ALLTERNIT_COMPUTE_GATE=on.
+        crate::routes::account_compute::require_compute(&self.db, user_id).await?;
         let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
         resolve_default_node_preferring(&PgNodeStore::new(&self.db), user_id, &connected).await
     }

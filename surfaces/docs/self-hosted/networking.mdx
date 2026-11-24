@@ -1,0 +1,80 @@
+---
+title: 'Networking'
+description: 'Per-environment network rules (none, limited, full), allowed hosts, the MCP allowlist, git rules, and every host the Agents Server and workers talk to.'
+---
+
+<Note>
+**Status: Private beta.** This page follows the environment policy in `selfhost-v1.yaml` and `docs/SELFHOST_WORKER_PROTOCOL.md`. Enforcement in the server and in `gizzi worker` is still being built.
+</Note>
+
+## Environment network modes
+
+Every environment has a `network` mode. Workers enforce it on every outbound connection from the sandbox, with a CONNECT proxy or the equivalent.
+
+| `network` | Rule |
+|---|---|
+| `none` (default) | Block all outbound traffic from the sandbox. |
+| `limited` | Allow only hosts in `allowed_hosts`. Exact match, optionally with a port. Everything else is refused with a clear error. |
+| `full` | Allow any host. |
+
+```bash
+curl -s -X POST $ALLTERNIT_SERVER_URL/v1/environments -H "Authorization: Bearer $ALLTERNIT_SERVER_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"build","network":"limited","allowed_hosts":["pypi.org","files.pythonhosted.org","registry.npmjs.org"]}'
+```
+
+Refusals use the code `host_not_allowed`. A policy change (`PATCH /v1/environments/{id}`) reaches a worker on its next claim. Work already claimed keeps the policy it was claimed with.
+
+## Git rules
+
+| Setting | Rule |
+|---|---|
+| `git.allowed_hostnames` | Git clone and push go only to these hosts. Exact match. |
+| `git.allowed_push_refs` | A push to a ref that does not match is refused, for example allow only `refs/heads/agent/*`. |
+
+## MCP allowlist
+
+MCP calls run on the server, not on workers.
+
+- `mcp.allowed_hostnames` in the settings file is the server-wide list.
+- Matching is exact and HTTPS only. A subdomain does not match, and an `http://` URL is refused.
+- An agent's `mcp_servers` URLs must be on the list.
+- An environment's `mcp.allowed_hostnames` can only narrow the server-wide list.
+
+## Narrow, never widen
+
+An environment's `git` and `mcp` lists can only narrow the server-wide lists in the settings file. A host that is not on the server list is not allowed, whatever the environment says.
+
+## Hosts the server talks to
+
+The server builds its outbound HTTP client from an allowlist taken from the settings file, and counts requests per host. It talks to:
+
+| Host | When |
+|---|---|
+| Your model provider | Always. Anthropic API, the Bedrock regional endpoint, the Vertex AI regional endpoint, your `foundry_endpoint`, or your `gateway.base_url`. |
+| Google's OAuth token endpoint | With `vertex`, to exchange the service-account key for an access token. |
+| PostgreSQL (`database.url`) | When a database URL is set. |
+| MCP servers on `mcp.allowed_hostnames` | When an agent uses one. |
+| Your OIDC issuer | With `auth.oidc`, for the discovery document and signing keys. |
+| Your Vault (`secrets.vault.address`) | With `secrets.backend: vault`. |
+| Your OTLP collector (`OTEL_EXPORTER_OTLP_ENDPOINT`) | When OpenTelemetry export is set. |
+
+The server is designed to talk to nothing else. It has no calls to `*.allternit.com` by design: no sign-in, no license check, no update check and no telemetry to Allternit. Don't take that on trust: the air-gapped compose override (`compose.airgap.yml`) puts the server, database, workers and a mock provider on a network with no route out and logs every DNS query, so you can check it on your own build.
+
+## Hosts a worker talks to
+
+- The Agents Server, over HTTPS. That is the worker's own traffic and is not sandbox traffic.
+- From inside the sandbox, only what the environment's `network`, `allowed_hosts` and `git` rules allow. The sandbox cannot reach the server API.
+
+## Ports
+
+| Port | What | Bind |
+|---|---|---|
+| `8400` | The API (`server.listen`) | `127.0.0.1` by default |
+| `9464` | Prometheus metrics, when enabled | `127.0.0.1` by default. The API port never serves `/metrics`. |
+
+Workers need no inbound port.
+
+## TLS
+
+The server listens on plain HTTP on loopback by default. For clients on other machines, put a TLS-terminating reverse proxy or load balancer in front and set `server.public_url` to the HTTPS URL. The web app and PWA only accept `https://` server URLs. See [Client apps](/self-hosted/client-apps).

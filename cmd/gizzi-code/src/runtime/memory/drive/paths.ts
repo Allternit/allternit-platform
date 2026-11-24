@@ -112,3 +112,23 @@ export function serverDreamingActiveSync(): boolean {
     return false
   }
 }
+
+/**
+ * True when Allternit Sleep is on for the current account (GET
+ * /memory/sleep/status → enabled, cached by runtime/memory/sleep/client.ts in
+ * <account>/credentials.json → settings.personal.sleep_enabled, primed at
+ * session start and refreshed with the ~5 min status check). Sleep's cycle
+ * consolidates memory on the server, so local autoDream stays off too: only
+ * one consolidator runs. Sync + light, like serverDreamingActiveSync.
+ */
+export function sleepActiveSync(): boolean {
+  const account = driveAccountSync()
+  if (!account.signedIn) return false
+  try {
+    const raw = readFileSync(path.join(accountDir(account), "credentials.json"), "utf8")
+    const store = JSON.parse(raw) as { settings?: Record<string, { sleep_enabled?: boolean }> }
+    return store.settings?.personal?.sleep_enabled === true
+  } catch {
+    return false
+  }
+}

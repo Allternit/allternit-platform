@@ -1,0 +1,122 @@
+---
+title: How your assistant uses your iPhone (routes)
+description: The ways your assistant can act on your own iPhone, when each one is used, how to set it up, what limits it has, and what each "needs you" message means.
+---
+
+Your assistant can act on your own iPhone in more than one way. Each way is called a **route**. You only need one that works. Allternit picks the first ready route each time, and every send is approved by you on your computer first.
+
+You can see which routes are ready for each iPhone in **Settings → Computers → Phones**. The row says **Ready**, **Needs you** or **Not set up** for each route, which one is in use, and what to do next.
+
+## The routes
+
+| Route | What it is | Used when |
+|---|---|---|
+| Shortcuts and Home | Shortcuts, Home accessories and reading the screen, through the Allternit app. | The request matches a shortcut, an iPhone action or a Home accessory. This always goes first. |
+| iPhone Mirroring | Apple's iPhone Mirroring on your Mac. | Your iPhone is locked and your Mac is unlocked. |
+| Bluetooth from this Mac | Your Mac acts as a Bluetooth keyboard and mouse. | A Mac is linked and the iPhone is unlocked or in use. |
+| Bluetooth from another iPhone or iPad (not in the App Store app yet) | A second iPhone or iPad acts as a Bluetooth keyboard and mouse. Not in the App Store version of the Allternit app yet, so this route is unavailable today. | You have a second Apple device and no ready Mac route. |
+| Bluetooth from an Android phone | An Android phone with the Allternit app with Phone Link ([allternit.com/android](https://allternit.com/android), not the Google Play version) acts as a Bluetooth keyboard and mouse. | The routes above are not ready. |
+| USB Agent | The USB board. See [USB Agent](/guides/usb-agent). | A board is plugged in. |
+| Old helper app | The old Allternit helper on your iPhone. | Only for people who already linked it. Being retired. |
+
+For actions that only tap and type, Allternit tries the tap routes in the order of the table, top to bottom, and uses the first one that is ready. It never switches to another route after a "needs you" message without telling you.
+
+## Set up each route
+
+### Shortcuts and Home
+
+1. Install the Allternit app on your iPhone from the App Store and pair it with your computer. See [The Allternit iPhone app](/guides/iphone-app).
+2. In the app, open **Settings → Device Access** and turn on **Shortcuts** and **Home** if you want them.
+3. Add the **Allternit Actions** shortcut. See [iPhone shortcuts for your assistant](/guides/iphone-bridge-shortcuts).
+4. To let the assistant read the screen, start the screen broadcast in the app.
+
+### iPhone Mirroring
+
+1. On a Mac with macOS 15 or newer, set up Apple's iPhone Mirroring with the same Apple Account as your iPhone.
+2. Keep iPhone Mirroring open and its window showing.
+3. Keep your Mac unlocked.
+4. When your Mac asks, allow Allternit in **System Settings > Privacy & Security > Screen & System Audio Recording** (to see the window) and **Accessibility** (to click and type in it).
+
+### Bluetooth from this Mac
+
+Available in Allternit Desktop for Mac only.
+
+1. Open **Settings → Computers → Phones** and find **Control my iPhone by Bluetooth**.
+2. Choose **Pair**. The first time, your Mac asks to allow Bluetooth. Allow it.
+3. On your iPhone, open **Settings > Bluetooth** and tap **Allternit Keyboard**.
+4. On your iPhone, turn on AssistiveTouch (**Settings > Accessibility > Touch**). The pointer must show.
+5. Keep the Allternit screen broadcast running so the assistant can see the result.
+
+To stop, choose **Disconnect** on the same row. While it is on, Allternit Desktop turns the keyboard on again each time it starts, so your iPhone can reconnect by itself.
+
+If you said no to Bluetooth before, macOS does not ask again. The row then says to allow Allternit in **System Settings > Privacy & Security > Bluetooth**, and **Pair** opens that pane.
+
+This route uses a Bluetooth service that Apple does not document. Apple may stop allowing it in a macOS update. If your Mac refuses it, the row says so and Allternit uses another route.
+
+### Bluetooth from another iPhone or iPad
+
+> **Not in the App Store app yet.** The current App Store version of the Allternit iPhone app does not include keyboard mode. Use a Mac, an Android phone or the USB Agent board instead. The steps below apply once it ships.
+
+1. On the second device, open the Allternit app and go to **Settings → Device Access → Be a keyboard for another iPhone**. Choose **Start**.
+2. If your account has more than one iPhone, the same page asks **Which iPhone is this the keyboard for?** Choose your main iPhone. With one iPhone, Allternit picks it for you. You can change it later with **Change**.
+3. On your main iPhone, open **Settings > Bluetooth** and tap **Allternit Keyboard**.
+4. On your main iPhone, turn on AssistiveTouch and keep the screen broadcast running.
+
+The second device shows in your phone list as **Keyboard for** and your iPhone's name. It is a keyboard, not another phone. A banner with **Stop** shows on it while it runs. Keep the Allternit app open on the second device: it keeps its screen on while it is a keyboard, and the keyboard stops if you leave the app. A Bluetooth keyboard is not told which iPhone it is paired with, so Allternit uses the iPhone you chose. Until you choose, the list says **Keyboard for your iPhone** and the route shows as not set up.
+
+### Bluetooth from an Android phone
+
+1. In the Allternit app with Phone Link on the Android phone (from [allternit.com/android](https://allternit.com/android); the Google Play version does not have it), open the Share screen and find **Control my iPhone by Bluetooth**.
+2. Turn it on and allow **Nearby devices**.
+3. Make the phone visible for pairing, then on your iPhone open **Settings > Bluetooth** and tap the Android phone.
+4. Turn on AssistiveTouch on your iPhone and keep the screen broadcast running.
+
+The Android app tells Allternit which iPhone it is connected to, by that iPhone's Bluetooth name. The route then shows under that iPhone in your phone list on the web, the phone app and Desktop. If you have more than one iPhone, keep each iPhone's name in **Settings > General > About** the same as its name in Allternit.
+
+### USB Agent
+
+See [USB Agent](/guides/usb-agent) for the board, the cable and the calibration.
+
+## Limits
+
+- **Bluetooth range is about 10 meters.** The Mac, Android phone or second device that acts as the keyboard must be near your iPhone.
+- **The keyboard device must stay near the iPhone** and stay on. If it sleeps or you close the Allternit app on it, the route stops.
+- **Mirroring needs your iPhone near your Mac.** It works only while Apple's iPhone Mirroring can see the iPhone.
+- **Cellular is fine for the internet parts.** The screen broadcast and the link to your computer work over cellular. The Bluetooth and Mirroring parts are local.
+- **Apple updates may stop the Bluetooth routes.** They rely on behavior Apple does not document. Shortcuts and Home, and the USB Agent, do not.
+- **US keyboard layout first.** Typing over Bluetooth assumes a US layout. Other layouts can type the wrong characters.
+- **Your iPhone must be unlocked** for most routes. Allternit does not enter your passcode.
+- **Every send is approved by you** on your computer before it goes out. This does not change on any route.
+- **Reading the screen.** The Allternit app reads the text on your iPhone's screen itself. When the broadcast is short on memory, Allternit Desktop on a Mac reads the latest frame instead. On Windows and Linux the assistant then works from the screenshot.
+
+## "Needs you" messages
+
+When no route is ready, or the route you picked needs something from you, Allternit shows one message. This is what each one means.
+
+| Message | What to do |
+|---|---|
+| Unlock your Mac so I can use your iPhone through it. | Unlock your Mac. |
+| Open iPhone Mirroring on your Mac and keep its window showing. | Open the iPhone Mirroring app and leave its window visible. |
+| Your iPhone is in use right now. Lock it, or I can use another way if you let me. | Lock your iPhone, or allow another route. |
+| Start the screen broadcast in the Allternit app on your iPhone. | Open the app and start the screen broadcast. |
+| Pair your iPhone with this Bluetooth keyboard and mouse in Settings > Bluetooth. | Pair "Allternit Keyboard" in your iPhone's Bluetooth settings. |
+| Turn on AssistiveTouch on your iPhone (Settings > Accessibility > Touch). | Turn it on. The pointer has to show on the screen. |
+| Turn on Full Keyboard Access on your iPhone (Settings > Accessibility > Keyboards). | Turn it on. |
+| Open the Allternit app on your iPhone. | Open the app so it is in front. |
+| Add the Allternit Actions shortcut in Allternit Settings > Device Access > iPhone actions. | See [iPhone shortcuts for your assistant](/guides/iphone-bridge-shortcuts). |
+| The old Allternit helper is being retired. Switch to the app and set up a new route. | Set up one of the routes above. |
+| Allow Allternit in System Settings > Privacy & Security > Screen & System Audio Recording (or Accessibility, or Bluetooth) on your Mac. | Open that pane on your Mac and turn on Allternit. iPhone Mirroring needs Screen & System Audio Recording and Accessibility. Bluetooth from this Mac needs Bluetooth. |
+| Turn on Shortcuts (or Home) in the Allternit app on your iPhone (Settings > Device Access). | Turn on that switch in the app. Allternit does not try another route for it. |
+
+Allternit finds out about AssistiveTouch and Full Keyboard Access by watching the screen. It can only tell when the pointer or keyboard does not respond, so a message may show a moment after you turn the setting off.
+
+## Stop using the old helper app
+
+The old Allternit helper app on your iPhone is being retired. Your phone keeps working through the routes above. You do not need to do anything today. When you are ready to remove the old setup:
+
+1. **Delete the helper app.** On your iPhone, touch and hold the Allternit helper app (it may be named iCTRL), then tap **Remove App** and **Delete App**. Do not delete the Allternit app from the App Store.
+2. **Delete LocalDevVPN.** If you installed LocalDevVPN for the old setup, delete it the same way. First open it and turn off its connection, then delete the app. Also remove its VPN profile in **Settings > General > VPN & Device Management**.
+3. **Turn off Developer Mode.** Open **Settings > Privacy & Security > Developer Mode**, turn it off, and restart when your iPhone asks. Leave it on if you use it for your own development.
+4. **Remove the old link in Allternit.** Open **Settings → Computers → Phones**, choose **⋯** next to the phone and choose **Remove phone**.
+
+Deleting these does not touch your Allternit account, your files or the Allternit app.

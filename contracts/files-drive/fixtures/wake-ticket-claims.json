@@ -1,0 +1,17 @@
+{
+  "type": "WakeTicketClaims",
+  "valid": true,
+  "case": "Decoded wake ticket.",
+  "message": {
+    "v": 1,
+    "typ": "wake",
+    "sub": "user_2abc",
+    "computer_id": "cmp_cloud_4gb",
+    "reason": "open_file",
+    "device_id": "dev_iphone16",
+    "iat": 1794751500,
+    "exp": 1794751620,
+    "jti": "wk_01JD",
+    "kid": "files-2026-11"
+  }
+}

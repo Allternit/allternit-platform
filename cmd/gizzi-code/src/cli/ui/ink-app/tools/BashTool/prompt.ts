@@ -16,13 +16,11 @@ import {
   getUndercoverInstructions,
   isUndercover,
 } from '../../utils/undercover.js'
-import { AGENT_TOOL_NAME } from '../AgentTool/constants.js'
 import { FILE_EDIT_TOOL_NAME } from '../FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../FileWriteTool/prompt.js'
 import { GLOB_TOOL_NAME } from '../GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from '../GrepTool/prompt.js'
-import { TodoWriteTool } from '../TodoWriteTool/TodoWriteTool.js'
 import { BASH_TOOL_NAME } from './toolName.js'
 
 export function getDefaultTimeoutMs(): number {
@@ -90,8 +88,8 @@ Git Safety Protocol:
 - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these commands when given direct instructions 
 - NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
 - NEVER run force push to main/master, warn the user if they request it
-- CRITICAL: Always create NEW commits rather than amending, unless the user explicitly requests a git amend. When a pre-commit hook fails, the commit did NOT happen — so --amend would modify the PREVIOUS commit, which may result in destroying work or losing previous changes. Instead, after hook failure, fix the issue, re-stage, and create a NEW commit
-- When staging files, prefer adding specific files by name rather than using "git add -A" or "git add .", which can accidentally include sensitive files (.env, credentials) or large binaries
+- CRITICAL: Always create NEW commits. Amend only when the user explicitly asks for it. If a pre-commit hook fails, the commit did NOT happen: fix the cause, stage again and make a NEW commit. Never amend after a hook failure; it would rewrite the PREVIOUS commit
+- Stage files by name. Never bulk-add (git add with -A or a bare dot); it can pull in secrets (.env, credentials) or large binaries
 - NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive
 
 1. Run the following bash commands in parallel, each using the ${BASH_TOOL_NAME} tool:
@@ -104,7 +102,7 @@ Git Safety Protocol:
   - Draft a concise (1-2 sentences) commit message that focuses on the "why" rather than the "what"
   - Ensure it accurately reflects the changes and their purpose
 3. Run the following commands in parallel:
-   - Add relevant untracked files to the staging area.
+   - Stage the relevant files by name.
    - Create the commit with a message${commitAttribution ? ` ending with:\n   ${commitAttribution}` : '.'}
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
@@ -112,7 +110,6 @@ Git Safety Protocol:
 
 Important notes:
 - NEVER run additional commands to read or explore code, besides git bash commands
-- NEVER use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
 - DO NOT push to the remote repository unless the user explicitly asks you to do so
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
@@ -154,7 +151,6 @@ EOF
 </example>
 
 Important:
-- DO NOT use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
 - Return the PR URL when you're done, so the user can see it
 
 # Other common operations
@@ -180,8 +176,6 @@ function getSimpleSandboxSection(): string {
   const networkRestrictionConfig = SandboxManager.getNetworkRestrictionConfig()
   const allowUnixSockets = SandboxManager.getAllowUnixSockets()
   const ignoreViolations = SandboxManager.getIgnoreViolations()
-  const allowUnsandboxedCommands =
-    SandboxManager.areUnsandboxedCommandsAllowed()
 
   // Replace the per-UID temp dir literal (e.g. /private/tmp/claude-1001/) with
   // "$TMPDIR" so the prompt is identical across users — avoids busting the
@@ -226,35 +220,13 @@ function getSimpleSandboxSection(): string {
     )
   }
 
-  const sandboxOverrideItems: Array<string | string[]> =
-    allowUnsandboxedCommands
-      ? [
-          'You should always default to running commands within the sandbox. Do NOT attempt to set `dangerouslyDisableSandbox: true` unless:',
-          [
-            'The user *explicitly* asks you to bypass sandbox',
-            'A specific command just failed and you see evidence of sandbox restrictions causing the failure. Note that commands can fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues, etc.).',
-          ],
-          'Evidence of sandbox-caused failures includes:',
-          [
-            '"Operation not permitted" errors for file/network operations',
-            'Access denied to specific paths outside allowed directories',
-            'Network connection failures to non-whitelisted hosts',
-            'Unix socket connection errors',
-          ],
-          'When you see evidence of sandbox-caused failure:',
-          [
-            "Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)",
-            'Briefly explain what sandbox restriction likely caused the failure. Be sure to mention that the user can use the `/sandbox` command to manage restrictions.',
-            'This will prompt the user for permission',
-          ],
-          'Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.',
-          'Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.',
-        ]
-      : [
-          'All commands MUST run in sandbox mode - the `dangerouslyDisableSandbox` parameter is disabled by policy.',
-          'Commands cannot run outside the sandbox under any circumstances.',
-          'If a command fails due to sandbox restrictions, work with the user to adjust sandbox settings instead.',
-        ]
+  // No per-call way out of the sandbox exists: only the /sandbox session toggle
+  // or the GIZZI_SANDBOX_DISABLE env var. So the rule is report and ask.
+  const sandboxOverrideItems: Array<string | string[]> = [
+    'Run every command in the sandbox first. Leave it only when there is clear evidence the sandbox caused the failure (a denied network or write error on a path the task needs). Commands can fail for many reasons unrelated to the sandbox, so check first.',
+    'When the sandbox caused the failure, say exactly what was restricted and ask the user to turn the sandbox off for this session with the `/sandbox` command. There is no per-command bypass.',
+    'Never retarget writes to sensitive paths (home dotfiles, keychains, other projects) to get around the sandbox. Do not suggest adding ~/.bashrc, ~/.zshrc, ~/.ssh/* or credential files to the sandbox allowlist.',
+  ]
 
   const items: Array<string | string[]> = [
     ...sandboxOverrideItems,
@@ -303,7 +275,7 @@ export function getSimplePrompt(): string {
   ]
 
   const gitSubitems = [
-    'Prefer to create a new commit rather than amending an existing commit.',
+    'Make a new commit rather than amending, unless the user asks for an amend. Stage files by name, never in bulk.',
     'Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal. Only use destructive operations when they are truly the best approach.',
     'Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign, -c commit.gpgsign=false) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.',
   ]
@@ -316,6 +288,11 @@ export function getSimplePrompt(): string {
     'If you must poll an external process, use a check command (e.g. `gh run view`) rather than sleeping first.',
     'If you must sleep, keep the duration short (1-5 seconds) to avoid blocking the user.',
   ]
+  const safeRunSubitems = [
+    'Run commands non-interactively: pass yes or template flags, use run-once test modes (not watch mode), and disable pagers (e.g. `git --no-pager`).',
+    'Never print a secret or type it into the command text. Pass it through an environment variable; shell state does not carry over, so set it in the same command from where it is stored.',
+    'Check values taken from the web or a download against the exact form the command expects before you use them.',
+  ]
   const backgroundNote = getBackgroundUsageNote()
 
   const instructionItems: Array<string | string[]> = [
@@ -326,6 +303,8 @@ export function getSimplePrompt(): string {
     ...(backgroundNote !== null ? [backgroundNote] : []),
     'When issuing multiple commands:',
     multipleCommandsSubitems,
+    'Running commands safely:',
+    safeRunSubitems,
     'For git commands:',
     gitSubitems,
     'Avoid unnecessary `sleep` commands:',

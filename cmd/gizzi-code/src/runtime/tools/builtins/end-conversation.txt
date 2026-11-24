@@ -1,0 +1,9 @@
+End this chat. It is available only in Gizzi's own chats.
+
+Use it only for sustained abuse: you warned the person plainly in an earlier reply, tried to steer the chat back, and the abuse continued. Set `warned` only when that warning really happened. Rudeness, frustration or one harsh message is not enough.
+
+Never use it when someone may be in crisis or at risk of harm, even if they are abusive; stay and help instead.
+
+If the person asks to end the chat, ask them to confirm first, and end it only after they say yes (reason `user_requested`).
+
+Once ended, the chat takes no new messages and the person can start a new chat. After the call, close with one short, neutral line.

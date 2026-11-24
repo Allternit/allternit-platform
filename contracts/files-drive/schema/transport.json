@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/transport.json",
+  "title": "Files drive: transport adapter",
+  "description": "One protocol over loopback, mesh, relay or gateway.",
+  "$defs": {
+    "TransportKind": {
+      "type": "string",
+      "enum": [
+        "loopback",
+        "mesh",
+        "relay",
+        "gateway"
+      ],
+      "description": "loopback = same machine (Desktop app to its own runtime). mesh = Headscale/tsnet, only between the user's own devices. relay = cloud-api POST /api/v1/runtime-devices/:id/proxy (RelayRequest envelope; the Files path goes in `path`); the baseline that always exists. gateway = cloud-api Files gateway for guests holding a share capability token."
+    },
+    "TransportCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_url",
+        "priority",
+        "max_request_bytes"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TransportKind"
+        },
+        "base_url": {
+          "type": "string",
+          "description": "loopback/mesh: URL prefix ending in /api/v1/files/v2. relay: the proxy URL; the client sends {method, path: \"/api/v1/files/v2/...\", headers, body, body_encoding} to it. gateway: https://api.allternit.com/api/v1/files-gateway."
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Lower tries first."
+        },
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Largest request body this transport takes, in decoded bytes. relay = 5242880 (runtime_relay.rs MAX_RELAY_BODY_BYTES; base64 bodies are measured as len*3/4). Chunks are at most 4194304, so one chunk always fits."
+        }
+      }
+    },
+    "EndpointsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "computer_state",
+        "wake",
+        "candidates",
+        "host"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        },
+        "wake": {
+          "$ref": "wake.json#/$defs/WakeSetting"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TransportCandidate"
+          }
+        },
+        "mesh_hostname": {
+          "type": "string",
+          "description": "Only for own_device hosts on the mesh."
+        },
+        "replicas": {
+          "type": "array",
+          "items": {
+            "$ref": "replicas.json#/$defs/Replica"
+          },
+          "description": "Replicas of this computer's roots on the user's other devices, from their last heartbeats. A client uses one (state current) when the computer is asleep or offline: it asks the host device's endpoints and reads the sealed copy (served_by replica, SPEC section 10)."
+        },
+        "host": {
+          "type": "string",
+          "enum": [
+            "own_device",
+            "cloud_computer"
+          ],
+          "description": "cloud_computer = provisioned by cloud-api (Incus/Contabo/Orgo). These computers do not join the mesh, so the server never lists a mesh candidate for them: relay only."
+        }
+      },
+      "description": "GET /api/v1/computer-files/:computer_id/endpoints on cloud-api. Candidates sorted by priority; the client tries them in order (see SPEC.md 'Replica and transport resolution')."
+    },
+    "PingResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "protocol",
+        "runtime_version",
+        "computer_state"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "protocol": {
+          "type": "string",
+          "const": "files/2"
+        },
+        "runtime_version": {
+          "type": "string"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{{- include "agents-server.checkReplicas" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agents-server.fullname" . }}
+  labels:
+    {{- include "agents-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Start the new pod before the old one stops. Replicas share PostgreSQL;
+  # a replica that stops fails the turns it still runs after
+  # settings.server.shutdown_grace (session error code server_restarted).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "agents-server.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "agents-server.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: allternit-selfhost
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/settings: {{ include "agents-server.settings" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agents-server.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # settings.server.shutdown_grace + 15s: running turns get the grace
+      # period to finish, then the replica fails what is left and exits.
+      terminationGracePeriodSeconds: {{ include "agents-server.terminationGrace" . }}
+      containers:
+        - name: server
+          image: {{ include "agents-server.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          env:
+            {{- include "agents-server.env" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: settings
+              mountPath: /etc/allternit/settings.yaml
+              subPath: settings.yaml
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/allternit-agents-server
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: settings
+          configMap:
+            name: {{ include "agents-server.fullname" . }}-settings
+        # Per pod, never shared between replicas: it holds this replica's id
+        # file (replica-id) and its gizzi child's session cache.
+        - name: data
+          emptyDir:
+            sizeLimit: {{ .Values.dataVolume.sizeLimit }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

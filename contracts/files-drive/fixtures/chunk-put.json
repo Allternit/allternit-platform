@@ -1,0 +1,10 @@
+{
+  "type": "ChunkPutResponse",
+  "valid": true,
+  "case": "One chunk stored.",
+  "message": {
+    "hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "stored": true,
+    "remaining": 0
+  }
+}

@@ -5,6 +5,114 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## Next — Desktop sign-in and Connect screen fixes
+
+The server fix goes live with the next cloud-api deploy; the Desktop fixes arrive with the next Desktop build.
+
+- **Pairing a new computer or phone:** signing in no longer ends with "This pairing request is invalid or expired." A server error on every pairing lookup (since 2026-11-09) caused it.
+- **Clearer pairing errors:** the sign-in window now says when the problem is on Allternit's side or when you need to sign in again. It says "invalid or expired" only when the code really is.
+- **Connect screen (tray → Connection settings):** **Test** and **Save** work again. On every system they failed with "Untrusted IPC sender".
+- **Linux and Windows:** the sign-in window's title bar reads "Allternit" instead of "@allternit/desktop".
+- **New pairing window:** the first-launch window shows this computer's name and three steps (sign in, approve, start), with a check or spinner on each as pairing runs. A failure gets a plain card with the next step (**Try again**, **Sign in again**, **Manage your computers** or **Check Allternit status**) instead of a raw error. App white, with dark mode that follows the system. See [Pairing this computer](/surfaces/desktop#pairing-this-computer).
+- **Connection Settings (tray)** now opens **Settings › Computers** in the app. The redesigned **Where Allternit runs** page (on this computer, or your server or cloud computer; **Check**, then **Save and restart**) shows only when the app can't load the workspace. The unused Local Port field is gone.
+- **App updates on Mac and Windows:** Desktop now updates itself on macOS and Windows too (the old updater never could). It downloads the new version in the background and shows the restart prompt; on Mac, Restart swaps in the new app, on Windows the installer runs silently. Users on 1.1.15 or older install the next version by hand once. See [App updates](/surfaces/desktop#app-updates).
+- **No sign-in window left behind:** after pairing, Desktop destroys the sign-in window instead of keeping it hidden, and renews the cloud sign-in with one request instead of loading the sign-in page in a hidden window about once a minute.
+- **Linux app updates:** the Linux `.deb` now updates itself: it downloads the new version, shows the restart prompt, and asks for your password to install it. If it can't ask, a notification opens the download page. Users on 1.1.15 or older install the next `.deb` by hand once. See [Updates on Linux](/surfaces/desktop#updates-on-linux).
+- **Linux gaps closed:** **Start at login** now works on Linux (it writes `~/.config/autostart/allternit.desktop`). Allternit tells you once when a global shortcut cannot be registered, and once when the system has no keyring. Mini-app `.zip` releases install on Linux. See [Linux notes](/surfaces/desktop#linux-notes).
+- **Cloud computers and signed-out Desktops stop calling Allternit for nothing:** with no account session in the window, Desktop no longer asks for call rings, phone numbers, computer presence or the computer list every minute (each was refused). Other refused account requests wait 1 minute, then longer, up to 30 minutes. Signing in resumes them at once.
+- **More Linux distros:** Desktop now ships as an `.rpm` for Fedora, RHEL/Alma/Rocky and openSUSE (`sudo dnf install ./Allternit-Desktop-<version>-x86_64.rpm`) and as an AppImage for every other distro (`chmod +x`, then run it), next to the `.deb`. Both update themselves. Where an AppImage cannot use Chromium's sandbox, Desktop offers to fix it (Ubuntu's AppArmor rule) or tells you once that it runs without it. See [Linux .rpm and AppImage](/surfaces/desktop#linux-rpm-and-appimage).
+- **Linux on arm64:** every Linux package now also comes in an arm64 build (`-arm64.deb`, `-aarch64.rpm`, `-arm64.AppImage`) for Raspberry Pi 4 and 5 on a 64-bit OS, ARM laptops and Linux VMs on Apple Silicon Macs. It needs the same glibc 2.27 or newer, passes the same install-and-start checks, and updates itself from its own arm64 files. See [Linux on arm64](/surfaces/desktop#linux-on-arm64).
+
+## Next — Phone feedback 1.0.4
+
+Arrives with the next iPhone app build (1.0.4) and the next web update. It is not live yet.
+
+- **No computer needed to start:** projects and bots are saved to your account and merge with your computer's lists once it connects. Files and runs still need a computer, and opening the work asks you to connect one. **Bot** is a fourth kind in New project. See [Project layouts](/guides/project-layouts#on-a-phone).
+- **One pill on Code sessions and Bots:** search plus a sliders popover. Code sessions holds List, Grid and Deck, status filters and Scheduled. Bots holds the layout switch, Threads, Office, Pause all and Connections. See [Code session list](/guides/code-session-list#code-sessions-view-on-a-phone) and [Allternit for iPhone](/guides/iphone-app#bots).
+- **Shell:** hidden from the view picker while no computer is connected.
+- **Keyboard and drawer:** tapping outside the composer closes the keyboard, and the drawer no longer clips on the left.
+- **Model picker:** phone layout matches desktop; the iPhone app adds filter chips, vendor groups and provider status dots. See [The model picker](/guides/chat-composer#the-model-picker).
+- **Delete account:** two taps from **Settings → Profile → Delete account** on the iPhone app and the phone layout of the web. See [Delete your account](/guides/delete-account).
+
+## Next — A calmer phone: composer, menus, Code sessions and Switch account
+
+Arrives with the next web update and the next iPhone app build. It is not live yet. The Android app (Google Play) is the m.allternit.com app, so it gets the web changes.
+
+- **Composer:** the deck folds at rest and opens when you type, attach, arm a mode or swipe up. The permission pill is gone; **+** opens **Add to chat** with **Permission**, **Computer** and **Project**. The mic sits beside voice. See [Composer](/guides/chat-composer#on-a-phone).
+- **Computer chip:** a chip above the text box replaces the strip at the top when no computer is connected. Errors read as plain sentences, with no status numbers.
+- **☰ modes and bots:** tap opens the drawer, hold opens the mode fan, holding longer on Bots opens the bots shelf. The drawer is narrower and the page slides aside. See [Motion and haptics](/guides/motion#phone-motion-and-haptics).
+- **Chats:** a **⋯** menu on a chat and on the Recents overview, **Select chats** to pin, archive or delete several at once, and a jump-to-latest button.
+- **Code sessions:** statuses **Needs input**, **Working**, **Ready for review**, **Done** and **Archived**, kept on your computer so every device agrees. A filter, a Scheduled view, Start a session and a connect sheet. See [Code session list](/guides/code-session-list#status).
+- **Projects and Artifacts:** a bottom pill with search and filters, a floating **+ New project** or **New artifact**, kind tiles for artifacts, and a viewer with **Comments**, **Share** and **Fill / Fit**. See [Project layouts](/guides/project-layouts) and [Artifacts](/guides/artifacts#on-a-phone).
+- **Settings:** a shorter first screen with every other page under **Advanced**, an **ⓘ** menu, **Haptic feedback** and **Reduce motion** switches, and Light as the default look. On the iPhone app, **Open links in** picks the in-app browser or Safari. See [Settings on a phone](/guides/phone-settings).
+- **Usage:** plan windows, Allternit Cloud hours, connected accounts and credits, with warnings at 80% and 95%. The iPhone app has the same page. See [Usage dashboard](/guides/usage-dashboard#plan-usage).
+- **Switch account:** the phone Settings card remembers accounts used on this device. Tap one to sign out and sign in with that email filled in, add another account, or remove one from the device. Only one account is signed in at a time, and nothing secret is stored. This is on the web, the PWA and the iPhone app. See [Switch accounts and organizations](/guides/switch-accounts).
+- **iPhone app:** all of the above, plus haptics and Reduce motion that follow the in-app switches, and the iPhone drawer and menus behave as described in [Allternit for iPhone](/guides/iphone-app).
+
+## Next — Buy in the iPhone and Android apps
+
+Arrives with the next iPhone and Android app builds and the next web update. It is not live yet.
+
+- **Store purchases:** buy a plan or credit pack in the iPhone app (billed by Apple) or the Google Play app (billed by Google). Store prices are higher than the web (Plus $24.99 against $20; packs $11.99, $29.99, $59.99, $119.99) with the same credits. See [Buying in the iPhone or Android app](/guides/credits-and-auto-top-up#buying-in-the-iphone-or-android-app).
+- **Restore Purchases and managing plans:** restore in Settings → Billing; change or cancel in App Store or Google Play subscriptions. Deleting an Allternit account does not cancel a store subscription.
+- **Billing page:** platform.allternit.com/billing shows "Billed by Apple" or "Billed by Google", locks the plan cards and says "You have two plans. Cancel one." when an account has two.
+- **Gizzi Code:** `/usage` shows who bills the plan and `/upgrade` points to the store for store plans.
+
+## Next — Freeweights Studio on more hardware
+
+Arrives with the next Desktop runtime, the next `gizzi` release and the next web update. It is not live yet.
+
+- **More computers:** Allternit Tune is built to run on Apple Silicon, NVIDIA (Linux and Windows), AMD (Linux), Intel GPUs (Linux and Windows) and CPU only. Every one is **Not yet tested by Allternit on this hardware**. CPU runs `lora` only, slowly. Intel Macs are not supported. See [Hardware](/surfaces/model-lab#hardware).
+- **MLX on Mac:** `lora` and `qlora` train with MLX, and **Also make → MLX** writes MLX files. The MLX adapter is mlx-lm's own format, not PEFT.
+- **Studio API:** `fit` on each engine, `resources.backend`, `outputs.mlx`, `base.path`, absolute output paths, and the new error codes `method_not_supported`, `backend_not_supported`, `output_not_supported`, `hardware_unavailable` and `invalid_base`. See [Studio API](/api/studio).
+- **Gizzi Code:** `gizzi studio run` takes `--backend` and `--mlx`.
+- **Engines:** Axolotl, LLaMA-Factory and torchtune install on your computer from the studio-engines kit at a pinned commit, with each upstream engine unmodified at a pinned version and run as a separate process. See [Where the engines come from](/api/studio#where-the-engines-come-from).
+- **Unsloth removed as an engine:** its CLI is AGPL-3.0, and nothing Allternit ships may sit under AGPL or LGPL, even as a separate process. Studio now has three external engines plus Allternit Tune, which covers LoRA, QLoRA and GGUF export.
+
+## 2026-11-15 — Freeweights Studio: training on your own computer
+
+- **New:** a [Studio API](/api/studio) at `/api/v1/studio` on each computer's Allternit API. It lists engines, runs one fine-tune job at a time, streams events, and registers outputs as local models. It replaces the old `/api/v1/model-training` routes, which are removed.
+- **Allternit Tune:** the default engine, Apache-2.0. It runs `lora`, `qlora`, `dpo` and `full` through TRL and PEFT on Apple Silicon and on NVIDIA with Linux. The MLX backend is not available yet. Windows, AMD, Intel and CPU-only computers are refused with the reason.
+- **Checked base models:** a job can pin the signed Freeweights manifest hash of its base model. A different manifest is refused with `manifest_mismatch`.
+- **Desktop:** bundles Allternit Tune. Job outputs stay on the computer.
+- **Gizzi Code:** `gizzi studio`. See [Fine-tune with gizzi studio](/cli/studio).
+- **iPhone:** the Models screen shows training jobs with status, log tail and cancel. You create jobs on Desktop or the web.
+- **Web and PWA (live):** [Freeweights Studio](/surfaces/model-lab) opens on the Freeweights catalog, with search as you type and publisher logos. On the phone layout and the PWA it is in the drawer's More, and the phone model picker has a chip. The Engine tab says there is no model engine on the device.
+- **Train tab (web, phone layout and PWA; Desktop with its next build):** pick an engine, a base model, a dataset and a method, then follow the job. **Also make** adds a merged model and GGUF files (Q4_K_M, Q8_0, F16) to a job. The Engine tab's Quantize, Merge LoRA and Evaluate cards are removed: they called a route that was never served. Evaluation is not available yet.
+- **Docs:** the Studio page no longer describes the `/api/model-lab/jobs` route, which was never served.
+
+## 2026-11-14 — Freeweights in the apps: models are checked before they run
+
+- **New:** Allternit apps read the [Freeweights](/tools/freeweights) catalog. Every model pulled to a computer is checked by its hash. The result shows as "Verified by Freeweights", "Matches the publisher's hash", "Pinned by Allternit" or "Not verified".
+- **Desktop, web, phone and PWA:** Model Lab is now [Freeweights Studio](/surfaces/model-lab) (same view id). Settings, then Models, has the catalog on the phone layout.
+- **iPhone:** the Models screen has a Freeweights section. **Send to computer** pulls the model on your paired computer.
+- **Gizzi Code:** `gizzi models pull`, `gizzi models verify` and `gizzi models search --catalog-source freeweights`. See [Models and providers](/cli/models#pull-and-verify-local-models).
+- **Local Engine and API:** `POST /models/verify`, a `verification` field on every model, and an `allow_unverified` option on downloads. Data with no hash is refused unless you allow it. See [Local Engine API](/api/local-engine).
+- **If Freeweights is down:** pulls fall back to the publisher and are checked against its hash. A catalog that answers but fails its signature check is an error.
+- **Where:** engine, API and Gizzi in the next runtime and Gizzi Code release. The Desktop, web, phone and PWA UI and the iOS build ship with their own releases.
+
+## 2026-11-13 — Desktop on Mac: Keychain prompt no longer freezes the app
+
+- **Fixed:** on Mac, Allternit Desktop reads its Keychain key off the main thread. If macOS asks for your password, the app keeps working. The startup window says "macOS is asking for permission. Click Always Allow."
+- **Choices:** **Allow** works for that launch. **Always Allow** stops future prompts. **Deny** shows **Try again** and **Quit**.
+- **Your data stays:** a slow or denied Keychain no longer discards your saved sign-in and keys.
+- **Where:** Desktop on Mac, in the next Desktop build. Windows and Linux are unchanged. See [Desktop](/surfaces/desktop#macos-signing).
+
+## 2026-11-12 — Edit and resend, share a thread, Memory page, run code on files
+
+- **Edit a sent message:** change a message you sent and send it again. The earlier reply stays as a version you can flip back to, even after a reload. See [Edit and versions](/guides/chat-sessions#edit-and-versions).
+- **Share a thread by link:** anyone with the link can read the thread, signed in or not. **Stop sharing** turns the link off. See [Share a thread](/guides/share-a-thread).
+- **Memory page:** Settings → Memory lists what Allternit knows about you. Edit or delete one memory at a time. See [Memory](/guides/memory).
+- **Run code on attached files:** attach a CSV, spreadsheet or JSON file and choose **Analyze**. Python runs in a sandbox with no network and returns tables, charts and files. See [Analyze files](/guides/analyze-files).
+- **Fewer screens:** 28 views that no menu opened are gone.
+- **Where:** web, phone and PWA now. Desktop 1.1.14 (runtime r20261113.0132), Gizzi Code 2.9.0 (`/edit`, `/share`, `gizzi memory list|edit|forget`, `run_code`), and iOS 1.0.3 on TestFlight.
+
+## 2026-11-12 — Allternit for Android is on Google Play
+
+- **New:** [Allternit for Android](https://play.google.com/store/apps/details?id=com.allternit.app) is on Google Play. allternit.com, ai.allternit.com and m.allternit.com now show the Google Play badge next to the App Store one, and `allternit.com/app` sends Android phones to Google Play. See [Get the app](/guides/get-the-app).
+- **New short link:** `allternit.com/play` opens the Google Play page. `allternit.com/android` still downloads the version with Phone Link.
+- **Gizzi Code:** `/mobile` now shows QR codes for the App Store and Google Play pages.
+
 ## 2026-11-12 — Platform API: Decisions, Responses, Messages, Approvals; SMS moves to /v1/texts
 
 - **New:** [Decisions](/api/platform/decisions), [Responses](/api/platform/responses), an Anthropic-shaped [Messages](/api/platform/messages) call, [Approvals](/api/platform/approvals), and [Conversations](/api/platform/conversations) with items.
@@ -379,7 +487,7 @@ The same changes apply on Desktop, on ai.allternit.com (including the phone layo
 
 ## 2026-10-20 — Meet your bots, editable routines calendar
 
-- **Meet your bots** replaces setup's Main bot step and opens once on your first visit to Bot Mode. Watch the Bots network, add bots from the templates by dragging them onto your team or tapping them, pick your main bot (A:// by default, Gizzi, the Gizzi YouTube cast or a vendor bot you already use), see and change your team's routines, and give them a first job. Nothing is created until **Start the job**, and the last page reports each part honestly with **Retry what didn't finish**. **Replay intro** in the Bots rail **⋯** menu shows it again. See [Meet your bots](/guides/meet-your-bots).
+- **Meet your bots** replaces setup's Main bot step and opens once on your first visit to Bot Mode. Watch the Bots network, add bots from the templates by dragging them onto your team or tapping them, pick your main bot (A:// by default, Gizzi, the Gizzi YouTube cast or a connected bot you already use), see and change your team's routines, and give them a first job. Nothing is created until **Start the job**, and the last page reports each part honestly with **Retry what didn't finish**. **Replay intro** in the Bots rail **⋯** menu shows it again. See [Meet your bots](/guides/meet-your-bots).
 - **Routines → Calendar** is now editable on every routines screen (a bot's Routines tab, Automation Tasks and a bot chat's Routines panel) and opens on **Day**: click an empty time to add a routine, click one to change who runs it, what it does and when, and drag it to move it. Routines that run every few hours draw as one band. See [Bot routines](/guides/bot-routines#edit-routines-on-the-calendar).
 - Built-in templates now each have a default character, and the bot setup picker shows every character whole, with Gizzi's eyes following your pointer and a tap to make it jump.
 - The **List / Graph / Calendar** switch from a bot's Routines tab is now also on **Automation Tasks** (All and Routines tabs, including the phone screen) and a bot chat's **Routines** panel. These screens show every bot's routines on the graph and calendar, and the switch remembers one choice across all of them. See [Bot routines](/guides/bot-routines#list-graph-and-calendar).
@@ -479,7 +587,7 @@ The same changes apply on Desktop, on ai.allternit.com (including the phone layo
 
 - Bot threads now use one-row tops with avatar navigation and vendor provenance popovers. Ripped-page context dividers, plan cards, and wavy gap/day rules explain thread history. The pane switches Thread, Browser, and Computer; notifications and bot settings fold into ⋯ when docked. See [Threads](/guides/bot-threads).
 - Projects and Bot Mode share one bot project list with pin/archive, server context files, per-device folders, coordinator instructions, and Threads / Library / Routines / Browser panes. Projects-tab workspaces include grouped threads, graphs, receipts, decision cards, wrap-up reports, and Library. See [Projects](/guides/project-coordination).
-- Carried vendors and all seven channel providers have thread looks. Allternit remains the default composer; vendor composer skinning is opt-in through an in-memory flag. Packed threads omit the dot-grid backdrop. See [Vendor packs](/plugins/guides/vendor-packs).
+- Carried vendors and all seven channel providers have thread looks. Allternit remains the default composer; vendor composer skinning is opt-in through an in-memory flag. Packed threads omit the dot-grid backdrop. See [Bot packs](/plugins/guides/bot-packs).
 - Gemini and Copilot connection entries use best-effort `ui_bridge`. They are new and not yet verified against the live services. Sign in under Settings → Subscriptions and read the terms warning. See [Subscriptions](/surfaces/subscriptions).
 - Web phone and PWA layouts keep avatar, provenance, project controls, and pane menus reachable. Panes open full screen with Back; view menus and actions stay above pane content.
 

@@ -9,6 +9,7 @@ import {
   useSignIn,
   useUser,
 } from '@clerk/clerk-react';
+import { Wordmark } from './Wordmark.js';
 import { loadClerkConfig } from './clerk-config.js';
 
 function AuthFlow() {
@@ -17,6 +18,7 @@ function AuthFlow() {
   const [isSignUp, setIsSignUp] = useState(false);
   const { isSignedIn } = useAuth();
   const { session } = useClerk();
+  const appearance = buildAppearance(useIsDark());
 
   const toggle = () => setIsSignUp((current) => !current);
 
@@ -28,19 +30,19 @@ function AuthFlow() {
   // (no token). TokenBridge picks the user's organization; with none, choose
   // or create one here instead of a blank window.
   if (session?.status === 'pending') {
-    return <TaskChooseOrganization redirectUrlComplete={selfRedirectUrl} appearance={clerkAppearance} />;
+    return <TaskChooseOrganization redirectUrlComplete={selfRedirectUrl} appearance={appearance} />;
   }
 
   return (
     <>
       {isSignUp ? (
         <SignUp
-          appearance={clerkAppearance}
+          appearance={appearance}
           routing="hash"
         />
       ) : (
         <SignIn
-          appearance={clerkAppearance}
+          appearance={appearance}
           routing="hash"
         />
       )}
@@ -48,8 +50,8 @@ function AuthFlow() {
         style={{
           marginTop: '18px',
           textAlign: 'center',
-          fontSize: '14px',
-          color: '#74716B',
+          fontSize: '13px',
+          color: 'var(--auth-text-2)',
           WebkitAppRegion: 'no-drag',
         }}
       >
@@ -61,7 +63,7 @@ function AuthFlow() {
             background: 'none',
             border: 'none',
             padding: 0,
-            color: '#9A7658',
+            color: 'var(--auth-ink)',
             cursor: 'pointer',
             fontSize: 'inherit',
             fontFamily: 'inherit',
@@ -82,7 +84,7 @@ function SignedInView() {
       style={{
         textAlign: 'center',
         padding: '40px 0',
-        color: '#0D0C0A',
+        color: 'var(--auth-ink)',
       }}
     >
       <div
@@ -90,8 +92,8 @@ function SignedInView() {
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          background: '#1A1916',
-          color: '#FAF9F7',
+          background: 'var(--auth-ink)',
+          color: 'var(--auth-on-ink)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -103,14 +105,14 @@ function SignedInView() {
       </div>
       <h2
         style={{
-          fontSize: '22px',
-          fontWeight: 700,
+          fontSize: '15px',
+          fontWeight: 600,
           margin: '0 0 8px',
         }}
       >
         Signed in
       </h2>
-      <p style={{ fontSize: '14px', color: '#74716B', margin: 0 }}>
+      <p style={{ fontSize: '13px', color: 'var(--auth-text-2)', margin: 0 }}>
         Completing runtime pairing…
       </p>
     </div>
@@ -150,120 +152,118 @@ const clerkLocalization = {
   },
 } as const;
 
-const clerkAppearance = {
-  variables: {
-    colorBackground: '#FFFEFC',
-    colorPrimary: '#1A1916',
-    colorText: '#0D0C0A',
-    colorTextSecondary: '#74716B',
-    colorInputBackground: '#FFFFFF',
-    colorInputText: '#0D0C0A',
-    colorNeutral: '#74716B',
-    colorDanger: '#f87171',
-    borderRadius: '16px',
-    fontFamily: 'inherit',
-  },
-  elements: {
-    cardBox: {
-      background: 'transparent',
-      border: 'none',
-      boxShadow: 'none',
-      width: '100%',
-      maxWidth: '100%',
+const LIGHT_VARS = {
+  colorBackground: '#FFFFFF',
+  colorPrimary: '#1F1E1D',
+  colorText: '#1F1E1D',
+  colorTextSecondary: '#6B6A68',
+  colorTextOnPrimaryBackground: '#FFFFFF',
+  colorInputBackground: '#FFFFFF',
+  colorInputText: '#1F1E1D',
+  colorNeutral: '#1F1E1D',
+  colorDanger: '#B42318',
+  colorShimmer: '#F4F4F3',
+};
+const DARK_VARS = {
+  colorBackground: '#232322',
+  colorPrimary: '#ECECEB',
+  colorText: '#ECECEB',
+  colorTextSecondary: '#A3A29F',
+  colorTextOnPrimaryBackground: '#1C1C1B',
+  colorInputBackground: '#2C2C2B',
+  colorInputText: '#ECECEB',
+  colorNeutral: '#ECECEB',
+  colorDanger: '#F97066',
+  colorShimmer: '#2C2C2B',
+};
+
+function useIsDark(): boolean {
+  const [dark, setDark] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const on = (e: MediaQueryListEvent) => setDark(e.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return dark;
+}
+
+// Colours come from the CSS tokens in auth.css, so light and dark both follow
+// prefers-color-scheme. Clerk's own variables are swapped per scheme above.
+function buildAppearance(dark: boolean) {
+  return {
+    variables: {
+      ...(dark ? DARK_VARS : LIGHT_VARS),
+      borderRadius: '12px',
+      fontFamily: 'inherit',
+      fontSize: '13px',
     },
-    rootBox: {
-      width: '100%',
-      maxWidth: '100%',
-      boxSizing: 'border-box',
+    elements: {
+      cardBox: { background: 'transparent', border: 'none', boxShadow: 'none', width: '100%', maxWidth: '100%' },
+      rootBox: { width: '100%', maxWidth: '100%', boxSizing: 'border-box' },
+      card: {
+        background: 'transparent',
+        border: 'none',
+        boxShadow: 'none',
+        width: '100%',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+        padding: '0',
+      },
+      // The instance logo (a tan Gizzi mascot) is set in the Clerk dashboard; the wordmark above replaces it.
+      logoBox: { display: 'none' },
+      logoImage: { display: 'none' },
+      headerTitle: { color: 'var(--auth-ink)', fontSize: '15px', fontWeight: '600', letterSpacing: '0' },
+      headerSubtitle: { color: 'var(--auth-text-2)', fontSize: '13px' },
+      socialButtonsBlockButton: {
+        background: 'var(--auth-input-bg)',
+        border: '1px solid var(--auth-border)',
+        color: 'var(--auth-ink)',
+        boxShadow: 'none',
+      },
+      socialButtonsBlockButtonText: { color: 'var(--auth-ink)', fontWeight: '500' },
+      dividerLine: { background: 'var(--auth-border)' },
+      dividerText: { color: 'var(--auth-text-3)' },
+      formFieldLabel: { color: 'var(--auth-ink)', fontSize: '13px' },
+      formFieldInput: {
+        background: 'var(--auth-input-bg)',
+        border: '1px solid var(--auth-border-strong)',
+        color: 'var(--auth-ink)',
+        boxShadow: 'none',
+      },
+      formFieldErrorText: { color: 'var(--auth-danger)' },
+      footerActionText: { display: 'none' },
+      footerActionLink: { display: 'none' },
+      footer: { background: 'transparent', padding: '20px 0 0', margin: '0' },
+      footerAction: { display: 'none' },
+      form: { gap: '14px' },
+      main: { gap: '18px' },
+      formButtonPrimary: {
+        background: 'var(--auth-ink)',
+        color: 'var(--auth-on-ink)',
+        boxShadow: 'none',
+        fontWeight: '500',
+        fontSize: '13px',
+        borderRadius: '9999px',
+      },
+      identityPreviewText: { color: 'var(--auth-ink)' },
+      identityPreviewEditButton: { color: 'var(--auth-ink)' },
+      formResendCodeLink: { color: 'var(--auth-ink)' },
+      otpCodeFieldInput: {
+        background: 'var(--auth-input-bg)',
+        border: '1px solid var(--auth-border-strong)',
+        color: 'var(--auth-ink)',
+      },
+      alertText: { color: 'var(--auth-ink)' },
+      alertClerkError: {
+        background: 'var(--auth-danger-bg)',
+        border: '1px solid var(--auth-danger-border)',
+      },
     },
-    card: {
-      background: 'transparent',
-      border: 'none',
-      boxShadow: 'none',
-      width: '100%',
-      maxWidth: '100%',
-      boxSizing: 'border-box',
-      padding: '0',
-    },
-    headerTitle: {
-      color: '#0D0C0A',
-      fontSize: '28px',
-      fontWeight: '700',
-      letterSpacing: '-0.03em',
-    },
-    headerSubtitle: {
-      color: '#74716B',
-    },
-    socialButtonsBlockButton: {
-      background: '#FFFFFF',
-      border: '1px solid #E1E0DC',
-      color: '#1A1916',
-      boxShadow: 'none',
-    },
-    socialButtonsBlockButtonText: {
-      color: '#1A1916',
-    },
-    dividerLine: {
-      background: '#E1E0DC',
-    },
-    dividerText: {
-      color: '#989590',
-    },
-    formFieldLabel: {
-      color: '#403E39',
-    },
-    formFieldInput: {
-      background: '#FFFFFF',
-      border: '1px solid #D7D5D0',
-      color: '#0D0C0A',
-      boxShadow: 'none',
-    },
-    footerActionText: {
-      display: 'none',
-    },
-    footerActionLink: {
-      display: 'none',
-    },
-    footer: {
-      background: 'transparent',
-      padding: '20px 0 0',
-      margin: '0',
-    },
-    footerAction: {
-      display: 'none',
-    },
-    form: {
-      gap: '14px',
-    },
-    main: {
-      gap: '18px',
-    },
-    formButtonPrimary: {
-      background: '#1A1916',
-      color: '#FAF9F7',
-      boxShadow: 'none',
-      fontWeight: '700',
-    },
-    identityPreviewText: {
-      color: '#0D0C0A',
-    },
-    formResendCodeLink: {
-      color: '#9A7658',
-    },
-    otpCodeFieldInput: {
-      background: '#FFFFFF',
-      border: '1px solid #D7D5D0',
-      color: '#0D0C0A',
-    },
-    alertText: {
-      color: '#0D0C0A',
-    },
-    alertClerkError: {
-      background: 'rgba(248,113,113,0.12)',
-      border: '1px solid rgba(248,113,113,0.24)',
-    },
-  },
-} as const;
+  } as const;
+}
 
 /**
  * DEBUG-only seeded auto-login: if VITE_CLERK_SEED_EMAIL/PASSWORD are set,
@@ -380,9 +380,9 @@ function TokenBridge() {
         marginTop: '16px',
         padding: '12px 14px',
         borderRadius: '12px',
-        background: 'rgba(248,113,113,0.12)',
-        border: '1px solid rgba(248,113,113,0.24)',
-        color: '#9c2a25',
+        background: 'var(--auth-danger-bg)',
+        border: '1px solid var(--auth-danger-border)',
+        color: 'var(--auth-danger)',
         fontSize: '13px',
         textAlign: 'center',
       }}
@@ -393,6 +393,7 @@ function TokenBridge() {
 }
 
 export default function AuthApp() {
+  const appearance = buildAppearance(useIsDark());
   const [config, setConfig] = useState<Awaited<ReturnType<typeof loadClerkConfig>> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -413,7 +414,7 @@ export default function AuthApp() {
           justifyContent: 'center',
           padding: '40px',
           textAlign: 'center',
-          color: '#9c2a25',
+          color: 'var(--auth-danger)',
         }}
       >
         {error}
@@ -436,8 +437,8 @@ export default function AuthApp() {
           style={{
             width: '28px',
             height: '28px',
-            border: '2px solid #e1e5eb',
-            borderTopColor: '#B08D6E',
+            border: '2px solid var(--auth-border)',
+            borderTopColor: 'var(--auth-ink)',
             borderRadius: '50%',
             animation: 'spin 0.8s linear infinite',
           }}
@@ -451,7 +452,7 @@ export default function AuthApp() {
     <ClerkProvider
       publishableKey={config.publishableKey}
       proxyUrl={config.proxyUrl}
-      appearance={clerkAppearance}
+      appearance={appearance}
       localization={clerkLocalization}
       signInFallbackRedirectUrl={selfRedirectUrl}
       signUpFallbackRedirectUrl={selfRedirectUrl}
@@ -480,17 +481,8 @@ export default function AuthApp() {
         }}
       >
         <div style={{ width: '100%', maxWidth: '380px', WebkitAppRegion: 'no-drag' }}>
-          <div
-            style={{
-              textAlign: 'center',
-              marginBottom: '28px',
-              fontFamily: "'Allternit Serif', Georgia, ui-serif, Cambria, 'Times New Roman', Times, serif",
-              fontSize: '28px',
-              fontWeight: 700,
-              color: '#0d0c0a',
-            }}
-          >
-            Allternit
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '28px' }}>
+            <Wordmark width={168} />
           </div>
           <AuthFlow />
           <TokenBridge />

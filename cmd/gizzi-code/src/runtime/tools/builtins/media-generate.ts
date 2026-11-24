@@ -1,4 +1,5 @@
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
@@ -144,6 +145,7 @@ async function subscriptionImage(prompt: string, title: string, provider: string
 export const MediaGenerateTool = Tool.define("media_generate", {
   description: DESCRIPTION,
   parameters: z.object({
+    ...LabelField,
     kind: z.enum(["image", "video"]).describe("What to make"),
     prompt: z.string().describe("What the user asked for, in their words"),
     title: z.string().optional().describe("Short name for the output; reuse it to replace a previous version"),

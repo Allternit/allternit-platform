@@ -50,7 +50,7 @@ private struct BotFormSheet: View {
     @State private var moreOpen = false
     @State private var advancedOpen = false
     @State private var vendorOpen = false
-    @State private var modelPickerOpen = false
+    @State private var layersOpen = false
     @State private var starterDraft = ""
     @State private var ownDraft = ""
 
@@ -106,7 +106,7 @@ private struct BotFormSheet: View {
                     vendorOpen = false
                     AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
                     let ids = firstBotId.map { [$0] } ?? []
-                    onCreated?(BotSetupOutcome(botIds: ids, mainBotId: mainBotId, summary: "Vendor bot connected"))
+                    onCreated?(BotSetupOutcome(botIds: ids, mainBotId: mainBotId, summary: "Connected bot added"))
                     dismiss()
                 }
                 .navigationTitle("Bring a vendor’s bot")
@@ -116,7 +116,7 @@ private struct BotFormSheet: View {
                 }
             }
         }
-        .sheet(isPresented: $modelPickerOpen) { modelPicker }
+        .sheet(isPresented: $layersOpen) { BotBrainPickerSheet(form: model) }
     }
 
     // MARK: Chrome
@@ -454,56 +454,19 @@ private struct BotFormSheet: View {
         }
     }
 
-    /// ComputerRuntimeStep: Intelligence (BotBrainBindFields, knowledge brain, model, provider, harness).
+    /// ComputerRuntimeStep: Intelligence. Runtime and brain are picked in the
+    /// layered picker (Harness & Bots 2.0); the legacy mode/harness follow the
+    /// runtime, and a native or UHP runtime still takes its session or id here.
     private var intelligenceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Intelligence", "Pick how this bot runs and the model it uses.")
-            label("Brain")
-            note("How this bot runs. Separate from the Gizzi knowledge brain.")
-            VStack(spacing: 6) {
-                ForEach(BotFormData.brainModes, id: \.id) { mode in
-                    let on = model.brainMode == mode.id
-                    Button { model.brainMode = mode.id } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mode.label).font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
-                                Text(mode.hint).font(.system(size: 12)).foregroundColor(Color("TextSecondary"))
-                            }
-                            Spacer()
-                            if on { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundColor(Color("TextPrimary")) }
-                        }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(on ? Color("TextPrimary") : Color("BorderSubtle")))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-            }
+            sectionTitle("Intelligence", "Pick where this bot runs and the brain it thinks with.")
+            layersRow
             if !model.isEditing && model.brainMissing {
-                Text(model.brainMode.isEmpty ? "Pick a brain to create this bot" : "Pick a model below to create this bot")
+                Text(model.brainMode.isEmpty ? "Pick a runtime and brain to create this bot" : "Pick a brain to create this bot")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.statusError)
             }
             if model.brainMode == "native_harness" {
-                label("Native harness")
-                ProjectChipWrap(spacing: 6) {
-                    ForEach(BotFormData.nativeHarnesses, id: \.id) { harness in
-                        let on = model.harnessId == harness.id
-                        Button { model.harnessId = harness.id } label: {
-                            Text(harness.label)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(on ? Color("TextPrimary") : Color("TextSecondary"))
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 44)
-                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
-                                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(on ? Color("TextPrimary") : Color("BorderSubtle")))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
                 label("Native session id")
                 field("Leave empty to bind on first start", text: $model.nativeSessionId)
             }
@@ -520,32 +483,13 @@ private struct BotFormSheet: View {
             if model.brainsLoading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 40)
             } else if model.knowledgeBrains.isEmpty {
-                note("No Gizzi knowledge brains found. Select a platform model below.")
+                note("No Gizzi knowledge brains found. The bot uses the brain picked above.")
             } else {
                 menuRow(value: model.knowledgeBrains.first { $0.id == model.knowledgeBrainId }?.label ?? "Platform model") {
                     Button("Platform model") { model.knowledgeBrainId = "" }
                     ForEach(model.knowledgeBrains) { brain in
                         Button(brain.label) { model.knowledgeBrainId = brain.id }
                     }
-                }
-            }
-            label("Model").padding(.top, 6)
-            Button { modelPickerOpen = true } label: {
-                HStack {
-                    Text(modelLabel).font(.system(size: 14)).foregroundColor(Color("TextPrimary")).lineLimit(1)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
-                }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .background(card)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            label("Provider").padding(.top, 6)
-            menuRow(value: BotFormData.providers.first { $0.id == model.provider }?.label ?? model.provider) {
-                ForEach(BotFormData.providers, id: \.id) { provider in
-                    Button(provider.label) { model.provider = provider.id }
                 }
             }
             label("Harness").padding(.top, 6)
@@ -557,46 +501,46 @@ private struct BotFormSheet: View {
         }
     }
 
-    private var modelLabel: String {
-        if model.modelId.isEmpty { return "Pick a brain" }
-        let id = "\(model.provider)/\(model.modelId)"
-        return models.models.first { $0.id == id || $0.id == model.modelId }?.name ?? model.modelId
+    /// Runtime · Brain summary; opens the layered picker.
+    private var layersRow: some View {
+        Button { layersOpen = true } label: {
+            HStack(spacing: 10) {
+                ModelProviderMark(providerId: model.runtimeId.isEmpty ? "allternit" : model.runtimeId, size: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(layersTitle).font(.system(size: 14, weight: .medium)).foregroundColor(Color("TextPrimary")).lineLimit(1)
+                    Text(layersDetail).font(.system(size: 12)).foregroundColor(Color("TextSecondary")).lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: model.connectedVendor == nil ? "chevron.right" : "lock.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 56)
+            .background(card)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Runtime and brain: \(layersTitle). \(layersDetail)")
+        .accessibilityHint("Opens the runtime and brain picker")
     }
 
-    private var modelPicker: some View {
-        NavigationStack {
-            List {
-                if models.isLoading && models.models.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else if let loadError = models.loadError, models.models.isEmpty {
-                    Text(loadError).font(.caption).foregroundColor(Theme.statusWarning)
-                } else {
-                    ForEach(models.providers, id: \.provider) { group in
-                        Section(group.provider) {
-                            ForEach(group.models) { option in
-                                Button {
-                                    let parts = option.id.split(separator: "/", maxSplits: 1).map(String.init)
-                                    model.modelId = parts.count == 2 ? parts[1] : option.id
-                                    model.provider = parts.count == 2 ? parts[0] : option.provider
-                                    modelPickerOpen = false
-                                } label: {
-                                    HStack {
-                                        Text(option.name).foregroundColor(Color("TextPrimary"))
-                                        Spacer()
-                                        if option.id == "\(model.provider)/\(model.modelId)" { Image(systemName: "checkmark") }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Model")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { modelPickerOpen = false } }
-            }
-        }
+    private var layersTitle: String {
+        if let vendor = model.connectedVendor { return "Run by \(vendor)" }
+        if model.brainMode.isEmpty { return "Pick a runtime and brain" }
+        return "\(model.runtimeName) · \(modelLabel)"
+    }
+
+    private var layersDetail: String {
+        if model.connectedVendor != nil { return "Allternit shows its work and keeps the record." }
+        if model.brainMode.isEmpty { return "Where the bot runs and the model it thinks with." }
+        return model.agentViewMode == "runtime" ? "Opens in the runtime's own view" : "Opens in the Allternit view"
+    }
+
+    private var modelLabel: String {
+        if model.modelId.isEmpty { return "Default model" }
+        let id = "\(model.provider)/\(model.modelId)"
+        return models.models.first { $0.id == id || $0.id == model.modelId }?.name ?? model.modelId
     }
 
     /// ComputerRuntimeStep: Advanced.
@@ -660,6 +604,10 @@ private struct BotFormSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 label("Accent color")
                 accentRow(BotFormData.editAccents)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                label("Runtime and brain")
+                layersRow
             }
             VStack(alignment: .leading, spacing: 6) {
                 label("Purpose / description")

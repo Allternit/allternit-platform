@@ -1,0 +1,36 @@
+---
+title: 'Task list (todowrite)'
+description: 'The session task list, with ids, active labels, blockers and five states'
+---
+
+## Overview
+
+`todowrite` keeps the session task list. Each call sends the whole list. Use it for work of three or more steps.
+
+## Item fields
+
+| Field | Meaning |
+|---|---|
+| `content` | The outcome, such as "Login rejects expired tokens". |
+| `id` | Stable id. One is assigned if left out. |
+| `activeForm` | Label shown while running, such as "Fixing token expiry". |
+| `blockedBy` | Ids of items that must finish first. Unknown ids and cycles are refused. |
+| `status` | `pending`, `in_progress`, `completed`, `cancelled` (dropped on purpose) or `interrupted` (stopped early). |
+
+Lists saved before this change still read.
+
+## Rules for the model
+
+- Keep one item in progress at a time and complete it right away.
+- Make the last item a verification.
+- Never mark an item completed on partial work.
+
+After 10 turns with open items and no update, the runtime adds one reminder notice per window.
+
+## In the apps
+
+The Progress panel and the todo cards on Desktop, web, phone, PWA and iOS show the new states, the active label and a "blocked by" line.
+
+## Related
+
+- [Agent control](/tools/agent-control)

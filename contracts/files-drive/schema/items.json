@@ -1,0 +1,528 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/items.json",
+  "title": "Files drive: item operations",
+  "description": "list, stat, mkdir, move, copy, delete, trash, restore, versions, pin, search.",
+  "$defs": {
+    "ListQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent_id"
+      ],
+      "properties": {
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "name",
+            "modified",
+            "size"
+          ]
+        }
+      }
+    },
+    "ListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "parent",
+        "items",
+        "cursor",
+        "freshness"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "parent": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/Item"
+          }
+        },
+        "next_page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "StatResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "freshness"
+      ],
+      "properties": {
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "MkdirRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent_id",
+        "name",
+        "on_conflict"
+      ],
+      "properties": {
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict"
+        }
+      }
+    },
+    "MoveRequest": {
+      "type": "object",
+      "description": "Rename and/or move inside one computer. Cross-root moves keep the item ID.",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "base_rev",
+        "on_conflict"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "base_rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "new_parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "new_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict"
+        }
+      }
+    },
+    "CopyRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "dest_parent_id",
+        "on_conflict"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "dest_parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "dest_computer_id": {
+          "$ref": "common.json#/$defs/ComputerId",
+          "description": "Set for a cross-computer copy; returns a job."
+        },
+        "dest_base_url": {
+          "type": "string",
+          "description": "With dest_computer_id: the destination's loopback or mesh URL prefix ending in /api/v1/files/v2. The source runtime pushes the copy there (have/need, upload session) with its runtime device token."
+        },
+        "delete_source": {
+          "type": "boolean",
+          "description": "With dest_computer_id: a cross-computer move. The source item goes to the trash only after the destination committed it with the same content hash. The job kind is move."
+        },
+        "new_name": {
+          "type": "string"
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict"
+        }
+      }
+    },
+    "DeleteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "permanent"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "base_rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "permanent": {
+          "type": "boolean",
+          "description": "false moves to trash."
+        }
+      }
+    },
+    "MutationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "cursor"
+      ],
+      "properties": {
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "conflict": {
+          "$ref": "common.json#/$defs/ConflictInfo"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "CopyResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "job": {
+          "$ref": "common.json#/$defs/JobRef"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "TrashEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trash_id",
+        "item",
+        "original_parent_id",
+        "trashed_at",
+        "trashed_by",
+        "purge_at"
+      ],
+      "properties": {
+        "trash_id": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "original_parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "trashed_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "trashed_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "purge_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "DeleteResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cursor"
+      ],
+      "properties": {
+        "trashed": {
+          "$ref": "#/$defs/TrashEntry"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "TrashListResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "entries",
+        "freshness"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrashEntry"
+          }
+        },
+        "next_page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "RestoreRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trash_id",
+        "on_conflict"
+      ],
+      "properties": {
+        "trash_id": {
+          "type": "string"
+        },
+        "on_conflict": {
+          "$ref": "common.json#/$defs/OnConflict"
+        }
+      }
+    },
+    "Version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id",
+        "rev",
+        "size",
+        "content_hash",
+        "created_at",
+        "created_by"
+      ],
+      "properties": {
+        "version_id": {
+          "type": "string"
+        },
+        "rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "created_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "VersionsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "versions",
+        "freshness"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Version"
+          }
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "RestoreVersionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id",
+        "base_rev"
+      ],
+      "properties": {
+        "version_id": {
+          "type": "string"
+        },
+        "base_rev": {
+          "$ref": "common.json#/$defs/Rev"
+        }
+      }
+    },
+    "PinRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "device_id",
+        "pinned"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      }
+    },
+    "PinResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "pinned_on"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "pinned_on": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/DeviceId"
+          }
+        }
+      }
+    },
+    "SearchMode": {
+      "type": "string",
+      "enum": [
+        "name",
+        "full_text",
+        "semantic"
+      ]
+    },
+    "SearchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query",
+        "mode"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "mode": {
+          "$ref": "#/$defs/SearchMode"
+        },
+        "root_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/RootId"
+          }
+        },
+        "kind": {
+          "$ref": "common.json#/$defs/ItemKind"
+        },
+        "modified_after": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        }
+      }
+    },
+    "SearchHit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "score"
+      ],
+      "properties": {
+        "item": {
+          "$ref": "common.json#/$defs/Item"
+        },
+        "score": {
+          "type": "number"
+        },
+        "snippet": {
+          "type": "string",
+          "description": "Never returned to guests outside their scope."
+        }
+      }
+    },
+    "SearchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hits",
+        "index_state",
+        "freshness"
+      ],
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SearchHit"
+          }
+        },
+        "next_page_token": {
+          "$ref": "common.json#/$defs/PageToken"
+        },
+        "index_state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "building",
+            "names_only"
+          ],
+          "description": "names_only when served from the asleep snapshot."
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    }
+  }
+}

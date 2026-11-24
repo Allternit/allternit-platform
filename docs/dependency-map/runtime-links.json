@@ -25,6 +25,24 @@
       "path": "allternit/cmd/allternit-api/src/mcp_event_automations.rs"
     },
     {
+      "id": "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+      "label": "Agent to user: files and notify routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_user_tools.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/agent_automation_tools.rs",
+      "label": "Agent scheduled-task routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_automation_tools.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+      "label": "automation tool",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts"
+    },
+    {
       "id": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
       "label": "Agent session execution and cancellation",
       "kind": "module",
@@ -636,6 +654,105 @@
       "label": "phone runs",
       "kind": "module",
       "path": "allternit/cmd/allternit-api/src/phone_runs.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "label": "cli-bridge",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "label": "run_code",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts"
+    },
+    {
+      "id": "external:freeweights",
+      "label": "Freeweights (open-weights catalog)",
+      "kind": "external",
+      "url": "https://freeweights.allternit.com",
+      "path": "https://freeweights.allternit.com"
+    },
+    {
+      "id": "allternit/services/model-source",
+      "label": "model-source (verified model downloads)",
+      "kind": "crate",
+      "path": "allternit/services/model-source"
+    },
+    {
+      "id": "allternit/services/model-training",
+      "label": "allternit-tune engine (services/model-training)",
+      "kind": "module",
+      "path": "allternit/services/model-training"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "label": "model host relay",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "label": "Platform API caller (project keys and alt_oat_ app tokens)",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "label": "Connections registry routes and claude-link",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs"
+    },
+    {
+      "id": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+      "label": "OAuthAuthorizePage.tsx",
+      "kind": "module",
+      "path": "allternit-ai/src/pages/OAuthAuthorizePage.tsx"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+      "label": "auth.ts",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Settings",
+      "label": "Settings",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Settings"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan",
+      "label": "person-plan",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "label": "model_router.rs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs"
+    },
+    {
+      "id": "external:anthropic-linked-billing",
+      "label": "Anthropic API (linked billing, operator token)",
+      "kind": "external",
+      "url": "https://api.anthropic.com",
+      "path": "https://api.anthropic.com"
+    },
+    {
+      "id": "external:claude-oauth",
+      "label": "Claude OAuth (auth.claude.com: link, token, revoke; fetches our JWKS)",
+      "kind": "external",
+      "url": "https://auth.claude.com",
+      "path": "https://auth.claude.com"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "label": "cli-catalog.json (runtime registry)",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json"
     }
   ],
   "edges": [
@@ -987,7 +1104,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -996,7 +1113,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/codync/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1005,7 +1122,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1014,7 +1131,7 @@
       "kind": "authenticated loopback HTTP; accepted message IDs matched to native conversation replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1024,7 +1141,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1034,7 +1151,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openbot-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1043,7 +1160,7 @@
       "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1052,7 +1169,7 @@
       "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1062,7 +1179,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1252,6 +1369,16 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "server hint metadata.project_role thread (from the session bag's projectRole) read by SystemPrompt.context() to add the project thread prompt block",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt/project-thread.txt"
+      ]
+    },
+    {
       "source": "allternit-ai/src/lib/openui",
       "target": "allternit/cmd/gizzi-code/src/runtime/session",
       "kind": "shared answer policy: app catalog routing and runtime final-response enforcement before public text publication",
@@ -1260,6 +1387,8 @@
         "allternit-ai/scripts/sync-answer-contract.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/answer-policy.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
         "allternit/cmd/gizzi-code/src/runtime/session/processor.ts"
       ]
     },
@@ -1367,6 +1496,24 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "runtime event forwarder: agent.message.sent from send_user_message (POST /bot-routing/user/notify) becomes a normal-level push, AGENT_MESSAGE category",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+      "target": "allternit/cmd/allternit-api/src/agent_automation_tools.rs",
+      "kind": "HTTP (POST /bot-routing/automation/create|list|update|delete|run): the automation tool makes scheduled tasks for a linked account; routine_local_scheduler.rs fires them",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+        "allternit/cmd/allternit-api/src/agent_automation_tools.rs"
+      ]
+    },
+    {
       "source": "allternit/cmd/allternit-api/src/status_snapshot.rs",
       "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
       "kind": "authenticated HTTP (runtime device bearer): status snapshot with bots and focus, ingested to choose push level and the Live Activity bot",
@@ -1466,6 +1613,405 @@
         "allternit/cmd/allternit-api/src/phone_runs.rs",
         "allternit/surfaces/allternit-mobile/ios/Features/Phones/RunStatusViews.swift",
         "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MessageRow.swift"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/run_code.ts",
+      "kind": "MCP tool call: CLI brains (Claude Code, Codex...) call run_code through the allternit MCP bridge; the bridge stages the latest user message's attachments, stashes the result metadata (files[], runDir, exit_code), and the session processor normalizes the name to run_code and merges it into the tool part",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/cli-bridge/results.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/processor.ts",
+        "allternit/cmd/gizzi-code/test/cli-bridge/cli-bridge-run-code.test.ts"
+      ]
+    },
+    {
+      "source": "allternit/services/model-source",
+      "target": "external:freeweights",
+      "kind": "HTTPS: catalog, signed manifests and resolve, then the publisher on fallback",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: resolve and fetch_verified for every model download",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/voice",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: voice pack downloads (state pinned)",
+      "evidence": [
+        "allternit/services/model-source/src/lib.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-source",
+      "kind": "in-process call: Ollama pull and sidecar install verification; Studio base model and dataset fetch (fetch_verified)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/services/model-source/src/lib.rs",
+        "allternit/cmd/allternit-api/src/studio/runner.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/local-engine",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and Worker, then the publisher (ALLTERNIT_FREEWEIGHTS_URL overrides the base)",
+      "evidence": [
+        "allternit/services/local-engine/src/download",
+        "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights annotations on Hugging Face search, cached 5 minutes",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/provider_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/sidecar",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog badge on sidecar search and pull verification",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts",
+        "allternit/cmd/gizzi-code/src/runtime/sidecar"
+      ]
+    },
+    {
+      "source": "allternit/services/status",
+      "target": "external:freeweights",
+      "kind": "HTTPS probes: Freeweights component (4 probes)",
+      "evidence": [
+        "allternit/services/status/contract/targets.json"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/views/model-lab",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog search and model details (Freeweights Studio)",
+      "evidence": [
+        "allternit-ai/src/views/model-lab"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "external:freeweights",
+      "kind": "HTTPS: Freeweights catalog and model details on the Models screen",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "authenticated HTTP via cloud relay: POST /api/local-engine/models/download and GET /models (Send to computer, then poll)",
+      "evidence": [
+        "allternit/surfaces/allternit-mobile/ios/Features/Models/ModelsTabView.swift",
+        "allternit/cmd/allternit-api/src/local_engine_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/studio-spec",
+      "kind": "in-process call: Studio job spec v1 validation, job states and engine catalog for /api/v1/studio",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/studio-spec/openapi/studio-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "child process + loopback HTTP: engine API v1 with a per-launch bearer token (venv python -m allternit_tune.server)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/runner.rs",
+        "allternit/services/studio-spec/openapi/engine-api.yaml"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/local-engine",
+      "kind": "loopback HTTP: POST /models/studio-output registers a finished Studio job output (source studio_output)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/mod.rs",
+        "allternit/services/local-engine/src/routes/models.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/services/model-training",
+      "kind": "bundles source (no venv): extraResources model-training + runtime packages; passed to allternit-api as ALLTERNIT_TUNE_SOURCE for the Studio engine install",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/package.json",
+        "allternit/surfaces/allternit-desktop/scripts/runtime-package.cjs",
+        "allternit/surfaces/allternit-desktop/src/main/backend-manager.ts",
+        "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "install: the host runs pip with requirements-<hardware id>.txt from the engine folder (requirements-apple-silicon.txt when present, else the generic file) into the Studio engine venv; ALLTERNIT_STUDIO_HARDWARE, ALLTERNIT_STUDIO_JOB_DIR and ALLTERNIT_STUDIO_OUTPUT_DIR are passed to the engine process",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/studio/engines.rs",
+        "allternit/cmd/allternit-api/src/studio/runner.rs",
+        "allternit/services/model-training/requirements-apple-silicon.txt"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/services/model-training",
+      "kind": "engine source pin: the three third-party Studio engines (Axolotl, LLaMA-Factory, torchtune) install from Allternit/studio-engines at commit e520474 (Apache-2.0), pinned by STUDIO_ENGINES_SHA in engines.rs and documented in surfaces/docs/api/studio.mdx; no AGPL/LGPL engine (Unsloth removed 2026-11-15)",
+      "evidence": [
+        "allternit/surfaces/docs/api/studio.mdx",
+        "allternit/cmd/allternit-api/src/studio/engines.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "kind": "HTTP GET /api/v1/model-hosts/v1/models + POST /v1/chat/completions (provider allternit-devices 'Your devices', bearer = API key or runtime device token; rescanned while gizzi runs)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/allternit-devices.ts",
+        "allternit/surfaces/docs/api/model-host-relay.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/model-host",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs",
+      "kind": "POST /api/v1/model-hosts/ws-ticket then WebSocket /api/v1/model-hosts/connect (hello/models/chunk/end/error up, ready/request/cancel down): the owner's host device runs the model and streams tokens back",
+      "evidence": [
+        "allternit-ai/src/lib/model-host/host-client.ts",
+        "allternit/surfaces/docs/api/model-host-relay.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/services",
+      "target": "external:freeweights",
+      "kind": "HTTPS: gizzi models publish uploads (preupload, LFS batch, commit) and GET /api/fw/v1/limits for gizzi usage; community repo check on pull",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/sleep/signal",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP GET /api/v1/memory/sleep/status",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP GET /api/v1/memory/sleep/context",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/disputes/:id/resolve",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs",
+        "allternit/cmd/allternit-api/src/sleep/disputes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/drive/capture/turn (role extension)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/platform.allternit.com",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/platform/projects/:id/oauth-apps (create app, secret rotate, test users, redirect URIs, submit) and /api/v1/admin/oauth-apps (approve, suspend), signed-in session",
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/connect-kit",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "kind": "HTTP GET/PATCH/DELETE /api/v1/oauth/grants (Apps with access: spend, cap, revoke) and /api/v1/claude-link (start, status, unlink), session bearer",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP GET /api/v1/oauth/requests/:id, POST .../approve and .../deny (consent page for Sign in with Allternit); follows the returned redirect_to",
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/oauth/grants (gizzi auth apps list, cap, revoke) and /api/v1/claude-link (gizzi auth link and unlink claude-org)",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/Features/Settings",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/oauth/grants (Settings > Privacy > Connected apps) and /api/v1/claude-link (Settings > Connections)",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "kind": "HTTP POST /v1/chat/completions for linked/claude/<model> (claude-org) with X-Allternit-Turn: person; refusals claude_link_* come back with fallbacks",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "target": "external:anthropic-linked-billing",
+      "kind": "HTTPS POST /v1/chat/completions with the operator token, anthropic-user-profile-id and billing_policy bill_to user_profile; also /v1/user_profiles and the WIF token exchange /v1/oauth/token",
+      "evidence": [
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
+        "allternit/surfaces/docs/guides/claude-organization.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "target": "external:claude-oauth",
+      "kind": "HTTPS auth.claude.com /v1/oauth/par, /v1/oauth/token, /v1/oauth/revoke with private_key_jwt assertions; Anthropic fetches our JWKS at /oauth2/anthropic-client/jwks.json",
+      "evidence": [
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
+        "allternit/surfaces/docs/guides/claude-organization.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[] and tools[]: runtime registry, fits(), normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/subprocess.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/drivers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads adapter kinds and runtimes[].systemLayer.via for local CLI sessions",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers/cli-session-flags.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/cli_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: GET /api/v1/runtimes (local gateway, adds installed with owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/cli_catalog.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/runtime_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[].liveUi: POST/GET/DELETE /api/v1/runtimes/:id/live starts the runtime's own web app on 127.0.0.1 (owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: public GET /api/v1/runtimes for web and phones",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/bot_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "botBrain normalizer derives runtime/mode/harness from the registry",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agent_*",
+      "target": "allternit/cmd/allternit-api/src/bot_*",
+      "kind": "GET /agents/:id adds botKind; agent saves run the botBrain normalizer",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_routes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands",
+      "target": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "kind": "registers gizzi agents bot (create/edit --runtime/--brain)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "kind": "--runtime/--brain: fits(), auto-switch, normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/allternit-api/src/agent_*",
+      "kind": "HTTP: GET /api/v1/agents/:id botKind for the Connected bot lock",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/agent_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/docs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "documents the runtime registry, runtimes API and system layers",
+      "evidence": [
+        "allternit/surfaces/docs/cli/runtime.mdx",
+        "allternit/surfaces/docs/api/runtimes.mdx",
+        "allternit/surfaces/docs/concepts/system-layers.mdx"
       ]
     }
   ]

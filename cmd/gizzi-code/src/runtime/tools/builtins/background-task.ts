@@ -2,6 +2,7 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { AgentControl } from "@/runtime/primitives/agent-control"
 
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"])
 
@@ -41,7 +42,8 @@ export const BackgroundTaskOutputTool = Tool.define("task_output", {
 })
 
 export const BackgroundTaskStopTool = Tool.define("task_stop", {
-  description: "Cancel a running background task owned by the current session.",
+  description:
+    "Cancel a running background task owned by the current session. A subagent's own agents and background tasks stop with it, deepest first.",
   parameters: z.object({ task_id: z.string(), reason: z.string().optional() }),
   async execute(params, ctx) {
     const task = await BackgroundTask.get(params.task_id)
@@ -59,7 +61,15 @@ export const BackgroundTaskStopTool = Tool.define("task_stop", {
       always: [],
       metadata: { taskID: task.id, description: task.description },
     })
-    if (task.childSessionID) SessionPrompt.cancel(task.childSessionID)
+    // Cascade: the subagent's own agents and shells stop first, deepest first; then the subagent itself.
+    if (task.childSessionID) {
+      await AgentControl.stopSubtree(task.childSessionID, {
+        reason: params.reason ?? "Its parent task was stopped",
+        includeRoot: false,
+        archive: false,
+      })
+      SessionPrompt.cancel(task.childSessionID)
+    }
     const cancelled = await BackgroundTask.cancel(task.id, params.reason)
     return {
       title: task.description,

@@ -65,8 +65,8 @@ async fn list_catalog(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CatalogQuery>,
 ) -> Json<CatalogResponse> {
-    let source = CatalogSource::from_str(&query.source);
-    let limit = query.limit.max(1).min(200);
+    let source = CatalogSource::parse(&query.source);
+    let limit = query.limit.clamp(1, 200);
     // Stale-while-revalidate: kick off a background refresh when the cache is
     // older than 30 minutes, then serve whatever we have immediately. The
     // `stale` flag reflects the age of the data actually being served.

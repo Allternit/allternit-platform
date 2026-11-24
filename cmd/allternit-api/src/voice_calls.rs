@@ -199,7 +199,7 @@ pub fn production_turner() -> Arc<dyn VoiceTurner> {
 #[async_trait]
 impl VoiceTurner for ChannelTurner {
     async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, _events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
-        crate::agent_session_routes::send_bot_turn(db, session_id, bot_id, text).await.map(TurnReply::Final)
+        crate::agent_session_routes::send_voice_bot_turn(db, session_id, bot_id, text).await.map(TurnReply::Final)
     }
 
     /// What the Stop button does: a vendor-bound session cancels on the vendor,
@@ -271,7 +271,12 @@ impl VoiceTurner for GizziStreamTurner {
             tracing::info!(session_id, "voice turn: session is {why}; answering with the final reply instead of streaming");
             return self.fallback.run(db, session_id, bot_id, text, events).await;
         }
-        let (client, path, payload) = crate::agent_session_routes::native_turn_request(db, session_id, bot_id, text).await?;
+        let (client, path, mut payload) = crate::agent_session_routes::native_turn_request(db, session_id, bot_id, text).await?;
+        // Spoken reply: the runtime adds its voice block when it sees this key.
+        if !payload["metadata"].is_object() {
+            payload["metadata"] = json!({});
+        }
+        payload["metadata"]["reply_mode"] = json!("voice");
         crate::voice_turn_stream::stream_gizzi_turn(&client, &crate::agent_session_routes::gizzi_base(), session_id, &path, payload, &events).await
     }
 
@@ -375,7 +380,10 @@ fn summary_prompt(db: &DbHandle, call: &CallRow, call_id: &str) -> Result<Option
         transcript = format!("[earlier part of the call omitted]\n{}", &transcript[cut..]);
     }
     Ok(Some(format!(
-        "Summarize this {} phone call for the bot's owner. Caller number: {}. Duration: {} seconds. Ended: {}.\n\nTranscript and tool log:\n{transcript}",
+        "Summarize this {} phone call for the bot's owner. Caller number: {}. Duration: {} seconds. Ended: {}.\n\n\
+Rules: cover who called, what was asked, what was agreed, and follow-ups with an owner and a time for each. \
+Use only facts stated in the transcript or tool log; if something is missing, write \"not stated\". Do not invent names, numbers, times or promises. \
+Keep it short, plain text.\n\nTranscript and tool log:\n{transcript}",
         call.direction,
         if caller.is_empty() { "withheld" } else { caller.as_str() },
         duration.map_or("unknown".to_string(), |d| d.to_string()),
@@ -769,10 +777,21 @@ fn speakable_chunks(reply: &str) -> Vec<String> {
 /// channel path writes none, so nothing is written twice); the internal
 /// `toolCallId` (and the call's `input` / `output` / `error`) are not part of the
 /// stream's event shape. `usage` events are dropped.
+///
+/// A `control` event (from a finished `voice_control` call) goes to the call
+/// client as `call.control` with `language` / `speed` / `reply_mode` /
+/// `end_call`. `end_call` means: hang up once the current speech has played,
+/// then post `call.ended` with the `reason` given here (`assistant_ended`).
 fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Value, out: &mpsc::UnboundedSender<Value>) {
     // Token usage is for Platform API text turns; a call is billed by the minute.
     if ev["type"] == "usage" {
         return;
+    }
+    if ev["type"] == "control" {
+        ev["type"] = json!("call.control");
+        if ev["end_call"] == true {
+            ev["reason"] = json!(ASSISTANT_ENDED);
+        }
     }
     if ev["type"] == "tool" {
         let id = ev.as_object_mut().and_then(|o| o.remove("toolCallId")).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
@@ -793,6 +812,9 @@ fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Valu
     }
     let _ = out.send(ev);
 }
+
+/// The `call.ended` reason when the assistant hung up (`voice_control` end_call).
+pub(crate) const ASSISTANT_ENDED: &str = "assistant_ended";
 
 /// Aborts the turn when the SSE response is dropped (the relay hung up) while
 /// that turn is still the call's current one.
@@ -855,7 +877,7 @@ async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<A
             match result {
                 Ok(reply) => {
                     if let TurnReply::Final(reply) = reply {
-                        for chunk in speakable_chunks(&crate::openui_text::to_spoken_text(&reply)) {
+                        for chunk in speakable_chunks(&crate::voice_turn_stream::strip_voice_tags(&crate::openui_text::to_spoken_text(&reply))) {
                             let _ = tx.send(json!({ "type": "text.delta", "text": chunk }));
                         }
                     }

@@ -1,5 +1,6 @@
 import { Server } from "@/runtime/server/server"
 import { Mesh } from "@/runtime/server/mesh"
+import { isSelfHosted, isVendorUrl } from "@/shared/selfhost/offline"
 import { cmd } from "@/cli/commands/cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "@/cli/network"
 import { Flag } from "@/runtime/context/flag/flag"
@@ -9,6 +10,7 @@ import { assertSafeServerExposure } from "@/cli/server-exposure"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { Sidecar } from "@/runtime/sidecar"
 import { onParentExit } from "@/runtime/util/parent-lifeline"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -65,6 +67,14 @@ export const ServeCommand = cmd({
       args.meshControlUrl ?? Flag.GIZZI_MESH_CONTROL_URL ?? config?.server?.mesh_control_url ?? Mesh.DEFAULT_CONTROL_URL
     // An auth key implies mesh mode even without --mesh (same rule as --tunnel-token).
     const mesh = meshFlag || !!meshAuthKey
+    // Self-hosted: the default coordination server is an Allternit host (a child
+    // process, so the fetch guard can't see it). Refuse instead of connecting.
+    if (mesh && isSelfHosted() && isVendorUrl(meshControlUrl)) {
+      throw new Error(
+        `--mesh would connect to ${meshControlUrl}, an Allternit host. Self-hosted mode (ALLTERNIT_SELF_HOSTED=1) ` +
+          "makes no Allternit calls: pass --mesh-control-url for your own Headscale server, or leave mesh off.",
+      )
+    }
 
     // A tunnel exposes even a loopback server to the public internet, so the
     // same "never expose an unauthenticated server" rule applies. Shared with
@@ -107,8 +117,11 @@ export const ServeCommand = cmd({
       note(`gizzi server received ${signal}; shutting down\n`)
       ProcessRegistry.killAll()
       void Sidecar.stop().catch(() => {})
-      server
-        .stop()
+      // Allternit Sleep: session_end for this runtime's sessions, capped at
+      // 500 ms; resolves at once when no session ran or Sleep is off.
+      SleepTriggers.endAll()
+        .catch(() => {})
+        .then(() => server.stop())
         .catch(() => {
           // stop() rejects if the socket is already closed; exiting anyway.
         })

@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -39,6 +40,9 @@ struct ProfileFields: Codable, Equatable, Sendable {
 /// model, then the plan card.
 struct ProfileSettingsPage: View {
     @EnvironmentObject private var authManager: AuthManager
+    /// Closes the whole Settings sheet (after the account is deleted).
+    var onClose: () -> Void = {}
+    @State private var isDeletePresented = false
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var usageStore = UsageStore.shared
 
@@ -166,6 +170,21 @@ struct ProfileSettingsPage: View {
                         .buttonStyle(SettingsQuietButtonStyle())
                 }
             }
+
+            // App Store 5.1.1(v): two taps from the Settings root (Profile > Delete account).
+            if authManager.isSignedIn {
+                Button(action: { isDeletePresented = true }) {
+                    Label("Delete account", systemImage: "person.crop.circle.badge.xmark")
+                        .font(.system(size: 15))
+                        .foregroundColor(Theme.statusError)
+                }
+                .padding(.top, 28)
+                .accessibilityLabel("Delete account")
+                .accessibilityIdentifier("delete-account-row")
+            }
+        }
+        .navigationDestination(isPresented: $isDeletePresented) {
+            DeleteAccountView(onDeleted: onClose)
         }
         .task { await load() }
     }
@@ -274,6 +293,7 @@ struct ResponseStyleSettingsPage: View {
         case .balanced: return "The answer in one line, then short sections."
         case .detailed: return "The full layout, with reasoning, examples and edge cases."
         case .custom: return "Your instructions below set the length. The layout stays the same."
+        case .learning: return "Guides you with questions instead of giving the answer right away."
         }
     }
 
@@ -441,15 +461,25 @@ private struct ThemeSegment: View {
 
 // MARK: - Voice
 
-/// Settings → Voice (the web's VoiceSettings panel): where voice runs.
-/// Allternit hosts no voice; both choices run on this phone.
+/// Settings → Voice (the web's VoiceSettings panel): where voice runs, and
+/// the user's own OpenAI / ElevenLabs keys. Allternit hosts no voice.
 struct VoiceSettingsPage: View {
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var keySync = VoiceKeySync.shared
+
+    private var privacyText: String {
+        let base = "Privacy: with voice on this phone, your audio is processed here and isn't sent to Allternit. With your own OpenAI, your audio and the bot's replies go from this phone to OpenAI; with your own ElevenLabs, the bot's replies go to ElevenLabs. Allternit never receives your audio or your key. Either way, what you say becomes a normal message in the thread."
+        guard keySync.isEnabled else { return base }
+        return base.replacingOccurrences(of: "Allternit never receives your audio or your key.", with: "Allternit never receives your audio.")
+            + " Your keys are also saved, encrypted, in your Allternit account so your other devices can use them. Turn this off to delete them from your account."
+    }
 
     private static func routeTitle(_ route: VoiceRoutePreference) -> String {
         switch route {
         case .automatic: return "Automatic (recommended)"
         case .device: return "This device"
+        case .openai: return "Your own OpenAI"
+        case .elevenlabs: return "Your own ElevenLabs"
         }
     }
 
@@ -457,6 +487,8 @@ struct VoiceSettingsPage: View {
         switch route {
         case .automatic: return "Voice runs on this phone. The voice model downloads once; until it's ready, the iPhone's built-in voice is used. Free, and your audio stays on this phone."
         case .device: return "The same, chosen on purpose: your audio stays on this phone."
+        case .openai: return "OpenAI Realtime listens and OpenAI speech reads replies, with your API key. OpenAI bills you directly."
+        case .elevenlabs: return "An ElevenLabs voice reads replies, with your API key; listening stays on this phone. ElevenLabs bills you directly."
         }
     }
 
@@ -471,6 +503,10 @@ struct VoiceSettingsPage: View {
                                       action: { settings.voiceRoute = route })
                 }
             }
+
+            SettingsSectionHeading(text: "Your own provider")
+                .padding(.top, 16)
+            VoiceOwnProviderSection()
 
             SettingsSectionHeading(text: "Speech to text")
                 .padding(.top, 16)
@@ -492,11 +528,384 @@ struct VoiceSettingsPage: View {
             LiveModeLookSection(inset: 0)
                 .padding(.top, 16)
 
-            Text("Privacy: voice runs on this phone. Your audio is processed here and isn't sent to Allternit; what you say becomes a normal message in the thread.")
+            Text(privacyText)
                 .font(.system(size: 13))
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 16)
+        }
+        // Account sync (no-op while off): newer copy wins on open and foreground.
+        .task { await keySync.sync() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            Task { await keySync.sync() }
+        }
+    }
+}
+
+// MARK: - Voice › Your own provider
+
+/// One row per vendor: Connect opens the vendor's key page in a Safari
+/// sheet; when it closes, a card offers Paste (no paste prompt) or typing.
+/// The key is checked with the vendor, saved in the Keychain, and Where
+/// voice runs switches to it. Plus the QR handoff from a computer, the
+/// ElevenLabs voice picker, and "Save to my Allternit account".
+private struct VoiceOwnProviderSection: View {
+    @ObservedObject private var keySync = VoiceKeySync.shared
+    @ObservedObject private var auth = AuthManager.shared
+    @State private var isScanning = false
+
+    var body: some View {
+        let _ = keySync.revision
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsDescription(text: keySync.isEnabled
+                ? "Optional. For a different voice, connect your own account. Your key is kept on this phone, in the Keychain, and in your Allternit account, encrypted. Voice calls go straight to that company. You pay them directly."
+                : "Optional. For a different voice, connect your own account. Your key is kept only on this phone, in the Keychain, and goes straight to that company, never to Allternit. You pay them directly.")
+            ForEach(VoiceVendor.allCases) { vendor in
+                VoiceVendorRow(vendor: vendor)
+            }
+            if VoiceProviderKeys.value(.elevenlabs) != nil {
+                ElevenLabsVoicePicker()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    isScanning = true
+                } label: {
+                    Label("Scan from my computer", systemImage: "qrcode.viewfinder")
+                }
+                .buttonStyle(SettingsQuietButtonStyle())
+                Text("Already set up on ai.allternit.com or Allternit Desktop? Show the QR code there and scan it. The key is sent end-to-end encrypted. Allternit can't read it.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SettingsSwitchRow(
+                title: "Save to my Allternit account",
+                detail: auth.isSignedIn
+                    ? "Off by default. Your other signed-in devices get your keys."
+                    : "Sign in to Allternit to save keys to your account.",
+                isOn: Binding(get: { keySync.isEnabled },
+                              set: { on in Task { await keySync.setEnabled(on) } }))
+                .disabled(!auth.isSignedIn || keySync.isBusy)
+            if let error = keySync.lastError {
+                SettingsErrorBanner(message: error)
+            }
+            Text("Disconnect removes a key from this phone only. To cut a key off everywhere, revoke it in your OpenAI or ElevenLabs account.")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .sheet(isPresented: $isScanning) { VoiceKeyHandoffSheet() }
+    }
+}
+
+/// OpenAI or ElevenLabs: Connect → vendor page → Paste → checked → Connected.
+private struct VoiceVendorRow: View {
+    let vendor: VoiceVendor
+    @ObservedObject private var keySync = VoiceKeySync.shared
+    @State private var safariURL: IdentifiableURL? = nil
+    @State private var isAddingKey = false
+    @State private var isTyping = false
+    @State private var draft = ""
+    @State private var isChecking = false
+    @State private var error: String? = nil
+
+    var body: some View {
+        let _ = keySync.revision
+        let key = VoiceProviderKeys.value(vendor.keyField)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(vendor.name)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(Color("TextPrimary"))
+                    if key != nil {
+                        (Text("● ").foregroundColor(Theme.statusSuccess)
+                         + Text("Connected · \(VoiceProviderKeys.label(vendor) ?? "Saved")").foregroundColor(Color("TextSecondary")))
+                            .font(.system(size: 13))
+                            .lineLimit(2)
+                    } else {
+                        Text("Not connected")
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                Spacer(minLength: 8)
+                if key != nil {
+                    Button("Disconnect") {
+                        keySync.disconnect(vendor)
+                        error = nil
+                    }
+                    .buttonStyle(SettingsQuietButtonStyle())
+                    .accessibilityLabel("Disconnect \(vendor.name)")
+                } else if !isAddingKey {
+                    Button("Connect") {
+                        error = nil
+                        safariURL = IdentifiableURL(url: vendor.keyPageURL)
+                    }
+                    .buttonStyle(SettingsPrimaryButtonStyle())
+                    .accessibilityLabel("Connect \(vendor.name)")
+                }
+            }
+            if key == nil && isAddingKey {
+                addKeyCard
+            }
+            if let error {
+                SettingsErrorBanner(message: error)
+            }
+        }
+        .padding(14)
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .sheet(item: $safariURL, onDismiss: { isAddingKey = true }) { item in
+            SafariView(url: item.url).ignoresSafeArea()
+        }
+    }
+
+    private var addKeyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Add your \(vendor.name) key")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+            Text("Copy the key on \(vendor.name)'s page, then paste it here.")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            if isChecking {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Checking your key with \(vendor.name)…")
+                        .font(.system(size: 14))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    // System paste button: no "Allow Paste" prompt.
+                    PasteButton(payloadType: String.self) { strings in
+                        let pasted = strings.first ?? ""
+                        Task { @MainActor in await connect(pasted) }
+                    }
+                    .buttonBorderShape(.roundedRectangle(radius: 8))
+                    .labelStyle(.titleAndIcon)
+                    .tint(Color("AccentPrimary"))
+                    if !isTyping {
+                        Button("Type it instead") { isTyping = true }
+                            .buttonStyle(SettingsQuietButtonStyle())
+                    }
+                    Spacer(minLength: 0)
+                }
+                if isTyping {
+                    HStack(spacing: 8) {
+                        SecureField("Your \(vendor.name) key", text: $draft)
+                            .font(.system(size: 14))
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 36)
+                            .background(Color("BgPrimary"))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                            .accessibilityLabel("\(vendor.name) API key")
+                            .onSubmit { Task { await connect(draft) } }
+                        Button("Save") { Task { await connect(draft) } }
+                            .buttonStyle(SettingsPrimaryButtonStyle())
+                            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                Button("Cancel") {
+                    isAddingKey = false
+                    isTyping = false
+                    draft = ""
+                    error = nil
+                }
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("FillNeutral"))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func connect(_ raw: String) async {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            error = "The clipboard has no text. Copy your \(vendor.name) key and try again."
+            return
+        }
+        error = nil
+        isChecking = true
+        let result = await VoiceVendorClient().checkKey(vendor, key: key)
+        isChecking = false
+        if case .rejected(let message) = result {
+            error = message
+            return
+        }
+        // Offline: keep the key; voice reports a bad key when it's used.
+        VoiceProviderKeys.store(vendor, apiKey: key, label: result.savedLabel ?? "Saved, not checked")
+        // A Connect on this phone picks that vendor (an account pull never does).
+        SettingsStore.shared.voiceRoute = vendor.route
+        isAddingKey = false
+        isTyping = false
+        draft = ""
+        keySync.localChanged(vendor)
+    }
+}
+
+/// Plays ElevenLabs `preview_url` clips.
+@MainActor
+private final class VoicePreviewPlayer: ObservableObject {
+    @Published private(set) var playingId: String?
+    private var player: AVPlayer?
+
+    func toggle(_ voice: ElevenLabsVoice) {
+        if playingId == voice.id {
+            stop()
+            return
+        }
+        guard let url = voice.previewURL else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        let player = AVPlayer(url: url)
+        self.player = player
+        playingId = voice.id
+        player.play()
+    }
+
+    func stop() {
+        player?.pause()
+        player = nil
+        playingId = nil
+    }
+}
+
+/// Your ElevenLabs voice: the account's voices (tap to choose, ▶ to hear),
+/// with "Enter voice ID" kept for voices the list can't show.
+private struct ElevenLabsVoicePicker: View {
+    @ObservedObject private var keySync = VoiceKeySync.shared
+    @StateObject private var player = VoicePreviewPlayer()
+    @State private var voices: [ElevenLabsVoice] = []
+    @State private var isLoading = false
+    @State private var loadError: String? = nil
+    @State private var isEnteringId = false
+    @State private var idDraft = ""
+
+    private var selectedId: String {
+        VoiceProviderKeys.value(.elevenlabsVoiceId) ?? VoiceProviderKeys.defaultElevenLabsVoice
+    }
+
+    var body: some View {
+        let _ = keySync.revision
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ElevenLabs voice")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+            if isLoading && voices.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading your voices…").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                }
+            } else if !voices.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(voices.enumerated()), id: \.element.id) { index, voice in
+                        if index > 0 { PhoneCardDivider() }
+                        voiceRow(voice)
+                    }
+                }
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+            }
+            if let loadError {
+                Text(loadError)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(isEnteringId ? "Hide voice ID" : "Enter voice ID") { isEnteringId.toggle() }
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+            if isEnteringId {
+                HStack(spacing: 8) {
+                    TextField("\(selectedId)", text: $idDraft)
+                        .font(.system(size: 14))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 36)
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                        .accessibilityLabel("ElevenLabs voice ID")
+                    Button("Save") {
+                        choose(idDraft)
+                        idDraft = ""
+                    }
+                    .buttonStyle(SettingsQuietButtonStyle())
+                    .disabled(idDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .task(id: VoiceProviderKeys.value(.elevenlabs)) { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in player.stop() }
+        .onDisappear { player.stop() }
+    }
+
+    private func voiceRow(_ voice: ElevenLabsVoice) -> some View {
+        let isSelected = voice.id == selectedId
+        return HStack(spacing: 4) {
+            Button { choose(voice.id) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .opacity(isSelected ? 1 : 0)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(voice.name)
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextPrimary"))
+                        if let category = voice.category, !category.isEmpty {
+                            Text(category.capitalized)
+                                .font(.system(size: 12))
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+            if voice.previewURL != nil {
+                Button { player.toggle(voice) } label: {
+                    Image(systemName: player.playingId == voice.id ? "stop.fill" : "play.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.playingId == voice.id ? "Stop \(voice.name)" : "Play \(voice.name)")
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .frame(minHeight: 44)
+    }
+
+    private func choose(_ id: String) {
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return }
+        VoiceProviderKeys.setVoice(id)
+        keySync.localChanged(.elevenlabs)
+    }
+
+    private func load() async {
+        guard let key = VoiceProviderKeys.value(.elevenlabs) else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            voices = try await VoiceVendorClient().listVoices(key: key)
+            loadError = voices.isEmpty ? "No voices on this ElevenLabs account yet. Enter a voice ID instead." : nil
+        } catch {
+            voices = []
+            loadError = error.localizedDescription
+            isEnteringId = true
         }
     }
 }
@@ -506,10 +915,17 @@ struct VoiceSettingsPage: View {
 /// Settings → Developer (the web's diagnostics panel): telemetry and system.
 /// Local engines and Factory services run on Desktop.
 struct DeveloperSettingsPage: View {
+    @ObservedObject private var seenNotes = SeenFeedbackNotes.shared
+
     var body: some View {
         PhoneSettingsPage(title: "Developer") {
             SettingsSectionHeading(text: "Local engines")
             SettingsDescription(text: "Engine status is only available in Allternit Desktop.")
+            SettingsSectionHeading(text: "Feedback notes")
+            SettingsDescription(text: "Notes are saved on the computer that runs your chats. This phone can't read that list, so only notes shown in a chat this session appear here.")
+            ForEach(seenNotes.notes.indices, id: \.self) { index in
+                FeedbackNoteCard(gap: seenNotes.notes[index])
+            }
             SettingsSectionHeading(text: "Telemetry & system")
             VStack(spacing: 0) {
                 row("App Version", AboutSettingsPage.versionString)
@@ -600,7 +1016,7 @@ struct AllternitMobileSettingsPage: View {
 /// Settings → About (SettingsView.tsx renderAboutPanel): the tile mark,
 /// "Allternit & Coffee", the build, and Terms · Privacy · GitHub.
 struct AboutSettingsPage: View {
-    @State private var safariURL: IdentifiableURL? = nil
+    /// Links follow Settings → App → Open links in (the root handler).
     @Environment(\.openURL) private var openURL
 
     static var versionString: String {
@@ -661,13 +1077,35 @@ struct AboutSettingsPage: View {
                 .frame(maxWidth: .infinity)
             #endif
         }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 
     private func link(_ title: String, _ raw: String) -> some View {
-        Button(title) { if let url = URL(string: raw) { safariURL = IdentifiableURL(url: url) } }
+        Button(title) { if let url = URL(string: raw) { openURL(url) } }
             .font(.system(size: 13, weight: .medium))
             .foregroundColor(Color("TextSecondary"))
             .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Open links in
+
+/// Settings → App → Open links in: In app or Safari
+/// (`SettingsStore.openLinksIn`, applied by `View.openLinksHandler()`).
+struct OpenLinksSettingsPage: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        PhoneSettingsPage(title: "Open links in") {
+            SettingsDescription(text: "Where web pages open when you tap a link. App Store pages and buying on the web always open outside the app.")
+            VStack(spacing: 8) {
+                ForEach(OpenLinksPreference.allCases, id: \.self) { option in
+                    SettingsRadioCard(title: option.label, detail: option.detail,
+                                      isSelected: settings.openLinksIn == option) {
+                        Haptics.selection()
+                        settings.openLinksIn = option
+                    }
+                }
+            }
+        }
     }
 }

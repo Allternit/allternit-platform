@@ -10,7 +10,8 @@ import {
   XIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { formatApiError, isNoRuntime } from "@/lib/api-client";
+import { NoRuntimeState } from "@/components/console-ui/NoRuntimeState";
 import {
   type AgentRecord,
   type ComputerRecord,
@@ -262,12 +263,14 @@ export function DeploymentsPage(): React.ReactNode {
           />
         }
       >
-        {error && (
+        {error && (isNoRuntime(error) ? (
+          <NoRuntimeState className="mb-4" />
+        ) : (
           <p className="mb-4 flex items-center gap-2 rounded-lg border border-solid border-[var(--status-error)]/30 bg-[var(--status-error)]/10 px-3 py-2 text-[13px] text-[var(--status-error)]">
             <HugeiconsIcon icon={AlertCircleIcon} size={14} />
             {error}
           </p>
-        )}
+        ))}
 
         {showCreate && (
           <div className="mb-4 space-y-3 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">

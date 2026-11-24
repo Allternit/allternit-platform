@@ -3,9 +3,13 @@ title: "Cloud billing API"
 description: "Credit packs, plans, auto top-up, disputes and the Stripe webhook on api.allternit.com (allternit-cloud-api)."
 ---
 
-These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are served at `https://api.allternit.com`. The web app's client is `src/lib/billing.ts` in `allternit-ai`. Every authenticated route takes a Clerk session or an `allternit_*` API token with the `billing` scope.
+These routes live in `allternit-cloud-api` (`cmd/allternit-cloud-api`) and are served at `https://api.allternit.com`. The web app's client is `src/lib/billing.ts` in `allternit-ai`. Every authenticated route takes a Clerk session or an Allternit API key (`alt_…`, created under ACI › Operator keys; legacy `allternit_*` tokens still work) with the `billing` scope.
 
 Routes that call Stripe answer `503 {"error":"billing_not_configured"}` when `STRIPE_SECRET_KEY` is unset, and `502 {"error":"billing_upstream_error"}` when Stripe rejects the call.
+
+## Computers
+
+Agents need a computer. Credit computers are started and stopped with `POST /api/v1/provisioned-instances/credit` and `/credit/stop`, billed per minute from the wallet. Free hosted computers are retired: `POST /api/v1/provisioned-instances/free` answers `410 free_computers_retired`. See [Computer pricing](/guides/computer-pricing) and [Account compute status](/api/account-compute-status).
 
 ## Credit packs
 
@@ -19,6 +23,37 @@ The pack Checkout Session is created for the person's Stripe customer (created o
 The PaymentIntent behind the session carries the same metadata as the session (`clerk_user_id`, `allternit_credits_usd`, `allternit_org_id` when present) plus `kind=credit_pack`, so a chargeback on the payment can be traced to the person. Pack grants still come from the Checkout Session.
 
 `return_url` must be an `https` page on an allowed Allternit host with no query or fragment. The server adds `?checkout=success` or `?checkout=cancelled`.
+
+## Credit balance and Cloud models
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/v1/billing/credits` | session, or a key with the `billing` scope | Balance, month-to-date usage, the last 20 ledger rows and `cloud_models`. |
+
+```json
+{
+  "balance_usd": 0,
+  "month_to_date_usage_usd": 0,
+  "recent_transactions": [],
+  "cloud_models": {
+    "allowed": false,
+    "reason": "credits_required",
+    "balance_usd": 0,
+    "byok_providers": ["openrouter"]
+  }
+}
+```
+
+`cloud_models` says whether the account can run Allternit Cloud models now. `GET /api/v1/me/usage` carries the same object, from the same server function.
+
+| Field | Meaning |
+| --- | --- |
+| `allowed` | `true` when the balance is above $0. |
+| `reason` | `null` when allowed, otherwise `credits_required` (no credits row) or `credits_exhausted` (balance at or below $0). These match the `402` codes on [Chat Completions](/api/chat-completions#credits-cloud-api). |
+| `balance_usd` | The current balance. |
+| `byok_providers` | Catalog provider ids the account has its own key for. Cloud models from these providers run on that key and are not locked. |
+
+Clients lock a Cloud model row only when `allowed` is `false` and the row's `provider` (from `GET /v1/models`) is not in `byok_providers`. A response with no `cloud_models` field means not locked, so older servers lock nothing. There is no free monthly allowance, and `free_inference` is no longer returned. On `GET /api/v1/me/usage`, a Free account with no credits row reports `credits: 0` and a weekly limit and usage of 0.
 
 ## Auto top-up
 
@@ -107,6 +142,125 @@ If the disputed pack named an organization and its credits went to that org's fa
 
 The live Stripe webhook endpoint must subscribe to `charge.dispute.created` and `charge.dispute.closed`. Without them, chargebacks leave the credits in place.
 
+## Store purchases (Apple and Google)
+
+**Status: AVAILABLE (dark until configured).** The same plans and credit packs can be bought in the iPhone app (Apple In-App Purchase) and in the Play app (Google Play Billing). Store prices are higher than web prices; the credits are the same. Setup and secrets are in [Store billing](/operations/store-billing). Until a store's secrets are set, that store's `store.enabled` is `false` and its routes answer 503.
+
+The server never trusts the client. A client sends a transaction id (Apple) or a purchase token (Google); the server reads the purchase from the App Store Server API or the Play Developer API, grants credits once, and stores the result. Store notifications are only a prompt to look again.
+
+### Routes
+
+All routes live under `/api/v1/billing/store/`. The first three authenticated routes need a signed-in account with the `billing` scope. The notification routes are unauthenticated and re-fetch from the store.
+
+| Method | Path | Auth | Body | Success |
+| --- | --- | --- | --- | --- |
+| POST | `/billing/store/preflight` | signed in | `{ "provider": "apple" or "google", "kind": "plan" or "pack", "id": "plus", "environment": "production" or "sandbox" }` (`environment` optional, default `production`) | `200 { "account_token": "uuid", "product_id": "..." }` |
+| POST | `/billing/store/apple/transactions` | signed in | `{ "transaction_id": "..." }` (`transactionId` also accepted) | `200` purchase answer |
+| POST | `/billing/store/google/purchases` | signed in | `{ "kind": "plan" or "pack", "product_id": "plan_plus", "purchase_token": "..." }` | `200` purchase answer |
+| POST | `/billing/store/apple/notifications` | none | `{ "signedPayload": "..." }` | `200 { "received": true, "notification_type": "...", "handled": true }` |
+| POST | `/billing/store/apple/notifications/sandbox` | none | same | same |
+| POST | `/billing/store/google/rtdn?token=...` | push token | Pub/Sub push envelope | `200 { "received": true, "kind": "...", "handled": true }` |
+
+Call preflight before every purchase. It checks that the store is on, that the account has no other open plan, and the first-purchase limit, then returns the product id to buy and the account's `account_token`. iPhone passes the token to StoreKit as `appAccountToken`. The token is the same on every call for one account.
+
+**Purchase answer** (both purchase routes):
+
+```json
+{
+  "granted": true,
+  "subscription": {
+    "plan_id": "plus",
+    "label": "Plus",
+    "status": "active",
+    "billing_provider": "apple",
+    "renews_at": "2026-12-17T00:00:00Z",
+    "manage_url": "https://apps.apple.com/account/subscriptions",
+    "conflict": false
+  },
+  "balance_usd": 22.0,
+  "idempotent_replay": false
+}
+```
+
+`subscription` appears for plans, `balance_usd` for packs. `idempotent_replay: true` means this transaction was granted before and nothing was added this time. When nothing is granted, `granted` is `false` and the answer carries `reason` (and sometimes `message`): `sandbox_not_granted`, `refunded`, `unknown_account`, `account_closed` for Apple, or `unclaimed` for a Google notification nobody has claimed yet. Clients must not consume a Play pack on the device; the server consumes it after the grant.
+
+### Errors
+
+Every error is `{ "error": "<code>", "message": "..." }`.
+
+| Status | Code | Routes | Meaning |
+| --- | --- | --- | --- |
+| 400 | `BAD_REQUEST` (standard API error) | preflight | Unknown store, environment, kind or id |
+| 400 | `invalid_transaction_id` | Apple transactions | `transaction_id` is not an App Store transaction id |
+| 400 | `account_token_missing` | Apple transactions | The purchase carries no `appAccountToken`; sign in to the account that bought it and restore |
+| 400 | `wrong_app` | Apple transactions | Bought in a different app (bundle id) |
+| 400 | `unknown_product` | both purchase routes | Not an Allternit product id |
+| 400 | `invalid_purchase_token` | Google purchases | Token is not shaped like a Play purchase token |
+| 400 | `invalid_purchase` | Google purchases | Google did not accept the token |
+| 400 | `invalid_notification` | Apple notifications | Body is not `{ "signedPayload": "..." }` |
+| 401 | `invalid_token` | Google rtdn | `?token=` missing or wrong |
+| 403 | `first_purchase_limit` | preflight | Production purchase above the first-purchase cap for an untrusted account. The cap applies to the credits granted, so the $29.99 pack ($25 of credits) passes a $25 cap. Sandbox skips it |
+| 404 | `transaction_not_found` | Apple transactions | The App Store has no such transaction |
+| 404 | `purchase_not_found` | Google purchases | Play has no such purchase |
+| 409 | `already_subscribed` | preflight | The account already has an open plan (see double billing below). Carries `current_plan_id`, `billing_provider`, `manage_url` |
+| 409 | `owned_by_another_account` | both purchase routes | The purchase belongs to a different account. Purchases never move between accounts |
+| 502 | `store_unavailable` | purchase routes | The store could not be reached; try again |
+| 503 | `store_billing_not_configured` | all | That store's secrets are not set. Carries `provider` |
+| 503 | `store_unavailable` | notification routes | Store unreachable; the store retries |
+
+Notification routes answer `200` with `handled: false` for a notification that cannot be applied (unknown account, unsupported type), so the store stops retrying. They answer 5xx only for failures worth retrying.
+
+### Additive fields on existing routes
+
+All additions are optional for old clients.
+
+- `GET /billing/plans` and `GET /billing/packs`: each item gains `store`:
+
+  ```json
+  {
+    "reference_price_usd": 24.99,
+    "apple": { "enabled": false, "product_id": "com.allternit.mobile.plan.plus.monthly" },
+    "google": { "enabled": false, "product_id": "plan_plus" }
+  }
+  ```
+
+  `enabled` is true only when that store's secrets are set. `reference_price_usd` is the intended store price for reference; clients show the store's own localized price, not this number.
+- `GET /billing/subscription`: adds `billing_provider` (`stripe`, `apple`, `google` or `null` on Free), `manage_url` (where to change or cancel) and `conflict` (`true` when the account has more than one open plan). For an Apple or Google plan whose period end has passed, this route first re-reads the plan from the store, at most once per 10 minutes per plan, so a missed notification heals itself.
+- `POST /billing/subscribe`: the existing 409 `already_subscribed` now also carries `billing_provider` and `manage_url`.
+- `POST /billing/portal`: answers 409 `store_billed` (with `current_plan_id`, `billing_provider`, `manage_url`) when the plan is billed by Apple or Google. The Stripe portal cannot manage it.
+
+### Products
+
+Store prices are set in App Store Connect and Play Console. Credits are the same as web.
+
+| Item | Apple product id | Play product id | Store price | Credits |
+| --- | --- | --- | --- | --- |
+| Plus (monthly) | `com.allternit.mobile.plan.plus.monthly` | `plan_plus` | $24.99 | $22 a month |
+| Max (monthly, id `super`) | `com.allternit.mobile.plan.max.monthly` | `plan_max` | $124.99 | $110 a month |
+| Ultra (monthly) | `com.allternit.mobile.plan.ultra.monthly` | `plan_ultra` | $249.99 | $220 a month |
+| Pack $10 | `com.allternit.mobile.credits.10` | `credits_10` | $11.99 | $10 |
+| Pack $25 | `com.allternit.mobile.credits.25` | `credits_25` | $29.99 | $25 |
+| Pack $50 | `com.allternit.mobile.credits.50` | `credits_50` | $59.99 | $50 |
+| Pack $100 | `com.allternit.mobile.credits.100` | `credits_100` | $119.99 | $100 |
+
+Plan credits use the same rollover cap as Stripe plans. Each renewal grants once, keyed by the store transaction. A store plan sets the same plan tier as a Stripe plan and suspends a cloud computer the same way when it goes unpaid or is canceled.
+
+### Plan states
+
+Apple grace period and Google grace map to `past_due` (access stays). Grace expired or on hold maps to `unpaid` (default tier, cloud computer stopped). Expired maps to `canceled`. A change inside the Apple subscription group, or a Play replacement purchase, updates the same plan.
+
+### Sandbox rule
+
+Sandbox and test purchases reach the production server. A sandbox purchase grants credits and a plan only for accounts listed in `STORE_SANDBOX_GRANT_USER_IDS` (the App Review demo account and the internal test account). For anyone else the purchase is recorded and answers `granted: false`, `reason: "sandbox_not_granted"`, `message: "Test purchase. No credits were added."`.
+
+### Refunds
+
+An Apple `REFUND` or `REVOKE`, or a Google voided purchase, writes a negative ledger entry for the credits granted from that transaction, once. A refunded plan drops to the default tier. If the store later reverses the refund (Apple `REFUND_REVERSED`), the credits are given back once. A refund recorded for a transaction that never granted anything takes nothing; if that refund is later reversed, the transaction goes back to pending and the grant that follows adds its credits. The balance can go negative when the credits were already spent, as with Stripe disputes.
+
+### Double billing
+
+An account never needs two plans. Preflight and `POST /billing/subscribe` answer 409 `already_subscribed` when any plan is open, naming who bills it. A change inside the same store (for example Plus to Max on Apple) is allowed. If two plans exist anyway, for example a purchase made on the device without preflight, the server records both, grants what was paid, sets `conflict: true` on `GET /billing/subscription`, and alerts the team. Clients then show "You have two plans. Cancel one."
+
 ## Tables
 
 Migration `103_auto_topup.sql`:
@@ -119,13 +273,95 @@ Migration `106_billing_disputes.sql`:
 
 - `billing_disputes`: one row per Stripe dispute (`stripe_dispute_id`, `user_id` or null when unmatched, charge, PaymentIntent and customer ids, `amount_cents`, `held_usd`, `hold_transaction_id`, `release_transaction_id`, `status` of `open`, `unmatched`, `won`, `lost` or `closed`).
 
+Migration `148_store_billing.sql` (see [Store billing](/operations/store-billing)):
+
+- `billing_subscriptions` gains `provider`, `store_product_id`, `store_environment`, `store_checked_at` and `store_purchase_token`.
+- `billing_store_accounts`: one store account token per person.
+- `billing_store_transactions`: the store ledger, one row per store transaction.
+
 ## Plans
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/api/v1/billing/plans` | Plus, Max (id `super`), Ultra. |
+| GET | `/api/v1/billing/plans` | Public. `plans`: Plus, Max (id `super`), Ultra. `freeweights`: the Freeweights perk listing (below). |
 | GET | `/api/v1/billing/subscription` | The person's current subscription, if any: `plan_id`, `label`, `plan_tier`, `status`, and `renews_at` (RFC 3339) once a Stripe event has reported the period end. |
 | POST | `/api/v1/billing/subscribe` | Subscription Checkout; reuses the person's Stripe customer. |
 | POST | `/api/v1/billing/portal` | Stripe billing portal for invoices, cards and cancellation. |
+
+### Freeweights perk listing
+
+`GET /api/v1/billing/plans` also returns a top-level `freeweights` block. It lists the [Freeweights](/tools/freeweights) perks for each plan, so a plan page can show them before they are sold:
+
+```json
+"freeweights": {
+  "status": "not_offered",
+  "plans": {
+    "free":  [{"key": "public_storage_bytes", "label": "Public upload storage", "value": 10000000000, "unit": "bytes"}, ...],
+    "plus":  [...],
+    "super": [...],
+    "ultra": [...]
+  }
+}
+```
+
+`status` is `offered` only while `FREEWEIGHTS_PERKS_ENABLED` is on. Otherwise it is `not_offered`: the perks are listed, but no account gets them and the entitlement claim's `perks` stays empty. Purchase surfaces show nothing while the status is `not_offered`. Each line has a `key`, a `label`, a `value` and a `unit` (`bytes`, `count` or `bool`). Bytes are decimal (1 GB = 1,000,000,000 bytes).
+
+The current values are a draft that still needs sign-off:
+
+| `key` | Free | Plus | Max (`super`) | Ultra |
+| --- | --- | --- | --- | --- |
+| `public_storage_bytes` | 10 GB | 250 GB | 1 TB | 2 TB |
+| `private_storage_bytes` | 0 | 100 GB | 500 GB | 1 TB |
+| `api_requests_5m` | 1,000 | 2,500 | 5,000 | 10,000 |
+| `webhooks` | 2 | 10 | 50 | 100 |
+| `private_collections` | no | yes | yes | yes |
+| `private_dataset_viewer` | no | yes | yes | yes |
+
+The same table feeds the entitlement claim once perks are on. `FREEWEIGHTS_PLAN_PERKS` replaces it (see Configuration below).
+
+## Freeweights entitlement
+
+[Freeweights](/tools/freeweights) signs people in with their Allternit account and never stores a plan, perk or price. Its Worker asks this route for a short signed claim instead. The contract is `spec/accounts-v1.md` section 3 in the freeweights repo.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/freeweights/entitlement` | Clerk session or `alt_` key (any scope; a revoked or expired key is refused). Answers `200` with `Content-Type: application/jose` and a compact JWS. |
+
+The JWS header is `{"alg":"EdDSA","typ":"JWT","kid":"entitlement-v1"}` (Ed25519). The payload:
+
+| Field | Value |
+| --- | --- |
+| `iss`, `aud` | `https://api.allternit.com`, `freeweights` |
+| `sub` | Clerk user id; for a key, the key owner |
+| `plan` | The plan id as cloud-api names it: `free`, `plus`, `super` (Max) or `ultra`. Same answer as `GET /api/v1/billing/subscription`. |
+| `orgs[]` | One entry per Clerk org: `clerk_org_id`, `slug`, `role` (`admin` for `org:admin`, else `member`), `plan`, `perks`, `addon_bytes`, and `seats` only for a team plan. Org plans are `free` until team billing ships. |
+| `perks` | Perk name to number, boolean or string, from the [perk table](#freeweights-perk-listing). Empty unless perks are turned on. `api_requests_5m` (a number) is the signed-in request limit per 5 minutes; while it is absent the Worker applies no limit of its own. |
+| `addon_bytes` | `{"public": 0, "private": 0}` until storage add-ons are sold. |
+| `scopes` | A session gets `freeweights.read` and `freeweights.write`. A key gets its own `freeweights.*` scopes (a full-access legacy `*` token counts as read and write). |
+| `cred` | `session` or `key` |
+| `iat`, `exp` | `exp` is `iat` + 600 seconds |
+
+Errors: no credential is `401`. A missing or unreadable signing key is `503` with `{"error":"accounts_not_configured"}`, which the Worker reads as accounts not being set up yet. A failed plan read or a failed Clerk org read is `503` with `{"error":"entitlement_unavailable"}` and `Retry-After: 60`. The rest of the API keeps working without the key.
+
+Browsers on `https://freeweights.allternit.com` and `https://fw-preview.allternit.com` may call this route and `GET /api/v1/billing/plans`. Those origins get no CORS access to any other route.
+
+### Configuration
+
+| Env var | Meaning |
+| --- | --- |
+| `FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY` | The Ed25519 private key: a PKCS#8 PEM (OpenSSL 3: `openssl genpkey -algorithm ed25519 -out entitlement-v1.key`; the LibreSSL `openssl` that ships with macOS cannot make Ed25519 keys; `\n` escapes are accepted) or the raw 32-byte seed as base64 or hex. Its public half (`openssl pkey -in entitlement-v1.key -pubout`) is `spec/keys/entitlement-v1.pub` in the freeweights repo. |
+| `FREEWEIGHTS_PERKS_ENABLED` | `1` or `true` turns perks on: the claim carries them and the listing's `status` reads `offered`. Off by default. |
+| `FREEWEIGHTS_PLAN_PERKS` | JSON object of plan id to perks, shaped like `{"plus": {"api_requests_5m": 2500, "private_collections": true}}`. A valid object replaces the built-in draft table for both the listing and the claim, even while perks are off (a plan it leaves out has no perks). Unset, blank or invalid keeps the draft table. |
+| `CLERK_SECRET_KEY` | Reads the org list from Clerk. Without it, `orgs` is empty. |
+
+### Freeweights key scopes
+
+`POST /api/v1/api-keys` accepts three Freeweights scopes and refuses any other name that starts with `freeweights.` with `400`:
+
+| Scope | Allows |
+| --- | --- |
+| `freeweights.read` | Reading the private repos the key owner can see |
+| `freeweights.write` | Every write the key owner can make; implies read |
+| `freeweights.repo:rp_…` | Reads and writes to one repo, by its stable `rp_` id. The id keeps its case. |
 
 The user guide is [Credits and auto top-up](/guides/credits-and-auto-top-up).

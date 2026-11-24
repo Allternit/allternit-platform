@@ -101,9 +101,12 @@ describe("memory drive checkout", () => {
     const files = await remoteFiles(remote)
     expect(files["a.md"]).toContain("a-only")
     expect(files["b.md"]).toContain("b-only")
-    // Exactly one line for the shared id: the later writer's intent re-applied once.
-    const all = Object.values(files).join("\n")
-    expect(all.split("\n").filter((l) => l.includes("id: same-id")).length).toBe(1)
+    // Exactly one line for the shared id. When the race reached replay, the
+    // later writer's text is kept beside it as a conflict_of sibling, never over it.
+    const all = Object.values(files).join("\n").split("\n")
+    expect(all.filter((l) => /; id: same-id(;|\])/.test(l)).length).toBe(1)
+    const both = all.some((l) => l.includes("Version from A")) && all.some((l) => l.includes("Version from B"))
+    expect(all.filter((l) => l.includes("conflict_of: same-id")).length).toBe(both ? 1 : 0)
     // History is linear: no force push ever rewrote it.
     const log = await remoteLog(remote)
     expect(log[log.length - 1]).toBe("Initialize memory drive")
@@ -122,6 +125,45 @@ describe("memory drive checkout", () => {
     const notes = (await remoteFiles(remote))["notes.md"]!
     expect(notes).toContain("Second text")
     expect(notes).not.toContain("First text")
+  })
+
+  test("replay after a rejected push never overwrites a newer edit from another device (mine-wins regression)", async () => {
+    const root = await scratch()
+    const remote = await bareRemote(root)
+    const dirB = path.join(root, "b")
+    const a = new DriveCheckout({ dir: path.join(root, "a"), remote: remoteFor(remote), author })
+    await a.write([{ UpsertEntry: { path: "notes.md", entry: entry("x", "Lives in Saint Paul") } }], { message: "seed" })
+    await new DriveCheckout({ dir: dirB, remote: remoteFor(remote), author }).sync()
+    // B edits x while offline; A edits the same entry on the server.
+    const offline = new DriveCheckout({ dir: dirB, remote: remoteFor(path.join(root, "gone.git")), author })
+    await offline.write([{ UpsertEntry: { path: "notes.md", entry: entry("x", "Lives in Minneapolis") } }], { message: "B edit" })
+    await a.write([{ UpsertEntry: { path: "notes.md", entry: entry("x", "Lives in Duluth") } }], { message: "A edit" })
+    // B reconnects: its push is replayed three ways.
+    const b = new DriveCheckout({ dir: dirB, remote: remoteFor(remote), author })
+    const status = await b.sync()
+    expect(status.pending).toBe(false)
+    const lines = rustLines((await remoteFiles(remote))["notes.md"]!)
+    const theirs = lines.find((l) => /; id: x(;|\])/.test(l))!
+    expect(theirs).toContain("Lives in Duluth")
+    const sibling = lines.find((l) => l.includes("conflict_of: x"))!
+    expect(sibling).toContain("Lives in Minneapolis")
+    expect(status.needsLook).toBe(1)
+  })
+
+  test("replay: an edit beats a delete from another device", async () => {
+    const root = await scratch()
+    const remote = await bareRemote(root)
+    const dirB = path.join(root, "b")
+    const a = new DriveCheckout({ dir: path.join(root, "a"), remote: remoteFor(remote), author })
+    await a.write([{ UpsertEntry: { path: "notes.md", entry: entry("x", "Old text") } }], { message: "seed" })
+    await new DriveCheckout({ dir: dirB, remote: remoteFor(remote), author }).sync()
+    const offline = new DriveCheckout({ dir: dirB, remote: remoteFor(path.join(root, "gone.git")), author })
+    await offline.write([{ UpsertEntry: { path: "notes.md", entry: entry("x", "Edited offline") } }], { message: "B edit" })
+    await a.write([{ DeleteEntry: { id: "x" } }], { message: "A delete" })
+    await new DriveCheckout({ dir: dirB, remote: remoteFor(remote), author }).sync()
+    const notes = (await remoteFiles(remote))["notes.md"]!
+    expect(notes).toContain("Edited offline")
+    expect(notes).not.toContain("conflict_of")
   })
 
   test("concurrent first initialization of one checkout is serialized", async () => {

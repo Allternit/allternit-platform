@@ -55,8 +55,14 @@ members = [
     "services/orchestration/control-plane/unified-registry/tool-registry",
     "platform/rust-sdk/adapters/rust/marketplace",
     "platform/types/a2ui-types",
+    "platform/types/allternit-files-core",
+    "platform/files/allternit-files-engine",
+    "platform/files/allternit-files-mount",
+    "platform/host-probe",
     "domains/governance/evidence-management/receipts-schema",
     "services/local-engine",
+    "services/model-source",
+    "services/studio-spec",
     "services/memory",
     "services/memory/data/memory-fabric",
     # Referenced by workspace.dependencies but previously outside the workspace
@@ -246,6 +252,9 @@ executor = { path = "domains/kernel/service/allternit-local-compute/executor" }
 
 marketplace = { path = "platform/rust-sdk/adapters/rust/marketplace" }
 a2ui-types = { path = "platform/types/a2ui-types" }
+allternit-files-core = { path = "platform/types/allternit-files-core" }
+allternit-files-engine = { path = "platform/files/allternit-files-engine" }
+host-probe = { path = "platform/host-probe" }
 
 
 allternit-tools-gateway = { path = "services/gateway/routing" }

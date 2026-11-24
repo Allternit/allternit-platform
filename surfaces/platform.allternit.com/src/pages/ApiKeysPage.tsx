@@ -22,6 +22,7 @@ import {
 import { formatApiError } from "@/lib/api-client";
 import { EmptyState } from "@/components/settings/EmptyState";
 import { QUIET_BUTTON_CLASS, DESTRUCTIVE_BUTTON_CLASS } from "@/components/settings/buttonStyles";
+import { isHiddenOnCloud } from "@/lib/availability";
 import { GatewayKeysPanel } from "@/pages/console/api-keys/GatewayKeysPanel";
 import { PlatformProjectsPanel } from "@/pages/console/api-keys/PlatformProjectsPanel";
 
@@ -32,7 +33,12 @@ const AVAILABLE_SCOPES = [
   { value: "devices", label: "Devices" },
   // Required for POST /v1/chat/completions (Allternit Cloud). Spends prepaid credits.
   { value: "inference", label: "Run models" },
+  // Freeweights (freeweights.allternit.com) uploads. A repo-limited key uses the rp_ field below.
+  { value: "freeweights.read", label: "Freeweights: read private repos" },
+  { value: "freeweights.write", label: "Freeweights: upload" },
 ];
+
+const FW_REPO_ID = /^rp_[A-Za-z0-9_-]+$/;
 
 function formatDate(iso?: string | null): string {
   if (!iso) return "—";
@@ -44,7 +50,12 @@ function formatDate(iso?: string | null): string {
 }
 
 export function ApiKeysPage() {
-  const [tab, setTab] = useState<"scoped" | "gateway" | "platform">("scoped");
+  // On cloud, project keys are the primary keys; the model-running preset still opens Scoped keys.
+  const [tab, setTab] = useState<"scoped" | "gateway" | "platform">(() =>
+    isHiddenOnCloud("routeCredentials") && !["inference", "freeweights"].includes(new URLSearchParams(window.location.search).get("create") ?? "")
+      ? "platform"
+      : "scoped",
+  );
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,10 +63,21 @@ export function ApiKeysPage() {
   // `/api-keys?create=inference` (linked from the public /cloud page) opens the
   // create form with the model-running scope already picked.
   const [searchParams] = useSearchParams();
-  const createPreset = searchParams.get("create") === "inference";
+  // `/api-keys?create=freeweights[&repo=rp_...]` picks the Freeweights upload scope, or the
+  // one-repo scope when a repo id is given.
+  const createMode = searchParams.get("create");
+  const fwPreset = createMode === "freeweights";
+  const presetRepo = fwPreset ? (searchParams.get("repo") ?? "").trim() : "";
+  const presetRepoOk = FW_REPO_ID.test(presetRepo) ? presetRepo : "";
+  const createPreset = createMode === "inference" || fwPreset;
   const [showCreate, setShowCreate] = useState(createPreset);
-  const [newName, setNewName] = useState(createPreset ? "Allternit Cloud" : "");
-  const [newScopes, setNewScopes] = useState<string[]>(createPreset ? ["inference"] : ["read"]);
+  const [newName, setNewName] = useState(
+    createMode === "inference" ? "Allternit Cloud" : fwPreset ? (presetRepoOk ? "Freeweights repo upload" : "Freeweights upload") : "",
+  );
+  const [newScopes, setNewScopes] = useState<string[]>(
+    createMode === "inference" ? ["inference"] : fwPreset ? (presetRepoOk ? [] : ["freeweights.write"]) : ["read"],
+  );
+  const [fwRepoId, setFwRepoId] = useState(presetRepoOk);
   const [creating, setCreating] = useState(false);
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
 
@@ -81,20 +103,31 @@ export function ApiKeysPage() {
 
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
+    const repoId = fwRepoId.trim();
+    if (repoId && !FW_REPO_ID.test(repoId)) {
+      setError("A Freeweights repo id starts with rp_ (for example rp_abc123). Copy it from your repo page.");
+      return;
+    }
+    const scopes = repoId ? [...newScopes, `freeweights.repo:${repoId}`] : newScopes;
+    if (scopes.length === 0) {
+      setError("Pick at least one scope.");
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
-      const key = await createApiKey({ name: newName, scopes: newScopes });
+      const key = await createApiKey({ name: newName, scopes });
       setCreatedKey(key);
       setNewName("");
       setNewScopes(["read"]);
+      setFwRepoId("");
       await load();
     } catch (err) {
       setError(formatApiError(err, "Unable to create API key"));
     } finally {
       setCreating(false);
     }
-  }, [newName, newScopes, load]);
+  }, [newName, newScopes, fwRepoId, load]);
 
   const handleRevoke = useCallback(
     async (id: string) => {
@@ -128,7 +161,7 @@ export function ApiKeysPage() {
             API Keys
           </h1>
           <p className="text-[13px] text-[var(--text-secondary)] mt-1">
-            Create scoped keys for the Allternit cloud API, gateway keys for the LLM gateway, and project keys for the developer Platform API.
+            Create scoped keys for the Allternit cloud API, project keys for the developer Platform API, and gateway keys for a connected runtime.
           </p>
           <div className="mt-3 inline-flex rounded-lg border border-solid border-[var(--border-subtle)] p-0.5">
             {(
@@ -137,7 +170,10 @@ export function ApiKeysPage() {
                 { id: "gateway", label: "Gateway keys" },
                 { id: "platform", label: "Platform API" },
               ] as const
-            ).map((item) => (
+            )
+              // Gateway keys are relayed to a paired runtime, so cloud accounts don't get that tab.
+              .filter((item) => item.id !== "gateway" || !isHiddenOnCloud("routeCredentials"))
+              .map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -168,7 +204,7 @@ export function ApiKeysPage() {
         )}
       </div>
 
-      {tab === "gateway" ? (
+      {tab === "gateway" && !isHiddenOnCloud("routeCredentials") ? (
         <GatewayKeysPanel />
       ) : tab === "platform" ? (
         <PlatformProjectsPanel />
@@ -273,6 +309,20 @@ export function ApiKeysPage() {
                     </label>
                   ))}
                 </div>
+                <label className="mt-3 block text-[12px] text-[var(--text-secondary)]">
+                  Freeweights repo id (optional)
+                  <input
+                    value={fwRepoId}
+                    onChange={(e) => setFwRepoId(e.target.value)}
+                    placeholder="rp_..."
+                    maxLength={64}
+                    spellCheck={false}
+                    className="mt-1.5 w-full p-2 px-3 rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] font-mono text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] placeholder:text-[var(--text-tertiary)]"
+                  />
+                  <span className="mt-1 block text-[11px] text-[var(--text-tertiary)]">
+                    Limits the key to writes on that one repo.
+                  </span>
+                </label>
                 {newScopes.includes("inference") && (
                   <p className="mt-1.5 text-[12px] text-[var(--text-tertiary)]">
                     Run models lets this key call <code className="font-mono">/v1/chat/completions</code>. Calls spend your prepaid credits.

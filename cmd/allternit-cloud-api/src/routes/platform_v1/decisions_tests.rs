@@ -348,3 +348,139 @@ fn missing_node_secret_is_agency_not_configured() {
     assert_eq!(e.code, "agency_not_configured");
     assert_eq!(e.status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
 }
+
+// ── GET /v1/decisions ───────────────────────────────────────────────────────
+
+mod list_route {
+    use std::sync::Arc;
+
+    use axum::{body::Body, http::{Request, StatusCode}, Router};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    use crate::routes::agency_forward::AgencyForward;
+    use crate::routes::platform_v1::{
+        project_billing, projects::{self, Principal}, router_with_agency, Gate, ProjectEnv, TestSession, CONSOLE_PROJECT_HEADER,
+    };
+    use crate::routes::test_support::{platform_schema, test_state, MockGateway};
+    use crate::services::api_keys::{self, CreateProjectKeyInput};
+
+    fn who(user: &str) -> Principal {
+        Principal { user_id: user.into(), org_id: None, org_admin: false }
+    }
+
+    async fn send(app: &Router, method: &str, path: &str, token: &str, project: Option<&str>) -> (StatusCode, Value) {
+        let mut b = Request::builder().method(method).uri(path).header("authorization", format!("Bearer {token}"));
+        if let Some(p) = project {
+            b = b.header(CONSOLE_PROJECT_HEADER, p);
+        }
+        let body = if method == "POST" { b = b.header("content-type", "application/json"); Body::from("{}") } else { Body::empty() };
+        let resp = app.clone().oneshot(b.body(body).unwrap()).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    async fn mint(db: &sqlx::PgPool, p: &projects::Project, account: Option<&str>, scopes: &[&str]) -> String {
+        api_keys::create_project_key(db, CreateProjectKeyInput {
+            user_id: p.owner_user_id.clone(),
+            organization_id: None,
+            project_id: p.id.clone(),
+            account_id: account.map(str::to_string),
+            env: ProjectEnv::parse(&p.env).unwrap(),
+            name: "k".into(),
+            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+        })
+        .await
+        .unwrap()
+        .token
+    }
+
+    async fn account(db: &sqlx::PgPool, project_id: &str, name: &str) -> String {
+        let id = format!("acct_{name}_{}", &project_id[project_id.len() - 6..]);
+        sqlx::query("INSERT INTO platform_accounts (id, project_id, name) VALUES ($1, $2, $3)")
+            .bind(&id).bind(project_id).bind(name).execute(db).await.unwrap();
+        id
+    }
+
+    async fn decision(db: &sqlx::PgPool, project_id: &str, account: Option<&str>, n: i64) -> String {
+        let id = format!("dec_{n:03}_{}", &project_id[project_id.len() - 6..]);
+        sqlx::query("INSERT INTO platform_decisions (id, project_id, account_id, answers, created_at) VALUES ($1, $2, $3, $4, NOW() - make_interval(secs => $5))")
+            .bind(&id)
+            .bind(project_id)
+            .bind(account)
+            .bind(json!([{ "name": "q", "type": "predicate", "answer": true, "node_decision_id": "dec_node_x" }]))
+            .bind((100 - n) as f64)
+            .execute(db)
+            .await
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn lists_newest_first_with_cursors_and_scoping() {
+        let st = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        platform_schema(&st.db).await;
+        let p = projects::create_project(&st.db, &who("owner_dl"), "Decisions", ProjectEnv::Sandbox).await.unwrap();
+        project_billing::put_test_card(&st.db, &p.id).await;
+        let other = projects::create_project(&st.db, &who("owner_dl2"), "Other", ProjectEnv::Sandbox).await.unwrap();
+        let acct_a = account(&st.db, &p.id, "a").await;
+        let acct_b = account(&st.db, &p.id, "b").await;
+        // 1..=4 on account a, 5 on b, 6 unbound; 6 is newest. One in another project.
+        let mut ids = Vec::new();
+        for n in 1..=6 {
+            let acct = match n { 1..=4 => Some(acct_a.as_str()), 5 => Some(acct_b.as_str()), _ => None };
+            ids.push(decision(&st.db, &p.id, acct, n).await);
+        }
+        decision(&st.db, &other.id, None, 7).await;
+
+        let agency = Arc::new(AgencyForward::new("http://127.0.0.1:9", Some("peer".into())));
+        let app = router_with_agency(&st, Gate::Forced(true), agency).layer(axum::Extension(TestSession(who("owner_dl")))).with_state(st.clone());
+        let key = mint(&st.db, &p, None, &["decisions"]).await;
+
+        // Project key: newest first, paged by `after`, node ids stripped.
+        let (s, page) = send(&app, "GET", "/v1/decisions?limit=4", &key, None).await;
+        assert_eq!(s, StatusCode::OK, "{page}");
+        let got: Vec<&str> = page["data"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+        assert_eq!(got, vec![ids[5].as_str(), ids[4].as_str(), ids[3].as_str(), ids[2].as_str()]);
+        assert_eq!(page["has_more"], json!(true));
+        assert_eq!(page["data"][0]["object"], "decision");
+        assert!(page["data"][0]["answers"][0].get("node_decision_id").is_none(), "{page}");
+        let cursor = page["next_cursor"].as_str().unwrap();
+        let (s, rest) = send(&app, "GET", &format!("/v1/decisions?limit=4&after={cursor}"), &key, None).await;
+        assert_eq!(s, StatusCode::OK);
+        let got: Vec<&str> = rest["data"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+        assert_eq!(got, vec![ids[1].as_str(), ids[0].as_str()]);
+        assert_eq!((rest["has_more"].clone(), rest["next_cursor"].clone()), (json!(false), Value::Null));
+
+        // Default limit 20 covers all six; bad limit / cursor are 400.
+        let (_, all) = send(&app, "GET", "/v1/decisions", &key, None).await;
+        assert_eq!(all["data"].as_array().map(Vec::len), Some(6));
+        assert_eq!(send(&app, "GET", "/v1/decisions?limit=101", &key, None).await.1["error"]["code"], "invalid_limit");
+        assert_eq!(send(&app, "GET", "/v1/decisions?after=zz", &key, None).await.1["error"]["code"], "invalid_cursor");
+
+        // account_id narrows a project-wide key; a bound key sees only its account.
+        let (_, only_b) = send(&app, "GET", &format!("/v1/decisions?account_id={acct_b}"), &key, None).await;
+        assert_eq!(only_b["data"].as_array().map(Vec::len), Some(1));
+        let bound = mint(&st.db, &p, Some(&acct_a), &["decisions"]).await;
+        let (_, mine) = send(&app, "GET", "/v1/decisions", &bound, None).await;
+        assert_eq!(mine["data"].as_array().map(Vec::len), Some(4));
+        let (s, e) = send(&app, "GET", &format!("/v1/decisions?account_id={acct_b}"), &bound, None).await;
+        assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::FORBIDDEN, Some("account_mismatch")));
+
+        // Scope `decisions` is required.
+        let wrong = mint(&st.db, &p, None, &["agents"]).await;
+        assert_eq!(send(&app, "GET", "/v1/decisions", &wrong, None).await.0, StatusCode::FORBIDDEN);
+
+        // A console session (Clerk + X-Allternit-Project) is served here, not forwarded.
+        let (s, console) = send(&app, "GET", "/v1/decisions", "console-session-jwt", Some(&p.id)).await;
+        assert_eq!((s, console["data"].as_array().map(Vec::len)), (StatusCode::OK, Some(6)), "{console}");
+
+        // Neither a project key nor a console session: still the Agency API's, GET and POST.
+        let (s, e) = send(&app, "GET", "/v1/decisions", "not-a-project-key", None).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED, "{e}");
+        assert!(e.get("data").is_none());
+        let (s, e) = send(&app, "POST", "/v1/decisions", "not-a-project-key", None).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED, "{e}");
+    }
+}

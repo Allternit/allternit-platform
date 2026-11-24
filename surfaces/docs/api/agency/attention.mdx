@@ -28,6 +28,13 @@ You can also answer with [`POST /v1/runs/{run_id}/input`](/api/agency/runs#submi
 4. A person answers. The first valid answer wins. The answer is written as a receipt before it takes effect.
 5. If nobody answers before `expires_at`: an `approval` resolves as a rejection (fail closed, `outcome: rejected`); an `informational` request becomes `expired` with no rejection implied (`outcome: none`).
 
+Every request gets a deadline when it opens: `expires_at` is 72 hours after `created_at`, unless the step that opened it sets its own. Server operators change the default with `ALLTERNIT_AGENCY_ATTENTION_TTL_HOURS`; `0` means requests get no default deadline. Two kinds of request keep a different deadline:
+
+- A wake gate ("Waiting for an explicit trigger") has no deadline. It waits until someone opens it.
+- A parent run's request for a child template's request uses the child's deadline. When the child's request is answered or expires, the parent's request gets the same outcome, and the parent run re-checks the child. The parent's request becomes `resolved` or `expired` to match.
+
+The expiry check runs every 60 seconds, so a request can expire up to a minute after its deadline.
+
 Only policy ASK outcomes become approval requests. A hard policy deny never becomes an attention request, and an approval can never override one (`403 ERR_POLICY_DENIED`).
 
 ## The AttentionRequest object

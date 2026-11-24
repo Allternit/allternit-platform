@@ -1,108 +1,44 @@
 import SwiftUI
 
-/// One plain "no computer online" state for the surfaces that run on the
-/// user's computer (Code, Automation) — the native twin of the PWA's
-/// `PhoneNoComputer` (allternit-ai src/fabric-session/phone/PhoneNoComputer.tsx):
-///
-/// - No computer paired → "Connect a computer or Allternit Cloud" · Connect
-/// - Paired but none answers → "Can't reach your computer" · Fix
-/// - A sleeping cloud computer waking up → "Waking your computer…"
-/// - Reachable (relay, mesh or a registered tunnel instance) → nothing.
-///
-/// Tapping the action opens `ConnectComputerSheet`, the computer picker.
+/// The old "Connect a computer or Allternit Cloud · Connect" strip is gone
+/// (phone calm pass, contract C4). The chip above the composer
+/// (`ComputerChipSlot`, Features/Shared/ComputerChip.swift) says it in Chat,
+/// Bots and Code, and screens with no composer say it in their empty state
+/// (`FriendlyStateView`, with a Connect action). The screens that still mount
+/// this view (Code, Routines, Loops, Tasks) only get the data refresh: the
+/// compute status, the computer list and the tunnel instances, so the chip
+/// and the empty states read fresh values. It draws nothing.
 struct ConnectComputerView: View {
-    /// The shell's own copy, above every section (PhoneShell `phone-main`).
-    /// Section copies stand down while the shell shows it.
-    var isShellBanner = false
-
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var instances = InstanceStore.shared
-    @Environment(\.shellShowsNoComputer) private var shellShowsNoComputer
-    @State private var isSheetPresented = false
+    @ObservedObject private var compute = ComputeStatusStore.shared
 
     var body: some View {
-        Group {
-            if shellShowsNoComputer && !isShellBanner {
-                EmptyView()
-            } else if relay.isWaking {
-                row(text: "Waking your computer…", action: nil, showsProgress: true)
-            } else if shouldShow {
-                row(
-                    text: isPaired ? "Can't reach your computer" : "Connect a computer or Allternit Cloud",
-                    action: isPaired ? "Fix" : "Connect",
-                    showsProgress: false
-                )
+        Color.clear
+            .frame(height: 0)
+            .accessibilityHidden(true)
+            .task {
+                await compute.refreshIfNeeded()
+                await relay.refresh()
+                await instances.refreshIfNeeded()
             }
-        }
-        .task {
-            await relay.refresh()
-            await instances.refreshIfNeeded()
-        }
-        .sheet(isPresented: $isSheetPresented) {
-            ConnectComputerSheet()
-        }
-    }
-
-    /// A paired computer exists (online or not).
-    private var isPaired: Bool { !relay.devices.isEmpty }
-
-    private var shouldShow: Bool {
-        #if DEBUG
-        if UserDefaults.standard.string(forKey: "gizzi-url") != nil { return false }
-        #endif
-        // A registered `gizzi serve --tunnel` instance that is online is a
-        // direct target of its own (InstanceConnection.resolve).
-        if instances.instances.contains(where: \.isOnline) { return false }
-        switch relay.availability {
-        case .unknown, .available: return false
-        case .unreachable, .none: return true
-        }
-    }
-
-    /// `phone-no-computer`: a rounded neutral strip, 8pt under the top and
-    /// 16pt in from the sides, 14pt text and a plain semibold action.
-    private func row(text: String, action: String?, showsProgress: Bool) -> some View {
-        HStack(spacing: 12) {
-            if showsProgress {
-                ProgressView().controlSize(.small)
-            }
-            Text(text)
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let action {
-                Button(action: { isSheetPresented = true }) {
-                    Text(action)
-                        .font(.system(size: 14, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(Color("TextPrimary"))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isStaticText)
     }
 }
 
-extension EnvironmentValues {
-    /// True under MainWorkspaceView, which shows the one no-computer banner
-    /// above every section, as the web phone shell does.
-    @Entry var shellShowsNoComputer: Bool = false
-}
-
-/// The computer picker behind `ConnectComputerView`: the account's runtime
+/// The connect kit's computer picker (the chip's Connect / Fix, the + sheet,
+/// the empty states' Connect): the account's runtime
 /// devices (`GET /api/v1/runtime-devices`), tap one to relay through it, or
 /// leave it on Automatic (the account's default computer, else the first
 /// online one — `RuntimeRelayStore.pick`).
+///
+/// `showsPairPaths` (the Code sessions view's +, phone calm I9, A3): the top
+/// section becomes `ComputerConnectPanel`, the two real ways a computer pairs
+/// (Allternit Desktop sign-in, or `gizzi pair` in a terminal). The list of
+/// computers under it stays the same.
 struct ConnectComputerSheet: View {
+    var showsPairPaths: Bool = false
+    var onConnected: ((String) -> Void)? = nil
+
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -110,14 +46,21 @@ struct ConnectComputerSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Open Allternit Desktop on your Mac or PC and sign in with this account, or start your Allternit cloud computer. It shows up here when it's online.")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color("TextSecondary"))
-                        .listRowBackground(Color("BgPanel"))
+                    if showsPairPaths {
+                        ComputerConnectPanel(onConnected: onConnected)
+                            .listRowBackground(Color("BgPanel"))
+                    } else {
+                        Text("Open Allternit Desktop on your Mac or PC and sign in with this account, or start your Allternit cloud computer. It shows up here when it's online.")
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextSecondary"))
+                            .listRowBackground(Color("BgPanel"))
+                    }
                 }
 
                 Section("Your computers") {
-                    if relay.isLoading && relay.devices.isEmpty {
+                    // Only the first read shows Loading; the pair panel's re-reads
+                    // every few seconds keep the list still.
+                    if relay.isLoading && relay.devices.isEmpty && relay.availability == .unknown {
                         HStack {
                             ProgressView()
                             Text("Loading…").foregroundColor(Color("TextSecondary"))
@@ -224,5 +167,192 @@ struct ConnectComputerSheet: View {
         var parts = [device.typeLabel, state]
         if device.isPreferred { parts.append("Default") }
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - Pair paths (Code: "Connect a computer")
+
+enum ComputerPairing {
+    /// The command the terminal path types. Real: the node's own pairing (A3,
+    /// web `FABRIC_PAIR_COMMAND`).
+    static let fabricPairCommand = "gizzi pair"
+    /// Where Allternit Desktop downloads (the compute gate's default link).
+    static let desktopDownloadURL = URL(string: "https://www.allternit.com/download")!
+}
+
+/// The two real ways a computer pairs with this account (web
+/// `ComputerConnectPanel`):
+/// - From Allternit Desktop: open it on the computer and sign in with this
+///   account. Signing in pairs it; there is no setting to turn on.
+/// - From a terminal: `gizzi pair`, typed out once, with Copy.
+/// Then it watches `RuntimeRelayStore`: "Connected" shows only when the
+/// computer list gains an online computer, never from the animation.
+struct ComputerConnectPanel: View {
+    var onConnected: ((String) -> Void)? = nil
+
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ReducedMotion private var reduced
+    @State private var before: Set<String>? = nil
+    @State private var typed = 0
+    @State private var copied = false
+    @State private var fired = false
+
+    private var fresh: RelayRuntimeDevice? {
+        newlyOnlineComputers(before: before, now: relay.devices, id: \.id, isOnline: \.isOnline).first
+    }
+
+    private var command: String { ComputerPairing.fabricPairCommand }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let fresh {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(Theme.statusSuccess)
+                    Text("Connected · \(fresh.displayName)")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Color("TextPrimary"))
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .transition(reduced ? .opacity : .scale(scale: 0.9).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.updatesFrequently)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("From Allternit Desktop", systemImage: "desktopcomputer")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Open Allternit Desktop on your computer and sign in with this account. Signing in pairs it, so there is no code to type.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Link(destination: ComputerPairing.desktopDownloadURL) {
+                        HStack(spacing: 4) {
+                            Text("Get Allternit Desktop")
+                            Image(systemName: "arrow.up.right")
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            Text("or")
+                .font(.system(size: 11))
+                .foregroundColor(Color("TextTertiary"))
+                .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("From a terminal", systemImage: "apple.terminal")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                terminalCard
+                (Text("In a terminal on your computer, run ") + Text(command).font(.system(size: 12, design: .monospaced)).foregroundColor(Color("TextPrimary")))
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+            }
+
+            if fresh == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for your computer…")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.vertical, 4)
+        .animation(reduced ? Motion.fade : .spring(response: 0.3, dampingFraction: 0.8), value: fresh?.id)
+        .task { await watch() }
+        .task(id: reduced) { await typeCommand() }
+        .onChange(of: fresh?.id) { _, id in
+            guard id != nil, !fired, let fresh else { return }
+            fired = true
+            Haptics.success()
+            onConnected?(fresh.displayName)
+        }
+    }
+
+    /// The dark terminal: traffic lights, Copy, and `~ $ gizzi pair`.
+    private var terminalCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(["#ff5f57", "#febc2e", "#28c840"], id: \.self) { hex in
+                    Circle().fill(Color(hex: hex)).frame(width: 8, height: 8)
+                }
+                Spacer()
+                Button(action: copy) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 13))
+                        .foregroundColor(TerminalPalette.foreground)
+                        .frame(width: 44, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "Copied" : "Copy \(command)")
+            }
+            .accessibilityElement(children: .contain)
+            HStack(spacing: 0) {
+                Text("~ $ ").foregroundColor(TerminalPalette.secondary)
+                Text(String(command.prefix(typed))).foregroundColor(Color(hex: "#E8A27C"))
+                if typed < command.count {
+                    Text("▌").foregroundColor(TerminalPalette.foreground).accessibilityHidden(true)
+                }
+            }
+            .font(.system(size: 13, design: .monospaced))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(command)
+        }
+        .padding(12)
+        .background(TerminalPalette.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = command
+        Haptics.light()
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            copied = false
+        }
+    }
+
+    /// Types the command once, a letter every 90 ms. Reduced motion: whole.
+    @MainActor
+    private func typeCommand() async {
+        if reduced {
+            typed = command.count
+            return
+        }
+        typed = 0
+        while typed < command.count, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(90))
+            typed += 1
+        }
+    }
+
+    /// Snapshot what is online once the first list is read, then re-read the
+    /// list every few seconds while the panel is up.
+    @MainActor
+    private func watch() async {
+        await relay.refresh()
+        if before == nil {
+            before = Set(relay.devices.filter(\.isOnline).map(\.id))
+        }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await relay.refresh()
+        }
     }
 }

@@ -2,6 +2,7 @@
 import addDir from './commands/add-dir/index.js'
 import resumeNow from './commands/resume-now/index.js'
 import keepGoing from './commands/keep-going/index.js'
+import answer from './commands/answer/index.js'
 import autofixPr from './commands/autofix-pr/index.js'
 import backfillSessions from './commands/backfill-sessions/index.js'
 import btw from './commands/btw/index.js'
@@ -24,6 +25,8 @@ import cost from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
+import autopilot from './commands/autopilot/index.js'
+import away from './commands/away/index.js'
 import customize from './commands/customize/index.js'
 import factory from './commands/factory/index.js'
 import board from './commands/board/index.js'
@@ -53,13 +56,14 @@ import resume from './commands/resume/index.js'
 import native from './commands/native/index.js'
 import review, { ultrareview } from './commands/review.js'
 import session from './commands/session/index.js'
+import edit from './commands/edit/index.js'
 import share from './commands/share/index.js'
 import skills from './commands/skills/index.js'
 import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
 import goal from './commands/goal.js'
 import loops from './commands/loops.js'
-import { decisions, pr, projects, routines } from './commands/work/index.js'
+import { computers, decisions, pr, projects, routines } from './commands/work/index.js'
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
@@ -210,6 +214,7 @@ import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
+import runtimeCommand from './commands/runtime/index.js'
 import tag from './commands/tag/index.js'
 import outputStyle from './commands/output-style/index.js'
 import remoteEnv from './commands/remote-env/index.js'
@@ -281,7 +286,6 @@ export const INTERNAL_ONLY_COMMANDS = [
   resetLimits,
   resetLimitsNonInteractive,
   onboarding,
-  share,
   summary,
   antTrace,
   perfIssue,
@@ -343,6 +347,8 @@ const COMMANDS = memoize((): Command[] => [
   dash,
   dashboard,
   bots,
+  autopilot,
+  away,
   customize,
   factory,
   board,
@@ -367,6 +373,7 @@ const COMMANDS = memoize((): Command[] => [
   loops,
   keybindings,
   routines,
+  computers,
   decisions,
   pr,
   projects,
@@ -380,6 +387,7 @@ const COMMANDS = memoize((): Command[] => [
   remember,
   mobile,
   model,
+  runtimeCommand,
   outputStyle,
   remoteEnv,
   plugin,
@@ -420,6 +428,9 @@ const COMMANDS = memoize((): Command[] => [
   ...(pet ? [pet] : []),
   resumeNow,
   keepGoing,
+  answer,
+  share,
+  edit,
   ...(proactive ? [proactive] : []),
   ...(briefCommand ? [briefCommand] : []),
   ...(assistantCommand ? [assistantCommand] : []),
@@ -743,7 +754,7 @@ export const BRIDGE_SAFE_COMMANDS: Set<Command> = new Set(
     cost, // Show session cost
     summary, // Summarize conversation
     releaseNotes, // Show changelog
-    files, // List tracked files
+    files, // Browse the Files drive (read-only, never wakes a computer)
     remember, // Append a memory note
     timestamps, // Toggle message timestamps
   ].filter((c): c is Command => c !== null),

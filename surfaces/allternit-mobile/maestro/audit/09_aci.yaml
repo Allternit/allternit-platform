@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn:
+    id: "modeDial"
+- tapOn:
+    id: "modeFanCardaci"
+- takeScreenshot: aci_landing
+- tapOn:
+    id: "phoneMenuButton"
+- takeScreenshot: aci_sidebar_open
+- stopApp

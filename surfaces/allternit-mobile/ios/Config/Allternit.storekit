@@ -1,0 +1,148 @@
+{
+  "identifier": "6C1A0E3B",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "11.99",
+      "familyShareable": false,
+      "internalID": "6835904378",
+      "localizations": [
+        {
+          "description": "Adds $10 to your Allternit Cloud balance",
+          "displayName": "$10 Cloud credits",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.allternit.mobile.credits.10",
+      "referenceName": "Credits 10",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "29.99",
+      "familyShareable": false,
+      "internalID": "6835904256",
+      "localizations": [
+        {
+          "description": "Adds $25 to your Allternit Cloud balance",
+          "displayName": "$25 Cloud credits",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.allternit.mobile.credits.25",
+      "referenceName": "Credits 25",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "59.99",
+      "familyShareable": false,
+      "internalID": "6835904324",
+      "localizations": [
+        {
+          "description": "Adds $50 to your Allternit Cloud balance",
+          "displayName": "$50 Cloud credits",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.allternit.mobile.credits.50",
+      "referenceName": "Credits 50",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "119.99",
+      "familyShareable": false,
+      "internalID": "6835904072",
+      "localizations": [
+        {
+          "description": "Adds $100 to your Allternit Cloud balance",
+          "displayName": "$100 Cloud credits",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.allternit.mobile.credits.100",
+      "referenceName": "Credits 100",
+      "type": "Consumable"
+    }
+  ],
+  "settings": {
+    "_developerTeamID": "MQ85968PQP",
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA"
+  },
+  "subscriptionGroups": [
+    {
+      "id": "22588990",
+      "localizations": [],
+      "name": "Allternit Plans",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "249.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "6835904238",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "$220 in Cloud credits every month",
+              "displayName": "Allternit Ultra",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.allternit.mobile.plan.ultra.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Ultra Monthly (level 1)",
+          "subscriptionGroupID": "22588990",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "124.99",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "6835904118",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "$110 in Cloud credits every month",
+              "displayName": "Allternit Max",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.allternit.mobile.plan.max.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Max Monthly (level 2)",
+          "subscriptionGroupID": "22588990",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "24.99",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "6835904253",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "$22 in Cloud credits every month",
+              "displayName": "Allternit Plus",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.allternit.mobile.plan.plus.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Plus Monthly (level 3)",
+          "subscriptionGroupID": "22588990",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

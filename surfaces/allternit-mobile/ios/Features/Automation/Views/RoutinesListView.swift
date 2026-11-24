@@ -70,19 +70,12 @@ struct RoutinesListView: View {
                 // Header (AutomationTasksListView's standalone-tab chrome:
                 // sidebar toggle + title + "+").
                 HStack {
-                    Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
+                    // Tap opens the drawer; hold fans the modes out (step 24).
+                    PhoneMenuButton {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
                             isSidebarOpen.toggle()
                         }
-                    }) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.title3)
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Open sidebar")
 
                     Menu {
                         ForEach(AutomationKind.allCases, id: \.self) { kind in
@@ -110,8 +103,7 @@ struct RoutinesListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -243,8 +235,7 @@ struct RoutinesListView: View {
 
     private func routineRow(_ routine: Routine) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailRoutine = routine
         }) {
             HStack(spacing: 12) {
@@ -289,8 +280,7 @@ struct RoutinesListView: View {
             message: "Chain a few commands into a named routine you can run on demand, anytime.",
             actionTitle: "Create routine",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

@@ -1,12 +1,15 @@
 import Combine
 import Contacts
+import CoreLocation
 import EventKit
 import Foundation
 
-/// The three things a bot can reach on the phone through Device Access.
-/// No Health, by design.
+/// What a bot can reach on the phone through Device Access. No Health, by
+/// design. `shortcuts` and `home` are Phone Use's official actions
+/// (contract §3.1): the person's own shortcuts, and HomeKit. `location` is
+/// when-in-use only and approximate unless the person allows precise.
 enum DeviceAccessKind: String, CaseIterable, Identifiable, Sendable {
-    case calendar, reminders, contacts
+    case calendar, reminders, contacts, shortcuts, home, location
 
     var id: String { rawValue }
 
@@ -15,6 +18,9 @@ enum DeviceAccessKind: String, CaseIterable, Identifiable, Sendable {
         case .calendar: return "Calendar"
         case .reminders: return "Reminders"
         case .contacts: return "Contacts"
+        case .shortcuts: return "Shortcuts"
+        case .home: return "Home"
+        case .location: return "Location"
         }
     }
 
@@ -23,14 +29,20 @@ enum DeviceAccessKind: String, CaseIterable, Identifiable, Sendable {
         case .calendar: return "calendar"
         case .reminders: return "checklist"
         case .contacts: return "person.crop.circle"
+        case .shortcuts: return "square.2.layers.3d"
+        case .home: return "house"
+        case .location: return "location"
         }
     }
 
     var detail: String {
         switch self {
-        case .calendar: return "Bots can read your events and add new ones. Each new event needs your approval on your computer."
-        case .reminders: return "Bots can read your reminders and add new ones. Each new reminder needs your approval on your computer."
+        case .calendar: return "Bots can read your events, add new ones and delete them. Each new or deleted event needs your approval on your computer."
+        case .reminders: return "Bots can read your reminders, add new ones and change them. Each new or changed reminder needs your approval on your computer."
         case .contacts: return "Bots can search your contacts by name. Read only."
+        case .shortcuts: return "Bots can run your shortcuts on this iPhone. Anything that sends a message, mail or call needs your approval on your computer first."
+        case .home: return "Bots can see your Home accessories and scenes, switch lights and run scenes. Locks, garage doors and alarms need your approval on your computer first."
+        case .location: return "Lets Gizzi see roughly where you are when you ask. Precise location asks each time."
         }
     }
 }
@@ -130,6 +142,17 @@ final class DeviceAccessStore: ObservableObject {
                 // iOS 18 "limited" access still lets a search run.
                 return CNContactStore.authorizationStatus(for: .contacts).rawValue == 4 ? .granted : .denied
             }
+        // Running a shortcut needs no iOS permission: the switch is the gate.
+        case .shortcuts: return .granted
+        case .home: return HomeAccessService.cachedAccess
+        case .location:
+            switch CLLocationManager().authorizationStatus {
+            case .authorizedWhenInUse, .authorizedAlways: return .granted
+            case .notDetermined: return .notDetermined
+            case .restricted: return .restricted
+            case .denied: return .denied
+            @unknown default: return .denied
+            }
         }
     }
 
@@ -150,6 +173,9 @@ final class DeviceAccessStore: ObservableObject {
         case .calendar: return (try? await EKEventStore().requestFullAccessToEvents()) ?? false
         case .reminders: return (try? await EKEventStore().requestFullAccessToReminders()) ?? false
         case .contacts: return (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
+        case .shortcuts: return true
+        case .home: return await HomeAccessService.shared.requestAccess()
+        case .location: return await DeviceLocator.shared.requestWhenInUse()
         }
     }
 }

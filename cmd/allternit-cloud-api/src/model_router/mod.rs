@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod anthropic;
 pub mod catalog;
 pub mod items_bridge;
 pub mod generic_openai;
@@ -296,13 +297,25 @@ impl ModelRouter {
         !self.providers.is_empty()
     }
 
+    /// The static catalog, unfiltered by provider health or funding. The
+    /// linked Claude organization rows of `GET /v1/models` are built from it:
+    /// they bill the person's own org, so Allternit's upstream funding does
+    /// not hide them.
+    pub fn catalog(&self) -> &catalog::ModelAliasMap {
+        &self.alias_map
+    }
+
     /// List the models clients may pick, starting with the static catalog.
-    /// The default model comes first and every row carries `default:
-    /// true|false`; unlisted aliases come last with `hidden: true` (listed
+    /// The default model (`default_alias`) comes first and every row carries
+    /// `default: true|false`; unlisted aliases come last with `hidden: true` (listed
     /// rows have no `hidden` key). Live upstream metadata is merged in when a
     /// provider is healthy.
     pub async fn list_models(&self) -> Vec<ModelInfo> {
         let mut models = Vec::new();
+        // The flag goes on the model the server actually uses as its default:
+        // when the catalog default's provider is out of credits, its row is
+        // left out and the next funded listed model carries `default: true`.
+        let default_alias = self.default_alias();
 
         for entry in self.alias_map.ordered_entries() {
             // Open-lane models are listed only while their upstream is set.
@@ -395,9 +408,20 @@ impl ModelRouter {
                     ),
                 );
             }
+            // The same retail price per 1M tokens, as an object clients can
+            // show in the Cloud credits disclosure (CONTRACT-cloud-credits D11).
+            info.extra.insert(
+                "pricing".to_string(),
+                serde_json::json!({
+                    "input_per_1m_usd": retail.prompt_per_1m,
+                    "output_per_1m_usd": retail.completion_per_1m,
+                }),
+            );
             // Set last so upstream extras can never override these flags.
-            info.extra
-                .insert("default".to_string(), serde_json::Value::Bool(entry.default));
+            info.extra.insert(
+                "default".to_string(),
+                serde_json::Value::Bool(default_alias == Some(entry.alias.as_str())),
+            );
             if entry.listed {
                 info.extra.remove("hidden");
             } else {
@@ -410,9 +434,37 @@ impl ModelRouter {
         models
     }
 
+    /// The model Allternit Cloud recommends, as `GET /v1/models` flags it: the
+    /// catalog's default model, else its first listed one. Open-lane models
+    /// (they need their own terms and credits) and models `GET /v1/models`
+    /// leaves out while their provider is out of credits are never picked. A
+    /// Platform agent on `"allternit"` runs on this model.
+    pub fn default_alias(&self) -> Option<&str> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .find(|entry| {
+                entry.listed
+                    && !catalog::is_open_lane(entry)
+                    && !crate::services::upstream_funding::provider_out_of_credits(&entry.provider)
+            })
+            .map(|entry| entry.alias.as_str())
+    }
+
     /// The provider id a model alias routes to, without dispatching.
     pub fn provider_for_alias(&self, alias: &str) -> Option<&str> {
         self.alias_map.resolve(alias).map(|entry| entry.provider.as_str())
+    }
+
+    /// Listed catalog aliases a provider serves, in `GET /v1/models` order
+    /// (the models a saved key for that provider unlocks).
+    pub fn listed_aliases_for_provider(&self, provider_id: &str) -> Vec<String> {
+        self.alias_map
+            .ordered_entries()
+            .into_iter()
+            .filter(|entry| entry.listed && entry.provider == provider_id)
+            .map(|entry| entry.alias.clone())
+            .collect()
     }
 
     /// Whether a model alias is an open-lane model (`lane: "open"`).

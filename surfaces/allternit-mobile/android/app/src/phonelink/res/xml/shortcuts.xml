@@ -59,4 +59,15 @@
             android:targetPackage="com.allternit.app"
             android:targetClass="com.allternit.phonelink.MainActivity" />
     </shortcut>
+    <shortcut
+        android:shortcutId="share_screen"
+        android:enabled="true"
+        android:icon="@drawable/ic_stat_link"
+        android:shortcutShortLabel="@string/shortcut_share_screen_short"
+        android:shortcutLongLabel="@string/shortcut_share_screen_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.allternit.app"
+            android:targetClass="com.allternit.phonelink.ScreenShareActivity" />
+    </shortcut>
 </shortcuts>

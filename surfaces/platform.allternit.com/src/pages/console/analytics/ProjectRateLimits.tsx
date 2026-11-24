@@ -9,8 +9,8 @@ import {
   PlatformHeader,
   ProjectGate,
   formatDateTime,
-  usePlatformProjects,
 } from "../platform/shared";
+import { useProjectContext } from "@/lib/project-context";
 
 function sourceLabel(source: LimitSource): string {
   return source === "override" ? "Project override" : "Plan";
@@ -102,16 +102,19 @@ function LimitsCard({ projectId }: { projectId: string }) {
   );
 }
 
-/** Read-only per-project rate limits, shown on Allternit Cloud. */
+/** Read-only rate limits for the project picked in the console header, shown on Allternit Cloud. */
 export function ProjectRateLimits(): React.ReactNode {
-  const state = usePlatformProjects();
+  const state = useProjectContext();
   const linkClass = "font-semibold text-[var(--accent-primary)] hover:underline";
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
       <PlatformHeader
         title="Rate limits"
-        subtitle="Limits that apply to requests made with this project's API keys."
-        state={state}
+        subtitle={
+          state.project
+            ? `Limits that apply to requests made with ${state.project.name}'s API keys.`
+            : "Limits that apply to requests made with this project's API keys."
+        }
       />
       <ProjectGate state={state}>{({ project }) => <LimitsCard projectId={project.id} />}</ProjectGate>
       <p className="mt-4 text-[12px] text-[var(--text-tertiary)]">

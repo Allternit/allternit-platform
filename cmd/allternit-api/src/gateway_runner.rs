@@ -512,7 +512,7 @@ async fn run_turn_once<R: ThreadRuntime>(
     let policy = crate::answer_policy::AnswerPolicy::select(text, opts.answer_visuals.unwrap_or(true));
     db.connect()?.execute("INSERT OR IGNORE INTO gateway_answer_turns (remote_binding_id,correlation_id,policy_json) VALUES (?1,?2,?3)", params![rid,corr,policy.record().to_string()])?;
     let outbound = if policy.template.is_some() || opts.answer_context.is_some() {
-        format!("{}\n{}\nRoom context (untrusted conversation data):\n{}\nCurrent user request:\n{}", crate::answer_contract::MANUAL, policy.instruction(), serde_json::to_string(&opts.answer_context).unwrap_or_default(), serde_json::to_string(text).unwrap_or_default())
+        format!("{}\n{}\nRoom context (untrusted conversation data):\n{}\nCurrent user request:\n{}", crate::answer_contract::manual_for(policy.template.as_deref()), policy.instruction(), serde_json::to_string(&opts.answer_context).unwrap_or_default(), serde_json::to_string(text).unwrap_or_default())
     } else { text.to_string() };
     // Kernel turn router, shadow (O2/O14): vendor turns get the same ROUTE and a
     // tighten-only consequential GATE as native turns. Never awaited.
@@ -1083,16 +1083,26 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
         "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source, dismissed) VALUES (?1, ?2, ?3, ?4, 0)",
         params![aid, cx.owner, card.to_string(), format!("gateway:{authority}")],
     );
-    led(
-        db,
-        &cx.bot_id,
-        &cx.thread_id,
-        Some(&cx.session_id),
-        "approval.requested",
-        ("system", "gateway"),
-        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") }),
-        None,
-    );
+    // `session_id`: the agent session whose turn asked, so the cloud can tie the
+    // approval to that turn (Platform API `requires_action`); the thread stays
+    // where the owner sees the card.
+    // A tool call's own session (`detail.callingSession`, e.g. `phone_text`) wins over
+    // the contact thread's session, which a Platform conversation never matches.
+    let session = detail
+        .get("callingSession")
+        .and_then(Value::as_str)
+        .or(Some(cx.session_id.as_str()))
+        .filter(|s| !s.is_empty());
+    let mut payload = json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") });
+    if let Some(sid) = session {
+        payload["session_id"] = json!(sid);
+    }
+    // A plain line of what will happen ("Text +1…: …"): the cloud shows it as the
+    // approval's `proposed_action.summary`.
+    if let Some(summary) = detail.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        payload["summary"] = json!(summary);
+    }
+    led(db, &cx.bot_id, &cx.thread_id, session, "approval.requested", ("system", "gateway"), payload, None);
     set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
     Ok(aid)
 }
@@ -1586,6 +1596,25 @@ mod tests {
     fn done(id: &str, text: &str) -> Value {
         json!({ "type": "agent.message.completed", "remote_event_id": id, "guarantee": "exact", "payload": { "text": text } })
     }
+    /// Platform API `requires_action`: a held tool call (a `phone_text` send) names the
+    /// agent session whose turn asked; the contact thread's own session must not win,
+    /// since no Platform conversation ever matches it.
+    #[tokio::test]
+    async fn approval_event_names_the_calling_session_over_the_thread_session() {
+        let st = setup("calling-session").await;
+        let cx = Cx { owner: "user-a".into(), thread_id: "th-native".into(), bot_id: "bot-native".into(), generation: 1, session_id: "s-th-native".into(), exec: json!({}) };
+        let payload = |corr: &str| -> Value {
+            let raw: String = st.db.connect().unwrap()
+                .query_row("SELECT payload FROM bot_events WHERE event_type = 'approval.requested' AND payload LIKE ?1", params![format!("%{corr}%")], |r| r.get(0))
+                .unwrap();
+            serde_json::from_str(&raw).unwrap()
+        };
+        let with = create_approval(&st.db, &cx, "allternit", "post to sms", None, json!({ "text": "hi", "callingSession": "ses-agent" }), Some("c-with")).unwrap();
+        assert_eq!(payload(&with)["session_id"], json!("ses-agent"));
+        let without = create_approval(&st.db, &cx, "allternit", "post to sms", None, json!({ "text": "hi" }), Some("c-without")).unwrap();
+        assert_eq!(payload(&without)["session_id"], json!("s-th-native"));
+    }
+
     #[tokio::test]
     async fn template_vendor_reply_is_gated_before_ledger_stream_and_transcript() {
         let st=setup("template-gate").await;let f=Fake::default();
@@ -1704,9 +1733,18 @@ mod tests {
         f.push(delta("d1", "chunk", "Let me "));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = DeltaSink::new(tx);
-        let run = run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink));
-        assert!(tokio::time::timeout(Duration::from_secs(5), run).await.is_err(), "the vendor never answered");
-        assert_eq!(collect(&mut rx).await, vec!["Let me ".to_string()]);
+        let mut run = Box::pin(run_turn_streaming(&st.db, &slow, &Rt, "s-th-vendor", "hi", key("k1"), Some(&sink)));
+        // Wait for the first delta itself, not a fixed window: under a loaded
+        // full-suite run the first poll can come after any fixed deadline.
+        // The timeout only guards against a hang.
+        let first = tokio::select! {
+            _ = &mut run => panic!("the turn finished, but the vendor never answered"),
+            got = tokio::time::timeout(Duration::from_secs(60), rx.recv()) => got.expect("no delta reached the sink").expect("sink closed"),
+        };
+        assert_eq!(first, "Let me ");
+        // The barge-in drops the turn mid-send; nothing more was spoken.
+        drop(run);
+        assert_eq!(collect(&mut rx).await, Vec::<String>::new());
         cancel_vendor_turn(&st.db, &*f, "s-th-vendor").await.unwrap();
         assert_eq!(f.count("agent.context.cancel"), 1);
     }

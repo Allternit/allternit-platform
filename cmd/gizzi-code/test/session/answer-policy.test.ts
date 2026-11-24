@@ -12,8 +12,16 @@ import { ProviderQuotas } from '../../src/runtime/providers/quota';
 import { SessionPause } from '../../src/runtime/session/pause';
 import { clearHandoffCache } from '../../src/runtime/providers/handoff';
 import { rm } from 'node:fs/promises';
+import { tmpdir as osTmpdir } from 'node:os';
+import { join } from 'node:path';
 const valid = '```openui\n' + JSON.stringify({ version: 1, template: 'task-board', title: 'Tasks', data: { columns: [{ name: 'To do', tasks: [] }] } }) + '\n```';
-async function run(replies: string[], options: { visuals?: boolean; message?: string; cancel?: boolean; handoff?: boolean; hook?: boolean; quota?: boolean; retryHint?: boolean } = {}) {
+// A fixture reply that calls the real run_code tool instead of answering.
+type Reply = string | { runCode: string };
+// run_code sets up a real uv venv on first use (network); reuse run-code.test.ts's env dir.
+process.env.GIZZI_PYTHON_ENV_DIR ??= join(osTmpdir(), 'gizzi-run-code-test-python');
+const skipRunCode = process.env.GIZZI_SKIP_RUN_CODE_E2E === '1' || process.platform === 'win32';
+const ANALYZE = 'Analyze the attached file(s) using the run_code tool (not your own shell, Bash or terminal): load them, summarize what they contain, and show the key numbers as a table and a chart.\n\n[Attached file: inventory.xlsx]\ninventory.xlsx (5 KB) is attached as a file. Use run_code to read the whole file.\n[/Attached file]';
+async function run(replies: Reply[], options: { visuals?: boolean; message?: string; cancel?: boolean; handoff?: boolean; hook?: boolean; quota?: boolean; retryHint?: boolean } = {}) {
   const { visuals = true, message = 'Create a task board', cancel = false, handoff = false, hook = false, quota = false, retryHint = false } = options;
   let stopEvents = 0;
   const requests: any[] = [], published: string[] = [], delayedPublished: string[] = [];
@@ -28,6 +36,10 @@ async function run(replies: string[], options: { visuals?: boolean; message?: st
     requests.push(body);
     if (quota && requests.length === 1) ProviderQuotas.record('answerfixture', [{ id: 'test-window', label: 'Test window', usedRatio: 0.97, resetAt: new Date(Date.now() + 3600000).toISOString() }]);
     const reply = replies[Math.min(requests.length - 1, replies.length - 1)];
+    if (typeof reply !== 'string') return new Response([
+      { choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: `call_${requests.length}`, type: 'function', function: { name: 'run_code', arguments: JSON.stringify({ language: 'python', code: reply.runCode }) } }] }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } },
+    ].map(chunk => 'data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk }) + '\n\n').join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
     const chunks = [{ choices: [{ index: 0, delta: { role: 'assistant', content: reply.slice(0, 15) }, finish_reason: null }] }, { choices: [{ index: 0, delta: { content: reply.slice(15) }, finish_reason: null }] }, { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }].map(chunk => 'data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk }) + '\n\n').join('') + 'data: [DONE]\n\n';
     if (retryHint && requests.length === 1) return new Response(chunks.slice(0, chunks.indexOf('\n\n') + 2)
       + 'event: allternit.retry_hint\ndata: {"retryable":true,"reason":"fixture","next_fallback":null}\n\n'
@@ -42,14 +54,14 @@ async function run(replies: string[], options: { visuals?: boolean; message?: st
   } });
   const savedOrigin = process.env.ALLTERNIT_API_URL, savedKey = process.env.ALLTERNIT_API_KEY, savedCloud = process.env.ALLTERNIT_CLOUD_URL;
   if (handoff) { process.env.ALLTERNIT_API_URL = `http://127.0.0.1:${server.port}`; process.env.ALLTERNIT_CLOUD_URL = `http://127.0.0.1:${server.port}`; process.env.ALLTERNIT_API_KEY = 'fixture-handoff'; clearHandoffCache(); }
-  const tmp = await tmpdir({ config: { model: 'answerfixture/fixture', small_model: 'answerfixture/fixture', snapshot: false, ...(hook ? { hooks: { http: [{ url: `http://127.0.0.1:${server.port}/hook`, events: ['Stop'] }] } } : {}), provider: { ...(handoff ? { allternit: { npm: '@ai-sdk/openai-compatible', name: 'Cloud fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } : {}), answerfixture: { npm: '@ai-sdk/openai-compatible', name: 'Fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } } });
+  const tmp = await tmpdir({ config: { model: 'answerfixture/fixture', small_model: 'answerfixture/fixture', snapshot: false, permission: { run_code: 'allow' }, ...(hook ? { hooks: { http: [{ url: `http://127.0.0.1:${server.port}/hook`, events: ['Stop'] }] } } : {}), provider: { ...(handoff ? { allternit: { npm: '@ai-sdk/openai-compatible', name: 'Cloud fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } : {}), answerfixture: { npm: '@ai-sdk/openai-compatible', name: 'Fixture', options: { baseURL: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fixture' }, models: { fixture: { name: 'Fixture', limit: { context: 100000, output: 4096 } } } } } } });
   try { return await Instance.provide({ directory: tmp.path, fn: async () => {
     const session = await Session.create({ title: 'Answer contract' });
     const stopPoll = cancel ? setInterval(() => { if (requests.length) SessionPrompt.cancel(session.id); }, 5) : undefined;
     const unsub = Bus.subscribe(MessageV2.Event.PartUpdated, event => { const part = event.properties.part; if (part.type === 'text') { published.push(part.text); queueMicrotask(() => delayedPublished.push(part.text)); } });
     try {
       const result = await SessionPrompt.prompt({ sessionID: session.id, agent: 'build', model: { providerID: 'answerfixture', modelID: 'fixture' }, system: visuals ? '+' + ANSWER_TEMPLATE_MANUAL : '+Text only.', parts: [{ type: 'text', text: message }] });
-      return { result, session: await Session.get(session.id), trace: SessionTrace.list({ sessionID: session.id, limit: 1000 }), requests, published, delayedPublished };
+      return { result, messages: await Session.messages({ sessionID: session.id }), session: await Session.get(session.id), trace: SessionTrace.list({ sessionID: session.id, limit: 1000 }), requests, published, delayedPublished };
     } finally { clearInterval(stopPoll); unsub(); }
   } }); } finally { server.stop(true); if (quota) { ProviderQuotas.clearCache(); SessionPause.clearTimers(); } if (handoff) { if (savedCloud === undefined) delete process.env.ALLTERNIT_CLOUD_URL; else process.env.ALLTERNIT_CLOUD_URL = savedCloud; if (savedOrigin === undefined) delete process.env.ALLTERNIT_API_URL; else process.env.ALLTERNIT_API_URL = savedOrigin; if (savedKey === undefined) delete process.env.ALLTERNIT_API_KEY; else process.env.ALLTERNIT_API_KEY = savedKey; clearHandoffCache(); } await tmp[Symbol.asyncDispose](); await rm(tmp.path, { recursive: true, force: true }); }
 }
@@ -159,3 +171,29 @@ describe('runtime answer enforcement', () => {
   }, 30000);
 
 });
+
+describe.skipIf(skipRunCode)('run_code results and the required template', () => {
+  const chart = "open('out/inventory_value.png', 'wb').write(b'\\x89PNG\\r\\n\\x1a\\n')\nprint('total value: 314.75')";
+  test('an Analyze turn whose chart came back as a run_code file is not failed for lacking the chart envelope', async () => {
+    const answer = 'Total inventory value is 314.75 across three products; the chart is attached.';
+    const { result, requests, trace, messages } = await run([{ runCode: chart }, answer], { message: ANALYZE });
+    expect((trace.find(t => t.kind === 'answer.policy')?.data as any)).toMatchObject({ mode: 'template', selected: 'chart' });
+    const tool = messages.flatMap(m => m.parts).find((p): p is MessageV2.ToolPart => p.type === 'tool' && p.tool === 'run_code');
+    expect(tool?.state.status === 'completed' && tool.state.metadata.files.map((f: any) => f.mediaType)).toEqual(['image/png']);
+    expect(requests).toHaveLength(2);
+    expect(result.info.role === 'assistant' && result.info.error).toBeUndefined();
+    expect(result.info.role === 'assistant' && result.info.answerPolicy).toMatchObject({ selected: 'chart', returned: 'run_code', status: 'accepted' });
+    expect(result.parts.filter(p => p.type === 'text' && !p.ignored).map(p => (p as MessageV2.TextPart).text).join('\n')).toBe(answer);
+  }, 120000);
+  test('a run_code call that saved no chart or sheet does not satisfy the chart template', async () => {
+    const { result, requests } = await run([{ runCode: "print('total value: 314.75')" }, 'Prose instead of a chart.', 'Still prose.'], { message: ANALYZE });
+    expect(requests).toHaveLength(3);
+    expect(result.info.role === 'assistant' && result.info.error?.name).toBe('AnswerTemplateError');
+  }, 120000);
+});
+test('a plain chart request without run_code still gets its template enforcement', async () => {
+  const { result, requests } = await run(['Revenue rose.', 'Revenue rose a lot.'], { message: 'Make me a chart of monthly revenue: Jan 10, Feb 30, Mar 20' });
+  expect(requests).toHaveLength(2);
+  expect(result.info.role === 'assistant' && result.info.answerPolicy).toMatchObject({ selected: 'chart', status: 'rejected' });
+  expect(result.info.role === 'assistant' && result.info.error?.name).toBe('AnswerTemplateError');
+}, 30000);

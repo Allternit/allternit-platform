@@ -140,6 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn no_healthy_node_is_a_428_pair_a_device_error() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
@@ -163,6 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn relays_to_the_resolved_default_node_with_exact_method_path_and_body() {
         let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");

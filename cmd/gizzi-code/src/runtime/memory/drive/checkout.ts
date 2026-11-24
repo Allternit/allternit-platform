@@ -9,8 +9,10 @@
  *   4. applies the operations to the current files, regenerates MEMORY.md's
  *      index, validates and secret-scans the WHOLE candidate tree, commits
  *   5. pushes; on a non-fast-forward rejection it fetches, re-applies the
- *      local intent (entry-level diff since the common base) on top of the
- *      latest files as ONE commit and retries (bounded). Offline or still
+ *      local intent on top of the latest files with a three-way, per-entry
+ *      merge (format.ts mergeOperations: the other device's change stays,
+ *      ours is kept beside it as a `conflict_of` sibling) and retries
+ *      (bounded). Offline or still
  *      failing: the local commit is kept and the state file records a visible
  *      pending/error that the next session retries.
  * Nothing here ever force-pushes, runs `git reset`, or deletes history.
@@ -21,12 +23,14 @@ import os from "os"
 import path from "path"
 import {
   applyOperations,
-  diffOperations,
+  conflictEntries,
   DriveFormatError,
   DriveSecretError,
   ENTRYPOINT,
+  entryVersion,
   isEntryLine,
   isManagedPath,
+  mergeOperations,
   normalizeFiles,
   parseEntry,
   rebuildIndex,
@@ -96,7 +100,16 @@ export interface DriveStatus {
   quarantined?: string[]
   rejected?: string
   rejectedAt?: string
+  /** Entries holding one side of a conflicting edit (metadata `conflict_of`). */
+  needsLook?: number
 }
+
+/**
+ * What to write: fixed operations, or a builder that receives the drive's
+ * files after sync (inside the write lock) so version checks see the latest
+ * head. A builder may throw to refuse the write.
+ */
+export type WritePlan = Operation[] | ((files: DriveFiles) => { operations: Operation[]; message?: string })
 
 export interface WriteResult {
   revision?: string
@@ -119,6 +132,8 @@ export interface SearchHit {
   line: number
   text: string
   entry?: Entry
+  /** The entry's version (format.ts entryVersion) when the line is an entry. */
+  version?: string
 }
 
 export class DriveGitError extends Error {
@@ -583,7 +598,7 @@ export class DriveCheckout {
         } catch {
           entry = undefined
         }
-        hits.push({ path: p, line: i + 1, text: entry?.text ?? line, entry })
+        hits.push({ path: p, line: i + 1, text: entry?.text ?? line, entry, version: entry ? entryVersion(line) : undefined })
         if (hits.length >= limit) return hits
       }
     }
@@ -604,6 +619,7 @@ export class DriveCheckout {
       ahead = r.code === 0 ? Number(r.stdout) || 0 : 0
     }
     const dirty = !!(await this.git(["status", "--porcelain", "--untracked-files=all"])).stdout
+    const needsLook = conflictEntries((await this.workingFiles()).files).length
     return {
       dir: this.dir,
       head,
@@ -619,6 +635,7 @@ export class DriveCheckout {
       quarantined: state.quarantined,
       rejected: state.rejected,
       rejectedAt: state.rejectedAt,
+      needsLook,
     }
   }
 
@@ -630,19 +647,20 @@ export class DriveCheckout {
   // ── writes ────────────────────────────────────────────────────────────────
 
   /** Apply stable-id operations as one commit, then publish. */
-  write(operations: Operation[], options: { message: string; source?: string }): Promise<WriteResult> {
+  write(plan: WritePlan, options: { message: string; source?: string }): Promise<WriteResult> {
     return withDriveLock(this.dir, async () => {
       if (this.readOnly) throw new DriveReadOnlyError()
       await this.ensureUnlocked()
       await this.syncUnlocked(options.source)
       const head = await this.head()
       const current = head ? await this.readTree(head) : { files: {}, oids: {} }
-      const next = applyOperations(current.files, operations)
+      const built = typeof plan === "function" ? plan(current.files) : { operations: plan }
+      const next = applyOperations(current.files, built.operations)
       if (head && sameFiles(next, current.files)) {
         const status = await this.status()
         return { revision: head, changed: false, pushed: false, pending: status.pending, error: status.pending ? status.lastError : undefined }
       }
-      const commit = await this.commitFiles(next, head ? [head] : [], options.message, current.oids, current.files)
+      const commit = await this.commitFiles(next, head ? [head] : [], built.message ?? options.message, current.oids, current.files)
       await this.materialize(commit, next, head)
       return this.publishUnlocked()
     })
@@ -824,8 +842,10 @@ export class DriveCheckout {
   /**
    * Re-apply local work since the common base on top of `onto`, one commit
    * per local commit (oldest first, keeping each commit's message), so work
-   * saved offline keeps its history. Each step re-applies that commit's
-   * entry-level changes to the latest files; a step that changes nothing
+   * saved offline keeps its history. Each step merges that commit's
+   * entry-level changes into the latest files three ways (mergeOperations):
+   * a newer change from another device is never overwritten; ours is kept
+   * beside it as a `conflict_of` sibling. A step that changes nothing
    * (already on the server) is skipped.
    */
   private async replayOnto(head: string, onto: string): Promise<void> {
@@ -837,9 +857,10 @@ export class DriveCheckout {
     let current = onto
     let currentFiles = theirs.files
     let previous = base ? (await this.readTree(base)).files : {}
+    const conflicts = new Map<string, string>()
     for (const commit of commits.length ? commits : [head]) {
       const ours = await this.readTree(commit)
-      const operations = diffOperations(previous, ours.files)
+      const operations = mergeOperations(previous, ours.files, currentFiles, conflicts)
       previous = ours.files
       const next = applyOperations(currentFiles, operations)
       if (sameFiles(next, currentFiles)) continue
@@ -960,7 +981,7 @@ export class DriveCheckout {
       const base = await this.mergeBase(local, head)
       const baseFiles = base ? (await this.readTree(base)).files : {}
       const ours = await this.readTree(head)
-      const operations = diffOperations(baseFiles, (await this.readTree(local)).files)
+      const operations = mergeOperations(baseFiles, (await this.readTree(local)).files, ours.files)
       const next = applyOperations(ours.files, operations)
       const commit = await this.commitFiles(next, [head, local], "Merge memory saved while signed out", ours.oids, ours.files)
       await this.materialize(commit, next, head)

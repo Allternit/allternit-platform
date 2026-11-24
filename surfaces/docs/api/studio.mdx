@@ -1,0 +1,181 @@
+---
+title: Studio API
+description: Run Freeweights Studio fine-tune jobs on a computer through its Allternit API
+---
+
+The Studio host runs inside each computer's Allternit API under `/api/v1/studio`. It lists training engines, runs fine-tune jobs, reports progress, and registers the results as local models. One job runs per computer at a time. Calls need a signed-in caller. Errors are always `{ "error": "<code>", "message": "<text>" }`.
+
+From the terminal, use [`gizzi studio`](/cli/studio). For the user flow, see [Freeweights Studio](/surfaces/model-lab#training). The contract lives in `services/studio-spec` in the platform repository: `openapi/studio-api.yaml` and `openapi/engine-api.yaml`.
+
+## Routes
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/engines` | List engines and their install state |
+| `POST` | `/engines/:id/install` | Install an engine. Safe to call again. |
+| `POST` | `/jobs` | Create a job from a job spec v1 |
+| `GET` | `/jobs` | List jobs, newest first |
+| `GET` | `/jobs/:id` | One job |
+| `GET` | `/jobs/:id/events?after=seq` | Events after a sequence number |
+| `POST` | `/jobs/:id/cancel` | Cancel a job that has not finished |
+| `GET` | `/jobs/:id/outputs` | Files the job produced |
+| `POST` | `/jobs/:id/outputs/register` | Register one output as a local model |
+
+## Engines
+
+`GET /engines` returns `{ "engines": [...] }`. Each engine has `id`, `name`, `license`, `version`, `methods` (`lora`, `qlora`, `full`, `dpo`), `hardware` (any of `apple-silicon`, `cuda-linux`, `cuda-windows`, `rocm-linux`, `xpu-linux`, `xpu-windows`, `cpu`), `install_state` (`not_installed`, `installing`, `installed`, `failed`), `backends` and `fit`. The default engine is `allternit-tune` (Apache-2.0). Its `torch` and `mlx` backends are both available.
+
+`fit` says whether the engine runs on this computer:
+
+| Field | Meaning |
+|---|---|
+| `ok` | The engine can train here |
+| `hardware` | The hardware id the host detected |
+| `backend` | Backend used for the first method that runs with `resources.backend` set to `auto`: `mlx`, `torch-mps`, `torch-cuda`, `torch-rocm`, `torch-xpu` or `torch-cpu`. On a Mac, `lora` and `qlora` use `mlx` and `full` and `dpo` use `torch-mps`. |
+| `reason` | Plain words, shown as is, when the engine is refused or the host fell back to `cpu` |
+| `warning` | Shown before start when the job runs but slowly (`cpu`) |
+| `methods_unavailable` | Method to reason, for methods this computer cannot run |
+| `outputs_unavailable` | Output kind to reason, for example `mlx` off a Mac |
+
+`POST /engines/:id/install` answers `202`. A build that cannot install the engine answers `501 not_available`.
+
+## Create a job
+
+```bash
+curl -X POST "$ALLTERNIT_API_URL/api/v1/studio/jobs" \
+  -H "Authorization: Bearer $ALLTERNIT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec_version": 1,
+    "engine": "allternit-tune",
+    "base": { "repo": "org/base-model", "manifest_sha256": "<64 hex characters>" },
+    "dataset": { "path": "/Users/me/data/train.jsonl", "format": "jsonl" },
+    "method": "lora",
+    "params": {},
+    "resources": { "place": "local" },
+    "outputs": { "adapter": true }
+  }'
+```
+
+The job starts in state `queued` (`201`). The spec fields are:
+
+| Field | Notes |
+|---|---|
+| `spec_version` | Must be `1`. |
+| `engine`, `engine_version` | Engine id. The version is optional. |
+| `base.repo`, `base.revision` | A hosted Freeweights model. |
+| `base.path` | Instead of `repo`: an absolute path (or `~/...`) to a model folder on the computer that runs the job. Give exactly one of `repo` or `path`. |
+| `base.manifest_sha256` | Optional. The sha256 of the signed Freeweights manifest for the base model. The host refuses the job if the model is not fetched with exactly that manifest. |
+| `dataset` | Exactly one of `repo` or `path`, plus `format` and an optional `revision`. |
+| `method` | `lora`, `qlora`, `full` or `dpo`. |
+| `params` | Engine parameters. |
+| `resources` | `place` is `local`, `paired` or `compute`. `backend` is `auto` (default), `torch` or `mlx`. Optional `gpu`, `max_hours`, `max_usd`. |
+| `outputs` | `adapter`, `merged`, `gguf` (list of quantizations), `mlx` (Apple Silicon only). |
+| `eval` | Optional `sets` and `baseline`. |
+
+## Job states
+
+`queued`, `preparing`, `running`, `exporting`, `succeeded`, `failed`, `cancelled`. States only move forward. A job also has `created_at`, `updated_at`, `error`, `last_seq` and `outputs`.
+
+## Events
+
+Poll `GET /jobs/:id/events?after=<seq>`. It returns the events with `seq` greater than `after` (default `0`) and the current state:
+
+```json
+{
+  "state": "running",
+  "events": [
+    { "seq": 7, "at": "2026-11-15T18:00:00Z", "kind": "progress", "message": "step 40 of 200", "progress": 0.2 }
+  ]
+}
+```
+
+`kind` is `state`, `log`, `progress`, `output` or `error`. `seq` starts at 1 and increases by 1 per job. Keep the highest `seq` you saw and pass it as `after` on the next poll. Stop when `state` is `succeeded`, `failed` or `cancelled`.
+
+## Outputs
+
+`GET /jobs/:id/outputs` lists `{ kind, path, bytes }` for each output. `kind` is `adapter`, `merged`, `gguf` or `mlx`. `path` is always an absolute path on the computer that ran the job, inside the output folder the host gave the engine. Outputs stay on the computer after the job ends.
+
+`POST /jobs/:id/outputs/register` with `{ "kind": "adapter", "name": "optional" }` registers an output with the Local Engine and returns `{ "model_id": "..." }`.
+
+## Error codes
+
+| HTTP | Code | Meaning |
+|---|---|---|
+| 401 | `unauthorized` | No signed-in caller |
+| 404 | `not_found` | No such job |
+| 404 | `unknown_engine` | No such engine |
+| 404 | `no_output` | The job has no output of that kind |
+| 409 | `job_running` | Another job runs on this computer |
+| 409 | `already_finished` | Cancel on a finished job |
+| 409 | `job_not_succeeded` | Register before the job succeeded |
+| 422 | `hardware_not_supported` | The engine does not run on this computer's hardware at all, for example an Intel Mac. The message is the reason from `fit`. |
+| 422 | `method_not_supported` | The method is in `fit.methods_unavailable`, for example `qlora` on `cpu`. The environment can cause it too, for example bitsandbytes missing or too old. |
+| 422 | `backend_not_supported` | `resources.backend` cannot be used here, for example `mlx` off a Mac or for `full` and `dpo`. Also returned when mlx-lm is missing. |
+| 422 | `output_not_supported` | An output is in `fit.outputs_unavailable`, for example `outputs.mlx` off a Mac |
+| 422 | `invalid_base` | `base` is not exactly one of `repo` or `path`, or the path is not a model folder on this computer |
+| 503 | `hardware_unavailable` | The training device cannot be used right now, for example the GPU driver did not load or the device was lost. The message says what the host saw. |
+| 422 | `engine_not_installed` | Install the engine first |
+| 422 | `manifest_mismatch` | `base.manifest_sha256` is not the hash of the signed manifest, the repo has no signed manifest at that revision, or it could not be checked |
+| 422 | `rented_not_available` | `resources.place` is `rented` |
+| 422 | `publish_not_available` | The spec has a `publish` block |
+| 422 | `unknown_method`, `unsupported_spec_version`, `invalid_dataset`, `invalid_spec` | The spec failed its checks |
+| 501 | `not_available` | This build cannot install that engine |
+| 502 | `local_engine_unreachable`, `register_failed` | The Local Engine did not take the output |
+
+A manifest that changes after the job is accepted fails the job while it is preparing, before any file downloads.
+
+## Where the engines come from
+
+- **Allternit Tune** is Apache-2.0 and ships with Allternit.
+- **Axolotl, LLaMA-Factory and torchtune** install through the engine kit and adapters in [Allternit/studio-engines](https://github.com/Allternit/studio-engines) (Apache-2.0), pinned to commit `e520474`. Each upstream engine is installed unmodified at a pinned version: Axolotl 0.21.1 (Apache-2.0), LLaMA-Factory 0.9.5 (Apache-2.0) and torchtune 0.6.1 (BSD-3-Clause, no longer maintained upstream). Each runs as a separate process in its own environment.
+- **No AGPL or LGPL engines.** Unsloth is not a Studio engine: its CLI is AGPL-3.0. Allternit Tune covers LoRA, QLoRA and GGUF export.
+- Every engine is labelled "Not yet tested by Allternit on this hardware".
+
+### How the computer installs an engine
+
+Each engine gets its own Python environment under the Studio folder. The host:
+
+1. Creates the environment. Desktop uses its bundled Python 3.12. On other computers the host uses the first Python on `PATH` that the engine accepts: 3.10 for torchtune, 3.11 for LLaMA-Factory, 3.12 for Axolotl and 3.10 for Allternit Tune. A Python build without `ensurepip` still works: the host creates the environment without pip and then installs pip into it.
+2. Installs the studio-engines kit from the pinned commit's archive (no `git` needed on the computer).
+3. Installs the upstream engine's wheel at its pinned version, checked against the wheel's SHA-256. The engine's own dependencies install by version, from the PyTorch index for this computer's hardware.
+4. Records what it installed (kit commit, engine version, wheel hash, hardware). A change to any of them reinstalls the engine.
+
+The host refuses to install an engine whose `fit.ok` is `false` on this computer (`hardware_not_supported`).
+
+## Engine API v1
+
+The host talks to each engine process over loopback. The host picks a free port and a per-launch token, and sends `Authorization: Bearer <token>` on every request. A wrong token returns `401 unauthorized`. The engine runs one job at a time.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/engine` | Engine identity and capabilities |
+| `POST` | `/v1/jobs` | Start a job from a job spec v1 |
+| `GET` | `/v1/jobs/:id` | One job |
+| `GET` | `/v1/jobs/:id/events?after=seq` | Events after a sequence number |
+| `POST` | `/v1/jobs/:id/cancel` | Cancel a job that has not finished |
+
+The schemas are the same as above.
+
+## Run the fake engine
+
+For client development, `allternit-studio-spec` has a fake engine. It walks a job through `queued`, `preparing`, `running`, `exporting` and `succeeded`, and records events. From the platform repository:
+
+```bash
+cargo run -p allternit-studio-spec --example fake_engine -- 8765 mytoken
+curl -H 'Authorization: Bearer mytoken' http://127.0.0.1:8765/v1/engine
+curl -H 'Authorization: Bearer mytoken' \
+  -d @services/studio-spec/fixtures/lora-valid.json \
+  http://127.0.0.1:8765/v1/jobs
+curl -H 'Authorization: Bearer mytoken' \
+  'http://127.0.0.1:8765/v1/jobs/job_0001/events?after=0'
+```
+
+A second job while one runs returns `409 job_running`. In Rust tests, `allternit_studio_spec::fake_engine::FakeEngine::start(token, step_delay)` binds a free loopback port.
+
+## Related links
+
+- [Freeweights Studio](/surfaces/model-lab)
+- [Fine-tune with gizzi studio](/cli/studio)
+- [Freeweights](/tools/freeweights)
+- [Local Engine API](/api/local-engine)

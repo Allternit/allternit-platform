@@ -24,6 +24,7 @@ import {
   DESTRUCTIVE_BUTTON_CLASS,
 } from "@/components/console-ui";
 import { cn } from "@/lib/utils";
+import { ORG_ROLES } from "@/lib/governance";
 
 const TH_CLASS =
   "text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] px-3 py-2";
@@ -59,6 +60,17 @@ interface InvitationRow {
   createdAt: string | null;
 }
 
+function mapInvitations(data: Array<Record<string, any>>): InvitationRow[] {
+  return data
+    .filter((invitation) => invitation.status === "pending")
+    .map((invitation) => ({
+      id: invitation.id,
+      email: invitation.emailAddress,
+      role: normalizeRole(invitation.role),
+      createdAt: invitation.createdAt ? new Date(invitation.createdAt).toISOString() : null,
+    }));
+}
+
 /**
  * Organization membership management, on Clerk's organization API (the same
  * boundary the rest of the platform console uses for admin gating). Members
@@ -74,13 +86,17 @@ export function MembersPage(): React.ReactNode {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
+  // Invitations load separately: a failure there (seen in Safari as
+  // "ClerkJS: Network error at …/invitations") must never hide the members.
+  const [invitationsError, setInvitationsError] = useState<string | null>(null);
+  const [invitationsLoading, setInvitationsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [inviteRole, setInviteRole] = useState<string>("developer");
   const [inviting, setInviting] = useState(false);
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -96,11 +112,20 @@ export function MembersPage(): React.ReactNode {
     if (!activeOrg) return;
     setLoading(true);
     setError(null);
+    setInvitationsError(null);
+    const [membershipSettled, invitationSettled] = await Promise.allSettled([
+      activeOrg.getMemberships({ pageSize: 100 }),
+      canManage ? activeOrg.getInvitations({ pageSize: 100 }) : Promise.resolve(null),
+    ]);
+    if (invitationSettled.status === "fulfilled") {
+      setInvitations(mapInvitations(invitationSettled.value?.data ?? []));
+    } else {
+      setInvitations([]);
+      setInvitationsError(clerkErrorMessage(invitationSettled.reason, "Unable to load invitations."));
+    }
     try {
-      const [membershipResult, invitationResult] = await Promise.all([
-        activeOrg.getMemberships({ pageSize: 100 }),
-        canManage ? activeOrg.getInvitations({ pageSize: 100 }) : Promise.resolve(null),
-      ]);
+      if (membershipSettled.status === "rejected") throw membershipSettled.reason;
+      const membershipResult = membershipSettled.value;
       setMembers(
         (membershipResult.data ?? []).map((membership: Record<string, any>) => ({
           id: membership.id,
@@ -116,16 +141,6 @@ export function MembersPage(): React.ReactNode {
           joinedAt: membership.createdAt ? new Date(membership.createdAt).toISOString() : null,
         }))
       );
-      setInvitations(
-        (invitationResult?.data ?? [])
-          .filter((invitation: Record<string, any>) => invitation.status === "pending")
-          .map((invitation: Record<string, any>) => ({
-            id: invitation.id,
-            email: invitation.emailAddress,
-            role: normalizeRole(invitation.role),
-            createdAt: invitation.createdAt ? new Date(invitation.createdAt).toISOString() : null,
-          }))
-      );
     } catch (err) {
       setError(clerkErrorMessage(err, "Unable to load organization members."));
       setMembers([]);
@@ -137,6 +152,20 @@ export function MembersPage(): React.ReactNode {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const retryInvitations = useCallback(async () => {
+    if (!activeOrg || !canManage) return;
+    setInvitationsLoading(true);
+    setInvitationsError(null);
+    try {
+      const result = await activeOrg.getInvitations({ pageSize: 100 });
+      setInvitations(mapInvitations(result?.data ?? []));
+    } catch (err) {
+      setInvitationsError(clerkErrorMessage(err, "Unable to load invitations."));
+    } finally {
+      setInvitationsLoading(false);
+    }
+  }, [activeOrg, canManage]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -317,12 +346,18 @@ export function MembersPage(): React.ReactNode {
               </span>
               <select
                 value={inviteRole}
-                onChange={(event) => setInviteRole(event.target.value as "member" | "admin")}
+                onChange={(event) => setInviteRole(event.target.value)}
                 className="w-full rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--border-default)]"
               >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
+                {ORG_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
               </select>
+              <span className="mt-1 block text-[11px] text-[var(--text-tertiary)]">
+                {ORG_ROLES.find((r) => r.value === inviteRole)?.hint}
+              </span>
             </label>
           </div>
           <div className="mt-3 flex items-center justify-end gap-2">
@@ -401,10 +436,15 @@ export function MembersPage(): React.ReactNode {
                         onChange={(event) => void handleRoleChange(member, event.target.value)}
                         className="rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] px-2 py-1 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--border-default)] disabled:opacity-50"
                       >
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
-                        {!["member", "admin"].includes(member.role) && (
-                          <option value={member.role}>{member.role}</option>
+                        {ORG_ROLES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}
+                          </option>
+                        ))}
+                        {!ORG_ROLES.some((r) => r.value === member.role) && (
+                          <option value={member.role} disabled>
+                            {member.role}
+                          </option>
                         )}
                       </select>
                     ) : (
@@ -456,6 +496,24 @@ export function MembersPage(): React.ReactNode {
             </tbody>
           </table>
         </div>
+      )}
+
+      {canManage && invitationsError && (
+        <p
+          role="status"
+          className="mt-8 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-tertiary)]"
+        >
+          <HugeiconsIcon icon={AlertCircleIcon} size={13} />
+          Pending invitations could not be loaded.
+          <button
+            type="button"
+            onClick={() => void retryInvitations()}
+            disabled={invitationsLoading}
+            className={QUIET_BUTTON_CLASS}
+          >
+            {invitationsLoading ? "Retrying…" : "Retry"}
+          </button>
+        </p>
       )}
 
       {canManage && invitations.length > 0 && (
@@ -515,6 +573,11 @@ export function MembersPage(): React.ReactNode {
       )}
 
       <p className="mt-6 text-[12px] text-[var(--text-tertiary)]">
+        Roles: {ORG_ROLES.map((r) => `${r.label} (${r.hint.toLowerCase()})`).join("; ")}. Only admins can change a
+        role. If a role is not set up for your organization in Clerk, the change is rejected and the reason is shown
+        above.
+      </p>
+      <p className="mt-3 text-[12px] text-[var(--text-tertiary)]">
         Member roles gate every admin surface in this console — service accounts, spend
         limits, security, and rate limits follow the same owner/admin boundary.{" "}
         <Link to="/organizations" className="text-[var(--accent-primary)] hover:underline">

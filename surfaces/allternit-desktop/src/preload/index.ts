@@ -34,11 +34,13 @@ const sdkAPI = {
 // ─── Connection / Backend mode ────────────────────────────────────────────────
 
 const connectionAPI = {
-  test: (): Promise<{ mode: string; url: string; status: string; lastError?: string }> =>
-    ipcRenderer.invoke('connection:test'),
+  /** Checks the active engine, or `target.remoteUrl` before it is saved (Connect page). */
+  test: (target?: { remoteUrl?: string }): Promise<{ mode: string; url: string; status: string; latencyMs?: number; lastError?: string }> =>
+    ipcRenderer.invoke('connection:test', target),
   getBackend: (): Promise<{ mode: 'bundled' | 'remote' | 'development'; url: string }> =>
     ipcRenderer.invoke('connection:get-backend'),
-  setBackend: (config: { mode: 'bundled' | 'remote'; remoteUrl?: string }): Promise<void> =>
+  /** `restart: true` relaunches the app after saving (Connect page "Save and restart"). */
+  setBackend: (config: { mode: 'bundled' | 'remote'; remoteUrl?: string; restart?: boolean }): Promise<void> =>
     ipcRenderer.invoke('connection:set-backend', config),
   onStateChange: (callback: (state: unknown) => void): (() => void) => {
     const handler = (_: IpcRendererEvent, state: unknown) => callback(state);
@@ -399,6 +401,37 @@ const meshAPI = {
   proxyFor: (instanceUrl: string): Promise<string> => ipcRenderer.invoke('mesh:proxy-for', instanceUrl),
 };
 
+// ─── Files drive (macOS Finder locations) ─────────────────────────────────────
+// Electron main keeps one File Provider location per computer in the Finder
+// sidebar (files-drive-manager.ts). The first-run checklist (design 3A) reads
+// this: status, the File Providers switch in System Settings, Show in Finder.
+
+export type FilesDriveStatus = {
+  availability: 'unsupported' | 'missing' | 'available';
+  signedIn: boolean;
+  flag: boolean | null;
+  computers: Array<{ id: string; name: string; enabled: boolean }>;
+  needsProviderSwitch: boolean;
+  syncing: boolean;
+  lastSyncAt?: string;
+  error?: string;
+};
+
+const filesDriveAPI = {
+  status: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:status'),
+  sync: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:sync'),
+  /** Checks for the System Settings switch every few seconds for 10 minutes. */
+  watch: (): Promise<FilesDriveStatus> => ipcRenderer.invoke('files-drive:watch'),
+  openProviderSettings: (): Promise<{ opened: boolean }> => ipcRenderer.invoke('files-drive:open-settings'),
+  showInFinder: (computerId: string): Promise<{ opened: boolean; error?: string }> =>
+    ipcRenderer.invoke('files-drive:show-in-finder', computerId),
+  onChange: (callback: (status: FilesDriveStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: FilesDriveStatus) => callback(status);
+    ipcRenderer.on('files-drive:changed', listener);
+    return () => ipcRenderer.removeListener('files-drive:changed', listener);
+  },
+};
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 interface HudPrefs {
@@ -724,6 +757,16 @@ function streamUnsubscribe(serial: string): void {
 // ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
 // Apple ID credentials pass through once to main; nothing here stores them.
 
+const selfhostAPI = {
+  /** Keychain-sealed credentials for the self-hosted server panel. A missing secret is null. */
+  credentials: {
+    get: (name: string): Promise<string | null> => ipcRenderer.invoke('selfhost:credentials:get', name),
+    set: (name: string, value: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('selfhost:credentials:set', name, value),
+    delete: (name: string): Promise<{ success: boolean }> => ipcRenderer.invoke('selfhost:credentials:delete', name),
+  },
+};
+
 const phoneLinkAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
   devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
@@ -750,6 +793,35 @@ const phoneLinkAPI = {
   },
 };
 
+// ─── Meetings presence (allternit-ai src/views/meetings/MeetingsHost.tsx) ──────
+// The app window reports which calls Gizzi is in; main shows them in the tray
+// menu and the macOS menu bar, and a tray click asks the app to open that
+// meeting. A bridge call, not the window event: under context isolation a
+// CustomEvent's detail does not reach the preload.
+
+const meetingsAPI = {
+  reportPresence: (detail: unknown): void => ipcRenderer.send('meetings:presence', detail),
+  onOpen: (callback: (meetingId: string) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, meetingId: unknown) => {
+      if (typeof meetingId === 'string') callback(meetingId);
+    };
+    ipcRenderer.on('meetings:open', listener);
+    return () => { ipcRenderer.removeListener('meetings:open', listener); };
+  },
+};
+
+// ─── Voice provider keys (voice-keys-ipc.ts) ──────────────────────────────────
+// The renderer's KeyStore (allternit-ai src/lib/voice/byok/desktopStore.ts) caches
+// these in memory; main keeps them in secure-store. readClipboard backs the
+// Paste button (renderer clipboard-read permission stays denied).
+
+const voiceKeysAPI = {
+  get: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:get'),
+  set: (json: string): Promise<boolean> => ipcRenderer.invoke('voiceKeys:set', json),
+  clear: (): Promise<boolean> => ipcRenderer.invoke('voiceKeys:clear'),
+  readClipboard: (): Promise<string | null> => ipcRenderer.invoke('voiceKeys:readClipboard'),
+};
+
 const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
   startQrPairing: (): Promise<{ payload: string }> => ipcRenderer.invoke('phone:pair-qr-start'),
@@ -762,6 +834,14 @@ const phonesAPI = {
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
   stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
+  /** App maps: { platform? } → { ok, maps: Summary[] }. Errors: { ok:false, error, message } (unsupported = old or stopped local API). */
+  mapsList: (args?: { platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-list', args ?? {}),
+  mapsGet: (args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-get', args),
+  mapsForget: (args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-forget', args),
+  /** Starts Explore (Android only): { app, serial, minutes?, max_screens? } → { ok, run_id, status } or an error code (money_app, phone_busy, explore_running…). */
+  mapsExplore: (args: { app: string; serial: string; minutes?: number; max_screens?: number }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-explore', args),
+  /** Stops a task, skill or Explore run by run_id. */
+  mapsStop: (args: { run_id: string }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-stop', args),
   /** iPhones connected with the Allternit app (serial "app:…"): [{ serial, name, screen, route: 'iphone-app-store', … }]. */
   appPhones: (): Promise<unknown> => ipcRenderer.invoke('phone:app-phones'),
   /** Answer an Allternit app pairing request shown on this Desktop. */
@@ -842,6 +922,8 @@ const phonesAPI = {
   },
   sendStreamInput: (serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('phone:stream-input', serial, events),
+  requestStreamControl: (serial: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('phone:stream-request-control', serial),
   setStreamDisplayPower: (serial: string, on: boolean): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('phone:stream-display-power', serial, on),
   // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.
@@ -897,6 +979,13 @@ const phonesAPI = {
   channelSend: (app: string, conversation: unknown, text: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-send', app, conversation, text),
   channelClip: (app: string, conversation: unknown): Promise<unknown> => ipcRenderer.invoke('phone:channel-clip', app, conversation),
   channelCachedClip: (app: string, conversationId: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-cached-clip', app, conversationId),
+  // Phone Use (CONTRACT-phone-use-2026-11-16 §3.1): { routes: [{ route, healthy, available, needs_you?, message?, needsYou?, covers }], chosen } or null.
+  phoneRoutes: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:routes', serial),
+  // "Control my iPhone by Bluetooth" (macOS): this Mac as a Bluetooth keyboard and mouse ("Allternit Keyboard").
+  // Each returns { available, enabled, status: 'unavailable'|'off'|'blocked'|'refused'|'waiting'|'connected', connected, deviceName, message }.
+  btMacStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:bt-mac-status'),
+  btMacPair: (): Promise<unknown> => ipcRenderer.invoke('phone:bt-mac-pair'),
+  btMacDisconnect: (): Promise<unknown> => ipcRenderer.invoke('phone:bt-mac-disconnect'),
   usbStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-status'),
   usbPorts: (): Promise<string[]> => ipcRenderer.invoke('phone:usb-ports'),
   usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),
@@ -1245,6 +1334,11 @@ const teachAPI = {
 
 // ─── Expose ───────────────────────────────────────────────────────────────────
 
+const screenContextAPI = {
+  /** Last-used non-Allternit window as {kind:'window'} or {kind:'unavailable'}; never prompts for permission. */
+  captureWindow: (): Promise<unknown> => ipcRenderer.invoke('screen-context:capture-window'),
+};
+
 const allternitDesktopAPI = {
   /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
   promptsBeforeUnload: true,
@@ -1262,6 +1356,7 @@ const allternitDesktopAPI = {
   auth: authAPI,
   devicePairing: devicePairingAPI,
   mesh: meshAPI,
+  filesDrive: filesDriveAPI,
   shell: shellAPI,
   office: officeAPI,
   officeAddins: officeAddinsAPI,
@@ -1271,6 +1366,7 @@ const allternitDesktopAPI = {
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
   phoneLink: phoneLinkAPI,
+  selfhost: selfhostAPI,
   featureFlags: featureFlagsAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,
@@ -1287,6 +1383,9 @@ const allternitDesktopAPI = {
   teach: teachAPI,
   artifactPreview: artifactPreviewAPI,
   voice: voiceAPI,
+  voiceKeys: voiceKeysAPI,
+  meetings: meetingsAPI,
+  screenContext: screenContextAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);

@@ -55,7 +55,9 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { Clock } from "@/runtime/primitives/clock"
 import { BackgroundTask } from "@/runtime/session/background-task"
+import { AgentControl } from "@/runtime/primitives/agent-control"
 import { SessionTasks } from "@/runtime/session/session-tasks"
 import { LinkedPRs } from "@/runtime/session/linked-prs"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
@@ -66,6 +68,8 @@ import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Question } from "@/runtime/integrations/question"
+import { fileAsk, parameters as askUserLaterParameters } from "@/runtime/tools/builtins/ask-user-later"
+import z from "zod/v4"
 import { TerminalLive } from "@/runtime/session/terminal-live"
 import { SessionStatus } from "@/runtime/session/status"
 import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
@@ -163,6 +167,34 @@ function extractReasoning(parts: any[]): string | null {
     .filter(Boolean)
     .join("\n")
   return reasoning === "" ? null : reasoning
+}
+
+
+/**
+ * Prompt hints a client may put on a user message (system.ts PromptContext): a phone
+ * client sends form_factor "phone", a voice turn reply_mode "voice", every client
+ * its IANA time_zone, and a client that draws no catalog cards (iOS, the Ink REPL)
+ * answer_cards "widgets" (AnswerTurnGuard.widgetsManual), a code run nobody watches
+ * run_kind "background_code", a voice engine that reads expressive tags voice_tags "on". Only these keys and values
+ * pass; SessionPrompt.prompt remembers the zone for turns without a client. Shared by
+ * every message route here.
+ */
+export function promptHints(raw: any): Record<string, string> | undefined {
+  const formFactor = raw?.form_factor === "phone" ? "phone" : undefined
+  const replyMode = raw?.reply_mode === "voice" ? "voice" : undefined
+  const timeZone = Clock.validZone(raw?.time_zone)
+  const answerCards = raw?.answer_cards === "widgets" ? "widgets" : undefined
+  const runKind = raw?.run_kind === "background_code" ? "background_code" : undefined
+  const voiceTags = raw?.voice_tags === "on" ? "on" : undefined
+  if (!formFactor && !replyMode && !timeZone && !answerCards && !runKind && !voiceTags) return undefined
+  return {
+    ...(formFactor ? { form_factor: formFactor } : {}),
+    ...(replyMode ? { reply_mode: replyMode } : {}),
+    ...(timeZone ? { time_zone: timeZone } : {}),
+    ...(answerCards ? { answer_cards: answerCards } : {}),
+    ...(runKind ? { run_kind: runKind } : {}),
+    ...(voiceTags ? { voice_tags: voiceTags } : {}),
+  }
 }
 
 /** The message a `message.updated` event names (by id); the newest one when it names none. */
@@ -327,6 +359,17 @@ export const AgentCompatRoutes = () =>
               request_id: props.id ?? null,
               session_id: props.sessionID ?? null,
               questions: props.questions ?? null,
+              // ask_user_later: the turn did not wait; the answer starts a new turn.
+              ...(props.async ? { async: true, assumption: props.assumption ?? null } : {}),
+            }
+          case "screen.context.request":
+            // capture_screen_context: the app answers POST /screen-context/:id/reply.
+            return {
+              type: "screen_context_requested",
+              request_id: props.id ?? null,
+              session_id: props.sessionID ?? null,
+              reason: props.reason ?? null,
+              time: props.time ?? null,
             }
           case "pane_browser.requested":
             return {
@@ -336,6 +379,8 @@ export const AgentCompatRoutes = () =>
               action: props.action ?? null,
               target: props.target ?? null,
               text: props.text ?? null,
+              // read_page / find / page text / console / tabs / plan + ref fields (pane-browser index.ts).
+              args: props.args ?? null,
               time: props.time ?? null,
             }
           case "pane_render.requested":
@@ -480,8 +525,30 @@ export const AgentCompatRoutes = () =>
     })
     .get("/v1/questions", async (c) => {
       const sessionId = c.req.query("sessionId")
+      // Blocking questions plus persisted ask_user_later asks (`async: true`,
+      // `assumption`), so a card shows on an idle session and after a restart.
       const all = await Question.list()
       return c.json({ questions: all.filter((r) => !sessionId || r.sessionID === sessionId) })
+    })
+    // ask_user_later asked in another process (the Gizzi TUI attached as a live
+    // session): the same path as the runtime tool, so the ask is persisted,
+    // `question.asked` goes out live and the user's devices get the push.
+    .post("/v1/questions/async", async (c) => {
+      const body = await c.req.json().catch(() => undefined)
+      const parsed = z
+        .object({ sessionID: z.string().min(1) })
+        .extend(askUserLaterParameters.shape)
+        .safeParse(body)
+      if (!parsed.success) return c.json({ error: "invalid ask", issues: parsed.error.issues }, 400)
+      const { sessionID, questions, assumption } = parsed.data
+      if (!(await Session.get(sessionID).catch(() => undefined))) return c.json({ error: "unknown session" }, 404)
+      try {
+        const { request, push } = await fileAsk({ sessionID, questions, assumption })
+        return c.json({ request, push })
+      } catch (error) {
+        if (error instanceof Question.AsyncLimitError) return c.json({ error: error.message, pending: error.pending }, 429)
+        throw error
+      }
     })
     .post("/v1/questions/:requestID/reply", async (c) => {
       const body = await c.req.json().catch(() => ({}))
@@ -646,6 +713,7 @@ export const AgentCompatRoutes = () =>
         sessionID,
         parts: [{ type: "text", text: String(body.text ?? ""), ...(source ? { metadata: { source } } : {}) }],
         model: selectModel(body.metadata),
+        ...(promptHints(body?.metadata) ? { metadata: promptHints(body?.metadata) } : {}),
         ...(body.noReply === true ? { noReply: true } : {}),
       })
       return c.json(transformMessage(result))
@@ -677,7 +745,14 @@ export const AgentCompatRoutes = () =>
     .post("/v1/agent-sessions/:sessionID/background-tasks/:taskID/cancel", async (c) => {
       const task = await BackgroundTask.get(c.req.param("taskID"))
       if (!task || task.parentSessionID !== c.req.param("sessionID")) return c.json({ error: "Background task not found" }, 404)
-      if (task.childSessionID) SessionPrompt.cancel(task.childSessionID)
+      if (task.childSessionID) {
+        await AgentControl.stopSubtree(task.childSessionID, {
+          reason: "Its parent task was cancelled",
+          includeRoot: false,
+          archive: false,
+        })
+        SessionPrompt.cancel(task.childSessionID)
+      }
       return c.json(await BackgroundTask.cancel(task.id))
     })
     .post("/v1/agent-sessions/:sessionID/abort", async (c) => {
@@ -775,7 +850,10 @@ export const AgentCompatRoutes = () =>
       try {
         if (!sessionID) {
           const existing = await findSession(chatID)
-          sessionID = existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}` })).id
+          // `surface: "chat"` as the Rust bridge sets it (create_gizzi_chat_session):
+          // an app session for PermissionNext.isAppSession, and the chat prompt stack.
+          sessionID =
+            existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}`, surface: "chat" })).id
           chatSessions.set(chatID, sessionID)
         }
       } catch (err) {
@@ -818,9 +896,19 @@ export const AgentCompatRoutes = () =>
       // Fast (the picker's tile): the priority tier, only for a model whose
       // account offers one (model-thinking.json `fast`); llm.ts sends it on.
       const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
+      // Prompt hints the runtime reads from the user message (system.ts PromptContext):
+      // a phone client sends form_factor "phone", a voice turn reply_mode "voice",
+      // every client sends its IANA time_zone (only a valid name passes;
+      // SessionPrompt.prompt remembers it for turns without a client), and a
+      // client that draws no catalog cards sends answer_cards "widgets".
+      const hints = promptHints(body?.metadata)
       const metadata =
-        (tools && typeof tools === "object") || fast
-          ? { ...(tools && typeof tools === "object" ? { tools } : {}), ...(fast ? { service_tier: "priority" } : {}) }
+        (tools && typeof tools === "object") || fast || hints
+          ? {
+              ...(tools && typeof tools === "object" ? { tools } : {}),
+              ...(fast ? { service_tier: "priority" } : {}),
+              ...(hints ?? {}),
+            }
           : undefined
       // The picker's thinking level, kept only when this model takes it.
       const variant = modelRef && typeof body?.effort === "string" ? ModelThinking.check(modelRef.modelID, body.effort) : undefined

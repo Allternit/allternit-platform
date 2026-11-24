@@ -1,20 +1,12 @@
-# Model Lab Python service requirements.
-#
-# IMPORTANT LICENSE BOUNDARY:
-#   - unsloth (core library) is Apache 2.0 — this service uses only the core.
-#   - unsloth-zoo and unsloth-studio UI are NOT listed here to avoid pulling
-#     AGPL-3.0 UI code into Allternit.
-
-unsloth>=2024.12.0
-fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
-pydantic>=2.0.0
-huggingface-hub>=0.23.0
-datasets>=2.19.0
-trl>=0.9.0
-peft>=0.11.0
-transformers>=4.42.0
-torch>=2.3.0
-safetensors>=0.4.0
-numpy>=1.26.0
-mlx-lm>=0.19.0; sys_platform == "darwin"
+# SPDX-License-Identifier: Apache-2.0
+# allternit-tune runtime dependencies. License of each package in the comment.
+# Upper bounds stop a major release from changing trainer APIs under us.
+torch>=2.5,<3                 # BSD-3-Clause
+transformers>=4.56,<6         # Apache-2.0
+peft>=0.17,<1                 # Apache-2.0
+trl>=0.24,<2                  # Apache-2.0
+accelerate>=1.0,<2            # Apache-2.0
+datasets>=3.0,<6              # Apache-2.0
+safetensors>=0.4,<1           # Apache-2.0
+huggingface_hub>=0.30,<3      # Apache-2.0
+bitsandbytes>=0.50,<1         # MIT; used only by QLoRA

@@ -1,0 +1,49 @@
+---
+title: 'Switch accounts and organizations'
+description: 'Switch between your organizations, and move between people you have signed in as on this device, on ai.allternit.com, the phone layout, the m.allternit.com app and the iPhone app.'
+---
+
+This page covers two different switches: moving between organizations, and moving between people. Both are in the accounts card at the top of **Settings** on a phone, and in the account menu on the web. In the iPhone app the same card is at the top of **Settings**. Allternit Desktop (the Electron app) does not show the second part.
+
+## Switch organizations
+
+The accounts card lists you and each organization you belong to. Tap a row to switch. The active row has a check, and tapping it opens your profile. Each row shows its plan.
+
+When you switch to another organization, Allternit clears the saved offline sign-in record and the cached lists, then loads the new organization. Plan labels come from a saved copy, so rows you are not using do not make extra calls.
+
+- **Web and PWA:** the page reloads, and push notifications register again.
+- **iPhone app:** the lists reload, push notifications register again, and widgets and Spotlight entries are rebuilt. The saved project, computer and Gizzi instance choices are reset, and so are the Decisions, bring-your-own-cloud and Code canvas lists, so you do not see the old organization's data.
+
+## Switch to another person
+
+Allternit remembers the accounts you have signed in to on this device. Below your organizations, the card lists the others with their name, email, picture and plan.
+
+- **Tap one** to sign out and open the sign-in screen with that email already filled in. You then sign in the usual way (code, Apple, GitHub or Google).
+- **Add another account** signs you out and opens an empty sign-in screen.
+- **Remove from this device** (the ✕ on a row) forgets that account here. It does not delete the account.
+
+Only one account is signed in at a time. Allternit stores no passwords and no sign-in tokens for the other accounts. What it remembers is a user id, a name, an email, a picture, a plan label and when you last used it, up to 8 accounts. The remembered list is kept when you sign out. If the sign-out fails, the screen says so in one line and you stay signed in. The plan label on a row is the one seen last, so it can be out of date.
+
+### What is cleared when the person changes
+
+Because a different person may be using this device, Allternit clears what belongs to the person before it signs out. Everything cleared for an organization switch is cleared here too, plus:
+
+- **Web and PWA:** the settings kept per person in this browser (about 50 entries) and the cached lists.
+- **iPhone app:**
+  - Brain: the sign-in token, the saved ids and the local copy. Notes not yet sent are moved aside to a folder named `brain-unsent-` and a time, never deleted.
+  - A connected AI subscription sign-in, which is revoked, and its notice.
+  - Voice keys, voice labels and voice opt-outs. Voice sync is off on this phone afterwards.
+  - The mesh key for this device, the selected computer, project working folders, and local favorite and archived marks.
+
+An old mesh entry for the iPhone stays on the server until it expires.
+
+### What is kept
+
+- The remembered account list itself, and settings that are not per person, such as Appearance, haptics and Reduce motion.
+- Your computers. On the iPhone app the pairing key is stored for each account, so signing back in as the first person finds it again.
+
+### Limits
+
+Only one account is signed in at a time, so you cannot see two accounts side by side. On the web, PWA and phone layout the plan label on a row is the person's own plan. On the iPhone app it is the plan of the active organization at the time.
+
+For the rest of the phone Settings screen, see [Settings on a phone](/guides/phone-settings) and [Allternit for iPhone](/guides/iphone-app#settings).

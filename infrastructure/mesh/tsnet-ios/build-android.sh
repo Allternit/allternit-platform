@@ -22,5 +22,8 @@ gomobile bind \
   -o "$OUT" \
   .
 
+# gomobile exits 0 even when its javac step fails (no Java runtime), leaving an empty file.
+[ -s "$OUT" ] || { echo "✗ gomobile produced an empty $OUT: set JAVA_HOME to a JDK 17 (e.g. /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home)" >&2; exit 1; }
+
 echo "Built: $(pwd)/$OUT"
 ls -lh "$OUT"

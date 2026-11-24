@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/storage.json",
+  "title": "Files drive: storage discovery",
+  "description": "What disks a computer has, from runtime heartbeats.",
+  "$defs": {
+    "Volume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volume_id",
+        "label",
+        "kind",
+        "total_bytes",
+        "free_bytes",
+        "removable"
+      ],
+      "properties": {
+        "volume_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "external",
+            "network",
+            "cloud_disk"
+          ]
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "free_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removable": {
+          "type": "boolean"
+        },
+        "encrypted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ReplicaHostInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "capacity_bytes",
+        "used_bytes"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "capacity_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "StorageDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "reported_at",
+        "volumes",
+        "root_usage",
+        "replica_host"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "reported_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Volume"
+          }
+        },
+        "root_usage": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Bytes per root ID."
+        },
+        "replica_host": {
+          "$ref": "#/$defs/ReplicaHostInfo"
+        }
+      }
+    },
+    "PlacementOption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "label",
+        "score",
+        "eligible",
+        "reason",
+        "free_bytes",
+        "computer_state"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/DeviceId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Higher is better. 0 when not eligible."
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "description": "One plain sentence the picker shows next to the device."
+        },
+        "free_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        }
+      },
+      "description": "One candidate replica host, ranked by rules over capacity, sensitivity and availability (plan D16). The user confirms the pick."
+    },
+    "PlacementResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "computer_id",
+        "root_id",
+        "needed_bytes",
+        "options"
+      ],
+      "properties": {
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "needed_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlacementOption"
+          },
+          "description": "Best first. The first eligible option is the suggestion."
+        }
+      },
+      "description": "GET /api/v1/computer-files/:computer_id/placement?root_id=...: where to put a replica of one root."
+    }
+  }
+}

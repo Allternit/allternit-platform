@@ -20,16 +20,21 @@ export interface ConnectionState {
   mode: 'bundled' | 'remote' | 'development';
   url: string;
   status?: string;
+  /** Round trip of the /health check, when it answered. */
+  latencyMs?: number;
   lastError?: string;
 }
 
 export interface BackendConfig {
   mode: 'bundled' | 'remote';
   remoteUrl?: string;
+  /** Relaunch the app after saving. */
+  restart?: boolean;
 }
 
 export interface ConnectionAPI {
-  test(): Promise<ConnectionState>;
+  /** Checks the active engine, or `target.remoteUrl` before it is saved. */
+  test(target?: { remoteUrl?: string }): Promise<ConnectionState>;
   getBackend(): Promise<{ mode: 'bundled' | 'remote' | 'development'; url: string }>;
   setBackend(config: BackendConfig): Promise<void>;
   onStateChange(callback: (state: unknown) => void): () => void;
@@ -633,6 +638,12 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
+  /** App maps and Explore. Results are { ok:true, … } or { ok:false, error, message } with the contract's codes. */
+  mapsList(args?: { platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsGet(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsForget(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsExplore(args: { app: string; serial: string; minutes?: number; max_screens?: number }): Promise<Record<string, unknown>>;
+  mapsStop(args: { run_id: string }): Promise<Record<string, unknown>>;
   /** iPhones connected with the Allternit app (serial "app:…", route "iphone-app-store"). */
   appPhones(): Promise<Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>>;
   /** Approve or deny an Allternit app pairing request (phone_app.pair_request). */
@@ -730,6 +741,31 @@ export type PhoneInputEvent =
   | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
   | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
 
+/** Files drive on macOS: one Finder location per computer (files-drive-manager.ts). */
+export interface FilesDriveStatus {
+  /** unsupported = not macOS; missing = no File Provider in this build. */
+  availability: 'unsupported' | 'missing' | 'available';
+  signedIn: boolean;
+  /** The account's files_drive flag; null until it was read once. */
+  flag: boolean | null;
+  computers: Array<{ id: string; name: string; enabled: boolean }>;
+  /** Some location is off: ask for System Settings > General > Login Items & Extensions > File Providers. */
+  needsProviderSwitch: boolean;
+  syncing: boolean;
+  lastSyncAt?: string;
+  error?: string;
+}
+
+export interface FilesDriveAPI {
+  status(): Promise<FilesDriveStatus>;
+  sync(): Promise<FilesDriveStatus>;
+  /** Checks for the File Providers switch every few seconds for 10 minutes. */
+  watch(): Promise<FilesDriveStatus>;
+  openProviderSettings(): Promise<{ opened: boolean }>;
+  showInFinder(computerId: string): Promise<{ opened: boolean; error?: string }>;
+  onChange(callback: (status: FilesDriveStatus) => void): () => void;
+}
+
 export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };
   connection: ConnectionAPI;
@@ -744,6 +780,7 @@ export interface AllternitDesktopAPI {
   auth: AuthAPI;
   devicePairing: DevicePairingAPI;
   mesh: MeshAPI;
+  filesDrive: FilesDriveAPI;
   shell: ShellAPI;
   officeAddins: OfficeAddinsAPI;
   theme: ThemeAPI;
@@ -752,6 +789,13 @@ export interface AllternitDesktopAPI {
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
   phoneLink: import('../main/phone-link-types').PhoneLinkAPI;
+  selfhost: {
+    credentials: {
+      get: (name: string) => Promise<string | null>;
+      set: (name: string, value: string) => Promise<{ success: boolean; error?: string }>;
+      delete: (name: string) => Promise<{ success: boolean }>;
+    };
+  };
   featureFlags: FeatureFlagsAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;

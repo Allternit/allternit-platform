@@ -238,7 +238,7 @@ pub async fn retry(state: &Arc<AppState>, owner: &str, id: &str) -> Result<Value
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .filter(|r| r.user_id == owner)
         .ok_or((StatusCode::NOT_FOUND, "that routine no longer exists".to_string()))?;
-    if routine.agent_id.as_deref().map_or(true, |a| a.trim().is_empty()) {
+    if !routine.runnable() {
         return Err((StatusCode::CONFLICT, "assign this routine to a bot first".into()));
     }
     let guard = crate::routine_local_scheduler::FlightGuard::acquire(routine_id)

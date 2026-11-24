@@ -2,13 +2,15 @@
  * Turns a provider failure into its real cause plus one or two commands to
  * run. Every model path in the TUI (Allternit Cloud, OpenAI-compatible API
  * keys and local servers, CLI brains) maps its error text here, so an
- * expired OpenRouter key no longer reads "Local model error" and a used-up
- * Cloud allowance no longer reads "Not logged in".
+ * expired OpenRouter key no longer reads "Local model error" and a Cloud
+ * account with no credits no longer reads "Not logged in".
  *
  * Pure functions: no network, no config reads. Callers pass what they know.
  * Only subscriptionAlternative reads discovery, loaded on call, so this file
  * stays a leaf the API layer can import without pulling in the runtime.
  */
+
+import { cloudCreditsDisclosure, cloudCreditsRefusal } from '@/shared/util/provider-error'
 
 export type ProviderFailure = {
   /** Provider id ("allternit", "openrouter", "claude-cli", "local-mlx"…). */
@@ -77,22 +79,24 @@ export function describeProviderError(f: ProviderFailure): ProviderErrorHelp | u
   const name = nameOf(f)
   const resets = nextMonthStart(f.now)
 
-  // Allternit Cloud: the free monthly allowance (403 Forbidden).
-  const allowance = text.match(/free inference allowance of \$?([\d.]+)\/month is used up/i)
-  if (allowance) {
+  // Allternit Cloud: no credits (402 `credits_required`) or credits used up
+  // (402 `credits_exhausted`). Matched by the body's code, not its text.
+  const credits = isCloud(f) ? cloudCreditsRefusal(f.text) : undefined
+  if (credits) {
     return {
-      message: `Allternit Cloud free allowance ($${allowance[1]}/month) is used up · resets ${resets}`,
-      commands: [switchHint(f), { command: '/usage', why: 'see your plan and credits' }],
+      message: cloudCreditsDisclosure(credits.code, credits),
+      commands: [switchHint(f), { command: '/usage', why: 'see your credits' }],
     }
   }
-  // Allternit Cloud: plan or credits at their limit.
-  if (/inference credits exhausted/i.test(text)) {
+  // An older Cloud's 402 with no code: still a credits refusal.
+  if (isCloud(f) && f.status === 402) {
     return {
-      message: 'Allternit Cloud credits are used up',
-      commands: [switchHint(f), { command: '/usage', why: 'add credits or change plan' }],
+      message: cloudCreditsDisclosure(/used up|exhausted/i.test(text) ? 'credits_exhausted' : 'credits_required'),
+      commands: [switchHint(f), { command: '/usage', why: 'see your credits' }],
     }
   }
-  if (isCloud(f) && (f.status === 402 || /(free plan|plan).{0,40}(monthly )?limit|monthly limit/i.test(text))) {
+  // Allternit Cloud: a paid plan at its monthly limit (403/429).
+  if (isCloud(f) && /(plan).{0,40}(monthly )?limit|monthly limit/i.test(text)) {
     return {
       message: `Allternit Cloud plan limit reached for this month · resets ${resets}`,
       commands: [switchHint(f), { command: '/usage', why: 'see your plan and credits' }],

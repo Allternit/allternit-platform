@@ -18,13 +18,18 @@ import { Provider } from "@/runtime/providers/provider"
 import { CLOUD_PROVIDER_ID, consumeHandoff, handoffTarget, isRefusal } from "@/runtime/providers/handoff"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
+import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
-import { ToolSelection } from "@/runtime/tools/selection"
+import { ToolFamilies } from "@/runtime/primitives/tool-families"
+import { ContextNotice } from "@/runtime/primitives/context-notice"
+import { SteerSignal } from "@/runtime/primitives/steer-signal"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Instance } from "@/runtime/context/project/instance"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
 import { Bus } from "@/shared/bus"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SystemPrompt } from "@/runtime/session/system"
+import { Clock } from "@/runtime/primitives/clock"
 import { InstructionPrompt } from "@/runtime/session/instruction"
 import { Plugin } from "@/runtime/integrations/plugin"
 import PROMPT_PLAN from "@/runtime/session/prompt/plan.txt"
@@ -36,6 +41,7 @@ import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
 import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
+import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -55,6 +61,7 @@ import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
+import { TurnLocations, resolveTurnLocation, type TurnLocation } from "@/runtime/tools/builtins/lookup"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
@@ -81,16 +88,19 @@ import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
-import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
 import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
 import { isAppBotMainChat, isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { PROJECT_SEND_TOOL_IDS } from "@/runtime/tools/builtins/project-send"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { END_CONVERSATION_TOOL_ID } from "@/runtime/primitives/gap-types"
 import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
 import type { QuotaWindow } from "@/runtime/providers/quota"
 import { Budget } from "@/runtime/session/budget"
 import * as TurnRouter from "@/runtime/routing/turn-router"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
+import { SleepReminders } from "@/runtime/memory/sleep/reminders"
+import { PROMPT_CACHE_TTL_S } from "@/shared/util/cache-countdown"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -195,6 +205,12 @@ export namespace SessionPrompt {
       .describe(
         "A system layer for this turn only, sent by allternit-api or the app: this turn's answer-template line, the card-repair note, the user's opt-in shared location. Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
       ),
+    turnLocation: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The user's opt-in shared location for this turn only, structured ({ lat, lon, accuracy_m?, time_zone?, place?, at? }; lat/lon rounded to two decimals), sent by allternit-api (client_location::turn_value) beside the prose line in `turnSystem`. Tools read it (lookup \"here\"). Held in memory for the turn like `turnSystem`: deliberately not part of `metadata` (stored on the user message), never logged, never carried to later turns. Invalid values are ignored.",
+      ),
     /**
      * Run this turn as one of the user's platform bots (sent by
      * allternit-api): the bot's identity leads, and the user's personal
@@ -249,6 +265,10 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // The client's time zone (`metadata.time_zone`, a hint like form_factor):
+    // kept as the runtime's last client zone for turns that carry none
+    // (routines, workers). Invalid names are ignored; never throws.
+    await Clock.rememberClientZone(input.metadata?.["time_zone"])
     // A live terminal session runs its turns in the terminal: hand the text over (TerminalLive).
     const { TerminalLive } = await import("@/runtime/session/terminal-live")
     if (TerminalLive.attached(input.sessionID)) {
@@ -278,8 +298,24 @@ export namespace SessionPrompt {
     // lineage head, and a switch to a model whose window can't hold this one
     // hands off first. Every entry point (HTTP, CLI, bots, routines) goes
     // through here, so no client can talk to a closed window.
+    // An ended chat (end_conversation) takes no new prompts; clients show the
+    // message and offer a new chat. Checked on the lineage head before a
+    // model-switch handoff could open a fresh window from it.
+    assertNotEnded(await Session.get(await SessionHandoff.head(input.sessionID)).catch(() => undefined))
     input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
+    assertNotEnded(session)
+    // Self-hosted: refuse the turn before anything is stored when the agent's
+    // custom tools are malformed or shadow a built-in or MCP tool of this
+    // session (resolveTools registers them again each step).
+    const customTools = RemoteToolHost.customToolsFrom(input.metadata)
+    if (customTools.length) {
+      RemoteToolHost.registerCustomTools(
+        input.sessionID,
+        customTools,
+        await reservedToolNames({ sessionID: input.sessionID, mcpProxy: input.mcpProxy }),
+      )
+    }
     await SessionRevert.cleanup(session)
 
     const submittedText = input.parts
@@ -361,6 +397,14 @@ const message = await createUserMessage(input)
       return message
     }
 
+    // Allternit Sleep: a new prompt cancels the idle timer (and sends
+    // `resume` after an `idle`). Top-level sessions only; fire-and-forget.
+    if (!session.parentID) {
+      SleepTriggers.promptArrived(input.sessionID, PROMPT_CACHE_TTL_S)
+      // Fired Sleep reminders for this turn (capped wait; rides in the tail below).
+      await SleepReminders.turnStart(input.sessionID, input.model?.modelID)
+    }
+
     // Usage limits (P3.17): a paused session holds the turn until it
     // resumes; one about to run into a limit lands here instead of failing.
     if (await holdForLimit(session, input.model)) return message
@@ -386,6 +430,10 @@ const message = await createUserMessage(input)
     // So does the turn-only system layer (answer template, card-repair note, opt-in location).
     const turnLayer = input.turnSystem?.trim()
     if (turnLayer) turnSystemLayers.set(input.sessionID, turnLayer)
+    // The shared location, structured for tools (lookup "here"); same lifetime. Read from
+    // the `turnLocation` field; the `turnSystem` text only when an older API sent no field.
+    const location = resolveTurnLocation(input.turnLocation, turnLayer)
+    if (location) TurnLocations.set(input.sessionID, location)
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
       if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
@@ -393,6 +441,7 @@ const message = await createUserMessage(input)
     } finally {
       releaseMcpProxy()
       if (turnLayer && turnSystemLayers.get(input.sessionID) === turnLayer) turnSystemLayers.delete(input.sessionID)
+      if (location) TurnLocations.release(input.sessionID, location)
     }
   })
 
@@ -402,6 +451,11 @@ const message = await createUserMessage(input)
    * written to the session, its messages or the logs.
    */
   const turnSystemLayers = new Map<string, string>()
+
+  /** The opt-in shared location of the turn now running in this session (lat/lon, radius, zone), or undefined. */
+  export function turnLocation(sessionID: string): TurnLocation | undefined {
+    return TurnLocations.get(sessionID)
+  }
 
   // Cancelling a session while its environment is being set up stops the setup.
   const setupAborts = new Map<string, AbortController>()
@@ -495,6 +549,14 @@ const message = await createUserMessage(input)
     const providerID = result?.info.role === "assistant" ? result.info.providerID : undefined
     SessionPause.pause(session.id, { until: hit.until, limit: hit.limit, reason: hit.reason, providerID })
     return true
+  }
+
+  function assertNotEnded(session: Session.Info | undefined) {
+    if (!session?.ended) return
+    throw new Session.EndedError(
+      { sessionID: session.id, at: session.ended.at, reason: session.ended.reason },
+      { message: Session.ENDED_MESSAGE },
+    )
   }
 
   async function beforeTurnHandoff(input: PromptInput): Promise<string> {
@@ -686,8 +748,10 @@ const message = await createUserMessage(input)
   }
 
   export const loop = fn(LoopInput, async (input) => {
-    const dir = workdirs.get(input.sessionID)
-    return dir ? Instance.withWorkdir(dir, () => runLoop(input)) : runLoop(input)
+    // A worktree the session entered wins over the folder the client sends each turn.
+    // Always provide the folder, so worktree_enter / worktree_exit can move the running turn.
+    const dir = (await SessionWorktree.active(input.sessionID))?.path ?? workdirs.get(input.sessionID) ?? Instance.workdir
+    return Instance.withWorkdir(dir, () => runLoop(input))
   })
 
   async function runLoop(input: z.infer<typeof LoopInput>) {
@@ -699,6 +763,10 @@ const message = await createUserMessage(input)
         const callbacks = state()[sessionID].callbacks
         callbacks.push({ resolve, reject })
         state()[sessionID].queuedTurns += 1
+        // Primitives Wave B: a message queued behind the running turn wakes a
+        // wait_agents call in that turn. This bump also fires for background
+        // completions, so the core checks its targets first (settled before steer).
+        SteerSignal.notify(sessionID)
       })
     }
 
@@ -733,6 +801,9 @@ const message = await createUserMessage(input)
       | { to: { providerID: string; modelID: string }; from: string; refusedID: string }
       | undefined
     const session = await Session.get(sessionID)
+    // The prompt stack follows the session's surface; a child session (task,
+    // subagent) uses its root's. Resolved once per turn: surfaces don't change mid-turn.
+    const promptSurface = await SystemPrompt.effectiveSurface(session, (id) => Session.get(id))
     // Usage-limit wrap-up: set once a step crosses land_at mid-turn.
     let wrapUp:
       | { left: number; done: boolean; providerID: string; window: QuotaWindow & { resetAt: string; source: string } }
@@ -1197,7 +1268,7 @@ const message = await createUserMessage(input)
         const system = await composeTurnSystem({
           userSystem: lastUser.system ?? (answerGuard.required ? answerGuard.system : undefined),
           bot: botTurn,
-          environment: () => SystemPrompt.environment(model),
+          environment: () => SystemPrompt.environment(model, { turnZone: Clock.turnZoneOf(lastUser.metadata) }),
           instructions: () => InstructionPrompt.system(),
           workspace: async () => {
             const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
@@ -1295,6 +1366,8 @@ const message = await createUserMessage(input)
       // runs inside the runtime session pipeline, so both the TUI (worker /
       // server) and headless (`gizzi run --print`) paths get the injection.
       const system = await turnSystemPromise
+      // answer_cards "widgets" (clients that draw no catalog cards): the short writing-only manual.
+      if (answerGuard.widgetsManual) system.push(answerGuard.widgetsManual)
       // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
@@ -1312,6 +1385,14 @@ const message = await createUserMessage(input)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) tail.push(validationReminder)
       if (wrapUp) tail.push(wrapUpReminder(wrapUp.window))
+      // Primitives Wave B: context left (25% / 10% / after a compaction), as a
+      // temporary tail part; each threshold fires once (primitives/context-notice.ts).
+      const contextNotice = await ContextNotice.forTurn({ sessionID, model, messages: msgs }).catch((error) => {
+        log.warn("context notice failed", { sessionID, error })
+        return undefined
+      })
+      if (contextNotice) tail.push(contextNotice)
+      tail.push(...SleepReminders.tail(sessionID)) // only top-level turns ever set it
       // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
       // default). Records a ContextProjectionV1; never changes `system`.
       if (KernelTurn.enabled())
@@ -1365,6 +1446,7 @@ const message = await createUserMessage(input)
         model,
         toolChoice: answerGuard.needsRepair ? "none" : format.type === "json_schema" ? "required" : undefined,
         plan,
+        surface: promptSurface,
       }).finally(() => {
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer)
       })
@@ -1504,6 +1586,10 @@ const message = await createUserMessage(input)
           } satisfies MessageV2.TextPart)
           continue
         }
+        // Allternit Sleep: the turn is done; idle after the prompt-cache TTL
+        // (native Anthropic requests here use the 5-minute ephemeral cache,
+        // see processor.ts). Fire-and-forget; never blocks the turn.
+        if (!session.parentID) SleepTriggers.turnEnded(sessionID, PROMPT_CACHE_TTL_S)
         if (format.type === "json_schema") {
           // Model stopped without calling StructuredOutput tool
           processor.message.error = new MessageV2.StructuredOutputError({
@@ -1666,7 +1752,7 @@ const message = await createUserMessage(input)
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, location: TurnLocations.get(input.session.id) },
       agent: input.agent.name,
       messages: input.messages,
       metadata: async (val: { title?: string; metadata?: any }) => {
@@ -1770,56 +1856,16 @@ const message = await createUserMessage(input)
       })
     }
 
-    // The user's connectors, through allternit-api's per-user proxy (registered for this turn only).
-    const proxyClient = await McpUserProxy.client(input.session.id)
-    const proxyEntry = McpUserProxy.current(input.session.id)
-    const mcpCatalog = await MCP.toolCatalog(
-      proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {},
-    )
+    const mcpCatalog = await mcpToolCatalog(input.session.id)
     const mcpTools = Object.entries(mcpCatalog.tools)
-    const config = await Config.get()
-    const dynamicSelection =
-      Flag.GIZZI_DYNAMIC_TOOL_SELECTION || config.experimental?.dynamic_tool_selection === true
-    const mcpNames = mcpTools.map(([name]) => name).sort()
-    const loadedMcpTools = ToolSelection.loaded(input.session.id, input.messages)
-    if (dynamicSelection && mcpNames.length) {
-      tools["select_tools"] = tool({
-        id: "select_tools" as any,
-        description: [
-          "Load one or more MCP tool schemas for the next model step. Use this when a required integration tool is not currently available.",
-          `Loadable tools: ${mcpNames.join(", ")}`,
-        ].join("\n"),
-        inputSchema: jsonSchema({
-          type: "object",
-          additionalProperties: false,
-          required: ["names"],
-          properties: {
-            names: { type: "array", items: { type: "string" }, minItems: 1 },
-          },
-        }),
-        execute: async (args: { names: string[] }, options) => {
-          const ctx = context(args, options)
-          return ToolDedupe.execute({
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            tool: "select_tools",
-            args,
-            run: () => ToolDispatcher.executeInitialized("select_tools", args, ctx, async (nextArgs) => {
-              const result = ToolSelection.load(input.session.id, nextArgs.names, mcpNames)
-              return {
-                title: "MCP tools selected",
-                metadata: result,
-                output: JSON.stringify(result),
-              }
-            }),
-          })
-        },
-      })
-    }
     // A bot's Capabilities page: MCP connectors it has off are not offered to it.
     const turnBot = BotTurn.get(input.session.id)
+    // Wave D decision 10: more than Connectors.DEFER_THRESHOLD connector tools
+    // mount none until connector_search loads them (non-connector MCP tools
+    // always mount). Loaded tools keep their own permission rules below.
+    const connectorMounted = Connectors.mountFilter(input.session.id, mcpCatalog.descriptors)
     for (const [key, item] of mcpTools) {
-      if (dynamicSelection && !loadedMcpTools.has(key)) continue
+      if (!connectorMounted(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue
@@ -1974,6 +2020,9 @@ const message = await createUserMessage(input)
       tools[key] = item
     }
 
+    // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
+    await addSelfhostCustomTools(tools, { ...input, context, mcpCatalog })
+
     // Per-message mobile composer gating (metadata.tools) — applied last so it
     // wins over agent/config tool assembly for this turn only.
     if (mobileOptions) {
@@ -2009,10 +2058,12 @@ const message = await createUserMessage(input)
       if (!allowed) delete tools[GrantTaskPermissionTool.id]
     }
 
-    // thread_update / thread_close / thread_search: only an app bot's chat steers its own thread.
-    if (THREAD_TOOL_IDS.some((id) => id in tools)) {
+    // thread_update / thread_close: only an app bot's chat steers its own thread.
+    // The past-chat tools (thread_search, thread_read, thread_recent, thread_wait)
+    // work in every session, CLI included (Primitives Wave D, decision 8).
+    if (ToolRegistry.BOT_THREAD_TOOL_IDS.some((id) => id in tools)) {
       const allowed = await isAppBotSession(input.session.id).catch(() => false)
-      if (!allowed) for (const id of THREAD_TOOL_IDS) delete tools[id]
+      if (!allowed) for (const id of ToolRegistry.BOT_THREAD_TOOL_IDS) delete tools[id]
     }
 
     // bot_create / vendor_connect: only an app bot's chat has an owner to act for.
@@ -2027,7 +2078,195 @@ const message = await createUserMessage(input)
       if (!allowed) for (const id of PROJECT_SEND_TOOL_IDS) delete tools[id]
     }
 
+    // end_conversation (D5): Gizzi's own chats only. Never a bot turn (a
+    // person's bot, bots on customer channels included), never a child
+    // session (the parent's chat is not its to end), never an ended chat.
+    if (END_CONVERSATION_TOOL_ID in tools) {
+      if (BotTurn.get(input.session.id) || input.session.parentID || input.session.ended) {
+        delete tools[END_CONVERSATION_TOOL_ID]
+      }
+    }
+
+    // Session rules (deny `*`, then allow a few) only gate execution elsewhere; drop the
+    // denied tools here so their schemas are not sent on every model call.
+    if (input.session.permission?.length) {
+      const ruleset = PermissionNext.merge(input.agent.permission, input.session.permission)
+      const keys = Object.keys(tools).filter((k) => k !== "invalid")
+      for (const key of PermissionNext.hidden(keys, ruleset)) delete tools[key]
+    }
+    // Primitives Wave B: deferred tool families (built-in groups and MCP tools)
+    // stay out until tool_search or a call by name loads them; applied last so
+    // it only narrows what every gate above allowed. GIZZI_DISABLE_TOOL_SEARCH
+    // turns it off (primitives/tool-families.ts).
+    const deferral = ToolFamilies.filter({ sessionID: input.session.id, tools, messages: input.messages })
+    for (const key of Object.keys(tools)) if (!(key in deferral.tools)) delete tools[key]
+    const schemaBytes = Object.values(tools).reduce((n, t) => {
+      try {
+        return n + JSON.stringify((t as any).inputSchema?.jsonSchema ?? (t as any).parameters ?? {}).length
+      } catch {
+        return n
+      }
+    }, 0)
+    log.info("resolved tools", {
+      count: Object.keys(tools).length,
+      deferred: deferral.deferred.length,
+      schemaBytes,
+      sessionRules: input.session.permission?.length ?? 0,
+    })
+
     return tools
+  }
+
+  type McpCatalog = Awaited<ReturnType<typeof MCP.toolCatalog>>
+
+  /**
+   * The session's MCP tools, named as the model gets them: the instance's
+   * connected servers plus the user's connectors through allternit-api's
+   * per-user proxy (registered for the current turn only). resolveTools offers
+   * these; reservedToolNames keeps custom tools off their names.
+   */
+  export async function mcpToolCatalog(sessionID: string): Promise<McpCatalog> {
+    const proxyClient = await McpUserProxy.client(sessionID)
+    const proxyEntry = McpUserProxy.current(sessionID)
+    return MCP.toolCatalog(proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {})
+  }
+
+  /**
+   * Every name a self-hosted custom tool of the session may not take, with
+   * what holds it: the tools already offered this step (`tools`, resolveTools),
+   * every registered built-in, StructuredOutput, and every tool of the
+   * session's MCP catalog (all of it, not only the tools loaded this step, so
+   * dynamic tool selection cannot load a clash later in the turn).
+   *
+   * `mcpProxy`: the turn's per-user proxy entry when it is not registered yet
+   * (prompt() checks before it registers the proxy; the check route has no
+   * turn). It is held only while the catalog is read.
+   */
+  export async function reservedToolNames(input: {
+    sessionID: string
+    tools?: Record<string, AITool>
+    mcpCatalog?: McpCatalog
+    mcpProxy?: unknown
+  }): Promise<RemoteToolHost.ReservedTool[]> {
+    let catalog = input.mcpCatalog
+    if (!catalog) {
+      const release =
+        input.mcpProxy !== undefined && !McpUserProxy.current(input.sessionID)
+          ? McpUserProxy.register(input.sessionID, input.mcpProxy)
+          : () => {}
+      try {
+        catalog = await mcpToolCatalog(input.sessionID)
+      } finally {
+        release()
+      }
+    }
+    const descriptors = catalog.descriptors
+    const mcp: RemoteToolHost.ReservedTool[] = Object.values(descriptors).map((d) => ({
+      kind: "mcp",
+      name: d.qualifiedName,
+      server: d.serverName,
+      tool: d.originalName,
+    }))
+    const builtins = [
+      ...Object.keys(input.tools ?? {}).filter((name) => !(name in descriptors)),
+      ...(await ToolRegistry.ids({ computer: true })),
+      "StructuredOutput",
+    ]
+    return [...builtins, ...mcp]
+  }
+
+  /**
+   * Offer the agent's custom tools to the model (self-hosted Agents Server,
+   * `GIZZI_TOOL_HOST=remote`). The server sends them in every turn's
+   * `metadata.selfhost.custom_tools`; they become this session's custom tools
+   * (replacing the last turn's), and a call to one goes through the remote
+   * tool host to the server's queue, where an SDK worker runs it. A custom
+   * tool named like a built-in, MCP or sandbox tool is refused: the turn
+   * fails with a `custom_tool_conflict` error. A subagent's child session gets
+   * its root session's custom tools, and its calls go to the root's queue.
+   *
+   * @internal Exported for testing
+   */
+  export async function addSelfhostCustomTools(
+    tools: Record<string, AITool>,
+    input: {
+      session: Session.Info
+      model: Provider.Model
+      agent: Agent.Info
+      metadata?: Record<string, unknown>
+      context: (args: Record<string, unknown>, options: ToolCallOptions) => Tool.Context
+      /** The session's MCP catalog when the caller already read it (resolveTools). */
+      mcpCatalog?: McpCatalog
+    },
+  ) {
+    if (!RemoteToolHost.enabled()) return
+    let custom: RemoteToolHost.CustomTool[]
+    RemoteToolHost.linkSession(input.session.id, input.session.parentID)
+    if (input.session.parentID) {
+      // A subagent (task, agent_swarm) runs in a child session the server does
+      // not know: its turns carry no metadata, and its calls go to the root's
+      // queue. It gets the root's custom tools; the root checked them against
+      // the same registry and MCP catalog, and a name the child already has
+      // stays the child's. The child's disable map and agent permissions drop
+      // them like any built-in (LLM.resolveTools).
+      custom = (await RemoteToolHost.customToolsFor(input.session.id)).filter((def) => {
+        if (!(def.name in tools)) return true
+        log.warn("custom tool not offered to the subagent: the name is taken", {
+          sessionID: input.session.id,
+          tool: def.name,
+        })
+        return false
+      })
+    } else {
+      custom = RemoteToolHost.customToolsFrom(input.metadata)
+      const reserved = custom.length
+        ? await reservedToolNames({ sessionID: input.session.id, tools, mcpCatalog: input.mcpCatalog })
+        : []
+      RemoteToolHost.registerCustomTools(input.session.id, custom, reserved)
+    }
+    for (const def of custom) {
+      tools[def.name] = tool({
+        id: def.name as any,
+        description: def.description,
+        inputSchema: jsonSchema(ProviderTransform.schema(input.model, def.inputSchema as any) as any),
+        async execute(args: Record<string, unknown>, options: ToolCallOptions) {
+          const ctx = input.context(args, options)
+          await Plugin.trigger(
+            "tool.execute.before",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID },
+            { args },
+          )
+          const result = await ToolDedupe.execute({
+            sessionID: ctx.sessionID,
+            messageID: ctx.messageID,
+            tool: def.name,
+            args,
+            // The dispatcher forwards it too (RemoteToolHost.handles); it never runs here.
+            run: () =>
+              ToolDispatcher.executeInitialized(def.name, args, ctx, (nextArgs, nextCtx) =>
+                RemoteToolHost.execute(def.name, nextArgs, nextCtx),
+              ),
+          })
+          const truncated = await Truncate.output(SecretRedactor.text(result.output), {}, input.agent)
+          const output = {
+            title: result.title,
+            metadata: {
+              ...SecretRedactor.deep(result.metadata),
+              custom: true,
+              truncated: truncated.truncated,
+              ...(truncated.truncated && { outputPath: truncated.outputPath }),
+            },
+            output: truncated.content,
+          }
+          await Plugin.trigger(
+            "tool.execute.after",
+            { tool: def.name, sessionID: ctx.sessionID, callID: ctx.callID, args },
+            output,
+          )
+          return output
+        },
+      })
+    }
   }
 
   const MobileTools = z.object({
@@ -2637,74 +2876,19 @@ const message = await createUserMessage(input)
         sessionID: userMessage.info.sessionID,
         type: "text",
         text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
+Plan mode is on. Nothing changes yet: you plan, the user approves, then you build. Do not edit anything except the plan file named below. Read-only shell commands (ls, cat, git status, git log, git diff, grep) are fine; do not run formatters, generators, migrations or commits. This holds even if the user says "just do it": that means plan how to do it.
 
-## Plan File Info:
+## Plan File
 ${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
+Build the plan incrementally in this file. It is the only file you may edit.
 
-## Plan Workflow
+## Workflow
+1. Explore. Start with the explore subagent. Use one agent when the scope is small or the files are known; use up to three in parallel, each with its own search focus, when the scope is wide. Plan mode is also used outside code, so adapt the exploration to the task.
+2. Ask the user only about intent and tradeoffs that the repo or files cannot answer, with the question tool, two to four options and a recommended default. Do not use the question tool to ask whether the plan is okay.
+3. Design. Unless the task is trivial, have a plan agent check your approach against what you found. Give it the filenames, constraints and code paths you traced.
+4. Write the final plan to the plan file: your recommended approach only, the files or places that change, ordered steps, edge cases, and a done check for each step. Keep it compact.
+5. End the turn by asking a question or by calling plan_exit. Approval is requested only through plan_exit.
 
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request
-
-2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
-   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
-   - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
-   - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
-   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
-
-3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
-
-You can launch up to 1 agent(s) in parallel.
-
-**Guidelines:**
-- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
-- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
-
-Examples of when to use multiple agents:
-- The task touches multiple parts of the codebase
-- It's a large refactor or architectural change
-- There are many edge cases to consider
-- You'd benefit from exploring different approaches
-
-Example perspectives by task type:
-- New feature: simplicity vs performance vs maintainability
-- Bug fix: root cause vs workaround vs prevention
-- Refactoring: minimal change vs clean architecture
-
-In the agent prompt:
-- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
-- Describe requirements and constraints
-- Request a detailed implementation plan
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files identified by agents to deepen your understanding
-2. Ensure that the plans align with the user's original request
-3. Use question tool to clarify any remaining questions with the user
-
-### Phase 4: Final Plan
-Goal: Write your final plan to the plan file (the only file you can edit).
-- Include only your recommended approach, not all alternatives
-- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
-- Include the paths of critical files to be modified
-- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
-
-### Phase 5: Call plan_exit tool
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
-This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
-
-**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
 </system-reminder>`,
         synthetic: true,
       })
@@ -3198,7 +3382,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     // A subscription (fabric) model runs only on a human send (D16), and the
     // send's human action belongs to the reply — keep the default title.
-    if (Provider.isFabricModel(model)) return
+    if (Provider.isHumanSendOnly(model)) return
     const modelMessages = MessageV2.toModelMessages(contextMessages, model)
     // Title gen calls LLM.stream directly instead of going through loop(), so it
     // doesn't get loop()'s folding of lastUser.system into the system array — fold
@@ -3218,6 +3402,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: input.session.id,
       retries: 2,
       callType: "title",
+      surface: await SystemPrompt.effectiveSurface(input.session, (id) => Session.get(id)),
       messages: [
         {
           role: "user",

@@ -1,0 +1,1 @@
+[{"Name":"Spooler","DisplayName":"Print Spooler","Status":"Running","StartType":"Automatic"},{"Name":"W32Time","DisplayName":"Windows Time","Status":"Stopped","StartType":"Manual"},{"Name":"RemoteRegistry","DisplayName":"Remote Registry","Status":"Stopped","StartType":"Disabled"},{"Name":"Dhcp","DisplayName":"DHCP Client","Status":4,"StartType":2}]

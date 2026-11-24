@@ -1,0 +1,9 @@
+Show the user a card that offers to connect 1 to 3 connectors.
+
+Use it when the task needs a connector that is not connected. The ids must come from a connector_search made in this session. Ids that were not searched, are already connected or can't be connected here are left off the card; if none is left, the call is refused.
+
+reason is one line the user sees (up to 200 characters): what connecting lets you do for them.
+
+The card does not connect anything by itself. The user taps Connect and signs in to the app themselves. Don't paste links or codes, and don't say it is connected until a later search shows it connected.
+
+If no fitting connector exists, tell the user where connectors are added, as the docs or Settings say. Don't invent steps.

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The nativeapp flavor (step 7b): the native MainActivity is the app icon. The TWA
+     LauncherActivity from src/main keeps its other filters but not LAUNCHER (see
+     ${twaLauncherCategory} in app/build.gradle.kts). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Wave H2: dictation and voice mode (Android SpeechRecognizer), asked after the priming sheet. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Gap run GS-B: Settings > Voice > Scan from my computer reads the voice key QR (CameraX + ML Kit, on-device). Asked
+         only when the scan sheet opens. Not required: a phone without a camera pastes the key instead. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!-- Android 11+ package visibility: the speech recognizer and the text-to-speech engine. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application>
+        <activity
+            android:name="com.allternit.feature.shell.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Wave I2: the four app shortcuts (iOS App Intents) open native screens, not m.allternit.com URLs. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+            <!-- Wave I2: allternit://inbox, bot/<id>/chat, call/main, handoff, routines: the widget, the Quick Settings
+                 tiles and the shortcuts (iOS DeepLinkRouter's own scheme). Not exported to the web (no BROWSABLE). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="allternit" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Open in Allternit: office files shared from other apps (iOS onOpenURL, LocalDocumentView). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="text/csv" />
+            </intent-filter>
+        </activity>
+
+        <!-- ============ Wave I2: phone system surfaces ============ -->
+
+        <!-- The TWA build has a GET share target (text only, to m.allternit.com/share-target). The native app replaces it
+             with ShareActivity below: drop the SEND filter and the share-target metadata, keep the launcher and the App Link. -->
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:exported="true"
+            tools:node="merge">
+            <meta-data
+                android:name="android.support.customtabs.trusted.METADATA_SHARE_TARGET"
+                tools:node="remove" />
+            <intent-filter tools:node="removeAll" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true" android:priority="-1">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="m.allternit.com" />
+            </intent-filter>
+        </activity>
+
+        <!-- Share to a bot (iOS AllternitShare): text, links, images and files. The Files drive's "Save to computer"
+             (ShareToComputerActivity) stays a second entry in the share sheet. -->
+        <activity
+            android:name="com.allternit.feature.system.ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="Share to a bot"
+            android:taskAffinity="${applicationId}.share"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/*" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Home-screen status widget (iOS StatusWidget), Glance. -->
+        <receiver
+            android:name="com.allternit.feature.system.StatusWidgetReceiver"
+            android:exported="true"
+            android:label="Allternit status">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/status_widget_info" />
+        </receiver>
+
+        <!-- Quick Settings tiles, one per iOS control (AllternitControls). -->
+        <service android:name="com.allternit.feature.system.CallMainBotTile" android:exported="true" android:icon="@drawable/ic_shortcut_call" android:label="Call main bot" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name="com.allternit.feature.system.AskBotTile" android:exported="true" android:icon="@drawable/ic_shortcut_ask" android:label="Ask a bot" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name="com.allternit.feature.system.HandOffTaskTile" android:exported="true" android:icon="@drawable/ic_shortcut_handoff" android:label="Hand off a task" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name="com.allternit.feature.system.NeedsMeTile" android:exported="true" android:icon="@drawable/ic_shortcut_inbox" android:label="Show what needs me" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name="com.allternit.feature.system.RunRoutineTile" android:exported="true" android:icon="@drawable/ic_shortcut_handoff" android:label="Run a routine" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name="com.allternit.feature.system.PauseBotsTile" android:exported="true" android:icon="@drawable/ph_bell" android:label="Pause all bots" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+    </application>
+</manifest>

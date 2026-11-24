@@ -1,0 +1,27 @@
+---
+title: 'user_location'
+description: 'Use the location shared with the message, approximate by default'
+---
+
+## Overview
+
+`user_location` uses the location shared with your message when the answer depends on where you are, such as nearby places or local time. Approximate is rounded to about 1 km. If no location was shared, or the assistant needs a precise one, the result asks for it and the chat shows a **Share location** card.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `precision` | `approximate` or `precise`, optional | Approximate (city level) is the default. Precise asks you every time |
+| `reason` | string | Why the assistant needs it, up to 200 characters, shown to you |
+
+## Result
+
+A status of `granted`, `requested`, `denied`, `unavailable` or `timeout`. A granted approximate answer has city, region, country and time zone. `requested` means the card asks you to tap **Share location** (approximate or precise); the location is sent with your next message. A precise share (about 11 m) is kept for that one message only. A location is never saved to memory.
+
+## Permission
+
+You choose whether to share. Precise location asks each time, in every mode, including Auto.
+
+## Surfaces
+
+Web, phone layout, PWA and iOS (as a Location kind in Device Access). Desktop shows the same prompt. Android follows the PWA. The terminal does not have it: a terminal has no location service, and the time zone comes from the clock. See [Device access](/guides/device-access). Family: `location`.

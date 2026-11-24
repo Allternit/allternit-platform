@@ -1,0 +1,57 @@
+[package]
+name = "allternit-files-win"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Allternit Files drive on Windows: a Cloud Files (cfapi) sync-root helper that shows each Allternit computer in Explorer (files/2 client)."
+
+# Its own workspace and lockfile, like the spike (spike/files-win-cfapi) and
+# cmd/allternit-sideload: the helper only builds on Windows and must not move
+# the root workspace's lockfile.
+#   cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml -- --test-threads=1
+[workspace]
+
+[[bin]]
+name = "allternit-files-win"
+path = "src/main.rs"
+
+[dependencies]
+# Wire types generated from contracts/files-drive/schema.
+allternit-files-core = { path = "../../../../platform/types/allternit-files-core" }
+# The pinned v1 chunker (SPEC section 5) and conflict naming, shared with the runtime.
+allternit-files-engine = { path = "../../../../platform/files/allternit-files-engine" }
+# SPEC section 5 pins fastcdc 3.2.1; this lockfile is separate from the root one,
+# so pin it here too or dedup with the runtime breaks silently.
+fastcdc = "=3.2.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+blake3 = "1.5"
+
+[target.'cfg(windows)'.dependencies]
+notify = "8"
+windows = { version = "0.58", features = [
+  "implement",
+  "Foundation",
+  "Foundation_Collections",
+  "Storage",
+  "Security_Cryptography",
+  "Storage_Provider",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_CloudFilters",
+  "Win32_Storage_FileSystem",
+  "Win32_System_CorrelationVector",
+  "Win32_System_IO",
+  "Win32_System_Threading",
+  "Win32_System_WinRT",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 3
+strip = true

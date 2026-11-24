@@ -1,10 +1,11 @@
 use allternit_local_engine::assess::Assessor;
 use allternit_local_engine::cache::ModelStore;
 use allternit_local_engine::catalog::CatalogService;
+use allternit_local_engine::engine_packs::{self, EnginePacks};
 use allternit_local_engine::hardware;
 use allternit_local_engine::recommend::Recommender;
 use allternit_local_engine::routes::{
-    assess, catalog, chat, health, models, recommend, runtimes, status,
+    assess, catalog, chat, hardware as hardware_routes, health, models, recommend, runtimes, status,
 };
 use allternit_local_engine::runtime::ProcessManager;
 use allternit_local_engine::sampler::SystemSampler;
@@ -27,7 +28,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::fs::create_dir_all(data_dir.join("logs").join("runtimes")).await?;
 
     let store = ModelStore::new(&models_dir);
-    let manager = ProcessManager::new(&data_dir);
+    // Registered Studio outputs (POST /models/studio-output) from earlier runs.
+    let studio_outputs = store.load_studio_outputs().await;
+    if studio_outputs > 0 {
+        info!(count = studio_outputs, "studio outputs restored");
+    }
+    let packs = EnginePacks::from_env(&data_dir);
+    // Idle unload (default 5 minutes; 0 = never). The override exists for tests.
+    let idle_unload = std::env::var("ALLTERNIT_ENGINE_IDLE_UNLOAD_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(allternit_local_engine::runtime::manager::DEFAULT_IDLE_UNLOAD);
+    let manager = ProcessManager::new(&data_dir)
+        .with_packs(packs.clone())
+        .with_idle_unload(idle_unload);
+    manager.spawn_idle_reaper();
     let hardware_profile = hardware::detect_and_persist(&data_dir);
     let catalog = CatalogService::new(&data_dir);
     let assessor = Assessor::new();
@@ -44,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         store,
         manager,
+        packs,
         models_dir: models_dir.clone(),
         data_dir: data_dir.clone(),
         hardware_profile,
@@ -61,6 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(catalog::create_router(state.clone()))
         .merge(assess::create_router(state.clone()))
         .merge(recommend::create_router(state.clone()))
+        .merge(hardware_routes::create_router(state.clone()))
+        .merge(engine_packs::routes::create_router(state.clone()))
         .merge(status::create_router(state));
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());

@@ -36,6 +36,7 @@ struct CreateLoopSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("New loop")
+                    .accessibilityIdentifier("createLoopTitle")
                     .font(.system(.title3, design: .serif))
                     .fontWeight(.medium)
                     .foregroundColor(Color("TextPrimary"))
@@ -49,6 +50,7 @@ struct CreateLoopSheet: View {
                         .clipShape(Circle())
                 }
                 .accessibilityLabel("Close")
+                .accessibilityIdentifier("createLoopClose")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -63,6 +65,7 @@ struct CreateLoopSheet: View {
                             .fontWeight(.semibold)
                             .foregroundColor(Color("TextSecondary"))
                         TextField("Command to run each iteration", text: $command)
+                            .accessibilityIdentifier("createLoopCommand")
                             .font(.subheadline.monospaced())
                             .foregroundColor(Color("TextPrimary"))
                             .textInputAutocapitalization(.never)
@@ -143,6 +146,7 @@ struct CreateLoopSheet: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canCreate)
+                    .accessibilityIdentifier("createLoopSubmit")
                     .padding(.top, 8)
                 }
                 .padding(.horizontal, 20)
@@ -206,8 +210,7 @@ struct CreateLoopSheet: View {
             noiseRuns: 5,
             minPairs: minPairs
         )
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(
             trimmedCommand,
             trimmedExitCondition.isEmpty ? nil : trimmedExitCondition,

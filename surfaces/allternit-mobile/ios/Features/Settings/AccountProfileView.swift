@@ -51,6 +51,8 @@ struct AccountProfileView: View {
                             .font(.subheadline)
                             .foregroundColor(Theme.statusError)
                     }
+                    .accessibilityLabel("Delete account")
+                    .accessibilityIdentifier("delete-account-row")
                 } else {
                     Button(action: {
                         onClose()
@@ -165,15 +167,7 @@ struct AccountProfileView: View {
         errorMessage = nil
         defer { switchingTo = nil }
         do {
-            try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
-            activeOrgId = Clerk.shared.session?.lastActiveOrganizationId ?? orgId
-            authManager.refreshAuthState()
-            // Everything account-scoped reloads for the new account.
-            AccountPlanStore.shared.reset()
-            AccountPlanStore.shared.load(force: true)
-            UsageStore.shared.refresh()
-            NotificationCenter.default.post(name: .historyMutated, object: nil)
-            UISelectionFeedbackGenerator().selectionChanged()
+            activeOrgId = try await AccountSwitch.activate(sessionId: sessionId, orgId: orgId, authManager: authManager)
         } catch {
             errorMessage = "Couldn't switch accounts. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
@@ -188,6 +182,63 @@ struct AccountProfileView: View {
         } catch {
             errorMessage = "Couldn't log out. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
+    }
+}
+
+/// Switches the active account (personal or one Clerk organization). Used by
+/// this page and the Settings root's Accounts card. Plan contract C7, in this
+/// order (`AccountSwitchOrder`): `AccountSwitchCleanup.run` while the leaving
+/// account's session still works, then Clerk `setActive`, then
+/// `AccountSwitchCleanup.rebuild()` for whichever account is active. The
+/// rebuild runs even when Clerk refuses, because the cleanup already dropped
+/// the cached data.
+@MainActor
+enum AccountSwitch {
+    /// Returns the organization id now active (nil = personal).
+    static func activate(sessionId: String, orgId: String?, authManager: AuthManager) async throws -> String? {
+        let steps = AccountSwitchSteps(
+            cleanup: { reason in await AccountSwitchCleanup.run(reason: reason) },
+            setActive: { sessionId, orgId in
+                try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
+            },
+            rebuild: {
+                authManager.refreshAuthState()
+                await AccountSwitchCleanup.rebuild()
+            }
+        )
+        // Organizations of the signed-in person only; another person's
+        // session (multi-session) is not offered yet (gated, see Accounts card).
+        try await AccountSwitchOrder.run(sessionId: sessionId, orgId: orgId,
+                                         reason: .organizationChanged, steps: steps)
+        Haptics.selection()
+        return Clerk.shared.session?.lastActiveOrganizationId ?? orgId
+    }
+
+    /// "Switch account" to another person, one Clerk session at a time
+    /// (phone calm I14b, option B; web `signOutToSignIn`). In this order
+    /// (`PersonSwitchOrder`): `AccountSwitchCleanup.run(reason:
+    /// .personChanged)` while the leaving session still works, then Clerk
+    /// sign-out, then the sign-in screen with `email` filled in (nil = "Add
+    /// another account", an empty sign-in). Throws when sign-out is refused;
+    /// the current person stays signed in and their data is rebuilt.
+    static func switchPerson(email: String?, authManager: AuthManager) async throws {
+        let steps = PersonSwitchSteps(
+            cleanup: { await AccountSwitchCleanup.run(reason: .personChanged) },
+            signOut: {
+                try await authManager.signOut()
+                AccountPlanStore.shared.reset()
+            },
+            afterSignOut: { AccountSwitchCleanup.resetLocalState(reason: .personChanged) },
+            rebuild: {
+                authManager.refreshAuthState()
+                await AccountSwitchCleanup.rebuild()
+                // signOut() revoked the device credential before Clerk
+                // refused; pair again for the person still signed in.
+                _ = try? await RuntimePairing.shared.ensurePaired()
+            },
+            showSignIn: { email in authManager.pendingSignInEmail = email }
+        )
+        try await PersonSwitchOrder.run(email: email, steps: steps)
     }
 }
 

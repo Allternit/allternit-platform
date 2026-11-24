@@ -44,6 +44,15 @@ final class VoiceModeViewModel: ObservableObject {
     @Published private(set) var modelProgress: Double? = nil
 
     private let chatViewModel: ChatViewModel
+    /// voice_control state: replies stay text (not spoken) after reply_mode "text";
+    /// end_call waits for the current speech, then ends the session.
+    @Published private(set) var repliesAreText: Bool = false
+    private var pendingEndCall = false
+    private var appliedControlParts: Set<String> = []
+    private var sessionOptions = VoiceSessionOptions()
+    /// Called when a voice_control end_call finishes its speech. The host
+    /// (VoiceHost) should run its normal end flow; when nil the model ends itself.
+    var onEndCall: (() -> Void)?
     private let runtimeModelId: String?
     private let effort: String?
     // Owned by the view (its @StateObjects); weak so teardown can't keep
@@ -133,14 +142,15 @@ final class VoiceModeViewModel: ObservableObject {
                 if let notice { statusLine = notice }
                 startLegacy()
                 return
-            case .device:
+            case .device, .openai, .elevenlabs:
                 do {
-                    try await startSession(route: .device)
+                    try await startSession(route: route)
                     if let notice { statusLine = notice }
                     return
                 } catch {
                     guard isActive else { return }
-                    notice = VoiceRouter.fallbackNotice(for: error)
+                    // Keep the first reason (e.g. a bad OpenAI key) over later ones.
+                    notice = notice ?? VoiceRouter.fallbackNotice(for: error, from: route)
                 }
             }
         }
@@ -158,7 +168,7 @@ final class VoiceModeViewModel: ObservableObject {
         }
     }
 
-    /// Starts a Voice Session on `route` (.device). Throws when it
+    /// Starts a Voice Session on `route` (.device, .openai, .elevenlabs). Throws when it
     /// can't (the caller falls back or surfaces the error).
     private func startSession(route: VoiceRoute) async throws {
         guard await Self.ensureMicPermission() else {
@@ -170,7 +180,13 @@ final class VoiceModeViewModel: ObservableObject {
         options.language = SettingsStore.shared.speechLanguage?.rawValue
             ?? Locale.current.language.languageCode?.identifier ?? "en"
         switch route {
-        case .device:
+        case .openai:
+            options.voice = SettingsStore.shared.voiceIdentifier
+            try ByokVoiceTransport.requireKey(.openai)  // no key: the router falls back now
+            factory = { try ByokVoiceTransport.openAI() }
+            engineLabel = "On your OpenAI account"
+        case .device, .elevenlabs:
+            if route == .elevenlabs { try ByokVoiceTransport.requireKey(.elevenlabs) }
             let packs = VoicePackManager.shared
             if !packs.isReady {
                 statusLine = "Downloading the voice model…"
@@ -189,20 +205,28 @@ final class VoiceModeViewModel: ObservableObject {
                 throw VoiceClientError.server(code: "pack", message: "The on-device voice model isn't installed.")
             }
             options.voice = SettingsStore.shared.voiceIdentifier
-            if KokoroVoices.deviceSupported, !VoicePackManager.kokoro.isReady {
-                // Replies use the system voice until the Kokoro pack lands;
-                // the first session fetches it on Wi-Fi in the background.
-                Task { await VoicePackManager.kokoro.install(cellular: false) }
+            let listening = SettingsStore.shared.listening
+            if route == .elevenlabs {
+                // Your ElevenLabs account speaks; the device still listens.
+                factory = { try ByokVoiceTransport.elevenLabs(paths: paths, listening: listening) }
+                engineLabel = "Voice by your ElevenLabs account"
+            } else {
+                if KokoroVoices.deviceSupported, !VoicePackManager.kokoro.isReady {
+                    // Replies use the system voice until the Kokoro pack lands;
+                    // the first session fetches it on Wi-Fi in the background.
+                    Task { await VoicePackManager.kokoro.install(cellular: false) }
+                }
+                let engine = LocalVoiceEngineFactory.make(
+                    paths: paths, listening: listening,
+                    kokoroVoice: KokoroVoices.resolve(bot: botVoice),
+                    speed: SettingsStore.shared.speechSpeed)
+                factory = { engine }
+                engineLabel = "On this device"
             }
-            let engine = LocalVoiceEngineFactory.make(
-                paths: paths, listening: SettingsStore.shared.listening,
-                kokoroVoice: KokoroVoices.resolve(bot: botVoice),
-                speed: SettingsStore.shared.speechSpeed)
-            factory = { engine }
-            engineLabel = "On this device"
         case .legacy:
             return
         }
+        sessionOptions = options
         let client = VoiceSessionClient(factory: factory)
         client.onEvent = { [weak self] event in self?.handleSession(event) }
         sessionClient = client
@@ -249,8 +273,7 @@ final class VoiceModeViewModel: ObservableObject {
     /// Mic tap toggles mute. Muting mid-turn discards any in-flight
     /// recognition; unmuting in hands-free resumes listening.
     func toggleMute() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         isMuted.toggle()
         if inSession {
             sessionClient?.setMuted(isMuted)
@@ -289,21 +312,19 @@ final class VoiceModeViewModel: ObservableObject {
         guard isActive else { return }
         if inSession {
             guard state == .thinking || state == .speaking else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptics.medium()
             sessionClient?.cancelSpeech(id: currentSpeakId)
             abortTurn()
             return
         }
         switch state {
         case .speaking:
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
+            Haptics.medium()
             speaker?.stop()
             replyMessageId = nil
             advanceAfterSpeech()
         case .thinking:
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
+            Haptics.medium()
             chatViewModel.stopStreaming()
             replyMessageId = nil
             advanceAfterSpeech()
@@ -365,6 +386,7 @@ final class VoiceModeViewModel: ObservableObject {
         guard state == .thinking || state == .speaking else { return }
 
         replyText = reply.content
+        applyVoiceControlParts(of: reply)
 
         if inSession {
             sessionReplyUpdated(reply)
@@ -452,6 +474,7 @@ final class VoiceModeViewModel: ObservableObject {
             // The reply may still be streaming more sentences; only go back
             // to listening once it is complete.
             if replyMessageId == nil, state == .speaking { state = .listening }
+            if replyMessageId == nil { finishPendingEndCall() }
         case .speakInterrupted:
             // Barge-in: the engine stopped; stop the agent's turn too.
             abortTurn()
@@ -460,6 +483,43 @@ final class VoiceModeViewModel: ObservableObject {
             if fatal { statusLine = message } else if code != "bad_message" { statusLine = message }
         case .ready, .speechStopped:
             break
+        }
+    }
+
+    // MARK: - voice_control
+
+    /// Applies `{language?, speed?, reply_mode?, end_call?}` from a `control`
+    /// stream event or a completed `voice_control` tool part.
+    func applyControl(_ control: AgentChatEvent.VoiceControl) {
+        guard isActive else { return }
+        if let language = control.language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+            if let known = SpeechLanguage(rawValue: language) { SettingsStore.shared.speechLanguage = known }
+            sessionOptions.language = language
+            sessionClient?.updateOptions(sessionOptions)
+        }
+        if let speed = control.speed, speed > 0 {
+            // New utterances read this; the engine's live rate follows on the next session.
+            SettingsStore.shared.speechSpeed = min(max(speed, 0.5), 2.0)
+        }
+        if let mode = control.replyMode {
+            repliesAreText = (mode == "text")
+        }
+        if control.endCall { pendingEndCall = true }
+    }
+
+    /// Ends the call after the current speech, when `end_call` asked for it.
+    private func finishPendingEndCall() {
+        guard pendingEndCall, isActive else { return }
+        pendingEndCall = false
+        if let onEndCall { onEndCall() } else { _ = endSession() }
+    }
+
+    private func applyVoiceControlParts(of reply: MessageRecord) {
+        for call in reply.toolCalls where call.toolName == GapToolMetadata.voiceControl {
+            guard let gap = call.gap, gap.ok != false, !appliedControlParts.contains(call.id) else { continue }
+            appliedControlParts.insert(call.id)
+            applyControl(.init(language: gap.language, speed: gap.speed, replyMode: gap.replyMode,
+                               endCall: gap.action == "end_call"))
         }
     }
 
@@ -474,6 +534,7 @@ final class VoiceModeViewModel: ObservableObject {
 
     /// Streams the reply's new text to the engine as it arrives.
     private func sessionReplyUpdated(_ reply: MessageRecord) {
+        applyVoiceControlParts(of: reply)
         if let error = reply.error {
             statusLine = error.title
             sessionClient?.cancelSpeech(id: currentSpeakId)
@@ -482,15 +543,16 @@ final class VoiceModeViewModel: ObservableObject {
             return
         }
         let content = reply.content
-        if !isMuted, content.count > spokenLength {
+        if !isMuted, !repliesAreText, content.count > spokenLength {
             let delta = String(content.dropFirst(spokenLength))
             spokenLength = content.count
             sessionClient?.speakDelta(id: utteranceId, text: delta)
         }
         guard !reply.isStreaming else { return }
         replyMessageId = nil
-        if isMuted || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if isMuted || repliesAreText || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = isMuted ? .idle : .listening
+            finishPendingEndCall()
             return
         }
         sessionClient?.speakDone(id: utteranceId)

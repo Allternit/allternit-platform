@@ -6,6 +6,13 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 
+#: Error ``code`` values the self-hosted Agents Server adds (compare with ``APIError.code``).
+CUSTOM_TOOL_CONFLICT = "custom_tool_conflict"  # 409: custom tool name clashes with a built-in/MCP tool; nothing stored
+IDEMPOTENCY_KEY_REUSE = "idempotency_key_reuse"  # 422: key already used with a different request body
+IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"  # 409: request with this key still running (SDK retries once)
+SERVER_RESTARTED = "server_restarted"  # error event: the replica running the turn went away; resend
+
+
 class AllternitError(Exception):
     """Base class for every error this SDK raises."""
 
@@ -97,6 +104,11 @@ _BY_TYPE = {
     "conflict_error": ConflictError,
     "rate_limit_error": RateLimitError,
 }
+
+
+def has_error_code(err: BaseException, code: str) -> bool:
+    """True when ``err`` is an ``APIError`` with this ``code``, e.g. ``has_error_code(e, CUSTOM_TOOL_CONFLICT)``."""
+    return isinstance(err, APIError) and err.code == code
 
 
 def error_for(

@@ -5,6 +5,14 @@ description: Launch reusable workers and coordinated projects from recipes you c
 
 A **bot template** describes one worker's instructions, tools, skills, routines, and first task. A **team template** adds roles and a plan of dependent tasks. Templates are recipes; instantiated bots and threads are the running work.
 
+## How a template prompt is written
+
+Every built-in bot follows one shape: role, what it owns, steps, output and gates. The specialist agent templates use role, scope, method, output and stop. The prompts are short rules in our own words.
+
+The owner-sends gates stay in every template that touches money or a client: the bot drafts, and the owner approves and sends. A bot never pays, invoices or writes to a client on its own.
+
+Templates are copied when a bot is created. A change to a template reaches new bots only. Bots you already made keep their own prompt.
+
 ## Marketplace
 
 **Bots rail ⋯ → Marketplace** (it was called Templates) opens everything you can add to your bots, in three tabs:

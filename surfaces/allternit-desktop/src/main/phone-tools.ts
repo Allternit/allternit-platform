@@ -3,6 +3,9 @@
  * open_app, task, sms.send, sms.read, call.dial. Android phones (Lane 2a) run them over
  * adb; iPhones on an Allternit USB Agent (phone-usb-agent.ts) run the same
  * names through the board, so a bot uses one set of tools for both.
+ * On iPhones, phone.describe, the Phone Use tools (shortcuts, actions, Home)
+ * and the tap tools go through the Phone Use router (phone-route.ts), which
+ * picks the route and wraps results in the contract envelope; Android is not routed.
  *
  * Everything here is transport-agnostic: the adb runner, approval gate, rate
  * store and ARTEMIS client are injected, so the argument validation and the
@@ -12,9 +15,28 @@
 
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
+import type { AppOfficialState, AppPhoneDevice, AppRpcResult } from './phone-app-store.js';
 import { appHints, catalogApp, catalogAppByName } from './phone-app-catalog.js';
 import { elementAt, parseUiText, PhoneApiUnavailable, type PhoneApi, type PhoneRunRecorder, type UiLine } from './phone-runs.js';
 import type { GuardAnswer, GuardCheckBody, GuardCtx, GuardElement, PhoneHoldClient } from './phone-hold-client.js';
+import {
+  actionWords,
+  approvalClass,
+  isIosLink,
+  isOfficialTool,
+  isRouteId,
+  isTapTool,
+  legacyHelperLane,
+  officialLane,
+  PhoneRouter,
+  ROUTE_IDS,
+  usbAgentLane,
+  type ApprovalClass,
+  type PhoneLane,
+  type ImageReader,
+  type RouteId,
+} from './phone-route.js';
+import { failEnvelope } from './phone-verify.js';
 
 // ── Injected collaborators ──────────────────────────────────────────────────
 
@@ -63,13 +85,18 @@ export interface UsbPhoneBackend {
 }
 
 /**
- * iPhones connected with the Allternit App Store app (phone-app-store.ts).
- * Serials start with "app:". The screen and the app's own browser only.
+ * Phones connected with the Allternit app (phone-app-store.ts): iPhones from
+ * the App Store and Android phones (screen share, Allow taps). Serials start
+ * with "app:". The screen and the app's own browser only.
  */
 export interface AppPhoneLane extends UsbPhoneBackend {
-  /** Re-reads the node's phone list when stale. Never throws. */
-  refresh(): Promise<void>;
-  devices(): Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>;
+  /** Re-reads the node's phone list when stale (or now, with force). Never throws. */
+  refresh(force?: boolean): Promise<void>;
+  devices(): AppPhoneDevice[];
+  /** Phone Use official route (phone-route.ts officialLane): the app's last state frame, null when not listed. */
+  officialState?(serial: string): AppOfficialState | null;
+  /** Phone Use official route: `POST /api/v1/phones/app/:id/rpc`. Absent = the official route is unavailable. */
+  rpc?(serial: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult>;
 }
 
 /** A Phone-Linked phone as phone.devices lists it, health included. */
@@ -157,6 +184,18 @@ export interface PhoneToolDeps {
   guard?: () => PhoneHoldClient | null;
   /** A hold was made: show it to the owner. Never awaited; the tool call returns approval_required at once. */
   onHold?: (notice: PhoneHoldNotice) => void;
+  /**
+   * Phone Use routes for iPhones (phone-route.ts). Routes left out are the
+   * defaults: usb-agent wraps `usb`, legacy-helper wraps `links`, the rest are
+   * stubs until their plan steps land. Tests pass fake lanes here.
+   */
+  lanes?: Partial<Record<RouteId, PhoneLane>>;
+  /** OCR of an image (the iPhone broadcast's fallback frame for phone.read_ui); Mac only. */
+  readImage?: () => ImageReader | null;
+  /** An iPhone's lock state when something knows it (null = unknown). */
+  phoneLocked?: (serial: string) => Promise<boolean | null>;
+  /** The iCTRL helper's removal date (ISO), once set (plan decision D2). Until then no retirement notice. */
+  helperRetiresAt?: () => string | null;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -189,7 +228,7 @@ export type ToolErrorCode =
   | 'accessibility_off'
   // element lookup (phone.find_and_tap)
   | 'not_found'
-  // iPhone with the Allternit app (app:…): no taps on native apps without the Bluetooth board
+  // iPhone with the Allternit app (app:…): no taps on other apps until a Phone Use tap route is set up
   | 'not_supported'
   // phone.web.* / phone.calendar.* ...: the Allternit app is not open on the iPhone
   | 'app_not_open'
@@ -198,7 +237,18 @@ export type ToolErrorCode =
   // The runtime holds this action for the owner: retry with "_hold": approvalId once approved
   | 'approval_required'
   // The approval check could not run (no runtime, signed out, timeout): acting calls are refused
-  | 'guard_unavailable';
+  | 'guard_unavailable'
+  // Phone Use (phone-route.ts, contract §4/§5): the user must act first (needs_you carries the code and sentence)
+  | 'needs_you'
+  // Phone Use: the chosen or pinned route is not set up for this phone, or not built yet
+  | 'route_unavailable'
+  // Phone Use act-then-verify: the screen did not change after three sends
+  | 'no_change'
+  // phone.actions.run: no such catalog app or action / its params are missing
+  | 'unknown_action'
+  | 'bad_params'
+  // An official call the phone did not answer within timeout_s
+  | 'timeout';
 
 export interface ToolFailExtra {
   retryAfterSec?: number;
@@ -222,6 +272,11 @@ const fail = (error: ToolErrorCode, message: string, extra: ToolFailExtra = {}):
 
 const serialProp = { type: 'string', description: 'Phone serial from phone.devices: Android phones as "host:port", iPhones on a USB Agent as "usb:…", Phone-Linked phones as "link:…", iPhones with the Allternit app as "app:…". Optional when exactly one phone is online.' };
 const appSerialProp = { type: 'string', description: 'An iPhone connected with the Allternit app ("app:…" from phone.devices). Optional when it is the only phone online.' };
+const iphoneSerialProp = { type: 'string', description: 'An iPhone from phone.devices ("app:…", "usb:…" or a linked "link:…" iPhone). Optional when it is the only phone online.' };
+/** Phone Use (contract §3): pin one route; omit it and the router picks (official first, then the first healthy tap route). iPhones only. */
+const routeProp = { enum: [...ROUTE_IDS], description: 'iPhones only: pin a route (official, mirror, bt-mac, bt-android, bt-apple, usb-agent, legacy-helper). Omit it to let Allternit pick. A pinned route that is not ready returns what you need to do, with no fallback.' };
+const timeoutProp = { type: 'integer', minimum: 1, maximum: 120, default: 30, description: 'Seconds to wait for the phone (default 30).' };
+const homeKindProp = { enum: ['light', 'switch', 'lock', 'thermostat', 'garage', 'sensor', 'scene'] };
 
 export const PHONE_TOOLS = [
   {
@@ -232,14 +287,14 @@ export const PHONE_TOOLS = [
   {
     name: 'phone.screenshot',
     description: 'Take a screenshot of the phone. Returns a base64 image (PNG on Android, JPEG of the AirPlay mirror on USB-Agent iPhones, JPEG on Phone-Linked phones and on iPhones with the Allternit app, where it is the latest frame of the shared screen) with its width and height. Tap coordinates are pixels of this image; on Phone-Linked phones coordinate_space says the space taps use ("pixels", or "points" when the image is 1:1 points).',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { serial: serialProp, route: routeProp }, additionalProperties: false },
   },
   {
     name: 'phone.tap',
     description: 'Tap at pixel coordinates from the latest screenshot. On iPhone the result says whether the screen changed; take a new screenshot before the next tap.',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 } },
+      properties: { serial: serialProp, route: routeProp, x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 } },
       required: ['x', 'y'],
       additionalProperties: false,
     },
@@ -249,21 +304,23 @@ export const PHONE_TOOLS = [
     description: 'Type ASCII text into the focused field (max 500 chars).',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, text: { type: 'string', maxLength: 500 } },
+      properties: { serial: serialProp, route: routeProp, text: { type: 'string', maxLength: 500 } },
       required: ['text'],
       additionalProperties: false,
     },
   },
   {
     name: 'phone.read_ui',
-    description: 'Read the screen as text: one line per element (class, label, id, bounds). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
+    description: 'Read the screen as text: one line per element (class, label, id, bounds). Also returns app, activity and nodes[] (structured elements with clickable/scrollable/checkable/editable/password/focused flags). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
     inputSchema: {
       type: 'object',
       properties: {
-        serial: serialProp,
+        serial: serialProp, route: routeProp,
         filter: { type: 'object', properties: { label: { type: 'string' }, type: { type: 'string' } }, additionalProperties: false },
         visible_only: { type: 'boolean' },
         max_elements: { type: 'integer', minimum: 1, maximum: 1000 },
+        with_activity: { type: 'boolean', description: 'Android over adb: also look up the focused activity (one extra adb call). Otherwise activity is null.' },
+        with_version: { type: 'boolean', description: 'Android over adb: also look up the foreground app\'s versionName as app_version (one extra adb call).' },
       },
       additionalProperties: false,
     },
@@ -278,7 +335,7 @@ export const PHONE_TOOLS = [
     description: 'Find an element on the screen and tap its centre. element_id is a resource id (Android), accessibility id or label; match narrows by label text. Works on Phone-Linked phones and Android over adb; not on a USB-Agent iPhone.',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, element_id: { type: 'string', maxLength: 200 }, match: { type: 'string', maxLength: 200 } },
+      properties: { serial: serialProp, route: routeProp, element_id: { type: 'string', maxLength: 200 }, match: { type: 'string', maxLength: 200 } },
       required: ['element_id'],
       additionalProperties: false,
     },
@@ -289,7 +346,7 @@ export const PHONE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        serial: serialProp,
+        serial: serialProp, route: routeProp,
         x1: { type: 'integer', minimum: 0 },
         y1: { type: 'integer', minimum: 0 },
         x2: { type: 'integer', minimum: 0 },
@@ -303,19 +360,19 @@ export const PHONE_TOOLS = [
   {
     name: 'phone.home',
     description: 'Go to the home screen.',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { serial: serialProp, route: routeProp }, additionalProperties: false },
   },
   {
     name: 'phone.back',
     description: 'Go back (Android back button; on iPhone, the swipe from the left edge).',
-    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { serial: serialProp, route: routeProp }, additionalProperties: false },
   },
   {
     name: 'phone.key',
     description: 'Press a key or shortcut: enter, esc, tab, backspace, space, up/down/left/right, or a combo like cmd+space (iPhone hardware-keyboard shortcuts). Phone-Linked Android phones also take home and back; a Phone-Linked iPhone takes only enter and home.',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, combo: { type: 'string', maxLength: 40 } },
+      properties: { serial: serialProp, route: routeProp, combo: { type: 'string', maxLength: 40 } },
       required: ['combo'],
       additionalProperties: false,
     },
@@ -325,7 +382,7 @@ export const PHONE_TOOLS = [
     description: 'Open an app. Android: package name (com.android.settings) or common name (settings, chrome, camera…). iPhone: the app name as shown on the home screen (Spotlight). For common apps the result carries hints: short notes on where things are in that app.',
     inputSchema: {
       type: 'object',
-      properties: { serial: serialProp, app: { type: 'string', maxLength: 128 } },
+      properties: { serial: serialProp, route: routeProp, app: { type: 'string', maxLength: 128 } },
       required: ['app'],
       additionalProperties: false,
     },
@@ -343,6 +400,7 @@ export const PHONE_TOOLS = [
         bot_id: { type: 'string', maxLength: 200, description: 'Your bot id: the task runs on your brain.' },
         brain: { type: 'string', maxLength: 200, description: 'A brain as provider/model, when bot_id is not known.' },
         model: { enum: ['Flash', 'Pro'], description: 'Only for the ARTEMIS fallback (Android over adb with GEMINI_API_KEY).' },
+        vision: { enum: ['auto', 'always'], description: 'Screenshot policy. auto (default) skips the screenshot when the screen tree is rich; always sends one every step.' },
       },
       required: ['task'],
       additionalProperties: false,
@@ -490,6 +548,16 @@ export const PHONE_TOOLS = [
     },
   },
   {
+    name: 'phone.calendar.delete',
+    description: 'iPhone with the Allternit app only: delete one calendar event by id (get the id from phone.calendar.list). The person always approves on the Desktop screen first. Device Access > Calendar must be on and the app open on the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, id: { type: 'string', minLength: 1, maxLength: 200, description: 'Event id from phone.calendar.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'phone.reminders.list',
     description: 'iPhone with the Allternit app only: list reminders (Device Access > Reminders must be on and the app open). Returns reminders [{id, title, due?, completed, list}].',
     inputSchema: {
@@ -514,12 +582,142 @@ export const PHONE_TOOLS = [
     },
   },
   {
+    name: 'phone.reminders.update',
+    description: 'iPhone with the Allternit app only: change one reminder by id (get the id from phone.reminders.list): title, due time, done or not, notes. Send only the fields to change. The person always approves on the Desktop screen first. Device Access > Reminders must be on and the app open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        id: { type: 'string', minLength: 1, maxLength: 200, description: 'Reminder id from phone.reminders.list.' },
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+        due: { type: 'string', maxLength: 40, description: 'ISO 8601.' },
+        completed: { type: 'boolean' },
+        notes: { type: 'string', maxLength: 2000 },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.location.get',
+    description: 'iPhone with the Allternit app only: get where the phone is. Use approximate (the default) unless distance truly matters; precise asks the person on the phone each time. Device Access > Location must be on and the app open. Never save a location to memory.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, precision: { type: 'string', enum: ['approximate', 'precise'] } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'phone.contacts.search',
     description: 'iPhone with the Allternit app only: search contacts by name (read only; Device Access > Contacts must be on and the app open). Returns contacts [{id, name, phones[], emails[]}].',
     inputSchema: {
       type: 'object',
       properties: { serial: appSerialProp, query: { type: 'string', minLength: 1, maxLength: 100 }, limit: { type: 'integer', minimum: 1, maximum: 50 } },
       required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.describe',
+    description: 'iPhones: what this phone can do right now. Lists every route (official = Shortcuts, actions and Home through the Allternit app; mirror, bt-mac, bt-android, bt-apple, usb-agent = taps from outside the phone; legacy-helper = the old helper) with healthy, covers and needs_you, plus locked, foreground_app, installed shortcuts and Home. Read only.',
+    inputSchema: { type: 'object', properties: { serial: iphoneSerialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.shortcuts.run',
+    description: 'iPhones: run a shortcut the person has, by name, and get its output. Every run is approved by the owner first unless Allternit knows the shortcut only reads or creates in their own data. A missing shortcut returns needs_you SHORTCUT_NOT_INSTALLED.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: iphoneSerialProp,
+        route: routeProp,
+        name: { type: 'string', minLength: 1, maxLength: 200 },
+        input: { type: ['string', 'object', 'array', 'number', 'boolean', 'null'], description: 'The shortcut input; objects are sent as JSON text.' },
+        timeout_s: timeoutProp,
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.actions.list',
+    description: 'iPhones: the action catalog — what Allternit can do in each app through Apple actions (App Intents, shortcuts, Apple frameworks), with kind, params, whether it is installed on this phone and whether it needs approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: iphoneSerialProp,
+        route: routeProp,
+        app: { type: 'string', maxLength: 64, description: 'Catalog app id, e.g. "slack"; omit for all.' },
+        kind: { enum: ['create', 'send', 'open', 'search', 'read', 'control', 'other'] },
+        installed_only: { type: 'boolean', default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.actions.run',
+    description: 'iPhones: run one catalog action from phone.actions.list (app "allternit" for the built-in actions). Sends, purchases and security changes are approved by the owner first. Unknown app or action: error unknown_action; missing params: bad_params with missing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: iphoneSerialProp,
+        route: routeProp,
+        app: { type: 'string', minLength: 1, maxLength: 64 },
+        action: { type: 'string', minLength: 1, maxLength: 128, description: 'The action id from phone.actions.list.' },
+        params: { type: 'object', additionalProperties: true },
+        timeout_s: timeoutProp,
+      },
+      required: ['app', 'action'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.home.list',
+    description: 'iPhones: Home accessories (id, name, room, kind, state) and scenes, through the Allternit app. Read only.',
+    inputSchema: { type: 'object', properties: { serial: iphoneSerialProp, route: routeProp, kind: homeKindProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.home.set',
+    description: 'iPhones: change one Home accessory, e.g. state { "on": true, "brightness": 40 } or { "locked": false }. Returns the state read back. Locks, garage doors and security devices are approved by the owner first.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: iphoneSerialProp, route: routeProp, id: { type: 'string', minLength: 1, maxLength: 200 }, state: { type: 'object', additionalProperties: true } },
+      required: ['id', 'state'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.home.scene',
+    description: 'iPhones: run one Home scene by id. A scene with a lock, garage door or security device is approved by the owner first.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: iphoneSerialProp, route: routeProp, id: { type: 'string', minLength: 1, maxLength: 200 } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.maps',
+    description:
+      'Read the app maps Explore has learned (screens, and the taps that lead between them). Without app: a summary per mapped app. With app (package name): that app\'s full map. Read only; never touches the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: { type: 'string', maxLength: 128 }, app: { type: 'string', maxLength: 200 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.explore_app',
+    description:
+      'Start an Explore run that maps one app: it opens the app and walks its screens depth first, recording where each tap leads, then returns run_id at once. Android only. It never taps switches, text fields, or anything that pays, sends or deletes, and money apps are refused (money_app). One Explore per phone, and it needs a phone with no task or skill running (explore_running, phone_busy). Stop it with the run\'s stop (POST /api/aci/stop/<run_id>). Read the result with phone.maps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: { type: 'string', maxLength: 128 },
+        app: { type: 'string', maxLength: 200 },
+        minutes: { type: 'integer', minimum: 1, maximum: 30, default: 10 },
+        max_screens: { type: 'integer', minimum: 1, maximum: 300, default: 60 },
+      },
+      required: ['app'],
       additionalProperties: false,
     },
   },
@@ -695,7 +893,29 @@ function unescapeXml(value: string): string {
 
 /** uiautomator dump XML (binary-clean, from `exec-out … /dev/tty`) → elements. */
 export function parseUiDump(xml: string): UiElement[] {
-  const out: UiElement[] = [];
+  return parseUiDumpNodes(xml).map((n) => n.el);
+}
+
+/** A structured read_ui node (contract §1), before the index is assigned. */
+export interface UiNode {
+  index: number;
+  class: string;
+  label: string;
+  resource_id: string;
+  bounds: [number, number, number, number];
+  clickable: boolean;
+  scrollable: boolean;
+  checkable: boolean;
+  editable: boolean;
+  password: boolean;
+  focused: boolean;
+}
+
+type UiNodeFlags = Omit<UiNode, 'index' | 'class' | 'label' | 'resource_id' | 'bounds'>;
+
+/** Same walk as parseUiDump, with the flags and the root package kept (for read_ui nodes and app). */
+export function parseUiDumpNodes(xml: string): { el: UiElement; flags: UiNodeFlags; package: string }[] {
+  const out: { el: UiElement; flags: UiNodeFlags; package: string }[] = [];
   for (const tag of xml.matchAll(/<node\b[^>]*?>/g)) {
     const attrs: Record<string, string> = {};
     for (const m of tag[0].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[m[1]] = unescapeXml(m[2]);
@@ -704,14 +924,38 @@ export function parseUiDump(xml: string): UiElement[] {
     if (!bounds) continue;
     const [x1, y1, x2, y2] = [Number(bounds[1]), Number(bounds[2]), Number(bounds[3]), Number(bounds[4])];
     out.push({
-      className: attrs.class,
-      label: attrs.text || attrs['content-desc'] || '',
-      id: attrs['resource-id'] || '',
-      bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
-      rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      el: {
+        className: attrs.class,
+        label: attrs.text || attrs['content-desc'] || '',
+        id: attrs['resource-id'] || '',
+        bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
+        rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      },
+      flags: {
+        clickable: attrs.clickable === 'true',
+        scrollable: attrs.scrollable === 'true',
+        checkable: attrs.checkable === 'true',
+        editable: isEditableClass(attrs.class) || /\btext-entry\b/.test(attrs.hint ?? ''),
+        password: attrs.password === 'true',
+        focused: attrs.focused === 'true',
+      },
+      package: attrs.package || '',
     });
   }
   return out;
+}
+
+const isEditableClass = (cls: string): boolean => /EditText|TextField|TextInput/.test(cls);
+
+function toNode(index: number, el: UiElement, flags: UiNodeFlags): UiNode {
+  return {
+    index,
+    class: el.className,
+    label: el.label,
+    resource_id: el.id,
+    bounds: [el.rect.x, el.rect.y, el.rect.x + el.rect.w, el.rect.y + el.rect.h],
+    ...flags,
+  };
 }
 
 /** The shared text form: `class "label" [id] {{x, y}, {w, h}}` (empty fields omitted). */
@@ -824,9 +1068,22 @@ export class PhoneToolRunner {
   private readonly raws = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
   /** The latest phone.web.snapshot elements per app phone: a web click's ref → its label, without a new snapshot (that would stale the bot's refs). */
   private readonly webEls = new Map<string, Array<Record<string, unknown>>>();
+  /** Phone Use: one router over every route to an iPhone (phone-route.ts). */
+  private readonly router: PhoneRouter;
 
   constructor(private readonly deps: PhoneToolDeps) {
     this.now = deps.now ?? Date.now;
+    this.router = new PhoneRouter({
+      lanes: {
+        official: officialLane(() => deps.apps?.() ?? null, deps.now, { readImage: () => deps.readImage?.() ?? null, sleep: deps.sleep }),
+        'usb-agent': usbAgentLane(() => deps.usb?.() ?? null),
+        'legacy-helper': legacyHelperLane(() => deps.links?.() ?? null, () => deps.helperRetiresAt?.() ?? null),
+        ...deps.lanes,
+      },
+      locked: deps.phoneLocked,
+      now: deps.now,
+      sleep: deps.sleep,
+    });
   }
 
   async call(name: string, args: unknown): Promise<ToolResult> {
@@ -838,11 +1095,30 @@ export class PhoneToolRunner {
     this.raws.set(a, raw);
     const result = await this.dispatch(name, a);
     const recorder = this.deps.recorder;
-    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
+    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill' && name !== 'phone.maps') {
       const serial = typeof a.serial === 'string' ? a.serial : this.onlyOnline();
       if (serial) recorder.record({ serial, tool: name, args: raw, result: result as Record<string, unknown>, durationMs: this.now() - started });
     }
     return result;
+  }
+
+  /**
+   * Phone Use routes for one iPhone, for the connect kit (preload
+   * `phones.phoneRoutes`): phone.describe's `routes` (contract §3.1) and the
+   * route a tap would use now (`chosen`, null when none is ready). Not a tool
+   * call: never acts and is not recorded in the run history. Null for a phone
+   * the router does not serve (Android, unknown serials).
+   */
+  async routes(serial: string): Promise<{ routes: Array<Record<string, unknown>>; chosen: RouteId | null } | null> {
+    const lanes: GuardLanes = { usb: this.deps.usb?.() ?? null, links: this.deps.links?.() ?? null, apps: this.deps.apps?.() ?? null };
+    if (!isIphone(serial, lanes)) return null;
+    const described = await this.router.describe(serial);
+    const routes = Array.isArray(described.detail.routes) ? (described.detail.routes as Array<Record<string, unknown>>) : [];
+    const chosen = routes.find((r) => r.healthy === true && Array.isArray(r.covers) && (r.covers as unknown[]).includes('tap'));
+    return {
+      routes: routes.map((r) => (typeof r.needs_you === 'string' ? { ...r, needsYou: { code: r.needs_you, message: r.message } } : r)),
+      chosen: chosen && isRouteId(chosen.route) ? chosen.route : null,
+    };
   }
 
   /** The one connected phone, when there is exactly one. */
@@ -877,13 +1153,21 @@ export class PhoneToolRunner {
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
     if (name === 'phone.skills' || name === 'phone.save_skill') return this.skillCall(name, a);
+    if (name === 'phone.maps') return this.mapsRead(a);
 
     const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    // Explore runs in allternit-api and the runtime guard checks every tap it makes (source "explore"), like phone.task.
+    if (name === 'phone.explore_app') return this.explore(serial, a);
     // Every acting call crosses here (task loop, replay, a bot's direct call, the gateway, MCP): the runtime decides, Desktop enforces.
     if (GUARDED_TOOLS.has(name) && !(name.startsWith('phone.web.') && !apps?.has(serial))) {
       const stop = await this.guardCheck(name, serial, a, { usb, links, apps });
       if (stop) return stop;
+    }
+    // Phone Use (iPhones): the router picks the route. Null = no route serves this call; the lanes below keep it.
+    if (name === 'phone.describe' || isOfficialTool(name) || isTapTool(name)) {
+      const routed = await this.phoneUse(name, serial, a, { usb, links, apps });
+      if (routed) return routed;
     }
     // iPhones with the Allternit app: the screen and the app's browser, nothing that taps.
     if (apps?.has(serial)) {
@@ -891,8 +1175,8 @@ export class PhoneToolRunner {
       if (name === 'phone.web.snapshot' && res.ok && Array.isArray(res.elements)) this.webEls.set(serial, res.elements as Array<Record<string, unknown>>);
       return res;
     }
-    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
-      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
+    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.') || name.startsWith('phone.location.')) {
+      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders, contacts and location are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
     }
     // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
     if (name === 'phone.task') return this.task(serial, a, usb, links);
@@ -905,7 +1189,8 @@ export class PhoneToolRunner {
       // Linked phones: mark bot use so background account reads wait (phone-account-reader.ts).
       links.noteActivity?.(serial, 1);
       try {
-        return withHints(name, a, await this.linkedCall(links, name, serial, a));
+        const res = await this.linkedCall(links, name, serial, a);
+        return withHints(name, a, res);
       } finally {
         links.noteActivity?.(serial, -1);
       }
@@ -954,6 +1239,69 @@ export class PhoneToolRunner {
     } finally {
       if (acting) this.deps.activity?.(serial, -1);
     }
+  }
+
+  /**
+   * Phone Use on an iPhone (contract §1.1): phone.describe, the official tools
+   * and the tap tools go through the router. Returns null to leave a tap tool
+   * on its old path: any non-iPhone (Android behaviour is unchanged), or an
+   * iPhone no route serves yet (an App Store iPhone's screen).
+   */
+  private async phoneUse(name: string, serial: string, a: Record<string, unknown>, lanes: GuardLanes): Promise<ToolResult | null> {
+    const pinned = a.route;
+    if (pinned !== undefined && !isRouteId(pinned)) return fail('invalid_args', `route must be one of: ${ROUTE_IDS.join(', ')}.`);
+    if (!isIphone(serial, lanes)) {
+      if (pinned !== undefined) return fail('invalid_args', 'route is for iPhones only. Leave it out on this phone.');
+      if (name === 'phone.describe' || isOfficialTool(name)) {
+        return fail('not_supported', `${name} is for iPhones: Shortcuts, actions and Home run through the Allternit app on an iPhone.`);
+      }
+      return null;
+    }
+    const args = Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'serial' && k !== 'route'));
+    if (name === 'phone.describe') return this.router.describe(serial);
+    if (isOfficialTool(name)) {
+      const bad = phoneUseArgsError(name, args);
+      if (bad) return failEnvelope(isRouteId(pinned) ? pinned : 'official', 'invalid_args', bad, { detail: { error: 'invalid_args' } });
+    }
+    const res = await this.router.run(name as Parameters<PhoneRouter['run']>[0], serial, args, {
+      ...(isRouteId(pinned) ? { route: pinned } : {}),
+      ...(isOfficialTool(name) ? { approve: () => this.phoneUseApproval(name, serial, a, args) } : {}),
+    });
+    if (res) return withHints(name, a, res);
+    if (!isOfficialTool(name)) return null;
+    const official = await this.router.health('official', { serial, locked: null });
+    const why = official.state === 'unavailable' ? official.reason : 'Shortcuts, actions and Home are not available on this iPhone yet.';
+    return failEnvelope('official', 'route_unavailable', why, { detail: { error: 'route_unavailable' } });
+  }
+
+  /**
+   * Contract §8 for the new tools: sends, purchases and security changes need
+   * the owner. The runtime guard is asked first (it can hold or refuse); an
+   * approved hold (`_hold`) is enough. The runtime holds these tool names by
+   * the class named here (phone_guard.rs phone_use_effect), so the owner
+   * approves a send once, on the hold. When the guard lets a call through
+   * without a hold (an older runtime, or no guard wired), this computer's own
+   * approval dialog asks, as the App Store lane does for calendar writes.
+   */
+  private async phoneUseApproval(name: string, serial: string, a: Record<string, unknown>, args: Record<string, unknown>): Promise<ToolResult | null> {
+    const cls = approvalClass(name, args, this.router.hints(serial, name, args));
+    if (!cls) return null;
+    const summary = phoneUseSummary(name, args, cls);
+    if (this.deps.guard) {
+      const stop = await this.guardCheck(name, serial, a, NO_LANES, { el: { class: `${name} ${cls}`, label: summary, id: '' }, summary });
+      if (stop) return stop;
+      const raw = this.raws.get(a) ?? a;
+      if (typeof raw._hold === 'string' && raw._hold.trim()) return null;
+    }
+    const decision = await this.deps.gate.request({
+      kind: 'device_write',
+      serial,
+      summary,
+      actionHash: canonicalHash({ kind: 'phone_use', serial, tool: name, ...args }),
+    });
+    if (decision === 'denied') return fail('approval_denied', 'The owner denied this action. Do not try to reach the same result another way.');
+    if (decision === 'timeout') return fail('approval_timeout', 'The owner did not respond in time.');
+    return null;
   }
 
   /**
@@ -1073,10 +1421,31 @@ export class PhoneToolRunner {
     }
     const xml = await this.uiDump(serial);
     if (typeof xml !== 'string') return xml;
-    let els = parseUiDump(xml);
-    if (filter.label) els = els.filter((e) => e.label.toLowerCase().includes(filter.label!.toLowerCase()));
-    if (filter.type) els = els.filter((e) => e.className.toLowerCase().includes(filter.type!.toLowerCase()));
-    return { ok: true, text: els.slice(0, max as number).map(formatUiElement).join('\n') };
+    const parsed = parseUiDumpNodes(xml);
+    let all = parsed;
+    if (filter.label) all = all.filter((e) => e.el.label.toLowerCase().includes(filter.label!.toLowerCase()));
+    if (filter.type) all = all.filter((e) => e.el.className.toLowerCase().includes(filter.type!.toLowerCase()));
+    all = all.slice(0, max as number);
+    // app: the first package attribute in the dump (free). activity / app_version cost one adb call each, so opt-in.
+    const app = parsed.find((n) => n.package)?.package ?? '';
+    let activity: string | null = null;
+    if (a.with_activity === true) activity = (await this.adbForegroundInfo(serial))?.activity ?? null;
+    const res: ToolResult = {
+      ok: true,
+      text: all.map((e) => formatUiElement(e.el)).join('\n'),
+      app,
+      activity,
+      nodes: all.map((e, i) => toNode(i, e.el, e.flags)),
+    };
+    if (a.with_version === true && app) res.app_version = await this.adbAppVersion(serial, app);
+    return res;
+  }
+
+  /** versionName of an installed package (`dumpsys package`), "" when unknown. */
+  private async adbAppVersion(serial: string, pkg: string): Promise<string> {
+    if (!/^[A-Za-z][\w]*(?:\.[\w]+)+$/.test(pkg)) return '';
+    const res = await this.deps.adb(['shell', `dumpsys package ${pkg} | grep -m1 versionName`], { serial, timeoutMs: 5_000 });
+    return res.code === 0 ? parseVersionName(res.stdout) : '';
   }
 
   private async screenText(serial: string): Promise<ToolResult> {
@@ -1132,6 +1501,7 @@ export class PhoneToolRunner {
     if (typeof a.task !== 'string' || !a.task.trim() || a.task.length > 2000) {
       return fail('invalid_args', 'task must be 1–2000 characters.');
     }
+    if (a.vision !== undefined && a.vision !== 'auto' && a.vision !== 'always') return fail('invalid_args', 'vision must be "auto" or "always".');
     const model = a.model === undefined ? 'Flash' : a.model;
     if (model !== 'Flash' && model !== 'Pro') return fail('invalid_args', 'model must be Flash or Pro.');
     if (a.max_steps !== undefined && (!isInt(a.max_steps, 40) || a.max_steps === 0)) return fail('invalid_args', 'max_steps must be 1–40.');
@@ -1144,6 +1514,7 @@ export class PhoneToolRunner {
           max_steps: a.max_steps as number | undefined,
           bot_id: typeof a.bot_id === 'string' ? a.bot_id : undefined,
           brain: typeof a.brain === 'string' ? a.brain : undefined,
+          vision: a.vision as 'auto' | 'always' | undefined,
         });
         if (out.ok === false && typeof out.error === 'string' && typeof out.message === 'string' && !('status' in out)) {
           return fail(out.error === 'not_found' ? 'not_found' : 'invalid_args', out.message);
@@ -1162,6 +1533,36 @@ export class PhoneToolRunner {
     }
     const result = await artemis.runTask(serial, a.task.trim(), model);
     return { ok: true, result, via: 'artemis' };
+  }
+
+  /** phone.maps: GET /phones/maps[/:app]. Read only. */
+  private async mapsRead(a: Record<string, unknown>): Promise<ToolResult> {
+    if (a.app !== undefined && (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200)) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'App maps live in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = typeof a.app === 'string' ? await api.map(a.app.trim()) : await api.maps();
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `App maps need Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
+  }
+
+  /** phone.explore_app: POST /phones/maps/:app/explore. Contract error codes pass through unchanged. */
+  private async explore(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
+    if (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    if (a.minutes !== undefined && (!isInt(a.minutes, 30) || a.minutes === 0)) return fail('invalid_args', 'minutes must be 1–30.');
+    if (a.max_screens !== undefined && (!isInt(a.max_screens, 300) || a.max_screens === 0)) return fail('invalid_args', 'max_screens must be 1–300.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'Explore runs in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = await api.explore(a.app.trim(), { serial, minutes: a.minutes as number | undefined, max_screens: a.max_screens as number | undefined });
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `Explore needs Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
   }
 
   /** phone.skills / phone.save_skill / phone.run_skill → allternit-api. */
@@ -1449,8 +1850,15 @@ export class PhoneToolRunner {
 
   /** The app in front on an adb phone (`dumpsys activity`, the resumed activity's package). */
   private async adbForeground(serial: string): Promise<string | undefined> {
+    return (await this.adbForegroundInfo(serial))?.package;
+  }
+
+  /** Same one `dumpsys activity` line as adbForeground, read for the package and the full activity class. */
+  private async adbForegroundInfo(serial: string): Promise<{ package: string; activity: string | null } | undefined> {
     const res = await this.deps.adb(['shell', 'dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity"'], { serial, timeoutMs: 5_000 });
-    return res.code === 0 ? parseForegroundPackage(res.stdout) ?? undefined : undefined;
+    if (res.code !== 0) return undefined;
+    const pkg = parseForegroundPackage(res.stdout);
+    return pkg ? { package: pkg, activity: parseForegroundActivity(res.stdout) } : undefined;
   }
 
   /** A Phone-Linked phone's name for the hold dialog (only looked up when a hold is made). */
@@ -1543,9 +1951,12 @@ export class PhoneToolRunner {
  * any lane runs them. phone.sms.send, phone.call.dial and phone.sms.read are
  * checked inside smsSend / callDial / smsRead, after validation and the rate
  * limit. Not checked (the guard has no rule for them): screenshot, read_ui,
- * screen_text, swipe, home, back, task (its loop checks every step), web.open,
+ * screen_text, swipe, home, back, task and explore_app (their loops check every
+ * step), maps (read only), web.open,
  * web.snapshot, web.scroll, web.back, web.wait, calendar/reminders/contacts,
- * skills.
+ * skills. The Phone Use tools (shortcuts.run, actions.run, home.set,
+ * home.scene) are checked in phoneUseApproval by their contract §8 class,
+ * once the router has a route for them; describe and the list tools never.
  */
 export const GUARDED_TOOLS: ReadonlySet<string> = new Set([
   'phone.tap',
@@ -1598,6 +2009,48 @@ function phonePlatform(serial: string, lanes: GuardLanes): 'android' | 'ios' | u
 export function parseForegroundPackage(stdout: string): string | null {
   const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/[\w.$]+/.exec(stdout);
   return m ? m[1] : null;
+}
+
+/** `… com.whatsapp/.HomeActivity t42}` → "com.whatsapp.HomeActivity" (a leading dot is relative to the package). */
+export function parseForegroundActivity(stdout: string): string | null {
+  const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/([\w.$]+)/.exec(stdout);
+  if (!m) return null;
+  return m[2].startsWith('.') ? `${m[1]}${m[2]}` : m[2];
+}
+
+/** `    versionName=14` → "14". */
+export function parseVersionName(stdout: string): string {
+  return /versionName=(\S+)/.exec(stdout)?.[1] ?? '';
+}
+
+/** The Phone Link helper's structured page_source → read_ui nodes (contract §1), app and activity. */
+export function linkedNodes(r: unknown): { app: string; activity: string | null; nodes: UiNode[] } {
+  const o = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+  const app = asText(o.foreground_app) || asText(o.bundle_id) || asText(o.package);
+  const activity = asText(o.activity) || null;
+  const nodes: UiNode[] = [];
+  for (const n of Array.isArray(o.nodes) ? o.nodes : []) {
+    if (!n || typeof n !== 'object') continue;
+    const v = n as Record<string, unknown>;
+    const b = (v.bounds && typeof v.bounds === 'object' ? v.bounds : {}) as Record<string, unknown>;
+    const [x, y, w, h] = [b.x, b.y, b.width, b.height];
+    if (![x, y, w, h].every((q) => typeof q === 'number' && Number.isFinite(q))) continue;
+    const cls = asText(v.class);
+    nodes.push({
+      index: nodes.length,
+      class: cls,
+      label: asText(v.label) || asText(v.text) || asText(v.content_desc),
+      resource_id: asText(v.resource_id),
+      bounds: [x as number, y as number, (x as number) + (w as number), (y as number) + (h as number)],
+      clickable: v.clickable === true,
+      scrollable: v.scrollable === true,
+      checkable: v.checkable === true,
+      editable: v.editable === true || isEditableClass(cls),
+      password: v.password === true,
+      focused: v.focused === true,
+    });
+  }
+  return { app, activity, nodes };
 }
 
 /** uiautomator XML → elements with the focused and password flags, and the first node's package. */
@@ -1661,6 +2114,68 @@ function actionText(name: string, a: Record<string, unknown>, el: GuardElement |
       return `Tap ${on || 'an element'} in the Allternit app's browser`;
     default:
       return name;
+  }
+}
+
+/**
+ * True when the serial is an iPhone the Phone Use router may serve: a USB
+ * Agent phone, an App Store app phone that is not Android, or a linked iPhone.
+ */
+function isIphone(serial: string, lanes: GuardLanes): boolean {
+  if (lanes.usb?.has(serial)) return true;
+  if (lanes.apps?.has(serial)) return lanes.apps.devices().find((d) => d.serial === serial)?.platform !== 'android';
+  return isIosLink(lanes.links, serial);
+}
+
+const ACTION_KINDS = ['create', 'send', 'open', 'search', 'read', 'control', 'other'];
+const HOME_KINDS = ['light', 'switch', 'lock', 'thermostat', 'garage', 'sensor', 'scene'];
+
+/** The new tools' argument checks (contract §3.1 schemas); null = fine. */
+export function phoneUseArgsError(name: string, a: Record<string, unknown>): string | null {
+  const str = (v: unknown, max: number, min = 1) => typeof v === 'string' && v.trim().length >= min && v.length <= max;
+  const obj = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (a.timeout_s !== undefined && !(Number.isInteger(a.timeout_s) && (a.timeout_s as number) >= 1 && (a.timeout_s as number) <= 120)) {
+    return 'timeout_s must be a whole number of seconds, 1–120.';
+  }
+  switch (name) {
+    case 'phone.shortcuts.run':
+      return str(a.name, 200) ? null : 'name must be the shortcut name (1–200 characters).';
+    case 'phone.actions.list':
+      if (a.app !== undefined && !str(a.app, 64)) return 'app must be a catalog app id (up to 64 characters).';
+      if (a.kind !== undefined && !ACTION_KINDS.includes(a.kind as string)) return `kind must be one of: ${ACTION_KINDS.join(', ')}.`;
+      if (a.installed_only !== undefined && typeof a.installed_only !== 'boolean') return 'installed_only must be true or false.';
+      return null;
+    case 'phone.actions.run':
+      if (!str(a.app, 64)) return 'app must be a catalog app id (up to 64 characters), or "allternit".';
+      if (!str(a.action, 128)) return 'action must be an action id from phone.actions.list (up to 128 characters).';
+      if (a.params !== undefined && !obj(a.params)) return 'params must be an object.';
+      return null;
+    case 'phone.home.list':
+      return a.kind === undefined || HOME_KINDS.includes(a.kind as string) ? null : `kind must be one of: ${HOME_KINDS.join(', ')}.`;
+    case 'phone.home.set':
+      if (!str(a.id, 200)) return 'id must be an accessory id from phone.home.list.';
+      return obj(a.state) ? null : 'state must be an object, e.g. { "on": true }.';
+    case 'phone.home.scene':
+      return str(a.id, 200) ? null : 'id must be a scene id from phone.home.list.';
+    default:
+      return null;
+  }
+}
+
+/** The approval dialog's line for a Phone Use call, in plain words. */
+function phoneUseSummary(name: string, a: Record<string, unknown>, cls: ApprovalClass): string {
+  const what = cls === 'send' ? 'may send to someone' : cls === 'purchase' ? 'may spend money' : 'changes security';
+  switch (name) {
+    case 'phone.shortcuts.run':
+      return `Run the shortcut “${String(a.name)}” on your iPhone (${what})`;
+    case 'phone.actions.run':
+      return `${actionWords(String(a.action))} in ${String(a.app)} on your iPhone (${what})`;
+    case 'phone.home.set':
+      return `Change “${String(a.id)}” in Home to ${JSON.stringify(a.state)} (${what})`;
+    case 'phone.home.scene':
+      return `Run the Home scene “${String(a.id)}” (${what})`;
+    default:
+      return `${name} (${what})`;
   }
 }
 

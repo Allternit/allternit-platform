@@ -387,13 +387,13 @@ async fn require_spend(db: &PgPool, project_id: &str) -> Result<(), PlatformErro
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateCall {
-    agent_id: String,
-    from_number_id: String,
-    to: String,
-    purpose: String,
+pub(crate) struct CreateCall {
+    pub(crate) agent_id: String,
+    pub(crate) from_number_id: String,
+    pub(crate) to: String,
+    pub(crate) purpose: String,
     #[serde(default)]
-    record: bool,
+    pub(crate) record: bool,
 }
 
 async fn create_call(
@@ -403,10 +403,20 @@ async fn create_call(
     ApiJson(body): ApiJson<CreateCall>,
 ) -> Result<(StatusCode, Json<Call>), PlatformError> {
     caller.require("voice")?;
+    let call = place_call(&state, &caller, deps.map(|Extension(d)| d), body).await?;
+    Ok((StatusCode::CREATED, Json(call)))
+}
+
+/// Place an outbound call: `POST /v1/calls` and a hosted agent's `call` tool
+/// (`agent_tools`). Checks consent, business hours, spend and a call slot; the
+/// caller checks its own scope. `deps` `None` reads LiveKit from the env (the
+/// production path for both routes; tests pass a fake). A sandbox call is
+/// `in_progress` at once and holds its slot until it is ended.
+pub(crate) async fn place_call(state: &ApiState, caller: &PlatformCaller, deps: Option<Arc<VoiceDeps>>, body: CreateCall) -> Result<Call, PlatformError> {
     let db = &state.db;
     sweep_unanswered(db).await;
-    let agent = agents::fetch_visible(&state, &caller, &body.agent_id).await?;
-    let number = api_number(db, &caller, &body.from_number_id).await.map_err(|e| e.with_param("from_number_id"))?;
+    let agent = agents::fetch_visible(state, caller, &body.agent_id).await?;
+    let number = api_number(db, caller, &body.from_number_id).await.map_err(|e| e.with_param("from_number_id"))?;
     if number.account_id.as_deref() != Some(agent.account_id.as_str()) {
         return Err(PlatformError::invalid_request("account_mismatch", "The number and the agent belong to different accounts.").with_param("from_number_id"));
     }
@@ -439,10 +449,10 @@ async fn create_call(
         .await?;
         slot.detach();
         let _ = emit_event(db, &caller.project_id, Some(&row.account_id), "call.started", call_event_data(&row)).await;
-        return Ok((StatusCode::CREATED, Json(Call::from(&row))));
+        return Ok(Call::from(&row));
     }
 
-    let deps = voice_deps(deps).ok_or_else(voice_unavailable)?;
+    let deps = deps.or_else(|| voice_deps(None)).ok_or_else(voice_unavailable)?;
     let trunk = deps.outbound_trunk.clone().ok_or_else(voice_unavailable)?;
     let slot = slots::acquire_slot(db, &caller.project_id, KIND_CALL).await?;
     // The consent gate's reference, as for the app's numbers: the worker refuses to dial without it.
@@ -499,7 +509,7 @@ async fn create_call(
         .fetch_optional(db)
         .await?
         .unwrap_or(row);
-    Ok((StatusCode::CREATED, Json(Call::from(&row))))
+    Ok(Call::from(&row))
 }
 
 // ---------------------------------------------------------------- read
@@ -935,9 +945,10 @@ async fn create_realtime_session(
 
 // ---------------------------------------------------------------- the worker side
 
-/// The caller of record for work the voice worker starts (no API key is
-/// involved): the project, bound to the call's account.
-async fn internal_caller(db: &PgPool, project_id: &str, account_id: &str) -> Result<PlatformCaller, PlatformError> {
+/// The caller of record for work no API key started (the voice worker, a hosted
+/// agent's tools): the project, bound to one account, with `key_id` naming who
+/// acted and only `scopes`.
+pub(crate) async fn internal_caller(db: &PgPool, project_id: &str, account_id: &str, key_id: &str, scopes: &[&str]) -> Result<PlatformCaller, PlatformError> {
     let (owner, org, env, plan): (String, Option<String>, String, String) =
         sqlx::query_as("SELECT owner_user_id, org_id, env, plan FROM platform_projects WHERE id = $1 AND archived_at IS NULL")
             .bind(project_id)
@@ -948,8 +959,8 @@ async fn internal_caller(db: &PgPool, project_id: &str, account_id: &str) -> Res
         project_id: project_id.to_string(),
         project_env: ProjectEnv::parse(&env).unwrap_or(ProjectEnv::Sandbox),
         account_id: Some(account_id.to_string()),
-        key_id: "voice_worker".into(),
-        scopes: vec!["voice".into(), "agents".into()],
+        key_id: key_id.to_string(),
+        scopes: scopes.iter().map(|s| s.to_string()).collect(),
         owner_user_id: owner,
         org_id: org,
         plan: Plan::parse(&plan),
@@ -1079,7 +1090,7 @@ pub async fn worker_turn(state: &Arc<ApiState>, call_id: &str, text: &str) -> Re
         return Err(ApiError::Conflict("call ended".into()));
     }
     let conversation = call.conversation_id.clone().ok_or_else(|| ApiError::Internal("call has no session".into()))?;
-    let caller = internal_caller(&state.db, &call.project_id, &call.account_id).await.map_err(worker_err)?;
+    let caller = internal_caller(&state.db, &call.project_id, &call.account_id, "voice_worker", &["voice", "agents"]).await.map_err(worker_err)?;
     let host = host_for(state, None);
     let (rt, path) = conversations::turn_target(state, host.as_ref(), &caller, &conversation).await.map_err(|e| {
         if e.code == "runtime_starting" {
@@ -1133,6 +1144,9 @@ pub fn is_platform_owner(user_id: &str) -> bool {
 /// Bind (or unbind, `None`) the agent that answers a number. The agent must be
 /// in the number's account. A live number gets its LiveKit inbound trunk and
 /// dispatch rule the first time an agent is bound (when LiveKit is configured).
+/// The agent's runtime definition lists its numbers (`phoneNumbers`, which
+/// gives it outbound texting and calling), so both the agent losing the number
+/// and the one gaining it are marked for a resync.
 pub async fn bind_agent(state: &ApiState, caller: &PlatformCaller, number: &ApiNumber, agent_id: Option<&str>, deps: DepsExt) -> Result<(), PlatformError> {
     let db = &state.db;
     if let Some(agent_id) = agent_id {
@@ -1141,7 +1155,18 @@ pub async fn bind_agent(state: &ApiState, caller: &PlatformCaller, number: &ApiN
             return Err(PlatformError::invalid_request("account_mismatch", "The number and the agent belong to different accounts.").with_param("agent_id"));
         }
     }
-    sqlx::query("UPDATE phone_numbers SET agent_id = $2 WHERE id = $1").bind(&number.id).bind(agent_id).execute(db).await?;
+    // `old` is the row as it was (locked first), so `old.agent_id` is the agent losing the number.
+    // (A CTE read from RETURNING would see the updated row and answer NULL.)
+    let previous: Option<String> = sqlx::query_scalar(
+        "UPDATE phone_numbers p SET agent_id = $2 FROM (SELECT id, agent_id FROM phone_numbers WHERE id = $1 FOR UPDATE) old \
+         WHERE p.id = old.id RETURNING old.agent_id",
+    )
+    .bind(&number.id)
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await?
+    .flatten();
+    mark_agents_stale(db, &caller.project_id, &[previous.as_deref(), agent_id]).await?;
     if number.simulated || agent_id.is_none() {
         return Ok(());
     }
@@ -1173,6 +1198,17 @@ pub async fn bind_agent(state: &ApiState, caller: &PlatformCaller, number: &ApiN
         }
         Err(e) => Err(livekit_failed(e)),
     }
+}
+
+/// Make the next turn re-send these agents' definitions to the runtime
+/// (`conversations::ensure_agent`). `None` entries are skipped.
+pub(crate) async fn mark_agents_stale(db: &PgPool, project_id: &str, agent_ids: &[Option<&str>]) -> Result<(), sqlx::Error> {
+    let ids: Vec<&str> = agent_ids.iter().flatten().copied().collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query("UPDATE platform_agents SET synced_at = NULL WHERE project_id = $1 AND id = ANY($2)").bind(project_id).bind(&ids).execute(db).await?;
+    Ok(())
 }
 
 /// Remove a released number's LiveKit trunk and rule (best effort).

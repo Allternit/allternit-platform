@@ -1,0 +1,10 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "files_drive flag is off for this user.",
+  "message": {
+    "error": "feature_disabled",
+    "code": "feature_disabled",
+    "message": "Files is not turned on for this account yet."
+  }
+}

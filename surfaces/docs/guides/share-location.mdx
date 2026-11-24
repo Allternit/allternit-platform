@@ -18,6 +18,10 @@ When it is on, each message you send carries:
 
 The bot gets one short note for that message only: where you are, roughly, and your time zone. It is told to use it only when it helps, not to mention it otherwise, and not to save it to memory.
 
+## Where it is used
+
+When you ask for weather or places "here" or "near me", the lookup tool reads your approximate position from the turn. It is a structured field used for that one call only. With location off, the bot asks "Which place?" instead. See [lookup](/tools/lookup).
+
 ## What is never kept
 
 - Your location is not stored with your messages, your chat history, your sessions or your bot's memory.
@@ -34,4 +38,4 @@ Your browser or phone may also ask for permission to use your location the first
 
 ## For developers
 
-The client sends `client_location` on the chat send body (`POST /api/agent-chat`, and the Desktop bridge `POST /api/v1/ai/chat`). See [Agent Chat API](/api/agent-chat#request-body). The server checks and rounds it and passes it to the runtime as a turn-only layer that is held in memory for that turn, separate from the stored system prompt.
+The client sends `client_location` on the chat send body (`POST /api/agent-chat`, and the Desktop bridge `POST /api/v1/ai/chat`). See [Agent Chat API](/api/agent-chat#request-body). The server checks and rounds it, and passes both the prompt layer and a structured `turnLocation` to the runtime. The structured field is turn-only, held in memory and never stored. The prompt layer is held in memory for that turn, separate from the stored system prompt.

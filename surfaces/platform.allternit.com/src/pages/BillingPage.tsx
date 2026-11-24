@@ -7,7 +7,6 @@ import {
   ArrowsClockwise,
   Info,
   Coins,
-  Lightning,
   Key,
   X,
 } from "@phosphor-icons/react";
@@ -22,12 +21,27 @@ import { EmptyState } from "@/components/settings/EmptyState";
 import { SkeletonRow } from "@/components/settings/SkeletonRow";
 import { QUIET_BUTTON_CLASS } from "@/components/settings/buttonStyles";
 import { formatApiError } from "@/lib/api-client";
-import { PlanPicker, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
+import { PlanPicker, type FreeweightsPerks, type LiveBillingPlan, type PlanId } from "@/components/PlanPicker";
+import { ComputerOnCreditsCard } from "@/components/billing/ComputerOnCreditsCard";
 import { TransferToOrgPanel } from "@/components/billing/TransferToOrgPanel";
 
 function formatHours(seconds: number): string {
   if (seconds < 3600) return `${Math.max(0, Math.round(seconds / 60))} min`;
   return `${(seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0)} hr`;
+}
+
+type StoreProvider = "apple" | "google";
+
+function storeLabel(provider: StoreProvider) {
+  return provider === "apple" ? "Apple" : "Google";
+}
+
+function storeManageLabel(provider: StoreProvider) {
+  return provider === "apple" ? "App Store" : "Google Play";
+}
+
+function asStoreProvider(value: unknown): StoreProvider | null {
+  return value === "apple" || value === "google" ? value : null;
 }
 
 function safePortalUrl(value?: string) {
@@ -54,17 +68,10 @@ export interface CreditTransaction {
   amount_usd: number;
 }
 
-export interface FreeInferenceUsage {
-  monthly_allowance_usd: number;
-  used_usd: number;
-  remaining_usd: number;
-}
-
 export interface BillingCredits {
   balance_usd: number;
   month_to_date_usage_usd: number;
   recent_transactions: CreditTransaction[];
-  free_inference?: FreeInferenceUsage;
 }
 
 export interface InferenceProviderKey {
@@ -148,12 +155,16 @@ export function BillingPage() {
   const [buyingPackId, setBuyingPackId] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [plans, setPlans] = useState<LiveBillingPlan[]>([]);
+  const [freeweightsPerks, setFreeweightsPerks] = useState<FreeweightsPerks | null>(null);
   const [subscribingPlanId, setSubscribingPlanId] = useState<PlanId | null>(null);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const [currentSubscription, setCurrentSubscription] = useState<{
     plan_id: string;
     status: string;
     renews_at?: string;
+    billing_provider?: string | null;
+    manage_url?: string | null;
+    conflict?: boolean;
   } | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   // `?plan=plus|super|ultra` (the website's Subscribe buttons) starts that
@@ -259,10 +270,20 @@ export function BillingPage() {
             plan_id?: string;
             status?: string;
             renews_at?: string;
+            billing_provider?: string | null;
+            manage_url?: string | null;
+            conflict?: boolean;
           } | null;
           setCurrentSubscription(
             payload?.plan_id && payload.status
-              ? { plan_id: payload.plan_id, status: payload.status, renews_at: payload.renews_at }
+              ? {
+                  plan_id: payload.plan_id,
+                  status: payload.status,
+                  renews_at: payload.renews_at,
+                  billing_provider: payload.billing_provider,
+                  manage_url: payload.manage_url,
+                  conflict: payload.conflict === true,
+                }
               : null,
           );
         }
@@ -280,8 +301,10 @@ export function BillingPage() {
         } else if (plansResponse.ok) {
           const plansPayload = (await plansResponse.json().catch(() => ({}))) as {
             plans?: LiveBillingPlan[];
+            freeweights?: FreeweightsPerks;
           };
           setPlans(Array.isArray(plansPayload.plans) ? plansPayload.plans : []);
+          setFreeweightsPerks(plansPayload.freeweights ?? null);
         }
       } catch {
         setPlans([]);
@@ -382,6 +405,23 @@ export function BillingPage() {
         return;
       }
       const payload = await response.json().catch(() => ({}));
+      const conflictStore = asStoreProvider(payload.billing_provider);
+      if (response.status === 409 && payload.error === "already_subscribed" && conflictStore) {
+        // The open plan is billed by a store: the Stripe portal cannot change it.
+        setSubscribeError(
+          `You already have a plan billed by ${storeLabel(conflictStore)}. Change or cancel it in ${storeManageLabel(conflictStore)} settings.`,
+        );
+        return;
+      }
+      if (response.status === 409 && payload.error === "store_billed") {
+        const store = conflictStore ?? storeProvider;
+        setSubscribeError(
+          store
+            ? `This plan is billed by ${storeLabel(store)}. Change or cancel it in ${storeManageLabel(store)} settings.`
+            : "This plan is billed by an app store. Change or cancel it in the store settings.",
+        );
+        return;
+      }
       if (response.status === 409 && payload.error === "already_subscribed") {
         // One plan per account: changes happen in the Stripe billing portal.
         setSubscribingPlanId(null);
@@ -423,6 +463,15 @@ export function BillingPage() {
         return;
       }
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.error === "store_billed") {
+        const store = asStoreProvider(payload.billing_provider) ?? storeProvider;
+        setPortalError(
+          store
+            ? `This plan is billed by ${storeLabel(store)}. Change or cancel it in ${storeManageLabel(store)} settings.`
+            : "This plan is billed by an app store. Change or cancel it in the store settings.",
+        );
+        return;
+      }
       if (!response.ok) {
         throw new Error(
           payload.message || payload.error || `Unable to open billing portal (${response.status})`,
@@ -447,6 +496,13 @@ export function BillingPage() {
       ? currentSubscription.plan_id
       : null;
 
+  // Plans bought in the iPhone or Android app are billed by the store, not Stripe.
+  const storeProvider: StoreProvider | null = subscribedPlanId
+    ? asStoreProvider(currentSubscription?.billing_provider)
+    : null;
+  const storeManageUrl = safePortalUrl(currentSubscription?.manage_url ?? undefined);
+  const planConflict = currentSubscription?.conflict === true;
+
   // Arrived from a website Subscribe button: start that plan's checkout, or
   // say where to switch when the account already has a plan.
   useEffect(() => {
@@ -456,6 +512,10 @@ export function BillingPage() {
     const label = (id: string) => id.charAt(0).toUpperCase() + id.slice(1);
     if (subscribedPlanId === plan) {
       setPlanNotice(`You're already on ${label(plan)}.`);
+    } else if (subscribedPlanId && storeProvider) {
+      setPlanNotice(
+        `You're on ${label(subscribedPlanId)}, billed by ${storeLabel(storeProvider)}. Change it in ${storeManageLabel(storeProvider)} settings.`,
+      );
     } else if (subscribedPlanId) {
       setPlanNotice(
         `You're on ${label(subscribedPlanId)}. Switch to ${label(plan)} in Manage billing.`,
@@ -586,64 +646,6 @@ export function BillingPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {credits?.free_inference && (
-            <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4">
-              <div className="flex items-start gap-3 mb-4">
-                <div className="size-9 shrink-0 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] flex items-center justify-center">
-                  <Lightning size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-semibold text-[var(--text-primary)]">Free inference</div>
-                  <p className="text-[12px] text-[var(--text-secondary)] mt-1">
-                    Monthly hosted-model allowance for free accounts.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3 text-[12px]">
-                  <span className="text-[var(--text-secondary)]">
-                    ${credits.free_inference.used_usd.toFixed(2)} of $
-                    {credits.free_inference.monthly_allowance_usd.toFixed(2)} used this month — resets monthly
-                  </span>
-                  <span className="font-mono text-[var(--text-primary)]">
-                    {credits.free_inference.monthly_allowance_usd > 0
-                      ? Math.min(
-                          100,
-                          (credits.free_inference.used_usd /
-                            credits.free_inference.monthly_allowance_usd) *
-                            100,
-                        ).toFixed(0)
-                      : "0"}
-                    %
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-[var(--bg-primary)] overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-[var(--accent-primary)] transition-[width]"
-                    style={{
-                      width: `${
-                        credits.free_inference.monthly_allowance_usd > 0
-                          ? Math.min(
-                              100,
-                              (credits.free_inference.used_usd /
-                                credits.free_inference.monthly_allowance_usd) *
-                                100,
-                            )
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-                {credits.free_inference.remaining_usd <= 0 && (
-                  <p className="text-[12px] text-[var(--status-warning)]">
-                    Allowance used up — buy credits or subscribe to keep using hosted models.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
           <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 p-4">
             <div className="flex items-start gap-3 mb-4">
               <div className="size-9 shrink-0 rounded-lg bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] flex items-center justify-center">
@@ -722,6 +724,8 @@ export function BillingPage() {
             )}
           </div>
 
+          <ComputerOnCreditsCard onChanged={() => void load()} />
+
           <TransferToOrgPanel onTransferred={() => void load()} />
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -780,12 +784,44 @@ export function BillingPage() {
         </div>
       )}
 
+      {planConflict && (
+        <div
+          role="alert"
+          className="rounded-xl border border-solid border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-4 py-3 text-[13px] text-[var(--status-error)]"
+        >
+          You have two plans. Cancel one.
+        </div>
+      )}
+
+      {storeProvider && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 px-4 py-3">
+          <span className="inline-flex items-center rounded-sm border border-[var(--text-primary)]/40 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] text-[var(--text-primary)]">
+            Billed by {storeLabel(storeProvider)}
+          </span>
+          <span className="text-[13px] text-[var(--text-secondary)]">
+            Change or cancel this plan in {storeManageLabel(storeProvider)} settings.
+          </span>
+          {storeManageUrl && (
+            <a
+              href={storeManageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={QUIET_BUTTON_CLASS}
+            >
+              Manage in {storeManageLabel(storeProvider)} <ArrowSquareOut size={13} />
+            </a>
+          )}
+        </div>
+      )}
+
       <PlanPicker
         currentPlanName={entitlement?.planDisplayName}
         subscribedPlanId={subscribedPlanId}
         onSelect={billingAvailable ? (planId) => void handleSubscribePlan(planId) : undefined}
         onSwitch={() => void handleOpenPortal()}
+        storeBilledBy={storeProvider ? storeLabel(storeProvider) : null}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
+        freeweights={freeweightsPerks}
         busyPlanId={subscribingPlanId}
         memberName={user?.firstName || (email !== "—" ? email.split("@")[0] : null)}
         renewsAt={currentSubscription?.renews_at}
@@ -1032,7 +1068,7 @@ export function BillingPage() {
                 </span>
               ) : null;
             })()}
-            {portalAvailable && (
+            {portalAvailable && !storeProvider && (
               <button
                 type="button"
                 onClick={() => void handleOpenPortal()}

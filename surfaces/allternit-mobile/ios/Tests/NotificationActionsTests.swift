@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import Allternit
 
 /// The button → request mapping and what each answer does to the
@@ -76,6 +77,12 @@ final class NotificationActionsTests: XCTestCase {
         XCTAssertEqual(byId["BOT_REPLY"]?.actions.map(\.identifier), ["REPLY", "OPEN"])
         XCTAssertEqual(byId["RUN_DONE"]?.actions.map(\.identifier), ["OPEN"])
         XCTAssertEqual(byId["NEEDS_FIX"]?.actions.map(\.identifier), ["RETRY", "SNOOZE"])
+        XCTAssertEqual(byId["COMPUTER_ALERT"]?.actions.map(\.identifier), ["OPEN"])
+        // An agent's message: Reply runs in the background, Open brings the app up.
+        XCTAssertEqual(byId["AGENT_MESSAGE"]?.actions.map(\.identifier), ["REPLY", "OPEN"])
+        XCTAssertTrue(byId["AGENT_MESSAGE"]?.actions.first is UNTextInputNotificationAction)
+        XCTAssertFalse(byId["AGENT_MESSAGE"]?.actions.first?.options.contains(.foreground) ?? true)
+        XCTAssertTrue(byId["AGENT_MESSAGE"]?.actions.last?.options.contains(.foreground) ?? false)
         for action in byId["APPROVAL_INLINE"]?.actions ?? [] {
             XCTAssertTrue(action.options.contains(.authenticationRequired))
             XCTAssertFalse(action.options.contains(.foreground))
@@ -92,5 +99,17 @@ final class NotificationActionsTests: XCTestCase {
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://call/main")!), .callMain)
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://routine/r1")!), .routine("r1"))
         XCTAssertEqual(DeepLink.parse(url: URL(string: "https://m.allternit.com/inbox/attention:at9")!), .inboxItem("attention:at9"))
+    }
+
+    func testAgentMessagePushOpensItsThreadElseItsSession() {
+        // A bot's session: the cloud's thread link wins.
+        XCTAssertEqual(DeepLink.forPush(urlPath: "/?allternit_thread=t1&bot=b1", event: "agent.message.sent", sessionId: "ses_1"),
+                       .thread(botId: "b1", threadId: "t1"))
+        // No bot (a chat, Gizzi Code): url is "/", so the session opens.
+        XCTAssertEqual(DeepLink.forPush(urlPath: "/", event: "agent.message.sent", sessionId: "ses_1"), .session("ses_1"))
+        XCTAssertEqual(DeepLink.forPush(urlPath: nil, event: "thread.needs_user", sessionId: "ses_2"), .session("ses_2"))
+        // Other events keep their old behaviour: no link, nothing opens.
+        XCTAssertNil(DeepLink.forPush(urlPath: "/", event: "agent.run.completed", sessionId: "ses_1"))
+        XCTAssertNil(DeepLink.forPush(urlPath: "/", event: "agent.message.sent", sessionId: "  "))
     }
 }

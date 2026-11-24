@@ -6,7 +6,12 @@ import {
   ArrowRight01Icon,
   DocumentValidationIcon,
 } from "@hugeicons/core-free-icons";
+import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { isCloudGateway } from "@/lib/availability";
+import { useProjectContext } from "@/lib/project-context";
+import { ErrorRetry, REPORT_RANGES, useReportFilters } from "./cloudReport";
+import type { ReportScope } from "@/lib/gateway-analytics";
 import { formatApiError } from "@/lib/api-client";
 import {
   ListPage,
@@ -18,7 +23,14 @@ import {
   SETTINGS_SELECT_CLASS,
 } from "@/components/console-ui";
 import {
+  dateDaysAgo,
+  formatUsd,
   getGatewayLogs,
+  getUsageRequestDetail,
+  getUsageRequests,
+  tomorrowDate,
+  type UsageRequestDetail,
+  type UsageRequestRow,
   listTags,
   microdollarsToUsd,
   type GatewayLogRow,
@@ -44,7 +56,7 @@ function statusBadgeClass(status: string): string {
     : "bg-[var(--status-error)]/10 text-[var(--status-error)]";
 }
 
-export function LogsPage(): React.ReactNode {
+function RuntimeLogsPage(): React.ReactNode {
   const [logs, setLogs] = useState<GatewayLogRow[]>([]);
   const [tags, setTags] = useState<ResourceTag[]>([]);
   const [loading, setLoading] = useState(true);
@@ -355,6 +367,363 @@ export function LogsPage(): React.ReactNode {
       )}
     </ListPage>
   );
+}
+
+const CLIENT_OPTIONS = [
+  { value: "", label: "All clients" },
+  { value: "api", label: "API" },
+  { value: "playground", label: "Playground" },
+  { value: "gizzi-code", label: "Gizzi Code" },
+  { value: "runtime", label: "Runtime" },
+];
+
+function formatLatency(ms: number | null): string {
+  if (ms === null) return "—";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function formatCloudTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+function BodyBlock({ label, value }: { label: string; value: unknown }): React.ReactNode {
+  return (
+    <div className="mt-4">
+      <h3 className="m-0 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+        {label}
+      </h3>
+      <CodeTemplateBlock
+        language="json"
+        code={typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+      />
+    </div>
+  );
+}
+
+function RequestDrawer({
+  row,
+  scope,
+  onClose,
+}: {
+  row: UsageRequestRow;
+  scope: ReportScope;
+  onClose: () => void;
+}): React.ReactNode {
+  const navigate = useNavigate();
+  const [detail, setDetail] = useState<UsageRequestDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setDetail(await getUsageRequestDetail(row.request_id, scope));
+    } catch (err) {
+      setDetail(null);
+      setError(formatApiError(err, "Unable to load this request"));
+    } finally {
+      setLoading(false);
+    }
+  }, [row.request_id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const d = detail ?? { ...row, request: null, response: null };
+  const hasBodies = d.request !== null || d.response !== null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+      <div
+        className="h-full w-full max-w-lg overflow-y-auto border-l border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 sm:p-5"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label={`Request ${row.request_id} details`}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="m-0 text-[16px] font-semibold text-[var(--text-primary)]">Request details</h2>
+            <p className="m-0 mt-1 break-all font-mono text-[12px] text-[var(--text-tertiary)]">{row.request_id}</p>
+          </div>
+          <button type="button" onClick={onClose} className={cn(QUIET_BUTTON_CLASS, "px-2.5 py-1 text-[12px]")}>
+            Close
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => navigate(`/playground?replay=${encodeURIComponent(row.request_id)}${scope === "org" ? "&scope=org" : ""}`)}
+          className="mb-4 inline-flex items-center rounded-lg bg-[var(--accent-primary)] px-3.5 py-2 text-[13px] font-semibold text-[var(--ui-text-inverse)] transition-colors hover:brightness-110"
+        >
+          Replay in Playground
+        </button>
+
+        {error && <ErrorRetry message={error} onRetry={() => void load()} />}
+
+        <dl className="m-0 space-y-2 text-[13px]">
+          {(
+            [
+              ["Time", formatCloudTime(d.created_at)],
+              ["Model", d.model],
+              ["Tokens in", d.prompt_tokens.toLocaleString()],
+              ["Tokens out", d.completion_tokens.toLocaleString()],
+              ["Cost", formatUsd(d.cost_usd)],
+              ["Latency", d.latency_ms === null ? null : formatLatency(d.latency_ms)],
+              ["Client", d.client],
+              ["Key", d.key],
+              ["Request ID", d.request_id],
+            ] as Array<[string, string | null]>
+          )
+            .filter(([, v]) => v !== null)
+            .map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-4">
+                <dt className="shrink-0 text-[var(--text-tertiary)]">{label}</dt>
+                <dd className="m-0 min-w-0 break-all text-right font-mono text-[12px] text-[var(--text-secondary)]">
+                  {value}
+                </dd>
+              </div>
+            ))}
+        </dl>
+
+        {loading && !detail ? (
+          <div className="mt-4">
+            <SkeletonRow lines={3} />
+          </div>
+        ) : hasBodies ? (
+          <>
+            {d.request !== null && <BodyBlock label="Request" value={d.request} />}
+            {d.response !== null && <BodyBlock label="Response" value={d.response} />}
+          </>
+        ) : !error ? (
+          <p className="mt-4 rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3 text-[12px] text-[var(--text-secondary)]">
+            Request and response bodies are only kept when the project turns on request logging.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Allternit Cloud: billed requests from GET /api/v1/me/usage/requests. */
+function CloudLogsPage(): React.ReactNode {
+  const ctx = useProjectContext();
+  const [override, setOverride] = useState<string | undefined>(undefined);
+  const projectId = override ?? ctx.project?.id ?? "";
+  const { isOrgAdmin, scope, setScope } = useReportFilters();
+  const [rangeDays, setRangeDays] = useState<number>(7);
+  const [client, setClient] = useState("");
+  const [search, setSearch] = useState("");
+  const [model, setModel] = useState("");
+  const [rows, setRows] = useState<UsageRequestRow[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<UsageRequestRow | null>(null);
+  const projectNames = useMemo(() => new Map(ctx.projects.map((p) => [p.id, p.name])), [ctx.projects]);
+
+  // Debounce the model filter so each keystroke is not a request.
+  useEffect(() => {
+    const t = window.setTimeout(() => setModel(search.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  const load = useCallback(
+    async (cursor?: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const page = await getUsageRequests({
+          from: dateDaysAgo(rangeDays),
+          to: tomorrowDate(),
+          projectId,
+          client,
+          model,
+          cursor,
+          limit: PAGE_LIMIT,
+          scope,
+        });
+        setRows(page.data);
+        setNextCursor(page.next_cursor);
+      } catch (err) {
+        setRows([]);
+        setNextCursor(null);
+        setError(formatApiError(err, "Unable to load logs"));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [rangeDays, projectId, client, model, scope],
+  );
+
+  useEffect(() => {
+    setCursorStack([]);
+    void load();
+  }, [load]);
+
+  const goNext = () => {
+    if (!nextCursor) return;
+    setCursorStack((stack) => [...stack, nextCursor]);
+    void load(nextCursor);
+  };
+  const goBack = () => {
+    const next = cursorStack.slice(0, -1);
+    setCursorStack(next);
+    void load(next[next.length - 1]);
+  };
+
+  return (
+    <ListPage
+      title="Logs"
+      subtitle="Billed requests only. Calls that failed before billing are not listed."
+      searchPlaceholder="Filter by model"
+      onSearch={setSearch}
+      filters={
+        <>
+          <select
+            value={projectId}
+            onChange={(e) => setOverride(e.target.value)}
+            aria-label="Project"
+            className={cn(SETTINGS_SELECT_CLASS, "min-w-0 max-w-[200px]")}
+          >
+            <option value="">All projects</option>
+            {ctx.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={client}
+            onChange={(e) => setClient(e.target.value)}
+            aria-label="Filter by client"
+            className={SETTINGS_SELECT_CLASS}
+          >
+            {CLIENT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={String(rangeDays)}
+            onChange={(e) => setRangeDays(Number(e.target.value))}
+            aria-label="Filter by range"
+            className={SETTINGS_SELECT_CLASS}
+          >
+            {REPORT_RANGES.map((d) => (
+              <option key={d} value={d}>
+                Last {d} days
+              </option>
+            ))}
+          </select>
+          {isOrgAdmin && (
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as ReportScope)}
+              aria-label="Scope"
+              className={SETTINGS_SELECT_CLASS}
+            >
+              <option value="me">Just me</option>
+              <option value="org">Whole organization</option>
+            </select>
+          )}
+        </>
+      }
+    >
+      {error && <ErrorRetry message={error} onRetry={() => void load(cursorStack[cursorStack.length - 1])} />}
+
+      {loading && rows.length === 0 ? (
+        <SkeletonRow lines={8} />
+      ) : rows.length === 0 ? (
+        !error && (
+          <EmptyState
+            icon={<HugeiconsIcon icon={DocumentValidationIcon} size={32} />}
+            title="No billed requests found"
+            caption={
+              model || client
+                ? "No requests match these filters. Try widening them."
+                : "Only billed requests are listed. Send a request with a project API key and it appears here."
+            }
+          />
+        )
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-xl border border-solid border-[var(--border-subtle)]">
+            <table className="w-full border-collapse text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-solid border-[var(--border-subtle)] text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
+                  <th className="px-3 py-2 font-medium">Request</th>
+                  <th className="px-3 py-2 font-medium">Time</th>
+                  <th className="px-3 py-2 font-medium">Model</th>
+                  <th className="px-3 py-2 font-medium">Client</th>
+                  <th className="px-3 py-2 font-medium">Project</th>
+                  <th className="px-3 py-2 font-medium">Tokens in</th>
+                  <th className="px-3 py-2 font-medium">Tokens out</th>
+                  <th className="px-3 py-2 font-medium">Cost</th>
+                  <th className="px-3 py-2 font-medium">Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.request_id}
+                    onClick={() => setSelected(row)}
+                    className="cursor-pointer border-b border-solid border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--surface-hover)]"
+                  >
+                    <td className="px-3 py-2.5">
+                      <MonoChip>{row.request_id.slice(0, 14)}…</MonoChip>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-[var(--text-secondary)]">
+                      {formatCloudTime(row.created_at)}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-[12px] text-[var(--text-secondary)]">{row.model ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-[var(--text-secondary)]">{row.client ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-[var(--text-secondary)]">
+                      {row.project_id ? projectNames.get(row.project_id) ?? row.project_id : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-[var(--text-secondary)]">{row.prompt_tokens.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-[var(--text-secondary)]">{row.completion_tokens.toLocaleString()}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-[var(--text-secondary)]">{formatUsd(row.cost_usd)}</td>
+                    <td className="px-3 py-2.5 text-[var(--text-secondary)]">{formatLatency(row.latency_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex items-center justify-end gap-2 text-[12px] text-[var(--text-secondary)]">
+            <button
+              type="button"
+              aria-label="Previous page"
+              disabled={cursorStack.length === 0 || loading}
+              onClick={goBack}
+              className="inline-flex size-7 items-center justify-center rounded-md border border-solid border-[var(--border-subtle)] transition-colors hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
+            </button>
+            <button
+              type="button"
+              aria-label="Next page"
+              disabled={!nextCursor || loading}
+              onClick={goNext}
+              className="inline-flex size-7 items-center justify-center rounded-md border border-solid border-[var(--border-subtle)] transition-colors hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+            </button>
+          </div>
+        </>
+      )}
+
+      {selected && <RequestDrawer row={selected} scope={scope} onClose={() => setSelected(null)} />}
+    </ListPage>
+  );
+}
+
+export function LogsPage(): React.ReactNode {
+  return isCloudGateway() ? <CloudLogsPage /> : <RuntimeLogsPage />;
 }
 
 export default LogsPage;

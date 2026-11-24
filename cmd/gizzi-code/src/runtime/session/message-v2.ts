@@ -6,6 +6,7 @@ import { Identifier } from "@/shared/id/id"
 import { LSP } from "@/runtime/integrations/lsp"
 import { Snapshot } from "@/runtime/session/snapshot"
 import { fn } from "@/shared/util/fn"
+import { fenceUntrusted, type FenceSource } from "@/runtime/tools/guard/untrusted"
 import { Database, eq, desc, inArray } from "@/runtime/session/storage/db"
 import { MessageTable, PartTable } from "@/runtime/session/session.sql"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
@@ -298,6 +299,18 @@ export namespace MessageV2 {
   })
   export type ToolPart = z.infer<typeof ToolPart>
 
+  /**
+   * PR8a: the call's label (3 to 8 words for the activity row). Tool.define
+   * saves it as `state.metadata.label`; before that lands, the model's own
+   * `input.label` is used.
+   */
+  export function toolLabel(part: Pick<ToolPart, "state">): string | undefined {
+    const state = part.state
+    const saved = "metadata" in state ? state.metadata?.label : undefined
+    const label = saved ?? state.input?.label
+    return typeof label === "string" && label.trim() ? label.trim() : undefined
+  }
+
   const Base = z.object({
     id: z.string(),
     sessionID: z.string(),
@@ -405,6 +418,17 @@ export namespace MessageV2 {
     }),
     /** Token counts were estimated because the provider reported none. */
     tokensEstimated: z.boolean().optional(),
+    /** Memory entries this turn touched, collected from memory tool parts (never model self-report). */
+    memory_refs: z
+      .array(
+        z.object({
+          id: z.string(),
+          title: z.string().optional(),
+          action: z.enum(["recalled", "saved", "updated", "deleted"]),
+        }),
+      )
+      .max(10)
+      .optional(),
     answerPolicy: z.object({
       version: z.literal(1), selected: z.string().optional(), returned: z.string().optional(),
       status: z.enum(['accepted', 'repairing', 'rejected']), attempt: z.number().int(), problems: z.array(z.string()),
@@ -538,13 +562,40 @@ export namespace MessageV2 {
     const name = part.filename || "file"
     const bytes = dataUrlBytes(part.url)
     const facts = [part.mime, bytes ? formatSize(bytes.length) : undefined].filter(Boolean).join(", ")
-    const note = (reason: string) => `Attached file ${name} (${facts}): ${reason}; a code tool can read the file.`
+    const note = (reason: string) => `Attached file ${name} (${facts}): ${reason}; use run_code to read it.`
     if (userText.includes(`[Attached file: ${name}]`)) return note("its text is in the message above")
     if (!isTextLike(part.mime)) return note("binary, not shown inline")
     if (!bytes) return note("not shown inline")
     const text = bytes.toString("utf8")
     if (text.length > DATA_FILE_INLINE_MAX_CHARS) return note("too large to show inline")
     return options.bare ? text : `[Attached file: ${name}]\n${text}\n[/Attached file]`
+  }
+
+  const CLEARED_TOOL_RESULT = "[Old tool result content cleared]"
+
+  /**
+   * Tools whose results carry text the person did not write (web pages, mail,
+   * connector and MCP results, past chats, resources), by tool id. Their text
+   * reaches the model inside an untrusted fence. Mail reaches the runtime
+   * through connector and MCP tools; the agent-email tools return only status.
+   */
+  const UNTRUSTED_TOOL_SOURCE: Record<string, FenceSource> = {
+    webfetch: "web",
+    websearch: "web",
+    codesearch: "web",
+    lookup: "web",
+    connector_search: "connector",
+    history_recall: "past_chat",
+    thread_read: "past_chat",
+    thread_recent: "past_chat",
+    thread_search: "past_chat",
+    resource: "resource",
+  }
+
+  /** The fence source for a tool id, or undefined when its result is not fenced. */
+  export function untrustedSourceOf(toolName: string): FenceSource | undefined {
+    if (toolName.startsWith("mcp__")) return "mcp"
+    return UNTRUSTED_TOOL_SOURCE[toolName]
   }
 
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
@@ -569,9 +620,14 @@ export namespace MessageV2 {
       return false
     })()
 
-    const toModelOutput = (output: unknown) => {
+    // Results whose text someone other than the person wrote are fenced here,
+    // on the model-facing copy only; stored parts and the UI keep the raw text.
+    const fence = (text: string, source: FenceSource | undefined) =>
+      source && text && text !== CLEARED_TOOL_RESULT ? fenceUntrusted(text, source) : text
+
+    const toModelOutput = (output: unknown, source?: FenceSource) => {
       if (typeof output === "string") {
-        return { type: "text", value: output }
+        return { type: "text", value: fence(output, source) }
       }
 
       if (typeof output === "object") {
@@ -586,7 +642,7 @@ export namespace MessageV2 {
         return {
           type: "content",
           value: [
-            { type: "text", text: outputObject.text },
+            { type: "text", text: fence(outputObject.text, source) },
             ...attachments.map((attachment) => ({
               type: "media",
               mediaType: attachment.mime,
@@ -688,7 +744,7 @@ export namespace MessageV2 {
           if (part.type === "tool") {
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
-              const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
+              const outputText = part.state.time.compacted ? CLEARED_TOOL_RESULT : part.state.output
               const attachments = part.state.time.compacted ? [] : (part.state.attachments ?? [])
 
               // For providers that don't support media in tool results, extract media files
@@ -773,7 +829,12 @@ export namespace MessageV2 {
       }
     }
 
-    const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
+    const tools = Object.fromEntries(
+      Array.from(toolNames).map((toolName) => {
+        const source = untrustedSourceOf(toolName)
+        return [toolName, { toModelOutput: (output: unknown) => toModelOutput(output, source) }]
+      }),
+    )
 
     return convertToModelMessages(
       result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),

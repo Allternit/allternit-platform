@@ -1,0 +1,9 @@
+{
+  "type": "RestoreVersionRequest",
+  "valid": true,
+  "case": "Restore an older version as the new current one.",
+  "message": {
+    "version_id": "v_5",
+    "base_rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+  }
+}

@@ -51,6 +51,12 @@ struct QuestionCardView: View {
                     .foregroundColor(Color("TextSecondary"))
                     .transition(.opacity)
             } else {
+                if request.isAsync, let assumption = request.assumption {
+                    Text("Assumed: \(assumption)")
+                        .font(.footnote)
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 questionBody
                 footer
             }
@@ -275,7 +281,7 @@ struct QuestionCardView: View {
                 .disabled(isSending)
             }
             Spacer(minLength: 0)
-            Button("Skip") { skipCurrent() }
+            Button(request.isAsync ? "Dismiss" : "Skip") { skipCurrent() }
                 .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
                 .disabled(isSending)
             Button {
@@ -380,18 +386,20 @@ struct QuestionCardView: View {
             do {
                 if allSkipped {
                     try await store.skip(request)
-                    withAnimation(.easeOut(duration: 0.2)) { sentLabel = "Skipped" }
+                    withAnimation(.easeOut(duration: 0.2)) { sentLabel = request.isAsync ? "Dismissed" : "Skipped" }
                 } else {
                     try await store.answer(request, answers: answers)
-                    withAnimation(.easeOut(duration: 0.2)) { sentLabel = agentName.map { "Sent to \($0)" } ?? "Sent" }
+                    withAnimation(.easeOut(duration: 0.2)) { sentLabel = request.isAsync
+                        ? (agentName.map { "\($0) is working" } ?? "Working")
+                        : (agentName.map { "Sent to \($0)" } ?? "Sent") }
                 }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
                 isSending = false
                 onResolved()
             } catch {
                 isSending = false
                 sendError = "Couldn't send your answer. \(FriendlyErrorMessage.from(error.localizedDescription))"
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             }
         }
     }

@@ -7,8 +7,11 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, safeStorage, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
-import { fileURLToPath } from 'node:url';
+import { setLinuxAutostart, isLinuxAutostartEnabled } from './linux-autostart.js';
+import { noteShortcutResult } from './shortcut-notice.js';
+import { warnIfNoKeyring } from './keyring-notice.js';
+import { app, shell, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
@@ -21,7 +24,8 @@ import { execFile } from 'node:child_process';
 import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
-import { updateElectronApp } from 'update-electron-app';
+import { startAppUpdater } from './app-updater.js';
+import { passAppImageSandboxGate } from './appimage-sandbox.js';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
@@ -39,13 +43,21 @@ import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.j
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
+import { isModelLink, modelLinkTarget } from './model-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
-import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
+import {
+  writeSecret,
+  FABRIC_WORKER_TOKEN_KEY,
+  hasKeychainSealedSecrets,
+  keychainSettled,
+  secretsReady,
+} from './secure-store.js';
+import { decryptString, encryptString, isEncryptionAvailable, osCryptReady, osCryptState } from './os-crypt.js';
 import { localEngineManager } from './local-engine-manager.js';
 import { installWindowsGizziOnPath } from './windows-gizzi-path.js';
 import {
@@ -65,6 +77,7 @@ import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
 import { subsGatewayManager } from './subs-gateway-manager.js';
+import { filesDriveWinManager } from './files-drive-win-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
 import { PORTS, URLS, devUiUrl, apiUrl, notebookUrl, staticUiUrl } from './config.js';
 import { acceptsDeviceToken, isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
@@ -77,11 +90,14 @@ import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager
 
 import { tunnelManager } from './tunnel-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
+import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
+import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTINGS_SCRIPT } from './window-chrome.js';
 // Side-effect import: constructing the manager registers the device-pairing:*
 // IPC handlers. A named import that is never read gets elided by tsc, which
 // left Settings → Devices failing with "No handler registered".
 import './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
+import { filesDriveManager } from './files-drive-manager.js';
 import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
@@ -90,7 +106,7 @@ import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-r
 import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
-import { DEFAULT_RUNTIME_FEED } from './runtime-package.js';
+import { DEFAULT_RUNTIME_FEED, timerLateMs } from './runtime-package.js';
 import {
   checkPermissions,
   presentGuide,
@@ -112,6 +128,8 @@ import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
 import { registerPhoneIpc } from './phone-ipc.js';
 import { registerPhoneLinkIpc } from './phone-link-ipc.js';
+import { registerVoiceKeysIpc } from './voice-keys-ipc.js';
+import { registerSelfHostCredentialsIpc } from './selfhost-credentials-ipc.js';
 import {
   createCaptureSession,
   stopCaptureSession,
@@ -133,6 +151,7 @@ import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './co
 import { isProvisionedMode } from './provisioned-bootstrap.js';
 import { startIdleApply } from './provisioned-runtime-apply.js';
 import { buildAppMenu, type AppMenuCommand } from './app-menu.js';
+import { registerScreenContextIpc } from './screen-context.js';
 import {
   broadcastToMainWindows,
   getFocusedMainWindow,
@@ -299,45 +318,18 @@ app.on('render-process-gone', (_event, webContents, details) => {
   }
 });
 
-// Auto-updater
-// Defaults read package.json repository, but we make the feed explicit so
-// local/self-hosted builds never accidentally phone home to the wrong repo.
-updateElectronApp({
-  repo: 'Allternit/desktop',
-  updateInterval: '1 hour',
-  logger: log,
-  notifyUser: false, // renderer will observe app:update-status and prompt
-});
-
-// Forward updater events to any renderer window so the platform UI can show
-// status and a restart prompt. These are Electron's built-in autoUpdater
-// events (the same channel used by update-electron-app); they carry less
-// detail than electron-updater's events, but they are sufficient for status
-// UI.
-autoUpdater.on('checking-for-update', () => {
-  broadcastUpdateStatus({ state: 'checking' });
-});
-autoUpdater.on('update-available', () => {
-  broadcastUpdateStatus({ state: 'available' });
-});
-autoUpdater.on('update-not-available', () => {
-  broadcastUpdateStatus({ state: 'up-to-date' });
-});
-autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName, _releaseDate, updateURL) => {
-  appUpdateDownloaded = true;
-  broadcastUpdateStatus({
-    state: 'downloaded',
-    version: releaseName,
-    releaseNotes: typeof releaseNotes === 'string' ? releaseNotes : undefined,
-    updateURL,
-  });
-});
-autoUpdater.on('error', (error) => {
-  log.error('[autoUpdater]', error);
-  broadcastUpdateStatus({ state: 'error', message: error?.message ?? String(error) });
-});
-
 let appUpdateDownloaded = false;
+
+// App updates: electron-updater on macOS, Windows and Linux (.deb), reading
+// the Allternit/desktop GitHub releases (app-updater.ts). It checks at start
+// and hourly, downloads in the background and reports on app:update-status,
+// which the renderer turns into the restart prompt. null in dev builds and on
+// Linux installs that cannot update themselves.
+const appUpdater = startAppUpdater({
+  logger: log,
+  broadcast: (status) => broadcastUpdateStatus(status),
+  onDownloaded: () => { appUpdateDownloaded = true; },
+});
 let runtimeUpdateTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -366,7 +358,7 @@ async function checkRuntimeNow(): Promise<string | null> {
     return staged;
   } catch (err) {
     runtimeFailures += 1;
-    log.warn('[Runtime] update check failed:', (err as Error).message ?? err);
+    log.error(`[Runtime] update check failed (${runtimeFailures} in a row):`, (err as Error).message ?? err);
     return null;
   }
 }
@@ -393,14 +385,34 @@ function startProvisionedRuntimeApply() {
   });
 }
 
+const RUNTIME_FIRST_CHECK_MS = 60 * 1000;
+/** A runtime check timer this late means the main thread was blocked. */
+const RUNTIME_LATE_WARN_MS = 30 * 1000;
+let runtimeScheduleLogged = false;
+
 function scheduleRuntimeUpdates() {
   startProvisionedRuntimeApply();
-  if (!runtimeFeed() || runtimeUpdateTimer) return;
+  if (runtimeUpdateTimer) return;
+  if (!runtimeFeed()) {
+    if (!runtimeScheduleLogged) {
+      runtimeScheduleLogged = true;
+      log.info(`[Runtime] background updates off (${app.isPackaged ? 'ALLTERNIT_RUNTIME_FEED=off' : 'unpackaged build'})`);
+    }
+    return;
+  }
+  let expectedAt = Date.now() + RUNTIME_FIRST_CHECK_MS;
+  log.info(`[Runtime] first update check in ${RUNTIME_FIRST_CHECK_MS / 1000}s, then every ${RUNTIME_CHECK_EVERY_MS / 3_600_000}h (feed ${runtimeFeed()})`);
   runtimeUpdateTimer = setTimeout(async function tick() {
+    const late = timerLateMs(expectedAt);
+    if (late > RUNTIME_LATE_WARN_MS) {
+      log.warn(`[Runtime] update check ran ${Math.round(late / 1000)}s late: the main process was blocked (often an unanswered Keychain prompt)`);
+    }
     await checkRuntimeNow();
     const wait = runtimeFailures ? RUNTIME_RETRY_MS[Math.min(runtimeFailures, RUNTIME_RETRY_MS.length) - 1] : RUNTIME_CHECK_EVERY_MS;
+    if (runtimeFailures) log.warn(`[Runtime] retrying the update check in ${Math.round(wait / 60_000)} min`);
+    expectedAt = Date.now() + wait;
     runtimeUpdateTimer = setTimeout(tick, wait);
-  }, 60 * 1000);
+  }, RUNTIME_FIRST_CHECK_MS);
 }
 
 function broadcastUpdateStatus(status: UpdateStatus) {
@@ -478,11 +490,18 @@ let pushServiceState = () => {
 let miniWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
+/** Calls Gizzi is in, as the app window last reported them (meetings:presence). */
+let meetingPresence: MeetingPresence[] = [];
 let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // False until startup has picked the UI to load. Until then activePlatformUrl
 // is only its default (the hosted ai.allternit.com), which the desktop shell
 // must never load: its CSP blocks the local API and its chunks go stale on deploy.
 let platformUiResolved = false;
+/** The main window's last workspace load failed (the Connect page is showing). */
+let workspaceLoadFailed = false;
+
+/** Bundled Connect screen (choose local or VPS backend). */
+const CONNECT_PAGE_PATH = join(__dirname, '../../static/connect.html');
 
 // Central security policy for this process. App origins are the platform UI
 // (remote or local static export), the HUD/office/design/session windows that
@@ -496,6 +515,9 @@ configureSecurity({
     }
     return origins;
   },
+  // The Connect screen (tray > Connection settings) is a bundled file page
+  // that sets and tests the backend over guarded IPC.
+  getAppFileUrls: () => [pathToFileURL(CONNECT_PAGE_PATH).href],
 });
 
 /**
@@ -510,6 +532,32 @@ function handleGuarded(
 ): void {
   ipcMain.handle(channel, (event, ...args) => {
     assertTrustedSender(event, channel);
+    return fn(event, ...args);
+  });
+}
+
+/**
+ * handleGuarded for channels that read or write secure-store secrets (local
+ * envelope in dev, OS encryption when packaged): waits for the Keychain unlock
+ * first so a handler never hits an unlock that is still pending.
+ */
+function handleGuardedSecrets(
+  channel: string,
+  fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+): void {
+  handleGuarded(channel, async (event, ...args) => {
+    await secretsReady();
+    return fn(event, ...args);
+  });
+}
+
+/** handleGuarded for channels whose secrets use OS encryption in every build (mini-apps, OAuth vault). */
+function handleGuardedKeychain(
+  channel: string,
+  fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+): void {
+  handleGuarded(channel, async (event, ...args) => {
+    await keychainSettled();
     return fn(event, ...args);
   });
 }
@@ -573,7 +621,12 @@ async function startGizziRuntime(): Promise<string> {
     existingPassword,
     apiToken: session?.accessToken,
     runtimeId: session?.runtimeId,
-    extraEnv: authManager.getConnectorSidecarEnvironment(),
+    extraEnv: {
+      ...authManager.getConnectorSidecarEnvironment(),
+      // Same token the API gets below: without it gizzi never registers the
+      // bundled allternit-connectors / allternit-tools MCP servers.
+      ...authManager.getInternalServiceLaunchEnvironment().gizzi,
+    },
   });
 }
 
@@ -616,6 +669,7 @@ async function startManagedFabricWorker(): Promise<void> {
     throw new Error(`worker credential provision failed: ${ensureRes.status} ${body.slice(0, 200)}`);
   }
   const ensured = (await ensureRes.json()) as { principal_id: string; token: string };
+  await secretsReady();
   writeSecret(FABRIC_WORKER_TOKEN_KEY, ensured.token);
   log.info(`[Main] Fabric worker credential provisioned for ${ensured.principal_id} (stored in Keychain)`);
   // P2.2/2.3: the worker's agentic jobs use the existing model router (the
@@ -1029,7 +1083,7 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     y: secondary && bounds.y !== undefined ? bounds.y + 28 * listMainWindows().length : bounds.y,
     minWidth,
     minHeight,
-    title: 'Allternit Desktop',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
     show: true, // Show immediately
@@ -1073,7 +1127,21 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     mainWindow = window;
     noteMainWindowFocused(window);
   });
-  window.webContents.on('page-title-updated', () => installAppMenu());
+  window.webContents.on('page-title-updated', (event) => {
+    // The Connect page keeps the product title; its <title> is not for the title bar.
+    if (isPrePairingPage(window.webContents.getURL())) event.preventDefault();
+    installAppMenu();
+  });
+  // Connect page and pairing error screens: no File/Edit/View bar on Linux and
+  // Windows. The workspace keeps its menu (accelerators work either way).
+  if (hidesMenuBarBeforePairing(process.platform)) {
+    const syncMenuBar = () => {
+      if (window.isDestroyed()) return;
+      window.setMenuBarVisibility(!isPrePairingPage(window.webContents.getURL()));
+    };
+    window.webContents.on('did-navigate', syncMenuBar);
+    window.webContents.on('did-finish-load', syncMenuBar);
+  }
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.
   // Local `/api/*` gets the paired device token. Cloud host `cloud` is a
@@ -1146,6 +1214,11 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
   window.on('unmaximize', () => emitWindowEvent('unmaximize', { maximized: false }));
   window.on('minimize', () => emitWindowEvent('minimize', { minimized: true }));
   window.on('restore', () => emitWindowEvent('restore', { minimized: false }));
+  // backgroundThrottling is off for this window (agents keep working while it
+  // is hidden), which also keeps document.visibilityState "visible". The UI's
+  // app-visibility module pauses idle decoration on these events instead.
+  window.on('hide', () => emitWindowEvent('hide', { hidden: true }));
+  window.on('show', () => emitWindowEvent('show', { hidden: false }));
   window.on('enter-full-screen', () => emitWindowEvent('enter-full-screen', { fullscreen: true }));
   window.on('leave-full-screen', () => emitWindowEvent('leave-full-screen', { fullscreen: false }));
   window.on('closed', () => {
@@ -1313,6 +1386,9 @@ function initializeAppOnce(): Promise<void> {
 
 async function initializeApp(): Promise<void> {
   log.info('[Main] Initializing Allternit Desktop v' + app.getVersion());
+  // Reached from whenReady (after the Keychain gate) and from a dock click
+  // (activate); either way nothing below may read a secret mid-unlock.
+  await secretsReady();
   // Voice is an optional local capability: start it automatically, but never
   // prevent the rest of the desktop from opening if model initialization fails.
   if (!process.env.ALLTERNIT_DISABLE_VOICE) {
@@ -1448,6 +1524,9 @@ async function initializeBundledMode(): Promise<void> {
     // it; failures land in system-one:get-status. Started this early so Laya is
     // ready for the first decisions (the API's "auto" S1 backend uses it once healthy).
     void systemOne.startWithApp();
+    // Files drive (macOS): each computer as a Finder location. Never awaited;
+    // it needs only the account, and failures land in files-drive:status.
+    filesDriveManager.start();
     const gizziTask = (async (): Promise<string | null> => {
       try {
         const url = await startGizziRuntime();
@@ -1609,6 +1688,7 @@ async function initializeBundledMode(): Promise<void> {
           ...acuGatewayManager.getLaunchEnvironment(),
           ...authManager.getPlatformEncryptionEnvironment(),
           ...authManager.getConnectorSidecarEnvironment(),
+          ...authManager.getInternalServiceLaunchEnvironment().api,
         },
       });
     } catch (apiErr) {
@@ -1791,6 +1871,7 @@ async function initializeBundledMode(): Promise<void> {
       log.info('[Main] Window started loading');
     });
     mainWindow.webContents.on('did-finish-load', () => {
+      if (mainWindow && !isPrePairingPage(mainWindow.webContents.getURL())) workspaceLoadFailed = false;
       prewarmHudWindowSoon();
       mainWindowLoaded = true;
       log.info('[Main] Window finished loading');
@@ -1799,8 +1880,13 @@ async function initializeBundledMode(): Promise<void> {
       sessionLinkReady = true;
       flushSessionLink();
     });
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       log.error(`[Main] Window failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
+      // The workspace can't open: show "Where Allternit runs" instead of a blank window.
+      if (isWorkspaceLoadFailure(errorCode, isMainFrame, validatedURL) && mainWindow && !mainWindow.isDestroyed()) {
+        workspaceLoadFailed = true;
+        void mainWindow.loadFile(CONNECT_PAGE_PATH, { query: { reason: 'load-failed' } });
+      }
     });
     mainWindow.webContents.on('did-navigate', (_event, url) => {
       log.info(`[Main] Window did-navigate: ${url}`);
@@ -2272,6 +2358,10 @@ function createMiniWindow(): BrowserWindow {
 }
 
 function toggleMiniWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[QuickChat] Not opening before pairing');
+    return;
+  }
   if (!miniWindow || miniWindow.isDestroyed()) {
     miniWindow = createMiniWindow();
     miniWindow.once('ready-to-show', () => {
@@ -2293,12 +2383,28 @@ function toggleMiniWindow(): void {
 // ============================================================================
 
 function showConnectionSettings(): void {
-  if (!mainWindow) {
+  const currentUrl = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : '';
+  if (connectionSettingsTarget({ platformUiResolved, workspaceLoadFailed, currentUrl }) === 'computers-settings') {
+    // Settings › Computers in the app: the one connect kit every surface uses.
+    showOrReopenMainWindow();
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    const open = () => {
+      win.webContents.executeJavaScript(OPEN_COMPUTERS_SETTINGS_SCRIPT).catch((error) => {
+        log.warn('[Tray] Could not open Settings › Computers:', error);
+      });
+    };
+    // A window that is still loading mounts the shell after did-finish-load.
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => setTimeout(open, 1500));
+    else open();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createMainWindow();
   }
   mainWindow.show();
   mainWindow.focus();
-  mainWindow.loadFile(join(__dirname, '../../static/connect.html'));
+  mainWindow.loadFile(CONNECT_PAGE_PATH);
 }
 
 /** Send a workspace command from the app menu or tray to the main window. */
@@ -2316,11 +2422,7 @@ function installAppMenu(): void {
     toggleHud: () => toggleHudWindow(),
     checkForUpdates: () => {
       if (!app.isPackaged) return;
-      try {
-        autoUpdater.checkForUpdates();
-      } catch (error) {
-        log.warn('[Menu] Update check failed:', error);
-      }
+      appUpdater?.check(true);
       void checkRuntimeNow();
     },
     openUrl: (url) => openExternalAllowlisted(url),
@@ -2389,6 +2491,64 @@ function openSystemDrawer(tab?: SystemTab): void {
   mainWindow?.webContents.send('companion:system-open', tab ?? null);
 }
 
+// ─── Meetings presence (tray + macOS menu bar) ──────────────────────────────
+// allternit-ai MeetingsHost polls the calls Gizzi is in and reports them
+// through window.allternit.meetings.reportPresence; only the main window's top
+// frame is trusted, and the payload is reduced to known states and short text.
+
+type MeetingGizzi = 'launching' | 'joining' | 'waiting_admit' | 'live' | 'paused';
+interface MeetingPresence { id: string; title: string; gizzi: MeetingGizzi }
+
+const MEETING_STATE_LABEL: Record<MeetingGizzi, string> = {
+  launching: 'Joining',
+  joining: 'Joining',
+  waiting_admit: 'Waiting to be let in',
+  live: 'Live',
+  paused: 'Not listening',
+};
+const MEETING_STATE_DOT: Record<MeetingGizzi, string> = {
+  launching: '🟡',
+  joining: '🟡',
+  waiting_admit: '🟠',
+  live: '🟢',
+  paused: '⚪️',
+};
+
+function sanitizeMeetingPresence(value: unknown): MeetingPresence[] {
+  const list = (value as { meetings?: unknown } | null)?.meetings;
+  if (!Array.isArray(list)) return [];
+  const out: MeetingPresence[] = [];
+  for (const raw of list.slice(0, 5)) {
+    const m = raw as { id?: unknown; title?: unknown; gizzi?: unknown };
+    if (typeof m?.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(m.id)) continue;
+    if (typeof m.gizzi !== 'string' || !(m.gizzi in MEETING_STATE_LABEL)) continue;
+    const title = typeof m.title === 'string' ? m.title.replace(/\s+/g, ' ').trim() : '';
+    out.push({ id: m.id, gizzi: m.gizzi as MeetingGizzi, title: (title || 'Your call').slice(0, 60) });
+  }
+  return out;
+}
+
+/** "Waiting" beats "Live" beats "Joining": the state that needs the person first. */
+function meetingMenuBarTitle(list: MeetingPresence[]): string {
+  if (list.some((m) => m.gizzi === 'waiting_admit')) return 'Gizzi waiting';
+  if (list.some((m) => m.gizzi === 'live' || m.gizzi === 'paused')) return 'Gizzi live';
+  if (list.length) return 'Gizzi joining';
+  return '';
+}
+
+function openMeetingFromTray(meetingId: string): void {
+  showOrReopenMainWindow();
+  mainWindow?.webContents.send('meetings:open', meetingId);
+}
+
+ipcMain.on('meetings:presence', (event, value: unknown) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return;
+  const next = sanitizeMeetingPresence(value);
+  if (JSON.stringify(next) === JSON.stringify(meetingPresence)) return;
+  meetingPresence = next;
+  void updateTrayMenu();
+});
+
 async function updateTrayMenu(): Promise<void> {
   if (!tray) return;
 
@@ -2434,9 +2594,22 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Meetings (behind the web app's `meetings` flag; empty when it is off).
+  const meetingsSection: Electron.MenuItemConstructorOptions[] = meetingPresence.length
+    ? [
+        { label: 'Meetings', enabled: false },
+        ...meetingPresence.map((m): Electron.MenuItemConstructorOptions => ({
+          label: `${MEETING_STATE_DOT[m.gizzi]} ${MEETING_STATE_LABEL[m.gizzi]}: ${m.title}`,
+          click: () => openMeetingFromTray(m.id),
+        })),
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...meetingsSection,
     ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
     { label: `Mode: ${modeLabel}`, enabled: false },
@@ -2471,6 +2644,8 @@ async function updateTrayMenu(): Promise<void> {
   ];
 
   trayMenu = Menu.buildFromTemplate(template);
+  // macOS menu bar: a short word next to the icon while Gizzi is in a call.
+  if (process.platform === 'darwin') tray.setTitle(meetingMenuBarTitle(meetingPresence));
   // macOS: left click is the HUD, so the menu pops up on right-click only.
   if (process.platform !== 'darwin') tray.setContextMenu(trayMenu);
 }
@@ -2577,6 +2752,24 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     return;
   }
 
+  // Model deep links from a Freeweights page: allternit://open?model=<id> and
+  // allternit://open?view=model-lab&model=<id>. Loaded into the main window as
+  // the same ?model= / ?view= params the web app reads (model-link.ts). Bad
+  // ids are dropped, never passed on.
+  if (isModelLink(url)) {
+    const target = modelLinkTarget(activePlatformUrl, url);
+    if (!target) {
+      log.warn('[Main] rejected model link');
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
+    void mainWindow.loadURL(target);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
   // `gizzi login` from a terminal on this Mac: allternit://pair?code=ABCD-1234
   // opens the pairing approval page in the signed-in app, so the terminal
   // uses the same account with one click instead of a second browser sign-in.
@@ -2668,8 +2861,86 @@ app.on('open-file', (event, filePath) => {
   }
 });
 
+const KEYCHAIN_PROMPT_TEXT = 'macOS is asking for permission. Click Always Allow.';
+const KEYCHAIN_WINDOW_DELAY_MS = 1_500;
+const KEYCHAIN_LOG_INTERVAL_MS = 10_000;
+/** True while startup waits on the Keychain: nothing has started, so quit must not wait on cleanup. */
+let keychainGateOpen = false;
+
+/**
+ * One Keychain unlock attempt. The addon reads the item on its own thread, so
+ * the event loop (timers, windows, Quit) keeps running while macOS shows its
+ * prompt. A small window explains the prompt if it hasn't resolved in 1.5 s.
+ */
+async function waitForKeychainUnlock(): Promise<'ready' | 'unavailable'> {
+  const started = Date.now();
+  let early: BrowserWindow | null = null;
+  const showTimer = setTimeout(() => {
+    early = keepHiddenIfHeadless(createStartupWindow({ initialStep: 'loading' }));
+    // Never float above the macOS permission dialog.
+    early.setAlwaysOnTop(false);
+    early.webContents.on('did-finish-load', () => {
+      if (early && !early.isDestroyed()) early.webContents.send('status', KEYCHAIN_PROMPT_TEXT);
+    });
+  }, KEYCHAIN_WINDOW_DELAY_MS);
+  const heartbeat = setInterval(() => {
+    log.info(`[Keychain] waiting for macOS permission (${Math.round((Date.now() - started) / 1000)}s)`);
+  }, KEYCHAIN_LOG_INTERVAL_MS);
+  try {
+    return await osCryptReady();
+  } finally {
+    clearTimeout(showTimer);
+    clearInterval(heartbeat);
+    const win = early as BrowserWindow | null;
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
+/**
+ * Startup Keychain gate (packaged macOS only; dev and other platforms unlock
+ * lazily). Returns false when the user chose Quit. When the Keychain stays
+ * unavailable and sealed secrets exist, continuing would make them look
+ * missing (re-pair, new keys), so the user picks Try again or Quit. With
+ * nothing sealed on disk the app continues without OS encryption, as before.
+ */
+async function passKeychainGate(): Promise<boolean> {
+  if (!app.isPackaged || !isMac) return true;
+  keychainGateOpen = true;
+  try {
+    for (;;) {
+      if ((await waitForKeychainUnlock()) === 'ready') return true;
+      const state = osCryptState();
+      if (!hasKeychainSealedSecrets()) {
+        log.warn(`[Keychain] unavailable (${state}); nothing sealed on disk, continuing without OS encryption`);
+        return true;
+      }
+      log.warn(`[Keychain] unavailable (${state}) with sealed secrets on disk; asking the user`);
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Try again', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Allternit needs access to the macOS Keychain',
+        detail:
+          'Your sign-in and saved keys are locked in the Keychain. Click Try again, then click Always Allow when macOS asks. Nothing has been changed.',
+      });
+      if (response !== 0) {
+        app.quit();
+        return false;
+      }
+    }
+  } finally {
+    keychainGateOpen = false;
+  }
+}
+
 app.whenReady().then(async () => {
   console.log('[Main] App is ready...');
+
+  // Linux AppImage started without the Chromium sandbox (user namespaces
+  // blocked): offer the AppArmor fix and relaunch, or keep going with one
+  // notice. Before any window, so a relaunch never shows a half-started app.
+  if (!(await passAppImageSandboxGate(log))) return;
 
   // Phase 0 convenience hook: open the Allternit Docs editor on startup
   // when explicitly requested (e.g. dev smoke test). Delivered to the main
@@ -2684,9 +2955,16 @@ app.whenReady().then(async () => {
     openOfficeWithFile(officeFileArg);
   }
 
+  // Packaged macOS: unlock the Keychain (off the main thread) before anything
+  // reads a sealed secret. Must precede authManager.initialize() and, through
+  // initializeAppOnce(), runtimePackages().prepareForLaunch().
+  if (!(await passKeychainGate())) return;
+
   console.log('[Main] Initializing auth manager...');
   await authManager.initialize();
   authManagerReady = true;
+  // Files drive Explorer locations (Windows only, behind the files_drive flag).
+  filesDriveWinManager.start();
   const startupBackend = store.get('backend');
   void authManager.updateBackendProfile({
     mode: startupBackend.mode,
@@ -2874,7 +3152,10 @@ app.whenReady().then(async () => {
   if (isMac) {
     app.setLoginItemSettings({ openAtLogin: prefs.startupOnLogin });
     if (prefs.menuBarMode) app.dock?.hide();
+  } else if (process.platform === 'linux' && prefs.startupOnLogin) {
+    setLinuxAutostart(true); // refresh Exec after an update; never delete on launch
   }
+  void warnIfNoKeyring(log);
 
   // Initialize MCP host if enabled
   if (featureFlagManager.get<boolean>('mcp.enabled')) {
@@ -2928,6 +3209,7 @@ app.whenReady().then(async () => {
   } else {
     log.warn(`[Main] Failed to register fallback global HUD hotkey: ${HUD_HOTKEY_FALLBACK} (another app may own it)`);
   }
+  for (const [accel, ok] of hudHotkeyStatus) noteShortcutResult(accel, ok);
   // Settings and the tray show which chords are taken by another app.
   void updateTrayMenu();
 
@@ -3070,7 +3352,10 @@ app.on('will-quit', () => {
 });
 
 async function shutdownAllServices(): Promise<void> {
-  await handoffInFlightToCloud();
+  // Before authManager.initialize() (e.g. Quit while the Keychain prompt is
+  // open) no backend or job exists to hand off, and the Clerk wait would hold
+  // the quit for the full deadline.
+  if (authManagerReady && !keychainGateOpen) await handoffInFlightToCloud();
   gizziManager.stop({ reapExternal: true });
   try {
     gizziDaemonManager.stopSync();
@@ -3093,9 +3378,11 @@ async function shutdownAllServices(): Promise<void> {
   await localEngineManager.stop();
   connectorSidecarManager.stop();
   subsGatewayManager.stop();
+  filesDriveWinManager.stop();
   officeEngineManager.stop();
   factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
+  filesDriveManager.stop();
   notebookManager.stop();
   voiceManager.stop();
   systemOne.stop();
@@ -3123,6 +3410,7 @@ ipcMain.handle('sdk:get-backend-url', () => activeBackendUrl);
 
 // Voice call-mode native dictation bridge
 voiceManager.registerIpcHandlers();
+registerScreenContextIpc();
 
 // Backend management
 ipcMain.handle('backend:get-status', () => backendManager.getStatus());
@@ -3142,6 +3430,16 @@ fabricWorkerManager.onStateChange((state: FabricWorkerState) => {
 });
 
 // Folder-grant wizard bridges (startup window preload → main).
+// Paired pairing card "Open Allternit": bring the workspace forward now; the
+// startup window would otherwise close by itself once the workspace loads.
+ipcMain.on('startup:open-app', () => {
+  if (!mainWindow || mainWindow.isDestroyed() || folderGrantsPending) return;
+  mainWindow.show();
+  mainWindow.focus();
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  splashWindow = null;
+});
+
 ipcMain.handle('startup:pick-folder', async () => {
   if (!splashWindow || splashWindow.isDestroyed()) return null;
   const result = await dialog.showOpenDialog(splashWindow, {
@@ -3168,6 +3466,7 @@ ipcMain.handle('startup:save-folders', async (_event, folders: unknown) => {
   return { saved: list.length };
 });
 handleGuarded('backend:restart', async () => {
+  await secretsReady();
   await backendManager.stopBackend();
 
   await computerUseDriverManager.start();
@@ -3178,6 +3477,7 @@ handleGuarded('backend:restart', async () => {
       ...decisionRuntimeManager.getLaunchEnvironment(),
       ...authManager.getPlatformEncryptionEnvironment(),
       ...authManager.getConnectorSidecarEnvironment(),
+      ...authManager.getInternalServiceLaunchEnvironment().api,
     },
   });
 });
@@ -3186,9 +3486,14 @@ ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.
 ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getStatus());
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
-registerPhoneIpc(handleGuarded);
+// Phone, Phone Link, voice keys and self-host credentials all read secure-store
+// secrets, so their handlers wait for the Keychain unlock first.
+registerPhoneIpc(handleGuardedSecrets);
 // Phone Link: setup for using the AI apps signed in on the user's phone.
-registerPhoneLinkIpc(handleGuarded);
+registerPhoneLinkIpc(handleGuardedSecrets);
+// Voice provider keys (Settings › Voice) in secure-store, plus the Paste button's clipboard read.
+registerVoiceKeysIpc(handleGuardedSecrets);
+registerSelfHostCredentialsIpc(handleGuardedSecrets);
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());
@@ -3248,24 +3553,32 @@ ipcMain.handle('app:get-info', () => ({
 // Auto-update control plane (renderer observes status via app:update-status)
 ipcMain.handle('app:check-for-updates', async () => {
   if (!app.isPackaged) {
-    log.info('[autoUpdater] Skipping update check in unpackaged dev build');
+    log.info('[appUpdater] Skipping update check in unpackaged dev build');
     return { ok: false, reason: 'dev-build' } as const;
   }
   try {
-    autoUpdater.checkForUpdates();
+    appUpdater?.check(true);
     // The runtime (API, gizzi, screens) updates separately: check it too.
     void checkRuntimeNow();
     return { ok: true } as const;
   } catch (error) {
-    log.error('[autoUpdater] Manual check failed:', error);
+    log.error('[appUpdater] Manual check failed:', error);
     return { ok: false, reason: 'check-failed', message: String(error) } as const;
   }
 });
 handleGuarded('app:install-update', async () => {
+  const updater = appUpdateDownloaded ? appUpdater : null;
+  if (updater) {
+    // Install BEFORE cleanup: a refused macOS bundle swap, a cancelled Linux
+    // password prompt or a missing Windows installer leaves the app running,
+    // and a notification opens the release page.
+    if (!(await updater.install())) return;
+  }
   // Clean up first so before-quit does not cancel the updater's own quit.
   await runQuitCleanup();
-  if (!appUpdateDownloaded && runtimePackages().hasPendingUpdate()) {
-    // Only the runtime changed: a restart promotes the staged package.
+  if (!updater) {
+    // Only the runtime changed (or nothing did): a restart promotes any
+    // staged runtime package.
     app.relaunch();
     app.exit(0);
     return;
@@ -3274,7 +3587,9 @@ handleGuarded('app:install-update', async () => {
   // that hide on close (HUD, Quick Chat) must already see a quit or they
   // cancel the close and the install never happens.
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
-  autoUpdater.quitAndInstall();
+  // macOS: bundle swapped; Linux: .deb installed (relaunch scheduled by both).
+  // Windows: runs the downloaded installer silently, then relaunches.
+  updater.finish();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
 ipcMain.on('app:get-platform-url', (event) => {
@@ -3666,6 +3981,7 @@ function hudUrl(): string {
  * (attachPetToHud puts the pet at the HUD's top-right corner).
  */
 function openHudForCompanion(agentId: string | null, anchor?: Electron.Rectangle): void {
+  if (!mayOpenHud(authManager.hasSession())) return;
   if (!anchor && hudCompanionAgentId === agentId && isHudAlive() && hudWindow!.isVisible()) {
     hideHudWindow();
     return;
@@ -3750,6 +4066,8 @@ function createHudWindow({ show }: { show: boolean }): BrowserWindow {
     // e.g. under Playwright). The transparent background hides the pre-paint.
     show,
     backgroundColor: '#00000000',
+    // No backgroundThrottling override: the HUD is pre-warmed hidden, and the
+    // default throttling keeps its timers and rAF slow until it is shown.
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -3776,6 +4094,7 @@ function createHudWindow({ show }: { show: boolean }): BrowserWindow {
 /** Create the HUD window and wire its handlers. `show:false` pre-warms it. */
 function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
   if (isHudAlive()) return hudWindow!;
+  if (!mayOpenHud(authManager.hasSession())) throw new Error('HUD is unavailable until this computer is paired');
   log.info('[HUD] Creating floating HUD window', { show });
   const win = createHudWindow({ show });
   hudWindow = win;
@@ -3826,6 +4145,10 @@ function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
 }
 
 function openHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     showHudWindow({ place });
     return;
@@ -3837,7 +4160,7 @@ function openHudWindow({ place = true }: { place?: boolean } = {}): void {
 /** Pre-create the HUD hidden once the main window is up, so the first summon is instant. */
 let hudPrewarmTimer: ReturnType<typeof setTimeout> | null = null;
 function prewarmHudWindowSoon(): void {
-  if (HEADLESS || hudPrewarmTimer || isHudAlive()) return;
+  if (HEADLESS || !mayOpenHud(authManager.hasSession()) || hudPrewarmTimer || isHudAlive()) return;
   hudPrewarmTimer = setTimeout(() => {
     if (isHudAlive() || (app as unknown as { isQuitting?: boolean }).isQuitting) return;
     try {
@@ -3849,6 +4172,10 @@ function prewarmHudWindowSoon(): void {
 }
 
 function toggleHudWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     if (hudWindow!.isVisible() && hudWindow!.isFocused()) {
       hideHudWindow();
@@ -4503,6 +4830,9 @@ handleGuarded('auth:forget-account', async (_event, userId: string) => {
   await authManager.forgetAccount(userId);
 });
 handleGuarded('auth:sign-out', async () => {
+  // First, while the Clerk session can still revoke the Files key: removes
+  // every Finder location of the account and the files macOS kept for them.
+  await filesDriveManager.signOut();
   await authManager.signOut();
   // The mesh node state is enrolled to the signed-out user's mesh identity.
   // Drop it so the next account enrolls its own node instead of reusing it.
@@ -4664,15 +4994,33 @@ handleGuarded('sidecar:restart', async () => {
 // IPC: Connection settings
 // ============================================================================
 
-ipcMain.handle('connection:test', async () => {
+ipcMain.handle('connection:test', async (event, target?: { remoteUrl?: string }) => {
   const backend = store.get('backend');
+  let url = activeBackendUrl;
+  let mode: string = backend.mode;
+  // The Connect page checks a typed server address before it is saved.
+  if (target?.remoteUrl) {
+    assertTrustedSender(event, 'connection:test');
+    let parsed: URL;
+    try {
+      parsed = new URL(target.remoteUrl);
+    } catch {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    url = parsed.origin;
+    mode = 'remote';
+  }
+  const started = Date.now();
   try {
-    const res = await fetch(`${activeBackendUrl}/health`, {
+    const res = await fetch(`${url}/health`, {
       signal: AbortSignal.timeout(3000),
     });
-    return { mode: backend.mode, url: activeBackendUrl, status: res.ok ? 'connected' : 'error' };
+    return { mode, url, status: res.ok ? 'connected' : 'error', latencyMs: Date.now() - started };
   } catch {
-    return { mode: backend.mode, url: activeBackendUrl, status: 'disconnected' };
+    return { mode, url, status: 'disconnected' };
   }
 });
 
@@ -4681,7 +5029,8 @@ ipcMain.handle('connection:get-backend', () => {
   return { mode: backend.mode, url: activeBackendUrl };
 });
 
-handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string }) => {
+handleGuarded('connection:set-backend', async (_event, input: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string; restart?: boolean }) => {
+  const { restart, ...config } = input;
   const nextBackend = { ...store.get('backend'), ...config };
   store.set('backend', nextBackend);
   void authManager.updateBackendProfile({
@@ -4700,6 +5049,13 @@ handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled'
   }
 
   broadcastToMainWindows('connection:state', { mode: nextBackend.mode, url: activeBackendUrl });
+  // Connect page "Save and restart": the engine choice applies on the next launch.
+  if (restart) {
+    setTimeout(() => {
+      app.relaunch();
+      app.quit();
+    }, 300);
+  }
 });
 
 // ============================================================================
@@ -4976,11 +5332,12 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
   return true;
 });
 
-ipcMain.handle('startup:getOnLogin', () => persistedState.get('prefs').startupOnLogin);
+ipcMain.handle('startup:getOnLogin', () => (process.platform === 'linux' ? isLinuxAutostartEnabled() : persistedState.get('prefs').startupOnLogin));
 
 handleGuarded('startup:setOnLogin', (_event, enabled: boolean) => {
   persistedState.patch('prefs', { startupOnLogin: enabled });
   if (isMac) app.setLoginItemSettings({ openAtLogin: enabled });
+  else if (process.platform === 'linux') setLinuxAutostart(enabled);
   return true;
 });
 
@@ -5183,13 +5540,13 @@ handleGuarded('motion:abort', (_event, id: string) => motionRender.abort(id));
 
 // ─── Mini-apps: install / start / stop / status ───────────────────────────────
 
-handleGuarded('miniApps:install', async (event, id: string) => {
+handleGuardedKeychain('miniApps:install', async (event, id: string) => {
   return installMiniApp(id, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
 });
 
-handleGuarded('miniApps:start', async (event, id: string) => {
+handleGuardedKeychain('miniApps:start', async (event, id: string) => {
   return startMiniApp(id, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
@@ -5201,29 +5558,32 @@ handleGuarded('miniApps:stop', (_event, id: string) => {
 });
 
 ipcMain.handle('miniApps:getStatus', (_event, id: string) => getMiniAppStatus(id));
-ipcMain.handle('miniApps:launchDesktop', (_event, id: string) => launchMiniAppDesktop(id));
+ipcMain.handle('miniApps:launchDesktop', async (_event, id: string) => {
+  await keychainSettled();
+  return launchMiniAppDesktop(id);
+});
 ipcMain.handle('miniApps:getApproval', (_event, id: string, registration) => getMiniAppApproval(id, registration));
 handleGuarded('miniApps:reviewAndApprove', (_event, registration) => reviewAndApproveMiniApp(registration));
 handleGuarded('miniApps:revokeApproval', (_event, id: string) => {
   revokeMiniAppApproval(id);
   return { success: true };
 });
-handleGuarded('miniApps:setSecret', (_event, id: string, name: string, value: string) => setMiniAppSecret(id, name, value));
+handleGuardedKeychain('miniApps:setSecret', (_event, id: string, name: string, value: string) => setMiniAppSecret(id, name, value));
 ipcMain.handle('miniApps:listSecrets', (_event, id: string) => listMiniAppSecrets(id));
 // ACI export bridge: write a gateway-generated provider_routing section into
 // the Hermes mini-app's ~/.hermes/config.yaml (backs up the previous file).
 handleGuarded('hermesRouting:export', (_event, routingYaml: string) => exportHermesRouting(routingYaml));
 handleGuarded('miniApps:deleteSecret', (_event, id: string, name: string) => deleteMiniAppSecret(id, name));
 handleGuarded('miniApps:removeRuntime', (_event, id: string) => removeMiniAppRuntime(id));
-handleGuarded('miniApps:rollbackRuntime', (_event, id: string) => rollbackMiniAppRuntime(id));
+handleGuardedKeychain('miniApps:rollbackRuntime', (_event, id: string) => rollbackMiniAppRuntime(id));
 
 // Versioned marketplace releases (atomic install / rollback / uninstall)
-handleGuarded('miniApps:installRelease', async (event, options: { registryUrl: string; id: string; version?: string }) => {
+handleGuardedKeychain('miniApps:installRelease', async (event, options: { registryUrl: string; id: string; version?: string }) => {
   return installReleaseFromRegistry(options, (progress) => {
     event.sender.send('miniApps:install-progress', progress);
   });
 });
-handleGuarded('miniApps:rollbackRelease', (_event, id: string, registryUrl?: string) => rollbackReleaseInstall(id, registryUrl));
+handleGuardedKeychain('miniApps:rollbackRelease', (_event, id: string, registryUrl?: string) => rollbackReleaseInstall(id, registryUrl));
 handleGuarded('miniApps:removeRelease', (_event, id: string, registryUrl?: string) => {
   stopMiniApp(id);
   return removeReleaseInstall(id, registryUrl);
@@ -5237,11 +5597,13 @@ let miniAppOAuthBroker: MiniAppOAuthBroker | null = null;
 function oauthBroker(): MiniAppOAuthBroker {
   if (miniAppOAuthBroker) return miniAppOAuthBroker;
   const broker = createMiniAppOAuthBroker({
+    // Callers await keychainSettled() first; a locked Keychain throws
+    // KeychainUnavailableError from os-crypt instead of looking like bad data.
     encrypt: (value) => {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('Operating-system encryption is unavailable');
-      return safeStorage.encryptString(value).toString('base64');
+      if (!isEncryptionAvailable()) throw new Error('Operating-system encryption is unavailable');
+      return encryptString(value).toString('base64');
     },
-    decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+    decrypt: (value) => decryptString(Buffer.from(value, 'base64')),
     openExternal: (url) => {
       openExternalAllowlisted(url);
     },
@@ -5262,15 +5624,19 @@ function oauthBroker(): MiniAppOAuthBroker {
 // refreshes when needed, and a missing/unauthorized account simply means the
 // variable is absent — tokens never cross IPC.
 setMiniAppOAuthTokenResolver(async (appId, providerId) => {
+  await keychainSettled();
   const result = await oauthBroker().getValidAccessToken(appId, providerId, 'default');
   return result.token ?? null;
 });
 
-handleGuarded('miniApps:oauthStart', (_event, appId: string, providerId: string, provider: MiniAppOAuthProvider, accountId: string) =>
+handleGuardedKeychain('miniApps:oauthStart', (_event, appId: string, providerId: string, provider: MiniAppOAuthProvider, accountId: string) =>
   oauthBroker().startFlow(appId, providerId, provider, accountId));
 ipcMain.handle('miniApps:oauthCancel', (_event, flowId: string) => oauthBroker().cancelFlow(flowId));
-ipcMain.handle('miniApps:oauthAccounts', (_event, appId: string) => oauthBroker().listAccounts(appId));
-handleGuarded('miniApps:oauthDisconnect', (_event, appId: string, providerId: string, accountId: string) =>
+ipcMain.handle('miniApps:oauthAccounts', async (_event, appId: string) => {
+  await keychainSettled();
+  return oauthBroker().listAccounts(appId);
+});
+handleGuardedKeychain('miniApps:oauthDisconnect', (_event, appId: string, providerId: string, accountId: string) =>
   oauthBroker().disconnect(appId, providerId, accountId));
 
 // ─── Artifact preview capture ────────────────────────────────────────────────

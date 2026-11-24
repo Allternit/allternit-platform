@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "@/runtime/server/openapi"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
@@ -51,6 +52,7 @@ import { HTTPException } from "hono/http-exception"
 import { errors } from "@/runtime/server/error"
 import { QuestionRoutes } from "@/runtime/server/routes/question"
 import { PaneBrowserRoutes } from "@/runtime/server/routes/pane-browser"
+import { ScreenContextRoutes } from "@/runtime/server/routes/screen-context"
 import { PaneArtifactRoutes } from "@/runtime/server/routes/pane-artifact"
 import { PaneRenderRoutes } from "@/runtime/server/routes/pane-render"
 import { CliBridgeRoutes } from "@/runtime/server/routes/cli-bridge"
@@ -141,6 +143,8 @@ export namespace Server {
             if (err instanceof NotFoundError) status = 404
             else if (Provider.ModelNotFoundError.isInstance(err)) status = 400
             else if (err.name.startsWith("Worktree")) status = 400
+            // An ended chat refuses new prompts: a conflict with its state, not a server failure.
+            else if (err.name === "SessionEndedError") status = 409
             else status = 500
             return c.json(err.toObject(), { status })
           }
@@ -409,6 +413,7 @@ export namespace Server {
         .route("/permission", PermissionRoutes())
         .route("/question", QuestionRoutes())
         .route("/pane-browser", PaneBrowserRoutes())
+        .route("/screen-context", ScreenContextRoutes())
         .route("/pane-artifact", PaneArtifactRoutes())
         .route("/pane-render", PaneRenderRoutes())
         .route("/cli-bridge", CliBridgeRoutes())
@@ -520,6 +525,7 @@ export namespace Server {
             .route("/permission", PermissionRoutes())
             .route("/question", QuestionRoutes())
             .route("/pane-browser", PaneBrowserRoutes())
+            .route("/screen-context", ScreenContextRoutes())
             .route("/pane-artifact", PaneArtifactRoutes())
             .route("/pane-render", PaneRenderRoutes())
             .route("/file", FileRoutes())
@@ -555,9 +561,10 @@ export namespace Server {
             .route("/workspace", WorkspaceRoutes()) as unknown as Hono,
         )
         .all("/*", async (c) => {
+          // Never forwards in self-hosted mode (ALLTERNIT_SELF_HOSTED=1), whatever the env says.
           const cloudProxyEnabled =
-            process.env.GIZZI_ENABLE_CLOUD_PROXY === "true" ||
-            process.env.GIZZI_ENABLE_CLOUD_PROXY === "1"
+            !isSelfHosted() &&
+            (process.env.GIZZI_ENABLE_CLOUD_PROXY === "true" || process.env.GIZZI_ENABLE_CLOUD_PROXY === "1")
 
           if (!cloudProxyEnabled) {
             log.warn(

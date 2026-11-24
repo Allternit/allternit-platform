@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/snapshot.json",
+  "title": "Files drive: asleep snapshot",
+  "description": "File-name metadata the runtime writes to the user's own R2 bucket so browsing works while a computer sleeps.",
+  "$defs": {
+    "SnapshotEncryption": {
+      "type": "string",
+      "enum": [
+        "none",
+        "files_key_v1"
+      ],
+      "description": "Decided (Eoj 2026-11-15): v2 writes none, i.e. plain file names in the user's own R2 bucket, the same trust class as files they upload. files_key_v1 is reserved, not used in v2: XChaCha20-Poly1305 with the snapshot subkey of the user's Files root key (keys.json)."
+    },
+    "SnapshotItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "size",
+        "rev",
+        "modified_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "common.json#/$defs/ItemKind"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rev": {
+          "$ref": "common.json#/$defs/Rev"
+        },
+        "modified_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "root_link": {
+          "$ref": "common.json#/$defs/RootId"
+        }
+      }
+    },
+    "SnapshotManifest": {
+      "type": "object",
+      "description": "R2 key: files-snapshots/<computer_id>/v1/manifest.json",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "computer_id",
+        "written_at",
+        "encryption",
+        "names_encrypted"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "files-snapshot/1"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "written_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "encryption": {
+          "$ref": "#/$defs/SnapshotEncryption"
+        },
+        "names_encrypted": {
+          "type": "boolean",
+          "description": "v2 writers always write false (Eoj 2026-11-15: plain names). true is reserved, not used in v2: names would live only in ciphertext, with encryption files_key_v1 and key_id set. A v2 reader that meets true shows the folder as \"names unavailable\" instead of failing."
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "roots.json#/$defs/Root"
+          },
+          "description": "names_encrypted false only."
+        },
+        "ciphertext": {
+          "type": "string",
+          "description": "Reserved, not used in v2. names_encrypted true: base64url XChaCha20-Poly1305 of the roots JSON array."
+        },
+        "nonce": {
+          "type": "string",
+          "description": "Reserved, not used in v2. base64url 24-byte nonce."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Reserved, not used in v2. Key reference: the FilesKeyInfo.key_id whose snapshot subkey (HKDF info \"files-snapshot/1\") sealed this file."
+        }
+      }
+    },
+    "SnapshotRootFile": {
+      "type": "object",
+      "description": "R2 key: files-snapshots/<computer_id>/v1/roots/<root_id>.json",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "root_id",
+        "cursor",
+        "written_at",
+        "encryption",
+        "names_encrypted"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "files-snapshot-root/1"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "written_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "encryption": {
+          "$ref": "#/$defs/SnapshotEncryption"
+        },
+        "names_encrypted": {
+          "type": "boolean",
+          "description": "v2 writers always write false (Eoj 2026-11-15: plain names). true is reserved, not used in v2: names would live only in ciphertext, with encryption files_key_v1 and key_id set. A v2 reader that meets true shows the folder as \"names unavailable\" instead of failing."
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SnapshotItem"
+          },
+          "description": "names_encrypted false only."
+        },
+        "ciphertext": {
+          "type": "string",
+          "description": "Reserved, not used in v2. names_encrypted true: base64url XChaCha20-Poly1305 of the items JSON array."
+        },
+        "nonce": {
+          "type": "string",
+          "description": "Reserved, not used in v2. base64url 24-byte nonce."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Reserved, not used in v2. Key reference: the FilesKeyInfo.key_id whose snapshot subkey (HKDF info \"files-snapshot/1\") sealed this file."
+        }
+      }
+    }
+  }
+}

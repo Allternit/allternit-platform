@@ -1,0 +1,57 @@
+---
+title: Desktop engines and iPhone models
+description: "How Allternit Desktop gets its model engines as signed packs, and how the Models tab works on iPhone."
+---
+
+<Note>
+The Desktop section below follows built and tested code. The iPhone section follows the plan and is still being built. Do not rely on its details yet.
+</Note>
+
+## Desktop engines
+
+Allternit Desktop does not ship the model engines in its installer. The Local Engine downloads the engine pack that matches your computer, as a signed download, the first time it is needed. Desktop prepares packs in the background only if the computer already runs local models.
+
+Which pack it picks:
+
+| Computer | Pack |
+|---|---|
+| Mac with Apple silicon | llama.cpp on Metal (`llamacpp-metal-macos-arm64`), plus the MLX engine (`mlx-metal-macos-arm64`) |
+| NVIDIA with a working driver | CUDA. Without the driver, Vulkan. |
+| AMD | ROCm on Linux when ROCm is installed. Otherwise Vulkan. |
+| Intel | Vulkan |
+| Windows on Arm | The processor first |
+| No usable GPU | The processor |
+
+A pack goes through these states: queued, downloading, verifying, installed, or failed with a reason. Before it runs anything, the engine checks the signature on the feed and the manifest, and the sha256 of every file. A bad signature is refused. A failed update keeps the previous pack (the install rolls back).
+
+Once a model is loaded:
+
+- It unloads after 5 minutes without use.
+- The engine reports live memory, speed, context used and the idle timer for the running model.
+- Every reply carries the measured speed and first-token time.
+
+Measured on a MacBook Pro with an M1 Pro: Qwen3-0.6B Q4_K_M on Metal at 45.9 tokens per second. Your computer will differ.
+
+Not checked:
+
+- MLX on Mac. The MLX engine builds from the iPhone engine's code, and that is not built yet. Until the MLX pack exists, a model asked to run on MLX falls back to its GGUF build, or says to install the pack.
+- Windows and Linux packs (CUDA, ROCm, Vulkan, processor). They are written and unit-tested for the pick rules, and have not been run.
+- Notarization of the Mac pack, and a packaged Desktop app downloading packs end to end.
+
+## iPhone
+
+The **Models** tab has two parts: **Catalog** and **On this iPhone**. There is no new tab in the bar. The Catalog shows Grid, List or Deck, like freeweights.allternit.com.
+
+Three engines run models: MLX, llama.cpp and Apple Foundation Models. MLX runs MLX builds (it is the faster engine on iPhone, and it runs Qwen3.5), llama.cpp runs GGUF builds, and Apple Foundation Models is the model built into iPhones with Apple Intelligence; it needs no download.
+
+- **Catalog** lists Freeweights models with a fit badge for this iPhone, and a download button.
+- **On this iPhone** lists the models you have downloaded and the one that is running. Tap **Run** to chat with a model; it also appears in the chat model picker.
+- Memory is the limit. The app reads the memory iOS gives it at each start and uses three quarters of it. On an iPhone 15 we measured about 2.2 GB without Apple's increased memory limit and about 3.0 GB with it. The app works without that limit, and it does not ask for it.
+- Models unload when the app goes to the background, when iOS warns about memory, and after 5 minutes without use.
+
+Speed measured on an iPhone 15: Qwen3.5-0.8B (4-bit, MLX) at about 58 tokens per second. Qwen3.5-2B does not fit on an iPhone 15.
+
+## Related
+
+- [Run models on your device](/guides/run-models-on-device)
+- [Engine packs, developer notes](/api/on-device-models#engine-packs)

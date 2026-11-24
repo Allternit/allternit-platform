@@ -220,8 +220,8 @@ private struct InboxRow: View {
     ]
 
     private static let trust: [String: String] = [
-        "owner": "you", "team": "your team", "contact": "a contact", "vendorbot": "a vendor bot",
-        "vendor_bot": "a vendor bot", "tooloutput": "a tool result", "tool_output": "a tool result",
+        "owner": "you", "team": "your team", "contact": "a contact", "vendorbot": "a Connected bot",
+        "vendor_bot": "a Connected bot", "tooloutput": "a tool result", "tool_output": "a tool result",
         "web": "a web page", "stranger": "someone you do not know",
     ]
 
@@ -242,7 +242,7 @@ private struct InboxRow: View {
                     .font(.system(size: 11))
                     .foregroundColor(Color("TextSecondary"))
             }
-            Text(item.summary)
+            Text(AutomationScheduleLogic.displayName(item.summary))
                 .font(.subheadline)
                 .foregroundColor(Color("TextPrimary"))
             if item.isPeerHeld, let text = item.text, !text.isEmpty {

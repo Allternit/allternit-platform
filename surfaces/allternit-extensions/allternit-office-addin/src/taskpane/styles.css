@@ -80,11 +80,11 @@
   --border-subtle:  rgba(92, 75, 60, 0.09);
   --border-default: rgba(92, 75, 60, 0.16);
   --border-strong:  rgba(92, 75, 60, 0.28);
-  --border-focus:   rgba(176, 141, 110, 0.55);
+  --border-focus:   rgba(31, 30, 29, 0.35);
 
   /* Brand accents */
-  --accent-primary:   #9A7658;
-  --accent-secondary: #D4B08C;
+  --accent-primary:   #1F1E1D;
+  --accent-secondary: #6B6A68;
   --accent-brand:     #D97757; /* Allternit coral — wordmark core, links */
   --accent-code:      #6B9A7B;
   --accent-cowork:    #9A7BAA;
@@ -101,7 +101,7 @@
   --shadow-lg:  0 12px 40px rgba(41, 32, 26, 0.14);
 
   /* Per-host accent — overridden inline from App.tsx (Word/Excel/PPT) */
-  --host-accent: #9A7658;
+  --host-accent: #1F1E1D;
 
   /* Spacing (4px grid) */
   --space-1: 4px;  --space-2: 8px;   --space-3: 12px;

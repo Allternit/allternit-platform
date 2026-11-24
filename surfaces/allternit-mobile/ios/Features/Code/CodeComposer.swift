@@ -46,6 +46,9 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The computer chip (C4), above the prompt; ✕ folds it into the
+            // dot on `+`. Without `+` it stays up (nowhere to fold into).
+            ComputerChipSlot(dismissible: onAttach != nil)
             if contextBarRaw == CodeContextBarPosition.above.rawValue {
                 CodeContextBar(state: contextState, terminal: terminal)
             }
@@ -59,6 +62,8 @@ struct CodeLaunchComposer: View {
                             .foregroundColor(ink.secondary)
                             .frame(width: 40, height: 40)
                             .contentShape(Rectangle())
+                            // The folded computer chip.
+                            .overlay(alignment: .topTrailing) { ComputerChipDot().offset(x: -4, y: 4) }
                     }
                     .buttonStyle(.plain)
                     .padding(.vertical, 6)
@@ -581,7 +586,7 @@ struct CodeDeckRow: View {
         }
     }
 
-    /// The view switch: Code · Terminal · Shell. Its icon is the current
+    /// The view switch: Code · Terminal. Its icon is the current
     /// view; the pick goes to Code mode (`.codePickView`).
     private var modeToggle: some View {
         CodeViewMenu(current: terminal ? .terminal : .code, tint: ink.primary)
@@ -737,6 +742,23 @@ private struct CodeEnvironmentSheet: View {
                             relay.select(device.id)
                             environmentStore.environment = .cloud
                             dismiss()
+                        }
+                        // The shell lives here: only a connected computer has one.
+                        if device.isOnline {
+                            Button {
+                                relay.select(device.id)
+                                dismiss()
+                                NotificationCenter.default.post(name: .codeOpenShell, object: nil)
+                            } label: {
+                                Label("Open shell", systemImage: "apple.terminal")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(Color("BrandAccent"))
+                                    .padding(.leading, 36)
+                                    .padding(.bottom, 6)
+                                    .frame(minHeight: 36, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Open shell on \(device.name.isEmpty ? "Allternit runtime" : device.name)")
                         }
                     }
                 }

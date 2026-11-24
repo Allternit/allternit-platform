@@ -74,7 +74,7 @@ function ApiScene() {
           <div className="ob-cl ob-l" style={d(0.35)}><span className="k">curl</span> https://api.allternit.com/v1/chat/completions \</div>
           <div className="ob-cl ob-l" style={d(0.57)}>  -H <span className="s">"Authorization: Bearer $ALLTERNIT_API_KEY"</span> \</div>
           <div className="ob-cl ob-l" style={d(0.79)}>  -H <span className="s">"Content-Type: application/json"</span> \</div>
-          <div className="ob-cl ob-l" style={d(1.01)}>  -d <span className="s">'{"{"}"model": "kimi-k3",</span></div>
+          <div className="ob-cl ob-l" style={d(1.01)}>  -d <span className="s">'{"{"}"model": "deepseek-v4.1-flash",</span></div>
           <div className="ob-cl ob-l" style={d(1.23)}><span className="s">       "messages": [{"{"}"role": "user", "content": "Hello"{"}"}]{"}"}'</span></div>
           <div className="ob-cl ob-l" style={d(1.55)}><span className="ob-prompt">$</span> <span className="ob-run ob-press" style={d(1.75)}>⏎ run</span></div>
         </div>
@@ -84,7 +84,7 @@ function ApiScene() {
         <div className="ob-resp-b">
           <div className="ob-cl ob-l" style={d(2.15)}>{"{"}</div>
           <div className="ob-cl ob-l" style={d(2.28)}>  <span className="k">"id"</span>: <span className="s">"chatcmpl-…"</span>,</div>
-          <div className="ob-cl ob-l" style={d(2.41)}>  <span className="k">"model"</span>: <span className="s">"kimi-k3"</span>,</div>
+          <div className="ob-cl ob-l" style={d(2.41)}>  <span className="k">"model"</span>: <span className="s">"deepseek-v4.1-flash"</span>,</div>
           <div className="ob-cl ob-l" style={d(2.54)}>  <span className="k">"choices"</span>: [{"{"} <span className="k">"message"</span>: {"{"}</div>
           <div className="ob-cl ob-l" style={d(2.67)}>    <span className="k">"role"</span>: <span className="s">"assistant"</span>,</div>
           <div className="ob-cl ob-l" style={d(2.8)}>    <span className="k">"content"</span>: <span className="s">"Hello! How can I help?"</span> {"}"} {"}"}]</div>

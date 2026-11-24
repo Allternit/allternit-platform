@@ -1,0 +1,12 @@
+{
+  "type": "PinResponse",
+  "valid": true,
+  "case": "Pin recorded.",
+  "message": {
+    "item_id": "it_doc000001",
+    "pinned_on": [
+      "dev_iphone16",
+      "dev_macbook1"
+    ]
+  }
+}

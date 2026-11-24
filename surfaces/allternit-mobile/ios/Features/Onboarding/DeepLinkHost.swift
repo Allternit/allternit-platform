@@ -23,6 +23,7 @@ struct DeepLinkHost: ViewModifier {
     @State private var botSheet: AgentRecord?
     @State private var isSettingsPresented = false
     @State private var isComputersPresented = false
+    @State private var consoleComputer: ConsoleComputerLink?
     @State private var isDecisionsPresented = false
     @State private var isInboxPresented = false
     @State private var routineSheet: Routine?
@@ -30,9 +31,17 @@ struct DeepLinkHost: ViewModifier {
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
+    @State private var meetingsLink: MeetingsLink?
+
+    struct MeetingsLink: Identifiable {
+        let id = UUID()
+        let meetingId: String?
+    }
 
     func body(content: Content) -> some View {
         content
+            // Files shortcuts (Open Files on, Scan to): FilesDrive.launch.
+            .modifier(FilesLaunchHost())
             .onAppear { takePending() }
             .onChange(of: router.pending) { _, _ in takePending() }
             .overlay(alignment: .top) {
@@ -51,6 +60,9 @@ struct DeepLinkHost: ViewModifier {
                     .padding(.top, 8)
                     .transition(.opacity)
                 }
+            }
+            .sheet(item: $meetingsLink) { link in
+                MeetingsView(focusMeetingId: link.meetingId)
             }
             .sheet(item: $botSheet) { agent in
                 NavigationStack {
@@ -77,6 +89,7 @@ struct DeepLinkHost: ViewModifier {
                         }
                 }
             }
+            .sheet(item: $consoleComputer) { ACIConsoleDeepLinkSheet(computerId: $0.id) }
             .sheet(isPresented: $isDecisionsPresented) {
                 DecisionsScreen()
             }
@@ -116,11 +129,13 @@ struct DeepLinkHost: ViewModifier {
         botSheet = nil
         isSettingsPresented = false
         isComputersPresented = false
+        consoleComputer = nil
         isDecisionsPresented = false
         isInboxPresented = false
         routineSheet = nil
         runSheet = nil
         inviteURL = nil
+        meetingsLink = nil
         switch link {
         case .session(let id):
             openSession(id)
@@ -145,6 +160,8 @@ struct DeepLinkHost: ViewModifier {
             inviteURL = IdentifiableURL(url: url)
         case .computers:
             isComputersPresented = true
+        case .computerConsole(let id):
+            consoleComputer = ConsoleComputerLink(id: id)
         case .decisions:
             isDecisionsPresented = true
         case .inbox:
@@ -168,6 +185,8 @@ struct DeepLinkHost: ViewModifier {
             }
         case .routine(let id):
             Task { await openRoutine(id) }
+        case .meetings(let id):
+            meetingsLink = MeetingsLink(meetingId: id)
         case .handoff:
             // The bots launchpad composer hands a task to the team (a new bot
             // project + its coordinator), same as HandOffTaskIntent.

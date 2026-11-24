@@ -25,6 +25,8 @@ import { PlansPage } from "@/pages/PlansPage";
 import { CloudPage } from "@/pages/CloudPage";
 import { AdminCustomersPage } from "@/pages/AdminCustomersPage";
 import { AdminFundingPage } from "@/pages/AdminFundingPage";
+import { AdminOAuthAppsPage } from "@/pages/AdminOAuthAppsPage";
+import { OAuthAppsPage } from "@/pages/console/platform/OAuthAppsPage";
 import { PlaygroundPage } from "@/pages/console/PlaygroundPage";
 import { FilesPage } from "@/pages/console/FilesPage";
 import { BatchesPage } from "@/pages/console/BatchesPage";
@@ -54,9 +56,11 @@ import { SpendLimitsPage } from "@/pages/console/manage/SpendLimitsPage";
 import { SecurityPage } from "@/pages/console/manage/SecurityPage";
 import { WebhooksPage } from "@/pages/console/manage/WebhooksPage";
 import { TagsPage } from "@/pages/console/manage/TagsPage";
+import { AuditLogPage } from "@/pages/console/manage/AuditLogPage";
 import { PlatformProjectsPage } from "@/pages/console/platform/ProjectsPage";
 import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
 import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
+import { PlatformDecisionsPage } from "@/pages/console/platform/DecisionsPage";
 import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
 import { PlatformPhonesPage } from "@/pages/console/platform/PhonesPage";
@@ -185,6 +189,22 @@ export default function App() {
         element={
           <ConsoleRoute>
             <AdminFundingPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/admin/oauth-apps"
+        element={
+          <ConsoleRoute>
+            <AdminOAuthAppsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/oauth-apps/*"
+        element={
+          <ConsoleRoute>
+            <OAuthAppsPage />
           </ConsoleRoute>
         }
       />
@@ -442,7 +462,7 @@ export default function App() {
         path="/analytics/caching/*"
         element={
           <ConsoleRoute>
-            <CachingPage />
+            {isCloudGateway() ? <CloudGate feature="caching" /> : <CachingPage />}
           </ConsoleRoute>
         }
       />
@@ -491,7 +511,15 @@ export default function App() {
         path="/manage/security/*"
         element={
           <ConsoleRoute>
-            {isCloudGateway() ? <CloudGate feature="security" /> : <SecurityPage />}
+            <SecurityPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/manage/audit-log/*"
+        element={
+          <ConsoleRoute>
+            <AuditLogPage />
           </ConsoleRoute>
         }
       />
@@ -499,7 +527,7 @@ export default function App() {
         path="/manage/webhooks/*"
         element={
           <ConsoleRoute>
-            <WebhooksPage />
+            {isCloudGateway() ? <Navigate to="/platform/webhooks" replace /> : <WebhooksPage />}
           </ConsoleRoute>
         }
       />
@@ -507,7 +535,7 @@ export default function App() {
         path="/manage/tags/*"
         element={
           <ConsoleRoute>
-            <TagsPage />
+            {isCloudGateway() ? <CloudGate feature="tags" /> : <TagsPage />}
           </ConsoleRoute>
         }
       />
@@ -516,7 +544,7 @@ export default function App() {
         path="/gizzi/usage/*"
         element={
           <ConsoleRoute>
-            {isCloudGateway() ? <CloudGate feature="gizziUsage" /> : <GizziUsagePage />}
+            <GizziUsagePage />
           </ConsoleRoute>
         }
       />
@@ -525,7 +553,7 @@ export default function App() {
         path="/gateway/routing-policy/*"
         element={
           <ConsoleRoute>
-            <RoutingPolicyPage />
+            {isCloudGateway() ? <CloudGate feature="routingPolicy" /> : <RoutingPolicyPage />}
           </ConsoleRoute>
         }
       />
@@ -533,7 +561,7 @@ export default function App() {
         path="/gateway/credentials/*"
         element={
           <ConsoleRoute>
-            <RouteCredentialsPage />
+            {isCloudGateway() ? <CloudGate feature="routeCredentials" /> : <RouteCredentialsPage />}
           </ConsoleRoute>
         }
       />
@@ -559,6 +587,14 @@ export default function App() {
         element={
           <ConsoleRoute>
             <PlatformConversationsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/decisions"
+        element={
+          <ConsoleRoute>
+            <PlatformDecisionsPage />
           </ConsoleRoute>
         }
       />

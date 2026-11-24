@@ -87,7 +87,7 @@ otherwise the picker contains default chat only. Copilot page chat support still
 needs human validation. Hermes profiles and Grok's Bot picker use their existing
 list readers.
 
-Choosing an entry does not create or modify a vendor bot or grant extra quota.
+Choosing an entry does not create or modify a connected bot or grant extra quota.
 Send the first turn yourself, and check that the vendor opened the intended bot
 before relying on its knowledge or instructions. Complete sign-in, verification
 checks, questions and approvals yourself.
@@ -104,12 +104,12 @@ Your own subscription has its own usage limits, for example a 5-hour or weekly l
 
 ### Keep going on Allternit Cloud
 
-If you don't want to wait, a paused session on your own subscription shows **Keep going on Allternit Cloud**, with the Cloud model it will use and what you have to spend, for example "DeepSeek V4 Pro · $4.20 Cloud balance" or "$1.50 free left this month".
+If you don't want to wait, a paused session on your own subscription shows **Keep going on Allternit Cloud**, with the Cloud model it will use and what you have to spend, for example "DeepSeek V4 Pro · $4.20 Cloud balance".
 
 - **Nothing changes until you tap it.** Allternit never moves a session to Cloud by itself, and nothing is charged without the tap.
 - **Which model:** the same model when Allternit Cloud offers it, otherwise Allternit Cloud's default model. Open models are never picked for you.
-- **What happens:** the same session continues on that Cloud model, paid from your Cloud credits (or your plan's or free monthly allowance). The transcript shows "Continued on Allternit Cloud (DeepSeek V4 Pro) after the 5-hour limit was reached.", and the model picker shows the Cloud model.
-- **No credits left:** the button reads **Add Cloud credits** and opens **Settings → Billing**. When you come back, the button changes to **Keep going on Allternit Cloud**. See [Credits and auto top-up](/guides/credits-and-auto-top-up).
+- **What happens:** the same session continues on that Cloud model, paid from your Cloud credits (a plan's monthly credits count). The transcript shows "Continued on Allternit Cloud (DeepSeek V4 Pro) after the 5-hour limit was reached.", and the model picker shows the Cloud model.
+- **No credits left:** the button reads **Add Cloud credits** and opens the **Allternit Cloud models need credits** window with the credit packs and plans. When you come back, the button changes to **Keep going on Allternit Cloud**. See [Credits and auto top-up](/guides/credits-and-auto-top-up).
 - **Signed out of Allternit Cloud:** the button doesn't show.
 - **When your subscription resets:** the session stays on Cloud. To go back, pick your subscription's model in the model picker.
 
@@ -142,7 +142,7 @@ Settings → Connections › Coding tools sets up CLI brains (Claude Code, Codex
    - **OpenCode:** a normal vendor like the others. Sign-in runs `opencode auth login`, which signs OpenCode in to the model providers you pick.
 3. When it says **Connected**, the tool is available as a brain in the model picker.
 
-A bot can also bring up this setup in chat: see [Connect a vendor from chat](/guides/connect-vendor-from-chat).
+A bot can also bring up this setup in chat: see [Connect a vendor from chat](/guides/connect-from-chat).
 
 If OpenAI rejects a Codex code, turn on "device code authorization for Codex" in ChatGPT Settings → Security, then try again. One-click install isn't available on Windows yet; install the tool yourself there, then sign in.
 

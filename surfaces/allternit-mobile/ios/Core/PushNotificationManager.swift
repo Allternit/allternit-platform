@@ -111,6 +111,25 @@ final class PushNotificationManager: NSObject {
         }
     }
 
+    /// Account switch, before Clerk `setActive` (plan contract C7): notices
+    /// and Live Activities of the account leaving go. The push token stays
+    /// registered; `didSwitchAccount()` moves it.
+    func willSwitchAccount() async {
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        // Needs the leaving account's Bearer, so it runs before setActive.
+        await BotLiveActivityManager.willSignOut()
+        clearBadge()
+    }
+
+    /// Account switch, after Clerk `setActive`: post the stored APNs token
+    /// again with the new session. cloud-api moves a token to whoever
+    /// registers it (routes/apns.rs `register`), so push goes to the active
+    /// account only (decision D3). Also stores the new widget read token and
+    /// re-sends Live Activity tokens.
+    func didSwitchAccount() async {
+        await didSignIn()
+    }
+
     /// Sign-out: stop pushes to this phone for the account leaving. Runs
     /// before the session is dropped (the DELETE needs its Bearer).
     func willSignOut() async {
@@ -133,8 +152,14 @@ final class PushNotificationManager: NSObject {
     /// A notification was tapped: open what it points at.
     /// An approval opens Decisions, where it can be answered; the rest open
     /// their link.
-    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil) {
+    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil, sessionId: String? = nil,
+                   type: String? = nil, computerId: String? = nil) {
         clearBadge()
+        // Computer alerts (offline, cpu, disk) open that computer's console detail.
+        if type == "computer_alert", let computerId, !computerId.isEmpty {
+            DeepLinkRouter.shared.enqueue(.computerConsole(computerId))
+            return
+        }
         if let inboxId, !inboxId.isEmpty {
             DeepLinkRouter.shared.enqueue(.inboxItem(inboxId))
             return
@@ -143,8 +168,8 @@ final class PushNotificationManager: NSObject {
             DeepLinkRouter.shared.enqueue(.decisions)
             return
         }
-        guard let urlPath, !urlPath.isEmpty else { return }
-        DeepLinkRouter.shared.open(path: urlPath)
+        // The url, else (an agent's message from a session with no bot) the session.
+        DeepLinkRouter.shared.openPush(urlPath: urlPath, event: event, sessionId: sessionId)
     }
 
     /// Opening the app counts as seeing what's new.

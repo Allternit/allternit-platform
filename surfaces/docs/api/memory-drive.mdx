@@ -101,6 +101,12 @@ Applies a batch as one commit, only if the drive is still at `expected_revision`
 Returns `{ revision, changed }`. `MEMORY.md`'s `## Index` is regenerated from the topic
 files on every write. `twin/` is managed by Allternit and can't be written.
 
+### Versions and conflict copies
+
+An entry's version is the first 12 hex characters of a SHA-256 hash of its stored line (UTF-8, no trailing newline). Clients that edit entries compute it the same way. The server needs no change for it: gizzi checks the version against the latest head before it sends a write with `expected_revision`.
+
+When gizzi replays local work after a rejected write, it merges per entry. If both sides changed the same entry differently, the other side keeps the id and the local text is written as a sibling entry with the id `<id>-conflict-<8 hex>` and the ordinary metadata key `conflict_of: <id>`. An edit beats a delete. The count of entries with `conflict_of` is the "N memories need a look" figure. See [Memory tools](/tools/memory).
+
 ### `POST /memory/drive/remember`
 
 Saves one memory without building an entry yourself.
@@ -229,10 +235,28 @@ logins are not logged.
 
 ### `POST /memory/drive/capture/turn`
 
-Body `{ source: "gizzi", label: "gizzi:session/<id>", text }`. Gizzi sends the person's message at
-the end of each turn. The API records it as a `turn_user` observation with the label as its source
-when the `gizzi` switch is on, and runs no extraction, because Gizzi saves memories itself. Returns
-`{ recorded }`.
+Body `{ source: "gizzi", label: "gizzi:session/<id>", text, role?, turn_id?, tool_name?, tool_input?, tool_output? }`.
+Gizzi sends the person's message at the end of each turn. The API records it as a `turn_user`
+observation with the label as its source when the `gizzi` switch is on, and runs no extraction,
+because Gizzi saves memories itself. Returns `{ recorded }`, or `{ recorded: false, reason }` when
+nothing was kept (`source_off`, `sleep_off`, `incognito`, `empty`, `repeat`).
+
+What is recorded depends on Allternit Sleep:
+
+- **Sleep off (default).** Only the person's message, clipped to 4000 characters. A request with
+  `role` `assistant` or `tool` records nothing (`sleep_off`). Old clients that send no `role` are
+  treated as `user`.
+- **Sleep on.** The person's message is kept in full up to 64,000 characters, and Gizzi also sends
+  the assistant's last text reply of the turn (`role: "assistant"`, stored as `turn_assistant`) and
+  each tool call (`role: "tool"`, stored as `turn_tool`). A tool row reads
+  `<tool_name>`, the input clipped to 4000 characters, `---`, then the output clipped to 16,000
+  characters; a clipped part ends with `[truncated N chars]`. Gizzi checks
+  `GET /memory/sleep/status` once per process (cached five minutes) and sends these extra rows only
+  when `enabled` is true. Tool output is sent as is: no Gizzi tool is marked sensitive yet.
+
+Nothing is recorded for an incognito session, for any role, and every role respects the `gizzi`
+capture switch. A row repeated with the same content in the same session within ten minutes is
+dropped (`turn_id` is accepted for later use).
 
 **Channels** are captured where messages arrive. In `channel_transports::accept_events_with` and
 in bot email, a message is captured only when its sender matches the account's verified owner
@@ -269,6 +293,7 @@ Query: `after` (follow new rows, oldest first), `before` (page back, newest firs
 | `imported` | Imports and syncs (commit messages `Import memory from …` / `Sync memory from …`) |
 | `dream` | Each Dream step: `detail.step` is `gather`, `plan`, `check`, `done` or `undo`; `run` is the Dream id |
 | `vendor` | Reads of the owner's own vendor logins |
+| `sleep.*` | Sleep events (six kinds, see [Sleep: Events](/api/memory-sleep#events)). Written by the API only. A client that does not know them should skip the row or show its `title` |
 
 `detail.items` holds up to 20 `{ text, source }` previews (240 characters each) and
 `detail.total` the full count. A row is tied to a `session` only when every added line came from
@@ -279,7 +304,7 @@ than 90 days are dropped. The drive's git history stays the full record. Older c
 
 An agent working on the owner's own drive reports what it did. Body
 `{ kind: "saved" | "recalled" | "forgot", title, items?: [{ text, source }], source?, session? }`
-(at most 50 items; `source` must be a `scheme:value` label). Gizzi's `memory_recall` and
+Any other kind, including every `sleep.*` kind, is refused. (at most 50 items; `source` must be a `scheme:value` label). Gizzi's `memory_recall` and
 `memory_write` tools call it with `source: gizzi:session/<id>` (best effort, never blocking the tool).
 
 ### Ledger: `GET /memory/drive/ledger`, `GET /ledger/file`, `POST /ledger/snapshot`, `GET /ledger/download`

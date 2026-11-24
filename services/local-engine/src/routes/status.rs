@@ -62,6 +62,10 @@ pub struct StatusResponse {
     pub ram: RamInfo,
     pub disk: DiskInfo,
     pub gpu: Option<Vec<GpuInfo>>,
+    /// Loaded models with live numbers (mem, tok/s, context).
+    pub running: Vec<crate::runtime::RunningInfo>,
+    /// Engine pack installs (progress while downloading, then the result).
+    pub engine_packs: Vec<crate::engine_packs::InstallJob>,
 }
 
 /// Create the status router.
@@ -81,18 +85,31 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         used_bytes: 0,
     });
 
-    let sys = System::new_all();
-    let platform = platform_info(&sys);
-    let cpu = cpu_info(&sys);
     // Live CPU usage and memory pressure come from the background sampler —
     // a per-request System can only report totals, not usage deltas.
     let sample = state.sampler.latest();
-    let ram = ram_info(&sys, &sample);
-    let gpu = detect_gpu(&ram);
+    // System::new_all and the GPU probes block (the probes for up to 2 s
+    // each), so they run off the async worker threads.
+    let probe = move || {
+        let sys = System::new_all();
+        let platform = platform_info(&sys);
+        let cpu = cpu_info(&sys);
+        let ram = ram_info(&sys, &sample);
+        let gpu = detect_gpu(&ram);
+        (platform, cpu, ram, gpu)
+    };
+    let (platform, cpu, ram, gpu) = match tokio::task::spawn_blocking(probe).await {
+        Ok(v) => v,
+        Err(_) => probe(),
+    };
 
     Json(StatusResponse {
         status: "healthy".into(),
-        active_runtimes: runtimes.len(),
+        // Stopped runtimes (idle unload, manual stop) stay listed; count live ones.
+        active_runtimes: runtimes
+            .iter()
+            .filter(|r| matches!(r.status, crate::runtime::RuntimeStatus::Running | crate::runtime::RuntimeStatus::Starting))
+            .count(),
         cached_models,
         platform,
         cpu,
@@ -100,6 +117,8 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         ram,
         disk,
         gpu,
+        running: runtimes.iter().filter_map(|r| r.running.clone()).collect(),
+        engine_packs: state.packs.jobs().await,
     })
 }
 
@@ -198,13 +217,17 @@ fn detect_gpu(ram: &RamInfo) -> Option<Vec<GpuInfo>> {
 
 #[cfg(target_os = "macos")]
 fn detect_macos_gpu(ram: &RamInfo) -> Result<Vec<GpuInfo>, Box<dyn std::error::Error>> {
-    // Prefer system_profiler because it is easier to parse.
-    let output = std::process::Command::new("system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output()?;
+    use crate::hardware::gpu_probe::{quiet_command, run_with_timeout, PROBE_TIMEOUT};
 
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout);
+    // Prefer system_profiler because it is easier to parse. Both probes are
+    // timed: a hung system_profiler must not hang /status.
+    let output = run_with_timeout(
+        quiet_command("system_profiler").args(["SPDisplaysDataType", "-json"]),
+        PROBE_TIMEOUT,
+    );
+
+    if let Some(output) = output.filter(|o| o.success) {
+        let text = output.stdout;
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
             let mut gpus = Vec::new();
             let displays = json
@@ -234,15 +257,14 @@ fn detect_macos_gpu(ram: &RamInfo) -> Result<Vec<GpuInfo>, Box<dyn std::error::E
     }
 
     // Fallback to ioreg.
-    let output = std::process::Command::new("ioreg")
-        .args(["-c", "IOPCIDevice", "-d", "2", "-l"])
-        .output()?;
+    let output = run_with_timeout(
+        quiet_command("ioreg").args(["-c", "IOPCIDevice", "-d", "2", "-l"]),
+        PROBE_TIMEOUT,
+    )
+    .filter(|o| o.success)
+    .ok_or("ioreg failed or timed out")?;
 
-    if !output.status.success() {
-        return Err("ioreg failed".into());
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = output.stdout;
     let mut gpus = Vec::new();
     for line in text.lines() {
         if let Some(pos) = line.find("\"model\"") {
@@ -271,30 +293,11 @@ fn detect_macos_gpu(ram: &RamInfo) -> Result<Vec<GpuInfo>, Box<dyn std::error::E
 
 #[cfg(target_os = "linux")]
 fn detect_linux_gpu() -> Result<Vec<GpuInfo>, Box<dyn std::error::Error>> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,memory.total,memory.used",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        return Err("nvidia-smi failed".into());
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut gpus = Vec::new();
-    for line in text.lines() {
-        let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-        if parts.len() >= 1 {
-            gpus.push(GpuInfo {
-                name: parts[0].to_string(),
-                memory_total_mb: parts.get(1).and_then(|s| s.parse().ok()),
-                memory_used_mb: parts.get(2).and_then(|s| s.parse().ok()),
-            });
-        }
-    }
-
+    // Timed nvidia-smi (see hardware::gpu_probe).
+    let gpus: Vec<GpuInfo> = crate::hardware::gpu_probe::nvidia_smi()
+        .into_iter()
+        .map(|g| GpuInfo { name: g.name, memory_total_mb: g.memory_total_mb, memory_used_mb: g.memory_used_mb })
+        .collect();
     if gpus.is_empty() {
         Err("no NVIDIA GPU detected".into())
     } else {

@@ -1,0 +1,34 @@
+Id=apparmor.service
+MainPID=0
+ActiveEnterTimestamp=Wed 2026-11-18 09:11:50 UTC
+UnitFileState=enabled
+
+Id=cron.service
+MainPID=612
+ActiveEnterTimestamp=Wed 2026-11-18 09:12:03 UTC
+UnitFileState=enabled
+
+Id=docker.service
+MainPID=845
+ActiveEnterTimestamp=Wed 2026-11-18 09:12:10 UTC
+UnitFileState=enabled
+
+Id=nginx.service
+MainPID=0
+ActiveEnterTimestamp=
+UnitFileState=disabled
+
+Id=ssh.service
+MainPID=701
+ActiveEnterTimestamp=Wed 2026-11-18 09:12:05 CET
+UnitFileState=enabled-runtime
+
+Id=postgresql@16-main.service
+MainPID=0
+ActiveEnterTimestamp=
+UnitFileState=static
+
+Id=allternit-agent.service
+MainPID=0
+ActiveEnterTimestamp=
+UnitFileState=enabled

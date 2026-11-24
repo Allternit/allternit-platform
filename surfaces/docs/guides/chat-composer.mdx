@@ -11,15 +11,29 @@ The text box is a white card. When you reply to something, or attach files on De
 
 - **Add files** opens the menu for files, folders, screenshots, GitHub and tools. On a phone it is the round **+** button. See [Attachments](/guides/attachments). **Draw a sketch** (on a phone, **Sketch**) opens a white canvas with pen, fine, marker, eraser, colors and undo. **Attach** adds the drawing as an image. The iPhone app uses Apple's drawing tools.
 - The **model** name opens the model picker. With no brain picked yet it reads **Pick a brain**. There is no default brain, so send then keeps your message, opens the picker and says **Pick a brain first**. Once you pick one, it stays your brain on every surface until you change it.
-- The **microphone** starts voice mode.
+- The **voice** button (the waveform) starts voice mode. On a phone, the **mic** sits to its left and dictates into the draft; see [Voice](/guides/voice#dictation-on-a-phone). If dictation fails, one plain line says so.
 - The **send** button stays grey until there is something to send.
+
+## On a phone
+
+These changes apply to the phone layout on ai.allternit.com and in the m.allternit.com app (including the Android app from Google Play).
+
+- **The deck sits under the text box.** The bar under the text box (Agent mode, Plugins, Artifacts) is joined to its bottom edge. On a phone, swipe the text box down to fold it and up to open it. While it is folded, a small grey **tools** tab shows under the text box; tap it to open the bar. The tab is hidden while the bar is open. On Desktop the **tools** tab is always there and folds or opens the bar. Your choice is remembered on this device. The gallery and starter pills do not move.
+- **Permission is in +.** The permission pill is gone from the row. Open **+** and choose **Permission · Auto ›** to pick **Auto**, **Ask** or **Read-only**. The choice is the same one as before (see [Chat sessions](/guides/chat-sessions#approval)). The page links to the permission defaults.
+- **Add to chat** sheet. **+** opens a sheet that groups the ways to add: files and photos (the **Photos** link in the title row opens the file picker, because a web page cannot read your camera roll), tools, the **Computer** row and **Permission**.
+- **Computer chip.** There is no strip at the top. A chip above the text box shows when there is no computer connected (**Connect**), when your computer cannot be reached (**Fix**), while it wakes, or when the compute gate applies. **✕** shrinks it to a dot on **+**; the dot clears when the state changes. The same chip shows in Chat, Bots and Code. Screens with no text box show an empty state with a **Connect** action.
+- **Chat ⋯ menu.** **Run on my phone** and **Capture to brain** moved from the sheet to the **⋯** menu at the top of a chat. The menu also has **Pin** and **Archive** for a saved chat.
+
+On iPhone Safari there is no vibration, so the haptic taps are silent there. See [Motion and haptics](/guides/motion#phone-motion-and-haptics).
+
+On a phone, tapping outside the composer closes the keyboard and folds the deck when the draft is empty. The drawer and the page beside it no longer clip on the left edge.
 
 ## The model picker
 
 The picker lists every model you can use, grouped by provider. Search narrows the list. Nothing is hidden behind the search.
 
 - **Desktop and the web:** the providers are on the left, each with a ring for its usage limit. The ring is green, then amber at 80%, then red at 95%. The models are in the middle. The model you point at is shown below, with its thinking setting and its account.
-- **Phone and the PWA:** a strip across the top shows each provider with its ring. Tap one to see only its models. Your current model and its thinking setting are at the top of the list.
+- **Phone and the PWA:** search is on top, with the provider rail on the left (each provider with its ring) and its models beside it. The model you point at is shown at the foot with its thinking setting. The iPhone app groups Allternit Cloud models by vendor and adds **Reasoning** and **Local** filter chips and a status dot on each provider.
 - Each provider's own default model carries a **Default** tag. Models inside a provider are in the vendor's order, newest and strongest first. The app never picks a model for you. A saved choice of a model that has been retired moves to its replacement.
 
 Each model shows its vendor's own thinking setting, with the vendor's word and levels:

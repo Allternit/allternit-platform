@@ -32,7 +32,7 @@ enum TwinKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// all = every bot and their vendor bots; bot = one bot; owner = only you.
+/// all = every bot and their Connected bots; bot = one bot; owner = only you.
 enum TwinVisibility: String, Codable, Sendable {
     case all, bot, owner
 
@@ -69,6 +69,11 @@ struct TwinMemory: Codable, Identifiable, Equatable, Sendable {
     let reviewedAt: String?
 
     var isProposed: Bool { status == "proposed" }
+}
+
+struct TwinContext: Decodable, Equatable, Sendable {
+    let configured: Bool
+    let context: String
 }
 
 struct TwinMemoryInput: Encodable, Sendable {
@@ -121,6 +126,20 @@ final class TwinClient: @unchecked Sendable {
                                  signature: profile.signature, ownerDisclosure: profile.ownerDisclosure)
         let body: ProfileBody = try await send("twin/profile", method: "PUT", body: input)
         return body.profile
+    }
+
+    /// What bots are told about you right now (`GET twin/context`).
+    /// `configured` is false until the profile has any content.
+    func context(botId: String? = nil) async throws -> TwinContext {
+        var path = "twin/context"
+        if let botId, !botId.isEmpty {
+            path += "?botId=\(botId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? botId)"
+        }
+        do {
+            return try await client.get(path: path)
+        } catch let APIError.httpError(status, _) where status == 404 {
+            return TwinContext(configured: false, context: "")
+        }
     }
 
     func memory() async throws -> [TwinMemory] {

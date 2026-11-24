@@ -31,6 +31,9 @@ test/mcp/catalog.test.ts
 test/mcp/era.test.ts
 test/mcp/headers.test.ts
 test/memory/abort-leak.test.ts
+test/memory/sleep-triggers.test.ts
+test/memory/sleep-cli.test.ts
+test/memory/sleep-dispute-note.test.ts
 test/package/native-assets.test.ts
 test/patch/patch.test.ts
 test/permission-task.test.ts
@@ -64,6 +67,7 @@ test/session/context-projector.test.ts
 test/session/instruction.test.ts
 test/session/message-v2.test.ts
 test/session/retry.test.ts
+test/session/system-prompt-selection.test.ts
 test/session/scratchpad.test.ts
 test/session/budget.test.ts
 test/session/budget-check.test.ts
@@ -161,3 +165,5 @@ test/runtime/provider-quota.test.ts
 test/runtime/cowork-store-boundary.test.ts
 test/runtime/process-registry.test.ts
 test/commands/status-json.test.ts
+test/studio-client.test.ts
+test/memory/sleep-reminders.test.ts

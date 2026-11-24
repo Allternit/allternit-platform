@@ -1,0 +1,8 @@
+apparmor.service                 loaded    active   exited  Load AppArmor profiles
+cron.service                     loaded    active   running Regular background program processing daemon
+docker.service                   loaded    active   running Docker Application Container Engine
+nginx.service                    loaded    failed   failed  A high performance web server and a reverse proxy server
+ssh.service                      loaded    active   running OpenBSD Secure Shell server
+postgresql@16-main.service       loaded    inactive dead    PostgreSQL Cluster 16-main
+allternit-agent.service          loaded    activating auto-restart Allternit agent
+ghost.service                    not-found inactive dead    ghost.service

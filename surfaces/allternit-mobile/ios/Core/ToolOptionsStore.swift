@@ -114,6 +114,16 @@ final class ToolOptionsStore: ObservableObject {
         return (parts + [body]).joined(separator: " ")
     }
 
+    /// `text` without the leading tool markers, keeping a style prefix.
+    func withoutToolMarkers(_ text: String) -> String {
+        var body = text
+        let markers = ["[web_search_enabled]", "[research_enabled]"]
+        while let marker = markers.first(where: { body.hasPrefix($0) }) {
+            body = String(body.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return body
+    }
+
     /// Undoes `enrichedText` so a failed send hands back what the person typed.
     func strippedText(_ text: String) -> String {
         var body = text

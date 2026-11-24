@@ -52,6 +52,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     var reasoning: String = ""
     var isStreaming: Bool = false
     var toolStatus: ToolStatus? = nil
+    /// The run's one-line status ("phase - note") from `session_status`
+    /// frames. Set while busy, cleared on idle and when the stream ends.
+    var busyLine: String? = nil
     /// Every tool call of the reply, for the tool calls rail and the agent
     /// run tree (Features/RunTree).
     var toolCalls: [ToolCallRecord] = []
@@ -79,6 +82,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     /// When the message was written: the server's timestamp for history,
     /// creation time for messages made on this device (the Office panel's thread).
     var createdAt: Date = Date()
+    /// Memories the reply used or changed (`metadata.memoryRefs`), for the
+    /// "Used memory (n)" chip (MemoryRefsChip). Empty for user messages.
+    var memoryRefs: [MemoryRef] = []
 }
 
 /// Parameters for the NEXT session create, pushed from the view whenever
@@ -115,6 +121,11 @@ struct SessionContext: Equatable, Sendable {
 
 /// Send-path failures with user-meaningful messages (surfaced via the
 /// composer's transient banner through `localizedDescription`).
+enum ChatEditError: LocalizedError {
+    case notSynced
+    var errorDescription: String? { "This message hasn't synced yet. Try again in a moment." }
+}
+
 enum ChatSendError: LocalizedError {
     case attachmentUploadFailed(String)
 
@@ -126,11 +137,33 @@ enum ChatSendError: LocalizedError {
     }
 }
 
+/// One location fix waiting for the next send (UserLocationCard sets it, the
+/// send path takes it). Expires after two minutes so a stale fix never rides a later turn.
 @MainActor
-final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = []
+enum PendingClientLocation {
+    private static var value: (loc: AgentChatClient.ClientLocation, at: Date)?
+    static func set(_ loc: AgentChatClient.ClientLocation) { value = (loc, Date()) }
+    static func take() -> AgentChatClient.ClientLocation? {
+        defer { value = nil }
+        guard let v = value, Date().timeIntervalSince(v.at) < 120 else { return nil }
+        return v.loc
+    }
+}
+
+@MainActor
+final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = [] {
+        didSet { if !branches.isEmpty, !isStreaming { remapEditedVersions() } }
+    }
     @Published var isStreaming: Bool = false {
         didSet { ReviewPromptStore.shared.streamingChanged(owner: self, streaming: isStreaming) }
     }
+    /// Earlier versions of edited turns, from `GET agent-sessions/:id/branches`.
+    private var branches: [MessageBranch] = []
+    /// User message id → its earlier versions (newest first), for the
+    /// "Edited" chip. Remapped by position whenever the feed changes.
+    @Published private(set) var editedVersions: [String: [MessageBranch]] = [:]
+    /// Set by an edit-resend so the branch list reloads once its reply lands.
+    private var reloadBranchesAfterStream = false
     @Published var currentSessionId: String? = nil
     /// True only during the first message's session-create POST; the
     /// composer disables send on it so a slow create can't double-send.
@@ -143,6 +176,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     @Published var draftToRestore: String? = nil
     /// Set when a send came back `no_brain`: ChatView opens the model picker.
     @Published var needsBrainPick: Bool = false
+    /// Set when a send hits a locked Allternit Cloud model (before sending,
+    /// D9) or the server refuses it for credits (402): ChatView shows the sheet.
+    @Published var cloudCreditsRequest: CloudCreditsRequest? = nil
 
     private let chatClient: AgentChatClient
 
@@ -219,7 +255,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         discardTemporaryBackingSession()
         transientError = nil
         messages = []
+        branches = []
+        editedVersions = [:]
         currentSessionId = nil
+        hasLocalPersonTurns = false
+        resetPlanThread()
         isIncognito = ephemeral
         sessionContext.ephemeral = ephemeral
     }
@@ -235,6 +275,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         transientError = nil
         currentSessionId = sessionId
         messages = []
+        branches = []
+        editedVersions = [:]
+        hasLocalPersonTurns = false
+        resetPlanThread()
+
+        if PlanThreadClient.isThreadId(sessionId) {
+            loadPlanThread(sessionId)
+            return
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -244,6 +293,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // Ignore stale responses if the user switched sessions mid-flight.
                 guard self.currentSessionId == sessionId else { return }
                 self.messages = records.map(Self.mapRecord)
+                await self.loadBranches()
             } catch {
                 self.transientError = "Couldn't load the conversation: \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
@@ -268,17 +318,26 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// attachments survive history loads and foreground reconciles.
     nonisolated private static func mapRecord(_ record: AgentSessionMessage) -> MessageRecord {
         let parts = record.metadata?.parts ?? []
+        // File parts by index, so a reply's `file:msg:<id>:<n>` citation
+        // finds its attachment (FileCitationChip).
+        CitationAttachments.record(messageId: record.id, parts: parts)
         let artifacts = parts
             .filter { $0.type == "file" }
             .map { ArtifactRecord(part: $0, messageId: record.id) }
+        let tools = ToolCallRecord.fromHistory(parts)
+        // The gateway's `[Tool name]` placeholder lines duplicate the tool chips; drop them.
+        let content = tools.isEmpty ? record.content : record.content
+            .replacingOccurrences(of: #"(?m)^[ \t]*\[Tool [^\]\n]*\][ \t]*\r?\n?"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return MessageRecord(
             id: record.id,
             role: record.role,
-            content: record.content,
+            content: content,
             reasoning: record.thinking ?? "",
-            toolCalls: ToolCallRecord.fromHistory(parts),
+            toolCalls: tools,
             artifacts: artifacts,
-            createdAt: parseTimestamp(record.timestamp) ?? Date()
+            createdAt: parseTimestamp(record.timestamp) ?? Date(),
+            memoryRefs: Array((record.metadata?.memoryRefs ?? []).prefix(10))
         )
     }
 
@@ -449,7 +508,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// are the composer's staged files — each is uploaded
     /// (`POST /api/v1/uploads`) before the stream starts and referenced from
     /// the agent-chat body; an upload failure fails the send.
-    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true) {
+    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, !isCreatingSession else { return }
 
@@ -459,8 +518,14 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // The UI shows the user's original text; prefixes (web search, style)
         // are injected only into the stream payload (ChatComposer.tsx parity).
         let streamText = enrich ? ToolOptionsStore.shared.enrichedText(trimmed) : trimmed
-        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId)
+        // A card's Share location parks the fix in PendingClientLocation, then sends a
+        // short message; this send picks it up (once, and only while it is fresh).
+        let location = clientLocation ?? PendingClientLocation.take()
+        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location)
     }
+
+    /// The live voice session, if any (set by VoiceHost); `control` events go to it.
+    weak var voiceModel: VoiceModeViewModel?
 
     /// Error-card "Retry": drops the failed assistant placeholder and
     /// re-streams the last sent text WITHOUT re-appending the user bubble
@@ -473,6 +538,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     runtimeModelId: runtimeModelId ?? last.runtimeModelId,
                     effort: effort ?? last.effort,
                     preparedRefs: last.attachmentRefs)
+    }
+
+    /// Error-card "Use Allternit credits for this message": the same retry,
+    /// once, on the given Allternit Cloud model. Only runs on a tap.
+    func resendOnCloudModel(_ assistantId: String, cloudModelId: String, effort: String? = nil) {
+        guard ModelStore.cloudAlias(cloudModelId) != nil else { return }
+        retryFailedMessage(assistantId, runtimeModelId: cloudModelId, effort: effort)
     }
 
     // MARK: - Regenerate & edit-resend (Phase 8)
@@ -509,14 +581,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     }
 
     /// Edit-resend: the user edited the LAST user bubble and hit send.
-    /// Truncates the conversation from that message on and re-sends the new
-    /// text as a fresh send.
-    ///
-    /// Server-side truncation: `POST /api/v1/agent-sessions/:id/revert` is
-    /// live on the backend (agent_session_routes.rs — probed 2026-07: 200 on
-    /// a valid session), so the revert call runs alongside the client-side
-    /// truncation. A failure is logged, not swallowed — the feed reload on
-    /// the next foreground reconcile is the source of truth.
+    /// Reverts the server conversation back to that message
+    /// (`POST agent-sessions/:id/revert {messageId}`), then truncates the feed
+    /// and re-sends the new text. If the revert can't be done (no server id for
+    /// the message, or the call fails) nothing is resent and a visible error
+    /// is shown: resending on top of the old turn would duplicate it.
     ///
     /// `attachments` are any newly-staged files in the composer while editing.
     /// Original attachments from the message being edited are not currently
@@ -524,19 +593,63 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     func resendEditedMessage(_ messageId: String, newText: String, attachments: [StagedAttachment] = [], runtimeModelId: String?, effort: String? = nil) {
         guard !isStreaming, !isCreatingSession,
               let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
-        if let sessionId = currentSessionId {
-            Task { [chatClient] in
-                do {
-                    try await chatClient.revert(sessionId: sessionId)
-                } catch {
-                    print("agent-sessions: revert failed for \(sessionId): \(error.localizedDescription)")
-                }
-            }
+        // A chat with the person's own plan lives on this phone only: cut the
+        // feed back to that message and send the new text.
+        if currentSessionId == nil, PersonModels.isPersonOnly(runtimeModelId) || ModelStore.shared.routesDirect(runtimeModelId) {
+            messages.removeSubrange(index...)
+            sendMessage(ToolOptionsStore.shared.enrichedText(newText), attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+            return
         }
-        messages.removeSubrange(index...)
-        // Re-apply active composer prefixes to the edited resend.
-        let enriched = ToolOptionsStore.shared.enrichedText(newText)
-        sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+        guard let sessionId = currentSessionId else {
+            transientError = "Couldn't edit this message: the chat isn't saved yet."
+            return
+        }
+        isCreatingSession = true  // blocks a second send while the revert runs
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isCreatingSession = false }
+            do {
+                let serverId = try await self.serverMessageId(for: messageId, localIndex: index, sessionId: sessionId)
+                try await self.chatClient.revert(sessionId: sessionId, messageId: serverId)
+            } catch {
+                self.transientError = "Couldn't edit this message: \(FriendlyErrorMessage.from(error.localizedDescription)) Your edit was not sent."
+                return
+            }
+            guard self.currentSessionId == sessionId,
+                  let current = self.messages.firstIndex(where: { $0.id == messageId }) else { return }
+            self.messages.removeSubrange(current...)
+            self.reloadBranchesAfterStream = true
+            self.isCreatingSession = false
+            // Re-apply active composer prefixes to the edited resend.
+            let enriched = ToolOptionsStore.shared.enrichedText(newText)
+            self.sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+        }
+    }
+
+    /// The server id of a user bubble. Bubbles sent on this device carry a
+    /// local UUID until the feed reloads; match those by their position among
+    /// the user messages of the server transcript.
+    private func serverMessageId(for messageId: String, localIndex: Int, sessionId: String) async throws -> String {
+        if messageId.hasPrefix("msg_") { return messageId }
+        let ordinal = messages[..<localIndex].filter { $0.role == "user" }.count
+        let records = try await chatClient.listMessages(sessionId: sessionId)
+        let users = records.filter { $0.role == "user" }
+        guard ordinal < users.count else { throw ChatEditError.notSynced }
+        return users[ordinal].id
+    }
+
+    /// Reloads the edited-turn history and maps it onto the feed.
+    func loadBranches() async {
+        guard let sessionId = currentSessionId else { return }
+        let loaded = (try? await chatClient.branches(sessionId: sessionId)) ?? []
+        guard currentSessionId == sessionId else { return }
+        branches = loaded
+        remapEditedVersions()
+    }
+
+    private func remapEditedVersions() {
+        let transcript = messages.map { EditHistory.Entry(id: $0.id, role: $0.role, date: $0.createdAt) }
+        editedVersions = EditHistory.map(branches: branches, transcript: transcript)
     }
 
     /// The last user text actually handed to the stream — the retry source.
@@ -548,7 +661,22 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// never-landed rollback removes it along with the placeholder.
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
-    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil) {
+    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil) {
+        // A locked Allternit Cloud model (D9): nothing is sent; the text goes
+        // back to the composer and the credits sheet opens. The 402 is the backstop.
+        if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
+            if let userMessageId {
+                messages.removeAll { $0.id == userMessageId }
+                draftToRestore = ToolOptionsStore.shared.strippedText(trimmed)
+            }
+            cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: nil)
+            return
+        }
+        if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) || routesCloudDirect(modelId) {
+            startPersonStream(text: trimmed, modelId: modelId,
+                              hasAttachments: !stagedAttachments.isEmpty || !(preparedRefs ?? []).isEmpty)
+            return
+        }
         transientError = nil
         draftToRestore = nil
 
@@ -611,7 +739,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
                     tools: ToolOptionsStore.shared.optionsForSend,
-                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" }
+                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
+                    clientLocation: clientLocation
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -622,8 +751,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // stream finished.
                 self.finishStreaming(messageId: assistantId)
                 if !streamFailed { ReviewPromptStore.shared.recordSuccessfulAnswer() }
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(streamFailed ? .error : .success)
+                if streamFailed { Haptics.error() } else { Haptics.success() }
             } catch is CancellationError {
                 // Local cancel (stop button / backgrounding). Whoever cancelled
                 // owns the state cleanup — just don't lose buffered deltas.
@@ -645,17 +773,170 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         // No brain chosen: keep the draft and open the picker.
                         self.transientError = AgentChatClientError.noBrainMessage
                         self.needsBrainPick = true
+                    } else if isComputeGateRefusal(error) {
+                        // No computer (428 / relayed compute_required): AgentChatClient opened the
+                        // compute gate sheet; the draft is back in the composer, so no raw banner.
+                        self.transientError = nil
+                    } else if ModelStore.cloudAlias(runtimeModelId) != nil,
+                              let reason = CloudCreditsGate.reason(inRelayedError: error.localizedDescription) {
+                        // The computer relayed cloud-api's 402: the credits sheet, not a banner.
+                        self.cloudCreditsRequest = CloudCreditsGate.request(modelId: runtimeModelId, reason: reason)
                     } else {
                         self.transientError = "Couldn't send the message: \(FriendlyErrorMessage.from(error.localizedDescription))"
                         self.reportPetOffer(error.localizedDescription)
                     }
                     self.finishStreaming(messageId: assistantId)
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.error)
+                    Haptics.error()
                 } else {
                     self.failStreaming(messageId: assistantId, error: error)
                 }
             }
+        }
+    }
+
+    // MARK: - The person's own plan (contract §9.3, §9.9)
+
+    /// True once this chat has turns sent to a person model. They live only
+    /// in this feed (no computer session), so the foreground reload must not
+    /// replace them with the server transcript.
+    private var hasLocalPersonTurns = false
+
+    /// The history a person model gets each turn (D8: replayed, no resume):
+    /// every finished user and assistant message, with `text` as the last
+    /// user message (it carries the composer's prefixes).
+    nonisolated static func personHistory(_ messages: [MessageRecord], text: String) -> [PersonChatMessage] {
+        var out: [PersonChatMessage] = messages.compactMap { m in
+            guard ["user", "assistant", "system"].contains(m.role), !m.isStreaming, m.error == nil else { return nil }
+            let content = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.isEmpty ? nil : PersonChatMessage(role: m.role, content: m.content)
+        }
+        if let last = out.last, last.role == "user" { out.removeLast() }
+        out.append(PersonChatMessage(role: "user", content: text))
+        return out
+    }
+
+    /// A composer send to a person model: plan/… and copilot/… go to cloud-api
+    /// with `X-Allternit-Turn: person`; chatgpt/… go from the phone to OpenAI.
+    /// No session on a computer, no tools, no attachments. A refusal lands
+    /// inline under the reply in plain words.
+    /// An Allternit Cloud turn with no computer goes straight to cloud-api
+    /// (like a plan turn) and is stored as a plan thread `allternit/<alias>`
+    /// (D7). A chat that lives on a computer keeps the computer path (D8).
+    private func routesCloudDirect(_ modelId: String) -> Bool {
+        guard ModelStore.shared.routesDirect(modelId) else { return false }
+        guard let sessionId = currentSessionId else { return true }
+        return PlanThreadClient.isThreadId(sessionId)
+    }
+
+    private func startPersonStream(text: String, modelId: String, hasAttachments: Bool) {
+        transientError = nil
+        draftToRestore = nil
+        // No tools here: the web search / research markers mean nothing to the vendor (a style prefix stays).
+        let history = Self.personHistory(messages, text: ToolOptionsStore.shared.withoutToolMarkers(text))
+        let vendor = PersonModels.vendorName(for: modelId)
+
+        let assistantId = UUID().uuidString
+        messages.append(MessageRecord(id: assistantId, role: "assistant", content: "", isStreaming: true))
+        isStreaming = true
+        streamingMessageId = assistantId
+        hasLocalPersonTurns = true
+        lastSent = (text, modelId, nil, [])
+        if PlanThreadClient.isStored(model: modelId), !hasAttachments {
+            savePlanTurn(role: "user", content: ToolOptionsStore.shared.strippedText(text), model: modelId)
+        }
+
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if hasAttachments { throw PersonChatRefusal(code: "text_only", message: nil, vendor: vendor) }
+                self.streamRequestStartedAt = Date()
+                self.streamFirstDeltaAt = nil
+                for try await event in PersonChatClient.stream(model: modelId, messages: history) {
+                    try Task.checkCancellation()
+                    if case .delta(let chunk) = event {
+                        _ = self.apply(.textDelta(.init(messageId: nil, partId: nil, text: chunk)), to: assistantId)
+                    }
+                }
+                self.finishStreaming(messageId: assistantId)
+                if PlanThreadClient.isStored(model: modelId),
+                   let reply = self.messages.first(where: { $0.id == assistantId }), !reply.content.isEmpty {
+                    self.savePlanTurn(role: "assistant", content: reply.content, model: modelId)
+                }
+                Haptics.success()
+            } catch is CancellationError {
+                self.flushPendingDeltas()
+            } catch let error as URLError where error.code == .cancelled {
+                self.flushPendingDeltas()
+            } catch let refusal as PersonChatRefusal {
+                self.flushPendingDeltas()
+                if refusal.isCreditsRefusal {
+                    self.cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: refusal.code)
+                }
+                self.updateMessage(assistantId) { $0.error = refusal.card }
+                self.finishStreaming(messageId: assistantId)
+                Haptics.error()
+            } catch {
+                self.failStreaming(messageId: assistantId, error: error)
+            }
+        }
+    }
+
+    // MARK: - Plan chat store (contract §9.10)
+
+    private var planThreadId: String?
+    /// Set by any store failure: the rest of this chat stays on the device.
+    private var planStoreOff = false
+    private var planSyncTail: Task<Void, Never>?
+
+    private func resetPlanThread() {
+        planThreadId = nil
+        planStoreOff = false
+        planSyncTail = nil
+    }
+
+    /// Saves one turn to the store in order: the first one creates the thread.
+    /// Any failure drops this chat to device-only, silently.
+    private func savePlanTurn(role: String, content: String, model: String) {
+        guard !planStoreOff else { return }
+        let previous = planSyncTail
+        planSyncTail = Task { [weak self] in
+            await previous?.value
+            guard let self, !self.planStoreOff else { return }
+            let message = PlanThreadMessage(role: role, content: content, model: model)
+            do {
+                if let id = self.planThreadId {
+                    try await PlanThreadClient.shared.append(id: id, messages: [message])
+                } else {
+                    let title = String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                    let thread = try await PlanThreadClient.shared.create(model: model, title: title, messages: [message])
+                    self.planThreadId = thread.id
+                    await ShellSessionsStore.shared.load()
+                }
+            } catch {
+                self.planStoreOff = true
+            }
+        }
+    }
+
+    /// A Cloud turn on the computer path failed with cloud-api's credits
+    /// refusal, which arrives as prose (contract pre-check e): open the sheet.
+    private func presentCreditsSheetIfRelayed(_ text: String) {
+        guard let modelId = lastSent?.runtimeModelId, ModelStore.cloudAlias(modelId) != nil,
+              let reason = CloudCreditsGate.reason(inRelayedError: text) else { return }
+        cloudCreditsRequest = CloudCreditsGate.request(modelId: modelId, reason: reason)
+    }
+
+    /// Opens a stored plan chat; the thread keeps taking new turns.
+    private func loadPlanThread(_ id: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let detail = try? await PlanThreadClient.shared.get(id: id),
+                  self.currentSessionId == id else { return }
+            self.messages = detail.messages.enumerated().map { index, m in
+                MessageRecord(id: "\(id)-\(index)", role: m.role, content: m.content)
+            }
+            self.planThreadId = id
+            self.hasLocalPersonTurns = true
         }
     }
 
@@ -679,7 +960,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.toolStatus = MessageRecord.ToolStatus(
                     toolName: payload.toolName,
-                    text: payload.toolName,
+                    text: payload.detail?.title ?? payload.toolName,
                     state: .running,
                     startedAt: Date()
                 )
@@ -688,7 +969,25 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .toolResult(let payload):
             updateMessage(messageId) { message in
-                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail)
+                var detail = payload.detail
+                // Rail title: metadata `label` (already in detail.title), else
+                // the call's input `label`; computer tools use input `step`.
+                if detail?.title == nil || detail?.title?.isEmpty == true {
+                    let input = detail?.input.isEmpty == false
+                        ? detail?.input
+                        : message.toolCalls.first(where: { $0.id == payload.toolCallId })?.input
+                    let computerTools: Set<String> = ["computer", "computer_v2", "browser"]
+                    let keys = computerTools.contains(payload.toolName) ? ["step", "label"] : ["label"]
+                    if let text = keys.compactMap({ input?[$0]?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
+                        detail = detail ?? AgentChatEvent.ToolDetail()
+                        detail?.title = text
+                    }
+                }
+                if let title = detail?.title, !title.isEmpty { message.toolStatus?.text = title }
+                if GapToolMetadata.feedbackNote == payload.toolName, let gap = detail?.gap {
+                    SeenFeedbackNotes.shared.add(gap)
+                }
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: detail, runCode: payload.runCode)
                 message.toolStatus?.state = .done
                 if let startedAt = message.toolStatus?.startedAt {
                     message.toolStatus?.elapsed = Date().timeIntervalSince(startedAt)
@@ -722,9 +1021,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             if let usage = payload.usage {
                 updateMessage(messageId) { $0.runUsage = usage }
             }
+            if let refs = payload.metadata?.memoryRefs, !refs.isEmpty {
+                updateMessage(messageId) { $0.memoryRefs = Array(refs.prefix(10)) }
+            }
             guard payload.status == "error" else { break }
             flushPendingDeltas()
             let raw = payload.metadata?.error ?? "The generation failed."
+            presentCreditsSheetIfRelayed(raw)
             let card = ChatError(
                 name: payload.metadata?.errorDetails?.name,
                 message: payload.metadata?.errorDetails?.message,
@@ -738,6 +1041,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .streamError(let reason):
             flushPendingDeltas()
+            presentCreditsSheetIfRelayed(reason)
             // The API's streamed no_brain error carries its fixed message.
             let name: String? = reason == AgentChatClientError.noBrainMessage ? "no_brain" : nil
             updateMessage(messageId) { message in
@@ -746,7 +1050,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             if name == nil { reportPetOffer(reason) }
             return true
 
+        case .questionClosed(let requestID):
+            AgentAskStore.shared.questionClosed(id: requestID)
+
         case .question(let request):
+            AgentAskStore.shared.questionAsked(request)
             updateMessage(messageId) { message in
                 if !message.questions.contains(where: { $0.id == request.id }) {
                     message.questions.append(request)
@@ -759,6 +1067,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     message.permissions.append(ask)
                 }
             }
+
+        case .sessionStatus(let status):
+            updateMessage(messageId) { $0.busyLine = status.busy ? status.line : nil }
+
+        case .control(let control):
+            voiceModel?.applyControl(control)
 
         case .messageStart, .done, .ignored:
             // messageStart carries only model labels (not rendered); done is
@@ -828,6 +1142,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// connection).
     private func reconcileSession() async {
         guard streamTask == nil else { return }
+        // Plan turns aren't on the server; reloading would drop them.
+        if hasLocalPersonTurns {
+            if let messageId = streamingMessageId {
+                updateMessage(messageId) { $0.isStreaming = false }
+                streamingMessageId = nil
+                isStreaming = false
+            }
+            return
+        }
 
         // A stream cancelled by backgrounding is no longer streaming locally.
         if let messageId = streamingMessageId {
@@ -845,6 +1168,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             guard self.currentSessionId == sessionId, self.streamTask == nil else { return }
             self.messages = records.map(Self.mapRecord)
             self.transientError = nil
+            await self.loadBranches()
         } catch {
             self.transientError = "Couldn't refresh the conversation: \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
@@ -883,6 +1207,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Normal end of a stream: flush, clear streaming flags and bookkeeping.
     private func finishStreaming(messageId: String) {
         flushPendingDeltas()
+        updateMessage(messageId) { $0.busyLine = nil }
 
         // Perf stats need a request-start and a first-delta timestamp — both
         // absent for e.g. an error that failed before any text arrived, in
@@ -905,6 +1230,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         isStreaming = false
         streamingMessageId = nil
         streamTask = nil
+
+        if reloadBranchesAfterStream {
+            reloadBranchesAfterStream = false
+            Task { [weak self] in await self?.loadBranches() }
+        } else if !branches.isEmpty {
+            remapEditedVersions()
+        }
 
         // Streaming consumes quota — refresh the usage meter (Phase 5;
         // UsageStore dedupes concurrent fetches).
@@ -941,8 +1273,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         }
         reportPetOffer(error.localizedDescription)
         finishStreaming(messageId: messageId)
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.error)
+        Haptics.error()
     }
 
     /// True while the streaming assistant message has received nothing —

@@ -73,6 +73,17 @@ final class BotFormModel: ObservableObject {
     @Published var temperature = 0.7
     @Published var voiceEnabled = false
     @Published var voiceId = "default"
+    /// Harness & Bots 2.0 (contract "Bot record"): `botBrain.runtime`,
+    /// `access`, `autoSwitchedFrom` and `config.agentView`. The legacy
+    /// mode/harness above are kept consistent with `runtime` by
+    /// `RuntimeRegistry.resolveRuntime`. Empty runtime = derived from mode.
+    @Published var runtimeId = ""
+    @Published var brainAccess: BrainAccess?
+    @Published var autoSwitchedFrom: String?
+    @Published var agentViewMode = "allternit"
+    @Published var agentLook: String?
+    /// The vendor of a Connected bot (Runtime and Brain are locked).
+    @Published private(set) var connectedVendor: String?
 
     // Loaded
     @Published private(set) var knowledgeBrains: [KnowledgeBrain] = []
@@ -94,6 +105,10 @@ final class BotFormModel: ObservableObject {
     /// The loaded bot's stored profile and config, kept whole so a save never drops a field.
     private var storedProfile: [String: JSONValue] = [:]
     private var storedConfig: [String: JSONValue] = [:]
+    /// The loaded bot's `config.botBrain`, kept whole for the same reason.
+    private var storedBrain: [String: JSONValue] = [:]
+    /// Edit bot writes `botBrain`/`agentView` only after the picker changed them.
+    private var layersEdited = false
     /// The chosen template's create body (model filled in), the base of the payload.
     private var templateBody: [String: JSONValue]?
     private var lastApplied: (name: String, description: String, prompt: String)?
@@ -222,6 +237,63 @@ final class BotFormModel: ObservableObject {
         let avatar = MeetAgentsAPI.object(config["avatar"]) ?? MeetAgentsAPI.object(row.at("avatar"))
         let vendorId = profile["vendorPackId"]?.jString
         look.configure(avatar: avatar.map(JSONValue.object), accent: accent, displayName: displayName, vendorId: vendorId)
+        connectedVendor = BotBrainPickerSheet.connectedVendor(config, botKind: row.at("botKind")?.jString)
+        storedBrain = config["botBrain"]?.jObject ?? [:]
+        var brain = storedBrain
+        if brain["modelRef"] == nil, let m = row.at("model")?.jString, let p = row.at("provider")?.jString, !m.isEmpty, !p.isEmpty {
+            brain["modelRef"] = .object(["providerID": .string(p), "modelID": .string(m)])
+        }
+        readLayers(brain: RuntimeRegistry.resolveRuntime(brain, in: RuntimeRegistryStore.shared.runtimes))
+        let agentView = config["agentView"]?.jObject
+        agentViewMode = agentView?["view"]?.jString == "runtime" ? "runtime" : "allternit"
+        agentLook = agentView?["look"]?.jString
+        layersEdited = false
+    }
+
+    // MARK: Runtime / brain layers
+
+    /// The brain as the layered picker reads it: the whole `botBrain`.
+    var layersBrain: [String: JSONValue] {
+        botBrain.jObject ?? [:]
+    }
+
+    /// The picker's result: the fields back into the form, legacy fields
+    /// included, and the View choice.
+    func applyLayers(brain: [String: JSONValue], view: String, look: String?) {
+        readLayers(brain: RuntimeRegistry.resolveRuntime(brain, in: RuntimeRegistryStore.shared.runtimes))
+        // Keys this app doesn't model ride along to the save.
+        storedBrain = brain
+        agentViewMode = view
+        agentLook = look
+        layersEdited = true
+    }
+
+    private func readLayers(brain: [String: JSONValue]) {
+        brainMode = brain["mode"]?.jString ?? ""
+        if let h = brain["harness"]?.jString, !h.isEmpty { harnessId = h }
+        nativeSessionId = brain["nativeSessionId"]?.jString ?? ""
+        uhpHarnessId = brain["uhpHarnessId"]?.jString ?? ""
+        runtimeId = brain["runtime"]?.jString ?? ""
+        brainAccess = brain["access"]?.jString.flatMap(BrainAccess.init(rawValue:))
+        autoSwitchedFrom = brain["autoSwitchedFrom"]?.jString
+        if let ref = brain["modelRef"]?.jObject, let p = ref["providerID"]?.jString, let m = ref["modelID"]?.jString {
+            provider = p
+            modelId = m
+        } else {
+            provider = ""
+            modelId = ""
+        }
+    }
+
+    /// "Codex · GPT-5" for the form's summary row.
+    var runtimeName: String {
+        if runtimeId == "custom" { return "Custom harness" }
+        let id = runtimeId.isEmpty ? (layersBrain["runtime"]?.jString ?? "allternit") : runtimeId
+        return RuntimeRegistryStore.shared.runtime(id)?.name ?? id
+    }
+
+    private var agentView: JSONValue {
+        .object(["view": .string(agentViewMode), "look": .string(agentLook ?? "terminal")])
     }
 
     // MARK: Editing helpers
@@ -428,22 +500,32 @@ final class BotFormModel: ObservableObject {
 
     // MARK: Save
 
+    /// The whole `botBrain`: the stored object (unknown keys kept) with the
+    /// form's fields on top, then the normalizer so mode/harness and runtime
+    /// always agree (contract "Normalizer rule").
     private var botBrain: JSONValue {
-        var brain: [String: JSONValue] = ["mode": .string(brainMode)]
+        var brain = storedBrain
+        brain["mode"] = .string(brainMode)
         if brainMode == "native_harness" {
             brain["harness"] = .string(harnessId)
             let session = nativeSessionId.trimmingCharacters(in: .whitespaces)
-            if !session.isEmpty { brain["nativeSessionId"] = .string(session) }
+            if !session.isEmpty { brain["nativeSessionId"] = .string(session) } else { brain.removeValue(forKey: "nativeSessionId") }
         } else if brainMode == "uhp_harness" {
             let id = uhpHarnessId.trimmingCharacters(in: .whitespaces)
-            if !id.isEmpty { brain["uhpHarnessId"] = .string(id) }
+            if !id.isEmpty { brain["uhpHarnessId"] = .string(id) } else { brain.removeValue(forKey: "uhpHarnessId") }
         }
         if !provider.isEmpty, !modelId.isEmpty {
             let prefix = "\(provider)/"
             let cleaned = modelId.hasPrefix(prefix) ? String(modelId.dropFirst(prefix.count)) : modelId
             brain["modelRef"] = .object(["providerID": .string(provider), "modelID": .string(cleaned)])
+        } else {
+            brain.removeValue(forKey: "modelRef")
         }
-        return .object(brain)
+        if !runtimeId.isEmpty { brain["runtime"] = .string(runtimeId) } else { brain.removeValue(forKey: "runtime") }
+        if let brainAccess { brain["access"] = .string(brainAccess.rawValue) } else { brain.removeValue(forKey: "access") }
+        if let autoSwitchedFrom { brain["autoSwitchedFrom"] = .string(autoSwitchedFrom) } else { brain.removeValue(forKey: "autoSwitchedFrom") }
+        if brainMode.isEmpty && runtimeId.isEmpty { return .object(brain) }
+        return .object(RuntimeRegistry.resolveRuntime(brain, in: RuntimeRegistryStore.shared.runtimes))
     }
 
     private var vmOperator: JSONValue {
@@ -492,6 +574,7 @@ final class BotFormModel: ObservableObject {
         config["isBot"] = .bool(true)
         config["botProfile"] = .object(profile)
         config["botBrain"] = botBrain
+        config["agentView"] = agentView
         config["vmOperator"] = vmOperator
         if !knowledgeBrainId.isEmpty { config["brainId"] = .string(knowledgeBrainId) } else { config.removeValue(forKey: "brainId") }
 
@@ -604,6 +687,10 @@ final class BotFormModel: ObservableObject {
         var config = storedConfig
         config["botProfile"] = .object(profile)
         if look.dirty, let avatar = look.avatar { config["avatar"] = avatar }
+        if layersEdited {
+            config["botBrain"] = botBrain
+            config["agentView"] = agentView
+        }
         let cleanTagline = tagline.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
         var body: [String: JSONValue] = [
@@ -615,6 +702,10 @@ final class BotFormModel: ObservableObject {
         ]
         let about = cleanTagline.isEmpty ? cleanDescription : cleanTagline
         if !about.isEmpty { body["description"] = .string(about) }
+        if layersEdited, !provider.isEmpty, !modelId.isEmpty {
+            body["model"] = .string(modelId)
+            body["provider"] = .string(provider)
+        }
         do {
             try await MeetAgentsAPI.update(id: botId, body: body)
             _ = try? await AgentHubStore.shared.refreshAgent(id: botId)

@@ -1,0 +1,39 @@
+---
+title: 'Share a thread by link'
+description: 'Send someone a read-only link to a conversation: create it, update it, stop sharing, and what the link shows.'
+---
+
+You can share a conversation with anyone by link. They do not need an account.
+
+## Create a link
+
+- **Desktop, web and the m.allternit.com app:** click **Share** in the header of a Chat, Cowork, Code or bot thread. On the phone layout, open the header **⋯** menu and pick **Share link**.
+- **iPhone:** pick **Share link…** in the reply bar menu or the thread header.
+- **Gizzi in the terminal:** type `/share`. `/share off` turns the link off.
+
+In the dialog, choose **Create link**, then **Copy link**. A new chat can be shared once it has its real id, which is after the first reply.
+
+The link looks like `https://ai.allternit.com/t/<token>`.
+
+## What the link shows
+
+The link shows a **snapshot** taken when you created it, not the live thread. Later messages do not appear until you choose **Update link**.
+
+| Shown | Left out |
+| --- | --- |
+| Your messages and the replies (text) | Tool inputs and outputs |
+| The names of the tools that ran | Thinking |
+| Small images (up to 300 KB each, at most 10 per thread) | Attached files |
+
+Long messages are cut at 20,000 characters. Anyone with the link can read it without signing in. Search engines are told not to index it.
+
+## Update or stop
+
+- **Update link** takes a fresh snapshot and keeps the same link.
+- **Stop sharing** turns the link off. Opening it then shows that sharing is turned off.
+
+Deleting your account deletes your shared links.
+
+## For developers
+
+The links are stored by Allternit Cloud. See [Cloud API, thread shares](/api/cloud-api#thread-shares).

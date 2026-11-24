@@ -17,7 +17,7 @@ enum ChatPermissionMode: String, CaseIterable, Sendable {
         }
     }
 
-    /// Short trigger text for the phone composer (web SHORT_LABEL).
+    /// Short value for the + sheet's "Permission ›" row (web PERMISSION_SHORT_LABEL).
     var shortLabel: String {
         switch self {
         case .auto: return "Auto"
@@ -66,7 +66,7 @@ final class ChatPermissionStore: ObservableObject {
         remember(mode, for: sessionId)
     }
 
-    /// The pill's pick: pending without a session, else a PATCH of the
+    /// A pick (the + sheet's Permission page): pending without a session, else a PATCH of the
     /// session's metadata (non-blocking, like the web's optimistic merge).
     func choose(_ mode: ChatPermissionMode, sessionId: String?) {
         guard let sessionId else {
@@ -88,8 +88,11 @@ final class ChatPermissionStore: ObservableObject {
     }
 }
 
-/// The composer's "◈ Auto" pill (web ChatPermissionPill, compact form): a
-/// quiet text trigger opening Auto · Ask before actions · Read-only.
+/// The old composer-row "◈ Auto" pill (web ChatPermissionPill, compact
+/// form): a quiet text trigger opening Auto · Ask before actions · Read-only.
+/// Kept with no caller since the phone calm pass (contract C2): the choice
+/// now lives in the composer's + sheet, "Permission · Auto ›"
+/// (ComposerPlusSheet's Permission page, same `ChatPermissionStore`).
 struct ChatPermissionPill: View {
     let sessionId: String?
     @ObservedObject private var store = ChatPermissionStore.shared

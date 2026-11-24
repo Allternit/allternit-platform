@@ -441,8 +441,9 @@ describe("CLI-owned background tasks", () => {
         await BackgroundTask.cancel(a.id)
         expect((await BackgroundTask.get(a.id))?.status).toBe("cancelled")
         expect((await BackgroundTask.get(b.id))?.status).toBe("running")
-        await Bun.sleep(800)
-        expect((await BackgroundTask.get(b.id))?.output).toBe("first bgB\npermission deny\nmiddle bgB\n")
+        const want = "first bgB\npermission deny\nmiddle bgB\n"
+        for (let i = 0; i < 100 && (await BackgroundTask.get(b.id))?.output !== want; i++) await Bun.sleep(50)
+        expect((await BackgroundTask.get(b.id))?.output).toBe(want)
         expect(await BackgroundTask.wait(b.id, 5000)).toMatchObject({
           status: "completed",
           output: "first bgB\npermission deny\nmiddle bgB\nlast bgB\n",

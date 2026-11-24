@@ -1,4 +1,5 @@
 import { Installation } from "@/shared/installation"
+import { isPersonOnlyProvider, isPersonTurn, PERSON_TURN_HEADER } from "@/runtime/providers/person-plan/rules"
 import * as TurnRouter from "@/runtime/routing/turn-router"
 import { Provider } from "@/runtime/providers/provider"
 import { Log } from "@/shared/util/log"
@@ -22,6 +23,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { SystemPrompt } from "@/runtime/session/system"
 import { headerParts } from "@/runtime/session/system-header"
 import * as BotTurn from "@/runtime/bots/bot-turn"
+import { appBotCaller } from "@/runtime/bots/app-bot-routing"
 import { Flag } from "@/runtime/context/flag/flag"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { runWithStreamContext } from "@/runtime/session/stream-context"
@@ -35,6 +37,7 @@ import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Bus } from "@/shared/bus"
 import { SessionContext } from "./context-event"
 import { PromptSegments } from "./prompt-segments"
+import { ToolFamilies } from "@/runtime/primitives/tool-families"
 import type { OutputCallType } from "./guardrail-defaults"
 
 export namespace LLM {
@@ -54,6 +57,12 @@ export namespace LLM {
     retries?: number
     toolChoice?: "auto" | "required" | "none"
     mode?: 'plan' | 'build'  // Execution mode for system prompt
+    /**
+     * The session's surface for prompt choice (SystemPrompt.effectiveSurface:
+     * the session's own, else its root's). chat/cowork/browser/design get the
+     * chat stack; code or unset get the code stack.
+     */
+    surface?: SystemPrompt.PromptContext["surface"]
     plan?: Provider.AuthPlan
     /** O5: picks the output cap row; omitted = "answer" (the previous default). */
     callType?: OutputCallType
@@ -94,16 +103,35 @@ export namespace LLM {
     // identity header is replaced (runtime/bots/bot-turn.ts).
     const bot = input.user.bot ?? BotTurn.get(input.sessionID)
     if (bot) BotTurn.mark(input.sessionID, bot)
+    // Surface picks the stack; the user message's metadata adds the voice
+    // (`reply_mode: "voice"`) and phone (`form_factor: "phone"`) blocks.
+    // The tool-signal blocks (suggestions, delegation, project thread,
+    // computer use) read the tools the model actually gets: prompt.ts
+    // resolveTools already gated them, and this file's resolveTools drops the ones
+    // this turn disables, so it runs first here. The person's own plans get
+    // no tools. The roster caller (project thread or main chat) is read only
+    // for app bot chats, from the cache the gating already filled.
+    const personOnly = isPersonOnlyProvider(input.model.providerID)
+    const toolIds = personOnly ? [] : Object.keys(await resolveTools(input))
+    const caller =
+      toolIds.includes("suggest_task") || toolIds.includes("thread_update")
+        ? await appBotCaller(input.sessionID).catch(() => null)
+        : null
+    // The session's permission mode picks the autonomy block (mode-auto or
+    // mode-ask; none in plan). getMode caches per session after one read.
+    const permissionMode = await PermissionNext.getMode(input.sessionID).catch(() => undefined)
+    const promptContext = SystemPrompt.context(input.surface, input.user.metadata, { toolIds, caller, permissionMode })
     const system = []
     system.push(
       headerParts({
         bot,
         // use agent prompt otherwise provider prompt
         agentPrompt: input.agent.prompt,
-        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
+        // Codex OAuth: the header stack (provider or bot guidance) goes in
+        // options.instructions below, so headerParts leaves it out here.
         codex: isCodex,
-        provider: () => SystemPrompt.provider(input.model, input.mode),
-        botGuidance: () => SystemPrompt.bot(input.mode),
+        provider: () => SystemPrompt.provider(input.model, input.mode, promptContext),
+        botGuidance: () => SystemPrompt.bot(input.mode, promptContext),
         // any custom prompt passed into this call — already includes the last
         // user message's system override/append (see prompt.ts's loop(),
         // which folds lastUser.system into this array exactly once; do not
@@ -149,7 +177,10 @@ export namespace LLM {
       options.serviceTier = "priority"
     }
     if (isCodex) {
-      options.instructions = bot ? SystemPrompt.bot(input.mode).join("\n") : SystemPrompt.instructions()
+      // The same stack a non-Codex turn gets as its header (mode prompt included).
+      options.instructions = bot
+        ? SystemPrompt.bot(input.mode, promptContext).join("\n")
+        : SystemPrompt.instructions(input.model, input.mode, promptContext)
     }
     // Forward service tier from API bridges (e.g. OpenAI `service_tier`) into
     // provider-specific options so the AI SDK can set the request body field.
@@ -239,7 +270,9 @@ export namespace LLM {
       typeCap === undefined ? undefined : kernelCap !== undefined ? Math.min(kernelCap, typeCap) : typeCap
 
     // O8: deterministic tool order so the [tools] prefix segment is stable.
-    const tools = PromptSegments.orderTools(await resolveTools(input))
+    // The person's own plans are chat only: no tools reach them (contract §9.3).
+    // (input.tools was already filtered by resolveTools above, before the prompt.)
+    const tools = personOnly ? {} : PromptSegments.orderTools(input.tools)
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -361,6 +394,19 @@ export namespace LLM {
             toolName: lower,
           }
         }
+        // Primitives Wave B (L3): a call to a deferred tool loads its family
+        // for the next step and tells the model to call again.
+        const deferred = tools[failed.toolCall.toolName]
+          ? undefined
+          : ToolFamilies.loadOnCall(input.sessionID, failed.toolCall.toolName)
+        if (deferred) {
+          l.info("loaded deferred tool family on call", { tool: failed.toolCall.toolName, group: deferred.group })
+          return {
+            ...failed.toolCall,
+            input: JSON.stringify({ tool: failed.toolCall.toolName, error: deferred.message }),
+            toolName: "invalid",
+          }
+        }
         return {
           ...failed.toolCall,
           input: JSON.stringify({
@@ -408,6 +454,11 @@ export namespace LLM {
                 ? { "x-allternit-human-action": (input.user.metadata?.subscription as any).action_id }
                 : {}),
             }
+          : {}),
+        // A plan answers only the person's own composer send: the chat bridge
+        // marks that user message `metadata.turn: "person"` (person-plan/rules.ts).
+        ...(personOnly && !input.small && (input.callType ?? "answer") === "answer" && isPersonTurn(input.user.metadata as Record<string, unknown> | undefined)
+          ? { [PERSON_TURN_HEADER]: "person" }
           : {}),
         ...(input.model.providerID.startsWith("gizzi")
           ? {

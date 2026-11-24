@@ -14,6 +14,7 @@
  * the mission's own git worktree, so this checkout is never switched. The
  * prompt-free steps live in cli/mission/actions.ts for the TUI's `/mission`.
  */
+import { refuseIfPersonOnly } from "@/runtime/providers/person-plan/rules"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -199,6 +200,11 @@ async function planApproveSpawn(m: Mission, yes: boolean): Promise<number> {
 // ---------------------------------------------------------------- verbs
 
 async function start(argv: { goal: string; on?: string; maxWorkers: number; maxHours?: number; maxAttempts: number; brain?: string; yes: boolean }): Promise<number> {
+  const personOnly = refuseIfPersonOnly(argv.brain, "mission")
+  if (personOnly) {
+    console.error(personOnly)
+    return EXIT.usage
+  }
   const picked = await workerBrain(argv.brain)
   if ("error" in picked) {
     console.error(picked.error)

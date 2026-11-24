@@ -477,6 +477,42 @@ export type PhoneList = {
   next_cursor?: (string | null);
 };
 
+export type PhoneMapSummary = {
+  app?: string;
+  platform?: "android" | "ios";
+  app_version?: string;
+  /**
+   * App label when known, else the package.
+   */
+  name?: string;
+  screens?: number;
+  edges?: number;
+  routable_edges?: number;
+  stale_edges?: number;
+  truncated?: (Record<string, unknown> | null);
+  last_seen?: string;
+};
+
+export type PhoneMapList = {
+  ok?: boolean;
+  maps?: Array<PhoneMapSummary>;
+};
+
+export type PhoneMapResult = {
+  ok?: boolean;
+  /**
+   * The map file: `version`, `fp_version`, `platform`, `app`, `app_version`, `truncated`, `screens` (id to screen), `edges`.
+   */
+  map?: {
+    platform?: "android" | "ios";
+    app?: string;
+    app_version?: string;
+    screens?: Record<string, unknown>;
+    edges?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+};
+
 export type PhoneSkillList = {
   data?: Array<{
     object?: "phone.skill";
@@ -747,6 +783,10 @@ export type Decision = {
   metadata?: Record<string, unknown>;
 };
 
+export type DecisionList = (ListEnvelope & {
+  data?: Array<Decision>;
+});
+
 export type ContentPart = {
   type: "input_text" | "output_text" | "input_image";
   text?: string;
@@ -780,7 +820,7 @@ export type Item = {
    */
   content?: Array<ContentPart>;
   /**
-   * function_call, function_call_output.
+   * function_call, function_call_output; on tool_call, the runtime's tool call id when it sent one (also on the `response.tool_call.*` stream events).
    */
   call_id?: string;
   /**
@@ -854,14 +894,23 @@ export type Response = {
    */
   id: string;
   object: "response";
-  status: "in_progress" | "completed" | "failed" | "incomplete";
+  /**
+   * `requires_action` while an approval the turn raised is pending (see `required_actions`); the stored status (`completed`, `failed` or `incomplete`) again once none is pending.
+   */
+  status: "in_progress" | "completed" | "failed" | "incomplete" | "requires_action";
   model?: (string | null);
   agent_id?: (string | null);
   conversation_id?: (string | null);
   previous_response_id?: (string | null);
   output: Array<Item>;
   /**
-   * Reserved; always empty in this release. Approvals are their own resource: subscribe to `approval.requested` / `approval.resolved`; after resolution send a new response in the same conversation.
+   * Why the response is `incomplete`; null otherwise.
+   */
+  incomplete_details?: ({
+    reason?: "max_output_tokens";
+  } | null);
+  /**
+   * One entry per pending approval this response's turn raised, oldest first; empty when none is pending. Resolve each with `POST /v1/approvals/{id}`, then send a new response with `previous_response_id`.
    */
   required_actions?: Array<{
     type: "approval";
@@ -1624,6 +1673,29 @@ export type RunPhoneSkillRequest = {
 
 export type RunPhoneSkillResponse = PhoneRunStarted;
 
+export type ListPhoneMapsQuery = {
+  /**
+   * Picks the Desktop that serves this phone.
+   */
+  serial?: string;
+  platform?: "android" | "ios";
+};
+
+export type ListPhoneMapsResponse = PhoneMapList;
+
+export type GetPhoneMapQuery = {
+  /**
+   * Picks the Desktop that serves this phone.
+   */
+  serial?: string;
+  /**
+   * Default: whichever exists, android first.
+   */
+  platform?: "android" | "ios";
+};
+
+export type GetPhoneMapResponse = PhoneMapResult;
+
 export type GetPhoneHistoryQuery = {
   /**
    * Only this run's steps.
@@ -1663,13 +1735,41 @@ export type RunPhoneTaskRequest = {
    * provider/model
    */
   brain?: string;
+  /**
+   * auto (default) skips the screenshot when the screen text is rich; always looks at it every step.
+   */
+  vision?: "auto" | "always";
 };
 
 export type RunPhoneTaskResponse = PhoneRunStarted;
 
 export type GetPhoneLiveViewResponse = PhoneLiveView;
 
-export type StartPhoneFleetRunResponse = unknown;
+export type StartPhoneFleetRunRequest = {
+  serials: Array<string>;
+  /**
+   * A task for every phone. Give this or skill.
+   */
+  goal?: string;
+  /**
+   * A saved phone skill to replay on every phone.
+   */
+  skill?: string;
+  /**
+   * Skill inputs.
+   */
+  inputs?: Record<string, string>;
+  max_steps?: number;
+  bot_id?: string;
+  /**
+   * provider/model
+   */
+  brain?: string;
+};
+
+export type StartPhoneFleetRunResponse = PhoneFleetRun;
+
+export type GetPhoneFleetRunResponse = PhoneFleetRun;
 
 export type ListMailboxesQuery = {
   /**
@@ -1743,30 +1843,13 @@ export type ReadMailOtpResponse = {
 };
 
 export type SendMailRequest = {
-  serials: Array<string>;
-  /**
-   * A task for every phone. Give this or skill.
-   */
-  goal?: string;
-  /**
-   * A saved phone skill to replay on every phone.
-   */
-  skill?: string;
-  /**
-   * Skill inputs.
-   */
-  inputs?: Record<string, string>;
-  max_steps?: number;
-  bot_id?: string;
-  /**
-   * provider/model
-   */
-  brain?: string;
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
 };
 
-export type SendMailResponse = PhoneFleetRun;
-
-export type GetPhoneFleetRunResponse = {
+export type SendMailResponse = {
   object?: "mail_send";
   mailbox_id?: string;
   from?: string;
@@ -1812,6 +1895,20 @@ export type DeleteIdentityResponse = {
   object?: "identity";
   deleted?: boolean;
 };
+
+export type ListDecisionsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+  account_id?: string;
+};
+
+export type ListDecisionsResponse = DecisionList;
 
 export type CreateDecisionRequest = DecisionRequest;
 

@@ -33,7 +33,7 @@ export const eventSchema = z.object({
   source: z.string().min(1),
   /** Subject resource id (artifact, workload, …) when applicable. */
   subject: z.string().optional(),
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
 })
 export type SpineEvent = z.infer<typeof eventSchema>
 
@@ -64,7 +64,7 @@ export const nodeEndpointSchema = z.object({
   /** Lower is preferred. Direct local/mesh endpoints win over relay. */
   priority: z.number().int().default(0),
   /** Transport-specific metadata (e.g. tailnet IP, tunnel hostname). */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 })
 export type NodeEndpoint = z.infer<typeof nodeEndpointSchema>
 
@@ -105,7 +105,7 @@ export const fabricEventSchema = z.object({
   at: isoDateTime,
   source: z.string().min(1),
   subject: z.string().optional(),
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
 })
 export type FabricEvent = z.infer<typeof fabricEventSchema>
 
@@ -116,7 +116,7 @@ export const leasePolicySchema = z.object({
   principalId: z.string().optional(),
   budgetId: z.string().optional(),
   maxInvocations: z.number().int().min(1).optional(),
-  extra: z.record(z.unknown()).optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
 })
 export type LeasePolicy = z.infer<typeof leasePolicySchema>
 
@@ -128,7 +128,7 @@ export const leaseSchema = z.object({
   issuedAt: isoDateTime,
   expiresAt: isoDateTime.optional(),
   status: z.enum(['active', 'revoked', 'expired']),
-  constraints: z.record(z.unknown()).optional(),
+  constraints: z.record(z.string(), z.unknown()).optional(),
   policy: leasePolicySchema.optional(),
   /** Signature proving the lease was issued by the authority (format TBD). */
   signature: z.string().optional(),
@@ -145,7 +145,7 @@ export const workloadSchema = z.object({
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
   /** Leases this workload executes under. */
   leaseIds: z.array(id).default([]),
-  inputs: z.record(z.unknown()).optional(),
+  inputs: z.record(z.string(), z.unknown()).optional(),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
 })

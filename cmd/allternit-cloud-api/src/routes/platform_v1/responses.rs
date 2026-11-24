@@ -28,14 +28,27 @@
 //! output items are appended `in_progress` when they open (so streamed item ids
 //! are the stored ids) and updated once when they close.
 //!
-//! **Approvals** never pause a turn. When an agent's twin `call` tool needs the
-//! owner's approval, that tool call fails ("try again once they approve") and
-//! the turn ends `completed`. `required_actions` is reserved and always `[]`;
-//! approvals are their own resource (`approval.requested` /
-//! `approval.resolved`), and after one resolves the client sends a new response
-//! in the same conversation.
+//! **Approvals.** When an agent's twin `call` tool needs the owner's approval,
+//! that tool call fails ("try again once they approve") and the turn ends
+//! `completed`. The approval arrives after `done` (its row links to this
+//! response), so the live answer can't know; reads derive it instead: while a
+//! linked approval is pending, `GET` returns `status: requires_action` and
+//! `required_actions: [{type: approval, approval_id}]` ([`response_json_with`]).
+//! The client resolves it (`POST /v1/approvals/{id}`) and sends a new response
+//! with `previous_response_id`.
+//!
+//! **Every turn ends.** Once a response row exists, the turn runs in its own
+//! task that owns the runtime stream, the items and the final write; the
+//! request handler only awaits it. A client that hangs up (or Cloudflare's 524
+//! on a non-streaming request after 100 s) drops the handler, never the turn,
+//! so the response still ends `completed`, `failed` or `incomplete`. A hosted
+//! turn past [`AgentHost::turn_cap`] (10 minutes) ends `failed` with
+//! `turn_timeout` and a failed assistant item, and frees the conversation. Rows
+//! left `in_progress` anyway (a crash or deploy mid-turn) are failed with
+//! `turn_abandoned` by [`fail_abandoned`], which the platform worker runs at
+//! startup and every 5 minutes.
 
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use axum::{
@@ -53,7 +66,7 @@ use sqlx::{FromRow, PgPool};
 use super::{
     agents, build_page,
     conversations::{self, ConvRow, TurnLock, TurnMeter},
-    hosting::{host_for, AgentHost, SseLines},
+    hosting::{host_for, AgentHost, SseLines, AGENT_TURN_CAP},
     items::{self, Item, NewItem},
     new_id, ApiJson, ApiQuery, PageParams, PlatformCaller, PlatformError, RouteTable,
 };
@@ -258,14 +271,29 @@ impl RespRow {
     }
 }
 
-/// The public response object. `required_actions` is reserved and always empty
-/// in this release (approvals never pause a turn).
+/// The public response object as the turn itself reports it (no pending
+/// approvals yet: they arrive after `done`). `incomplete_details` says why a
+/// response is `incomplete`, as OpenAI's does; the only cause is the model
+/// stopping at `max_output_tokens` ([`model_end`]).
 fn response_json(r: &RespRow) -> Value {
+    response_json_with(r, &[])
+}
+
+/// The public response object with `pending` = the ids of the approvals its
+/// turn raised that are still pending, oldest first
+/// (`approvals::pending_for_response`). Any → `status: requires_action` and one
+/// `required_actions` entry each, once the turn is over; none → the stored status.
+fn response_json_with(r: &RespRow, pending: &[String]) -> Value {
+    let incomplete = (r.status == "incomplete").then(|| json!({ "reason": "max_output_tokens" }));
+    let waiting = !pending.is_empty() && r.status != "in_progress";
+    let status = if waiting { "requires_action" } else { r.status.as_str() };
+    let actions: Vec<Value> = if waiting { pending.iter().map(|id| json!({ "type": "approval", "approval_id": id })).collect() } else { Vec::new() };
     json!({
-        "id": r.id, "object": "response", "status": r.status, "model": r.model, "agent_id": r.agent_id,
+        "id": r.id, "object": "response", "status": status, "model": r.model, "agent_id": r.agent_id,
         "conversation_id": r.conversation_id, "previous_response_id": r.previous_response_id,
         "output": r.output,
-        "required_actions": [],
+        "incomplete_details": incomplete,
+        "required_actions": actions,
         "usage": { "input_tokens": r.usage["input_tokens"].as_i64().unwrap_or(0), "output_tokens": r.usage["output_tokens"].as_i64().unwrap_or(0) },
         "error": r.error, "metadata": r.metadata, "created_at": r.created_at, "completed_at": r.completed_at,
     })
@@ -510,12 +538,17 @@ impl OutputFold {
     async fn tool_started(&mut self, sink: &mut dyn ItemSink, e: &Value) -> Result<Vec<Ev>, PlatformError> {
         let mut out = self.close_text(sink, &End::Completed).await?;
         let name = e["name"].as_str().unwrap_or("tool");
-        let (index, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None)).await?;
+        let call_id = e["toolCallId"].as_str().filter(|c| !c.is_empty());
+        let (index, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None).with_call_id(call_id)).await?;
         out.extend(added);
-        if let Some(id) = e["toolCallId"].as_str() {
+        if let Some(id) = call_id {
             self.tools.insert(id.to_string(), index);
         }
-        out.push(ev("response.tool_call.started", json!({ "item_id": self.output[index].id, "output_index": index, "name": name, "input": cut(&e["input"]) })));
+        let mut data = json!({ "item_id": self.output[index].id, "output_index": index, "name": name, "input": cut(&e["input"]) });
+        if let Some(id) = call_id {
+            data["call_id"] = json!(id);
+        }
+        out.push(ev("response.tool_call.started", data));
         Ok(out)
     }
 
@@ -528,7 +561,8 @@ impl OutputFold {
             None => {
                 out.extend(self.close_text(sink, &End::Completed).await?);
                 let name = e["name"].as_str().unwrap_or("tool");
-                let (i, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None)).await?;
+                let call_id = e["toolCallId"].as_str().filter(|c| !c.is_empty());
+                let (i, added) = self.open(sink, NewItem::tool_call(name, cut(&e["input"]), Value::Null, "in_progress", None).with_call_id(call_id)).await?;
                 out.extend(added);
                 i
             }
@@ -545,6 +579,9 @@ impl OutputFold {
         }
         let it = &self.output[index];
         let mut data = json!({ "item_id": it.id, "output_index": index, "name": it.content["name"], "input": it.content["input"] });
+        if !it.content["call_id"].is_null() {
+            data["call_id"] = it.content["call_id"].clone();
+        }
         if failed {
             data["error"] = json!(error);
             out.push(ev("response.tool_call.failed", data));
@@ -647,6 +684,8 @@ struct Finish {
     db: PgPool,
     store: bool,
     row: RespRow,
+    /// `error.code` when the turn fails: `turn_failed`, or `turn_timeout`.
+    error_code: &'static str,
 }
 
 impl Finish {
@@ -662,7 +701,7 @@ impl Finish {
         self.row.output = fold.output_json();
         self.row.usage = usage;
         self.row.error = match end {
-            End::Failed(f) => Some(json!({ "code": "turn_failed", "message": f })),
+            End::Failed(f) => Some(json!({ "code": self.error_code, "message": f })),
             _ => None,
         };
         self.row.completed_at = Some(Utc::now());
@@ -683,7 +722,11 @@ impl Finish {
             }
         }
         let body = response_json(&self.row);
-        let last = if matches!(end, End::Failed(_)) { "response.failed" } else { "response.completed" };
+        let last = match end {
+            End::Completed => "response.completed",
+            End::Incomplete => "response.incomplete",
+            End::Failed(_) => "response.failed",
+        };
         emit.send(vec![ev(last, json!({ "response": body }))]);
         body
     }
@@ -691,19 +734,42 @@ impl Finish {
 
 // ---- agent turns --------------------------------------------------------------
 
-/// Read an agent turn to its end, building items and events as it goes.
+/// How long a turn may run, in words.
+fn cap_words(cap: Duration) -> String {
+    match cap.as_secs() {
+        s if s >= 60 && s % 60 == 0 => format!("{} minutes", s / 60),
+        s if s >= 1 => format!("{s} seconds"),
+        _ => format!("{} ms", cap.as_millis()),
+    }
+}
+
+/// Read an agent turn to its end, building items and events as it goes. Runs
+/// in its own task (see [`agent_turn`]); at most `cap` is spent waiting on the
+/// runtime, then the turn ends `failed` (`turn_timeout`).
 async fn drive_agent(
     mut upstream: crate::routes::voice_calls_cloud::RelayStream,
     mut sink: DbSink,
-    fin: Finish,
+    mut fin: Finish,
     meter: TurnMeter,
     lock: TurnLock,
     mut emit: Emitter,
+    cap: Duration,
 ) -> Value {
     emit.send(vec![ev("response.created", json!({ "response": response_json(&fin.row) }))]);
     let mut fold = OutputFold::default();
     let (mut lines, mut failure, mut done, mut usage) = (SseLines::default(), None::<String>, false, Value::Null);
-    'read: while let Some(chunk) = upstream.next().await {
+    let deadline = tokio::time::Instant::now() + cap;
+    let mut timed_out = false;
+    'read: loop {
+        let chunk = match tokio::time::timeout_at(deadline, upstream.next()).await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break 'read,
+            Err(_) => {
+                timed_out = true;
+                failure = Some(format!("the agent didn't finish within {}", cap_words(cap)));
+                break 'read;
+            }
+        };
         let bytes = match chunk {
             Ok(b) => b,
             Err(e) => {
@@ -742,8 +808,24 @@ async fn drive_agent(
             }
         }
     }
+    // Stop reading from the runtime now (a timed-out turn closes its relay).
+    drop(upstream);
     let failure = failure.or_else(|| (!done).then(|| "the agent's reply ended early".to_string()));
     let end = failure.clone().map(End::Failed).unwrap_or(End::Completed);
+    if timed_out {
+        fin.error_code = "turn_timeout";
+        // The conversation shows the failed reply even when the runtime never answered.
+        let answered = fold.text.is_some() || fold.output.iter().any(|it| it.kind == "message" && it.role.as_deref() == Some("assistant"));
+        if !answered {
+            match fold.open(&mut sink, NewItem::assistant_text("").with_status("in_progress")).await {
+                Ok((index, added)) => {
+                    fold.text = Some((index, String::new()));
+                    emit.send(added);
+                }
+                Err(err) => tracing::error!(response = %fin.row.id, "platform: failed reply not stored: {}", err.message),
+            }
+        }
+    }
     match fold.finish(&mut sink, &end).await {
         Ok(evs) => emit.send(evs),
         Err(err) => tracing::error!(response = %fin.row.id, "platform: output items not closed: {}", err.message),
@@ -802,7 +884,7 @@ async fn agent_turn(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dy
     let started = async {
         let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous turn in this conversation."))?;
         let (rt, session, own_key) = conversations::prepare(state, host.as_ref(), caller, &conv).await?;
-        let meter = TurnMeter::new(caller, &conv, own_key)?;
+        let meter = TurnMeter::new(caller, &conv, own_key)?.with_cloud_price(&state.model_router).await;
         let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", meter.agent_id, session);
         let upstream = host.stream(&rt, &path, &json!({ "text": text })).await?;
         Ok::<_, PlatformError>((lock, meter, upstream))
@@ -820,17 +902,98 @@ async fn agent_turn(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dy
     // Stored once the runtime took the turn: a refused turn leaves no response behind.
     let row = RespRow::new(new_id("resp_"), conv.account_id.clone(), Some(agent.id.clone()), None, Some(conv.id.clone()), body.previous_response_id.clone(), metadata);
     let row = insert_row(db, &caller.project_id, &row).await?;
-    items::append(db, &caller.project_id, Some(&conv.id), Some(&row.id), input).await?;
+    if let Err(e) = items::append(db, &caller.project_id, Some(&conv.id), Some(&row.id), input).await {
+        fail_one(db, &row.id, "turn_failed", "The request couldn't be stored.").await;
+        return Err(e);
+    }
+    let resp_id = row.id.clone();
     let sink = DbSink { db: db.clone(), project_id: caller.project_id.clone(), conversation_id: Some(conv.id.clone()), response_id: row.id.clone() };
-    let fin = Finish { db: db.clone(), store: true, row };
+    let fin = Finish { db: db.clone(), store: true, row, error_code: "turn_failed" };
     let (emit, rx) = emitter(body.stream);
+    // The turn owns everything it needs: dropping this handler (the client hung
+    // up) leaves it running to its stored end.
+    let turn = tokio::spawn(drive_agent(upstream, sink, fin, meter, lock, emit, host.turn_cap()));
     match rx {
-        None => Ok(Created::Json(drive_agent(upstream, sink, fin, meter, lock, emit).await)),
-        Some(rx) => {
-            tokio::spawn(drive_agent(upstream, sink, fin, meter, lock, emit));
-            Ok(Created::Stream(rx))
+        None => Ok(Created::Json(joined(db, &resp_id, turn).await?)),
+        Some(rx) => Ok(Created::Stream(rx)),
+    }
+}
+
+/// The answer of a detached turn the handler waits on. A turn task that
+/// panicked leaves its response failed, not running.
+async fn joined(db: &PgPool, resp_id: &str, turn: tokio::task::JoinHandle<Value>) -> Result<Value, PlatformError> {
+    match turn.await {
+        Ok(body) => Ok(body),
+        Err(error) => {
+            tracing::error!(%error, response = resp_id, "platform: response turn task died");
+            fail_one(db, resp_id, "turn_failed", "The turn stopped unexpectedly.").await;
+            Err(PlatformError::api_error("internal_error", "An internal error occurred. Please retry."))
         }
     }
+}
+
+// ---- responses that can't finish ---------------------------------------------
+
+/// A row still `in_progress` this long after it was created has no live turn
+/// behind it (turns end by [`AGENT_TURN_CAP`]); the margin covers the last writes.
+pub const ABANDON_AFTER: Duration = Duration::from_secs(AGENT_TURN_CAP.as_secs() + 5 * 60);
+
+/// Fail `in_progress` responses: `id` alone, or every row older than
+/// `older_than`. Each gets `status: failed`, `error {code, message}` and
+/// `completed_at`; its open items fail with it, and a response with no assistant
+/// message gets a failed one so its conversation shows the failure. Rows that
+/// already ended are never touched. Returns how many responses it failed.
+async fn fail_in_progress(db: &PgPool, id: Option<&str>, older_than: Duration, code: &str, message: &str) -> Result<u64, sqlx::Error> {
+    // Uses idx_platform_responses_in_progress (migration 138): only running rows are indexed.
+    // Postgres runs every data-modifying CTE to completion whether or not the
+    // final SELECT reads it.
+    let n: i64 = sqlx::query_scalar(
+        "WITH stuck AS ( \
+           UPDATE platform_responses \
+              SET status = 'failed', error = jsonb_build_object('code', $3::text, 'message', $4::text), completed_at = NOW() \
+            WHERE status = 'in_progress' AND ($1::text IS NULL OR id = $1) \
+              AND created_at <= NOW() - make_interval(secs => $2::float8) \
+           RETURNING id, project_id, conversation_id \
+         ), closed AS ( \
+           UPDATE platform_items SET status = 'failed', error = COALESCE(error, $4) \
+            WHERE response_id IN (SELECT id FROM stuck) AND status = 'in_progress' \
+           RETURNING response_id \
+         ), replies AS ( \
+           INSERT INTO platform_items (id, project_id, conversation_id, response_id, type, role, status, content, error) \
+           SELECT 'item_' || substr(md5(random()::text || s.id), 1, 24), s.project_id, s.conversation_id, s.id, \
+                  'message', 'assistant', 'failed', '[{\"type\":\"output_text\",\"text\":\"\"}]'::jsonb, $4 \
+             FROM stuck s \
+            WHERE NOT EXISTS (SELECT 1 FROM platform_items i WHERE i.response_id = s.id AND i.type = 'message' AND i.role = 'assistant') \
+           RETURNING 1 \
+         ) \
+         SELECT COUNT(*) FROM stuck",
+    )
+    .bind(id)
+    .bind(older_than.as_secs_f64())
+    .bind(code)
+    .bind(message)
+    .fetch_one(db)
+    .await?;
+    Ok(n as u64)
+}
+
+/// Fail one response whose turn can't finish (best effort; logged).
+async fn fail_one(db: &PgPool, id: &str, code: &str, message: &str) {
+    if let Err(error) = fail_in_progress(db, Some(id), Duration::ZERO, code, message).await {
+        tracing::error!(%error, response = id, "platform: couldn't fail a response that can't finish");
+    }
+}
+
+/// The sweep: responses (and `/v1/messages` thread turns) still `in_progress`
+/// after [`ABANDON_AFTER`] → `failed` with `turn_abandoned`. Cheap when nothing
+/// is stuck (a partial index holds only running rows). Run by the platform
+/// worker at startup and every 5 minutes.
+pub async fn fail_abandoned(db: &PgPool) -> Result<u64, sqlx::Error> {
+    fail_abandoned_after(db, ABANDON_AFTER).await
+}
+
+async fn fail_abandoned_after(db: &PgPool, older_than: Duration) -> Result<u64, sqlx::Error> {
+    fail_in_progress(db, None, older_than, "turn_abandoned", "The turn stopped without an answer; send the request again.").await
 }
 
 // ---- model turns --------------------------------------------------------------
@@ -955,18 +1118,30 @@ async fn model_turn(state: &Arc<ApiState>, caller: &PlatformCaller, model: &str,
         let row = RespRow::new(resp_id.clone(), account_id, None, Some(model.to_string()), None, body.previous_response_id.clone(), metadata);
         (Box::new(MemSink { project_id: caller.project_id.clone(), response_id: resp_id, seq: 0 }) as Box<dyn ItemSink>, row)
     };
-    let fin = Finish { db: db.clone(), store, row };
+    let fin = Finish { db: db.clone(), store, row, error_code: "turn_failed" };
+    let resp_id = fin.row.id.clone();
     let (emit, rx) = emitter(body.stream);
+    // Detached like an agent turn: a client that hangs up can't leave the row running.
+    let turn = tokio::spawn(drive_model(run, sink, fin, lock, emit));
     match rx {
-        None => Ok(Created::Json(drive_model(run, sink, fin, lock, emit).await)),
-        Some(rx) => {
-            tokio::spawn(drive_model(run, sink, fin, lock, emit));
-            Ok(Created::Stream(rx))
-        }
+        None => Ok(Created::Json(joined(db, &resp_id, turn).await?)),
+        Some(rx) => Ok(Created::Stream(rx)),
     }
 }
 
 // ---- handlers -----------------------------------------------------------------
+
+/// Plan and Copilot models are person-sent chat only (CONTRACT-connections
+/// section 9.3): a Platform response never runs one.
+pub(crate) fn refuse_person_only_model(model: Option<&str>) -> Result<(), PlatformError> {
+    match model {
+        Some(model) if crate::routes::model_router::is_person_only_model(model) => Err(PlatformError::permission(
+            "plan_person_only",
+            crate::routes::model_router::PLAN_PERSON_ONLY_MESSAGE,
+        )),
+        _ => Ok(()),
+    }
+}
 
 async fn create_inner(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<dyn AgentHost>, body: CreateBody) -> Result<Created, PlatformError> {
     let model = nonempty(&body.model).map(str::to_string);
@@ -982,6 +1157,7 @@ async fn create_inner(state: &Arc<ApiState>, caller: &PlatformCaller, host: Arc<
         (None, Some(_)) => caller.require("agents")?,
         _ => return Err(invalid("model", "Give exactly one of model or agent.")),
     }
+    refuse_person_only_model(model.as_deref())?;
     let metadata = check_metadata(&body.metadata)?;
     let input = items::parse_input(&body.input)?;
     if input.len() > MAX_INPUT_ITEMS {
@@ -1038,7 +1214,8 @@ fn require_read(caller: &PlatformCaller) -> Result<(), PlatformError> {
 async fn fetch(State(state): State<Arc<ApiState>>, caller: PlatformCaller, Path(id): Path<String>) -> Result<Json<Value>, PlatformError> {
     require_read(&caller)?;
     let row = load_row(&state.db, &caller, &id).await?;
-    Ok(Json(response_json(&row)))
+    let pending = super::approvals::pending_for_response(&state.db, &caller.project_id, &row.id).await?;
+    Ok(Json(response_json_with(&row, &pending)))
 }
 
 async fn input_items(
@@ -1154,6 +1331,17 @@ mod tests {
         row.status = "completed".into();
         let v = response_json(&row);
         assert_eq!((v["status"].as_str(), v["required_actions"].as_array().map(Vec::len)), (Some("completed"), Some(0)));
+        // Pending approvals turn a finished response into `requires_action`, never a running one.
+        let pending = vec!["apr_1".to_string(), "apr_2".to_string()];
+        let v = response_json_with(&row, &pending);
+        assert_eq!(v["status"], "requires_action");
+        assert_eq!(v["required_actions"], json!([{ "type": "approval", "approval_id": "apr_1" }, { "type": "approval", "approval_id": "apr_2" }]));
+        let mut running = RespRow::new("resp_2".into(), None, Some("agt_1".into()), None, Some("conv_1".into()), None, json!({}));
+        running.status = "in_progress".into();
+        assert_eq!((response_json_with(&running, &pending)["status"].as_str(), response_json_with(&running, &pending)["required_actions"].as_array().map(Vec::len)), (Some("in_progress"), Some(0)));
+        assert!(v["incomplete_details"].is_null());
+        row.status = "incomplete".into();
+        assert_eq!(response_json(&row)["incomplete_details"], json!({ "reason": "max_output_tokens" }));
         row.status = "failed".into();
         assert_eq!(response_json(&row)["status"], "failed");
     }
@@ -1212,8 +1400,12 @@ mod billing_tests {
 
     struct Ctx {
         db: PgPool,
+        state: Arc<ApiState>,
         app: Router,
         upstream: Arc<FakeUpstream>,
+        /// The model gateway as production mounts it: `auth_middleware` in front
+        /// of the real `/v1/chat/completions` handler.
+        gateway: Router,
     }
 
     async fn ctx() -> Ctx {
@@ -1229,7 +1421,11 @@ mod billing_tests {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
         }
         let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
-        Ctx { db: state.db.clone(), app, upstream }
+        let gateway = Router::new()
+            .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::middleware::auth_middleware))
+            .with_state(state.clone());
+        Ctx { db: state.db.clone(), state: state.clone(), app, upstream, gateway }
     }
 
     async fn key(c: &Ctx) -> (String, String) {
@@ -1324,5 +1520,204 @@ mod billing_tests {
         // No double billing: nothing settled against the key creator's credits.
         let personal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inference_usage").fetch_one(&c.db).await.unwrap();
         assert_eq!(personal, 0);
+    }
+
+    async fn get(c: &Ctx, token: &str, path: &str) -> (u16, Value) {
+        let req = Request::builder().method("GET").uri(path).header("authorization", format!("Bearer {token}")).body(Body::empty()).unwrap();
+        let resp = c.app.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    async fn approval(c: &Ctx, project: &str, id: &str, response: &str, minutes_ago: i64, expires_in_secs: Option<i64>) {
+        sqlx::query(
+            "INSERT INTO platform_approvals (id, project_id, source, source_ref, response_id, kind, status, expires_at, created_at) \
+             VALUES ($1, $2, 'twin', $1, $3, 'send_email', 'pending', CASE WHEN $4::bigint IS NULL THEN NULL ELSE NOW() + make_interval(secs => $4::float8) END, NOW() - make_interval(mins => $5::int))",
+        )
+        .bind(id)
+        .bind(project)
+        .bind(response)
+        .bind(expires_in_secs)
+        .bind(minutes_ago as i32)
+        .execute(&c.db)
+        .await
+        .unwrap();
+    }
+
+    /// `GET /v1/responses/{id}` reads `requires_action` while an approval its
+    /// turn raised is pending, and the stored status again once none is.
+    #[tokio::test]
+    async fn pending_approvals_make_a_stored_response_require_action() {
+        let c = ctx().await;
+        let (project, token) = key(&c).await;
+        sqlx::query("INSERT INTO platform_responses (id, project_id, status, store, completed_at) VALUES ('resp_wait', $1, 'completed', true, NOW())")
+            .bind(&project)
+            .execute(&c.db)
+            .await
+            .unwrap();
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str(), v["required_actions"].clone()), (200, Some("completed"), json!([])), "{v}");
+
+        // Two pending (oldest first), one already past its deadline (expired, so left out).
+        approval(&c, &project, "apr_new", "resp_wait", 1, None).await;
+        approval(&c, &project, "apr_old", "resp_wait", 5, Some(600)).await;
+        approval(&c, &project, "apr_late", "resp_wait", 9, Some(-1)).await;
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str()), (200, Some("requires_action")), "{v}");
+        assert_eq!(v["required_actions"], json!([{ "type": "approval", "approval_id": "apr_old" }, { "type": "approval", "approval_id": "apr_new" }]));
+
+        // Resolved: back to the stored status.
+        sqlx::query("UPDATE platform_approvals SET status = 'approved', resolved_at = NOW() WHERE id IN ('apr_old', 'apr_new')").execute(&c.db).await.unwrap();
+        let (s, v) = get(&c, &token, "/v1/responses/resp_wait").await;
+        assert_eq!((s, v["status"].as_str(), v["required_actions"].clone()), (200, Some("completed"), json!([])), "{v}");
+    }
+
+    /// A project's hosted runtime runs its `"allternit"` agents on Allternit
+    /// Cloud with its own device token (owner `platform:<project>`). The project
+    /// pays for those turns, so the consumer gates must not refuse it: they did
+    /// (no verified email, no free allowance left, later no credits row) and
+    /// every hosted agent turn failed. Nothing is charged to a user's credits;
+    /// a project that can't pay is refused, and a consumer computer keeps every
+    /// gate.
+    #[tokio::test]
+    async fn a_platform_runtime_runs_cloud_inference_for_its_project() {
+        let c = ctx().await;
+        sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", "")).execute(&c.db).await.expect("migration 125 applies");
+        // The personal credit balance the gateway reads (migrations_pg/001, minimal).
+        sqlx::query("CREATE TABLE IF NOT EXISTS user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION)").execute(&c.db).await.unwrap();
+        let (project_id, _) = key(&c).await;
+        let device = |id: &str, owner: String| {
+            let db = c.db.clone();
+            let token = format!("allternit_runtime_{id}_secret");
+            let id = id.to_string();
+            async move {
+                sqlx::query("INSERT INTO users (id) VALUES ($1)").bind(&owner).execute(&db).await.unwrap();
+                sqlx::query("INSERT INTO runtime_devices (id, user_id, name, status, credential_expires_at, credential_hash) VALUES ($1, $2, 'rt', 'online', '2999-01-01', $3)")
+                    .bind(&id)
+                    .bind(&owner)
+                    .bind(crate::routes::runtime_pairing::sha256_hex(token.as_bytes()))
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                // Old usage, and no credits row: the consumer path refuses it.
+                sqlx::query("INSERT INTO inference_usage (id, user_id, model, prompt_tokens, completion_tokens, cost_usd) VALUES ($1, $2, 'gpt-4o', 1, 1, 100.0)")
+                    .bind(format!("old_{id}"))
+                    .bind(&owner)
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                token
+            }
+        };
+        let runtime = device("rt_proj", format!("platform:{project_id}")).await;
+        let consumer = device("rt_user", "user_free".to_string()).await;
+        let complete = |token: String| {
+            let gateway = c.gateway.clone();
+            async move {
+                let body = json!({ "model": "gpt-4o", "messages": [{ "role": "user", "content": "Reply with exactly: pong" }] });
+                let req = Request::builder().method("POST").uri("/v1/chat/completions").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+                let resp = gateway.oneshot(req).await.unwrap();
+                let status = resp.status().as_u16();
+                let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+                (status, String::from_utf8_lossy(&bytes).into_owned())
+            }
+        };
+
+        let (s, b) = complete(runtime.clone()).await;
+        assert_eq!(s, 200, "{b}");
+        assert!(b.contains("hello"), "{b}");
+        let (client, credits): (Option<String>, i64) = sqlx::query_as(
+            "SELECT (SELECT client FROM inference_usage WHERE user_id = $1 AND id NOT LIKE 'old_%'), (SELECT COUNT(*) FROM user_credits WHERE user_id = $1)",
+        )
+        .bind(format!("platform:{project_id}"))
+        .fetch_one(&c.db)
+        .await
+        .unwrap();
+        assert_eq!((client.as_deref(), credits), (Some("runtime"), 0), "recorded as the runtime's call, no credits involved");
+
+        let (s, b) = complete(consumer).await;
+        assert_eq!(s, 402, "a consumer computer still needs credits: {b}");
+        assert!(b.contains("\"credits_required\""), "{b}");
+
+        sqlx::query("UPDATE platform_projects SET stripe_customer_id = NULL, stripe_subscription_id = NULL, billing_status = NULL WHERE id = $1").bind(&project_id).execute(&c.db).await.unwrap();
+        let (s, b) = complete(runtime).await;
+        assert_eq!(s, 402, "a project that can't pay gets no Cloud inference: {b}");
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15 D6: a signed-in Clerk session (web or
+    /// iOS with no computer) may run an Allternit Cloud catalog alias, under
+    /// the same credits gate; a direct BYOK ref stays refused.
+    #[tokio::test]
+    async fn a_clerk_session_runs_catalog_models_only_with_credits() {
+        use crate::auth::middleware::{AuthContext, CLERK_SESSION_TOKEN_ID};
+        use crate::auth::AuthenticatedUser;
+        let c = ctx().await;
+        sqlx::raw_sql(&include_str!("../../../migrations_pg/125_inference_attribution.sql").replace("public.", "")).execute(&c.db).await.expect("migration 125 applies");
+        sqlx::query("CREATE TABLE IF NOT EXISTS user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION)").execute(&c.db).await.unwrap();
+        sqlx::query("INSERT INTO users (id) VALUES ('user_funded'), ('user_none')").execute(&c.db).await.unwrap();
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ('user_funded', 5.0)").execute(&c.db).await.unwrap();
+        let complete = |user: &str, model: &str| {
+            let session = AuthContext {
+                user: AuthenticatedUser {
+                    user_id: user.to_string(),
+                    token_id: CLERK_SESSION_TOKEN_ID.to_string(),
+                    permissions: vec!["inference".to_string()],
+                },
+                is_development: false,
+            };
+            let app = Router::new()
+                .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
+                .layer(axum::Extension(session))
+                .with_state(c.state.clone());
+            let body = json!({ "model": model, "messages": [{ "role": "user", "content": "Reply with exactly: pong" }] });
+            async move {
+                let req = Request::builder().method("POST").uri("/v1/chat/completions").header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status().as_u16();
+                let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+                (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+            }
+        };
+
+        let (s, b) = complete("user_funded", "gpt-4o").await;
+        assert_eq!(s, 200, "a funded session runs a catalog alias: {b}");
+        assert_eq!(b["choices"][0]["message"]["content"], "hello");
+
+        let (s, b) = complete("user_none", "gpt-4o").await;
+        assert_eq!(s, 402, "{b}");
+        assert_eq!(b["error"]["code"], "credits_required");
+        assert_eq!(b["error"]["packs"].as_array().map(Vec::len), Some(4));
+
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ('user_none', 0)").execute(&c.db).await.unwrap();
+        let (s, b) = complete("user_none", "gpt-4o").await;
+        assert_eq!((s, b["error"]["code"].as_str()), (402, Some("credits_exhausted")), "{b}");
+
+        let (s, b) = complete("user_funded", "xai/grok-4").await;
+        assert_eq!(s, 403, "a direct BYOK ref is not open to a session: {b}");
+    }
+
+    /// CONTRACT-cloud-credits-2026-11-15 D11: every `/v1/models` row carries
+    /// its retail price per 1M tokens.
+    #[tokio::test]
+    async fn every_model_row_has_retail_pricing() {
+        let c = ctx().await;
+        let app = Router::new()
+            .route("/v1/models", axum::routing::get(crate::routes::model_router::list_models))
+            .with_state(c.state.clone());
+        let resp = app.oneshot(Request::builder().uri("/v1/models").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 22).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let rows = body["data"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let pricing = &row["pricing"];
+            assert!(pricing["input_per_1m_usd"].is_number() && pricing["output_per_1m_usd"].is_number(), "{row}");
+        }
+        // gpt-4o's live wholesale $2 / $8 per 1M with the default 1.5x markup.
+        let gpt = rows.iter().find(|row| row["id"] == "gpt-4o").expect("gpt-4o listed");
+        let price = |key: &str| gpt["pricing"][key].as_f64().unwrap();
+        assert!((price("input_per_1m_usd") - 3.0).abs() < 1e-9 && (price("output_per_1m_usd") - 12.0).abs() < 1e-9, "{gpt}");
     }
 }

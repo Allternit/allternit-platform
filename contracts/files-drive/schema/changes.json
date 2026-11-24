@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/changes.json",
+  "title": "Files drive: change feed",
+  "description": "Per-root monotonic cursor; poll or subscribe.",
+  "$defs": {
+    "ChangeOp": {
+      "type": "string",
+      "enum": [
+        "created",
+        "modified",
+        "moved",
+        "renamed",
+        "deleted",
+        "trashed",
+        "restored",
+        "meta"
+      ]
+    },
+    "ChangeEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "op",
+        "item_id",
+        "at",
+        "by"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "op": {
+          "$ref": "#/$defs/ChangeOp"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "item": {
+          "$ref": "common.json#/$defs/Item",
+          "description": "Absent for deleted."
+        },
+        "old_parent_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        }
+      }
+    },
+    "ChangesQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cursor"
+      ],
+      "properties": {
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "wait_s": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Long poll, max 25.",
+          "maximum": 25
+        }
+      }
+    },
+    "ChangesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "changes",
+        "cursor",
+        "has_more",
+        "reset_required",
+        "freshness"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChangeEntry"
+          }
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "reset_required": {
+          "type": "boolean",
+          "description": "Cursor too old (cursor_expired). Re-list the root, then use the new cursor."
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "SubscribeRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "cursor"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "SubscribeMessage": {
+      "type": "object",
+      "description": "Client to server, first frame on the subscribe socket.",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "roots"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "subscribe"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SubscribeRoot"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        }
+      }
+    },
+    "FeedChanges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "root_id",
+        "changes",
+        "cursor"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "changes"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChangeEntry"
+          }
+        },
+        "cursor": {
+          "$ref": "common.json#/$defs/Cursor"
+        }
+      }
+    },
+    "FeedReset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "root_id",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reset"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "cursor_expired",
+            "root_removed",
+            "index_rebuilt"
+          ]
+        }
+      }
+    },
+    "FeedState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "computer_state"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "state"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        },
+        "snapshot_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "FeedHeartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "at"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "heartbeat"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "FeedMessage": {
+      "description": "Server to client frames. A held socket never counts as activity and never keeps a computer awake.",
+      "x-discriminator": "type",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FeedChanges"
+        },
+        {
+          "$ref": "#/$defs/FeedReset"
+        },
+        {
+          "$ref": "#/$defs/FeedState"
+        },
+        {
+          "$ref": "#/$defs/FeedHeartbeat"
+        }
+      ]
+    }
+  }
+}

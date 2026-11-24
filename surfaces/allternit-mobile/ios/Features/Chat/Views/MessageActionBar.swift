@@ -36,7 +36,7 @@ final class SpeechSpeaker: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             return
         }
         synthesizer.stopSpeaking(at: .immediate)
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = FileCitation.plainText(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         speakingMessageId = messageId
         isSpeaking = true
@@ -47,7 +47,7 @@ final class SpeechSpeaker: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     /// Unlike `toggle`, chunks QUEUE on the synthesizer instead of replacing
     /// each other, so a multi-sentence reply is read end-to-end.
     func speakChunk(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = FileCitation.plainText(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isSpeaking = true
         synthesizer.speak(makeUtterance(trimmed))
@@ -114,6 +114,8 @@ struct MessageActionBar: View {
     /// reply — ChatView passes this for that row only.
     let isLastAssistant: Bool
     let onRegenerate: () -> Void
+    /// Opens the thread's share-link sheet (nil hides the menu entry).
+    var onShareLink: (() -> Void)? = nil
 
     /// 👍/👎 selection. LOCAL-ONLY: the backend has no message-feedback
     /// endpoint (verified against cmd/allternit-api routes, 2026-07) — the
@@ -125,10 +127,24 @@ struct MessageActionBar: View {
     var body: some View {
         HStack(spacing: 4) {
             actionButton("doc.on.doc", label: "Copy") {
-                UIPasteboard.general.string = message.content
+                UIPasteboard.general.string = FileCitation.plainText(message.content)
             }
-            actionButton("square.and.arrow.up", label: "Share") {
-                isSharePresented = true
+            if let onShareLink {
+                Menu {
+                    Button { isSharePresented = true } label: { Label("Share text", systemImage: "square.and.arrow.up") }
+                    Button { onShareLink() } label: { Label("Share link…", systemImage: "link") }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("TextSecondary"))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Share")
+            } else {
+                actionButton("square.and.arrow.up", label: "Share") {
+                    isSharePresented = true
+                }
             }
             actionButton(
                 speaker.speakingMessageId == message.id ? "stop.fill" : "speaker.wave.2",
@@ -150,14 +166,13 @@ struct MessageActionBar: View {
         }
         .padding(.leading, 8)
         .sheet(isPresented: $isSharePresented) {
-            ActivityView(text: message.content)
+            ActivityView(text: FileCitation.plainText(message.content))
         }
     }
 
     private func actionButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UISelectionFeedbackGenerator()
-            generator.selectionChanged()
+            Haptics.selection()
             action()
         }) {
             Image(systemName: systemName)

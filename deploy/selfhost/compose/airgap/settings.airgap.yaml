@@ -1,0 +1,46 @@
+# Settings for the air-gap test only (compose.airgap.yml).
+# Schema: cmd/allternit-api/openapi/selfhost-settings.schema.json
+# The model provider is the local mock (mock-provider/server.py) behind a
+# gateway in Anthropic Messages format. No real provider, no API key.
+
+server:
+  listen: 0.0.0.0:8400
+  public_url: http://server:8400
+  cors_origins: []
+
+database:
+  url: env:ALLTERNIT_DATABASE_URL
+  max_connections: 10
+
+inference:
+  provider: gateway
+  gateway:
+    format: anthropic-messages
+    base_url: http://mock-provider:8080/v1
+  model_map:
+    # The agent the test creates uses model "mock-sonnet".
+    mock-sonnet: mock-model
+
+mcp:
+  allowed_hostnames: []
+
+git:
+  allowed_hostnames: []
+  allowed_push_refs: []
+
+web_tools:
+  enabled: false
+
+secrets:
+  backend: env
+  encryption_key_ref: env:ALLTERNIT_ENCRYPTION_KEY
+
+observability:
+  log_format: json
+  prometheus:
+    enabled: true
+    # Reachable from the test's probe container on the internal network only.
+    listen: 0.0.0.0:9464
+
+health:
+  check_interval: 10s

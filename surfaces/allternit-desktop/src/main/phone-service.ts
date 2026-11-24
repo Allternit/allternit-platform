@@ -8,7 +8,7 @@
  * and adb is only fetched the first time an Android phone is used.
  */
 
-import { app, dialog, nativeImage, Notification, safeStorage } from 'electron';
+import { app, dialog, nativeImage, Notification, shell } from 'electron';
 import log from 'electron-log';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -21,7 +21,7 @@ import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js'
 import { CloudPhoneAutoLink, fetchCloudPhones, syncCloudPhones, type CloudPhoneLinkStarter, type CloudPhonesDeps, type CloudPhonesSnapshot } from './cloud-phones.js';
 import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
-import { httpPhoneApi, PhoneRunRecorder } from './phone-runs.js';
+import { httpPhoneApi, PhoneRunRecorder, phoneMapsCall, type PhoneMapsOp } from './phone-runs.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
 import { findUxplay } from './phone-airplay.js';
@@ -35,8 +35,11 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
-import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
+import { btAndroidLane } from './phone-bt-android.js';
+import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
+import { BtHidClient, btHidBinaryPath, btMacLane, btMacSettings, resumeBtMacAtLaunch, type BtMacSettings } from './phone-bt-mac.js';
+import { btAppleLane } from './phone-bt-apple.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
 import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
@@ -80,11 +83,13 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import { MirrorClient, mirrorBinaryPath, mirrorImageReader, mirrorLane, onlyIphone } from './phone-mirror.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
 import { onHomeScreen, PhoneAccountScheduler, readLinkedAccount, type PhoneLinkAccountResult } from './phone-account-reader.js';
-import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
+import { readSecret, writeSecret, deleteSecret, keychainSettled, keychainUnavailable, secretsReady } from './secure-store.js';
+import { decryptString, encryptString, isEncryptionAvailable } from './os-crypt.js';
 import {
   PhoneToolRunner,
   type AdbCall,
@@ -226,12 +231,21 @@ export function fileUsbAgentStore(dir: string): UsbAgentStore {
   };
 }
 
-/** Board keys sealed with the OS keychain; plain (0600 file) only where the OS offers no keychain. */
+/**
+ * Board keys sealed with the OS keychain; plain (0600 file) only where the OS
+ * offers no keychain (or the user denied it). Never plain just because the
+ * macOS Keychain unlock is still pending: that throws KeychainUnavailableError.
+ */
 export function keychainSealer(): Sealer {
   return {
-    seal: (hex) => (safeStorage.isEncryptionAvailable() ? `v1:${safeStorage.encryptString(hex).toString('base64')}` : `plain:${hex}`),
+    seal: (hex) => {
+      if (isEncryptionAvailable()) return `v1:${encryptString(hex).toString('base64')}`;
+      const blocked = keychainUnavailable();
+      if (blocked?.reason === 'pending') throw blocked;
+      return `plain:${hex}`;
+    },
     open: (sealed) => {
-      if (sealed.startsWith('v1:')) return safeStorage.decryptString(Buffer.from(sealed.slice(3), 'base64'));
+      if (sealed.startsWith('v1:')) return decryptString(Buffer.from(sealed.slice(3), 'base64'));
       if (sealed.startsWith('plain:')) return sealed.slice(6);
       throw new Error('unknown key format');
     },
@@ -288,6 +302,10 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  /** The iPhone Mirroring helper process (macOS; phone-mirror.ts). Started on first use. */
+  private mirror: MirrorClient | null = null;
+  /** The Mac Bluetooth keyboard helper (macOS; phone-bt-mac.ts). Started on first use, kept while turned on. */
+  private btHid: BtHidClient | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
   private appBackend: AppPhoneBackend | null = null;
   private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
@@ -708,6 +726,9 @@ class PhoneService {
 
   /** The tool runner, loopback gateway and MCP shim that every bot reaches phones through. */
   private async ensureGateway(): Promise<void> {
+    // Every phone lane starts here and then reads Keychain-sealed link keys
+    // (secure-store) synchronously: wait for the unlock first (packaged builds).
+    await secretsReady();
     await this.ensureGatewayServer();
     if (!this.shimRegistered) {
       this.shimRegistered = true;
@@ -755,6 +776,42 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        // Phone Use lanes: 2a iPhone Mirroring on this Mac, 2b this Mac as the iPhone's Bluetooth keyboard
+        // and mouse (phone-bt-mac.ts), 2d the person's Android phone as one (phone-bt-android.ts).
+        lanes: {
+          mirror: mirrorLane({
+            client: () => this.ensureMirrorClient(),
+            serves: (serial) => onlyIphone(serial, { usb: this.usbAgents, links: this.ensureLinkedBackend(), apps: this.ensureAppBackend() }),
+          }),
+          'bt-android': btAndroidLane({
+            phones: () => this.ensureAppBackend(),
+            rpc: (phoneId, method, params, timeoutMs) =>
+              httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).rpc(phoneId, method, params, timeoutMs),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btCalibrationFile(serial), c),
+          }),
+          'bt-mac': btMacLane({
+            client: () => this.ensureBtHidClient(),
+            enabled: () => this.btMacEnabled(),
+            phones: () => this.ensureAppBackend(),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btMacCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btMacCalibrationFile(serial), c),
+          }),
+          // Phone Use route 2c: a second iPhone or iPad (the App Store app, keyboard mode on) as the
+          // main iPhone's Bluetooth keyboard and mouse, driven over its app-phone lane (phone-bt-apple.ts).
+          'bt-apple': btAppleLane({
+            phones: () => this.ensureAppBackend(),
+            rpc: (phoneId, method, params, timeoutMs) =>
+              httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).rpc(phoneId, method, params, timeoutMs),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btAppleCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btAppleCalibrationFile(serial), c),
+          }),
+        },
+        // phone.read_ui on an iPhone whose broadcast extension is out of memory: OCR its frame here (Mac).
+        readImage: () => (this.ensureMirrorClient() ? mirrorImageReader(() => this.ensureMirrorClient()) : null),
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -936,6 +993,11 @@ class PhoneService {
     return this.appBackend;
   }
 
+  /** Pointer calibration for one iPhone on the bt-android route. */
+  private btCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-android-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
+  }
+
   /** The desktop credential plus the signed-in user, as the node maps it to the account. */
   private nodeHeaders(): Record<string, string> {
     const base = backendManager.getLocalAuthHeaders();
@@ -946,11 +1008,24 @@ class PhoneService {
 
   private createAppViewerSession(serial: string): AppPhoneViewerSession {
     const backend = this.ensureAppBackend();
+    const platform = appPlatformOf(backend.row(serial));
+    const node = () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() });
     return new AppPhoneViewerSession({
-      open: () => httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).openViewer(serial),
-      deviceName: backend.row(serial)?.name || 'iPhone',
+      // Every viewer starts read-only. An Android phone takes the owner's taps only after the
+      // "Allow taps" click, which approves the runtime's confirmation grant and swaps in a full-control socket.
+      open: () => node().openViewer(serial, { readOnly: true }),
+      ...(platform === 'android' ? { openControl: () => node().openViewer(serial, { readOnly: false, approve: true }) } : {}),
+      deviceName: backend.row(serial)?.name || (platform === 'android' ? 'Android phone' : 'iPhone'),
+      platform,
+      canTap: () => backend.row(serial)?.canTap === true,
       log: (message) => log.info('[PhoneStream]', message),
     });
+  }
+
+  /** phone:maps-*: app maps and Explore in the local allternit-api (phone-runs.ts phoneMapsCall). */
+  mapsCall(op: PhoneMapsOp, args: unknown): Promise<Record<string, unknown>> {
+    const api = httpPhoneApi(() => URLS.API, () => backendManager.getLocalAuthHeaders());
+    return phoneMapsCall(api, op, args && typeof args === 'object' ? (args as Record<string, unknown>) : {});
   }
 
   /** phone:app-phones: the account's iPhones with the Allternit app, for the phone list. */
@@ -958,6 +1033,20 @@ class PhoneService {
     const backend = this.ensureAppBackend();
     await backend.refresh(true);
     return backend.devices();
+  }
+
+  /**
+   * phone:routes: the Phone Use routes for one iPhone (phone-tools.ts `routes`), for the connect kit.
+   * Null for a phone no route serves, a bad serial, or before the phone tools started.
+   */
+  async phoneRoutes(serial: unknown): Promise<Awaited<ReturnType<PhoneToolRunner['routes']>>> {
+    if (typeof serial !== 'string' || !serial || serial.length > 128) return null;
+    try {
+      await this.ensureGatewayServer();
+    } catch {
+      return null;
+    }
+    return this.runner?.routes(serial) ?? null;
   }
 
   /** phone:app-pair-decision: the person approved or denied a pairing request on this Desktop. */
@@ -996,8 +1085,12 @@ class PhoneService {
       // The node relays it: no adb, no Phone Link. Only while the iPhone shares its screen.
       const apps = this.ensureAppBackend();
       await apps.refresh(true);
-      if (!apps.row(serial)) return { ok: false, message: 'That iPhone is not paired with this computer.' };
-      if (!apps.row(serial)?.online) return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
+      const appRow = apps.row(serial);
+      const appPlatform = appPlatformOf(appRow);
+      if (!appRow) return { ok: false, message: 'That phone is not paired with this computer.' };
+      // An iPhone must already share its screen. An Android phone is asked to (the node sends the request
+      // while a viewer waits), so its viewer starts and shows "Tap Start on <phone>" until the screen is live.
+      if (!appRow.online && appPlatform !== 'android') return { ok: false, message: APP_SHARE_SCREEN_MESSAGE };
       return this.ensureStreamManager().start(serial, opts ?? {});
     }
     if (serial.startsWith(LINK_SERIAL_PREFIX)) {
@@ -1036,6 +1129,11 @@ class PhoneService {
     if (!Array.isArray(events) || events.length === 0) return { ok: false, message: 'No input events.' };
     // encodeControlMessage validates every event; invalid ones fail as { ok: false }.
     return this.streams?.sendInput(serial, events as PhoneInputEvent[]) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  /** phone:stream-request-control: the owner clicked "Allow taps" on an Android app phone's viewer. */
+  async requestStreamControl(serial: string): Promise<{ ok: boolean; message?: string }> {
+    return (await this.streams?.requestControl(serial)) ?? { ok: false, message: 'The stream is not live.' };
   }
 
   setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {
@@ -1306,6 +1404,8 @@ class PhoneService {
 
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
   async ensureUsbReady(): Promise<UsbAgentManager> {
+    // Board keys are Keychain-sealed in every build; open them only once unlocked.
+    await keychainSettled();
     await this.ensureGateway();
     if (!this.usbAgents) {
       const uxplay = findUxplay();
@@ -1576,6 +1676,7 @@ class PhoneService {
 
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
+    await secretsReady();
     this.ensureIosRecovery();
     // The loopback gateway alone (no phone tools for bots): lets this computer
     // receive a phone handed over from the person's Mac before it has one.
@@ -1593,6 +1694,13 @@ class PhoneService {
     }
     this.startCloudPhoneSync();
     this.startAppPhoneCheck();
+    // Control my iPhone by Bluetooth left on: advertise now so the iPhone can reconnect (phone-bt-mac.ts).
+    void resumeBtMacAtLaunch({
+      platform: process.platform,
+      enabled: this.btMacEnabled(),
+      client: () => this.ensureBtHidClient(),
+      log: (message) => log.warn(`[Phone] ${message}`),
+    });
   }
 
   /**
@@ -1806,11 +1914,100 @@ class PhoneService {
     return this.runner?.call('phone.screenshot', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
+  // ── Control my iPhone by Bluetooth (bt-mac; Settings → Computers → Phones) ──
+
+  /** The allternit-bthid client, or null when this build has no binary (and on Windows/Linux). */
+  private ensureBtHidClient(): BtHidClient | null {
+    if (this.btHid) return this.btHid;
+    const binary = btHidBinaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+    if (!binary) return null;
+    this.btHid = new BtHidClient({ binary: () => binary, wanted: this.btMacEnabled() });
+    return this.btHid;
+  }
+
+  private btMacFile(): string {
+    return path.join(this.dir(), 'bt-mac.json');
+  }
+
+  /** The person turned the keyboard on (Pair) and has not turned it off (Disconnect). */
+  private btMacEnabled(): boolean {
+    return readJson<{ enabled?: boolean }>(this.btMacFile(), {}).enabled === true;
+  }
+
+  /** Pointer calibration for one iPhone on the bt-apple route (driven by a second iPhone or iPad). */
+  private btAppleCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-apple-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
+  }
+
+  /** Pointer calibration for one iPhone on the bt-mac route. */
+  private btMacCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-mac-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
+  }
+
+  /** The settings row: available, on or off, and one sentence of status. Starts the helper only when turned on. */
+  async btMacStatus(): Promise<BtMacSettings> {
+    const client = this.ensureBtHidClient();
+    const enabled = this.btMacEnabled();
+    if (!client || !enabled) return btMacSettings({ platform: process.platform, hasBinary: !!client, enabled, state: null });
+    try {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled, state: await client.status() });
+    } catch (error) {
+      return btMacSettings({ platform: process.platform, hasBinary: true, enabled, state: null, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /**
+   * Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth
+   * permission the first time). macOS never asks again after a denial, so when
+   * the permission is missing this click opens Privacy & Security > Bluetooth.
+   */
+  async btMacPair(): Promise<BtMacSettings> {
+    const client = this.ensureBtHidClient();
+    if (!client) return btMacSettings({ platform: process.platform, hasBinary: false, enabled: false, state: null });
+    writeJson(this.btMacFile(), { enabled: true });
+    let row: BtMacSettings;
+    try {
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
+    } catch (error) {
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
+    }
+    if (row.needs_you === 'MAC_PERMISSION_MISSING' && row.settingsUrl) {
+      shell.openExternal(row.settingsUrl).catch((error) => log.debug(`[Phone] Could not open Bluetooth settings: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    return row;
+  }
+
+  /** Disconnect: stop the keyboard; the iPhone drops the link (its pairing stays until the person forgets it there). */
+  async btMacDisconnect(): Promise<BtMacSettings> {
+    writeJson(this.btMacFile(), { enabled: false });
+    const client = this.ensureBtHidClient();
+    try {
+      await client?.unpair();
+    } catch (error) {
+      log.debug(`[Phone] Bluetooth keyboard did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return btMacSettings({ platform: process.platform, hasBinary: !!client, enabled: false, state: null });
+  }
+
   async tryHome(serial: string) {
     return this.runner?.call('phone.home', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
+  /** The allternit-mirror client, or null when this build has no binary (and on Windows/Linux). */
+  private ensureMirrorClient(): MirrorClient | null {
+    if (this.mirror) return this.mirror;
+    const binary = mirrorBinaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+    if (!binary) return null;
+    this.mirror = new MirrorClient({ binary: () => binary });
+    return this.mirror;
+  }
+
   shutdown(): void {
+    this.mirror?.close();
+    this.mirror = null;
+    // Closing stdin lets the helper release every key and remove the keyboard before it exits.
+    this.btHid?.close();
+    this.btHid = null;
     this.callBridge?.stop();
     this.callBridgeWindow?.destroy();
     this.callBridge = null;

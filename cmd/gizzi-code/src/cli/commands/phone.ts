@@ -31,7 +31,7 @@ export class PhoneLineError extends Error {}
 
 type Reply = { status: number; body: any; raw: Response }
 
-async function call(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = 15_000): Promise<Reply> {
+async function call(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, timeoutMs = 15_000): Promise<Reply> {
   let raw: Response
   try {
     raw = await platformFetch(method, path, body, { timeoutMs })
@@ -55,6 +55,13 @@ export interface Phone {
   name: string
   model?: string
   online: boolean
+  /** App phones: "ios" or "android". */
+  platform?: string
+  route?: string
+  /** Android app phone: taps from the live view are on. */
+  canTap?: boolean
+  /** Android screen-share consent: granted | needed | denied | unknown. */
+  consent?: string
 }
 
 export async function listPhones(): Promise<Phone[]> {
@@ -62,6 +69,23 @@ export async function listPhones(): Promise<Phone[]> {
   if (r.status === 401 || r.status === 403) throw new PhoneLineError("You're signed out. Run `gizzi login` first.")
   if (r.status !== 200) throw new PhoneLineError(`Couldn't list your phones: ${reason(r)}`)
   return (r.body?.phones ?? []) as Phone[]
+}
+
+/** One line per phone: name, platform, and for Android app phones the screen-share state and taps. */
+export function formatPhones(phones: Phone[]): string {
+  if (!phones.length) return "No phone is linked."
+  return phones
+    .map((p) => {
+      const android = p.platform === "android"
+      const platform = android ? "Android" : p.platform === "ios" || p.serial.startsWith("app:") ? "iPhone" : "phone"
+      const base = `${(p.name || p.model || p.serial).padEnd(18).slice(0, 18)} ${platform.padEnd(8)}`
+      if (android && p.route === "android-app") {
+        const screen = p.online ? "screen live" : "screen waiting for Start"
+        return `${base} ${screen}  taps ${p.canTap ? "on" : "off"}`
+      }
+      return `${base} ${p.online ? "online" : "offline"}`
+    })
+    .join("\n")
 }
 
 const label = (p: Phone) => p.name || p.model || p.serial
@@ -241,6 +265,11 @@ export interface TaskReport {
   reason?: string
   steps?: Array<unknown>
   run_id?: string
+  /** Added by runtimes with app maps; absent on older ones. */
+  map_steps?: number
+  tokens_in?: number
+  tokens_out?: number
+  model_calls?: number
 }
 
 export interface FollowDeps {
@@ -311,8 +340,28 @@ const OUTCOME: Record<string, string> = {
   failed: "Failed.",
 }
 
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v)
+
+export function formatTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+}
+
+/** "5 steps · 3 from the map · 41k tokens", or "" when the runtime sent none of the map fields. */
+export function outcomeStats(r: TaskReport): string {
+  if (!isNum(r.map_steps) && !isNum(r.tokens_in) && !isNum(r.tokens_out)) return ""
+  const parts: string[] = []
+  const steps = Array.isArray(r.steps) ? r.steps.length : 0
+  if (steps > 0) parts.push(`${steps} step${steps === 1 ? "" : "s"}`)
+  if (isNum(r.map_steps) && r.map_steps > 0) parts.push(`${r.map_steps} from the map`)
+  const tokens = (isNum(r.tokens_in) ? r.tokens_in : 0) + (isNum(r.tokens_out) ? r.tokens_out : 0)
+  if (tokens > 0) parts.push(`${formatTokens(tokens)} tokens`)
+  return parts.join(" · ")
+}
+
 export function describeOutcome(r: TaskReport): string {
-  const head = OUTCOME[r.status ?? ""] ?? (r.ok ? "Done." : `Ended: ${r.status ?? "unknown"}.`)
+  let head = OUTCOME[r.status ?? ""] ?? (r.ok ? "Done." : `Ended: ${r.status ?? "unknown"}.`)
+  const stats = outcomeStats(r)
+  if (stats) head = head === "Done." ? `Done in ${stats}.` : `${head.replace(/\.$/, "")} (${stats}).`
   return r.result ? `${head} ${r.result}` : head
 }
 
@@ -366,7 +415,12 @@ const TaskCommand = cmd({
     phoneOpt(y)
       .positional("goal", { type: "string", array: true, demandOption: true })
       .option("thread", { type: "string", describe: "bot thread this task belongs to (default: $GIZZI_THREAD_ID)" })
-      .option("session", { type: "string", describe: "session this task belongs to (default: $GIZZI_SESSION_ID)" }),
+      .option("session", { type: "string", describe: "session this task belongs to (default: $GIZZI_SESSION_ID)" })
+      .option("vision", {
+        type: "string",
+        choices: ["auto", "always"] as const,
+        describe: "auto: skip the screenshot when the screen text is enough; always: send it every step",
+      }),
   handler: (args) =>
     guard(async () => {
       const goal = (args.goal as string[]).join(" ").trim()
@@ -377,6 +431,7 @@ const TaskCommand = cmd({
       const body: Record<string, unknown> = { goal, source: thread || session ? "chat" : "api" }
       if (thread) body.thread_id = thread
       if (session) body.session_id = session
+      if (args.vision) body.vision = args.vision
       const startedAt = Date.now() - 2000
       process.stdout.write(`Starting on ${label(phone)}: ${goal}\n`)
       const task = call("POST", `/api/v1/phones/${encodeURIComponent(phone.serial)}/task`, body, 6 * 60_000).then(
@@ -443,10 +498,185 @@ const RunsCommand = cmd({
     }),
 })
 
+const ListCommand = cmd({
+  command: "list",
+  describe: "your linked phones, their platform, and screen-share state",
+  builder: (y: Argv) => y,
+  handler: () =>
+    guard(async () => {
+      process.stdout.write(formatPhones(await listPhones()) + "\n")
+    }),
+})
+
+// ── app maps ──────────────────────────────────────────────────────────────
+
+export interface MapSummary {
+  app: string
+  platform?: string
+  name?: string
+  screens: number
+  edges?: number
+  routable_edges?: number
+  stale_edges: number
+  truncated?: { reason?: string } | null
+  last_seen?: string
+}
+
+export interface MapFile {
+  app: string
+  screens: Record<string, { id: string; name?: string }>
+  edges: Array<{ from: string; to: string; routable?: boolean }>
+}
+
+export function formatMaps(rows: MapSummary[]): string {
+  if (!rows.length) return "No app maps yet. Run `gizzi phone explore <app>` to make one."
+  return rows
+    .map((m) => {
+      const upd = m.last_seen ? m.last_seen.slice(0, 16).replace("T", " ") : "never"
+      const tail = m.truncated ? `  partial (${m.truncated.reason ?? "stopped"})` : ""
+      return `${(m.name && m.name !== m.app ? `${m.name} (${m.app})` : m.app).padEnd(40).slice(0, 40)} ${String(m.screens).padStart(3)} screens  ${String(m.routable_edges ?? m.edges ?? 0).padStart(3)} routes  ${String(m.stale_edges).padStart(2)} stale  ${upd}${tail}`.trimEnd()
+    })
+    .join("\n")
+}
+
+/** Screens of one map with their hops (taps) from the start screen. */
+export function formatMapScreens(map: MapFile): string {
+  const ids = Object.keys(map.screens)
+  if (!ids.length) return `${map.app} has no screens yet.`
+  const start = map.screens["s0"] ? "s0" : (map.edges[0]?.from ?? ids[0]!)
+  const hops = new Map<string, number>([[start, 0]])
+  const queue = [start]
+  while (queue.length) {
+    const cur = queue.shift()!
+    for (const e of map.edges) {
+      if (e.from === cur && e.routable !== false && !hops.has(e.to)) {
+        hops.set(e.to, hops.get(cur)! + 1)
+        queue.push(e.to)
+      }
+    }
+  }
+  const rows = ids
+    .map((id) => ({ id, name: map.screens[id]?.name || id, hop: hops.get(id) }))
+    .sort((a, b) => (a.hop ?? 1e9) - (b.hop ?? 1e9))
+  const lines = [`${map.app}: ${ids.length} screens, start ${map.screens[start]?.name || start}`]
+  for (const r of rows) lines.push(`  ${r.name.padEnd(30).slice(0, 30)} ${r.hop === undefined ? "no route from start" : r.hop === 0 ? "start" : `${r.hop} hop${r.hop === 1 ? "" : "s"}`}`)
+  return lines.join("\n")
+}
+
+const MAP_ERRORS: Record<string, string> = {
+  money_app: "Explore won't touch money apps.",
+  phone_busy: "The phone is busy with a task. Wait for it to finish, then try again.",
+  explore_running: "An Explore is already running on that phone. Stop it first with `gizzi phone stop <run_id>`.",
+  explore_android_only: "Explore works on Android phones only.",
+  map_not_found: "No map for that app yet.",
+  phone_not_found: "That phone isn't linked.",
+  phone_unreachable: "The phone can't be reached right now.",
+  invalid_args: "Those options aren't valid (minutes 1-30, max screens 1-300).",
+}
+
+export const OLD_RUNTIME = "This Allternit runtime doesn't have app maps yet. Update Allternit, then try again."
+
+/** Plain-words message for an API error code, falling back to the server's message. */
+export function mapErrorMessage(r: { status: number; body?: any }): string {
+  const code = r.body?.error
+  if (!code && (r.status === 404 || r.status === 405)) return OLD_RUNTIME
+  if (code && MAP_ERRORS[code]) return MAP_ERRORS[code]!
+  return r.body?.message || code || `HTTP ${r.status}`
+}
+
+export const EXPLORE_RULES = "Explore never taps switches, text fields, or anything that pays, sends, deletes or signs out. Money apps are refused."
+
+const MapsCommand = cmd({
+  command: "maps [app]",
+  describe: "app maps your phone has learned: screens, routes, stale routes",
+  builder: (y: Argv) => y.positional("app", { type: "string" }).option("json", { type: "boolean", default: false }),
+  handler: (args) =>
+    guard(async () => {
+      const app = args.app as string | undefined
+      const r = await call("GET", app ? `/api/v1/phones/maps/${encodeURIComponent(app)}` : "/api/v1/phones/maps")
+      if (r.status !== 200) throw new PhoneLineError(mapErrorMessage(r))
+      if (args.json) return void process.stdout.write(JSON.stringify(app ? r.body?.map : r.body?.maps ?? [], null, 2) + "\n")
+      process.stdout.write((app ? formatMapScreens(r.body?.map as MapFile) : formatMaps((r.body?.maps ?? []) as MapSummary[])) + "\n")
+    }),
+})
+
+async function stopRun(runId: string): Promise<void> {
+  const r = await call("POST", `/api/aci/stop/${encodeURIComponent(runId)}`, {})
+  if (r.status !== 200) throw new PhoneLineError(`Couldn't stop ${runId}: ${reason(r)}`)
+  process.stdout.write(`Stop sent to ${runId}.\n`)
+}
+
+const ExploreCommand = cmd({
+  command: "explore <app>",
+  describe: "walk an Android app's screens to learn its map",
+  builder: (y: Argv) =>
+    y
+      .positional("app", { type: "string", demandOption: true })
+      .option("serial", { type: "string", describe: "phone serial or name (default: your only phone)" })
+      .option("minutes", { type: "number", describe: "time budget, 1-30 (default 10)" })
+      .option("max-screens", { type: "number", describe: "screen cap, 1-300 (default 60)" })
+      .option("stop", { type: "string", describe: "stop this Explore run instead of starting one" }),
+  handler: (args) =>
+    guard(async () => {
+      if (args.stop) return stopRun(args.stop as string)
+      const app = args.app as string
+      const phone = choosePhone(await listPhones(), args.serial as string | undefined)
+      const body: Record<string, unknown> = { serial: phone.serial }
+      if (args.minutes !== undefined) body.minutes = Number(args.minutes)
+      if (args["max-screens"] !== undefined) body.max_screens = Number(args["max-screens"])
+      const r = await call("POST", `/api/v1/phones/maps/${encodeURIComponent(app)}/explore`, body)
+      if (r.status !== 202 && r.status !== 200) throw new PhoneLineError(mapErrorMessage(r))
+      const id = r.body?.run_id as string
+      process.stdout.write(`Exploring ${app} on ${label(phone)}. Run ${id}\n${EXPLORE_RULES}\nStop it with: gizzi phone stop ${id}\n`)
+    }),
+})
+
+const StopCommand = cmd({
+  command: "stop <run_id>",
+  describe: "stop a running phone task or Explore",
+  builder: (y: Argv) => y.positional("run_id", { type: "string", demandOption: true }),
+  handler: (args) => guard(() => stopRun(args.run_id as string)),
+})
+
+export async function confirmForget(app: string, yes: boolean, ask: (q: string) => Promise<string>): Promise<boolean> {
+  if (yes) return true
+  const a = await ask(`Delete the map for ${app}? The next task will learn it again. [y/N] `)
+  return /^y(es)?$/i.test(a.trim())
+}
+
+const ForgetMapCommand = cmd({
+  command: "forget-map <app>",
+  describe: "delete the learned map for an app",
+  builder: (y: Argv) => y.positional("app", { type: "string", demandOption: true }).option("yes", { type: "boolean", default: false }),
+  handler: (args) =>
+    guard(async () => {
+      const app = args.app as string
+      const ok = await confirmForget(app, Boolean(args.yes), async (q) => {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) throw new PhoneLineError("Not a terminal, so I can't ask. Add --yes to delete.")
+        const rl = createInterface({ input: process.stdin, output: process.stdout })
+        const a: string = await new Promise((res) => rl.question(q, res))
+        rl.close()
+        return a
+      })
+      if (!ok) return void process.stdout.write("Kept the map.\n")
+      const r = await call("DELETE", `/api/v1/phones/maps/${encodeURIComponent(app)}`)
+      if (r.status !== 200) throw new PhoneLineError(mapErrorMessage(r))
+      process.stdout.write(r.body?.deleted === false ? `There was no map for ${app}.\n` : `Deleted the map for ${app}.\n`)
+    }),
+})
+
 export const PhoneCommand = cmd({
   command: "phone",
   describe: "run tasks on your linked phone and approve what it asks",
   builder: (y: Argv) =>
-    y.command(TaskCommand).command(RunsCommand).demandCommand(1, "Specify a phone command (task, runs)"),
+    y
+      .command(ListCommand)
+      .command(TaskCommand)
+      .command(RunsCommand)
+      .command(MapsCommand)
+      .command(ExploreCommand)
+      .command(StopCommand)
+      .command(ForgetMapCommand)
+      .demandCommand(1, "Specify a phone command (list, task, runs, maps, explore, stop, forget-map)"),
   handler: () => {},
 })

@@ -8,7 +8,9 @@
  *          Wi-Fi through the authenticated link (phone-usb-agent-link.ts)
  *   eyes:  the phone's AirPlay screen mirror, received here by UxPlay
  *          (phone-airplay.ts), one PIN-protected receiver per board
- *   aim:   calibration and closed-loop aiming (phone-usb-agent-pointer.ts)
+ *   aim:   calibration and closed-loop aiming, from the shared keyboard/mouse
+ *          core (phone-hid-core.ts); the board is its `usb-agent` sender
+ *          (phone-usb-agent-pointer.ts)
  *
  * The board starts disarmed and only a press of its button arms it, so
  * nothing on the network can start driving the phone on its own; Stop here
@@ -21,9 +23,10 @@ import { randomInt } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { AirplayScreen, AIRPLAY_BASE_PORT, AIRPLAY_NAME, type AirplayState, type UxplayOptions } from './phone-airplay.js';
 import { UsbAgentLink, type BoardSessionInfo } from './phone-usb-agent-link.js';
-import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand } from './phone-usb-agent-protocol.js';
+import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand, type BoardMode, type BtStatus } from './phone-usb-agent-protocol.js';
 import { BoardError, UsbPointer, type Calibration, type PointerScreen } from './phone-usb-agent-pointer.js';
-import { changed, type Gray } from './phone-usb-agent-vision.js';
+import { HidError } from './phone-hid-core.js';
+import type { Gray } from './phone-usb-agent-vision.js';
 import { compareVersions } from './phone-usb-agent-firmware.js';
 import { provision, readIdentity, validateProvision, type SerialPort } from './phone-usb-agent-provision.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
@@ -64,6 +67,7 @@ export type UsbAgentStatus =
   | 'board_offline'
   | 'phone_not_connected'
   | 'phone_locked'
+  | 'bt_not_paired'
   | 'no_screen'
   | 'not_calibrated'
   | 'disarmed'
@@ -73,6 +77,7 @@ export const USB_STATUS_LABEL: Record<UsbAgentStatus, string> = {
   board_offline: 'USB Agent not on Wi-Fi',
   phone_not_connected: 'Plug the USB Agent into the iPhone',
   phone_locked: 'Unlock the iPhone',
+  bt_not_paired: 'Pair your iPhone with “Allternit Keyboard” in Settings > Bluetooth',
   no_screen: 'Start Screen Mirroring to Allternit',
   not_calibrated: 'Calibrate the pointer',
   disarmed: 'Press the USB Agent button to arm it',
@@ -85,6 +90,10 @@ export interface UsbAgentInfo {
   name: string;
   status: UsbAgentStatus;
   armed: boolean;
+  /** How the board reaches the phone: the USB cable, or Bluetooth ("Allternit Keyboard"). Older firmware: always cable. */
+  mode: BoardMode;
+  /** Bluetooth side: off in cable mode; pairing, bonded (not connected) or connected. */
+  bluetooth: BtStatus;
   firmware: string | null;
   address: string | null;
   mirroring: AirplayState;
@@ -269,6 +278,30 @@ export class UsbAgentManager extends EventEmitter {
     return res.ok ? { ok: true } : fail(res.error === 'offline' ? 'device_offline' : 'adb_failed', res.message);
   }
 
+  /**
+   * Switches how the board reaches the phone. It disarms the board (the button arms it again), so a
+   * mode change never leaves input live. Bluetooth mode needs firmware 1.1.0 or newer.
+   */
+  async setMode(boardId: string, mode: BoardMode): Promise<ToolResult> {
+    return this.boardOp(boardId, { op: 'mode', mode });
+  }
+
+  /** Makes the board discoverable again as "Allternit Keyboard" (Bluetooth mode). */
+  async pairBluetooth(boardId: string): Promise<ToolResult> {
+    return this.boardOp(boardId, { op: 'btpair' });
+  }
+
+  /** Forgets the bonded iPhone; the board disarms and waits to be paired again. Remove the board from the iPhone's Bluetooth list too. */
+  async forgetBluetooth(boardId: string): Promise<ToolResult> {
+    return this.boardOp(boardId, { op: 'btforget' });
+  }
+
+  private async boardOp(boardId: string, cmd: BoardCommand): Promise<ToolResult> {
+    if (!this.boards.has(boardId)) return fail('device_offline', 'That USB Agent isn’t set up.');
+    const res = await this.link.send(boardId, cmd);
+    return res.ok ? { ok: true } : fail(res.error === 'offline' ? 'device_offline' : 'adb_failed', res.message);
+  }
+
   async calibrate(boardId: string): Promise<ToolResult> {
     const b = this.boards.get(boardId);
     if (!b) return fail('device_offline', 'Unknown USB Agent.');
@@ -307,6 +340,8 @@ export class UsbAgentManager extends EventEmitter {
       name: b.stored.name,
       status: statusOf(session, b.screen.state(), b.pointer.calibrated),
       armed: session?.state.armed ?? false,
+      mode: session?.state.mode ?? 'cable',
+      bluetooth: session?.state.bt ?? 'off',
       firmware: session?.firmware ?? null,
       address: session?.address ?? null,
       mirroring: b.screen.state(),
@@ -373,11 +408,7 @@ export class UsbAgentManager extends EventEmitter {
           }
           // Spotlight from a hardware keyboard: ⌘Space, type the name, Return.
           return await this.act(b, async () => {
-            await b.pointer.key('cmd+space');
-            await sleep(600);
-            await b.pointer.type((a.app as string).trim());
-            await sleep(500);
-            await b.pointer.key('enter');
+            await b.pointer.openApp((a.app as string).trim());
             return [];
           }, { needCalibration: false });
         }
@@ -417,8 +448,10 @@ export class UsbAgentManager extends EventEmitter {
   private blocker(b: Board, opts: { needCalibration: boolean; needScreen?: boolean }): ToolResult | null {
     const session = this.link.session(b.stored.boardId);
     if (!session) return fail('device_offline', 'The USB Agent is not connected to Wi-Fi.');
-    if (session.state.usb === 'none') return fail('device_offline', 'The USB Agent isn’t plugged into the iPhone.');
-    if (session.state.usb === 'asleep') return fail('device_locked', 'The iPhone is locked or asleep. Unlock it to continue.');
+    if (session.state.mode === 'bt') {
+      if (session.state.bt !== 'connected') return fail('device_offline', 'The iPhone isn’t connected to the USB Agent over Bluetooth. Pair “Allternit Keyboard” in Settings > Bluetooth.');
+    } else if (session.state.usb === 'none') return fail('device_offline', 'The USB Agent isn’t plugged into the iPhone.');
+    else if (session.state.usb === 'asleep') return fail('device_locked', 'The iPhone is locked or asleep. Unlock it to continue.');
     if (!session.state.armed) return fail('disarmed', 'The USB Agent is disarmed. Press its button to let the bot use the phone.');
     if ((opts.needScreen ?? true) && b.screen.state() !== 'mirroring') {
       return fail('no_screen', `The iPhone isn’t mirroring. On the phone: Control Center → Screen Mirroring → ${b.screen.receiverName()}.`);
@@ -440,26 +473,25 @@ export class UsbAgentManager extends EventEmitter {
     const blocked = this.blocker(b, { needCalibration: opts.needCalibration, needScreen: opts.needCalibration });
     if (blocked) return blocked;
     const frame = b.screen.latest();
-    const beforeGray = frame ? this.deps.decode(frame.jpeg, DECODE_WIDTH) : null;
-    const from = b.pointer.where();
-    const visited = await run(frame ?? { width: 1, height: 1 });
-    // The pointer's own trip (from where it was to where it went) is masked out of the comparison.
-    const ignore: Point[] = [...(from ? [from] : []), ...visited];
-    if (!frame) return { ok: true, screenChanged: null };
-    await b.screen.settled(350, 300, 3_000);
-    const after = b.screen.latest();
-    const afterGray = after && after !== frame ? this.deps.decode(after.jpeg, DECODE_WIDTH) : beforeGray;
+    // The core reads its "before" frame in this same tick, so it is this frame;
+    // the pointer's own trip (from where it was to where it went) is masked out.
+    const screenChanged = await b.pointer.actAndCompare(() => run(frame ?? { width: 1, height: 1 }));
+    if (screenChanged === null) return { ok: true, screenChanged: null };
     return {
       ok: true,
-      screenChanged: changed(beforeGray, afterGray, ignore),
+      screenChanged,
       note: 'screenChanged=false usually means the action missed; look again before retrying. Coordinates are only valid for the frame they came from.',
     };
   }
 
   private boardFailure(error: unknown): ToolResult {
     if (error instanceof BoardError) {
-      const map: Record<string, ToolErrorCode> = { offline: 'device_offline', disarmed: 'disarmed', usb_asleep: 'device_locked', uncertain: 'uncertain', invalid: 'invalid_args', rejected: 'adb_failed' };
+      const map: Record<string, ToolErrorCode> = { offline: 'device_offline', disarmed: 'disarmed', usb_asleep: 'device_locked', bt_not_connected: 'device_offline', uncertain: 'uncertain', invalid: 'invalid_args', rejected: 'adb_failed' };
       return fail(map[error.result.error] ?? 'adb_failed', error.message);
+    }
+    if (error instanceof HidError) {
+      const map: Record<HidError['code'], ToolErrorCode> = { bad_params: 'invalid_args', not_calibrated: 'not_calibrated', unsupported: 'unsupported' };
+      return fail(map[error.code], error.message);
     }
     return fail('adb_failed', error instanceof Error ? error.message : String(error));
   }
@@ -505,6 +537,11 @@ export class UsbAgentManager extends EventEmitter {
       load: () => this.deps.store.loadCalibration(stored.boardId),
       save: (c) => this.deps.store.saveCalibration(stored.boardId, c),
       linkGeneration: () => board.generation,
+      connected: () => this.link.session(stored.boardId) !== null,
+      bluetooth: () => {
+        const st = this.link.session(stored.boardId)?.state;
+        return st && st.mode === 'bt' ? { paired: st.bt === 'bonded' || st.bt === 'connected', connected: st.bt === 'connected' } : null;
+      },
       now: this.now,
     });
     this.boards.set(stored.boardId, board);
@@ -532,7 +569,6 @@ export class UsbAgentManager extends EventEmitter {
 
 class ArgError extends Error {}
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isCoord = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20_000;
 
 export function serialOf(boardId: string): string {
@@ -541,8 +577,10 @@ export function serialOf(boardId: string): string {
 
 export function statusOf(session: BoardSessionInfo | null, mirroring: AirplayState, calibrated: boolean): UsbAgentStatus {
   if (!session) return 'board_offline';
-  if (session.state.usb === 'none') return 'phone_not_connected';
-  if (session.state.usb === 'asleep') return 'phone_locked';
+  if (session.state.mode === 'bt') {
+    if (session.state.bt !== 'connected') return 'bt_not_paired';
+  } else if (session.state.usb === 'none') return 'phone_not_connected';
+  else if (session.state.usb === 'asleep') return 'phone_locked';
   if (mirroring !== 'mirroring') return 'no_screen';
   if (!calibrated) return 'not_calibrated';
   if (!session.state.armed) return 'disarmed';

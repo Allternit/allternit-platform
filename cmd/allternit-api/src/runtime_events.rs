@@ -67,6 +67,9 @@ const DATA_KEYS: &[&str] = &[
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
     "attentionId", "botName",
+    // The agent session whose turn raised an approval (`gateway_runner::create_approval`):
+    // cloud-api links the approval to that turn's Platform API response.
+    "session_id",
     // "urgent" when a bot marked it so: it reaches the owner during quiet hours (cloud-api notifications::level).
     "urgency",
     // iPhone system surfaces: which inbox item an approval is, and what the
@@ -75,6 +78,9 @@ const DATA_KEYS: &[&str] = &[
     // Factory approvals: where this runtime already asked (`["app","push",…]`). "push" means its own Web Push
     // (factory_approvals_push) reached a device, so cloud sends the iPhone app only, not a second Web Push.
     "surfaces",
+    // An agent's message to its user (`agent_user_tools`, `agent.message.sent`): what it points at, and the
+    // session's name when it has no bot.
+    "ref", "sessionTitle",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in
@@ -84,6 +90,14 @@ const PHONE_KEYS: &[&str] = &[
     "step_id", "run_id", "serial", "tool", "label", "ok", "error", "duration_ms", "source", "snapshot",
     "status", "skill", "steps", "failed", "model_calls",
     "approval_id", "effect", "state", "held_ms", "holds",
+];
+
+/// Extra keys a Files event (`files.inbox.dropped`, `files.task.result`,
+/// `files.conflict`) carries: the contract's `FilesEvent` fields
+/// (`contracts/files-drive/schema/events.json`). Never file content.
+const FILES_KEYS: &[&str] = &[
+    "event_id", "at", "computer_id", "root_id", "item_id", "name", "size", "mime", "dropped_by", "untrusted",
+    "task_id", "task_state", "rule_id", "input_item_id", "status", "result_item_ids", "agent_id", "error", "conflict",
 ];
 
 // ---------------------------------------------------------------- owner ledger
@@ -138,6 +152,13 @@ pub fn envelope(source: &str, row: &LedgerRow) -> Option<Value> {
     }
     if matches!(kind, Kind::PhoneStep | Kind::PhoneRunCompleted | Kind::PhoneApprovalRequested | Kind::PhoneApprovalResolved) {
         for k in PHONE_KEYS {
+            if let Some(v) = p.get(*k).filter(|v| !v.is_null()) {
+                data.insert((*k).to_string(), v.clone());
+            }
+        }
+    }
+    if matches!(kind, Kind::FilesInboxDropped | Kind::FilesTaskResult | Kind::FilesConflict) {
+        for k in FILES_KEYS {
             if let Some(v) = p.get(*k).filter(|v| !v.is_null()) {
                 data.insert((*k).to_string(), v.clone());
             }
@@ -586,13 +607,18 @@ mod tests {
             ("phone.run.completed", json!({ "run_id": "task-1" }), Some("phone.run.completed")),
             ("phone.approval.requested", json!({ "approval_id": "a1" }), Some("phone.approval.requested")),
             ("phone.approval.resolved", json!({ "approval_id": "a1", "state": "approved" }), Some("phone.approval.resolved")),
+            ("files.changed", json!({ "item_id": "it_1", "op": "created" }), None),
+            ("files.inbox.dropped", json!({ "task_id": "tsk_1", "untrusted": true }), Some("files.inbox.dropped")),
+            ("files.task.result", json!({ "task_id": "tsk_1", "status": "succeeded" }), Some("files.task.result")),
+            ("files.conflict", json!({ "conflict": {} }), Some("files.conflict")),
+            ("agent.message.sent", json!({ "text": "Your report is ready", "kind": "message" }), Some("agent.message.sent")),
         ];
         for (ty, payload, want) in table {
             let got = classify(ty, payload).and_then(Kind::registry);
             assert_eq!(got, *want, "{ty} {payload}");
         }
         // The registry names this runtime emits are all in the agreed list.
-        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved"];
+        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved", "files.inbox.dropped", "files.task.result", "files.conflict", "agent.message.sent"];
         for (_, _, want) in table {
             if let Some(w) = want {
                 assert!(registry.contains(w), "{w}");

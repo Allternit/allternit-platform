@@ -201,6 +201,25 @@ export function stopComputer(id: string): Promise<{ id: string; status: string }
   return gateway(`/api/v1/computers/${encodeURIComponent(id)}/stop`, { method: "POST" })
 }
 
+export type RestorePoint = { id: string; created_at?: string; stateful?: boolean }
+
+/** Restore points on a computer (allternit-api `/api/v1/computers/:id/snapshots`). */
+export async function listRestorePoints(id: string): Promise<RestorePoint[]> {
+  return (await gateway<{ snapshots?: RestorePoint[] }>(`/api/v1/computers/${encodeURIComponent(id)}/snapshots`)).snapshots ?? []
+}
+
+export function createRestorePoint(id: string): Promise<{ snapshot_id: string }> {
+  return gateway(`/api/v1/computers/${encodeURIComponent(id)}/snapshots`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stateful: false }),
+  })
+}
+
+export function restoreRestorePoint(id: string, snapshotId: string): Promise<{ success: boolean }> {
+  return gateway(`/api/v1/computers/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" })
+}
+
 // ── bots pause (allternit-api GET/PUT /api/v1/bots/pause) ─────────────────
 
 export type BotPause = { paused: boolean; since: number | null; by: string | null }
@@ -527,6 +546,35 @@ export function toProject(row: any): Project {
 export async function listProjects(): Promise<Project[]> {
   const body = await gateway<{ projects?: any[] }>("/api/v1/cowork/projects")
   return (body.projects ?? []).map(toProject)
+}
+
+// ── project pad (allternit-api GET /api/v1/project-pad/:scope) ────────────
+
+export type ProjectPad = {
+  data?: {
+    notes?: string
+    links?: Array<{ title?: string; url?: string }>
+    checklist?: Array<{ id?: string; text?: string; done?: boolean }>
+  }
+  updatedAt?: string | number
+}
+
+/** `pad` is null when none is saved; `unsupported` when the runtime is too old (404). */
+export type ProjectPadResult = { pad: ProjectPad | null; unsupported: boolean }
+
+/** Scope as the web builds it. The project list carries no mode, so callers pass "chat". */
+export function projectPadScope(id: string, mode: string = "chat"): string {
+  return `project:${mode}:${id}`
+}
+
+export async function getProjectPad(scope: string): Promise<ProjectPadResult> {
+  try {
+    const body = await gateway<{ pad?: ProjectPad | null }>(`/api/v1/project-pad/${encodeURIComponent(scope)}`)
+    return { pad: body?.pad ?? null, unsupported: false }
+  } catch (e) {
+    if (/ failed: 404\b/.test(String((e as Error)?.message))) return { pad: null, unsupported: true }
+    throw e
+  }
 }
 
 // ── routines ──────────────────────────────────────────────────────────────

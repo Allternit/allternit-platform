@@ -305,6 +305,135 @@ struct ArtifactV2ListQuery: Sendable, Equatable {
     var archived: Bool = false
 }
 
+/// One comment (`comment_json` in routes/artifacts_comments.rs). Threads are
+/// one level deep: a reply's `parent_id` is its thread's root. The opaque
+/// `anchor` is not decoded (the phone lists threads, it doesn't pin them).
+struct ArtifactComment: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let artifactId: String?
+    let version: Int?
+    let parentId: String?
+    /// The user id, or `assistant` for an agent's comment.
+    let authorId: String
+    let authorName: String?
+    let authorImageURL: String?
+    let body: String
+    let toAssistant: Bool?
+    let resolvedAt: String?
+    let createdAt: String
+    let agentName: String?
+
+    init(id: String, artifactId: String? = nil, version: Int? = nil, parentId: String? = nil, authorId: String,
+         authorName: String? = nil, authorImageURL: String? = nil, body: String, toAssistant: Bool? = nil,
+         resolvedAt: String? = nil, createdAt: String, agentName: String? = nil) {
+        self.id = id
+        self.artifactId = artifactId
+        self.version = version
+        self.parentId = parentId
+        self.authorId = authorId
+        self.authorName = authorName
+        self.authorImageURL = authorImageURL
+        self.body = body
+        self.toAssistant = toAssistant
+        self.resolvedAt = resolvedAt
+        self.createdAt = createdAt
+        self.agentName = agentName
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, version, body
+        case artifactId = "artifact_id"
+        case parentId = "parent_id"
+        case authorId = "author_id"
+        case authorName = "author_name"
+        case authorImageURL = "author_image_url"
+        case toAssistant = "to_assistant"
+        case resolvedAt = "resolved_at"
+        case createdAt = "created_at"
+        case agentName = "agent_name"
+    }
+
+    var isRoot: Bool { parentId == nil }
+    var isResolved: Bool { resolvedAt != nil }
+    var createdDate: Date? { ArtifactV2Dates.parse(createdAt) }
+}
+
+/// One row of `GET /api/v2/artifacts/:id/sharing` `shares` (sharing_json).
+struct ArtifactV2Share: Decodable, Hashable, Sendable {
+    /// user | email | group
+    let principalType: String
+    let principalId: String
+    /// view | comment | edit
+    let level: String
+    let display: String?
+    let expiresAt: String?
+    let acceptedAt: String?
+
+    init(principalType: String, principalId: String, level: String, display: String? = nil,
+         expiresAt: String? = nil, acceptedAt: String? = nil) {
+        self.principalType = principalType
+        self.principalId = principalId
+        self.level = level
+        self.display = display
+        self.expiresAt = expiresAt
+        self.acceptedAt = acceptedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case level, display
+        case principalType = "principal_type"
+        case principalId = "principal_id"
+        case expiresAt = "expires_at"
+        case acceptedAt = "accepted_at"
+    }
+
+    /// The PUT body's shape (ShareInput).
+    var input: ArtifactV2ShareInput {
+        ArtifactV2ShareInput(principalType: principalType, principalId: principalId, level: level)
+    }
+}
+
+/// `PUT /api/v2/artifacts/:id/sharing` share (artifacts/sharing.rs ShareInput).
+struct ArtifactV2ShareInput: Encodable, Hashable, Sendable {
+    let principalType: String
+    let principalId: String
+    let level: String
+
+    enum CodingKeys: String, CodingKey {
+        case level
+        case principalType = "principal_type"
+        case principalId = "principal_id"
+    }
+}
+
+/// `Sharing.policy`: what this artifact may do right now.
+struct ArtifactV2SharingPolicy: Decodable, Hashable, Sendable {
+    let linkAllowed: Bool
+    let outsideInvitesAllowed: Bool
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case linkAllowed = "link_allowed"
+        case outsideInvitesAllowed = "outside_invites_allowed"
+    }
+}
+
+/// `GET|PUT /api/v2/artifacts/:id/sharing` (owner only).
+struct ArtifactV2Sharing: Decodable, Hashable, Sendable {
+    /// private | people | org | link
+    let visibility: String
+    let shares: [ArtifactV2Share]
+    let policy: ArtifactV2SharingPolicy
+    /// Present when `visibility == link`.
+    let linkURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case visibility, shares, policy
+        case linkURL = "link_url"
+    }
+}
+
 enum ArtifactV2Dates {
     /// Server timestamps are RFC 3339 with microseconds (`ts`).
     static func parse(_ value: String) -> Date? {
@@ -408,6 +537,79 @@ final class ArtifactsV2Client: @unchecked Sendable {
 
     func orgSettings() async throws -> ArtifactV2OrgSettings {
         try await send(path: "api/v2/org/artifact-settings")
+    }
+
+    // MARK: Comments (routes/artifacts_comments.rs)
+    //
+    // list = any access, create = comment, resolve = author or edit (thread
+    // root only), edit body = author only, delete = author or owner (a
+    // root's replies go with it). `ArtifactCommentRules` mirrors these.
+
+    func comments(id: String) async throws -> [ArtifactComment] {
+        struct Page: Decodable { let items: [ArtifactComment] }
+        let page: Page = try await send(path: "api/v2/artifacts/\(Self.escape(id))/comments")
+        return page.items
+    }
+
+    /// A new thread, or a reply when `parentId` is a thread's root. A body
+    /// that mentions @gizzi asks the server's assistant to answer (billed to
+    /// the commenter, as on the web).
+    func addComment(id: String, body: String, parentId: String? = nil) async throws -> ArtifactComment {
+        struct Body: Encodable {
+            let body: String
+            let parentId: String?
+            enum CodingKeys: String, CodingKey {
+                case body
+                case parentId = "parent_id"
+            }
+        }
+        return try await send(
+            path: "api/v2/artifacts/\(Self.escape(id))/comments",
+            method: "POST",
+            body: try JSONEncoder().encode(Body(body: body, parentId: parentId))
+        )
+    }
+
+    func resolveComment(id: String, commentId: String, resolved: Bool) async throws -> ArtifactComment {
+        struct Body: Encodable { let resolved: Bool }
+        return try await send(
+            path: "api/v2/artifacts/\(Self.escape(id))/comments/\(Self.escape(commentId))",
+            method: "PATCH",
+            body: try JSONEncoder().encode(Body(resolved: resolved))
+        )
+    }
+
+    func editComment(id: String, commentId: String, body: String) async throws -> ArtifactComment {
+        struct Body: Encodable { let body: String }
+        return try await send(
+            path: "api/v2/artifacts/\(Self.escape(id))/comments/\(Self.escape(commentId))",
+            method: "PATCH",
+            body: try JSONEncoder().encode(Body(body: body))
+        )
+    }
+
+    func deleteComment(id: String, commentId: String) async throws {
+        try await sendNoContent(path: "api/v2/artifacts/\(Self.escape(id))/comments/\(Self.escape(commentId))", method: "DELETE")
+    }
+
+    // MARK: Sharing (owner only; artifacts_v2.rs get_sharing / put_sharing)
+
+    func sharing(id: String) async throws -> ArtifactV2Sharing {
+        try await send(path: "api/v2/artifacts/\(Self.escape(id))/sharing")
+    }
+
+    /// Replaces who can open the artifact: `shares` is the whole list (rows
+    /// left out are removed).
+    func setSharing(id: String, visibility: String, shares: [ArtifactV2ShareInput]) async throws -> ArtifactV2Sharing {
+        struct Body: Encodable {
+            let visibility: String
+            let shares: [ArtifactV2ShareInput]
+        }
+        return try await send(
+            path: "api/v2/artifacts/\(Self.escape(id))/sharing",
+            method: "PUT",
+            body: try JSONEncoder().encode(Body(visibility: visibility, shares: shares))
+        )
     }
 
     // MARK: Transport

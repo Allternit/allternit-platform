@@ -10,6 +10,7 @@ The Local Engine API is a thin, authenticated proxy to the Allternit Local Engin
 Use this surface to:
 
 - Inspect the health and host status of the local engine.
+- Read the device profile and model memory budget that the on-device fit check uses.
 - Manage cached models: list, import from disk, and queue downloads from Hugging Face.
 - Launch and stop local model runtimes.
 - Call a running local model through a chat-completions-compatible surface.
@@ -45,6 +46,9 @@ curl https://api.allternit.com/api/local-engine/health \
 |--------|------|-------------|
 | `GET` | `/api/local-engine/health` | Controller health check. |
 | `GET` | `/api/local-engine/status` | Host diagnostics and engine state. |
+| `GET` | `/api/local-engine/hardware` | Device profile and model budget for on-device fit. |
+| `GET` | `/api/local-engine/engines/packs` | Installed engine packs and install progress. |
+| `POST` | `/api/local-engine/engines/packs/ensure` | Install the engine pack(s) this device needs. |
 | `GET` | `/api/local-engine/catalog` | Model catalog. |
 | `POST` | `/api/local-engine/catalog/refresh` | Refresh the catalog. |
 | `POST` | `/api/local-engine/assess` | Assess whether this host can run a model. |
@@ -131,6 +135,177 @@ Returns host-level diagnostics, including active runtimes, cached models, CPU, R
 }
 ```
 
+GPU probes in `/status` run with a 2 second time limit each. A probe that fails or runs too long leaves `gpu` as `null`. It never fails the request.
+
+## Hardware
+
+```http
+GET /api/local-engine/hardware
+```
+
+Returns this device's profile and the memory budget for loading models. Every client's on-device fit check (Desktop, web, Gizzi) reads `budget` from this route. Engines older than this route return `404`. Clients then fall back to `/status`.
+
+### Example request
+
+```bash
+curl https://api.allternit.com/api/local-engine/hardware \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+### Example response
+
+Measured on an Apple M1 Pro with 32 GB:
+
+```json
+{
+  "hardware_id": "958e69a15b1e871eeddeb707958371809430b478192141b70a379908249e30f7",
+  "os": "macos",
+  "arch": "aarch64",
+  "cpu_model": "Apple M1 Pro",
+  "cpu_threads": 10,
+  "ram_total_bytes": 34359738368,
+  "ram_available_bytes": 4792647680,
+  "gpus": [
+    {
+      "name": "Apple M1 Pro",
+      "vendor": "apple",
+      "vram_total_bytes": 34359738368,
+      "vram_free_bytes": 4792647680,
+      "discrete": false
+    }
+  ],
+  "unified_memory": true,
+  "apple_chip": "M1 Pro",
+  "disk_free_bytes": 167185006592,
+  "models_dir": "~/Library/Application Support/allternit-local-engine/models",
+  "budget": {
+    "kind": "unified",
+    "fast_bytes": 22333829939,
+    "spill_bytes": 0
+  },
+  "engines": [
+    { "id": "llama.cpp", "backend": "metal", "version": "b10330", "pack_id": null, "state": "ready" },
+    { "id": "mlx", "backend": "metal", "version": null, "pack_id": null, "state": "missing" }
+  ]
+}
+```
+
+### Hardware fields
+
+All sizes are bytes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hardware_id` | string | Stable hash of CPU, core count, RAM, GPU, OS and architecture. The same value the assess and recommend routes use. |
+| `os` | string | Short OS name: `macos`, `linux` or `windows`. |
+| `arch` | string | CPU architecture: `aarch64` or `x86_64`. |
+| `cpu_model` | string | CPU brand string, e.g. `Apple M1 Pro`. |
+| `cpu_threads` | integer | Logical CPU count. |
+| `ram_total_bytes` | integer | Installed system RAM. |
+| `ram_available_bytes` | integer | RAM available now. |
+| `gpus` | array | Detected GPUs. Empty when none were found or every probe failed. |
+| `gpus[].name` | string | Marketing name, or `Vendor GPU (vvvv:dddd)` from the PCI IDs when no name is known. |
+| `gpus[].vendor` | string | `nvidia`, `amd`, `intel`, `apple`, `qualcomm` or `other`. |
+| `gpus[].vram_total_bytes` | integer \| null | Dedicated VRAM. On Apple silicon this is system RAM, because the GPU shares it. `null` when unknown. |
+| `gpus[].vram_free_bytes` | integer \| null | Free VRAM, when the driver reports it (nvidia-smi, AMD on Linux, Apple). |
+| `gpus[].discrete` | boolean | `true` for a separate graphics card, `false` for an integrated GPU. |
+| `unified_memory` | boolean | `true` when the budget kind is `unified`. |
+| `apple_chip` | string \| null | Full Apple silicon chip name, e.g. `M1 Pro` or `M4 Max`. `null` on other hardware. |
+| `disk_free_bytes` | integer | Free space on the volume that holds `models_dir`. |
+| `models_dir` | string | Where the engine stores downloaded models. |
+| `budget` | object | Memory budget for models. See below. |
+| `engines` | array | Inference engines on this device. See below. |
+
+### Budget
+
+`budget` holds `kind`, `fast_bytes` and `spill_bytes`. The rules follow the on-device fit spec (`spec/on-device/fit.md`):
+
+| `kind` | When | `fast_bytes` | `spill_bytes` |
+|--------|------|--------------|---------------|
+| `discrete` | A discrete GPU with known VRAM | VRAM of the largest discrete GPU | System RAM |
+| `unified` | Apple silicon | 0.65 x RAM | 0 |
+| `unified` | Integrated GPU only (Intel or AMD iGPU, Snapdragon) | 0.60 x RAM | 0 |
+| `cpu` | No usable GPU | 0.6 x RAM | 0 |
+
+A discrete GPU whose VRAM could not be read does not set the budget. The device then counts as `unified` or `cpu`.
+
+### Engines
+
+Each entry has `id` (`llama.cpp` or `mlx`), `backend` (`metal`, `cuda`, `rocm`, `vulkan`, `sycl` or `cpu`), `version`, `pack_id` and `state`.
+
+| `state` | Meaning |
+|---------|---------|
+| `ready` | Installed, and it can use this device's GPU (or this device has no GPU). |
+| `installed` | Installed, but the engine did not answer which devices it sees in time. |
+| `fallback` | Installed, but it runs only on the CPU although this device has a usable GPU. |
+| `missing` | Not installed. `backend` is the build this device should get. |
+| `off` | Does not apply on this device, e.g. MLX on hardware other than Apple silicon. |
+
+Engines come from signed engine packs (see [Engine packs](#engine-packs)). An installed pack reports `pack_id`, its llama.cpp build or MLX version as `version`, and `ready`, or `fallback` when it is the CPU pack on a device with a usable GPU. With no pack installed, a `llama-server` found on `PATH` is used as a development fallback and reports `fallback` (or `installed` if it did not answer in time) with `pack_id: null`. MLX is `missing` on Apple silicon until its pack is installed, and `off` elsewhere.
+
+### Running models
+
+`running` lists every loaded model with live numbers. It is also in `/status` and in each runtime from `/runtimes`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_id` | string | The model the runtime serves. |
+| `mem_bytes` | integer \| null | Resident memory of the engine process. |
+| `tok_per_sec` | number \| null | Generation speed of the last request. |
+| `first_token_ms` | integer \| null | Time to the first token of the last request. |
+| `ctx_used` | integer \| null | Prompt plus completion tokens of the last request. |
+| `ctx_max` | integer \| null | Context size the runtime was launched with. |
+| `idle_unload_sec` | integer | The engine stops a runtime after this many idle seconds (300; 0 means never). |
+| `idle_sec` | integer | Seconds since the last request finished. |
+| `requests_in_flight` | integer | Requests being answered now. |
+
+A runtime the engine stopped for being idle shows `status: "stopped"` and `stop_reason: "idle"` in `/runtimes`. Launch it again to reload it.
+
+### Caching
+
+GPU and engine probes run outside commands, each with a 2 second time limit, so the engine caches the full report for 5 minutes. If an engine probe timed out (`state: "installed"`), the next probe comes after 30 seconds. `ram_available_bytes`, `gpus[].vram_free_bytes` and `disk_free_bytes` refresh at most every 3 seconds.
+
+### Errors
+
+| Status | Code | Meaning |
+|--------|------|---------|
+| `401 Unauthorized` | `Unauthorized` | Missing or invalid bearer token. |
+| `502 Bad Gateway` | `local_engine_unavailable` | The Local Engine controller is not answering. |
+| `404 Not Found` | — | The engine is older than this route. Fall back to `/status`. |
+
+A failed GPU probe never turns into an error. It only makes `gpus` shorter.
+
+## Engine packs
+
+```http
+GET /api/local-engine/engines/packs
+POST /api/local-engine/engines/packs/ensure
+```
+
+Inference engines are not in the Desktop installer. The local engine downloads them as signed engine packs: llama.cpp builds per OS and GPU (Metal, CUDA, ROCm, Vulkan, CPU) and, on Apple silicon, the MLX engine. Before any engine starts, the local engine checks the pack's Ed25519 signature and the sha256 of every file. A pack that fails the check is never run. The engine rolls back to the previous version, or removes the pack.
+
+`ensure` picks the pack from the device: Metal on Apple silicon, CUDA for NVIDIA with a working driver (else Vulkan), ROCm for AMD on Linux when ROCm is installed (else Vulkan), Vulkan for Intel, CPU first on Windows on Arm, else CPU. The body is optional: `{"engines": ["llamacpp", "mlx"], "update": false}`. `update: true` also installs a newer version of a pack that is already installed. The call returns at once with `202` when it started an install (`200` when nothing was needed). Progress is in `jobs` here and in `engine_packs` in `/status`.
+
+```json
+{
+  "platform": "darwin-arm64",
+  "dev_feed": false,
+  "installed": [
+    { "pack_id": "llamacpp-metal-macos-arm64", "engine": "llamacpp", "backend": "metal", "version": "b12414", "build": 1794753442, "previous": null, "dir": "~/Library/Application Support/allternit-local-engine/engines/llamacpp-metal-macos-arm64/b12414" }
+  ],
+  "jobs": [
+    { "pack_id": "mlx-metal-macos-arm64", "state": "downloading", "version": "mlx0.31.3-lm2.31.3", "bytes_done": 9300000, "bytes_total": 31000000, "error": null, "started_at": "2026-11-15T18:02:11Z", "finished_at": null }
+  ],
+  "choices": [
+    { "pack_id": "llamacpp-metal-macos-arm64", "engine": "llamacpp", "backend": "metal" },
+    { "pack_id": "mlx-metal-macos-arm64", "engine": "mlx", "backend": "metal" }
+  ],
+  "started": ["mlx-metal-macos-arm64"]
+}
+```
+
+`jobs[].state` is `queued`, `downloading`, `verifying`, `installed` or `failed` (with `error`). A launch while no pack is installed fails with `501` and a message that names the pack to install. A pack that fails its check at launch fails with `503`.
+
 ## List models
 
 ```http
@@ -170,6 +345,11 @@ Returns every model currently tracked in the local cache.
 | `downloaded_bytes` | integer | Bytes already downloaded. |
 | `total_bytes` | integer | Total expected bytes. |
 | `created_at` | string | ISO 8601 timestamp. |
+| `verification` | object | What the files were checked against: `state` (`freeweights_signed`, `publisher_hash`, `pinned` or `unverified`), `source_used`, `source_url`, `manifest_commit`, `checked_at`. See [Freeweights](/tools/freeweights#verification-states). Absent on engine builds that predate it. |
+| `source_used` | string | Which source served the bytes. |
+| `files` | array | The files of the model. |
+| `error` | string | Why a download failed, when it did. |
+| `freeweights_listed` | boolean | Whether Freeweights lists the repo. |
 
 ## Import a model
 
@@ -229,7 +409,8 @@ Queues a download from a Hugging Face repository. The returned state reflects th
 |-------|------|----------|-------------|
 | `repo_id` | string | Yes | Hugging Face repository id, e.g. `bartowski/Llama-3.2-3B-Instruct-GGUF`. |
 | `revision` | string | No | Git revision. Defaults to `main`. |
-| `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. |
+| `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. The filter runs on the Freeweights manifest file list, so only the matching quant downloads. |
+| `allow_unverified` | boolean | No | Default `false`. Set `true` to accept files that have no hash at Freeweights, the publisher or from you. The model then ends as `unverified`. |
 
 ### Example request
 
@@ -255,6 +436,26 @@ curl -X POST https://api.allternit.com/api/local-engine/models/download \
   "message": "download queued"
 }
 ```
+
+Every file is fetched through the [model source contract](/tools/freeweights#source-order-and-fallback). Data with no hash fails unless `allow_unverified` is `true`. A failed download can be retried with the same request.
+
+## Verify a model
+
+```http
+POST /api/local-engine/models/verify
+```
+
+Re-hashes the local files of a downloaded model against the source it was checked against. On a mismatch the response has `ok: false` and the model is marked `failed`.
+
+### Request body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `repo` or `repo_id` | string | Yes | Repository id, e.g. `Qwen/Qwen3-Embedding-0.6B`. |
+| `revision` | string | No | Git revision. |
+| `quantization` | string | No | Quantization tag. |
+
+Older engine builds return 404 for this route. Clients show "Not checked by this version".
 
 ## List runtimes
 
@@ -442,7 +643,11 @@ POST /api/local-engine/v1/chat/completions
 
 Proxies a chat-completions-shaped request to a healthy local runtime serving the requested `model`. Both non-streaming and streaming (`stream: true`) requests are supported; streaming responses are returned as server-sent events.
 
-The request body is forwarded verbatim, so all standard chat-completions options—`temperature`, `max_tokens`, `tools`, `response_format`, and `stream`—are supported when the underlying backend accepts them.
+The request body is forwarded as sent, so all standard chat-completions options—`temperature`, `max_tokens`, `tools`, `response_format`, and `stream`—are supported when the underlying backend accepts them. Streams pass through token by token.
+
+### Token numbers
+
+Every reply carries real numbers in an `allternit` object: `tok_per_sec`, `first_token_ms`, `ctx_used`, `ctx_max` and `mem_bytes`. On a non-streaming reply it sits next to `usage`. On a stream, set `stream_options.include_usage: true` to get a final chunk with `choices: []`, the standard `usage` (`prompt_tokens`, `completion_tokens`) and the `allternit` object. Without it the engine still reads the numbers (they show in `running`), but sends no usage chunk. llama.cpp replies also keep their `timings` object (`predicted_per_second`, `prompt_ms`); the MLX engine sends the same fields.
 
 ### Request body
 

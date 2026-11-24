@@ -19,6 +19,8 @@ import {
   type CloudCredential,
   type CreateCloudCredentialInput,
 } from '@/lib/design/cloud-credentials';
+import { isNoRuntime } from '@/lib/api-client';
+import { NoRuntimeState } from '@/components/console-ui/NoRuntimeState';
 
 export function CloudCredentialsPanel() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -77,7 +79,8 @@ export function CloudCredentialsPanel() {
         </div>
       </div>
 
-      {error && (
+      {error && isNoRuntime(error) && <NoRuntimeState />}
+      {error && !isNoRuntime(error) && (
         <div className="flex items-start gap-2 rounded-lg border border-solid border-[rgba(239,68,68,0.25)] bg-[var(--status-error-bg)] px-3 py-2.5 text-[12px] text-[var(--status-error)]">
           <Warning size={18} weight="fill" />
           <span className="flex-1 leading-relaxed">{error}</span>

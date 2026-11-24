@@ -4,7 +4,7 @@ description: "The crew: bots and how they run (Hosted, Terminal, Vendor), how pe
 ---
 
 <Note>
-Shipping with the Allternit Factory build. The `terminal` binding, `team.yaml` and the `gizzi agents` commands are the approved design and are not live yet. Hosted and Vendor bots are live today.
+Shipping with the Allternit Factory build. The `terminal` binding, `team.yaml` and the `gizzi agents` commands are the approved design and are not live yet. Hosted and Connected bots are live today.
 </Note>
 
 `gizzi agents` is the crew: which agents exist, which harness each one runs on, and which machine it's on.
@@ -17,13 +17,13 @@ Every agent in the Factory is a **Bot**: one record with a stable id. The Factor
 |---|---|---|---|
 | **Hosted** (`type: hosted`) | Runs on Gizzi's session loop, locally or on a cloud computer | Al (the Coordinator), bots you create in Bot Mode | Live |
 | **Terminal** (`type: terminal`) | A CLI harness running in an engine pane | Claude Code, Codex, Kimi CLI, Grok CLI, agy, and `gizzi` itself | New with the Factory. Every pane belongs to a bot |
-| **Vendor** (`type: vendor`, mode `linked` or `mirror`) | A vendor's own agent or app, reached through the agent gateway | ChatGPT, Claude, Gemini, Copilot, Grok, Kimi, Hermes | Live. See [Vendor bots](/guides/vendor-bots) |
+| **Vendor** (`type: vendor`, mode `linked` or `mirror`) | A vendor's own agent or app, reached through the agent gateway | ChatGPT, Claude, Gemini, Copilot, Grok, Kimi, Hermes | Live. See [Connected bots](/guides/connected-bots) |
 
-Vendor bots carry a **lane** (`official`, `channel`, `ui_bridge` or `local`) and a **guarantee** (`exact`, `best_effort` or `read_only`), and they're directed by another bot. The guarantee decides what "delivered" means for that bot. See [delivery states](/factory/orchestration#delivery-states).
+Connected bots carry a **lane** (`official`, `channel`, `ui_bridge` or `local`) and a **guarantee** (`exact`, `best_effort` or `read_only`), and they're directed by another bot. The guarantee decides what "delivered" means for that bot. See [delivery states](/factory/orchestration#delivery-states).
 
 ## Reach is separate from running
 
-Telegram, Slack, SMS, phone calls, email and push are how **people** talk to a bot. They're not a way for the bot to run. A Hosted bot can be on Telegram. A Terminal bot's Telegram messages arrive as turns in its pane. A Vendor bot stays inside its directing bot's phone. Channels belong to [orchestration](/factory/orchestration).
+Telegram, Slack, SMS, phone calls, email and push are how **people** talk to a bot. They're not a way for the bot to run. A Hosted bot can be on Telegram. A Terminal bot's Telegram messages arrive as turns in its pane. A Connected bot stays inside its directing bot's phone. Channels belong to [orchestration](/factory/orchestration).
 
 ## A Terminal bot is a full Bot
 
@@ -71,7 +71,7 @@ On macOS the pane host runs under Allternit Desktop, so it needs Desktop's permi
 
 ## `team.yaml`
 
-A team is a file. `gizzi agents up <team>` reads it, spawns a pane for each Terminal bot, binds the Hosted and Vendor bots, and registers everyone. Teams can mix all three bindings.
+A team is a file. `gizzi agents up <team>` reads it, spawns a pane for each Terminal bot, binds the Hosted and Connected bots, and registers everyone. Teams can mix all three bindings.
 
 ```yaml
 bots:
@@ -106,7 +106,7 @@ gizzi agents model builder@product opus --restart   # relaunch now; the conversa
 gizzi agents model builder@product --clear          # back to team.yaml's model
 ```
 
-`--restart` stops the bot's pane and relaunches it with its harness's resume, the same way `gizzi agents recover` does. Hosted and vendor bots keep their model on your account; change it in the app or with `gizzi agents bot`.
+`--restart` stops the bot's pane and relaunches it with its harness's resume, the same way `gizzi agents recover` does. Hosted and connected bots keep their model on your account; change it in the app or with `gizzi agents bot`.
 
 ### Handing a seat to a fresh session
 
@@ -190,7 +190,7 @@ Only `PROBLEM` turns the check red.
 - `gizzi agents ps` lists every bot with its binding, state, current node and proof count. Running sessions are checked against the live panes on every `ps`, so a dead process shows as dead, never as running.
 - `gizzi agents wall` opens the live wall of terminals in the engine's pane view. `ctrl+b q` returns you to Gizzi.
 - `gizzi agents wall <team>` opens the same wall with its Agents panel narrowed to that team's running bots (the panel is titled `team <name>`) and focused on the first one. The narrowed view goes away when you close the wall. With none of the team's bots running it says so (exit `2`) and suggests `gizzi agents up <team>`. The view belongs to the shared wall session, so anyone attached to the wall at the same time sees it too.
-- `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane (a bot on another computer opens a live mirror of it; see [`--on`](#--on-computer)). A Hosted bot opens its session right in Gizzi's TUI. A Vendor bot shows its thread and ticket status, because it has no terminal.
+- `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane (a bot on another computer opens a live mirror of it; see [`--on`](#--on-computer)). A Hosted bot opens its session right in Gizzi's TUI. A Connected bot shows its thread and ticket status, because it has no terminal.
 - `gizzi agents recover` shows what it would restart after a crash. `--apply` does it. A session qualifies when its pane is gone, it isn't finished, and its notes sentinel (if it has one) doesn't say `status: done`. Only the lead that started it can restart it (`--lead <id>`, else `$ALLTERNIT_FACTORY_LEAD` or your user name), unless you pass `--as-human`. The restart goes through the same spawn gate as any spawn, with the bot's identity and WIH kept, and uses the harness's own resume when the original launch named a session (`claude --resume`, `codex resume`, `kimi --session`, `agy --conversation`, `grok --resume`).
 - `gizzi agents down <bot@team>` stops one bot's pane; `gizzi agents down <team>` stops the team's.
 
@@ -219,4 +219,4 @@ A Terminal bot that works in a worktree gets an [Agent Tree](/factory/trees): it
 - [Command reference: `gizzi agents`](/factory/commands#gizzi-agents)
 - [Agent Trees](/factory/trees)
 - [Orchestration](/factory/orchestration)
-- [Bot threads](/guides/bot-threads), [Vendor bots](/guides/vendor-bots), [Bot autonomy](/guides/bot-autonomy)
+- [Bot threads](/guides/bot-threads), [Connected bots](/guides/connected-bots), [Bot autonomy](/guides/bot-autonomy)

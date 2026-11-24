@@ -344,8 +344,9 @@ pub async fn send_to_user(db: &PgPool, transport: &dyn PushTransport, vapid: &Va
             }
         }
     }
-    // The same message to the person's iPhones (no-op unless APNs is configured).
-    delivered + super::apns::send_to_user(db, user, msg).await
+    // The same message to the person's iPhones (no-op unless APNs is configured) and Android phones (no-op unless
+    // FCM_SERVICE_ACCOUNT_JSON is set).
+    delivered + super::apns::send_to_user(db, user, msg).await + super::fcm::send_to_user(db, user, msg).await
 }
 
 /// Whether a message-type push for `collapse_key` may go out now, recording it when it may. One per
@@ -378,7 +379,7 @@ pub async fn can_reach(db: &PgPool, user: &str) -> bool {
         return false;
     }
     let browser = sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM push_subscriptions WHERE user_id = $1)").bind(user).fetch_one(db).await.unwrap_or(false);
-    browser || super::apns::can_reach(db, user).await
+    browser || super::apns::can_reach(db, user).await || super::fcm::can_reach(db, user).await
 }
 
 /// Send `msg` to `user` in the background. Does nothing, and costs nothing, when push isn't configured.

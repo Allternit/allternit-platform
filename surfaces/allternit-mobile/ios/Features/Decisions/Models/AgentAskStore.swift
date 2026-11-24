@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// What the person has answered this app session, and what each chat's
 /// agent is still waiting on. Keeps an answered card from coming back when
@@ -17,14 +18,59 @@ final class AgentAskStore: ObservableObject {
     private let client: AgentAsksClient
     private var inFlight: Set<String> = []
 
+    /// Async asks (no waiting turn) per session: kept even when the session
+    /// is idle, rebuilt from the pending list on launch and foreground.
+    @Published private(set) var asyncAsks: [String: [AgentQuestionRequest]] = [:]
+    /// Sessions that started a new turn after an async ask was answered.
+    @Published private(set) var workingSessions: Set<String> = []
+
     init(client: AgentAsksClient = .shared) {
         self.client = client
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.refreshAll() }
+        }
     }
+
+    /// Re-fetches every pending question across sessions (launch / foreground),
+    /// so async asks that arrived while the app was closed come back.
+    func refreshAll() async {
+        guard let all = try? await client.listQuestions() else { return }
+        var bySession: [String: [AgentQuestionRequest]] = [:]
+        for ask in all where !resolvedIds.contains(ask.id) {
+            bySession[ask.sessionID, default: []].append(ask)
+        }
+        pendingQuestions = bySession
+        asyncAsks = bySession.mapValues { $0.filter { $0.isAsync } }.filter { !$0.value.isEmpty }
+    }
+
+    /// Stream events: `question.asked` adds, `question.replied` / `question.rejected` remove.
+    func questionAsked(_ ask: AgentQuestionRequest) {
+        guard !resolvedIds.contains(ask.id) else { return }
+        var list = pendingQuestions[ask.sessionID] ?? []
+        if !list.contains(where: { $0.id == ask.id }) { list.append(ask) }
+        pendingQuestions[ask.sessionID] = list
+        if ask.isAsync {
+            var a = asyncAsks[ask.sessionID] ?? []
+            if !a.contains(where: { $0.id == ask.id }) { a.append(ask) }
+            asyncAsks[ask.sessionID] = a
+        }
+    }
+
+    func questionClosed(id: String) { markResolved(id) }
+
+    func isWorking(_ sessionId: String) -> Bool { workingSessions.contains(sessionId) }
+    func clearWorking(_ sessionId: String) { workingSessions.remove(sessionId) }
 
     func isResolved(_ id: String) -> Bool { resolvedIds.contains(id) }
 
     func markResolved(_ id: String) {
         resolvedIds.insert(id)
+        for (session, list) in asyncAsks {
+            let kept = list.filter { $0.id != id }
+            asyncAsks[session] = kept.isEmpty ? nil : kept
+        }
         for (session, list) in pendingQuestions {
             pendingQuestions[session] = list.filter { $0.id != id }
         }
@@ -61,6 +107,7 @@ final class AgentAskStore: ObservableObject {
 
     func answer(_ request: AgentQuestionRequest, answers: [AgentAsksClient.ReplyAnswer]) async throws {
         try await client.replyQuestion(id: request.id, answers: answers)
+        if request.isAsync { workingSessions.insert(request.sessionID) }
         markResolved(request.id)
     }
 

@@ -1,6 +1,12 @@
 import Foundation
 
 /// Typed errors surfaced by APIClient and AgentChatClient.
+///
+/// Calm errors (phone calm pass, contract C5): `errorDescription` never
+/// contains an HTTP status number, a status phrase or a machine code. A
+/// server message is kept when it reads as a sentence; otherwise the status
+/// gets a plain sentence (`statusSentence`). Mirrors allternit-ai
+/// `src/lib/errors/plain-error.ts`.
 enum APIError: Error, LocalizedError, Sendable {
     case invalidResponse
     case httpError(statusCode: Int, message: String?)
@@ -12,12 +18,249 @@ enum APIError: Error, LocalizedError, Sendable {
         case .invalidResponse:
             return "The server returned an invalid response."
         case .httpError(let statusCode, let message):
-            return message ?? "Request failed with status \(statusCode)."
-        case .decoding(let error):
-            return "Failed to decode the server response: \(error.localizedDescription)"
+            if isComputeGateRefusal { return CalmCopy.computeRequired }
+            return plainErrorText(message: message, status: statusCode)
+        case .decoding:
+            return "The server's answer couldn't be read. Try again."
         case .transport(let error):
-            return error.localizedDescription
+            return plainErrorText(error)
         }
+    }
+
+    /// The compute gate's account-state refusals: 409 `compute_required`,
+    /// 410 `free_computers_retired`, and cloud-api's 428 "pair a device"
+    /// (data_plane_fallback.rs). On a read these show no error: the list shows
+    /// its empty state and the no-computer chip explains (contract C5).
+    /// Mirrors web `isComputeGateRefusal`.
+    var isComputeGateRefusal: Bool {
+        switch self {
+        case .httpError(let status, let message):
+            if status == 428 { return true }
+            guard status == 409 || status == 410, let message else { return false }
+            // `validate` sets the gate sentence for a gate body; other
+            // builders may still carry the raw code in their message.
+            return message == CalmCopy.computeRequired
+                || message.range(of: #"\b(compute_required|free_computers_retired)\b"#,
+                                 options: [.regularExpression, .caseInsensitive]) != nil
+        case .transport(let inner):
+            return (inner as? APIError)?.isComputeGateRefusal ?? false
+        case .invalidResponse, .decoding:
+            return false
+        }
+    }
+}
+
+/// Any error, true when it is a compute-gate refusal (see
+/// `APIError.isComputeGateRefusal`).
+func isComputeGateRefusal(_ error: Error?) -> Bool {
+    (error as? APIError)?.isComputeGateRefusal ?? false
+}
+
+// MARK: - Calm error text (contract C5)
+
+/// The calm sentences iOS shares with the web phone shell (allternit-ai
+/// `PhoneNoComputer.tsx` / `plain-error.ts`), word for word.
+enum CalmCopy {
+    /// Web `NO_COMPUTER_TEXT`.
+    static let noComputer = "No computer connected"
+    /// Web `CANT_REACH_TEXT`.
+    static let cantReach = "Can't reach your computer"
+    /// Web `WAKING_TEXT`.
+    static let waking = "Waking your computer…"
+    /// Web `CODE_TEXT.compute_required`: what a compute-gate refusal reads as.
+    static let computeRequired = "Agents need a computer."
+    /// The line under `noComputer` on screens with no composer.
+    static let noComputerDetail = "Connect a computer or start Allternit Cloud to use this."
+    /// When nothing a person can act on is left.
+    static let fallback = "Something went wrong. Try again."
+}
+
+/// Machine codes a person can read a sentence for (web `CODE_TEXT`).
+private let calmCodeText: [String: String] = [
+    "compute_required": CalmCopy.computeRequired,
+    "free_computers_retired": CalmCopy.computeRequired,
+    "runtime_unavailable": "Can't reach your computer.",
+    "runtime_offline": "Can't reach your computer.",
+    "runtime_warming": "Your computer is waking up. Try again in a moment.",
+    "computer_capacity": "No computers are free right now.",
+    // cloud-api's 428 code (error.rs PreconditionRequired): pair a device.
+    "precondition_required": CalmCopy.noComputerDetail,
+]
+
+private let httpReasonPattern = "(?:Bad Request|Unauthorized|Payment Required|Forbidden|Not Found|Method Not Allowed|Request Timeout|Conflict|Gone|Precondition Failed|Precondition Required|Unprocessable (?:Entity|Content)|Too Many Requests|Internal Server Error|Not Implemented|Bad Gateway|Service Unavailable|Gateway Timeout)"
+
+/// Each layer prefixes its own wrapper; the innermost message says what
+/// happened (web `WRAPPER_PREFIXES`).
+private let wrapperPrefixPatterns: [String] = [
+    #"^invalid error response format:\s*"#,
+    #"^gateway request failed:\s*"#,
+    #"^error:\s*"#,
+    // A leading machine code ("compute_required: …", "RUNTIME_OFFLINE - …").
+    #"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+\s*[:\-–—]\s*"#,
+]
+
+/// Status numbers and status phrases, wherever they sit (web `STATUS_TEXT`),
+/// plus Foundation's "(SomeDomain error -1004.)" tail.
+private let statusTextPatterns: [String] = [
+    // " (409)", "(HTTP 500)", "(status 404)", "(status code 502)"
+    #"\s*\(\s*(?:HTTP\s*|status\s*(?:code\s*)?:?\s*)?[1-5]\d\d\s*\)"#,
+    // "with status code 502", "status: 404", "status 500"
+    #"\s*\b(?:with\s+)?status(?:\s+code)?\s*:?\s*[1-5]\d\d\b"#,
+    // "HTTP 404", "HTTP/1.1 500"
+    #"\s*\bHTTP(?:/\d(?:\.\d)?)?\s*[1-5]\d\d\b"#,
+    // "500 Internal Server Error", "404 Not Found"
+    #"\s*\b[45]\d\d\s+"# + httpReasonPattern + #"\b"#,
+    // "Error 500", "code 409", "error code: 428"
+    #"\s*\b(?:error|code)(?:\s+code)?\s*:?\s*[45]\d\d\b"#,
+    // NSError tails: "(NSURLErrorDomain error -1004.)", "(Allternit.APIError error 1.)"
+    #"\s*\([^()]*\berror\s+-?\d+\.?\)"#,
+]
+
+/// Only transport words left: nothing a person can act on.
+private let genericLeftoverPattern = "^(?:request failed|request error|failed|error|unknown error|an error occurred|http error|server error|network response was not ok|the operation couldn['’]t be completed|" + httpReasonPattern + ")$"
+
+/// A message that is only a machine code, e.g. `compute_required`.
+private let bareCodePattern = #"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$"#
+
+private func calmMatches(_ text: String, _ pattern: String) -> Bool {
+    text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+}
+
+private func calmReplacing(_ text: String, _ pattern: String, with template: String = "") -> String {
+    text.replacingOccurrences(of: pattern, with: template, options: [.regularExpression, .caseInsensitive])
+}
+
+/// The sentence for an error that carries a status and no usable message.
+/// Same sentences as web `statusSentence`.
+func statusSentence(_ status: Int?) -> String? {
+    guard let status else { return nil }
+    switch status {
+    case 401: return "Sign in again to continue."
+    case 403: return "You don't have access to that."
+    case 404: return "That isn't there anymore."
+    case 408, 504: return "That took too long. Try again."
+    case 428: return "This needs your approval first."
+    case 429: return "Too many requests. Wait a moment and try again."
+    case 500..<600: return "Something went wrong on our side. Try again."
+    default: return nil
+    }
+}
+
+/// Removes status numbers and status phrases from any text, keeping the
+/// rest. Returns "" when nothing readable is left. Safe for non-error text
+/// ("Imported 404 files" is left alone). Mirrors web `stripStatusText`.
+func stripStatusText(_ text: String?) -> String {
+    var out = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !out.isEmpty else { return "" }
+    for pattern in statusTextPatterns { out = calmReplacing(out, pattern) }
+    out = calmReplacing(out, #"\s+([.,;:!?])"#, with: "$1")
+    out = calmReplacing(out, #"^[\s:;,.\-–—]+"#)
+    out = calmReplacing(out, #"[\s:;,\-–—]+$"#)
+    out = calmReplacing(out, #"\s{2,}"#, with: " ")
+    return out.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func unwrapErrorText(_ text: String) -> String {
+    var out = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    var changed = true
+    while changed {
+        changed = false
+        for pattern in wrapperPrefixPatterns {
+            let next = calmReplacing(out, pattern).trimmingCharacters(in: .whitespacesAndNewlines)
+            if next != out, !next.isEmpty {
+                out = next
+                changed = true
+            }
+        }
+    }
+    return out
+}
+
+/// A server or transport message made calm, or nil when nothing a person
+/// can read is left (only a status, a wrapper or an unknown code).
+func calmMessageText(_ raw: String?) -> String? {
+    var text = stripStatusText(unwrapErrorText(raw ?? ""))
+    if calmMatches(text, "^(invalid error response format|gateway request failed)$") { return "Couldn't reach the model." }
+    if calmMatches(text, bareCodePattern) {
+        if let known = calmCodeText[text.lowercased()] { return known }
+        text = ""
+    }
+    let bare = calmReplacing(text, #"[.!]+$"#)
+    if text.isEmpty || calmMatches(bare, genericLeftoverPattern) { return nil }
+    return text
+}
+
+/// One calm sentence from a message, an HTTP status and a machine code.
+/// Never returns a status number or a code. Mirrors web `plainErrorText`.
+func plainErrorText(message: String?, status: Int? = nil, code: String? = nil,
+                    fallback: String = CalmCopy.fallback) -> String {
+    if let text = calmMessageText(message) { return text }
+    if let code, let known = calmCodeText[code.lowercased()] { return known }
+    return statusSentence(status) ?? fallback
+}
+
+/// One calm sentence for any error. Every screen that shows an error's text
+/// goes through this (or through `APIError.errorDescription`, which uses it).
+func plainErrorText(_ error: Error?, fallback: String = CalmCopy.fallback) -> String {
+    guard let error else { return fallback }
+    if let api = error as? APIError {
+        if case .httpError(let status, let message) = api {
+            if api.isComputeGateRefusal { return CalmCopy.computeRequired }
+            return plainErrorText(message: message, status: status, fallback: fallback)
+        }
+        return api.errorDescription ?? fallback
+    }
+    if error is CancellationError { return "The request was cancelled." }
+    return plainErrorText(message: error.localizedDescription, fallback: fallback)
+}
+
+/// A non-2xx JSON body in any of the shapes our servers send: string
+/// `error` (cloud-api: `{error, message, code}`), object `error: {code,
+/// message}` (the compute gate), top-level `message`, or `detail` (string,
+/// or FastAPI's `[{msg}]`).
+struct APIErrorBody: Equatable, Sendable {
+    var message: String?
+    var code: String?
+
+    static func parse(_ data: Data?) -> APIErrorBody {
+        guard let data,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return APIErrorBody(message: nil, code: nil)
+        }
+        var message = object["message"] as? String
+        var code = object["code"] as? String
+        if let nested = object["error"] as? [String: Any] {
+            code = (nested["code"] as? String) ?? code
+            message = message ?? (nested["message"] as? String)
+        } else if let error = object["error"] as? String {
+            if calmMatches(error, bareCodePattern) {
+                code = code ?? error
+            } else {
+                message = message ?? error
+            }
+        }
+        if message == nil {
+            if let detail = object["detail"] as? String {
+                message = detail
+            } else if let details = object["detail"] as? [[String: Any]] {
+                message = details.first?["msg"] as? String
+            }
+        }
+        return APIErrorBody(message: message, code: code)
+    }
+
+    /// 409 `compute_required` / 410 `free_computers_retired`.
+    var isComputeGateCode: Bool {
+        let lowered = code?.lowercased()
+        return lowered == "compute_required" || lowered == "free_computers_retired"
+    }
+
+    /// The message `APIError.httpError` carries: calm, or nil.
+    var calmMessage: String? {
+        if isComputeGateCode { return CalmCopy.computeRequired }
+        if let text = calmMessageText(message) { return text }
+        if let code, let known = calmCodeText[code.lowercased()] { return known }
+        return nil
     }
 }
 
@@ -135,9 +378,9 @@ final class APIClient: @unchecked Sendable {
 
     // MARK: - Response validation
 
-    /// Throws a typed APIError for non-2xx responses, surfacing the gateway's
-    /// `{ "message" | "error" }` body when present (same shape the web reads).
-    func validate(_ response: URLResponse, data: Data? = nil) throws {
+    /// Throws a typed APIError for non-2xx responses, carrying the server's
+    /// message made calm (`APIErrorBody.calmMessage`: no status, no code).
+    func validate(_ response: URLResponse, data: Data? = nil, method: String? = nil) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
@@ -150,24 +393,20 @@ final class APIClient: @unchecked Sendable {
             // the device log.
             NSLog("[APIClient] %d %@", httpResponse.statusCode, httpResponse.url?.path ?? "-")
             #endif
-            throw APIError.httpError(
-                statusCode: httpResponse.statusCode,
-                message: Self.errorMessage(from: data)
-            )
+            let status = httpResponse.statusCode
+            let body = APIErrorBody.parse(data)
+            // 409 compute_required: the account has no computer; open the gate.
+            if status == 409, body.code == "compute_required" {
+                Task { @MainActor in ComputeStatusStore.shared.noteComputeRequired(method: method) }
+            }
+            let error = APIError.httpError(statusCode: status, message: body.calmMessage)
+            // A read refused by the gate shows no error (C5): the screen shows
+            // its empty state and the no-computer chip reads this flag.
+            if error.isComputeGateRefusal, ComputeReadState.isRead(method: method) {
+                Task { @MainActor in ComputeReadState.shared.noteRefused() }
+            }
+            throw error
         }
-    }
-
-    private static func errorMessage(from data: Data?) -> String? {
-        guard let data,
-              let body = try? JSONDecoder().decode(ErrorBody.self, from: data) else {
-            return nil
-        }
-        return body.message ?? body.error
-    }
-
-    private struct ErrorBody: Decodable {
-        let message: String?
-        let error: String?
     }
 
     // MARK: - Standard REST requests
@@ -221,7 +460,7 @@ final class APIClient: @unchecked Sendable {
     func get<T: Decodable>(path: String) async throws -> T {
         let request = try await authorizedRequest(path: path)
         let (data, response) = try await send(request)
-        try validate(response, data: data)
+        try validate(response, data: data, method: "GET")
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {

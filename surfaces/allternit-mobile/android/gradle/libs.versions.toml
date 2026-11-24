@@ -1,0 +1,88 @@
+# Version catalog (native app step 4, 2026-11-18). New modules take their versions
+# from here. Older literals in app/ and ondevice/ move in only when a step touches them.
+#
+# Toolchain bump (step 7b, 2026-11-18): Clerk Android (com.clerk:clerk-android-api 1.4.1,
+# the native sign-in SDK) is compiled with Kotlin metadata 2.4 and pulls kotlin-stdlib 2.4.21,
+# OkHttp 5.4.0, kotlinx-serialization 1.12.0, coroutines 1.11.0 and Compose BOM 2026.06.01.
+# Kotlin 2.0.21 cannot read that metadata; Kotlin 2.3.21 builds it (step 7a spike, AGP 8.9.1,
+# Gradle 8.11.1, JDK 17). The versions below match what Gradle resolves anyway, on purpose.
+[versions]
+agp = "8.9.1"
+# The kotlin-android, Compose compiler and serialization plugins all follow this version
+# (root build.gradle.kts), including for :app and :ondevice.
+kotlin = "2.3.21"
+# Compose BOM 2026.06.01 (UI 1.11.x), the BOM Clerk Android resolves. Needs compileSdk 36.
+composeBom = "2026.06.01"
+datastore = "1.1.7"
+# OkHttp 5 (okhttp + okhttp-sse move together). Clerk resolves 5.4.0 for every module.
+okhttp = "5.4.0"
+kotlinxSerialization = "1.12.0"
+coroutines = "1.11.0"
+junit = "4.13.2"
+# Clerk Android (MIT, Clerk): native sign-in, session JWTs, organizations (step 7a spike).
+clerk = "1.4.1"
+# setContent for the native MainActivity; the version the step 7a spike ran with.
+activityCompose = "1.10.1"
+# androidx.webkit (Apache-2.0): origin-scoped web message listeners and document-start scripts for
+# the wave D artifact web views (the iOS WKScriptMessageHandler / WKUserScript equivalents).
+webkit = "1.12.1"
+# Google Play Billing Library (Apache-2.0) for the native app's plans and credit packs (wave H1, store purchases
+# D15). 8.3.0 is the version the play flavor already ships through androidbrowserhelper billing:1.2.0; new apps and
+# updates need PBL 8+. Only :feature:billing uses it, so only the nativeapp flavor carries it.
+playBilling = "8.3.0"
+# Firebase Cloud Messaging (Apache-2.0) for native push (wave I1). Only :feature:push uses it, so only the nativeapp
+# flavor carries it. No google-services plugin: the Firebase options come from string resources :app generates from
+# the local client config (app/build.gradle.kts, firebaseResValues), so nothing Firebase-specific is in git.
+firebaseMessaging = "24.1.0"
+# Jetpack Glance (Apache-2.0) for the home-screen status widget (wave I2, iOS AllternitWidgets StatusWidget). Only
+# :feature:system uses it, so only the nativeapp flavor carries it.
+glance = "1.1.1"
+# CameraX (Apache-2.0) + ML Kit barcode scanning, bundled model (Google ML Kit terms, free, on-device) for the voice key
+# QR scan in Settings > Voice (gap run GS-B, iOS VoiceKeyScannerView). Only :feature:settings uses them, so only the
+# nativeapp flavor carries them.
+camerax = "1.4.2"
+mlkitBarcode = "17.3.0"
+# ML Kit Document Scanner (Google Play services): the Android counterpart of iOS VisionKit VNDocumentCamera.
+mlkitDocScanner = "16.0.0-beta1"
+# sherpa-onnx (Apache-2.0, k2-fsa) for on-phone voice: Silero VAD + Moonshine listening and Kokoro replies, the same
+# release iOS (Frameworks/fetch-sherpa-onnx.sh) and the native voice engine (services/voice) pin. k2-fsa publishes the
+# Android AAR only as a GitHub release asset, so settings.gradle.kts declares that release as an ivy repository and
+# :feature:chat checks the AAR's sha256 before every build. Gradle caches it; nothing is committed.
+sherpaOnnx = "1.13.8"
+# Apache Commons Compress (Apache-2.0): unpacks the .tar.bz2 voice packs (iOS Core/Voice/Bz2Tar).
+commonsCompress = "1.27.1"
+
+[libraries]
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-runtime = { group = "androidx.compose.runtime", name = "runtime" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.ref = "clerk" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-browser = { group = "androidx.browser", name = "browser", version = "1.8.0" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
+mlkit-document-scanner = { group = "com.google.android.gms", name = "play-services-mlkit-document-scanner", version.ref = "mlkitDocScanner" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+# Kotlin 2.x ships the Compose compiler as a Kotlin plugin; its version is the Kotlin version.
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

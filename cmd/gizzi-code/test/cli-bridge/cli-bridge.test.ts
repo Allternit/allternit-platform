@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { CliBridge } from "../../src/runtime/integrations/cli-bridge"
 import {
   acpMcpServers,
+  CLI_BRIDGE_TOOL_TIMEOUT_SEC,
   CLI_PERMISSION_TOOL,
   claudePermissionFlags,
   claudeSessionFlags,
@@ -41,9 +42,35 @@ describe("CliBridge MCP server", () => {
       "artifact_comment",
       "artifact_storage",
       "artifact_check",
+      "run_code",
+      "send_user_message",
+      "current_time",
+      "lookup",
+      "automation",
+      "get_context_remaining",
+      "history_recall",
+      "thread_read",
+      "thread_recent",
+      "resource",
+      "memory_list",
+      "sleep",
+      "folder_access",
+      "connector_search",
+      "connector_suggest",
+      "settings",
+      "second_opinion",
+      "status_update",
+      "feedback_note",
+      "user_location",
+      "voice_control",
+      "end_conversation",
       "question",
     ])
+    // Screen and browser tasks need the app (see CliBridge.TOOLS).
+    expect(names).not.toContain("capture_screen_context")
+    expect(names).not.toContain("browser_tasks")
     const question = list.result.tools.find((t: any) => t.name === "question")
+    expect(names).not.toContain("thread_wait")
     expect(question.description).toContain("no AskUserQuestion")
     expect(question.inputSchema.properties.questions).toBeDefined()
     const media = list.result.tools.find((t: any) => t.name === "media_generate")
@@ -106,7 +133,7 @@ describe("handing the bridge to each kind of CLI", () => {
     const flags = claudeSessionFlags({ systemPrompt: "Edit the doc with pane_artifact.", mcp })
     expect(flags.slice(0, 2)).toEqual(["--append-system-prompt", "Edit the doc with pane_artifact."])
     const config = JSON.parse(flags[flags.indexOf("--mcp-config") + 1])
-    expect(config.mcpServers.allternit).toEqual({ type: "http", url: mcp.url, headers: mcp.headers })
+    expect(config.mcpServers.allternit).toEqual({ type: "http", url: mcp.url, headers: mcp.headers, timeout: CLI_BRIDGE_TOOL_TIMEOUT_SEC * 1000 })
     expect(claudeSessionFlags({})).toEqual([])
   })
 
@@ -114,6 +141,7 @@ describe("handing the bridge to each kind of CLI", () => {
     expect(codexMcpConfig(mcp)).toEqual({
       "mcp_servers.allternit.url": mcp.url,
       "mcp_servers.allternit.http_headers": mcp.headers,
+      "mcp_servers.allternit.tool_timeout_sec": CLI_BRIDGE_TOOL_TIMEOUT_SEC,
     })
     expect(codexMcpConfig(undefined)).toBeUndefined()
   })

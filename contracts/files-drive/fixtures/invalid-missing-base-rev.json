@@ -1,0 +1,10 @@
+{
+  "type": "MoveRequest",
+  "valid": false,
+  "case": "Rejected: a move without base_rev.",
+  "message": {
+    "item_id": "it_doc000001",
+    "new_name": "x.pdf",
+    "on_conflict": "fail"
+  }
+}

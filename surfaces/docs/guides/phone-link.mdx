@@ -16,6 +16,8 @@ On ai.allternit.com, the phone layout and the m.allternit.com app, the same butt
 
 Settings → Computers → Phones keeps the Android cable tools and the USB Agent, with a line that points here.
 
+Phone not next to your computer? An Android phone can also share its screen through the Allternit app, with no cable, and you can see and tap it from the web, the phone app, the iPhone app and Desktop: see [Android live view](/guides/android-live-view). When Desktop has the phone over a cable or Wi-Fi, scrcpy over `adb` stays the main source and is used first; live view is the fallback.
+
 No spare phone? [Cloud phones](/guides/cloud-phones) will run Android on an Allternit server and link the same way. They are not available yet.
 
 **Before you start:** sign in to the apps on your phone first. Allternit uses them as you're signed in.
@@ -24,7 +26,7 @@ No spare phone? [Cloud phones](/guides/cloud-phones) will run Android on an Allt
 
 Settings → Connections › **Apps** has one row per app, built from what your phones report: each app found on a linked phone, plus each browser sign-in on your Sessions computer. A row says how bots reach that app: **On your phone** (one line per phone, with its state), **In a browser** (your sign-ins), and **Routes** with the one bots use now and a pin.
 
-To sign in to an app on a linked phone, choose **Connect** on its row and pick the phone app: Allternit Desktop opens the app on the phone, you sign in there yourself, and **Check** reads the app's screen to confirm it is signed in. Allternit never types into a sign-in screen or sees your password. See [Connections › Connect a new app](/guides/connections#connect-a-new-app).
+To sign in to an app on a linked phone, choose **Connect** on its row and pick the phone app: Allternit Desktop opens the app on the phone, you sign in there yourself, and **Check** reads the app's screen to confirm it is signed in. Allternit never types into a sign-in screen or sees your password. See [Connections › Connect a new app](/guides/connections#checks-for-every-app-on-a-phone).
 
 Phone Link looks for the apps in Allternit's phone app catalog: the AI apps (ChatGPT, Claude, Gemini, Grok, Kimi, Copilot, Perplexity), Telegram, and the most useful apps that also have a [connector](/guides/connectors), such as Slack, Discord, WhatsApp, Instagram, X, Gmail, Notion, Google Drive, Asana, HubSpot, Shopify and Spotify — about a hundred in all, grouped the way the connector directory groups them. An app you install after setup shows up within about ten minutes on Android. Carrier placeholders don't count: some phones ship an icon for an app (WhatsApp on some Moto phones) that only opens a page to install it. Phone Link 0.3.1 and later skip those, so the app appears once you really install it. On an iPhone, plug it in once (or run setup again) after installing an app: iOS doesn't list installed apps over Wi-Fi.
 
@@ -51,6 +53,10 @@ To stop the helper, use **Stop** on its notification, or uninstall **Allternit P
 After the phone restarts, the service is off until Desktop can reach the phone again: bring the phone home on Wi-Fi once with your computer on and Allternit open (or plug it in). Phone Link turns on Wireless debugging by itself so Desktop can reconnect, and turns it back off once the screen service is running (only if Phone Link was the one that turned it on). Until then the live view says it is waiting for your computer.
 
 ## iPhone
+
+<Note>
+The old Allternit helper app on your iPhone is being retired. Your phone keeps working through the new routes, so you do not need to do anything today. New iPhone setups use the Allternit app instead. See [How your assistant uses your iPhone](/guides/iphone-routes), which also shows how to delete the old helper app and LocalDevVPN and turn off Developer Mode.
+</Note>
 
 You need Allternit Desktop on a Mac and a cable. It's one cable session, then it works over Wi-Fi. You do **not** need to put the iPhone in DFU or recovery mode.
 

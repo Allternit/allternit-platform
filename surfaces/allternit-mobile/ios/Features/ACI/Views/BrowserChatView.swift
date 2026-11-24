@@ -22,8 +22,7 @@ struct BrowserChatView: View {
             // Header — mirrors the ACI landing header's chrome.
             HStack {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onBack()
                 }) {
                     Image(systemName: "chevron.left")

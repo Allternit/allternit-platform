@@ -35,6 +35,7 @@ import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
 import { Filesystem } from "@/runtime/util/filesystem"
 import { Installation } from "@/shared/installation"
+import { isSelfHosted } from "@/shared/selfhost/offline"
 
 export namespace Pairing {
   /** The pairing request ended without approval: expired or denied. The CLI prints it without a stack trace. */
@@ -182,6 +183,8 @@ export namespace Pairing {
   // rotation leaves the old token in place (it may still be valid) and the
   // caller proceeds with it. Returns true only when a new token was stored.
   export async function rotateIfNeeded(): Promise<boolean> {
+    // Self-hosted: device tokens belong to the Allternit platform, which is never called.
+    if (isSelfHosted()) return false
     const stored = await load()
     if (!rotationDue(stored)) return false
     if (!stored.runtimeId) {

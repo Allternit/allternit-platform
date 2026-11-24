@@ -608,3 +608,187 @@ async fn conversations_v2_hold_items_and_page_them() {
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM platform_items WHERE conversation_id = $1").bind(&conv_id).fetch_one(&c.state.db).await.unwrap();
     assert_eq!(left, 0);
 }
+
+// ---- turns always end (POST /v1/responses with `agent`) --------------------------
+
+/// A runtime that answers slowly (`delay` before the reply), or never (`hang`),
+/// with a short turn cap so the timeout path runs in a test.
+struct SlowHost {
+    delay: std::time::Duration,
+    hang: bool,
+    cap: std::time::Duration,
+}
+
+#[async_trait::async_trait]
+impl AgentHost for SlowHost {
+    async fn runtime(&self, project_id: &str) -> Result<HostRuntime, PlatformError> {
+        Ok(HostRuntime { owner: hosting::runtime_owner(project_id), runtime_id: "rt_slow".into() })
+    }
+    async fn call(&self, _rt: &HostRuntime, _method: &str, _path: &str, _body: &Value) -> Result<(u16, Value), PlatformError> {
+        Ok((200, json!({ "sessionId": "ses_slow" })))
+    }
+    async fn stream(&self, _rt: &HostRuntime, _path: &str, _body: &Value) -> Result<RelayStream, PlatformError> {
+        use futures::StreamExt as _;
+        if self.hang {
+            return Ok(Box::pin(futures::stream::pending()));
+        }
+        let delay = self.delay;
+        let first = futures::stream::once(async { Ok(bytes::Bytes::from("data: {\"type\":\"text.delta\",\"text\":\"slow \"}\n\n")) });
+        let rest = futures::stream::once(async move {
+            tokio::time::sleep(delay).await;
+            Ok(bytes::Bytes::from("data: {\"type\":\"text.delta\",\"text\":\"answer\"}\n\ndata: {\"type\":\"done\"}\n\n"))
+        });
+        Ok(Box::pin(first.chain(rest)))
+    }
+    fn turn_cap(&self) -> std::time::Duration {
+        self.cap
+    }
+}
+
+/// A project with an agent on `host`: (ctx, project id, agents key, agent id).
+async fn slow_agent(host: SlowHost) -> (Ctx, String, String, String) {
+    let c = ctx().await;
+    let dyn_host: Arc<dyn AgentHost> = Arc::new(host);
+    let app = router_gated(&c.state, Gate::Forced(true)).layer(axum::Extension(dyn_host)).with_state(c.state.clone());
+    let c = Ctx { state: c.state, app };
+    let p = project(&c, "dev_slow", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let acct = account(&c, &key, "A").await;
+    let (s, agent) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct, "name": "Ada" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{agent}");
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+    (c, p.id, key, agent_id)
+}
+
+/// The project's newest response: (id, status, error).
+async fn newest_response(db: &sqlx::PgPool, project_id: &str) -> Option<(String, String, Option<Value>)> {
+    sqlx::query_as("SELECT id, status, error FROM platform_responses WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1").bind(project_id).fetch_optional(db).await.unwrap()
+}
+
+/// Wait (up to 5 s) for the project's newest response to leave `in_progress`.
+async fn ended_response(db: &sqlx::PgPool, project_id: &str) -> (String, String, Option<Value>) {
+    for _ in 0..100 {
+        if let Some(r) = newest_response(db, project_id).await.filter(|r| r.1 != "in_progress") {
+            return r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the response never ended: {:?}", newest_response(db, project_id).await);
+}
+
+/// (type, role, status, content, error) of a response's items, in order.
+async fn response_items(db: &sqlx::PgPool, response_id: &str) -> Vec<(String, Option<String>, String, Value, Option<String>)> {
+    sqlx::query_as("SELECT type, role, status, content, error FROM platform_items WHERE response_id = $1 ORDER BY seq").bind(response_id).fetch_all(db).await.unwrap()
+}
+
+/// Start a request, wait until its response row exists, then drop the request
+/// future: what hyper does when the client (or Cloudflare at 100 s) hangs up.
+async fn hang_up_after_start(c: &Ctx, project_id: &str, key: &str, body: Value) {
+    let (app, key) = (c.app.clone(), key.to_string());
+    let req = tokio::spawn(async move { call_raw(&app, "POST", "/v1/responses", &key, body).await });
+    for _ in 0..100 {
+        if newest_response(&c.state.db, project_id).await.is_some_and(|r| r.1 == "in_progress") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let row = newest_response(&c.state.db, project_id).await.expect("the turn started");
+    assert_eq!(row.1, "in_progress", "the client hangs up mid-turn");
+    req.abort();
+    assert!(req.await.unwrap_err().is_cancelled(), "the request future was dropped mid-turn");
+}
+
+#[tokio::test]
+async fn a_response_whose_client_hangs_up_still_ends_completed() {
+    let (c, project_id, key, agent_id) =
+        slow_agent(SlowHost { delay: std::time::Duration::from_millis(400), hang: false, cap: hosting::AGENT_TURN_CAP }).await;
+
+    // Non-streaming: the 524 case. The turn runs on and is stored completed.
+    hang_up_after_start(&c, &project_id, &key, json!({ "agent": agent_id, "input": "hi" })).await;
+    let (id, status, error) = ended_response(&c.state.db, &project_id).await;
+    assert_eq!((status.as_str(), error), ("completed", None));
+    let items = response_items(&c.state.db, &id).await;
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert_eq!((items[1].1.as_deref(), items[1].2.as_str(), &items[1].3), (Some("assistant"), "completed", &json!([{ "type": "output_text", "text": "slow answer" }])));
+    // The conversation is free again: the next turn runs.
+    let (s, next) = call(&c.app, "POST", "/v1/responses", &key, Some(json!({ "agent": agent_id, "input": "again", "previous_response_id": id }))).await;
+    assert_eq!((s, next["status"].as_str()), (StatusCode::OK, Some("completed")), "{next}");
+
+    // Streaming: a dropped SSE client doesn't leave the response running either.
+    hang_up_after_start(&c, &project_id, &key, json!({ "agent": agent_id, "input": "hi", "stream": true, "previous_response_id": next["id"] })).await;
+    let (id, status, _) = ended_response(&c.state.db, &project_id).await;
+    assert_ne!(id, next["id"].as_str().unwrap());
+    assert_eq!(status, "completed");
+}
+
+#[tokio::test]
+async fn a_turn_past_the_cap_fails_with_turn_timeout_and_frees_the_conversation() {
+    let (c, project_id, key, agent_id) =
+        slow_agent(SlowHost { delay: std::time::Duration::ZERO, hang: true, cap: std::time::Duration::from_millis(300) }).await;
+    let (s, r) = call(&c.app, "POST", "/v1/responses", &key, Some(json!({ "agent": agent_id, "input": "hi" }))).await;
+    assert_eq!((s, r["status"].as_str(), r["error"]["code"].as_str()), (StatusCode::OK, Some("failed"), Some("turn_timeout")), "{r}");
+    assert!(r["completed_at"].is_string(), "{r}");
+    // The failed reply is stored, so the conversation shows it.
+    let id = r["id"].as_str().unwrap();
+    let items = response_items(&c.state.db, id).await;
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert_eq!((items[1].0.as_str(), items[1].1.as_deref(), items[1].2.as_str()), ("message", Some("assistant"), "failed"));
+    assert!(items[1].4.as_deref().unwrap_or("").contains("didn't finish"), "{items:?}");
+    assert_eq!(r["output"].as_array().map(Vec::len), Some(1), "{r}");
+    let (_, status, _) = newest_response(&c.state.db, &project_id).await.unwrap();
+    assert_eq!(status, "failed");
+    // The lock is released: the next turn isn't `conversation_busy` (it times out too).
+    let (s, again) = call(&c.app, "POST", "/v1/responses", &key, Some(json!({ "agent": agent_id, "input": "again", "previous_response_id": id }))).await;
+    assert_eq!((s, again["error"]["code"].as_str()), (StatusCode::OK, Some("turn_timeout")), "{again}");
+
+    // Streaming ends the same way, with `response.failed`.
+    let (s, body) = call_raw(&c.app, "POST", "/v1/responses", &key, json!({ "agent": agent_id, "input": "x", "stream": true, "previous_response_id": again["id"] })).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(body.contains("event: response.failed") && body.contains("turn_timeout"), "{body}");
+}
+
+#[tokio::test]
+async fn the_sweep_fails_responses_left_in_progress() {
+    let (c, project_id, key, agent_id) =
+        slow_agent(SlowHost { delay: std::time::Duration::ZERO, hang: false, cap: hosting::AGENT_TURN_CAP }).await;
+    let db = &c.state.db;
+    sqlx::raw_sql(&include_str!("../../../migrations_pg/138_platform_responses_in_progress.sql").replace("public.", "")).execute(db).await.expect("migration 138 applies");
+    let (s, done) = call(&c.app, "POST", "/v1/responses", &key, Some(json!({ "agent": agent_id, "input": "hi" }))).await;
+    assert_eq!((s, done["status"].as_str()), (StatusCode::OK, Some("completed")), "{done}");
+    let conv_id = done["conversation_id"].as_str().unwrap();
+
+    // Two rows a crashed turn left behind (one with an open assistant item) and one still running.
+    for (id, minutes_ago) in [("resp_stuck_old", 60), ("resp_stuck_open", 20), ("resp_running", 1)] {
+        sqlx::query(&format!(
+            "INSERT INTO platform_responses (id, project_id, agent_id, conversation_id, status, created_at) VALUES ($1, $2, $3, $4, 'in_progress', NOW() - interval '{minutes_ago} minutes')"
+        ))
+        .bind(id)
+        .bind(&project_id)
+        .bind(&agent_id)
+        .bind(conv_id)
+        .execute(db)
+        .await
+        .unwrap();
+        super::items::append(db, &project_id, Some(conv_id), Some(id), vec![super::items::NewItem::user_text("hello")]).await.unwrap();
+    }
+    super::items::append(db, &project_id, Some(conv_id), Some("resp_stuck_open"), vec![super::items::NewItem::assistant_text("half").with_status("in_progress")]).await.unwrap();
+
+    assert_eq!(super::responses::fail_abandoned(db).await.unwrap(), 2);
+    assert_eq!(super::responses::fail_abandoned(db).await.unwrap(), 0, "a second sweep finds nothing");
+
+    for id in ["resp_stuck_old", "resp_stuck_open"] {
+        let (status, error, completed): (String, Option<Value>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT status, error, completed_at FROM platform_responses WHERE id = $1").bind(id).fetch_one(db).await.unwrap();
+        assert_eq!((status.as_str(), error.as_ref().and_then(|e| e["code"].as_str()), completed.is_some()), ("failed", Some("turn_abandoned"), true), "{id}");
+        let items = response_items(db, id).await;
+        let replies: Vec<_> = items.iter().filter(|i| i.1.as_deref() == Some("assistant")).collect();
+        assert_eq!(replies.len(), 1, "{id}: exactly one assistant item {items:?}");
+        assert_eq!(replies[0].2, "failed", "{id}");
+        assert!(items.iter().all(|i| i.2 != "in_progress"), "{id}: {items:?}");
+    }
+    // A live turn and a finished one are untouched.
+    let running: String = sqlx::query_scalar("SELECT status FROM platform_responses WHERE id = 'resp_running'").fetch_one(db).await.unwrap();
+    assert_eq!(running, "in_progress");
+    let (_, finished) = call(&c.app, "GET", &format!("/v1/responses/{}", done["id"].as_str().unwrap()), &key, None).await;
+    assert_eq!((finished["status"].as_str(), &finished["error"]), (Some("completed"), &Value::Null));
+}

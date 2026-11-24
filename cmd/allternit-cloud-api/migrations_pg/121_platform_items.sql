@@ -92,6 +92,6 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'allternit') THEN
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_responses, public.platform_items TO allternit;
-        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO allternit;
+        GRANT USAGE, SELECT ON SEQUENCE public.platform_items_seq_seq TO allternit;
     END IF;
 END $$;

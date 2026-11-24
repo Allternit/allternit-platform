@@ -12,7 +12,7 @@ Sections appear in this order:
 | Section | What is in it | When it shows |
 |---|---|---|
 | Allternit Cloud | The Cloud catalog, grouped by vendor ("Kimi · via Allternit Cloud") | Always |
-| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added) and Subscription Fabric (`subs-*`) | Always |
+| Your subscriptions | CLI sign-ins you have installed (`claude-cli`, `codex-cli`, `kimi-cli`, any CLI you added), Subscription Fabric (`subs-*`), and the plans you connected: `chatgpt/…` (ChatGPT signed in on this computer), `plan/<vendor>/<model>` and `copilot-plan/<model>` | Always; plans once connected ([Connect](/cli/connect)) |
 | API keys | Providers in `gizzi.json` with an OpenAI-compatible `baseURL` | Only once a key is on file |
 | Local | Servers on this computer (MLX, llama.cpp, Ollama, LM Studio) | Always |
 
@@ -29,6 +29,7 @@ Each row is `provider/model`. Tags after a row:
 | `default` | That provider's own default model |
 | `current` | The model Gizzi will use now |
 | `not signed in` | The CLI is installed but you are not signed in to it |
+| `needs credits` | An `allternit/` row the account can't run yet: it has no Cloud credits and no key of its own for that model's provider. Free accounts don't include Cloud usage. |
 
 The last line shows the current default and why: `default: provider/model (reason)`.
 
@@ -38,6 +39,27 @@ The last line shows the current default and why: `default: provider/model (reaso
 - `gizzi models <provider>` shows one provider. Use `gizzi models claude-cli` for example.
 - Retired Allternit Cloud aliases are not listed, but a saved choice of one keeps working. A retired CLI model id in your config is mapped to its replacement.
 - A local server that is installed but reports no models is not listed.
+
+## Pull and verify local models
+
+These commands use the Local Engine and the [Freeweights](/tools/freeweights) catalog.
+
+| Command | What it does |
+|---|---|
+| `gizzi models pull <org/repo>` | Queues a download through the Local Engine, shows progress, and prints one verification line when it ends. `--quant <tag>` picks a quantization. |
+| `gizzi models verify <org/repo>` | Asks the engine to re-hash the files on disk. An engine build that predates verification prints "Not checked by this engine version". |
+| `gizzi models search <query> --catalog-source freeweights` | Searches the Freeweights catalog. Sidecar Hugging Face results also carry a Freeweights badge. |
+
+`pull` exits with code 2 when the result is `unverified`. Add `--allow-unverified` to accept files that have no hash anywhere. `--download` and `--run` work as before.
+
+### Publish a model to Freeweights
+
+```bash
+export FREEWEIGHTS_TOKEN=alt_...
+gizzi models publish ./my-model eoj/my-model
+```
+
+Uploads a folder to your Freeweights namespace with an Allternit key that has the `freeweights.write` scope (`ALLTERNIT_API_KEY` works if it is an `alt_` key). Large files go in parts and the command prints each step. Files are scanned before they are served, so the repo reads "scanning" at first. `gizzi models pull` on a community repo prints a notice that it is a community upload and ends as `unverified` unless you pass `--allow-unverified`. `gizzi usage` shows your Freeweights storage. See [Uploads](/tools/freeweights#uploads).
 
 ## Default model
 
@@ -65,6 +87,14 @@ Swarm and mission workers use your default CLI brain unless you pass `--brain`.
 
 `/model` shows the same sections and order as `gizzi models`. Type to filter. Rows carry the `default` and `current` tags, and a CLI that is not signed in has a "not signed in" note. Where a model has thinking levels, you set one per model. Picking a model makes it your pick and adds it to your recent models.
 
+To choose the runtime too (Claude Code, Codex, Allternit and others) and see only the brains that fit it, use `/runtime`. See [gizzi runtime](/cli/runtime#pick-a-runtime-in-the-tui).
+
+Picking a `needs credits` row keeps your current model and prints:
+
+```text
+Allternit Cloud models need credits. Packs: $10, $25, $50, $100. Buy: https://ai.allternit.com/settings/billing · or choose a plan.
+```
+
 ### Effort on `gizzi run` and `gizzi exec`
 
 `--effort` accepts the levels the picked model has. An unsupported level is an error that lists the valid ones. A failed run exits with a non-zero code.
@@ -84,9 +114,11 @@ gizzi attach http://127.0.0.1:4096 --model claude-cli/claude-sonnet-5-5
 
 `--model` sets the model for the session, ahead of your settings and `gizzi.json`. `/model` changes it later.
 
+Plan models (`chatgpt/…`, `plan/…`, `copilot-plan/…`) answer only what you type and send in the TUI. They are chat only, never picked as a default or for titles and summaries, and refused in `gizzi run`, bots, missions, routines and sub-agents. See [Plans answer only you](/cli/connect#plans-answer-only-you).
+
 ## CLI brains in the TUI
 
-A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud allowance.
+A model under **Your subscriptions** runs in your own signed-in CLI, through the same driver `gizzi run` and Desktop use. It does not use your Allternit Cloud credits.
 
 - The CLI runs its own tools. Its text, thinking and tool calls (Read, Update, Bash…) show in the TUI as they happen.
 - Permissions still apply. The CLI starts in the TUI's permission mode (default, accept edits, plan or bypass), and each tool it asks to run shows the TUI's normal approval prompt, with the diff for an edit and the command for Bash.
@@ -95,16 +127,36 @@ A model under **Your subscriptions** runs in your own signed-in CLI, through the
 
 This also works when the TUI is attached to Desktop's server with `gizzi attach`.
 
+## Run a model on this computer
+
+<Info>
+New with this release.
+</Info>
+
+`gizzi models fit`, `run`, `ps` and `stop` run open-weights models on this computer, through the Local Engine. They use the same fit rule as the apps ([contract](/api/on-device-models#fit-spec)) and the Freeweights device data, and are described for people in [Run models on your device](/guides/run-models-on-device).
+
+| Command | What it does |
+|---|---|
+| `gizzi models fit <id>` | Prints whether the model fits this computer: the badge (Fits, May be slow, Tight fit, Won't fit, No build for this device, Size not checked), the build it would use and the reason. `--json` prints the result as JSON. It exits 0 for Fits, May be slow and Tight fit, and exits 1 for every other result, so a script can test it. |
+| `gizzi models run <id>` | Downloads the model if needed (verified like `gizzi models pull`), starts it on the engine and opens a chat. Refuses a model that Won't fit or has no device data, before downloading anything. `--quant Q4_K_M` picks one build; an unknown name lists the builds there are. `--prompt "text"` sends that one prompt, prints the reply and the speed, and exits instead of opening a chat. |
+| `gizzi models ps` | Lists the models running now, with memory use and speed. |
+| `gizzi models stop <id>` | Unloads a running model. A model idle for 5 minutes unloads by itself. |
+
+If the build is for MLX and the MLX engine pack cannot be installed, `run` says why and uses the GGUF (llama.cpp) build instead, if one fits.
+
+`ps` shows memory, speed, context used and the idle timer for each running model, and `--json` prints the raw list.
+
+The models appear under the Local section of `/model` while they run. Speed depends on your hardware and is not guaranteed.
+
 ## When a turn fails
 
 Each failure names the real cause and one or two commands to run. Examples:
 
 | You see | Cause | Run |
 |---|---|---|
-| Allternit Cloud free allowance ($2.00/month) is used up · resets Dec 1 | The free monthly allowance is spent | `/model claude-cli/claude-sonnet-5-5` (your Claude plan) or `/usage` |
+| Allternit Cloud models need credits. Buy credits or choose a plan. | The account has no Cloud credits (`credits_required`). Free accounts don't include Cloud usage. | `/model claude-cli/claude-sonnet-5-5` (your Claude plan), or buy credits at ai.allternit.com/settings/billing |
 | Allternit Cloud plan limit reached for this month | Your plan's monthly limit | `/model …` or `/usage` |
-| Allternit Cloud credits are used up | Prepaid credits ran out | `/usage` to add credits |
-| Allternit Cloud free models need a verified email address | The account's email is not verified | Verify it, then `/login` |
+| Your Allternit Cloud credits are used up. Add credits to keep going. | The balance reached $0 (`credits_exhausted`) | `/usage`, or add credits at ai.allternit.com/settings/billing |
 | OpenRouter rejected the API key (401) | The key in `gizzi.json` or the environment expired or was revoked | `gizzi connect login` to save a new key |
 | Claude Code isn't signed in on this computer | The CLI brain has no sign-in | `claude`, then `/login` in it |
 | Codex isn't installed on this computer | The CLI is missing | Install it, then `gizzi agents harness register` |

@@ -7,10 +7,13 @@ import { SkillsCommand } from "@/cli/commands/skills"
 import { UpgradeCommand } from "@/cli/commands/upgrade"
 import { UninstallCommand } from "@/cli/commands/uninstall"
 import { ModelsCommand } from "@/cli/commands/models"
+import { StudioCommand } from "@/cli/commands/studio"
 import { HardwareCommand } from "@/cli/commands/hardware"
 import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
 import { ComputersCommand } from "@/cli/commands/computers"
+import { FilesCommand } from "@/cli/commands/files"
+import { MeetingsCommand } from "@/cli/commands/meetings"
 import { PhoneCommand } from "@/cli/commands/phone"
 import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
@@ -31,6 +34,8 @@ import { InitCommand } from "@/cli/commands/init"
 import { DoctorCommand } from "@/cli/commands/doctor"
 import { VerificationCommand } from "@/cli/commands/verification"
 import { FabricWorkerCommand } from "@/cli/commands/fabric-worker"
+import { WorkerCommand } from "@/cli/commands/worker"
+import { RuntimeCommand } from "@/cli/commands/runtime"
 import { ProviderCommand } from "@/cli/commands/provider"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
@@ -41,6 +46,7 @@ import { ArtifactCommand } from "@/cli/commands/artifact"
 import { PdfCommand } from "@/cli/commands/pdf"
 import { ProgramsCommand } from "@/cli/commands/programs"
 import { OrgCommand } from "@/cli/commands/org"
+import { UsageCommand } from "@/cli/commands/usage"
 import { LabsCommand } from "@/cli/commands/labs"
 import { HookCommand } from "@/cli/commands/hook"
 import { TeamMcpCommand } from "@/cli/commands/team-mcp"
@@ -113,11 +119,15 @@ export const COMMANDS: RegisteredCommand[] = [
   ServeCommand,
   PairCommand,
   ComputersCommand,
+  // Files drive: your computers' files (ls, put, share, mount …), contracts/files-drive.
+  FilesCommand,
+  MeetingsCommand,
   PhoneCommand,
   TeleportCommand,
   LoginCommand,
   WebCommand,
   ModelsCommand,
+  StudioCommand,
   HardwareCommand,
   StatsCommand,
   StatusCommand,
@@ -132,6 +142,9 @@ export const COMMANDS: RegisteredCommand[] = [
   DoctorCommand,
   VerificationCommand,
   FabricWorkerCommand,
+  // Self-hosted Agents Server: sandbox worker, and server profiles (`runtime register --self-hosted`, `runtime status`).
+  WorkerCommand,
+  RuntimeCommand,
   ProviderCommand,
   AllternitCommand,
   BrainCommand,
@@ -141,6 +154,7 @@ export const COMMANDS: RegisteredCommand[] = [
   PdfCommand,
   ProgramsCommand,
   OrgCommand,
+  UsageCommand,
   ProductsCommand,
   LabsCommand,
   UdemyCommand,

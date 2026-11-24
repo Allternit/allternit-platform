@@ -1,5 +1,14 @@
 import type { AgentTask } from "@/runtime/runtime-driver"
 import { claudeBotFlags } from "@/runtime/bots/bot-turn"
+import { getRuntime, listRuntimes, type SystemLayerVia } from "@/runtime/providers/discovery/runtime-registry"
+
+/**
+ * MCP tool-call timeout for gizzi's bridge, seconds. A long run_code (first
+ * run installs Python, 60-120 s; runs up to 120 s) must not be cut off.
+ * Claude Code's per-server `timeout` (ms) and Codex's per-server
+ * `tool_timeout_sec`, both read from the CLIs' own binaries.
+ */
+export const CLI_BRIDGE_TOOL_TIMEOUT_SEC = 180
 
 /** The CLI bridge tool Claude Code's plan mode asks for permission (`--permission-prompt-tool`). */
 export const CLI_PERMISSION_TOOL = "permission_prompt"
@@ -69,13 +78,14 @@ export function claudeSessionFlags(ctx: {
   const flags: string[] = []
   // Continue the vendor's own conversation from the previous turn.
   if (ctx.vendorSessionId) flags.push("--resume", ctx.vendorSessionId)
-  // A bot turn replaces Claude Code's own "coding CLI" prompt with the bot's
-  // (persona first); other sessions append to it.
-  if (ctx.systemPrompt?.trim()) flags.push(ctx.bot ? "--system-prompt" : "--append-system-prompt", ctx.systemPrompt)
+  // Allternit's layer (a bot's persona included) is appended: Claude Code's own
+  // system prompt stays (Harness & Bots 2.0 D10). Bot policy is enforced by
+  // the tool flags and gizzi's broker, not by the prompt.
+  if (ctx.systemPrompt?.trim()) flags.push("--append-system-prompt", ctx.systemPrompt)
   if (ctx.mcp) {
     flags.push(
       "--mcp-config",
-      JSON.stringify({ mcpServers: { [ctx.mcp.name]: { type: "http", url: ctx.mcp.url, headers: ctx.mcp.headers } } }),
+      JSON.stringify({ mcpServers: { [ctx.mcp.name]: { type: "http", url: ctx.mcp.url, headers: ctx.mcp.headers, timeout: CLI_BRIDGE_TOOL_TIMEOUT_SEC * 1000 } } }),
     )
   }
   return flags
@@ -87,6 +97,7 @@ export function codexMcpConfig(mcp: AgentTask["mcp"]): Record<string, unknown> |
   return {
     [`mcp_servers.${mcp.name}.url`]: mcp.url,
     [`mcp_servers.${mcp.name}.http_headers`]: mcp.headers,
+    [`mcp_servers.${mcp.name}.tool_timeout_sec`]: CLI_BRIDGE_TOOL_TIMEOUT_SEC,
   }
 }
 
@@ -126,22 +137,94 @@ export function withInstructions(prompt: string, systemPrompt?: string): string 
 }
 
 /**
- * True for CLIs that take the session's instructions through their own
- * channel: Claude Code's system-prompt flags, Codex's developer instructions,
- * and ACP (runAcp leads each prompt with them).
+ * How a CLI's runtime adds Allternit's layer, from its registry entry
+ * (cli-catalog.json `runtimes[].systemLayer.via`, matched by `tool`, then by
+ * id or alias). A CLI the registry does not list (a user's own tool) gets
+ * "agents-md", which today means the layer leads the message.
  */
-export function cliHasSystemChannel(cliName: string, mode: string): boolean {
-  return cliName === "claude-cli" || mode === "codex-app-server" || mode === "acp"
+export function systemLayerVia(cliName: string): SystemLayerVia {
+  const runtime = listRuntimes().find((r) => r.tool === cliName) ?? getRuntime(cliName)
+  return runtime?.systemLayer?.via ?? "agents-md"
 }
 
 /**
- * The message a CLI turn sends. A CLI with no system-prompt channel (Gemini,
- * Antigravity, Qwen, Cursor, OpenCode, text CLIs…) gets the session's
- * instructions leading it, the way ACP does, so every brain gets the same
- * instructions (answer shapes, mode contract) instead of only the last message.
+ * Where the session's instructions go on this turn. The driver only ever
+ * appends: the runtime's own system prompt stays.
+ * - "channel": the CLI's own append channel. `append-flag` is Claude Code's
+ *   `--append-system-prompt` (stream-json) or Codex's developer instructions
+ *   (codex-app-server, added on top of Codex's base instructions);
+ *   `acp-session` is the first prompt of the ACP turn (runAcp leads it with
+ *   the instructions; ACP has no system prompt field).
+ * - "message": the instructions lead the message (withInstructions).
+ *   `agents-md` lands here because gizzi has no AGENTS.md writer, `plugin`
+ *   because no runtime has a plugin hook yet, and so does any turn whose
+ *   adapter has no channel (agy's `--print` fallback, a mismatched entry).
+ * - "none": no layer.
+ */
+export function systemLayerPath(cliName: string, mode: string): "channel" | "message" | "none" {
+  const via = systemLayerVia(cliName)
+  if (via === "none") return "none"
+  if (via === "append-flag" && ((cliName === "claude-cli" && mode === "stream-json") || mode === "codex-app-server")) return "channel"
+  if (via === "acp-session" && mode === "acp") return "channel"
+  return "message"
+}
+
+/**
+ * The message a CLI turn sends. A CLI with no append channel (Gemini,
+ * Antigravity's print fallback, Qwen, Cursor, OpenCode, text CLIs…) gets the
+ * session's instructions leading it, the way ACP does, so every brain gets
+ * the same instructions (answer shapes, mode contract) instead of only the
+ * last message.
  */
 export function cliTurnMessage(prompt: string, systemPrompt: string | undefined, cliName: string, mode: string): string {
-  return cliHasSystemChannel(cliName, mode) ? prompt : withInstructions(prompt, systemPrompt)
+  return systemLayerPath(cliName, mode) === "message" ? withInstructions(prompt, systemPrompt) : prompt
+}
+
+/**
+ * The instructions a CLI's own append channel carries this turn (Claude's
+ * flag, Codex's developer instructions), so a layer never goes in twice.
+ */
+export function channelSystemPrompt(systemPrompt: string | undefined, cliName: string, mode: string): string | undefined {
+  return systemLayerPath(cliName, mode) === "channel" ? systemPrompt : undefined
+}
+
+/**
+ * Whether a CLI's tool calls reach gizzi's tool broker: the caller's
+ * AgentTask.approveTool (the Gizzi TUI), a bot's tool policy, and for ACP the
+ * Allternit spawn gate. The broker is enforced outside the runtime; a prompt
+ * is not a boundary.
+ * - Claude Code (stream-json): `--permission-prompt-tool stdio`, every
+ *   can_use_tool request goes to the broker.
+ * - Codex (codex-app-server): exec and file-change approval requests go to
+ *   the broker (approval policy on-request while a caller approves).
+ * - ACP: `session/request_permission` goes to the gate, then approveTool.
+ *   CLIs gizzi starts with their own auto-approve flag (Grok
+ *   `--always-approve`, Qoder and Trae `--yolo`) never ask, so they are not
+ *   brokered.
+ * - No permission channel: the other stream-json CLIs (started with their
+ *   own skip-permissions flag), OpenClaw, one-shot JSON (Pi, OMP) and text
+ *   CLIs (and agy's print fallback). These run under the session's file and
+ *   shell sandbox only.
+ */
+export function toolCallsBrokered(cliName: string, mode: string): boolean {
+  if (mode === "codex-app-server") return true
+  if (mode === "stream-json") return cliName === "claude-cli"
+  if (mode === "acp") return !ACP_SELF_APPROVING.has(cliName)
+  return false
+}
+
+/** ACP CLIs gizzi starts with their own auto-approve flag (see CLI_ADAPTERS). */
+const ACP_SELF_APPROVING = new Set(["grok", "qodercli", "qoderclicn", "traecli"])
+
+/**
+ * Codex thread settings while a caller approves tools itself
+ * (AgentTask.approveTool): Codex asks before exec and file changes
+ * (`on-request`), unless the caller's mode is bypassPermissions. No caller:
+ * Codex keeps its own configured policy.
+ */
+export function codexApprovalParams(approval: { mode: string } | undefined): Record<string, unknown> {
+  if (!approval) return {}
+  return { approvalPolicy: approval.mode === "bypassPermissions" ? "never" : "on-request" }
 }
 
 /** Claude stream-json events carry the vendor session id as `session_id` (system init and result). */

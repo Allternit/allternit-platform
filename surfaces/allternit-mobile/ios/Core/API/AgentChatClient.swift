@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Composer "+" sheet tool options, sent as `metadata.tools` on every
 /// agent-chat request (ToolOptionsStore is the persisted source).
@@ -235,8 +236,24 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
 
     /// Conversation revert (Phase 8 edit-resend), live on the backend
     /// (agent_session_routes.rs — probed 2026-07: 200 on a valid session).
-    func revert(sessionId: String) async throws {
-        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/revert")
+    ///
+    /// The server (`RevertSessionBody`) requires `{"messageId": …}`: the
+    /// message to revert back to. A bodyless POST fails and the old turn would
+    /// never be reverted.
+    func revert(sessionId: String, messageId: String) async throws {
+        struct Body: Encodable { let messageId: String }
+        try await client.post(path: "agent-sessions/\(Self.escape(sessionId))/revert", body: Body(messageId: messageId))
+    }
+
+    /// Earlier versions of edited turns (`GET agent-sessions/:id/branches`,
+    /// newest first, max 20). Runtimes that predate the route answer 404:
+    /// that is "no branches", not an error.
+    func branches(sessionId: String) async throws -> [MessageBranch] {
+        do {
+            return try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/branches")
+        } catch let APIError.httpError(statusCode, _) where statusCode == 404 {
+            return []
+        }
     }
 
     // MARK: - Uploads (POST /api/v1/uploads)
@@ -257,7 +274,15 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// "+" sheet's tool options; the bridge turns `attachments` into gizzi
     /// file parts.
     private struct AgentChatRequest: Encodable {
-        struct Metadata: Encodable { let tools: ToolOptions }
+        /// `form_factor: "phone"` tells the runtime to add its small-screen reply block.
+        /// `time_zone` (IANA name) lets the runtime answer in the user's local time.
+        /// `answer_cards: "widgets"` says this app draws the `writing` draft card
+        /// (and lookup cards from tool results), so the runtime adds only that
+        /// short card manual instead of the full answer catalog.
+        /// `screen_context: "available"` says this app can answer capture_screen_context
+        /// with its own view (ScreenContextResponder); sent only while the app is in front.
+        /// Optional fields are omitted when nil.
+        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String? }
         let chatId: String
         let message: String
         let agentId: String?
@@ -270,6 +295,37 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let metadata: Metadata?
         /// The session's working folder (its project's); "" clears it.
         let workdir: String?
+        /// This turn's location (the card's Share location). Optional; omitted when nil.
+        let client_location: ClientLocation?
+    }
+
+    /// `client_location` of a chat send: `at` is RFC 3339 UTC, `time_zone` IANA,
+    /// `precision` is "precise" only for a precise share (omitted for approximate).
+    struct ClientLocation: Codable, Sendable, Equatable {
+        let lat: Double
+        let lon: Double
+        let accuracyM: Int
+        let timeZone: String
+        let at: String
+        let precision: String?
+
+        enum CodingKeys: String, CodingKey {
+            case lat, lon, at, precision
+            case accuracyM = "accuracy_m"
+            case timeZone = "time_zone"
+        }
+
+        /// Approximate shares are rounded to 2 decimals; precise ones go as-is.
+        init(lat: Double, lon: Double, accuracyM: Int, precise: Bool) {
+            self.lat = precise ? lat : (lat * 100).rounded() / 100
+            self.lon = precise ? lon : (lon * 100).rounded() / 100
+            self.accuracyM = accuracyM
+            self.timeZone = TimeZone.current.identifier
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            self.at = f.string(from: Date())
+            self.precision = precise ? "precise" : nil
+        }
     }
 
     /// Sends `text` to the session and streams the response frames.
@@ -282,7 +338,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// never reached the phone.
     ///
     /// Throws `AgentChatClientError.noReachableNode` when no computer resolves.
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -299,6 +355,10 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                     // Streams are long-lived; the default 60s idle timeout
                     // would kill slow generations between frames.
                     request.timeoutInterval = 600
+                    let formFactor: String? = await MainActor.run { UIDevice.current.userInterfaceIdiom == .phone ? "phone" : nil }
+                    // A send from the background (an intent, a share) has no chat on
+                    // screen to answer a screen context request, so no hint then.
+                    let screenContext: String? = await MainActor.run { UIApplication.shared.applicationState == .active ? "available" : nil }
                     request.httpBody = try JSONEncoder().encode(AgentChatRequest(
                         chatId: sessionId,
                         message: text,
@@ -308,17 +368,27 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: tools.map { AgentChatRequest.Metadata(tools: $0) },
-                        workdir: workdir
+                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets"),
+                        workdir: workdir,
+                        client_location: clientLocation
                     ))
 
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
                     guard (200...299).contains(http.statusCode) else {
-                        if http.statusCode == 409 {
+                        if [409, 410, 428].contains(http.statusCode) {
                             var body = ""
                             for try await line in bytes.lines where body.count < 4096 { body += line }
-                            if body.contains("\"no_brain\"") { throw AgentChatClientError.noBrain }
+                            if http.statusCode == 409, body.contains("\"no_brain\"") { throw AgentChatClientError.noBrain }
+                            // A relayed compute-gate refusal (428, or 409/410 compute_required /
+                            // free_computers_retired) is the no-computer state, not a raw error:
+                            // open the gate as APIClient.validate does and carry the gate sentence,
+                            // so isComputeGateRefusal holds for the send's error too.
+                            if http.statusCode == 428
+                                || body.range(of: #"\b(compute_required|free_computers_retired)\b"#, options: .regularExpression) != nil {
+                                await MainActor.run { ComputeStatusStore.shared.noteComputeRequired(method: "POST") }
+                                throw APIError.httpError(statusCode: http.statusCode, message: CalmCopy.computeRequired)
+                            }
                         }
                         throw APIError.httpError(statusCode: http.statusCode, message: nil)
                     }
@@ -400,9 +470,19 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         // Most of this stream is every session's reply text;
                         // only these frames get decoded.
                         guard line.hasPrefix("data:"),
-                              line.contains("pane_artifact_requested") || line.contains("pane_render_requested") || line.contains("handed_off") else { continue }
+                              line.contains("pane_artifact_requested") || line.contains("pane_render_requested") || line.contains("handed_off")
+                                || ScreenContextRequest.mayMatch(line) else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard let frame = try? decoder.decode(SessionSyncFrame.self, from: Data(payload.utf8)) else { continue }
+                        // capture_screen_context: answered here from the app's own
+                        // view (ScreenContextResponder), on any chat screen running
+                        // this stream; the responder takes each request once.
+                        if ScreenContextRequest.frameTypes.contains(frame.type) {
+                            if let request = ScreenContextRequest(payload: payload) {
+                                Task { await ScreenContextResponder.shared.answer(request, client: self) }
+                            }
+                            continue
+                        }
                         switch frame.type {
                         case "pane_artifact_requested":
                             guard let requestId = frame.requestId, let sessionId = frame.sessionId else { continue }
@@ -481,6 +561,33 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         return false
     }
 
+    /// Answers a capture_screen_context request with the app's view, on the
+    /// computer that asked; same two routes as `replyPaneArtifact`. False when
+    /// neither knows the request (it timed out, or another app answered first).
+    @discardableResult
+    func replyScreenContext(requestId: String, reply: ScreenContextReply) async throws -> Bool {
+        guard let resolved = await InstanceConnection.resolve() else {
+            throw AgentChatClientError.noReachableNode
+        }
+        let paths = ["api/v1/screen-context/\(requestId)/reply", "v1/screen-context/\(requestId)/reply"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONEncoder().encode(reply)
+            let (_, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if (200...299).contains(http.statusCode) { return true }
+            if http.statusCode != 404 {
+                throw APIError.httpError(statusCode: http.statusCode, message: nil)
+            }
+        }
+        return false
+    }
+
     /// Stores a rendered file (a native video's MP4) on the computer the chat
     /// runs on and returns its API path, like the web's mediaArtifactsApi.
     func uploadMediaArtifact(_ data: Data, mime: String) async throws -> String {
@@ -513,5 +620,59 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// path-safe; this is parity insurance).
     private static func escape(_ sessionId: String) -> String {
         sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
+    }
+}
+
+
+// MARK: - Edited-message history
+
+/// One revert-and-resend: the messages the edit removed, as
+/// `GET agent-sessions/:id/branches` returns them.
+struct MessageBranch: Decodable, Sendable, Identifiable, Equatable {
+    let id: String
+    let anchorMessageId: String
+    let createdAt: String
+    let messages: [Message]
+
+    struct Message: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let role: String
+        let content: String
+        let timestamp: String
+    }
+}
+
+/// Matches branches to the turn they replaced. The resent user message gets a
+/// NEW id, so the anchor id never matches the live transcript: the turn is the
+/// first message after the last live message older than the anchor's time.
+enum EditHistory {
+    struct Entry: Equatable {
+        let id: String
+        let role: String
+        let date: Date
+    }
+
+    static func parse(_ value: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: value) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: value)
+    }
+
+    /// `transcript` is the live feed in order. Result: user message id → its
+    /// earlier versions, newest first. Branches that match no user message are
+    /// dropped.
+    static func map(branches: [MessageBranch], transcript: [Entry]) -> [String: [MessageBranch]] {
+        var result: [String: [MessageBranch]] = [:]
+        for branch in branches {
+            let anchor = branch.messages.first(where: { $0.id == branch.anchorMessageId }) ?? branch.messages.first
+            guard let anchor, let anchorDate = parse(anchor.timestamp) else { continue }
+            let lastOlder = transcript.lastIndex(where: { $0.date < anchorDate })
+            let nextIndex = lastOlder.map { $0 + 1 } ?? 0
+            guard nextIndex < transcript.count, transcript[nextIndex].role == "user" else { continue }
+            result[transcript[nextIndex].id, default: []].append(branch)
+        }
+        return result
     }
 }

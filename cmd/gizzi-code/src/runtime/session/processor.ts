@@ -25,6 +25,7 @@ import { Guardrails } from "./guardrails"
 import { generatedFileMeta, generatedFilePart, type GeneratedFileMeta } from "./generated-file"
 import { mergeSources, sourceFromStreamPart, todosFromNativePlan, type ResponseSource } from "./response-parts"
 import { Todo } from "./todo"
+import { CliBridgeResults } from "@/runtime/integrations/cli-bridge/results"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -48,6 +49,12 @@ export namespace SessionProcessor {
     resetHeldText?: (messageID: string) => Promise<void>
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
+    const memoryRefs: NonNullable<MessageV2.Assistant["memory_refs"]> = []
+    const addMemoryRef = (ref: (typeof memoryRefs)[number]) => {
+      if (!ref.id || memoryRefs.length >= 10) return
+      if (memoryRefs.some((r) => r.id === ref.id && r.action === ref.action)) return
+      memoryRefs.push(ref)
+    }
     const toolCallOrder: Record<string, number> = {}
     let nextToolCallIndex = 0
     let snapshot: string | undefined
@@ -374,6 +381,24 @@ export namespace SessionProcessor {
                       },
                     })) as MessageV2.ToolPart
 
+                    // Memory chips come from the tool's own result, not from what the model says.
+                    try {
+                      const md: any = value.output.metadata ?? {}
+                      const inp: any = value.input ?? match.state.input ?? {}
+                      if (match.tool === "memory_recall") {
+                        const out = String(value.output.output ?? "")
+                        for (const id of (md.ids as string[] | undefined) ?? []) {
+                          const line = out.split("\n").find((l) => l.includes(`(id: ${id};`))
+                          const title = line?.replace(/^- \[[^\]]*\]\s*/, "").split(" (id: ")[0].slice(0, 80)
+                          addMemoryRef({ id, title: title || undefined, action: "recalled" })
+                        }
+                      } else if (match.tool === "memory_write" && !md.refused && md.id !== undefined) {
+                        const id = String(md.id || inp.id || "")
+                        const act = inp.action === "delete" ? "deleted" : inp.id ? "updated" : "saved"
+                        const title = typeof inp.text === "string" ? inp.text.slice(0, 80) : undefined
+                        addMemoryRef({ id, title, action: act })
+                      }
+                    } catch {}
                     Bus.publish(MessageV2.Event.PartUpdated, {
                       part,
                     })
@@ -468,6 +493,7 @@ export namespace SessionProcessor {
                     })
                   }
                   input.assistantMessage.finish = value.finishReason
+                  if (memoryRefs.length) input.assistantMessage.memory_refs = [...memoryRefs]
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
                   // Native Anthropic requests use ephemeral markers without a TTL override
@@ -830,7 +856,10 @@ export namespace SessionProcessor {
                       messageID: input.assistantMessage.id,
                       sessionID: input.assistantMessage.sessionID,
                       type: "tool",
-                      tool: String(observed.name ?? "tool"),
+                      // A bridged run_code arrives under the CLI's MCP name
+                      // (mcp__allternit__run_code…); allternit-api and the
+                      // clients key on "run_code". Other names stay as reported.
+                      tool: CliBridgeResults.canonicalTool(String(observed.name ?? "tool")),
                       callID: id,
                       // The CLI is already executing the call — "running" is
                       // the honest state, and it is what the DAG bridge keys
@@ -854,6 +883,13 @@ export namespace SessionProcessor {
                     const match = id ? toolcalls[id] : undefined
                     if (!match || match.state.status !== "running") break
                     const isError = Boolean(observed.isError)
+                    // What the bridge kept from the call beyond its text
+                    // (run_code: files[], runDir, exit_code…), merged so the
+                    // part reads like the native tool's.
+                    const bridged =
+                      !isError && CliBridgeResults.isCanonical(match.tool)
+                        ? CliBridgeResults.take(input.sessionID, match.tool, match.state.input)
+                        : undefined
                     const part = (await Session.updatePart({
                       ...match,
                       state: isError
@@ -870,9 +906,12 @@ export namespace SessionProcessor {
                             status: "completed",
                             input: match.state.input,
                             output: String(observed.content ?? ""),
-                            title: match.tool,
+                            title: bridged?.title ?? match.tool,
                             // Structured results the CLI gave (Claude Code WebSearch), for source frames.
-                            metadata: Array.isArray(observed.sources) && observed.sources.length ? { sources: observed.sources } : {},
+                            metadata: {
+                              ...(Array.isArray(observed.sources) && observed.sources.length ? { sources: observed.sources } : {}),
+                              ...bridged?.metadata,
+                            },
                             time: {
                               start: match.state.time.start,
                               end: Date.now(),

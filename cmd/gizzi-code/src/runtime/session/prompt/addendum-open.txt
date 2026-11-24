@@ -1,0 +1,4 @@
+# Notes for this model
+- Call tools with parameter names and types exactly as their schema says: arrays as arrays, absolute paths, one object per call. If a call fails on its schema, fix it once, then try another way.
+- Never repeat the same failing call a third time. Read the error and change the input or the tool.
+- Do not describe a tool call instead of making it, and do not narrate tool mechanics. Say what you are after, then call.

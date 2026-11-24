@@ -25,6 +25,21 @@ Use the **Group by** filter to group another way. The app remembers your choice.
 
 The **Status** filter can show only completed sessions.
 
+## Status
+
+Each Code session has one status. When more than one applies, the first in this list wins: Archived, **Needs input**, **Working**, **Ready for review**, **Done**.
+
+| Status | Icon | What makes it |
+| --- | --- | --- |
+| **Needs input** | Hand | The agent asked for a permission or asked you a question and is waiting. It clears when nothing is pending, on an error, when the run goes idle, or when a new run starts. |
+| **Working** | Spinner | The session is running now. |
+| **Ready for review** | Eye | The run finished and changed files or made an artifact. Opening the session clears it. It also clears when a new run starts. |
+| **Done** | Check | You marked the session completed. |
+
+The status is kept on your computer's server, and an always-on watcher updates it even when no app is open, so it matches on every device. Gaps: if your computer was disconnected while a run happened, that run's events are missed, and a session placed on another server takes its status from that server.
+
+The **Status** filter has six choices: **All**, **Needs input**, **Working**, **Ready for review**, **Done** and **Archived**. **All** means everything not archived.
+
 ## The row menu
 
 Hover over a row and click **⋯**, or right-click it. The same items are in the session header's menu while the session is open.
@@ -52,3 +67,17 @@ Unread, completed, archived and project moves are saved with the session, so the
 ## On phones
 
 On ai.allternit.com's phone layout and in the m.allternit.com app, Code sessions are in the drawer, grouped by repository, with the same unread dot and PR badge. Press and hold a row, or tap **⋯**, to open the same items as a sheet; **Hold to delete** works the same way there. Phones have no keyboard shortcuts.
+
+### Code sessions view on a phone
+
+A pill holds search and a sliders button. Its popover has the **List · Grid · Deck** switch, the status filters and **Scheduled** (a filter, not a separate page).
+
+**View all** in the Code drawer opens the Code sessions view. It shows:
+
+- **Computers**: the computers your sessions run on. The device sheet lists sessions only for the current Code computer.
+- Each session with its status icon (Working, Needs input, Ready for review, Done).
+- The six filters above, and **Scheduled**, which lists your scheduled tasks for a Code repository. **New task** there opens the Create scheduled task sheet.
+- **New session**: type a prompt and it goes through the same send path as the Code launchpad.
+- A connect sheet when no computer is linked, with the two real options: pair a computer with the `gizzi pair` command (install Gizzi Code first with `npm install -g @allternit/gizzi-code`), or install Allternit Desktop. It shows **Connected** only when the computer appears in the real list.
+
+Rows in the drawer show a spinner while the session works and a blue dot when something is new.

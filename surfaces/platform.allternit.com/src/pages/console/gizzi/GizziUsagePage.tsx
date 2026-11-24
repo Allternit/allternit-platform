@@ -38,6 +38,19 @@ import {
   type GizziCodeGranularity,
 } from "@/lib/gizzi-usage";
 import { usePlatformOrganization } from "@/lib/platform-auth-client";
+import { isCloudGateway } from "@/lib/availability";
+import { formatUsd, sumReportRows } from "@/lib/gateway-analytics";
+import {
+  ErrorRetry,
+  MUTED as CLOUD_MUTED,
+  RefreshButton,
+  ReportFilters,
+  ReportTable,
+  dayLabel,
+  useCsvDownload,
+  useReportFilters,
+  useUsageReport,
+} from "@/pages/console/analytics/cloudReport";
 
 const RANGES: Array<{ label: string; days: number; granularity: GizziCodeGranularity }> = [
   { label: "7d", days: 7, granularity: "day" },
@@ -66,7 +79,7 @@ function bucketLabel(bucket: string, granularity: GizziCodeGranularity): string 
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-export function GizziUsagePage(): React.ReactNode {
+function RuntimeGizziUsagePage(): React.ReactNode {
   const { organization, isLoaded: orgLoaded } = usePlatformOrganization();
   const navigate = useNavigate();
 
@@ -373,6 +386,109 @@ export function GizziUsagePage(): React.ReactNode {
       )}
     </ListPage>
   );
+}
+
+/**
+ * Allternit Cloud: Gizzi Code usage is the per-user report filtered to
+ * client=gizzi-code (set by the X-Allternit-Client header). Grouped by day and
+ * model; tool-call and lines columns are runtime-only and not shown.
+ */
+function CloudGizziUsagePage(): React.ReactNode {
+  const filters = useReportFilters(30);
+  const base = {
+    from: filters.from,
+    to: filters.to,
+    projectId: filters.projectId,
+    scope: filters.scope,
+    client: "gizzi-code",
+  };
+  const daily = useUsageReport({ ...base, groupBy: "day" }, "Unable to load Gizzi Code usage");
+  const byModel = useUsageReport({ ...base, groupBy: "model" }, "Unable to load Gizzi Code usage");
+  const csv = useCsvDownload({ ...base, groupBy: "day" }, `allternit-gizzi-code-usage-${filters.from}.csv`);
+
+  const dayRows = daily.rows ?? [];
+  const totals = useMemo(() => sumReportRows(dayRows), [dayRows]);
+  const chartData = useMemo(
+    () =>
+      dayRows
+        .slice()
+        .sort((a, b) => a.group.localeCompare(b.group))
+        .map((r) => ({ day: dayLabel(r.group), tokens: r.prompt_tokens + r.completion_tokens })),
+    [dayRows],
+  );
+  const loading = daily.loading || byModel.loading;
+  const error = daily.error ?? byModel.error ?? csv.error;
+  const reload = () => {
+    daily.reload();
+    byModel.reload();
+  };
+
+  return (
+    <ListPage
+      title="Gizzi Code usage"
+      subtitle="Requests, tokens and spend from Gizzi Code signed in to Allternit Cloud."
+      filters={<ReportFilters filters={filters} />}
+      primaryAction={{ label: csv.busy ? "Preparing…" : "Download CSV", onClick: () => void csv.run() }}
+    >
+      {error && <ErrorRetry message={error} onRetry={reload} />}
+      {loading && daily.rows === null ? (
+        <SkeletonRow lines={6} />
+      ) : daily.rows === null ? null : totals.requests === 0 ? (
+        <EmptyState
+          icon={<HugeiconsIcon icon={Analytics01Icon} size={32} />}
+          title="No Gizzi Code usage in this range"
+          caption="Sign in to Allternit Cloud in Gizzi Code and run a prompt. Billed requests from Gizzi Code show up here."
+        />
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard
+              label="Requests"
+              value={totals.requests.toLocaleString()}
+              hint={`${formatTokenCount(totals.prompt_tokens)} in · ${formatTokenCount(totals.completion_tokens)} out`}
+            />
+            <StatCard label="Tokens" value={formatTokenCount(totals.prompt_tokens + totals.completion_tokens)} />
+            <StatCard label="Spend" value={formatUsd(totals.cost_usd)} hint="Billed requests only" />
+          </div>
+          <div className="rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+              Tokens per day
+            </h3>
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ left: -12, right: 8, top: 4, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: CLOUD_MUTED, fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: CLOUD_MUTED, fontSize: 10 }} tickFormatter={(v: number) => formatTokenCount(v)} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "var(--bg-secondary)",
+                      border: "1px solid var(--border-subtle)",
+                      borderRadius: "8px",
+                    }}
+                    formatter={(v: number) => formatTokenCount(v)}
+                  />
+                  <Bar dataKey="tokens" name="Tokens" fill="var(--accent-primary)" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <h3 className="m-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">By model</h3>
+          <ReportTable rows={byModel.rows ?? []} groupBy="model" projectNames={filters.projectNames} />
+          <h3 className="m-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">By day</h3>
+          <ReportTable rows={dayRows} groupBy="day" projectNames={filters.projectNames} />
+          <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+            Gizzi Code marks its requests with X-Allternit-Client. Only billed requests are counted.
+          </p>
+          <RefreshButton loading={loading} onClick={reload} />
+        </div>
+      )}
+    </ListPage>
+  );
+}
+
+export function GizziUsagePage(): React.ReactNode {
+  return isCloudGateway() ? <CloudGizziUsagePage /> : <RuntimeGizziUsagePage />;
 }
 
 export default GizziUsagePage;

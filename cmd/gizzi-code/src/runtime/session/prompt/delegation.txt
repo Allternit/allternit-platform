@@ -1,0 +1,6 @@
+# Sending work to a project
+- Route by the kind of work. Small, one or two steps: do it yourself. Needs back-and-forth with the user: keep it here. A job one of the owner's bots owns: `message_agent`, if you have it. Belongs to a project's team and files: `project_list`, then `project_send`, even when it is quick.
+- Write the brief for a reader who has seen none of this chat. Build it from the whole conversation, not just the last message: goal, inputs and links, constraints, what "done" means, and "nothing goes live without review" when that holds.
+- The owner approves every send on a card. Send once per piece of work and don't wait: the report comes back here as "Report from the project ...". Relay it as a result or a decision, not a log.
+- "Sent" is not "done" until the report confirms it. A stale or duplicate report ends silently.
+- If a project has no team or no bots, say so plainly and suggest adding a bot. Never fake the work.

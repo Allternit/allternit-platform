@@ -38,6 +38,9 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/local-engine/health", get(proxy_health))
         .route("/local-engine/status", get(proxy_status))
+        .route("/local-engine/hardware", get(proxy_hardware))
+        .route("/local-engine/engines/packs", get(proxy_engine_packs))
+        .route("/local-engine/engines/packs/ensure", post(proxy_engine_packs_ensure))
         .route("/local-engine/catalog", get(proxy_catalog))
         .route("/local-engine/catalog/refresh", post(proxy_catalog_refresh))
         .route("/local-engine/assess", post(proxy_assess))
@@ -46,6 +49,7 @@ pub fn local_engine_router() -> Router<Arc<AppState>> {
         .route("/local-engine/models", get(proxy_list_models))
         .route("/local-engine/models/import", post(proxy_import_model))
         .route("/local-engine/models/download", post(proxy_download_model))
+        .route("/local-engine/models/verify", post(proxy_verify_model))
         .route("/local-engine/runtimes", get(proxy_list_runtimes))
         .route("/local-engine/runtimes/launch", post(proxy_launch_runtime))
         .route("/local-engine/runtimes/:id/stop", post(proxy_stop_runtime))
@@ -70,6 +74,31 @@ async fn proxy_status(State(_state): State<Arc<AppState>>, headers: HeaderMap) -
         return unauthorized();
     }
     proxy_get("/status").await
+}
+
+/// Device profile + model budget for on-device fit (`GET /hardware`).
+async fn proxy_hardware(headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    proxy_get("/hardware").await
+}
+
+/// Installed engine packs and install progress.
+async fn proxy_engine_packs(headers: HeaderMap) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    proxy_get("/engines/packs").await
+}
+
+/// Install the engine pack(s) this machine needs ("Run here" calls it first).
+async fn proxy_engine_packs_ensure(headers: HeaderMap, body: Bytes) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    // The engine probes GPUs before answering (2 s per probe at most).
+    proxy_post_with_timeout("/engines/packs/ensure", body, std::time::Duration::from_secs(20)).await
 }
 
 async fn proxy_catalog(
@@ -141,6 +170,11 @@ async fn proxy_import_model(
     if get_user(&headers).is_none() {
         return unauthorized();
     }
+    // A model package copied over the Files drive without run permission
+    // (`.allternit-package.json` with `execute: false`) is refused here.
+    if let Some(refused) = crate::files_v2::models::import_gate(&body) {
+        return refused;
+    }
     proxy_post("/models/import", body).await
 }
 
@@ -155,6 +189,20 @@ async fn proxy_download_model(
     proxy_post("/models/download", body).await
 }
 
+/// `{repo}` → re-hash the local files against the Freeweights manifest (or
+/// the publisher's hashes); returns the contract `verification`.
+async fn proxy_verify_model(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if get_user(&headers).is_none() {
+        return unauthorized();
+    }
+    // Re-hashing a large model takes a while (sha256 over every file).
+    proxy_post_with_timeout("/models/verify", body, std::time::Duration::from_secs(30 * 60)).await
+}
+
 async fn proxy_launch_runtime(
     State(_state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -162,6 +210,10 @@ async fn proxy_launch_runtime(
 ) -> Response {
     if get_user(&headers).is_none() {
         return unauthorized();
+    }
+    // Same run-permission check for a launch by path or by imported model id.
+    if let Some(refused) = crate::files_v2::models::launch_gate(&body, &local_engine_url()).await {
+        return refused;
     }
     proxy_post("/runtimes/launch", body).await
 }
@@ -181,7 +233,43 @@ async fn proxy_chat_completions(
     if get_user(&headers).is_none() {
         return unauthorized();
     }
-    proxy_post("/v1/chat/completions", body).await
+    proxy_chat_stream(body).await
+}
+
+/// Chat completions: the body streams through as the engine sends it (SSE
+/// tokens arrive live, not all at once at the end) and has no overall
+/// timeout, only connect and per-read limits, so long replies finish.
+async fn proxy_chat_stream(body: Bytes) -> Response {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_default();
+    let url = format!("{}/v1/chat/completions", local_engine_url());
+    let res = match client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(res) => res,
+        Err(err) => {
+            warn!(error = %err, url = %url, "Local Engine chat proxy failed");
+            return engine_unavailable(err);
+        }
+    };
+    let status = StatusCode::from_u16(res.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut builder = Response::builder().status(status);
+    for (name, value) in res.headers().iter() {
+        if is_hop_by_hop_header(name.as_str()) || name.as_str().eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+    builder
+        .body(Body::from_stream(res.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 // ─── Generic proxy helpers ────────────────────────────────────────────────────
@@ -217,8 +305,12 @@ async fn proxy_get(path: &str) -> Response {
 }
 
 async fn proxy_post(path: &str, body: Bytes) -> Response {
+    proxy_post_with_timeout(path, body, std::time::Duration::from_secs(30)).await
+}
+
+async fn proxy_post_with_timeout(path: &str, body: Bytes, timeout: std::time::Duration) -> Response {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(timeout)
         .build()
         .unwrap_or_default();
 

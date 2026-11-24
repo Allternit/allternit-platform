@@ -4,8 +4,9 @@
  * without a new Desktop app build (see src/main/runtime-package.ts).
  *
  *   node scripts/runtime-package.cjs stamp     write resources/runtime.json (build number + bundled file list)
- *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform} → release/runtime/feed/
+ *   node scripts/runtime-package.cjs pack      write the feed for resources/{bin,platform,meeting-bot} + model-training → release/runtime/feed/
  *   node scripts/runtime-package.cjs publish   show what would upload; add --confirm to upload to R2
+ *   node scripts/runtime-package.cjs prune     plan old-version cleanup (--keep N, default 3); --confirm deletes
  *
  * Feed layout (bucket allternit-runtime, served at runtime.allternit.com):
  *   objects/<sha256>.gz                          each file once, gzip, shared by every version and platform
@@ -17,7 +18,7 @@
  *
  * Build the parts first without packaging the app:
  *   scripts/build-desktop.sh --skip-electron && (cd surfaces/allternit-desktop &&
- *     npm run prepare:platform-static && npm run prepare:api-binary)
+ *     npm run prepare:platform-static && npm run prepare:api-binary && npm run prepare:meeting-bot)
  *
  * Signing key: ALLTERNIT_RUNTIME_SIGNING_KEY or ~/.config/allternit/runtime-signing-ed25519.pem
  * (Ed25519, PKCS#8 PEM). Its public half is RUNTIME_PUBLIC_KEY in runtime-package.ts.
@@ -51,7 +52,14 @@ const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64
 const EXE = TARGET_OS === 'win32' ? '.exe' : '';
 // allternit-factory (the Factory engine) rides with gizzi-code so a runtime
 // update moves both together.
-const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, `allternit-factory${EXE}`];
+// allternit-files-mount (Files drive mount + big uploads) rides with gizzi-code
+// too; macOS and Linux only (Windows uses the cfapi helper).
+const BINARIES = [
+  `allternit-api${EXE}`,
+  `gizzi-code${EXE}`,
+  `allternit-factory${EXE}`,
+  ...(TARGET_OS === 'win32' ? [] : ['allternit-files-mount']),
+];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -77,14 +85,63 @@ function walk(dir, base = dir, out = []) {
   return out;
 }
 
+// The Meetings bot (scripts/prepare-meeting-bot.cjs): resources/meeting-bot plus this
+// platform's rtc-node binding from resources/meeting-bot-native/<platform>/, listed where
+// the app has it after electron-builder's overlay (meeting-bot/node_modules/@livekit/…).
+const BOT_DIR = path.join(RESOURCES, 'meeting-bot');
+const BOT_NATIVE_DIR = path.join(RESOURCES, 'meeting-bot-native', PLATFORM);
+const BOT_RUNNER = 'meeting-bot/dist/runner.js';
+
+/** Manifest path -> source file for the Meetings bot; null when it is not staged for PLATFORM. */
+let botSources;
+function meetingBotSources() {
+  if (botSources !== undefined) return botSources;
+  botSources = null;
+  if (!fs.existsSync(path.join(BOT_DIR, 'dist', 'runner.js')) || !fs.existsSync(BOT_NATIVE_DIR)) return null;
+  const out = new Map();
+  for (const rel of walk(BOT_DIR)) out.set(`meeting-bot/${rel}`, path.join(BOT_DIR, rel));
+  for (const rel of walk(BOT_NATIVE_DIR)) out.set(`meeting-bot/node_modules/${rel}`, path.join(BOT_NATIVE_DIR, rel));
+  botSources = out;
+  return out;
+}
+
+// Allternit Tune (services/model-training), source only: the Studio host in
+// allternit-api installs the engine's venv from it. Same files as the
+// electron-builder extraResources `model-training` entry, so the bundled list
+// matches what the app carries. Read from the checkout the staged resources
+// belong to (ALLTERNIT_RUNTIME_RESOURCES = <worktree>/surfaces/allternit-desktop/resources).
+const TUNE_DIR = [
+  path.resolve(RESOURCES, '..', '..', '..', 'services', 'model-training'),
+  path.join(REPO_ROOT, 'services', 'model-training'),
+].find((dir) => fs.existsSync(path.join(dir, 'requirements.txt')));
+const TUNE_REQUIREMENTS = 'model-training/requirements.txt';
+const TUNE_SKIP = /^(tests|tools|\.venv|\.scratch|\.pytest_cache)\/|(^|\/)__pycache__\/|\.egg-info\/|^\.gitignore$|^requirements-dev\.txt$/;
+
+/** Manifest path -> source file for Allternit Tune; empty when the checkout has none. */
+function tuneSources() {
+  if (!TUNE_DIR) return new Map();
+  return new Map(walk(TUNE_DIR).filter((rel) => !TUNE_SKIP.test(rel)).map((rel) => [`model-training/${rel}`, path.join(TUNE_DIR, rel)]));
+}
+
+/** Where a manifest path's bytes come from. */
+function sourceOf(rel) {
+  if (rel.startsWith('model-training/')) return tuneSources().get(rel) ?? path.join(RESOURCES, rel);
+  return rel.startsWith('meeting-bot/') ? meetingBotSources()?.get(rel) ?? path.join(RESOURCES, rel) : path.join(RESOURCES, rel);
+}
+
 /** The runtime's files under resources/, as manifest entries. Null when not built yet. */
 function runtimeFiles() {
   if (!BINARIES.every((b) => fs.existsSync(path.join(RESOURCES, 'bin', b)))) return null;
   if (!fs.existsSync(path.join(RESOURCES, 'platform', 'index.html'))) return null;
-  const rels = [...BINARIES.map((b) => `bin/${b}`), ...walk(path.join(RESOURCES, 'platform')).map((r) => `platform/${r}`)];
+  const sources = new Map([
+    ...BINARIES.map((b) => [`bin/${b}`, path.join(RESOURCES, 'bin', b)]),
+    ...walk(path.join(RESOURCES, 'platform')).map((r) => [`platform/${r}`, path.join(RESOURCES, 'platform', r)]),
+    ...(meetingBotSources() ?? []),
+    ...tuneSources(),
+  ]);
   const files = {};
-  for (const rel of rels.sort()) {
-    const buf = fs.readFileSync(path.join(RESOURCES, rel));
+  for (const rel of [...sources.keys()].sort()) {
+    const buf = fs.readFileSync(sources.get(rel));
     files[rel] = { sha256: sha256(buf), size: buf.length };
   }
   return files;
@@ -132,6 +189,15 @@ function signMacBinaries() {
     ], { stdio: 'inherit' });
     console.log(`✓ signed ${binary}`);
   }
+  // The Meetings bot's native modules (the rtc-node binding): Developer ID like the app signs
+  // its own native code, so a runtime update does not ship an unsigned dylib into a hardened app.
+  for (const [rel, file] of meetingBotSources() ?? []) {
+    if (!rel.endsWith('.node')) continue;
+    const details = spawnSync('codesign', ['-dvv', file], { encoding: 'utf8' }).stderr || '';
+    if (details.includes(`Authority=${developerId[1]}`)) continue;
+    execFileSync('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', developerId[1], file], { stdio: 'inherit' });
+    console.log(`✓ signed ${rel}`);
+  }
 }
 
 function stamp() {
@@ -149,6 +215,7 @@ function stamp() {
   // The bundled file list lets a runtime update copy unchanged files from the app instead of downloading them.
   const files = runtimeFiles();
   if (!files) console.warn('⚠ runtime parts not staged yet — runtime.json has no file list (updates download every file)');
+  else if (!files[BOT_RUNNER]) console.warn(`⚠ meeting-bot not staged for ${PLATFORM} — run node scripts/prepare-meeting-bot.cjs (the bundled list has no Meetings bot)`);
   const info = {
     version, build, shellApi: shellApi(),
     platformSha: git(REPO_ROOT, 'rev-parse', 'HEAD') || null,
@@ -169,11 +236,55 @@ function signingKey() {
   return crypto.createPrivateKey(fs.readFileSync(file));
 }
 
+/**
+ * Linux only: the highest GLIBC the package's ELFs need, read with scripts/check-elf-floor.mjs.
+ * Desktop refuses a package whose stamp is above the machine's glibc, so a package built
+ * above GLIBC_FLOOR (build-linux-sidecars.sh, 2.27 = Ubuntu 18.04) is not published unless
+ * ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1. Other platforms: undefined (no stamp).
+ *
+ * ELFs on scripts/elf-floor-allowlist.json (the LiveKit rtc-node binding, GLIBC_2.28) do
+ * not raise the stamp: they are optional features that stay unavailable below their need,
+ * exactly as in the bundled app. Counting them would keep every Ubuntu 18.04 machine off
+ * runtime updates for the engine because of the Meeting bot alone.
+ */
+function linuxMinGlibc(files) {
+  if (TARGET_OS !== 'linux') return undefined;
+  const script = path.join(REPO_ROOT, 'scripts', 'check-elf-floor.mjs');
+  const floor = execFileSync('node', [script, '--print-floor'], { encoding: 'utf8' }).trim();
+  // Only the files this package ships: resources/ also holds app-only ELFs that never
+  // reach a runtime package and must not raise its stamp.
+  const list = path.join(os.tmpdir(), `runtime-elf-files-${process.pid}.txt`);
+  fs.writeFileSync(list, Object.keys(files).map(sourceOf).join('\n'));
+  // The checker exits 1 when an ELF is over the floor and still prints the JSON; the
+  // decision is made here. Any other status is a real error.
+  const res = spawnSync('node', [script, '--files', list, '--floor', floor, '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  fs.rmSync(list, { force: true });
+  if (res.status !== 0 && res.status !== 1) die(`check-elf-floor failed: ${res.stderr || res.stdout}`);
+  const rows = JSON.parse(res.stdout).rows;
+  const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+  for (const r of rows.filter((r) => r.status === 'allowed')) console.log(`  minGlibc ignores allowlisted ${r.file} (GLIBC_${r.glibc}: ${r.reason})`);
+  let max = null;
+  for (const r of rows) if (r.status !== 'allowed' && r.glibc && (max === null || cmp(r.glibc, max) > 0)) max = r.glibc;
+  max = max || floor;
+  if (cmp(max, floor) > 0) {
+    const over = rows.filter((r) => r.status === 'FAIL').map((r) => `${r.file} (GLIBC_${r.glibc})`);
+    const msg = `linux runtime needs GLIBC_${max}, above the floor GLIBC_${floor}:\n  ${over.join('\n  ')}`;
+    if (process.env.ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR === '1') console.warn(`! ${msg}\n  publishing anyway (ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1); the stamp keeps older machines on the bundled runtime`);
+    else die(`${msg}\n  Rebuild with scripts/build-linux-sidecars.sh, or set ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1 to publish on purpose.`);
+  }
+  return max;
+}
+
 function pack() {
   signMacBinaries();
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
   const files = runtimeFiles();
   if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
+  // Cloud computers and Desktop run the Meetings bot from the runtime package; never publish one without it.
+  if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
+  // Studio installs Allternit Tune from the runtime's model-training/ (allternit-api engines.rs).
+  if (!files[TUNE_REQUIREMENTS]) die(`${TUNE_REQUIREMENTS} missing — services/model-training is not in this checkout`);
+  const minGlibc = linuxMinGlibc(files);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);
@@ -184,11 +295,12 @@ function pack() {
   for (const [rel, f] of Object.entries(files)) {
     const obj = path.join(objectsDir, `${f.sha256}.gz`);
     if (fs.existsSync(obj)) continue;
-    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(path.join(RESOURCES, rel)), { level: 9 }));
+    fs.writeFileSync(obj, zlib.gzipSync(fs.readFileSync(sourceOf(rel)), { level: 9 }));
     written += 1;
   }
   const manifest = Buffer.from(JSON.stringify({
     version: info.version, build: info.build, platform: PLATFORM, shellApi: info.shellApi,
+    ...(minGlibc ? { minGlibc } : {}),
     platformSha: info.platformSha, platformDirty: info.platformDirty, aiSha: info.aiSha, files,
   }, null, 2));
   const manifestRel = `manifests/${info.version}.json`;
@@ -196,6 +308,7 @@ function pack() {
   fs.writeFileSync(path.join(platformDir, `${manifestRel}.sig`), crypto.sign(null, manifest, key).toString('base64'));
   const latest = Buffer.from(JSON.stringify({
     format: 2, version: info.version, build: info.build, shellApi: info.shellApi,
+    ...(minGlibc ? { minGlibc } : {}),
     manifest: manifestRel, manifestSha256: sha256(manifest),
   }, null, 2));
   fs.writeFileSync(path.join(platformDir, 'latest.json'), latest);
@@ -238,11 +351,21 @@ function put(url, method, headers, body) {
   });
 }
 
+// Prune makes thousands of small requests; the account allows ~1200 / 5 min, so it paces itself.
+const pace = { on: false, next: 0, gapMs: 300 };
+async function gate() {
+  if (!pace.on) return;
+  const at = Math.max(Date.now(), pace.next);
+  pace.next = at + pace.gapMs;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now()));
+}
+
 async function r2(method, key, body, contentType, cacheControl) {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${key}`;
   for (let attempt = 1, refreshed = false; ; attempt++) {
     const token = auth.token;
     let res;
+    await gate();
     try {
       res = await put(url, method, { Authorization: `Bearer ${token}`, ...(contentType ? { 'Content-Type': contentType } : {}), ...(cacheControl ? { 'Cache-Control': cacheControl } : {}) }, body);
     } catch (e) {
@@ -365,10 +488,129 @@ async function publish(confirm) {
       rel.endsWith('.json') ? 'application/json' : 'text/plain', immutable ? 'public, max-age=31536000, immutable' : 'no-store');
   }
   console.log(`✓ published ${latest.version} → https://runtime.allternit.com/stable/${PLATFORM}/latest.json`);
+  console.log('Run `node surfaces/allternit-desktop/scripts/runtime-package.cjs prune --confirm` to delete old versions (keeps 3).');
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-if (cmd === 'stamp') stamp();
-else if (cmd === 'pack') pack();
-else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
-else die('usage: runtime-package.cjs stamp | pack | publish [--confirm]');
+/** Order of a manifest for "newest": its build number, else the rNNNNNNNN.NNNN timestamp in its version. */
+function manifestOrder(m, key) {
+  if (Number.isFinite(Number(m?.build)) && m?.build !== undefined && m?.build !== null) return [1, Number(m.build), ''];
+  const v = String(m?.version ?? key.split('/').pop().replace(/\.json$/, ''));
+  const t = v.match(/r(\d{8})\.(\d+)/);
+  return t ? [0, Number(t[1]) * 1e6 + Number(t[2]), ''] : [0, 0, v];
+}
+const cmpOrder = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2].localeCompare(b[2]);
+
+/**
+ * Pure keep/delete decision. Objects are content-addressed and shared by every version and platform,
+ * so an object goes only when NO kept manifest on ANY platform references it.
+ * @param {{platforms: Record<string, {latest: string, manifests: Record<string, object>}>, objects: Set<string>|string[], keep: number}} input
+ *   manifests keyed by manifest file name (e.g. "r2026.json"), latest = the name latest.json points at.
+ * @returns {{keepManifests: string[], dropManifests: string[], keepObjects: Set<string>, dropObjects: string[], missing: string[]}}
+ */
+function planPrune({ platforms, objects, keep }) {
+  const have = new Set(objects);
+  const keepManifests = new Set();
+  const dropManifests = [];
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const names = Object.keys(manifests).sort((a, b) => cmpOrder(manifestOrder(manifests[a], a), manifestOrder(manifests[b], b)));
+    const kept = new Set(names.slice(-Math.max(1, keep)));
+    if (latest) kept.add(latest);
+    for (const n of names) {
+      const key = `stable/${plat}/manifests/${n}`;
+      if (kept.has(n)) keepManifests.add(key); else dropManifests.push(key);
+    }
+  }
+  const keepObjects = new Set();
+  for (const [plat, { manifests }] of Object.entries(platforms)) {
+    for (const [n, m] of Object.entries(manifests)) {
+      if (!keepManifests.has(`stable/${plat}/manifests/${n}`)) continue;
+      for (const f of Object.values(m.files ?? {})) keepObjects.add(`objects/${f.sha256}.gz`);
+    }
+  }
+  return {
+    keepManifests: [...keepManifests].sort(),
+    dropManifests,
+    keepObjects,
+    dropObjects: [...have].filter((k) => !keepObjects.has(k)),
+    missing: [...keepObjects].filter((k) => !have.has(k)),
+  };
+}
+
+async function listAll(prefix) {
+  const out = [];
+  let cursor = '';
+  for (;;) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects?prefix=${encodeURIComponent(prefix)}&per_page=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    let body;
+    for (let attempt = 1; ; attempt++) {
+      await gate();
+      const res = await put(url, 'GET', { Authorization: `Bearer ${auth.token}` });
+      if (res.ok) { body = JSON.parse(await res.text()); break; }
+      if (res.status === 401 && attempt === 1 && !process.env.CLOUDFLARE_API_TOKEN) { refreshToken(auth.token); continue; }
+      if ((res.status === 429 || res.status >= 500) && attempt < 8) { await new Promise((r) => setTimeout(r, attempt * 10_000)); continue; }
+      throw new Error(`list ${prefix}: ${res.status} ${await res.text()}`);
+    }
+    for (const o of body.result ?? []) out.push({ key: o.key, size: Number(o.size ?? 0) });
+    cursor = body.result_info?.cursor ?? '';
+    if (!body.result_info?.is_truncated || !cursor) return out;
+  }
+}
+
+async function prune(confirm, keep) {
+  auth.token = cloudflareToken();
+  pace.on = true;
+  const stable = await listAll('stable/');
+  const objs = await listAll('objects/');
+  const sizes = new Map(objs.map((o) => [o.key, o.size]));
+  const stableKeys = new Set(stable.map((o) => o.key));
+  const plats = [...new Set(stable.map((o) => o.key.split('/')[1]))].sort();
+  const platforms = {};
+  for (const plat of plats) {
+    const latestKey = `stable/${plat}/latest.json`;
+    if (!stableKeys.has(latestKey)) { console.log(`skip ${plat}: no latest.json`); continue; }
+    const latest = JSON.parse(await (await r2('GET', latestKey)).text());
+    const manifests = {};
+    for (const o of stable) {
+      const m = o.key.match(new RegExp(`^stable/${plat}/manifests/([^/]+\\.json)$`));
+      if (m) manifests[m[1]] = JSON.parse(await (await r2('GET', o.key)).text());
+    }
+    platforms[plat] = { latest: String(latest.manifest).replace(/^manifests\//, ''), manifests };
+  }
+  const plan = planPrune({ platforms, objects: sizes.keys(), keep });
+  const dropManifestFiles = plan.dropManifests.flatMap((k) => [k, `${k}.sig`].filter((x) => stableKeys.has(x)));
+  const gb = (n) => `${(n / 1e9).toFixed(2)} GB`;
+  for (const [plat, { latest, manifests }] of Object.entries(platforms)) {
+    const kept = plan.keepManifests.filter((k) => k.startsWith(`stable/${plat}/`)).map((k) => k.split('/').pop());
+    console.log(`${plat}: ${Object.keys(manifests).length} manifests, latest -> ${latest}, keep ${kept.length}: ${kept.join(', ')}`);
+  }
+  const dropBytes = plan.dropObjects.reduce((n, k) => n + sizes.get(k), 0);
+  console.log(`objects: ${sizes.size} (${gb([...sizes.values()].reduce((a, b) => a + b, 0))}); referenced by kept manifests: ${plan.keepObjects.size}; missing: ${plan.missing.length}`);
+  console.log(`delete: ${plan.dropObjects.length} objects (${gb(dropBytes)}) + ${dropManifestFiles.length} old manifest files`);
+  if (plan.missing.length) die(`refusing: kept manifests reference ${plan.missing.length} missing object(s), e.g. ${plan.missing[0]}; nothing deleted`);
+  if (!confirm) { console.log('Dry run. Re-run with --confirm to delete.'); return; }
+  const queue = [...plan.dropObjects, ...dropManifestFiles];
+  let done = 0;
+  const worker = async () => {
+    for (let k = queue.shift(); k; k = queue.shift()) {
+      await r2('DELETE', k);
+      if (++done % 1000 === 0) console.log(`  deleted ${done}`);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  console.log(`✓ deleted ${done} files`);
+}
+
+module.exports = { planPrune, manifestOrder };
+
+if (require.main === module) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === 'stamp') stamp();
+  else if (cmd === 'pack') pack();
+  else if (cmd === 'publish') publish(rest.includes('--confirm')).catch((e) => die(e.message));
+  else if (cmd === 'prune') {
+    const i = rest.indexOf('--keep');
+    const keep = i >= 0 ? Number(rest[i + 1]) : 3;
+    if (!Number.isInteger(keep) || keep < 1) die('--keep needs a whole number >= 1');
+    prune(rest.includes('--confirm'), keep).catch((e) => die(e.message));
+  } else die('usage: runtime-package.cjs stamp | pack | publish [--confirm] | prune [--keep N] [--confirm]');
+}

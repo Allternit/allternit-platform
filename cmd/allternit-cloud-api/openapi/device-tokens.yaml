@@ -1,0 +1,104 @@
+openapi: 3.1.0
+info:
+  title: Allternit Device Tokens API
+  version: "1.0.0"
+  summary: Push token registration for the Allternit phone apps.
+  description: |
+    Internal contract for Allternit's own apps, not the public developer API
+    (`platform-v1.yaml` is pinned to `/v1` routes by a router test). Base URL
+    `https://api.allternit.com` (the app's `ApiConfig.cloudBaseUrl`); paths are
+    absolute on it (`x-base: cloud`). Handler: `src/routes/apns.rs`.
+
+    Auth: a Clerk session JWT or an `allternit_*` API token with the `compute`
+    scope. Errors are `{ "error": "<code>" }`: `apns_not_configured` (503, iOS),
+    `fcm_not_configured` (503, Android), `unsupported_platform`, `bad_token`
+    (400), `too_many_devices` (429), `internal` (500).
+
+    `platform` is `"ios"` (the default: an APNs hex token, 32–200 hex
+    characters, stored lowercased) or `"android"` (an FCM registration token,
+    32–4096 characters of `[A-Za-z0-9_:-]`, case kept; `environment` is
+    ignored). Android pushes go out through FCM HTTP v1 (`src/routes/fcm.rs`)
+    once `FCM_SERVICE_ACCOUNT_JSON` is set on cloud-api. Both share the
+    10-device cap per person (migration `152_device_token_platform.sql`).
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/device-tokens:
+    post:
+      operationId: registerDeviceToken
+      summary: Register (or move) this device's push token
+      x-base: cloud
+      x-handler: cmd/allternit-cloud-api/src/routes/apns.rs register_route
+      tags: [Push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterDeviceTokenRequest" }
+      responses:
+        "201":
+          description: Registered; `readToken` is handed out once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterDeviceTokenResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: unregisterDeviceToken
+      summary: Remove this device's push token (sign-out)
+      x-base: cloud
+      x-handler: cmd/allternit-cloud-api/src/routes/apns.rs unregister_route
+      tags: [Push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnregisterDeviceTokenRequest" }
+      responses:
+        "200":
+          description: Removed (the body is not read by the app).
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Error:
+      description: An error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/DeviceTokenError" }
+  schemas:
+    DeviceTokenError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    RegisterDeviceTokenRequest:
+      type: object
+      description: apns.rs `RegisterBody` (serde rename_all camelCase).
+      required: [token]
+      properties:
+        token: { type: string }
+        platform: { type: string, description: '"ios" (default) or "android".' }
+        environment: { type: string, description: '"sandbox" or "production" (iOS only).' }
+        deviceId: { type: string }
+        osVersion: { type: string }
+        appBuild: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+    RegisterDeviceTokenResponse:
+      type: object
+      required: [ok, id, readToken]
+      properties:
+        ok: { type: boolean }
+        id: { type: string }
+        readToken: { type: string }
+    UnregisterDeviceTokenRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }

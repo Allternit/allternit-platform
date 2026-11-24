@@ -278,8 +278,7 @@ pub async fn test_state_with_provisioning(
         run_service,
         session_manager,
         rate_limiter: crate::create_rate_limiter(rate_limit_config.clone()),
-        public_rate_limiter: crate::create_rate_limiter(rate_limit_config.clone()),
-        free_inference_rate_limiter: crate::create_rate_limiter(rate_limit_config),
+        public_rate_limiter: crate::create_rate_limiter(rate_limit_config),
         cost_service: Arc::new(crate::services::CostServiceImpl::new(db.clone())),
         quota_service: quota_service.clone(),
         contabo_runtime_service: Arc::new(crate::services::ContaboRuntimeService::new(
@@ -321,6 +320,7 @@ pub async fn events_backbone_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"),
         include_str!("../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../migrations_pg/083_mcp_event_replay.sql"),
+        include_str!("../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }
@@ -357,6 +357,7 @@ pub async fn platform_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/121_platform_items.sql"),
         include_str!("../../migrations_pg/122_platform_approvals.sql"),
         include_str!("../../migrations_pg/123_platform_decisions.sql"),
+        include_str!("../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }

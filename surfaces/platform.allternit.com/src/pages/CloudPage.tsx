@@ -21,7 +21,7 @@ import { usePlatformAuth } from "@/lib/platform-auth-client";
 import { cn } from "@/lib/utils";
 
 const BASE_URL = "https://api.allternit.com/v1";
-const QUICKSTART_MODEL = "deepseek-v4-pro";
+const QUICKSTART_MODEL = "deepseek-v4.1-flash";
 const KEY_PATH = "/api-keys?create=inference";
 const BILLING_PATH = "/billing";
 const DOCS = "https://docs.allternit.com";
@@ -653,8 +653,8 @@ function Pricing({ signedIn }: { signedIn: boolean }) {
       <div className="grid min-w-0 gap-3 sm:grid-cols-3 lg:col-span-5">
         {[
           {
-            title: "$2 free each month",
-            body: "Every account gets $2 of model usage a month at no charge, so you can try the API before you pay.",
+            title: "Credits for Cloud models",
+            body: "Free accounts don't include Cloud usage. $1 buys $1 of credit, and plans include monthly credits.",
           },
           {
             title: "Auto top-up",
@@ -678,6 +678,9 @@ function Pricing({ signedIn }: { signedIn: boolean }) {
         </AuthLink>
         <a href={`${DOCS}/api/cloud-billing`} target="_blank" rel="noopener noreferrer" className={SECONDARY_BTN}>
           Billing docs <ArrowSquareOut size={14} />
+        </a>
+        <a href={`${DOCS}/guides/credits-computer`} target="_blank" rel="noopener noreferrer" className={SECONDARY_BTN}>
+          Computer on credits <ArrowSquareOut size={14} />
         </a>
       </div>
     </div>
@@ -778,7 +781,7 @@ export function CloudPage() {
               )}
             </div>
             <p className="mt-3 text-[12px] text-[var(--text-tertiary)]">
-              $2 of free usage every month on every account.
+              Cloud models need credits. $1 buys $1 of credit.
             </p>
           </div>
 
@@ -815,7 +818,7 @@ export function CloudPage() {
               },
               {
                 title: "Add credits",
-                body: "Your $2 monthly free usage covers a first test. Buy a pack or a plan when you need more.",
+                body: "Cloud models need credits. Buy a pack or choose a plan; $1 buys $1 of credit.",
               },
               {
                 title: "Call the API",

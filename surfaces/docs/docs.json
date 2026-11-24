@@ -73,17 +73,21 @@
             "group": "Workspace workflows",
             "pages": [
               "guides/first-run-setup",
+              "guides/choose-how-agents-run",
+              "guides/link-your-computer",
               "guides/setup-checklist",
               "guides/sidebar-navigation",
               "guides/session-overview",
               "guides/system-drawer",
               "guides/office-view",
+              "guides/labs-courses",
               "guides/measured-loops",
               "guides/facility",
               "guides/decisions",
               "guides/plan-approval",
               "guides/glance-lines",
               "architecture/sidebar-layout",
+              "architecture/phone-shell-behaviour",
               "guides/meet-your-bots",
               "guides/morning-brief",
               "guides/bot-setup-picker",
@@ -95,20 +99,18 @@
               "guides/app-deployments",
               "guides/bot-routines",
               "guides/usage-dashboard",
+              "guides/switch-accounts",
+              "guides/phone-settings",
               "guides/phone-sms-runtime",
               "guides/project-coordination",
               "guides/project-status",
               "guides/project-delegate",
+              "guides/project-pad",
               "guides/project-layouts",
               "guides/project-appearance",
               "architecture/project-appearance",
               "guides/bot-templates",
-              "guides/vendor-bots",
-              "guides/how-vendor-bots-connect",
-              "guides/local-vendor-bots",
-              "guides/vendor-bots-use-your-phone",
               "guides/allternit-bot-cli",
-              "guides/keep-vendor-bots-online",
               "guides/bot-avatars",
               "guides/bot-home-screen",
               "guides/allternit-bots-app",
@@ -121,14 +123,16 @@
               "guides/delete-account",
               "guides/whatsapp-business",
               "guides/connections",
+              "guides/use-your-plan",
               "guides/subscriptions",
-              "guides/connect-vendor-from-chat",
               "guides/open-models",
+              "guides/run-a-model-on-your-phone",
               "guides/lane-status",
               "guides/system-status",
               "guides/always-on-bots",
-              "plugins/guides/vendor-packs",
+              "plugins/guides/bot-packs",
               "guides/artifacts",
+              "guides/guard",
               "guides/pinned-artifacts",
               "guides/artifact-apps",
               "guides/artifact-editors",
@@ -146,10 +150,15 @@
               "guides/code-linked-prs",
               "guides/motion",
               "guides/computers-and-apps",
+              "guides/files-drive",
+              "guides/files-sharing",
+              "guides/files-windows",
               "guides/phone-for-your-bot",
               "guides/phone-skills",
+              "guides/phone-app-maps",
               "guides/phone-approvals",
               "guides/usb-agent",
+              "guides/files-inbox",
               "guides/get-the-app",
               "guides/iphone-app",
               "guides/imessage-app",
@@ -157,6 +166,9 @@
               "guides/android-app",
               "guides/device-access",
               "guides/phone-link",
+              "guides/iphone-routes",
+              "guides/iphone-bridge-shortcuts",
+              "guides/android-live-view",
               "guides/cloud-phones",
               "guides/bot-voice-on-linked-phone",
               "guides/customize",
@@ -164,14 +176,15 @@
               "guides/app-screens",
               "guides/connectors-in-other-apps",
               "guides/managed-authorization",
-              "guides/vendor-bots-on-the-phone",
               "guides/bot-phone",
               "guides/people",
               "guides/your-twin",
+              "guides/memory",
               "guides/memory-drive",
               "guides/bot-page",
               "guides/bot-soul",
               "guides/memory-and-learning",
+              "guides/sleep",
               "guides/needs-you-inbox",
               "guides/invite-someone",
               "guides/call-notifications",
@@ -184,14 +197,38 @@
               "guides/live-session-delivery",
               "guides/team-roster",
               "guides/a2a-public-edge",
+              "guides/files-organize",
               "guides/calls-and-texts",
               "guides/voice",
+              "guides/meetings",
               "guides/mcp-apps-status",
               "guides/mcp-events",
               "guides/connected-apps",
+              "guides/apps-with-access",
+              "guides/claude-organization",
               "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
+          },
+          {
+            "group": "Runtimes, brains and bots",
+            "pages": [
+              "concepts/agent-model",
+              "concepts/control-layer",
+              "concepts/system-layers",
+              "guides/runtimes",
+              "guides/runtime-views",
+              "guides/brains-and-access",
+              "guides/agent-card",
+              "guides/connected-bots",
+              "guides/how-connected-bots-connect",
+              "guides/local-connected-bots",
+              "guides/connected-bots-use-your-phone",
+              "guides/keep-connected-bots-online",
+              "guides/connected-bots-on-the-phone",
+              "guides/connect-from-chat"
+            ],
+            "icon": "/icons/agent.svg"
           },
           {
             "group": "Code mode",
@@ -210,6 +247,7 @@
               "architecture",
               "architecture/dependency-map",
               "architecture/facility-workspace",
+              "architecture/facility-campus",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
               "architecture/group-room-brief",
@@ -269,7 +307,8 @@
             "pages": [
               "architecture/context-memory/overview",
               "architecture/context-memory/projections",
-              "architecture/context-memory/memory"
+              "architecture/context-memory/memory",
+              "architecture/context-memory/sleep"
             ],
             "icon": "/icons/document.svg"
           },
@@ -353,6 +392,8 @@
               "build-on-allternit/verifier",
               "build-on-allternit/policy",
               "build-on-allternit/executor",
+              "build-on-allternit/add-a-connection",
+              "build-on-allternit/add-a-runtime",
               "build-on-allternit/conformance-checklist"
             ],
             "icon": "/icons/code.svg"
@@ -367,10 +408,18 @@
               "operations/owned-downloads",
               "operations/screen-capture",
               "operations/hosted-driver",
+              "operations/brain-runner",
+              "operations/compute-providers",
+              "operations/cloud-computer-network",
               "operations/upstream-funding",
+              "operations/claude-linked-billing",
               "operations/database-migrations",
+              "operations/store-billing",
+              "operations/cloud-api-edge",
+              "operations/platform-test-projects",
               "operations/mail-triage-eval",
-              "internal/channel-apps-owner-setup"
+              "internal/channel-apps-owner-setup",
+              "internal/api-build-speed"
             ],
             "icon": "/icons/screen.svg"
           },
@@ -382,7 +431,9 @@
               "reference/error-codes",
               "reference/status-enums",
               "reference/glossary",
-              "reference/changelog"
+              "reference/changelog",
+              "dev/computers-console-contract",
+              "dev/computer-pairing"
             ],
             "icon": "/icons/book.svg"
           },
@@ -390,6 +441,7 @@
             "group": "Core Concepts",
             "pages": [
               "core/gizzi-runtime",
+              "core/system-prompts",
               "core/gizzi-core",
               "core/communication",
               "core/memory-fabric",
@@ -421,8 +473,13 @@
               "cli/installation",
               "cli/configuration",
               "cli/models",
+              "cli/studio",
               "cli/authentication",
+              "cli/connect",
+              "cli/runtime",
+              "cli/bot",
               "cli/headless-execution",
+              "cli/background-runs",
               "cli/output",
               "cli/permission-profiles",
               "cli/skills",
@@ -434,12 +491,14 @@
               "cli/native-sessions",
               "cli/continue-anywhere",
               "cli/work",
+              "cli/files",
               "cli/tasks",
               "cli/doctor",
               "cli/status",
               "cli/context",
               "cli/code-intelligence",
               "cli/usage",
+              "cli/autopilot",
               "cli/keyboard-shortcuts",
               "cli/plan",
               "cli/ci-mode",
@@ -455,9 +514,19 @@
               "tools/overview",
               "tools/tool-belt",
               "tools/artifact-tools",
+              "tools/current-time",
+              "tools/automation",
+              "tools/lookup",
+              "tools/send-user-message",
+              "tools/ask-user-later",
+              "tools/memory",
+              "tools/past-chats",
+              "tools/resources",
               "tools/project-status",
               "tools/mdx-graphs",
               "tools/mcp",
+              "tools/connectors",
+              "tools/settings",
               "tools/computer-use",
               "tools/computer-toolset",
               "tools/allternit-driver",
@@ -465,6 +534,11 @@
               "tools/computer-use-suite",
               "tools/computer-use-decisions",
               "tools/computer-safety",
+              "tools/computer-access",
+              "tools/action-review",
+              "tools/pane-browser",
+              "tools/browser-tasks",
+              "tools/screen-context",
               "tools/computer-use-replay",
               "tools/computer-parallel",
               "tools/computer-credentials",
@@ -472,11 +546,32 @@
               "tools/build-a-tool",
               "tools/plugin-adapters",
               "tools/sandbox",
+              "tools/untrusted-content",
+              "tools/worktree",
+              "tools/second-opinion",
+              "tools/pr-comments",
+              "tools/status-update",
+              "tools/feedback-note",
+              "tools/user-location",
+              "tools/voice-control",
+              "tools/end-conversation",
               "tools/server-tools",
               "tools/agent-swarm",
+              "tools/agent-control",
+              "tools/tool-search",
+              "tools/context-remaining",
+              "tools/task-list",
+              "tools/agent-batch",
+              "tools/sleep",
               "tools/gateway",
               "tools/etrid",
               "tools/local-engine",
+              "tools/freeweights",
+              "guides/run-models-on-device",
+              "guides/run-models-in-your-browser",
+              "guides/run-models-on-android",
+              "guides/run-models-on-desktop-and-iphone",
+              "guides/use-models-on-your-other-devices",
               "tools/voice",
               "tools/voice-calls",
               "tools/phone-number-sync",
@@ -557,9 +652,28 @@
             "icon": "/icons/stack.svg"
           },
           {
+            "group": "Self-Hosted Agents",
+            "pages": [
+              "self-hosted/overview",
+              "self-hosted/quickstart",
+              "self-hosted/configuration",
+              "self-hosted/workers",
+              "self-hosted/auth",
+              "self-hosted/models",
+              "self-hosted/networking",
+              "self-hosted/observability",
+              "self-hosted/operations",
+              "self-hosted/client-apps",
+              "self-hosted/sdks",
+              "self-hosted/api-reference"
+            ],
+            "icon": "/icons/shield.svg"
+          },
+          {
             "group": "Surfaces",
             "pages": [
               "surfaces/desktop",
+              "surfaces/desktop-linux",
               "surfaces/context-window",
               "surfaces/sign-in",
               "surfaces/public-embed",
@@ -613,6 +727,9 @@
               "guides/token-budgets",
               "guides/allternit-cloud-quickstart",
               "guides/credits-and-auto-top-up",
+              "guides/plan-renewal-and-cancellation",
+              "guides/computer-pricing",
+              "guides/credits-computer",
               "guides/webhooks",
               "guides/webhook-triggers",
               "guides/channel-events-and-connect-api",
@@ -621,9 +738,15 @@
               "guides/voice-call-runtime-routes",
               "guides/custom-voices",
               "guides/attachments",
+              "guides/analyze-files",
+              "guides/files-sharing",
+              "guides/files-keys",
               "guides/chat-composer",
               "guides/chat-sessions",
+              "guides/share-a-thread",
               "guides/interactive-answers",
+              "guides/learning-mode",
+              "guides/autonomy-modes",
               "reference/answer-template-contract",
               "guides/write-in-my-style",
               "guides/share-location",
@@ -663,6 +786,7 @@
                 "pages": [
                   "api/overview",
                   "api/cloud-api",
+                  "api/studio",
                   "api/phone-numbers",
                   "api/phone-invites",
                   "api/people",
@@ -691,6 +815,7 @@
                 "pages": [
                   "api/providers",
                   "api/open-lane",
+                  "api/model-host-relay",
                   "api/data-retention",
                   "api/embeddings",
                   "api/images",
@@ -701,7 +826,8 @@
                   "api/estimates",
                   "api/proxy",
                   "api/translate",
-                  "api/local-engine"
+                  "api/local-engine",
+                  "api/on-device-models"
                 ]
               },
               {
@@ -712,6 +838,7 @@
                   "api/agents-v1",
                   "api/agent-operations",
                   "api/agent-runtimes",
+                  "api/runtimes",
                   "api/agent-workspaces",
                   "api/agent-preferences",
                   "api/subagent-types",
@@ -722,6 +849,7 @@
                   "api/memory-stores",
                   "api/memory",
                   "api/memory-drive",
+                  "api/memory-sleep",
                   "api/bot-hub",
                   "api/page-agents",
                   "api/local-brains",
@@ -746,13 +874,18 @@
                 "group": "Files, Webhooks & Sandbox",
                 "pages": [
                   "api/files",
+                  "api/files-drive",
+                  "api/files-drive-runtime",
+                  "api/files-drive-cloud",
+                  "api/files-drive-models",
                   "api/workspace-files",
                   "api/webhooks",
                   "api/webhook-subscriptions",
                   "api/slack-webhooks",
                   "api/sandbox",
                   "api/sandbox-templates",
-                  "api/uploads"
+                  "api/uploads",
+                  "api/files-drive-inbox"
                 ]
               },
               {
@@ -762,9 +895,11 @@
                   "api/connectors",
                   "api/tools",
                   "api/office",
+                  "api/floor",
                   "api/office-engine",
                   "api/voice",
                   "api/voice-tickets",
+                  "api/voice-keys",
                   "api/voice-recordings",
                   "api/files",
                   "api/server-tools",
@@ -784,6 +919,7 @@
                   "api/agent-chat",
                   "api/subscription-gateway",
                   "api/connections",
+                  "api/meetings",
                   "api/conversations",
                   "api/artifacts",
                   "api/artifacts-v2",
@@ -810,6 +946,8 @@
                   "api/web-proxy",
                   "api/usage",
                   "api/cloud-billing",
+                  "api/account-compute-status",
+                  "api/account-projects",
                   "api/analytics",
                   "api/audit-logs",
                   "api/runtime-backend",
@@ -821,6 +959,7 @@
                   "api/workspaces",
                   "api/har",
                   "api/oauth",
+                  "api/oauth-apps",
                   "api/pricing",
                   "api/backend-install",
                   "api/brain-git",
@@ -838,12 +977,6 @@
                 "group": "Onboarding",
                 "pages": [
                   "api/onboarding"
-                ]
-              },
-              {
-                "group": "A Labs",
-                "pages": [
-                  "api/alabs"
                 ]
               },
               {
@@ -916,7 +1049,7 @@
             "group": "Guides",
             "pages": [
               "plugins/guides/selling",
-              "plugins/guides/vendor-packs",
+              "plugins/guides/bot-packs",
               "plugins/guides/porting",
               "plugins/guides/troubleshooting"
             ],
@@ -935,6 +1068,31 @@
       {
         "tab": "API Reference",
         "groups": [
+          {
+            "group": "Console",
+            "pages": [
+              "console/projects",
+              "console/playground",
+              "console/models-and-pricing",
+              "console/usage-and-logs",
+              "console/governance",
+              "console/navigation",
+              "console/approvals-and-decisions"
+            ],
+            "icon": "/icons/code.svg"
+          },
+          {
+            "group": "Platform API reference",
+            "openapi": "api-reference/platform-v1.yaml"
+          },
+          {
+            "group": "Inference API reference",
+            "openapi": "api-reference/inference-v1.yaml"
+          },
+          {
+            "group": "Self-Hosted Agents API reference",
+            "openapi": "api-reference/selfhost-v1.yaml"
+          },
           {
             "group": "Platform API",
             "pages": [
@@ -1069,29 +1227,65 @@
       "destination": "/factory/migration"
     },
     {
-      "source": "/cli/runtime",
-      "destination": "/factory/agents"
-    },
-    {
       "source": "/api/orchestrator",
       "destination": "/factory/api-reference"
+    },
+    {
+      "source": "/guides/vendor-bots",
+      "destination": "/guides/connected-bots"
+    },
+    {
+      "source": "/guides/how-vendor-bots-connect",
+      "destination": "/guides/how-connected-bots-connect"
+    },
+    {
+      "source": "/guides/local-vendor-bots",
+      "destination": "/guides/local-connected-bots"
+    },
+    {
+      "source": "/guides/keep-vendor-bots-online",
+      "destination": "/guides/keep-connected-bots-online"
+    },
+    {
+      "source": "/guides/vendor-bots-on-the-phone",
+      "destination": "/guides/connected-bots-on-the-phone"
+    },
+    {
+      "source": "/guides/vendor-bots-use-your-phone",
+      "destination": "/guides/connected-bots-use-your-phone"
+    },
+    {
+      "source": "/guides/connect-vendor-from-chat",
+      "destination": "/guides/connect-from-chat"
+    },
+    {
+      "source": "/plugins/guides/vendor-packs",
+      "destination": "/plugins/guides/bot-packs"
     }
   ],
   "footer": {
     "socials": {
       "x": "https://x.com/allternit",
       "github": "https://github.com/Allternit",
-      "youtube": "https://www.youtube.com/@allternit",
-      "linkedin": "https://www.linkedin.com/in/allternit-llc"
+      "youtube": "https://www.youtube.com/@allternit"
     }
   },
   "fonts": {
     "heading": {
       "family": "Newsreader",
-      "weight": 500
+      "weight": 500,
+      "source": "/fonts/newsreader-latin.woff2",
+      "format": "woff2"
     },
     "body": {
-      "family": "Inter"
+      "family": "Inter",
+      "source": "/fonts/inter-latin.woff2",
+      "format": "woff2"
+    }
+  },
+  "api": {
+    "playground": {
+      "display": "interactive"
     }
   }
 }

@@ -2,7 +2,8 @@
  * Minimal Allternit API client for the platform console.
  *
  * Uses the gateway at VITE_ALLTERNIT_GATEWAY_URL (default https://api.allternit.com).
- * Bearer tokens are set from the Clerk session sync in PlatformAuthProvider.
+ * Bearer tokens come from the Clerk token provider registered by
+ * PlatformAuthProvider, called on every request (see TokenProvider).
  *
  * Phase 2 extension — `stream()`:
  * The `/v1/*` LLM gateway accepts `stream: true` on chat completions and
@@ -29,6 +30,47 @@ export class AllternitApiError extends Error {
   }
 }
 
+/**
+ * cloud-api answers relayed (data-plane) routes with HTTP 428
+ * PRECONDITION_REQUIRED when the account has no paired node. The client maps
+ * that to `code: "no_runtime"` and this message, so any page that prints
+ * `formatApiError(err)` shows a readable sentence instead of the raw code,
+ * and pages can swap in <NoRuntimeState /> via `isNoRuntime(error)`.
+ */
+export const NO_RUNTIME_CODE = 'no_runtime';
+export const NO_RUNTIME_MESSAGE =
+  'No computer is connected. Pair your Mac, PC or a cloud computer to run agents, sessions and vaults.';
+
+/** True for a 428 no-runtime error, or the string formatApiError made from one. */
+export function isNoRuntime(err: unknown): boolean {
+  if (err instanceof AllternitApiError) {
+    return err.code === NO_RUNTIME_CODE || err.statusCode === 428;
+  }
+  if (typeof err === 'string') return err === NO_RUNTIME_MESSAGE;
+  if (err instanceof Error) return err.message === NO_RUNTIME_MESSAGE;
+  return false;
+}
+
+async function toApiError(response: Response): Promise<AllternitApiError> {
+  const errorData = await response.json().catch(() => ({}));
+  // Platform API errors nest as { error: { type, code, message, param } }.
+  const nested = errorData.error && typeof errorData.error === 'object' ? errorData.error : null;
+  const message =
+    (nested ? nested.message : errorData.error) || errorData.message || `HTTP ${response.status}`;
+  if (response.status === 428) {
+    return new AllternitApiError(NO_RUNTIME_MESSAGE, 428, NO_RUNTIME_CODE, {
+      ...(errorData.details ?? {}),
+      server_message: message,
+    });
+  }
+  return new AllternitApiError(
+    message,
+    response.status,
+    (nested ? nested.code : undefined) ?? errorData.code,
+    errorData.details
+  );
+}
+
 export function formatApiError(err: unknown, fallback: string): string {
   if (err instanceof AllternitApiError) return err.message;
   if (err instanceof Error) {
@@ -40,55 +82,70 @@ export function formatApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-class AllternitApiClient {
+/**
+ * A token provider is called on every request. Clerk's `session.getToken()`
+ * caches and refreshes the JWT itself, so the client never holds its own copy
+ * (a held copy goes stale: Clerk tokens live 60 s and background tabs throttle
+ * timers). `skipCache: true` asks for a newly minted token after a 401.
+ */
+export type TokenProvider = (options?: { skipCache?: boolean }) => Promise<string | null>;
+
+function hasAuthorizationHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization');
+}
+
+export class AllternitApiClient {
+  /** Static bearer set on purpose by a non-Clerk caller; used only when no provider is registered. */
   private token: string | null = null;
-  private tokenProvider: (() => Promise<string | null>) | null = null;
-  private authPromise: Promise<string | null> | null = null;
-  private authResolve: ((token: string | null) => void) | null = null;
+  private tokenProvider: TokenProvider | null = null;
+  /** Resolves once a token or provider is registered, so early requests wait for auth. */
+  private authReady: Promise<void> | null = null;
+  private authReadyResolve: (() => void) | null = null;
 
   constructor() {
-    this.resetAuthPromise();
+    this.resetAuthReady();
   }
 
-  private resetAuthPromise(): void {
-    this.authPromise = new Promise((resolve) => {
-      this.authResolve = resolve;
+  private resetAuthReady(): void {
+    this.authReady = new Promise((resolve) => {
+      this.authReadyResolve = resolve;
     });
   }
 
-  private flushAuth(token: string | null): void {
-    if (this.authResolve) {
-      this.authResolve(token);
-      this.authResolve = null;
+  private signalAuthReady(): void {
+    if (this.authReadyResolve) {
+      this.authReadyResolve();
+      this.authReadyResolve = null;
     }
   }
 
   setToken(token: string): void {
     this.token = token;
-    this.flushAuth(token);
+    this.signalAuthReady();
   }
 
   clearToken(): void {
     this.token = null;
-    this.resetAuthPromise();
+    if (!this.tokenProvider) this.resetAuthReady();
   }
 
-  setTokenProvider(provider: () => Promise<string | null>): void {
+  setTokenProvider(provider: TokenProvider): void {
     this.tokenProvider = provider;
-    void provider().then((token) => {
-      if (token) this.token = token;
-      this.flushAuth(token);
-    });
+    this.signalAuthReady();
   }
 
   clearTokenProvider(): void {
     this.tokenProvider = null;
-    this.flushAuth(null);
-    this.resetAuthPromise();
+    if (!this.token) {
+      // Release anyone waiting so they fail fast instead of hanging, then
+      // arm a new wait for the next sign-in.
+      this.signalAuthReady();
+      this.resetAuthReady();
+    }
   }
 
   isAuthenticated(): boolean {
-    return !!this.token;
+    return !!this.tokenProvider || !!this.token;
   }
 
   private gatewayBase(): string {
@@ -96,19 +153,72 @@ class AllternitApiClient {
     return String(configured).replace(/\/+$/, '');
   }
 
+  private async currentToken(): Promise<string | null> {
+    if (this.tokenProvider) {
+      try {
+        return await this.tokenProvider();
+      } catch {
+        return null;
+      }
+    }
+    return this.token;
+  }
+
   private async resolveToken(): Promise<string | null> {
-    if (this.token) return this.token;
-    if (this.tokenProvider) return this.tokenProvider();
+    if (this.tokenProvider || this.token) return this.currentToken();
     // The auth provider may not have mounted yet. Wait briefly for a token
     // or provider to be registered before sending an unauthenticated request.
-    if (this.authPromise) {
+    if (this.authReady) {
       const timeoutMs = Number(import.meta.env.VITE_ALLTERNIT_AUTH_TIMEOUT_MS || 3000);
-      const timeout = new Promise<string | null>((resolve) =>
-        window.setTimeout(() => resolve(null), timeoutMs)
-      );
-      return Promise.race([this.authPromise, timeout]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      });
+      await Promise.race([this.authReady, timeout]);
+      if (timer !== undefined) clearTimeout(timer);
+      return this.currentToken();
     }
     return null;
+  }
+
+  /**
+   * fetch with the session bearer. A caller-supplied Authorization header
+   * (e.g. an `ak-…` virtual key) is sent as-is and never retried. When the
+   * bearer came from the token provider and the server answers 401, retry
+   * once with a freshly minted token before surfacing the error.
+   */
+  private async authedFetch(
+    url: string,
+    init: RequestInit,
+    baseHeaders: Record<string, string>
+  ): Promise<Response> {
+    const callerHeaders = (init.headers as Record<string, string>) || {};
+    const send = (token: string | null) =>
+      fetch(url, {
+        ...init,
+        headers: {
+          ...baseHeaders,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...callerHeaders,
+        },
+      });
+
+    if (hasAuthorizationHeader(callerHeaders)) return send(null);
+
+    const token = await this.resolveToken();
+    const response = await send(token);
+    const provider = this.tokenProvider;
+    if (response.status !== 401 || !token || !provider) return response;
+
+    let fresh: string | null = null;
+    try {
+      fresh = await provider({ skipCache: true });
+    } catch {
+      fresh = null;
+    }
+    if (!fresh) return response;
+    response.body?.cancel().catch(() => undefined);
+    return send(fresh);
   }
 
   private async request<T>(
@@ -118,36 +228,24 @@ class AllternitApiClient {
     options: RequestInit = {}
   ): Promise<T> {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    const token = await this.resolveToken();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers as Record<string, string> || {}),
-    };
 
     const controller = new AbortController();
     const timeoutMs = Number(import.meta.env.VITE_ALLTERNIT_API_TIMEOUT_MS || 15000);
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    const response = await fetch(`${this.gatewayBase()}${normalizedPath}`, {
-      ...options,
-      method,
-      headers,
-      signal: controller.signal,
-      ...(body && method !== 'GET' ? { body: JSON.stringify(body) } : {}),
-    }).finally(() => window.clearTimeout(timeoutId));
+    const response = await this.authedFetch(
+      `${this.gatewayBase()}${normalizedPath}`,
+      {
+        ...options,
+        method,
+        signal: controller.signal,
+        ...(body && method !== 'GET' ? { body: JSON.stringify(body) } : {}),
+      },
+      { 'Content-Type': 'application/json', Accept: 'application/json' }
+    ).finally(() => clearTimeout(timeoutId));
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      // Platform API errors nest as { error: { type, code, message, param } }.
-      const nested = errorData.error && typeof errorData.error === 'object' ? errorData.error : null;
-      throw new AllternitApiError(
-        (nested ? nested.message : errorData.error) || errorData.message || `HTTP ${response.status}`,
-        response.status,
-        (nested ? nested.code : undefined) ?? errorData.code,
-        errorData.details
-      );
+      throw await toApiError(response);
     }
 
     if (response.status === 204) {
@@ -179,15 +277,8 @@ class AllternitApiClient {
 
   async raw(path: string, options: RequestInit = {}): Promise<Response> {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    const token = await this.resolveToken();
-    const headers: Record<string, string> = {
+    return this.authedFetch(`${this.gatewayBase()}${normalizedPath}`, options, {
       Accept: 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers as Record<string, string> || {}),
-    };
-    return fetch(`${this.gatewayBase()}${normalizedPath}`, {
-      ...options,
-      headers,
     });
   }
 
@@ -207,35 +298,25 @@ class AllternitApiClient {
   ): AsyncGenerator<T> {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const method = (options.method as string | undefined) ?? 'POST';
-    const token = await this.resolveToken();
-    const headers: Record<string, string> = {
-      Accept: 'text/event-stream',
-      ...(method === 'GET'
-        ? {}
-        : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers as Record<string, string> || {}),
-    };
-
-    const response = await fetch(`${this.gatewayBase()}${normalizedPath}`, {
-      ...options,
-      method,
-      headers,
-      body:
-        method === 'GET' || body === undefined
-          ? undefined
-          : JSON.stringify(body),
-      signal: options.signal ?? null,
-    });
+    const response = await this.authedFetch(
+      `${this.gatewayBase()}${normalizedPath}`,
+      {
+        ...options,
+        method,
+        body:
+          method === 'GET' || body === undefined
+            ? undefined
+            : JSON.stringify(body),
+        signal: options.signal ?? null,
+      },
+      {
+        Accept: 'text/event-stream',
+        ...(method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
+      }
+    );
 
     if (!response.ok || !response.body) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new AllternitApiError(
-        errorData.error || errorData.message || `HTTP ${response.status}`,
-        response.status,
-        errorData.code,
-        errorData.details
-      );
+      throw await toApiError(response);
     }
 
     const reader = response.body.getReader();

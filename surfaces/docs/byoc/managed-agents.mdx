@@ -7,6 +7,10 @@ description: 'Run Allternit agents on a runtime you control'
 **Status:** Implementation IMPLEMENTED (pairing and relay) × Exposure PUBLIC PREVIEW. Earlier versions of this page described `allternit-runtime register`, `POST /v1/deployments` with `runtime_type: "byoc"`, a `deployment_id` on agents, `GET /v1/deployments/{id}/runs`, and mTLS daemon auth. None of these exist on main.
 </Note>
 
+<Tip>
+**Need no Allternit account and no relay?** [Self-Hosted Agents](/self-hosted/overview) (private beta) is a separate product: you run the whole agent server, its PostgreSQL state and the sandbox workers yourself. Clients call your server directly, there is no pairing or WSS relay, and the server makes no calls to `*.allternit.com`. The only outside call is to your model provider.
+</Tip>
+
 ## What actually happens
 
 Agents are records on the Allternit API ([Agents API](/api/agents)). When you pair a node ([BYOC Overview](/byoc/overview)), the Cloud API relays agent-session, office and beta calls to that node over an outbound WebSocket, so the agent runs on your data plane against its SQLite state and the local Gizzi runtime (`:4096`).
@@ -16,6 +20,10 @@ Browser / SDK  --HTTPS-->  Cloud API  --WSS relay-->  agent-daemon --> allternit
 ```
 
 There is no per-agent binding to a deployment. Routing is per paired runtime: relayed routes go to your paired, online node, and return HTTP 428 if none is available.
+
+## Before a device is paired
+
+Until a node is paired, the Cloud API has nowhere to run agents, sessions, vaults, memory or deployments. These calls answer `428 PRECONDITION_REQUIRED` with the message "No data-plane node registered for this account". In the console, those pages show a "Managed Agents run on a computer you connect" card with **Connect a device** and **Docs** instead of an error. Pair your Mac, PC or a cloud computer and the pages fill in.
 
 ## Steps
 

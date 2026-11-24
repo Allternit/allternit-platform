@@ -185,8 +185,9 @@ Important:
 - Available skills are listed in system-reminder messages in the conversation
 - When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task
 - NEVER mention a skill without actually calling this tool
-- Do not invoke a skill that is already running
-- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)
+- Only skills in the listing are valid names. Never guess a name
+- Do not invoke a skill that is already running, and do not reload a skill that is already loaded this turn
+- Built-in commands (like /help or /clear) are not skills. Do not use this tool for them
 - If you see a <${COMMAND_NAME_TAG}> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again
 `
 })

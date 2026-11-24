@@ -52,7 +52,7 @@ object UiTree {
             .put("bounds", JSONObject().put("x", n.bounds.left).put("y", n.bounds.top)
                 .put("width", n.bounds.width).put("height", n.bounds.height))
             .put("clickable", n.clickable).put("editable", n.editable).put("focused", n.focused)
-            .put("scrollable", n.scrollable).put("enabled", n.enabled).put("visible", n.visibleToUser)
+            .put("checkable", n.checkable).put("scrollable", n.scrollable).put("enabled", n.enabled).put("visible", n.visibleToUser)
         if (n.checkable) o.put("checked", n.checked)
         if (n.hint != null) o.put("hint", n.hint)
         if (n.windowType != null) o.put("window_type", n.windowType)

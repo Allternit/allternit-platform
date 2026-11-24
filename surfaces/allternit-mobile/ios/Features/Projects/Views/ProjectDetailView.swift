@@ -23,6 +23,8 @@ struct ProjectDetailView: View {
     let onNewChat: (CoworkProject) -> Void
     /// Tapping a chat row opens it in Home.
     let onOpenChat: (AgentSession) -> Void
+    /// A new project made with "Cover and pad": opens the cover editor on arrival.
+    var opensLook = false
 
     @StateObject private var projectStore = ProjectStore.shared
     @ObservedObject private var library = ProjectsLibraryStore.shared
@@ -50,6 +52,11 @@ struct ProjectDetailView: View {
     @State private var statusRecord: ProjectStatusRecord? = nil
     @StateObject private var looks: ProjectLookStore
     @ObservedObject private var backdrops = StageBackdropStore.shared
+    // The project pad (tab card, Pad | List, edit sheet). `looks` stays for
+    // projects that still draw an old Style, and for the Customize sheet.
+    @StateObject private var padStore: ProjectPadStore
+    @ObservedObject private var padTemplates = PadTemplatesStore.shared
+    @State private var folderAppearance: Appearance? = nil
 
     // The project's coordinator (project-workspaces): registered on first use.
     @State private var coordinatorId: String? = nil
@@ -77,7 +84,7 @@ struct ProjectDetailView: View {
     }
 
     private enum DetailSheet: String, Identifiable {
-        case customize, settings, edit, memory, status
+        case customize, settings, edit, memory, status, padEdit
         var id: String { rawValue }
     }
 
@@ -86,9 +93,18 @@ struct ProjectDetailView: View {
 
     init(project: CoworkProject,
          onNewChat: @escaping (CoworkProject) -> Void,
-         onOpenChat: @escaping (AgentSession) -> Void) {
+         onOpenChat: @escaping (AgentSession) -> Void,
+         opensLook: Bool = false) {
         self.project = project
+        self.opensLook = opensLook
         _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
+        // Chat projects are the web's cowork projects (`project:cowork:<id>`);
+        // a look an older build saved under `project:chat:<id>` is converted once.
+        _padStore = StateObject(wrappedValue: ProjectPadStore(
+            scope: ProjectPadStore.scope(mode: "cowork", id: project.id),
+            mode: .chat,
+            legacyLookScopes: ["project:chat:\(project.id)"],
+            defaultTemplate: PadTemplatesStore.shared.loaded ? PadTemplatesStore.shared.defaultTemplate(for: .chat) : nil))
         self.onNewChat = onNewChat
         self.onOpenChat = onOpenChat
         _instructions = State(initialValue: project.instructions ?? "")
@@ -123,7 +139,7 @@ struct ProjectDetailView: View {
                                 .foregroundColor(Theme.statusWarning)
                         }
                         if section == .overview {
-                            ProjectDashboardView(layout: looks.look.layout, look: looks.look, data: boardData, title: liveProject.title) { sheet = .status }
+                            projectPadCard
                             if chats.isEmpty && serverThreads.isEmpty { overviewIntro }
                             if !messages.isEmpty {
                                 ProjectConversationView(
@@ -208,6 +224,16 @@ struct ProjectDetailView: View {
             selectedPhotoItems = []
         }
         .task {
+            padStore.load()
+            if opensLook, sheet == nil { Haptics.light(); sheet = .customize }
+            if !padTemplates.loaded && !padTemplates.loading { padTemplates.load() }
+            folderAppearance = try? await AppearanceClient(client: .shared).appearance(key: AppearanceClient.projectKey(mode: "cowork", id: project.id))
+        }
+        .onChange(of: padTemplates.doc) { _, _ in
+            padStore.setDefaultTemplate(padTemplates.loaded ? padTemplates.defaultTemplate(for: .chat) : nil)
+        }
+        .onDisappear { Task { await padStore.flush() } }
+        .task {
             await loadFiles()
             await loadChats()
             coordinatorId = try? await BotProjectClient.shared.workspaceProjectId(key: workspaceKey)
@@ -225,10 +251,14 @@ struct ProjectDetailView: View {
     private func sheetContent(_ which: DetailSheet) -> some View {
         switch which {
         case .customize:
-            ProjectCustomizeSheet(store: looks, data: boardData, title: liveProject.title, scope: scope,
-                                  backdropColors: StageBackdrops.sampleColors) {
+            FolderLookSheet(
+                title: liveProject.title, mode: "chat",
+                key: AppearanceClient.projectKey(mode: "cowork", id: project.id),
+                initial: folderAppearance,
+                onSaved: { folderAppearance = $0 }
+            ) {
                 Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
-            } manage: {
+                Button("Edit pad") { sheet = .padEdit }.frame(minHeight: 44)
                 Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
                 if let libraryRow {
                     Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
@@ -241,12 +271,18 @@ struct ProjectDetailView: View {
                                  placeholder: "How should the coordinator manage this project?")
                 .onDisappear { projectStore.fetchProjectsIfNeeded(force: true) }
         case .edit:
-            ProjectEditDetailsSheet(title: liveProject.title, details: liveProject.description ?? "") { title, details in
+            ProjectDetailSettingsSheet(
+                title: liveProject.title, details: liveProject.description ?? "",
+                appearance: folderAppearance,
+                onCoverAndPad: { sheet = .customize }
+            ) { title, details in
                 try await BotProjectClient.shared.saveDetails(projectId: project.id, title: title, description: details)
                 projectStore.fetchProjectsIfNeeded(force: true)
             }
         case .memory:
             ProjectMemorySheet(sessionIds: memorySessionIds)
+        case .padEdit:
+            PadEditSheet(store: padStore, templates: padTemplates, isStyle: padStore.pad.layout.style != nil)
         case .status:
             ProjectStatusSheet(projectId: coordinatorId ?? project.id) { projectStore.fetchProjectsIfNeeded(force: true) }
         }
@@ -366,6 +402,35 @@ struct ProjectDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Customize")
         }
+    }
+
+    // MARK: - Pad
+
+    private var padThreads: [PadThread] {
+        let fromChats = chats.map { chat in
+            PadThread(id: chat.id, title: chat.name ?? "Chat", at: ProjectBoardData.date(chat.updatedAt), open: { onOpenChat(chat) })
+        }
+        let fromBot = serverThreads.filter { !$0.incognito }.map { t in
+            PadThread(id: t.id, title: t.title, at: ProjectBoardData.date(t.lastActivityAt), open: { navigator.openThread(t) })
+        }
+        return fromChats + fromBot
+    }
+
+    /// The tab card (folder tab, mode, Needs-you bar, Pad | List, Edit).
+    private var projectPadCard: some View {
+        let data = boardData
+        return ProjectPadCard(
+            store: padStore,
+            looks: looks,
+            data: data,
+            threads: padThreads,
+            title: liveProject.title,
+            modeLabel: "Chat project",
+            colorHex: folderAppearance?.color ?? Appearance.defaultColor,
+            onEdit: { sheet = .padEdit },
+            onNeeds: { (data.needsYou.first?.open ?? { sheet = .status })() },
+            onStatus: { sheet = .status }
+        )
     }
 
     private var boardData: ProjectBoardData {
@@ -564,8 +629,7 @@ struct ProjectDetailView: View {
 
     private func addButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             VStack(spacing: 8) {
@@ -633,8 +697,7 @@ struct ProjectDetailView: View {
                 }
             } else {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isEditingInstructions = true
                 }) {
                     Text(liveProject.instructions ?? "")
@@ -743,8 +806,7 @@ struct ProjectDetailView: View {
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onNewChat(liveProject)
                 }) {
                     HStack(spacing: 6) {
@@ -773,8 +835,7 @@ struct ProjectDetailView: View {
                 VStack(spacing: 8) {
                     ForEach(chats) { session in
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             onOpenChat(session)
                         }) {
                             HStack(spacing: 12) {
@@ -910,6 +971,106 @@ struct ProjectDetailView: View {
                 files.removeAll { $0.id == file.id }
             } catch {
                 filesError = "Couldn't remove \(file.name): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+
+// MARK: - Project settings sheet (phone calm step 27)
+
+/// Name and description with the folder cover on top, ✕ left / ✓ right, and a
+/// "Cover and pad" row that opens the existing cover and pad editor.
+private struct ProjectDetailSettingsSheet: View {
+    let appearance: Appearance?
+    let onCoverAndPad: () -> Void
+    let onSave: @MainActor (String, String) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var details: String
+    @State private var saving = false
+    @State private var error: String?
+
+    init(title: String, details: String, appearance: Appearance?,
+         onCoverAndPad: @escaping () -> Void,
+         onSave: @escaping @MainActor (String, String) async throws -> Void) {
+        self.appearance = appearance
+        self.onCoverAndPad = onCoverAndPad
+        self.onSave = onSave
+        _title = State(initialValue: title)
+        _details = State(initialValue: details)
+    }
+
+    private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Spacer()
+                        FolderCoverView(title: trimmedTitle.isEmpty ? "Project" : trimmedTitle, mode: "chat",
+                                        appearance: appearance, width: 110, flat: true)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Folder cover for \(trimmedTitle)")
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                Section {
+                    Button {
+                        Haptics.light()
+                        onCoverAndPad()
+                    } label: {
+                        HStack {
+                            Text("Cover and pad")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .foregroundColor(Color("TextPrimary"))
+                }
+                Section("Name") {
+                    TextField("Name this project", text: $title)
+                }
+                Section("Description") {
+                    TextField("What is this project about?", text: $details, axis: .vertical)
+                        .lineLimit(3...8)
+                }
+                if let error {
+                    Text(error).font(.caption).foregroundColor(Theme.statusError)
+                }
+            }
+            .navigationTitle("Project settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { save() } label: { Image(systemName: "checkmark") }
+                        .accessibilityLabel("Save")
+                        .disabled(saving || trimmedTitle.isEmpty)
+                }
+            }
+        }
+        .onAppear { Haptics.light() }
+        .presentationDetents([.large])
+    }
+
+    private func save() {
+        saving = true
+        error = nil
+        Task {
+            defer { saving = false }
+            do {
+                try await onSave(trimmedTitle, details.trimmingCharacters(in: .whitespacesAndNewlines))
+                dismiss()
+            } catch {
+                self.error = "Couldn't save the project details. Try again."
             }
         }
     }

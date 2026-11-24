@@ -17,8 +17,10 @@
  *   `POST /api/v1/phones/app/:id/rpc`, which forwards them to the app's control
  *   socket while the app is open. 409 `app_not_open` when it isn't.
  *
- * Taps and swipes on other apps are not possible yet ("Taps on native apps
- * need the Bluetooth board"), so those tools answer `not_supported`.
+ * Taps and swipes on other apps go through a Phone Use tap route
+ * (phone-route.ts: iPhone Mirroring, or a Bluetooth keyboard from the Mac, an
+ * Android phone, a second iPhone/iPad or the USB Agent board). This lane has
+ * none of its own, so those tools answer `not_supported` here (APP_TAPS_MESSAGE).
  *
  * Everything that talks to the node is injected (AppPhoneNode), so the lane is
  * unit-tested with no phone and no node.
@@ -32,7 +34,18 @@ import { canonicalHash, type ApprovalGate, type ToolErrorCode, type ToolResult, 
 
 export const APP_SERIAL_PREFIX = 'app:';
 export const APP_PHONE_ROUTE = 'iphone-app-store';
-export const APP_TAPS_MESSAGE = 'Taps on native apps need the Bluetooth board';
+/** Listing route of an Android phone on the app-phone lane (the Allternit Android app). */
+export const ANDROID_APP_ROUTE = 'android-app';
+export type AppPlatform = 'ios' | 'android';
+
+/** What to tell the person while an app phone is not sharing its screen. */
+export const appWaitMessage = (platform: AppPlatform | undefined, name: string): string =>
+  platform === 'android' ? `Tap Start on ${name || 'your phone'} to share its screen.` : APP_SHARE_SCREEN_MESSAGE;
+/** The Desktop live view of an iPhone is watch-only (no viewer input on that lane). */
+export const IPHONE_LIVE_VIEW_MESSAGE = 'The live view of an iPhone is watch-only. Your assistant taps it through iPhone Mirroring or a Bluetooth keyboard (Settings > Computers > Phones).';
+/** Phone Use tap routes (contract §1), for the answer when none is set up. */
+export const APP_TAPS_MESSAGE =
+  'Taps in other apps need iPhone Mirroring on a Mac, or a Bluetooth keyboard from the Mac, an Android phone, a second iPhone or iPad, or the USB Agent board (Settings > Computers > Phones)';
 export const APP_SHARE_SCREEN_MESSAGE = 'Open the Allternit app on your iPhone and tap Share screen.';
 export const APP_NOT_OPEN_MESSAGE = 'Open the Allternit app on the iPhone. The bot can use its browser only while the app is open.';
 
@@ -65,6 +78,8 @@ const RPC_TIMEOUT_MS = 20_000;
 const MAX_GOP_UNITS = 240;
 const MAX_GOP_BYTES = 24 * 1024 * 1024;
 
+/** Reads a row's platform: only `android` is Android; everything else is an iPhone (older nodes send none). */
+export const appPlatformOf = (row: { platform?: unknown } | undefined): AppPlatform => (row?.platform === 'android' ? 'android' : 'ios');
 export const isAppSerial = (serial: unknown): boolean => typeof serial === 'string' && serial.startsWith(APP_SERIAL_PREFIX);
 export const appPhoneId = (serial: string): string => serial.slice(APP_SERIAL_PREFIX.length);
 
@@ -77,6 +92,28 @@ export interface AppPhoneRow {
   model: string;
   /** The broadcast extension's ingest socket is open (the screen is shared). */
   online: boolean;
+  /** `ios` (default for older nodes) or `android`. */
+  platform?: AppPlatform;
+  /** Android with Accessibility on and the app connected: viewer taps are accepted. */
+  canTap?: boolean;
+  /** Android screen-share consent as the app last reported it. */
+  consent?: string;
+  /** The app holds its control socket (it is open on the phone). */
+  appOpen?: boolean;
+  /** Device Access switches from the app's last state frame; absent on older nodes or while the app is closed. */
+  deviceAccess?: Record<string, boolean>;
+  /** Phone Use: a second iPhone or iPad in keyboard mode, and the iPhone it types for ('' = not certain). */
+  keyboardFor?: string;
+  /** Phone Use routes the node can see for this iPhone (contract §3.1 rows). */
+  routes?: unknown[];
+}
+
+/** What the node last heard from an iPhone's app, for the Phone Use official route's health (phone-route.ts). */
+export interface AppOfficialState {
+  appOpen: boolean;
+  /** The broadcast extension is sending (device.screen.read can run). */
+  screen: boolean;
+  deviceAccess: Record<string, boolean> | null;
 }
 
 export type AppRpcResult =
@@ -97,8 +134,12 @@ export interface AppPhoneNode {
   listPhones(): Promise<AppPhoneRow[]>;
   /** `POST /api/v1/phones/app/:id/rpc` with `{method, params}`. */
   rpc(phoneId: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult>;
-  /** Mints a read-only ws-token and opens `/ws/phones/:serial/stream`. */
-  openViewer(serial: string): Promise<AppViewerSocket>;
+  /**
+   * Mints a ws-token and opens `/ws/phones/:serial/stream`. Read-only by
+   * default. `readOnly:false` is gated by the ACI confirmation grant: pass
+   * `approve` (the owner's "Allow taps" click) to approve and present it.
+   */
+  openViewer(serial: string, opts?: { readOnly?: boolean; approve?: boolean }): Promise<AppViewerSocket>;
   /** `POST /api/v1/phones/app/pair/:phoneId/decision` with `{approve}`. */
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }>;
 }
@@ -115,8 +156,14 @@ interface ViewerEvents {
 }
 
 export interface AppViewerDeps {
+  /** Opens the read-only viewer socket. */
   open: () => Promise<AppViewerSocket>;
+  /** Android: opens a full-control socket after the owner's "Allow taps" click (the approval). */
+  openControl?: () => Promise<AppViewerSocket>;
   deviceName: string;
+  /** `android` phones take the owner's taps while `canTap()` is true; iPhones never do. */
+  platform?: AppPlatform;
+  canTap?: () => boolean;
   log?: (message: string) => void;
   startTimeoutMs?: number;
 }
@@ -126,8 +173,8 @@ export interface AppViewerDeps {
  * shape. Binary frames are plaintext iCTRL packets; CONFIG becomes the
  * stream meta (again on every change: rotation), FRAME the video chunks,
  * AUDIO_CONFIG/AUDIO the sound. ENDED (the person stopped sharing) and a
- * relay `{"type":"end"}` end the session. Input is refused: taps on other
- * apps need the Bluetooth board.
+ * relay `{"type":"end"}` end the session. Input from the iPhone live view is
+ * refused (IPHONE_LIVE_VIEW_MESSAGE): taps go through a Phone Use route.
  */
 export class AppPhoneViewerSession implements StreamSessionHandle {
   private listeners: { [K in keyof ViewerEvents]?: Array<ViewerEvents[K]> } = {};
@@ -163,22 +210,56 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
         this.rejectLive = reject;
       });
       void live.catch(() => undefined);
-      this.timer = setTimeout(() => this.fail(new Error(APP_SHARE_SCREEN_MESSAGE)), this.deps.startTimeoutMs ?? APP_START_TIMEOUT_MS);
+      this.timer = setTimeout(() => this.fail(new Error(appWaitMessage(this.deps.platform, this.deps.deviceName))), this.deps.startTimeoutMs ?? APP_START_TIMEOUT_MS);
       const socket = await this.deps.open();
       if (this.ended) {
         socket.close();
         throw new Error('closed');
       }
-      this.socket = socket;
-      socket.onMessage((data, isBinary) => this.onMessage(data, isBinary));
-      socket.onClose((_code, reason) => this.finish(reason || 'the iPhone stopped sharing its screen'));
-      socket.onError((error) => this.deps.log?.(`[app-screen ${this.deps.deviceName}] socket error: ${error.message}`));
+      this.attach(socket);
       await live;
     })().catch((error) => {
       this.finish(error instanceof Error ? error.message : String(error));
       throw error;
     });
     return this.startPromise;
+  }
+
+  private attach(socket: AppViewerSocket): void {
+    this.socket = socket;
+    // A replaced socket's close must not end the session.
+    socket.onMessage((data, isBinary) => { if (this.socket === socket) this.onMessage(data, isBinary); });
+    socket.onClose((_code, reason) => { if (this.socket === socket) this.finish(reason || 'the iPhone stopped sharing its screen'); });
+    socket.onError((error) => this.deps.log?.(`[app-screen ${this.deps.deviceName}] socket error: ${error.message}`));
+  }
+
+  /** True once the socket is full-control (requestControl succeeded). */
+  private controlOn = false;
+
+  /**
+   * Android: the owner clicked "Allow taps". Swap the read-only socket for a
+   * full-control one (the click is the approval the runtime's confirmation
+   * grant needs). The old socket closes only after the new one is open.
+   */
+  async requestControl(): Promise<{ ok: boolean; message?: string }> {
+    if (this.deps.platform !== 'android') return { ok: false, message: IPHONE_LIVE_VIEW_MESSAGE };
+    if (this.controlOn) return { ok: true };
+    if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
+    if (!this.deps.openControl) return { ok: false, message: 'Taps are not available here.' };
+    try {
+      const next = await this.deps.openControl();
+      if (this.ended) {
+        next.close();
+        return { ok: false, message: 'The stream is not live.' };
+      }
+      const old = this.socket;
+      this.attach(next);
+      try { old?.close(); } catch { /* already closed */ }
+      this.controlOn = true;
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Couldn’t turn on taps.' };
+    }
   }
 
   private onMessage(data: Buffer | string, isBinary: boolean): void {
@@ -190,7 +271,7 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
       } catch {
         return;
       }
-      if (frame?.type === 'end') this.finish(typeof frame.reason === 'string' && frame.reason ? endReason(frame.reason) : 'the stream ended');
+      if (frame?.type === 'end') this.finish(typeof frame.reason === 'string' && frame.reason ? endReason(frame.reason, this.deps.platform, this.deps.deviceName) : 'the stream ended');
       else if (frame?.type === 'ping') this.socket?.send(JSON.stringify({ type: 'pong' }));
       return;
     }
@@ -257,8 +338,16 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
     this.emit('ended', { reason });
   }
 
-  sendControl(_events: PhoneInputEvent[]): { ok: boolean; message?: string } {
-    return { ok: false, message: `${APP_TAPS_MESSAGE}. This iPhone shares its screen only.` };
+  sendControl(events: PhoneInputEvent[]): { ok: boolean; message?: string } {
+    if (this.deps.platform === 'android') {
+      if (!this.deps.canTap?.()) return { ok: false, message: `Turn on Allternit Accessibility on ${this.deps.deviceName || 'your phone'} to allow taps.` };
+      if (!this.socket || this.ended) return { ok: false, message: 'The stream is not live.' };
+      if (!this.controlOn) return { ok: false, message: 'Tap Allow taps to tap and type on the phone.' };
+      // The node seals this as input.events for the Android app (full-control viewers only).
+      this.socket.send(JSON.stringify({ type: 'input', events }));
+      return { ok: true };
+    }
+    return { ok: false, message: IPHONE_LIVE_VIEW_MESSAGE };
   }
 
   setDisplayPower(_on: boolean): { ok: boolean; message?: string } {
@@ -271,8 +360,8 @@ export class AppPhoneViewerSession implements StreamSessionHandle {
 }
 
 /** The relay's end reasons in plain words. */
-function endReason(reason: string): string {
-  if (reason === 'desktop_offline' || reason === 'phone_offline') return APP_SHARE_SCREEN_MESSAGE;
+function endReason(reason: string, platform?: AppPlatform, name = ''): string {
+  if (reason === 'desktop_offline' || reason === 'phone_offline') return appWaitMessage(platform, name);
   if (reason === 'token_expired') return 'The stream token expired.';
   return reason;
 }
@@ -407,14 +496,20 @@ export interface AppPhoneBackendDeps {
 /** One app phone as phone.devices lists it. */
 export interface AppPhoneDevice {
   serial: string;
-  platform: 'ios';
+  platform: AppPlatform;
   via: 'allternit-app';
-  route: typeof APP_PHONE_ROUTE;
+  route: typeof APP_PHONE_ROUTE | typeof ANDROID_APP_ROUTE;
   name: string;
+  /** Owner taps are accepted (Android with Accessibility on). Bots still go through the guard. */
+  canTap: boolean;
   /** The screen is shared right now. */
   screen: boolean;
   /** What a bot can do here, in plain words. */
   note: string;
+  /** Phone Use: this is a second iPhone or iPad acting as a Bluetooth keyboard for the named iPhone ('' = not certain). Not a phone to act on. */
+  keyboard_for?: string;
+  /** Phone Use routes the node listed (the connect kit asks Desktop for the full list: phones.phoneRoutes). */
+  routes?: unknown[];
 }
 
 const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false, error, message });
@@ -436,11 +531,14 @@ export const isWebTool = (name: string): boolean => name in WEB_METHODS;
 const DEVICE_METHODS: Record<string, string> = {
   'phone.calendar.list': 'device.calendar.list',
   'phone.calendar.create': 'device.calendar.create',
+  'phone.calendar.delete': 'device.calendar.delete',
   'phone.reminders.list': 'device.reminders.list',
   'phone.reminders.create': 'device.reminders.create',
+  'phone.reminders.update': 'device.reminders.update',
+  'phone.location.get': 'device.location.get',
   'phone.contacts.search': 'device.contacts.search',
 };
-const DEVICE_WRITES = new Set(['device.calendar.create', 'device.reminders.create']);
+const DEVICE_WRITES = new Set(['device.calendar.create', 'device.reminders.create', 'device.calendar.delete', 'device.reminders.update']);
 const MAX_RANGE_MS = 62 * 86_400_000;
 
 export const isDeviceTool = (name: string): boolean => name in DEVICE_METHODS;
@@ -481,6 +579,28 @@ export function deviceRpc(name: string, a: Record<string, unknown>): { method: s
       if (location === null || notes === null || (a.allDay !== undefined && typeof a.allDay !== 'boolean')) return bad('location, notes or allDay is malformed.');
       const params = { title, start: new Date(start).toISOString(), end: new Date(end).toISOString(), allDay: a.allDay === true, ...(location ? { location } : {}), ...(notes ? { notes } : {}) };
       return { method, params, write: true, summary: `Add calendar event "${title}" starting ${params.start}${location ? ` at ${location}` : ''}` };
+    }
+    case 'device.calendar.delete': {
+      const id = typeof a.id === 'string' ? a.id.trim() : '';
+      if (!id || id.length > 200) return bad('id is required (up to 200 characters).');
+      return { method, params: { id }, write: true, summary: `Delete calendar event ${id}` };
+    }
+    case 'device.reminders.update': {
+      const id = typeof a.id === 'string' ? a.id.trim() : '';
+      if (!id || id.length > 200) return bad('id is required (up to 200 characters).');
+      const title = a.title === undefined ? undefined : typeof a.title === 'string' ? a.title.trim() : null;
+      const due = a.due === undefined ? undefined : isoMs(a.due);
+      const notes = optText(a.notes, 2000);
+      if (title === null || (title !== undefined && (!title || title.length > 200))) return bad('title must be 1-200 characters.');
+      if (due === null || notes === null) return bad('due must be an ISO 8601 time and notes up to 2000 characters.');
+      if (a.completed !== undefined && typeof a.completed !== 'boolean') return bad('completed must be a boolean.');
+      if (title === undefined && due === undefined && notes === undefined && a.completed === undefined) return bad('Give at least one of title, due, completed or notes to change.');
+      const params = { id, ...(title !== undefined ? { title } : {}), ...(due !== undefined ? { due: new Date(due).toISOString() } : {}), ...(a.completed !== undefined ? { completed: a.completed } : {}), ...(notes !== undefined ? { notes } : {}) };
+      return { method, params, write: true, summary: `Update reminder ${id}${title ? ` (title "${title}")` : ''}${a.completed !== undefined ? (a.completed ? ', mark done' : ', mark open') : ''}` };
+    }
+    case 'device.location.get': {
+      if (a.precision !== undefined && a.precision !== 'approximate' && a.precision !== 'precise') return bad('precision must be "approximate" or "precise".');
+      return { method, params: { precision: a.precision === 'precise' ? 'precise' : 'approximate' }, write: false, summary: '' };
     }
     case 'device.reminders.list': {
       const limit = optLimit(a.limit, 200);
@@ -568,13 +688,13 @@ function notOnAppPhone(name: string): string | null {
     case 'phone.key':
     case 'phone.type':
     case 'phone.open_app':
-      return `${APP_TAPS_MESSAGE}. On this iPhone a bot can see the screen (phone.screenshot) and use the Allternit app's browser (phone.web.*).`;
+      return `${APP_TAPS_MESSAGE}. Until one is set up, a bot can see the screen (phone.screenshot) and use the Allternit app's browser (phone.web.*).`;
     case 'phone.read_ui':
     case 'phone.screen_text':
-      return 'Reading other apps as text needs the Bluetooth board. Use phone.screenshot to see the screen, or phone.web.snapshot for the Allternit app\'s browser.';
+      return 'Reading the screen as text needs the Allternit screen broadcast running on the iPhone. Use phone.screenshot to see the screen, or phone.web.snapshot for the Allternit app\'s browser.';
     case 'phone.task':
     case 'phone.run_skill':
-      return `${APP_TAPS_MESSAGE}, so plain-English tasks and skills can't run on this iPhone yet. Use phone.web.* for web tasks in the Allternit app's browser.`;
+      return `${APP_TAPS_MESSAGE}, so plain-English tasks and skills can't run on this iPhone until one is set up. Use phone.web.* for web tasks in the Allternit app's browser.`;
     case 'phone.sms.send':
     case 'phone.sms.read':
     case 'phone.call.dial':
@@ -634,18 +754,53 @@ export class AppPhoneBackend implements UsbPhoneBackend {
     return this.rows.find((r) => r.serial === serial);
   }
 
+  /** Phone Use official route: what the node last heard from this phone's app (its state frame). */
+  officialState(serial: string): AppOfficialState | null {
+    const r = this.row(serial);
+    if (!r) return null;
+    return { appOpen: r.appOpen === true, screen: r.online, deviceAccess: r.deviceAccess ?? null };
+  }
+
+  /** Phone Use official route: one call to the app (device.*), or to the broadcast for device.screen.read. */
+  rpc(serial: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult> {
+    return this.deps.node.rpc(appPhoneId(serial), method, params, timeoutMs);
+  }
+
   devices(): AppPhoneDevice[] {
-    return this.rows.map((r) => ({
-      serial: r.serial,
-      platform: 'ios',
-      via: 'allternit-app',
-      route: APP_PHONE_ROUTE,
-      name: r.name || 'iPhone',
-      screen: r.online,
-      note: r.online
-        ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
-        : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
-    }));
+    return this.rows.map((r): AppPhoneDevice => {
+      const platform = appPlatformOf(r);
+      const name = r.name || (platform === 'android' ? 'Android phone' : 'iPhone');
+      if (platform === 'android') {
+        return {
+          serial: r.serial,
+          platform,
+          via: 'allternit-app',
+          route: ANDROID_APP_ROUTE,
+          name,
+          canTap: r.canTap === true,
+          screen: r.online,
+          note: r.online
+            ? `Screen live: phone.screenshot and phone.web.* work; ${r.canTap ? 'taps are on for the live view' : 'taps are off until Accessibility is on'}.`
+            : `${appWaitMessage(platform, name)} phone.web.* work while the Allternit app is open.`,
+        };
+      }
+      return {
+        serial: r.serial,
+        platform,
+        via: 'allternit-app',
+        route: APP_PHONE_ROUTE,
+        name,
+        canTap: false,
+        screen: r.online,
+        note: r.keyboardFor !== undefined
+          ? `Bluetooth keyboard and mouse for ${r.keyboardFor || 'another iPhone'} (route bt-apple). Not a phone to act on: use the iPhone's own serial.`
+          : r.online
+            ? `Screen and the Allternit app's browser here: phone.screenshot and phone.web.* work. ${APP_TAPS_MESSAGE}.`
+            : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
+        ...(r.keyboardFor !== undefined ? { keyboard_for: r.keyboardFor } : {}),
+        ...(r.routes ? { routes: r.routes } : {}),
+      };
+    });
   }
 
   decidePair(phoneId: string, approve: boolean): Promise<{ ok: boolean; message?: string }> {
@@ -759,7 +914,7 @@ export class AppPhoneBackend implements UsbPhoneBackend {
         height: still.height,
         ageMs: Math.max(0, this.now() - snap.at),
         coordinate_space: 'none',
-        note: `Screen only. ${APP_TAPS_MESSAGE}; use phone.web.* for the Allternit app's browser.`,
+        note: `Screen only. ${APP_TAPS_MESSAGE}. Use phone.web.* for the Allternit app's browser.`,
       };
     } catch (error) {
       return fail('no_screen', `Couldn't turn the iPhone's video into a picture (${error instanceof Error ? error.message : String(error)}).`);
@@ -822,13 +977,23 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const json = (await res.json().catch(() => ({}))) as { phones?: unknown };
       const rows = Array.isArray(json.phones) ? json.phones : [];
       return rows.flatMap((row): AppPhoneRow[] => {
-        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown };
+        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown; appOpen?: unknown; deviceAccess?: unknown; keyboard_for?: unknown; routes?: unknown };
+        const access = r.deviceAccess && typeof r.deviceAccess === 'object' && !Array.isArray(r.deviceAccess)
+          ? Object.fromEntries(Object.entries(r.deviceAccess as Record<string, unknown>).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>
+          : undefined;
         if (!isAppSerial(r.serial)) return [];
-        if (r.route !== undefined && r.route !== APP_PHONE_ROUTE) return [];
+        if (r.route !== undefined && r.route !== APP_PHONE_ROUTE && r.route !== ANDROID_APP_ROUTE) return [];
         return [{
           serial: r.serial as string,
-          name: typeof r.name === 'string' && r.name ? r.name : 'iPhone',
+          name: typeof r.name === 'string' && r.name ? r.name : r.platform === 'android' ? 'Android phone' : 'iPhone',
           model: typeof r.model === 'string' ? r.model : 'iPhone',
+          platform: r.platform === 'android' ? 'android' : 'ios',
+          canTap: r.platform === 'android' && r.canTap === true,
+          ...(typeof r.consent === 'string' ? { consent: r.consent } : {}),
+          ...(typeof r.appOpen === 'boolean' ? { appOpen: r.appOpen } : {}),
+          ...(access ? { deviceAccess: access } : {}),
+          ...(typeof r.keyboard_for === 'string' ? { keyboardFor: r.keyboard_for } : {}),
+          ...(Array.isArray(r.routes) ? { routes: r.routes } : {}),
           // `screen` is the ingest socket; older rows only carry `online`.
           online: r.screen === undefined ? r.online === true : r.screen === true && r.online !== false,
         }];
@@ -849,8 +1014,20 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const result = body.result && typeof body.result === 'object' && !Array.isArray(body.result) ? (body.result as Record<string, unknown>) : body;
       return { ok: true, result };
     },
-    async openViewer(serial) {
-      const res = await post(`/api/v1/phones/${encodeURIComponent(serial)}/ws-token`, { readOnly: true });
+    async openViewer(serial, opts) {
+      const readOnly = opts?.readOnly !== false;
+      const tokenPath = `/api/v1/phones/${encodeURIComponent(serial)}/ws-token`;
+      let res = await post(tokenPath, { readOnly });
+      if (res.status === 403 && !readOnly && opts?.approve) {
+        // Full control is gated by the ACI confirmation grant; the owner's "Allow taps" click approves it (single use).
+        const body = (await res.json().catch(() => ({}))) as { error?: unknown; approval_id?: unknown };
+        if (body.error === 'confirmation_required' && typeof body.approval_id === 'string') {
+          const id = encodeURIComponent(body.approval_id);
+          const ok = await post(`/api/aci/handoff/${id}/approve`, {});
+          if (!ok.ok) throw new Error(`Taps couldn’t be approved (${ok.status}).`);
+          res = await post(`${tokenPath}?approval_id=${id}`, { readOnly });
+        }
+      }
       if (!res.ok) {
         const { message } = await errorOf(res);
         throw new Error(res.status === 404 || res.status === 409 ? APP_SHARE_SCREEN_MESSAGE : message || `The phone stream token was refused (${res.status}).`);

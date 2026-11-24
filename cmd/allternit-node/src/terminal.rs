@@ -71,6 +71,25 @@ impl TerminalStore {
         let mut command = portable_pty::CommandBuilder::new(shell);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // A coding agent's session markers, inherited when the node was started
+        // from inside an agent's shell. A `claude` run in this terminal would
+        // otherwise act as that session's child and stop saving its transcript.
+        // Same list as factory/pane/src/pane.rs INHERITED_AGENT_SESSION_ENV.
+        for key in [
+            "CODEX_THREAD_ID",
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_EXECPATH",
+            "CLAUDE_PID",
+            "AI_AGENT",
+        ] {
+            command.env_remove(key);
+        }
         if let Some(cwd) = cwd {
             command.cwd(cwd);
         }

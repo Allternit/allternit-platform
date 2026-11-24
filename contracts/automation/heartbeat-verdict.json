@@ -1,0 +1,220 @@
+[
+  {
+    "note": "plain NOTIFY on the last line",
+    "input": "Checked the build.\nNOTIFY: The deploy failed on step 3.",
+    "expected": {
+      "kind": "notify",
+      "line": "The deploy failed on step 3."
+    }
+  },
+  {
+    "note": "plain DONT_NOTIFY",
+    "input": "All green, same as last time.\nDONT_NOTIFY",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "plain DONE",
+    "input": "The PR merged.\nDONE: PR #42 merged; stopping this check.",
+    "expected": {
+      "kind": "done",
+      "line": "PR #42 merged; stopping this check."
+    }
+  },
+  {
+    "note": "lowercase keyword",
+    "input": "notify: lowercase works",
+    "expected": {
+      "kind": "notify",
+      "line": "lowercase works"
+    }
+  },
+  {
+    "note": "extra spaces and trailing blank lines",
+    "input": "   NOTIFY:    extra spaces around   \n\n   ",
+    "expected": {
+      "kind": "notify",
+      "line": "extra spaces around"
+    }
+  },
+  {
+    "note": "empty reply",
+    "input": "",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "only whitespace",
+    "input": "\n\n   \n",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "verdict not on the last line",
+    "input": "NOTIFY: something broke\nI also looked at the logs.",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "verdict inside a trailing code fence",
+    "input": "Result:\n```\nDONT_NOTIFY\n```",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "bold markdown around the keyword",
+    "input": "**NOTIFY:** Build is red",
+    "expected": {
+      "kind": "notify",
+      "line": "Build is red"
+    }
+  },
+  {
+    "note": "inline code around DONT_NOTIFY",
+    "input": "`DONT_NOTIFY`",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "quote marker",
+    "input": "> DONT_NOTIFY",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "bullet marker",
+    "input": "- DONE: bullet",
+    "expected": {
+      "kind": "done",
+      "line": "bullet"
+    }
+  },
+  {
+    "note": "trailing period after DONT_NOTIFY",
+    "input": "DONT_NOTIFY.",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "text after DONT_NOTIFY is ignored",
+    "input": "Status unchanged.\nDONT_NOTIFY - still queued",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "Don't notify spelled out",
+    "input": "Don't notify",
+    "expected": {
+      "kind": "dont_notify"
+    }
+  },
+  {
+    "note": "DONE without a message",
+    "input": "DONE",
+    "expected": {
+      "kind": "done",
+      "line": ""
+    }
+  },
+  {
+    "note": "DONE with a period",
+    "input": "Done.",
+    "expected": {
+      "kind": "done",
+      "line": ""
+    }
+  },
+  {
+    "note": "NOTIFY without a message",
+    "input": "NOTIFY",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "NOTIFY with an empty message",
+    "input": "NOTIFY:",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "prose starting with Notifying",
+    "input": "Notifying the user was not needed.",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "prose starting with Done, no separator",
+    "input": "Done with the check, nothing changed.",
+    "expected": {
+      "kind": "none"
+    }
+  },
+  {
+    "note": "dash separator",
+    "input": "DONE - the migration finished",
+    "expected": {
+      "kind": "done",
+      "line": "the migration finished"
+    }
+  },
+  {
+    "note": "em dash separator",
+    "input": "NOTIFY — em dash works",
+    "expected": {
+      "kind": "notify",
+      "line": "em dash works"
+    }
+  },
+  {
+    "note": "DONE after NOTIFY: the last line wins",
+    "input": "NOTIFY: Build failed\nDONE: Build fixed",
+    "expected": {
+      "kind": "done",
+      "line": "Build fixed"
+    }
+  },
+  {
+    "note": "NOTIFY after DONE: the last line wins",
+    "input": "DONE: Tests pass\nNOTIFY: One test is flaky again",
+    "expected": {
+      "kind": "notify",
+      "line": "One test is flaky again"
+    }
+  },
+  {
+    "note": "CRLF line endings",
+    "input": "Windows line\r\nNOTIFY: crlf ok\r\n",
+    "expected": {
+      "kind": "notify",
+      "line": "crlf ok"
+    }
+  },
+  {
+    "note": "minus sign in the message is kept",
+    "input": "NOTIFY: Temperature is -5 now",
+    "expected": {
+      "kind": "notify",
+      "line": "Temperature is -5 now"
+    }
+  },
+  {
+    "note": "keyword word inside the message",
+    "input": "NOTIFY: done",
+    "expected": {
+      "kind": "notify",
+      "line": "done"
+    }
+  }
+]

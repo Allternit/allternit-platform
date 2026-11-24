@@ -33,7 +33,7 @@ import { AppshotViewer } from './AppshotViewer'
 const palette = {
 	bgPrimary: '#FDF8F3',
 	bgSecondary: '#F5EDE3',
-	accentPrimary: '#B08D6E',
+	accentPrimary: '#1F1E1D',
 	textPrimary: '#2A1F16',
 	textSecondary: '#6B5B4E',
 	border: '#D9C9B8',

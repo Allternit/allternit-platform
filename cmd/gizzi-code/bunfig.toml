@@ -8,3 +8,9 @@
 "@allternit/gizzi-sdk/providers/allternit/resources/index.mjs" = "./packages/sdk/src/providers/allternit/resources/index.ts"
 "@allternit/gizzi-sdk/providers/allternit/resources/messages.mjs" = "./packages/sdk/src/providers/allternit/resources/messages/index.ts"
 "@allternit/gizzi-sdk/providers/allternit/resources/beta/messages/messages.mjs" = "./packages/sdk/src/providers/allternit/resources/beta/messages/index.ts"
+
+# Every run, with or without script/test-full.sh, starts isolated from this
+# machine: XDG dirs, home and config point at a temp dir, so a real login, db or
+# scheduler cannot change a result.
+[test]
+preload = ["./test/preload.ts"]

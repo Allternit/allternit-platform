@@ -3,6 +3,7 @@ import * as BotTurn from "@/runtime/bots/bot-turn"
 import { RESULT_INSTRUCTION, subagentResult } from "./subagent-result"
 import DESCRIPTION from "@/runtime/tools/builtins/task.txt"
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { Identifier } from "@/shared/id/id"
@@ -24,17 +25,20 @@ import { BackgroundTask } from "@/runtime/session/background-task"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
 import { DELEGATION_HINT, FOLDED_TYPES } from "@/runtime/agents/builtin-catalog"
 import { resolveModelClass } from "@/runtime/agents/model-class"
+import { TaskEffort, TaskFork, TaskName } from "@/runtime/primitives/task-name"
+import { TASK_EFFORT_VALUES, TASK_FORK_VALUES } from "@/runtime/primitives/wave-b-types"
 
 const log = Log.create({ service: "tool.task" })
 
 const parameters = z.object({
+  ...LabelField,
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
   subagent_type: z.string().describe("The type of specialized agent to use for this task"),
   task_id: z
     .string()
     .describe(
-      "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
+      "Only set this to resume a previous task: a prior task_id, or the name path a named task got (such as /root/build/tests, or tests relative to you). The task continues the same subagent session instead of starting fresh.",
     )
     .optional(),
   command: z.string().describe("The command that triggered this task").optional(),
@@ -46,7 +50,25 @@ const parameters = z.object({
     .enum(["small", "standard", "deep", "inherit"])
     .optional()
     .describe(
-      "Which model class runs this task: small (quick, cheap lookups), standard, deep (hard reasoning) or inherit (your own model). Leave unset to use the agent's default.",
+      "Which model class runs this task: small (haiku-class: quick, cheap lookups), standard (sonnet-class: normal work), deep (opus-class: risky or hard reasoning only) or inherit (your own model). Leave unset to use the agent's default.",
+    ),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "A short name for addressing this task later ([a-z0-9_-], up to 32 characters, such as tests). It becomes a path under yours, such as /root/build/tests; a taken name gets -2.",
+    ),
+  fork: z
+    .enum(TASK_FORK_VALUES)
+    .optional()
+    .describe(
+      "none (default): the child starts with only your prompt. all: the child gets a copy of this conversation up to your last finished message, and runs on your own model (no model or effort override).",
+    ),
+  effort: z
+    .enum(TASK_EFFORT_VALUES)
+    .optional()
+    .describe(
+      "How hard the child's model thinks: low, medium or high. Uses the model's nearest reasoning level; ignored when the model has none.",
     ),
 })
 
@@ -59,6 +81,8 @@ type TaskMetadata = {
   title?: string
   face?: string
   modelClass?: string
+  /** The child's name path (`task.name`), such as /root/build/tests. */
+  path?: string
 }
 
 export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", async (ctx) => {
@@ -107,9 +131,20 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
+      // Check the Wave B inputs before anything is created.
+      if (params.name !== undefined) TaskName.validate(params.name)
+      TaskFork.check({ fork: params.fork, model: params.model, effort: params.effort })
+      const forkAll = params.fork === "all"
+      if (forkAll && params.task_id)
+        throw new Error('fork: "all" only applies to a new task; a resumed task already has its own history.')
+
       const session = await iife(async () => {
         if (params.task_id) {
-          const found = await Session.get(params.task_id).catch((e) => {
+          // task_id is a session id or a name path within this session's descendants.
+          const taskID =
+            (await TaskName.resolve({ sessionID: ctx.sessionID, target: params.task_id }).catch(() => undefined)) ??
+            params.task_id
+          const found = await Session.get(taskID).catch((e) => {
             log.debug("Failed to look up existing task session", { taskId: params.task_id, error: e })
           })
           if (found) {
@@ -161,6 +196,13 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
         await PermissionNext.setMode(created.id, await PermissionNext.getMode(ctx.sessionID))
         return created
       })
+      const path = params.task_id
+        ? ((await TaskName.pathOf(session.id)) ?? undefined)
+        : params.name
+          ? await TaskName.assign({ parentSessionID: ctx.sessionID, childSessionID: session.id, name: params.name })
+          : undefined
+      // fork: all — the child starts from a copy of this conversation up to the last finished message.
+      if (forkAll) await TaskFork.copyHistory({ parentSessionID: ctx.sessionID, childSessionID: session.id })
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
       if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
       const info = msg.info
@@ -169,14 +211,22 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
       // models.jobs (explorer/builder jobs) → its model class (subagents default
       // to small, so delegated work runs cheap) → the caller's. A class that
       // can't be routed falls back to the caller's model.
+      // fork: all stays on the parent's model and effort (TaskFork.check refused overrides).
       const parentModel = { modelID: msg.info.modelID, providerID: msg.info.providerID }
       const jobName = ModelJobs.jobForAgent(agent.name)
-      const model =
-        (params.model ? await resolveModelClass(params.model, parentModel) : undefined) ??
-        agent.model ??
-        (jobName ? await ModelJobs.jobModel(jobName) : undefined) ??
-        (await resolveModelClass(agent.modelClass ?? (agent.mode === "subagent" ? "small" : "inherit"), parentModel))
+      const model = forkAll
+        ? parentModel
+        : ((params.model ? await resolveModelClass(params.model, parentModel) : undefined) ??
+          agent.model ??
+          (jobName ? await ModelJobs.jobModel(jobName) : undefined) ??
+          (await resolveModelClass(agent.modelClass ?? (agent.mode === "subagent" ? "small" : "inherit"), parentModel)))
+      const variant = forkAll
+        ? info.variant
+        : params.effort
+          ? await TaskEffort.variant({ effort: params.effort, providerID: model.providerID, modelID: model.modelID })
+          : undefined
       const identity = {
+        ...(path ? { path } : {}),
         agent: agent.name,
         title: agent.title ?? agent.name,
         ...(agent.face ? { face: agent.face } : {}),
@@ -208,6 +258,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           messageID: Identifier.ascending("message"),
           sessionID: session.id,
           model: { modelID: model.modelID, providerID: model.providerID },
+          ...(variant ? { variant } : {}),
           agent: agent.name,
           tools,
           parts: await SessionPrompt.resolvePromptParts(prompt),
@@ -290,8 +341,8 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           },
           async (error) => {
             const message = error instanceof Error ? error.message : String(error)
-            await BackgroundTask.fail(backgroundTaskID, error)
-            await notify("failed", message)
+            const settled = await BackgroundTask.fail(backgroundTaskID, error)
+            if (settled.status === "failed") await notify("failed", message)
           },
         ).catch((error) => {
           log.error("background task settlement failed", { taskID: backgroundTaskID, error })
@@ -303,6 +354,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           output: [
             `background_task_id: ${backgroundTaskID}`,
             `task_id: ${session.id}`,
+            ...(path ? [`name: ${path}`] : []),
             "status: running",
             "The subagent is running in the background. Its completion will be delivered as a synthetic parent turn.",
           ].join("\n"),
@@ -319,6 +371,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
 
       const output = [
         `task_id: ${session.id} (for resuming to continue this task if needed)`,
+        ...(path ? [`name: ${path}`] : []),
         "",
         "<task_result>",
         text,

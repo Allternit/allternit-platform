@@ -13,6 +13,10 @@ enum NotificationCategoryID {
     static let botReply = "BOT_REPLY"
     static let runDone = "RUN_DONE"
     static let needsFix = "NEEDS_FIX"
+    /// An agent's message to its owner (`agent.message.sent`, send_user_message).
+    static let agentMessage = "AGENT_MESSAGE"
+    /// A Computers console alert (offline, cpu, disk): tap opens that computer.
+    static let computerAlert = "COMPUTER_ALERT"
 }
 
 /// Button identifiers. Fixed, like the categories.
@@ -37,6 +41,7 @@ enum NotificationStrings {
     static let snooze = String(localized: "Snooze")
     static let replyButton = String(localized: "Send")
     static let replyPlaceholder = String(localized: "Message the bot")
+    static let replyAgentPlaceholder = String(localized: "Reply to your agent")
 
     static let changed = String(localized: "This changed. Review it again.")
     static let offline = String(localized: "Your computer is offline. Open Allternit to retry.")
@@ -56,13 +61,13 @@ enum NotificationCategories {
         func button(_ id: NotificationActionID, _ title: String, _ options: UNNotificationActionOptions) -> UNNotificationAction {
             UNNotificationAction(identifier: id.rawValue, title: title, options: options)
         }
-        func reply() -> UNTextInputNotificationAction {
+        func reply(_ placeholder: String = NotificationStrings.replyPlaceholder) -> UNTextInputNotificationAction {
             UNTextInputNotificationAction(
                 identifier: NotificationActionID.reply.rawValue,
                 title: NotificationStrings.reply,
                 options: auth,
                 textInputButtonTitle: NotificationStrings.replyButton,
-                textInputPlaceholder: NotificationStrings.replyPlaceholder
+                textInputPlaceholder: placeholder
             )
         }
         let approve = button(.approve, NotificationStrings.approve, auth)
@@ -77,6 +82,12 @@ enum NotificationCategories {
             UNNotificationCategory(identifier: NotificationCategoryID.botReply,
                                    actions: [reply(), open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.runDone,
+                                   actions: [open], intentIdentifiers: []),
+            // Reply posts into the agent's session (any session, bot or not);
+            // Open (and a plain tap) opens its thread or chat.
+            UNNotificationCategory(identifier: NotificationCategoryID.agentMessage,
+                                   actions: [reply(NotificationStrings.replyAgentPlaceholder), open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: NotificationCategoryID.computerAlert,
                                    actions: [open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.needsFix,
                                    actions: [button(.retry, NotificationStrings.retry, auth),

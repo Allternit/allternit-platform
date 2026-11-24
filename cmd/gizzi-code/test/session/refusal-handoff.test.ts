@@ -5,7 +5,7 @@
  * on the Allternit Cloud open model, without the refused message in context,
  * and the answer is marked with `handoff`. Off unless the person turned it on.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { Session } from "../../src/runtime/session"
@@ -21,6 +21,17 @@ const ANSWER = "Here is the walkthrough you asked for."
 
 let replies: string[] = []
 const calls: { model: string; messages: string }[] = []
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back once this file is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+const realHandoffModule = { ...(await import("../../src/runtime/providers/handoff")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+  mock.module("../../src/runtime/providers/handoff", () => realHandoffModule)
+})
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {

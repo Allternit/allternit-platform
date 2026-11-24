@@ -40,16 +40,58 @@ pub const RETAIN: &[(&str, &str)] = &[
     ("billing_entitlement_events", "finance: what a payment granted"),
     ("billing_subscriptions", "finance: subscription mirror, marked canceled"),
     ("user_billing_accounts", "finance: links the id to the Stripe customer"),
+    ("billing_store_accounts", "finance: links the id to App Store / Play purchases (account token)"),
+    ("billing_store_transactions", "finance: App Store / Play purchase ledger, refund reference"),
     ("billing_disputes", "finance: chargebacks and disputes"),
     ("billing_auto_topup_attempts", "finance: charge attempts"),
     ("voice_billing_periods", "finance: voice invoices, unbilled ones closed"),
     ("inference_usage", "finance: token counts and cost, no content"),
+    ("platform_org_policies", "organization settings, keyed by org; the spend alert address belongs to the org"),
     ("artifact_versions", "versions of other people's artifacts, author cleared"),
 ];
 
 /// `(table, condition)`, run in this order with the user id as `$1`. A table
 /// that another table references without a cascade comes after that table.
 pub const ERASE: &[(&str, &str)] = &[
+    // Files drive (migrations 143, 144). Drops before their share; guests and
+    // the access log cascade from files_shares.
+    // Files keys (migration 146): envelopes and requests before the devices and keys they name.
+    ("files_key_envelopes", USER),
+    ("files_key_requests", USER),
+    ("files_key_devices", USER),
+    ("files_keys", USER),
+    ("files_queued_drops", "owner_user_id = $1"),
+    ("files_shares", "owner_user_id = $1"),
+    ("computer_files_wake_tickets", USER),
+    ("computer_files_wake_settings", USER),
+    ("computer_files_storage", USER),
+    // Meetings (migration 130), children first; sessions cascade from meetings.
+    ("meeting_tool_approvals", USER),
+    ("meeting_participants", "user_id = $1 OR session_id IN (SELECT id FROM meeting_sessions WHERE user_id = $1)"),
+    ("meeting_bot_minutes", USER),
+    ("meeting_sessions", USER),
+    ("meetings", USER),
+    ("calendar_connections", USER),
+    ("zoom_connections", USER),
+    ("user_meeting_settings", USER),
+    // The compute gate's "chat only" acknowledgement (migration 133).
+    ("account_compute_acknowledgements", "user_id = $1"),
+    // Brain runner box and plan disclosure acceptances (migration 140). The
+    // box itself is destroyed in release_computers first.
+    ("brain_runners", USER),
+    ("plan_runner_consents", USER),
+    // Plan chat threads (migration 141).
+    ("plan_threads", USER),
+    // Projects and bots made with no computer (migration 149).
+    ("account_projects", USER),
+    // Copilot grants (migration 142). Revoked at GitHub in release_computers first.
+    ("copilot_grants", USER),
+    // Linked Claude organization (migration 151). REVOKE disconnects it first.
+    ("anthropic_connections", USER),
+    ("anthropic_link_requests", USER),
+    ("anthropic_link_profiles", USER),
+    // Account preferences: pad templates and per-mode defaults (migration 145).
+    ("account_prefs", USER),
     // Platform API projects, children first.
     ("platform_webhook_deliveries", "webhook_id IN (SELECT id FROM platform_webhooks WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)) OR event_id IN (SELECT id FROM platform_events WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("platform_webhooks", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
@@ -77,10 +119,23 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_spend_alerts", PROJECT),
     ("platform_credit_grants", PROJECT),
     ("platform_usage_events", PROJECT),
+    ("platform_saved_prompts", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    ("inference_request_bodies", PROJECT),
     ("platform_phone_fleet_runs", PROJECT),
     ("platform_phone_runs", OWNER_USER),
     ("platform_idempotency", "key_id IN (SELECT id FROM api_keys WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("api_keys", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    // Sign in with Allternit (migration 150). The person's grants on any app
+    // (tokens and spend cascade), then their own apps (redirect URIs cascade),
+    // before platform_projects. Test-user rows go by account or address; the
+    // address is read before SCRUB clears it.
+    // Tokens cascade from their grant; listed so the actor check sees replaced_by
+    // (a token id, not a person) as handled.
+    ("oauth_tokens", "grant_id IN (SELECT id FROM oauth_grants WHERE user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)))"),
+    ("oauth_grants", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_auth_requests", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_app_test_users", "user_id = $1 OR email IN (SELECT lower(email) FROM users WHERE id = $1) OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_apps", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
     ("platform_agents", PROJECT),
     ("platform_accounts", PROJECT),
     ("platform_projects", OWNER_USER),
@@ -97,14 +152,19 @@ pub const ERASE: &[(&str, &str)] = &[
     // Runs, schedules, tasks.
     ("mirror_sessions", USER),
     ("attachments", USER),
+    ("approval_requests", "run_id IN (SELECT id FROM runs WHERE owner_id = $1)"),
     ("runs", OWNER),
     ("schedules", OWNER),
     ("task_comments", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("task_queue", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("task_events", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
+    ("task_assignments", "task_id IN (SELECT id FROM tasks WHERE owner_id = $1)"),
     ("tasks", OWNER),
     // Computers and runtimes.
     ("provisioned_instance_wakes", USER),
+    // Plan computer hours meter (migration 134); the overage debits it
+    // charged stay in credit_transactions (RETAIN, finance).
+    ("plan_computer_hours", USER),
     ("provisioned_instance_usage_sessions", USER),
     ("provisioned_instances", USER),
     ("hosted_runtime_usage_sessions", USER),
@@ -112,6 +172,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("cloud_phones", USER),
     ("computer_pairing_codes", USER),
     ("paired_computers", USER),
+    // Computers console alert rules (migration 154): the owner's own settings.
+    ("computer_alert_rules", USER),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),
@@ -176,6 +238,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("vendor_bot_keys", USER),
     ("provider_tokens", USER),
     ("user_inference_keys", USER),
+    ("user_voice_keys", USER),
+    ("voice_key_handoffs", USER),
     ("mcp_oauth_approvals", USER),
     ("idjag_issuance_log", USER),
     ("user_sessions", USER),
@@ -201,14 +265,31 @@ pub const ERASE: &[(&str, &str)] = &[
 /// Clears the user from rows that stay: kept records, and work that belongs to
 /// someone else. Runs after [`ERASE`], in the same transaction.
 const SCRUB: &[&str] = &[
+    // A share on someone else's computer keeps working; only who made it goes.
+    "UPDATE files_shares SET created_by = 'deleted' WHERE created_by = $1",
+    // Approvals on another account's Files key keep working; only who approved goes.
+    "UPDATE files_key_devices SET approved_by = 'deleted' WHERE approved_by = $1",
+    "UPDATE files_key_requests SET granted_by = 'deleted' WHERE granted_by = $1",
     "UPDATE artifact_versions SET author_id = 'deleted' WHERE author_id = $1",
     "UPDATE artifact_shares SET invited_by = 'deleted' WHERE invited_by = $1",
     "UPDATE phone_invites SET joined_user_id = NULL WHERE joined_user_id = $1",
     // Org-owned managed-auth settings stay with the org; only who made them goes.
     "UPDATE managed_auth_configs SET created_by = 'deleted' WHERE created_by = $1",
     "UPDATE mcp_trusted_issuers SET created_by = 'deleted' WHERE created_by = $1",
+    // Org-owned artifact and meeting settings stay with the org; who last
+    // changed them goes.
+    "UPDATE org_artifact_settings SET updated_by = NULL WHERE updated_by = $1",
+    "UPDATE org_meeting_settings SET updated_by = NULL WHERE updated_by = $1",
+    // The user acting on someone else's run or task.
+    "UPDATE approval_requests SET requested_by = NULL WHERE requested_by = $1",
+    "UPDATE approval_requests SET responded_by = NULL WHERE responded_by = $1",
+    "UPDATE task_assignments SET assigned_by = NULL WHERE assigned_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
+    "UPDATE oauth_audit_log SET actor = 'deleted', ip = NULL, ua = NULL WHERE actor = $1",
+    // The user as a participant in someone else's meeting: the owner keeps the
+    // record of what was said, without the link to the account or the address.
+    "UPDATE meeting_participants SET user_id = NULL, email = NULL WHERE user_id = $1",
     "UPDATE users SET email = NULL, name = NULL, avatar_url = NULL, tenant_id = NULL, status = 'inactive' WHERE id = $1",
 ];
 
@@ -220,6 +301,15 @@ const REVOKE: &[&str] = &[
     "DELETE FROM vendor_bot_keys WHERE user_id = $1",
     "DELETE FROM floor_shares WHERE user_id = $1",
     "DELETE FROM thread_shares WHERE user_id = $1",
+    "DELETE FROM user_voice_keys WHERE user_id = $1",
+    // Calendar and Zoom tokens stop working at once.
+    "DELETE FROM calendar_connections WHERE user_id = $1",
+    "DELETE FROM zoom_connections WHERE user_id = $1",
+    // A linked Claude organization stops billing at once: the sealed refresh
+    // token goes and the link reads disconnected. The row (connection and
+    // profile ids) stays for the remote revoke until ERASE deletes it.
+    "UPDATE anthropic_connections SET status = 'disconnected', refresh_token_ciphertext = NULL, refresh_token_nonce = NULL WHERE user_id = $1",
+    "DELETE FROM anthropic_link_requests WHERE user_id = $1",
     "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL",
 ];
 
@@ -245,6 +335,9 @@ pub async fn erase_account(state: &ApiState, user_id: &str) -> Result<(), ApiErr
     }
     if let Err(e) = release_computers(state, user_id).await {
         failures.push(format!("computers: {e}"));
+    }
+    if let Err(e) = crate::services::meeting_launcher::Launcher::from_state(state).stop_all_for_user(user_id).await {
+        failures.push(format!("meeting pods: {e}"));
     }
     if let Err(e) = release_numbers(db, user_id).await {
         failures.push(format!("numbers: {e}"));
@@ -272,14 +365,36 @@ async fn run_all(db: &PgPool, statements: &[&str], user_id: &str) -> Result<(), 
 
 /// Cancels the user's Stripe subscriptions at once, with no final invoice. The
 /// mirror can miss one, so each known customer is also asked what it has.
+///
+/// Plans billed by Apple or Google (`provider` `apple` / `google`, keys
+/// `apple:…` / `google:…`) cannot be cancelled by the server: only the person
+/// can, in their App Store or Play subscriptions. They are marked canceled
+/// locally, logged, and never sent to Stripe, and an account with only store
+/// plans needs no Stripe key.
 pub(crate) async fn cancel_stripe(
     db: &PgPool,
     stripe: &dyn StripeCheckout,
     secret: Option<&str>,
     user_id: &str,
 ) -> Result<(), ApiError> {
+    let store_plans: Vec<String> = sqlx::query_scalar(
+        "UPDATE billing_subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP \
+         WHERE user_id = $1 AND COALESCE(provider, 'stripe') <> 'stripe' AND status <> 'canceled' \
+         RETURNING stripe_subscription_id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    for key in &store_plans {
+        tracing::warn!(
+            %user_id,
+            subscription = %key,
+            "account erase: store-billed plan marked canceled locally; the store keeps billing until the person cancels it in App Store / Play subscriptions"
+        );
+    }
     let mut subscriptions: Vec<String> = sqlx::query_scalar(
-        "SELECT stripe_subscription_id FROM billing_subscriptions WHERE user_id = $1 AND status <> 'canceled' \
+        "SELECT stripe_subscription_id FROM billing_subscriptions \
+         WHERE user_id = $1 AND status <> 'canceled' AND COALESCE(provider, 'stripe') = 'stripe' \
          UNION SELECT stripe_subscription_id FROM platform_projects WHERE owner_user_id = $1 AND stripe_subscription_id IS NOT NULL",
     )
     .bind(user_id)
@@ -349,6 +464,14 @@ fn is_missing(error: &ApiError) -> bool {
 
 async fn release_computers(state: &ApiState, user_id: &str) -> Result<(), ApiError> {
     state.provisioning_service.delete_all_for_user(user_id).await?;
+    // The plan box (CLI sign-ins on its home volume) goes with the computers.
+    crate::services::brain_runners::shared(&state.db).destroy(user_id).await?;
+    // The Copilot grant is given back to GitHub (best effort; ERASE deletes the row).
+    crate::services::copilot::revoke_for_erase(state, user_id).await;
+    // The linked Claude organization is revoked at auth.claude.com by its
+    // connection id (best effort, never fails the erase). REVOKE already
+    // disconnected it locally; ERASE deletes its rows.
+    crate::services::claude_link::revoke_for_erase(state, user_id).await;
     crate::routes::hosted_runtimes::destroy_all_for_user(state, user_id).await?;
     let phones: Vec<String> =
         sqlx::query_scalar("SELECT id FROM cloud_phones WHERE user_id = $1 AND status <> 'deleted'")
@@ -492,9 +615,20 @@ mod tests {
         word.trim_matches('"').rsplit('.').next().unwrap().trim_matches('"').to_ascii_lowercase()
     }
 
+    /// `created_by`, `updated_by` and the like: a person who acted on a row
+    /// that may belong to someone else (an org). Not part of
+    /// [`holds_a_person`]: such a row needs a [`SCRUB`] line, not ERASE.
+    fn names_an_actor(column: &str) -> bool {
+        column.to_ascii_lowercase().ends_with("_by")
+    }
+
     /// Table name → its columns that can hold a user, from `CREATE TABLE` and
     /// `ALTER TABLE … ADD COLUMN` across all the migrations.
     fn person_columns() -> BTreeMap<String, BTreeSet<String>> {
+        columns_matching(holds_a_person)
+    }
+
+    fn columns_matching(holds_a_person: fn(&str) -> bool) -> BTreeMap<String, BTreeSet<String>> {
         let mut found: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for file in migrations() {
             let sql = std::fs::read_to_string(file).unwrap();
@@ -549,6 +683,26 @@ mod tests {
             .map(|(table, columns)| format!("{table} {columns:?}"))
             .collect();
         assert!(missing.is_empty(), "add these to ERASE or RETAIN in account_erase.rs: {missing:#?}");
+    }
+
+    /// Regression: `org_artifact_settings.updated_by` and
+    /// `org_meeting_settings.updated_by` sat in no list (2026-11-13 inventory).
+    #[test]
+    fn every_actor_column_is_erased_retained_or_scrubbed() {
+        let classified: BTreeSet<&str> = ERASE.iter().map(|(t, _)| *t).chain(RETAIN.iter().map(|(t, _)| *t)).collect();
+        let found = columns_matching(names_an_actor);
+        assert!(found.contains_key("org_meeting_settings"), "the migration parser missed updated_by");
+        let missing: Vec<String> = found
+            .iter()
+            .filter(|(table, _)| !classified.contains(table.as_str()))
+            .flat_map(|(table, columns)| columns.iter().map(move |column| (table, column)))
+            .filter(|(table, column)| {
+                let set = format!("UPDATE {table} SET {column} ");
+                !SCRUB.iter().any(|statement| statement.starts_with(&set))
+            })
+            .map(|(table, column)| format!("{table}.{column}"))
+            .collect();
+        assert!(missing.is_empty(), "add a SCRUB line (or ERASE/RETAIN) in account_erase.rs for: {missing:#?}");
     }
 
     #[test]
@@ -729,6 +883,22 @@ mod tests {
         cancel_stripe(&db, &stripe, Some("sk_test"), "user_gone").await.unwrap();
         assert_eq!(stripe.deleted.lock().unwrap().len(), 3);
 
+        // Store-billed plans (migration 148): never sent to Stripe, marked
+        // canceled locally, and an account with only those needs no Stripe key.
+        db.execute(
+            "INSERT INTO users (id, email, name) VALUES ('user_store', 'user_store@example.com', 'Name');
+             INSERT INTO billing_subscriptions (stripe_subscription_id, user_id, plan_id, plan_tier, status, provider)
+               VALUES ('apple:2000000999', 'user_store', 'plus', 'pro', 'active', 'apple');",
+        )
+        .await
+        .unwrap();
+        cancel_stripe(&db, &stripe, None, "user_store").await.expect("store-only account needs no Stripe key");
+        assert_eq!(stripe.deleted.lock().unwrap().len(), 3, "a store plan is never sent to Stripe");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM billing_subscriptions WHERE user_id = 'user_store' AND status = 'canceled'").await,
+            1
+        );
+
         // Objects: a failure keeps the rows for the retry.
         let failing = FakeStore { fail: true, ..Default::default() };
         assert!(delete_objects(&db, Some(&failing), "user_gone").await.is_err());
@@ -769,6 +939,37 @@ mod tests {
 
         drop_db(db, &base, &name).await;
     }
+    /// Account erase destroys the plan box (box and home volume) and then
+    /// removes its row and the disclosure acceptances; someone else's stay.
+    #[tokio::test]
+    async fn erase_destroys_the_brain_runner_and_removes_its_rows() {
+        use crate::services::brain_runners::{test_runner_db, test_service_with_box, Vendor, DISCLOSURE_VERSION};
+        let db = test_runner_db().await;
+        let (service, backend) = test_service_with_box(db.clone(), "user_gone").await;
+        service.ensure("user_stays").await.unwrap();
+        for user in ["user_gone", "user_stays"] {
+            service.accept_disclosure(user, Vendor::Claude, DISCLOSURE_VERSION).await.unwrap();
+        }
+        assert_eq!(backend.boxes(), 2);
+
+        // release_computers' step, then the ERASE rows for both tables.
+        service.destroy("user_gone").await.unwrap();
+        assert_eq!(backend.boxes(), 1, "the erased account's box is gone");
+        for (table, condition) in ERASE.iter().filter(|(t, _)| matches!(*t, "brain_runners" | "plan_runner_consents")) {
+            sqlx::query(&format!("DELETE FROM {table} WHERE {condition}")).bind("user_gone").execute(&db).await.unwrap();
+        }
+        for (sql, want) in [
+            ("SELECT count(*) FROM brain_runners WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM plan_runner_consents WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM brain_runners WHERE user_id = 'user_stays'", 1),
+            ("SELECT count(*) FROM plan_runner_consents WHERE user_id = 'user_stays'", 1),
+        ] {
+            assert_eq!(count(&db, sql).await, want, "{sql}");
+        }
+        // Clerk retries: a second destroy with nothing left is fine.
+        service.destroy("user_gone").await.unwrap();
+    }
+
     /// Shared chat links die when the account is erased: the REVOKE step
     /// deletes them before any step that can fail, and ERASE covers a retry.
     /// Runs in CI (schema-per-test pool), unlike the full-schema test above.
@@ -796,6 +997,67 @@ mod tests {
             sqlx::query(step).bind("user_gone").execute(&db).await.unwrap();
             assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_gone'").await, 0, "{step}");
             assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_stays'").await, 1, "{step}");
+        }
+    }
+
+    /// A linked Claude organization stops billing the moment erase starts
+    /// (REVOKE: disconnected, sealed refresh token gone, pending sign-ins
+    /// gone) and its rows are gone after ERASE; someone else's link stays.
+    #[tokio::test]
+    async fn erase_disconnects_then_removes_the_claude_link() {
+        let db = crate::routes::test_support::test_pool().await;
+        // 151 widens inference_usage; a minimal one stands in for 007.
+        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS inference_usage (id TEXT PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT now())")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/151_anthropic_links.sql").replace("public.", ""))
+            .execute(&db)
+            .await
+            .expect("151 applies");
+        for user in ["user_gone", "user_stays"] {
+            sqlx::query("INSERT INTO anthropic_link_profiles (user_id, user_profile_id) VALUES ($1, 'uprof_' || $1::text)")
+                .bind(user)
+                .execute(&db)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO anthropic_connections (user_id, user_profile_id, connection_id, refresh_token_ciphertext, refresh_token_nonce)
+                 VALUES ($1, 'uprof_' || $1::text, 'ocon_' || $1::text, '\\x01'::bytea, '\\x02'::bytea)",
+            )
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO anthropic_link_requests (state, user_id, code_verifier_ciphertext, code_verifier_nonce)
+                 VALUES ('st_' || $1::text, $1, '\\x01'::bytea, '\\x02'::bytea)",
+            )
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+
+        let revoke: Vec<&str> = REVOKE.iter().copied().filter(|s| s.contains("anthropic_")).collect();
+        assert_eq!(revoke.len(), 2);
+        run_all(&db, &revoke, "user_gone").await.unwrap();
+        for (sql, want) in [
+            ("SELECT count(*) FROM anthropic_connections WHERE user_id = 'user_gone' AND status = 'disconnected' \
+              AND refresh_token_ciphertext IS NULL AND connection_id = 'ocon_user_gone'", 1),
+            ("SELECT count(*) FROM anthropic_link_requests WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM anthropic_connections WHERE user_id = 'user_stays' AND status = 'linked' \
+              AND refresh_token_ciphertext IS NOT NULL", 1),
+        ] {
+            assert_eq!(count(&db, sql).await, want, "{sql}");
+        }
+
+        for (table, condition) in ERASE.iter().filter(|(t, _)| t.starts_with("anthropic_")) {
+            sqlx::query(&format!("DELETE FROM {table} WHERE {condition}")).bind("user_gone").execute(&db).await.unwrap();
+        }
+        for table in ["anthropic_connections", "anthropic_link_requests", "anthropic_link_profiles"] {
+            assert_eq!(count(&db, &format!("SELECT count(*) FROM {table} WHERE user_id = 'user_gone'")).await, 0, "{table}");
+            assert_eq!(count(&db, &format!("SELECT count(*) FROM {table} WHERE user_id = 'user_stays'")).await, 1, "{table}");
         }
     }
 }

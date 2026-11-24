@@ -29,6 +29,7 @@ import { startPreventSleep, stopPreventSleep } from '../services/preventSleep';
 import { useTerminalNotification } from '../ink/useTerminalNotification';
 import { hasCursorUpViewportYankBug } from '../ink/terminal';
 import { createFileStateCacheWithSizeLimit, mergeFileStateCaches, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache';
+import { isChatEnded, CHAT_ENDED_NOTICE } from '../tools/EndConversationTool/EndConversationTool.js';
 import { updateLastInteractionTime, getLastInteractionTime, getOriginalCwd, getProjectRoot, getSessionId, switchSession, setResumeHandler, setCostStateForRestore, getTurnHookDurationMs, getTurnHookCount, resetTurnHookDuration, getTurnToolDurationMs, getTurnToolCount, resetTurnToolDuration, getTurnClassifierDurationMs, getTurnClassifierCount, resetTurnClassifierDuration, getCwdState } from '../bootstrap/state';
 import { asSessionId, asAgentId } from '../types/ids';
 import { logForDebugging } from '../utils/debug';
@@ -48,6 +49,7 @@ import { endInteractionSpan } from '../utils/telemetry/sessionTracing';
 import { useLogMessages } from '../hooks/useLogMessages';
 import { useReplBridge } from '../hooks/useReplBridge';
 import { useLiveSession } from '../hooks/useLiveSession';
+import { useAskUserLaterAnswers } from '../hooks/useAskUserLaterAnswers';
 import { type Command, type CommandResultDisplay, type ResumeEntrypoint, getCommandName, isCommandEnabled } from '../commands';
 import type { PromptInputMode, QueuedCommand, VimMode } from '../types/textInputTypes';
 import { MessageSelector, selectableUserMessagesFilter, messagesAfterAreOnlySynthetic } from '../components/MessageSelector';
@@ -2664,6 +2666,14 @@ export function REPL({
           setIsMessageSelectorVisible(true);
         }
       },
+      restoreLastUserMessage: () => {
+        const lastUserMsg = messagesRef.current.findLast(selectableUserMessagesFilter);
+        if (!lastUserMsg) return false;
+        // rewindConversationTo's setMessages races stream appends: cancel first (idempotent).
+        onCancel();
+        restoreMessageSyncRef.current(lastUserMsg);
+        return true;
+      },
       onChangeAPIKey: reverify,
       readFileState: readFileState.current,
       setToolJSX,
@@ -2729,7 +2739,7 @@ export function REPL({
     const removedNotifications = removeByFilter(cmd => cmd.mode === 'task-notification');
     void (async () => {
       const toolUseContext = getToolUseContext(messagesRef.current, [], new AbortController(), mainLoopModel);
-      const [defaultSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(toolUseContext.options.tools, mainLoopModel, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), toolUseContext.options.mcpClients), getUserContext(), getSystemContext()]);
+      const [defaultSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(toolUseContext.options.tools, mainLoopModel, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), toolUseContext.options.mcpClients, toolPermissionContext.mode), getUserContext(), getSystemContext()]);
       const systemPrompt = buildEffectiveSystemPrompt({
         mainThreadAgentDefinition,
         toolUseContext,
@@ -2776,7 +2786,7 @@ export function REPL({
   // same system prompt), with the addition of follow-up turns.
   const buildDashboardQueryParams = useCallback(async () => {
     const toolUseContext = getToolUseContext(messagesRef.current, [], new AbortController(), mainLoopModel);
-    const [defaultSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(toolUseContext.options.tools, mainLoopModel, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), toolUseContext.options.mcpClients), getUserContext(), getSystemContext()]);
+    const [defaultSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(toolUseContext.options.tools, mainLoopModel, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), toolUseContext.options.mcpClients, toolPermissionContext.mode), getUserContext(), getSystemContext()]);
     const systemPrompt = buildEffectiveSystemPrompt({
       mainThreadAgentDefinition,
       toolUseContext,
@@ -3055,7 +3065,7 @@ export function REPL({
     // IMPORTANT: do this after setMessages() above, to avoid UI jank
     checkAndDisableBypassPermissionsIfNeeded(toolPermissionContext, setAppState),
     // Gated on TRANSCRIPT_CLASSIFIER so GrowthBook kill switch runs wherever auto mode is built in
-    feature('TRANSCRIPT_CLASSIFIER') ? checkAndDisableAutoModeIfNeeded(toolPermissionContext, setAppState, store.getState().fastMode) : undefined, getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients), getUserContext(), getSystemContext()]);
+    feature('TRANSCRIPT_CLASSIFIER') ? checkAndDisableAutoModeIfNeeded(toolPermissionContext, setAppState, store.getState().fastMode) : undefined, getSystemPrompt(freshTools, mainLoopModelParam, Array.from(toolPermissionContext.additionalWorkingDirectories.keys()), freshMcpClients, toolPermissionContext.mode), getUserContext(), getSystemContext()]);
     const userContext = {
       ...baseUserContext,
       ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
@@ -3663,6 +3673,12 @@ export function REPL({
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches common agent auto-scroll behavior).
     repinScroll();
+
+    // An ended chat takes no new input (end_conversation).
+    if (isChatEnded() && !input.trim().startsWith('/')) {
+      addNotification({ key: 'chat-ended', text: CHAT_ENDED_NOTICE, priority: 'high' });
+      return;
+    }
 
     // Stop + send (ctrl+x enter, ctrl+s): stop the running turn the same way
     // esc does, then send below as a fresh turn. abort('interrupt') alone
@@ -4392,6 +4408,8 @@ export function REPL({
   sendBridgeResultRef.current = sendBridgeResult;
   // Live session: this terminal as an engine session every surface can watch and steer.
   useLiveSession(messages, isLoading, abortControllerRef, mainLoopModel);
+  // ask_user_later answered here (/answer): the answer becomes the next turn.
+  useAskUserLaterAnswers();
   useAfterFirstRender();
 
   // Track prompt queue usage for analytics. Fire once per transition from
@@ -4592,7 +4610,7 @@ export function REPL({
     onSubmitMessage: handleIncomingPrompt
   });
 
-  // Scheduled tasks from .claude/scheduled_tasks.json (CronCreate/Delete/List)
+  // Scheduled tasks: this session's queue (automation tool) + older .claude/scheduled_tasks.json entries
   if (feature('AGENT_TRIGGERS')) {
     // Assistant mode bypasses the isLoading gate (the proactive tick →
     // Sleep → tick loop would otherwise starve the scheduler).
@@ -5513,7 +5531,7 @@ export function REPL({
             const newAbortController = createAbortController();
             const context = getToolUseContext(compactMessages, [], newAbortController, mainLoopModel);
             const appState = context.getAppState();
-            const defaultSysPrompt = await getSystemPrompt(context.options.tools, context.options.mainLoopModel, Array.from(appState.toolPermissionContext.additionalWorkingDirectories.keys()), context.options.mcpClients);
+            const defaultSysPrompt = await getSystemPrompt(context.options.tools, context.options.mainLoopModel, Array.from(appState.toolPermissionContext.additionalWorkingDirectories.keys()), context.options.mcpClients, appState.toolPermissionContext.mode);
             const systemPrompt = buildEffectiveSystemPrompt({
               mainThreadAgentDefinition: undefined,
               toolUseContext: context,

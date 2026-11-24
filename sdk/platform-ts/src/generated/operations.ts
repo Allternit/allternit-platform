@@ -258,7 +258,8 @@ export class ConversationsResource {
    * then `RUN_FINISHED` or `RUN_ERROR` (`{message, code}`). `runId` is echoed (generated when
    * missing). Refusals before the stream starts are plain errors, as for messages:
    * `402 spend_cap_reached` / `payment_method_required`, `409 conversation_busy`,
-   * `503 runtime_starting`. The reply is stored and metered like any conversation message.
+   * `503 runtime_starting` or `503 computer_capacity` (the host has no memory for another awake
+   * runtime). Both carry `Retry-After: 30`. The reply is stored and metered like any conversation message.
    *
    * `POST /v1/agents/{id}/ag-ui`
    */
@@ -309,7 +310,8 @@ export class ConversationsResource {
    * "output"?, "error"?}`; arguments and results are cut at 8,000 characters) as it uses
    * tools, then `message.completed` (the stored reply) or `error`. Clients should skip
    * event names they don't know. The first message starts the
-   * project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+   * project's hosted runtime: `503 runtime_starting` (or `503 computer_capacity` when the host is full)
+   * means retry after the `Retry-After` header (30 seconds).
    * One message at a time per conversation (`409 conversation_busy`). A project at its
    * monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
    * `402 payment_method_required`. Each reply records `tokens_in` and
@@ -1222,6 +1224,28 @@ export class PhonesResource {
   }
 
   /**
+   * List learned App Maps
+   *
+   * One summary per app Allternit has mapped on the owner's Desktop (read only; exploring and forgetting a map stay on the Desktop, web, app and Gizzi). Errors 503 `phone_desktop_offline` while the Desktop is offline, 404 `no_desktop` when none is paired.
+   *
+   * `GET /v1/phones/maps`
+   */
+  listMaps(query?: T.ListPhoneMapsQuery, options?: RequestOptions): Promise<T.ListPhoneMapsResponse> {
+    return this._client.request<T.ListPhoneMapsResponse>({ method: "GET", path: `/v1/phones/maps`, query: query, options });
+  }
+
+  /**
+   * One app's map
+   *
+   * The map file for one app. Errors 404 `map_not_found` (nothing learned yet), 403 `money_app` (money apps are never mapped), 503 `phone_desktop_offline`, 404 `no_desktop`.
+   *
+   * `GET /v1/phones/maps/{app}`
+   */
+  getMap(app: string, query?: T.GetPhoneMapQuery, options?: RequestOptions): Promise<T.GetPhoneMapResponse> {
+    return this._client.request<T.GetPhoneMapResponse>({ method: "GET", path: `/v1/phones/maps/${encodeURIComponent(app)}`, query: query, options });
+  }
+
+  /**
    * A phone's run history
    *
    * Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.
@@ -1274,8 +1298,8 @@ export class PhonesResource {
    *
    * `POST /v1/phones/runs`
    */
-  startFleetRun(options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
-    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, options });
+  startFleetRun(body: T.StartPhoneFleetRunRequest, options?: RequestOptions): Promise<T.StartPhoneFleetRunResponse> {
+    return this._client.request<T.StartPhoneFleetRunResponse>({ method: "POST", path: `/v1/phones/runs`, body: body, options });
   }
 
   /**
@@ -1454,6 +1478,24 @@ export class DecisionsResource {
   }
 
   /**
+   * List decisions
+   *
+   * The project's stored decisions, newest first, in the usual cursor envelope (`limit` 1 to 100, default 20; pass `next_cursor` as `after`). A key bound to an account sees only that account's decisions; `account_id` narrows a project-wide key (`403 account_mismatch` for a bound key naming another account). Each item is the same `Decision` that `GET /v1/decisions/{id}` returns. Requires the `decisions` scope.
+   *
+   * `GET /v1/decisions`
+   */
+  list(query?: T.ListDecisionsQuery, options?: RequestOptions): Promise<T.ListDecisionsResponse> {
+    return this._client.request<T.ListDecisionsResponse>({ method: "GET", path: `/v1/decisions`, query: query, options });
+  }
+
+  /**
+   * Every item of `list`, fetching pages as you iterate.
+   */
+  listAll(query?: T.ListDecisionsQuery, options?: RequestOptions): AsyncIterable<T.Decision> {
+    return this._client.paginate<T.Decision>((after) => this.list({ ...(query ?? {}), after } as T.ListDecisionsQuery, options) as unknown as Promise<Page<T.Decision>>);
+  }
+
+  /**
    * Ask one or more questions about some input
    *
    * Answers up to 16 typed questions about one input (text or JSON), with a probability
@@ -1524,21 +1566,22 @@ export class ResponsesResource {
    * `response.output_text.done`, `response.function_call_arguments.done`,
    * `response.tool_call.started` / `response.tool_call.completed` / `response.tool_call.failed`
    * (hosted tools, arguments and results cut at 8,000 characters),
-   * `response.output_item.done`, then `response.completed` or `response.failed`, and `error`
+   * `response.output_item.done`, then `response.completed`, `response.incomplete` or `response.failed`, and `error`
    * for failures before the stream starts. Clients should skip event names they don't know.
-   * Approvals never pause a turn: when an agent's action needs the owner's approval, that
-   * tool call fails with a "try again once they approve" result and the turn still ends
-   * `completed`. `required_actions` is reserved and always empty in this release. Approvals
-   * are their own resource: subscribe to the `approval.requested` / `approval.resolved`
-   * webhooks (or read `GET /v1/approvals`), and after resolution send a new response in the
-   * same conversation. Errors before the stream starts are
+   * When an agent's action needs the owner's approval, that tool call fails with a "try
+   * again once they approve" result and the turn ends; this answer (and its stream) still
+   * ends `completed`, because the approval is raised after the turn finishes. While it is
+   * pending, `GET /v1/responses/{id}` reads `status: requires_action` with one
+   * `required_actions` entry per pending approval. Resolve it with `POST /v1/approvals/{id}`
+   * (or follow the `approval.requested` / `approval.resolved` webhooks), then send a new
+   * response with `previous_response_id`. Errors before the stream starts are
    * plain errors: `400 invalid_request` for `agent` with `store: false`, `agent` with client
    * `tools`, or mixing `model` and `agent` turns in one conversation;
    * `400 missing_function_call_output` when a `function_call` of the previous response has no
    * matching `function_call_output` in `input`; `409 previous_response_not_latest` when
    * `previous_response_id` is not the latest response of its conversation;
    * `402 spend_cap_reached`, `402 payment_method_required`, `409 conversation_busy`,
-   * `503 runtime_starting`. Token usage is recorded as
+   * `503 runtime_starting` / `computer_capacity` (both with `Retry-After: 30`). Token usage is recorded as
    * `tokens_in` and `tokens_out`. Requires the `inference` scope with `model`, or the
    * `agents` scope with `agent`.
    *
@@ -1558,7 +1601,7 @@ export class ResponsesResource {
   /**
    * Retrieve a response
    *
-   * A stored response (`store` was not false) with its output items. Requires the `inference` or `agents` scope.
+   * A stored response (`store` was not false) with its output items. While an approval its turn raised is pending, `status` is `requires_action` and `required_actions` lists the pending approvals (one `approval` entry with its `approval_id` each, oldest first). Requires the `inference` or `agents` scope.
    *
    * `GET /v1/responses/{id}`
    */

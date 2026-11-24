@@ -1,0 +1,85 @@
+---
+title: 'Memory tools'
+description: 'How an agent reads, edits and lists the user''s Memory Drive: versions, partial edits, refused stale writes and conflict copies'
+---
+
+## Overview
+
+Three built-in tools give an agent safe access to the user's [Memory Drive](/guides/memory-drive). Each memory is one line holding one lasting fact. Before asking the user something they may already have said, the agent checks the Memory Drive index in its context, then `memory_list` or `memory_recall`.
+
+When memory is on, the session also carries a short guide to using it:
+
+- The assistant checks memory and the current thread before asking you for a detail. If the answer is there, it uses it without announcing the lookup.
+- It says "noted" or "saved" only after `memory_write` has succeeded, never before.
+- It applies memory quietly and only when it changes the answer, and it does not say "I remember" or "according to my notes".
+- "Forget X" is a standing boundary: the entry is deleted in that turn and never saved again.
+- Sensitive facts such as health or money trouble stay unmentioned unless you raise them.
+- Before acting on a remembered file, setting or flag, it checks the thing still exists. The newest correction wins over older notes.
+
+| Tool | Use |
+|---|---|
+| `memory_list` | Topics with entry counts, or the entries in one topic. |
+| `memory_recall` | Search by words. Each hit carries its drive, topic, id, version, source and date. |
+| `memory_write` | Save, append, replace or delete one entry. |
+
+## Used memory chip
+
+Under a reply, ai and iOS show a "Used memory (n)" chip, and the TUI shows a dim "used memory (n)" line. The count comes from the memory tools the turn actually ran (`memory_list`, `memory_recall`, `memory_write`), recorded on the reply as `memory_refs` (up to 10 entries, each with an id, an optional title and the action: recalled, saved and so on). It never comes from the model's own claim that it used memory.
+
+## Versions
+
+Every entry has a version: the first 12 hex characters of a SHA-256 hash of its stored line. Any change to the text or metadata changes it. `memory_list` and `memory_recall` return it, and a change to an existing entry must pass it as `if_version`.
+
+## memory_write actions
+
+| Action | Input | Effect |
+|---|---|---|
+| `save` | `text`, optional `id` | A new memory. With the id of an existing entry it replaces the whole line. |
+| `append` | `id`, `text` | Adds text to the end of an entry, exactly as given. Start with a space to separate words. |
+| `replace` | `id`, `old`, `new` | Swaps one part. `old` must appear exactly once in the entry. |
+| `delete` | `id` | Removes the entry. |
+
+Changing or deleting an existing entry needs `if_version`. The check runs against the latest head after a sync. If the entry changed since the agent read it, nothing is written and the result is a refusal that carries the current text and version. The agent checks that its change still makes sense and retries with the new version.
+
+Results carry the new `version`. In chat, the row reads "Memory edited" or "Memory edit refused".
+
+## Credential check
+
+The credential scanner runs on the whole line that results from the edit, not on the fragment sent. An append or replace that only forms a key or password together with the existing text is refused. The categories the agent must never save (ID numbers, health and legal history, instructions to flatter or hide disagreement, its own guesses about the user) remain a rule in the tool text.
+
+## memory_recall queries
+
+A query should stand alone. The agent uses your exact names, terms and time window and the topic's own nouns, not meta-words like "discussed" or "talked about". If the request has no content words ("what did I tell you?"), it asks which thing you mean instead of searching. It searches for what you asked and does not widen to related preferences.
+
+## memory_list
+
+| Parameter | Meaning |
+|---|---|
+| `drive` | A drive ref or a mounted drive's name. Default is the personal drive. |
+| `topic` | Leave out to list topics. Pass one, such as `preferences`, to list its entries. |
+| `after` | The last id of the previous page. A page holds 200 entries. |
+
+Entries come back as `id`, `version`, `text` and `added`.
+
+## Memory conflicts
+
+When [Allternit Sleep](/api/memory-sleep) finds two memories that disagree, a `memory_recall` hit for either one carries a conflict note under it: both sides, which one Sleep kept and why. The agent may mention the conflict if it matters.
+
+If Sleep could not decide, the note says the conflict needs the user. The agent then asks once per session, through the same question prompt as any other question, with four choices: side A, side B, "Both, in different contexts" or "Neither". The answer is recorded with `POST /api/v1/memory/disputes/:id/resolve`. If the conflict is already settled or Sleep is off, the agent is told quietly and nothing else happens. A server without Sleep sends no conflict note and recall looks the same as before.
+
+## Reminders
+
+When you ask the agent to remind you of something and the reminder fires, Gizzi reads it at the start of your next message and adds it to that turn as a short note (`The user asked to be reminded: "..."`). The agent mentions it if it is relevant. Each reminder is delivered once. The read waits at most 1.5 seconds, so a slow or missing Sleep service never delays your turn. With Sleep off, signed out or on an older runtime, nothing is added. The system prompt is never changed, so the prompt cache stays warm. This works the same in the terminal and in Desktop.
+
+## Two devices, one memory
+
+When a push is rejected because another computer changed the drive, the agent's local work is replayed per entry, three ways, instead of overwriting the newer copy:
+
+- Only this device changed it: the change applies.
+- Both made the same text: it stays as it is.
+- Both changed it differently: the other device's text keeps the id, and this device's text is kept as a sibling entry with the id `<id>-conflict-<8 hex>` and the metadata `conflict_of: <id>`.
+- One device edited and the other deleted: the edit wins.
+
+The session status and `memory_list` show "N memories need a look", counting the entries with `conflict_of`. To settle one, keep the right text on the original id and delete the copy. Saving over an entry clears `conflict_of`.
+
+See the [Memory Drive API](/api/memory-drive#versions-and-conflict-copies) for the wire format.

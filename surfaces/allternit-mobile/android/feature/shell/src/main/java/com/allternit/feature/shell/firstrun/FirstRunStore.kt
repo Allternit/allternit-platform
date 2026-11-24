@@ -1,0 +1,312 @@
+package com.allternit.feature.shell.firstrun
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.allternit.core.data.Prefs
+import com.allternit.feature.chat.RelayPick
+import com.allternit.feature.chat.RuntimeRelay
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+
+/**
+ * First-run setup state (iOS OnboardingStore), in DataStore:
+ * - [completedOnDevice] (key `allternit-onboarding-complete`, the iOS UserDefaults key) gates the
+ *   setup in MainActivity, before the workspace. It is true once setup finished on this phone.
+ * - [skippedThisLaunch]: the gate let an existing user through for this launch only (the server
+ *   could not answer and a computer is paired). In memory, so it asks again next launch.
+ * - [forceRun]: show setup without asking the server (Settings → Replay setup).
+ */
+internal class FirstRunStore(context: Context) {
+    private val prefs = Prefs(context)
+    private val shellPrefs = context.applicationContext.getSharedPreferences("allternit_shell", Context.MODE_PRIVATE)
+
+    var loaded by mutableStateOf(false)
+        private set
+    var completedOnDevice by mutableStateOf(false)
+        private set
+    var skippedThisLaunch by mutableStateOf(false)
+        private set
+    var forceRun by mutableStateOf(false)
+        private set
+
+    val isComplete: Boolean get() = completedOnDevice || skippedThisLaunch
+
+    /**
+     * Someone has used the app on this phone before: the shell's remembered mode (iOS reads the
+     * mode store's keys for the same reason).
+     */
+    val usedAppBefore: Boolean get() = shellPrefs.contains("shell-mode")
+
+    suspend fun load() {
+        completedOnDevice = prefs.boolean(KEY_COMPLETE).first()
+        loaded = true
+    }
+
+    /** Setup finished (or the server says it is done). */
+    suspend fun complete() {
+        forceRun = false
+        completedOnDevice = true
+        // The write must land even if the composition leaves and cancels the caller.
+        withContext(NonCancellable) { prefs.setBoolean(KEY_COMPLETE, true) }
+    }
+
+    fun skipThisLaunch() {
+        skippedThisLaunch = true
+    }
+
+    /** Settings → Replay setup: the root swaps back to setup, without waiting for the server. */
+    suspend fun replay() {
+        forceRun = true
+        skippedThisLaunch = false
+        completedOnDevice = false
+        prefs.setBoolean(KEY_COMPLETE, false)
+    }
+
+    companion object {
+        const val KEY_COMPLETE = "allternit-onboarding-complete"
+    }
+}
+
+/**
+ * The live connect-kit rows for setup (iOS ConnectionsStore, the part setup reads): cloud-api's
+ * `GET /api/v1/connections`, with the catalog's fallbacks for rows the server didn't send.
+ */
+internal class ConnectionsStore {
+    var rows by mutableStateOf<Map<String, ConnectionWire>>(emptyMap())
+        private set
+    var loaded by mutableStateOf(false)
+        private set
+    var loadError by mutableStateOf<String?>(null)
+        private set
+    var computerOnline by mutableStateOf(false)
+        private set
+    private var connecting by mutableStateOf<Set<String>>(emptySet())
+    private var loading = false
+
+    /**
+     * Per-group catalog counts (contract §11, one `limit=0` call). Null until it answers, and
+     * when the call fails (an older server): every More tile hides then.
+     */
+    var catalogCounts by mutableStateOf<Map<String, Int>?>(null)
+        private set
+
+    /** Apps connected from More, shown in Apps as normal rows (plan D4). */
+    var promotedApps by mutableStateOf<List<ConnEntry>>(emptyList())
+        private set
+
+    /** Rows for catalog entries the page has seen: their availability, reason and fallbacks. */
+    private var extraRows by mutableStateOf<Map<String, ConnectionWire>>(emptyMap())
+
+    /** The computer the runtime rows came from, null when none answered (iOS `runtimeId`). */
+    var runtimeId by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Reads cloud-api and the active computer and merges them (contract §3, iOS
+     * ConnectionsStore.load): unknown ids are dropped, and a computer row replaces a cloud row
+     * with the same id only when it is `on`. With no computer answering, rows that need one fall
+     * back to the catalog.
+     */
+    suspend fun load(relay: RuntimeRelay) {
+        if (loading) return
+        loading = true
+        try {
+            coroutineScope {
+                val cloud = async { runCatching { ConnectionsClient.list(null) } }
+                val active = (relay.resolve() as? RelayPick.Computer)?.runtimeId
+                val runtimeRows = active?.let { id -> runCatching { ConnectionsClient.list(id) }.getOrNull() }
+                val answered = if (runtimeRows != null) active else null
+                val merged = mutableMapOf<String, ConnectionWire>()
+                val cloudResult = cloud.await()
+                cloudResult.onSuccess { list -> list.filter { it.id in ConnectionsCatalog.knownIds }.forEach { merged[it.id] = it } }
+                loadError = cloudResult.exceptionOrNull()?.let(ConnectionsClient::describe)
+                runtimeRows.orEmpty().filter { it.id in ConnectionsCatalog.knownIds }.forEach { row ->
+                    // A runtime row without a source still lives on that computer.
+                    val r = if (row.source == null && answered != null) row.copy(source = "runtime:$answered") else row
+                    if (merged[r.id] == null || r.state == ConnState.On) merged[r.id] = r
+                }
+                rows = merged
+                runtimeId = answered
+                computerOnline = answered != null
+            }
+        } finally {
+            loading = false
+            loaded = true
+        }
+    }
+
+    suspend fun loadCatalogCounts() {
+        catalogCounts = runCatching { ConnectionsCatalogClient.page(limit = 0).counts }.getOrNull()
+    }
+
+    /**
+     * The apps the computer's connector gateway says are connected, minus the base rows. With no
+     * computer answering, the last list stays (the apps are still connected; they just can't run).
+     */
+    suspend fun loadPromotedApps() {
+        val apps = runCatching { AppConnectorsClient.connected() }.getOrNull() ?: return
+        val base = ConnectionsCatalog.entries.map { it.id }.toSet()
+        val list = apps.filter { it.id !in base && it.id != "catalog" }
+        val previous = promotedApps.map { it.id }.toSet()
+        promotedApps = list.map { a ->
+            ConnEntry(a.id, a.name, a.name.firstOrNull()?.uppercase() ?: "?", a.detail, ConnWay.OAuth, ConnRunsOn.Computer, group = "apps")
+        }
+        extraRows = extraRows - previous + list.associate { it.id to ConnectionWire(it.id, ConnState.On, found = it.detail) }
+    }
+
+    /** Key providers that are connected (or need you), promoted into Brains like any extra (plan D4). */
+    val promotedKeys: List<ConnEntry>
+        get() = ConnectionsCatalog.keyProviders.filter { rows[it.id]?.state == ConnState.On || rows[it.id]?.state == ConnState.Needs }
+            .map { ConnEntry(it.id, it.name, it.name.first().uppercase(), "API key", ConnWay.Paste, group = "brains") }
+
+    /** Everything on the page besides the base rows. */
+    val promoted: List<ConnEntry> get() = promotedKeys + promotedApps
+
+    /** Every id the page lists; More hides these (contract §11 client rules). */
+    val listedIds: Set<String> get() = ConnectionsCatalog.entries.map { it.id }.toSet() + promoted.map { it.id }
+
+    /** Keeps the catalog's row facts for entries a More panel shows, without hiding a live row. */
+    fun rememberCatalog(entries: List<CatalogEntry>) {
+        val fresh = entries.filter { it.id !in extraRows && it.id !in rows }
+        if (fresh.isNotEmpty()) extraRows = extraRows + fresh.associate { it.id to it.wire() }
+    }
+
+    /** An app connected from More shows as "Connecting…" until the gateway says it is connected. */
+    fun markAppConnecting(entry: CatalogEntry, on: Boolean) {
+        extraRows = extraRows + (entry.id to (extraRows[entry.id] ?: entry.wire()).copy(state = if (on) ConnState.Connecting else ConnState.Off))
+    }
+
+    /** Rows that live on a computer go to that computer; everything else to cloud-api (iOS target(for:)). */
+    fun target(id: String): String? {
+        rows[id]?.runtimeId?.let { return it }
+        val rid = runtimeId ?: return null
+        return if (id in ConnectionsCatalog.cliLoginIds || id == "local" || (id == "chatgpt" && rows[id]?.source == null)) rid else null
+    }
+
+    fun row(id: String): ConnectionWire {
+        var r = rows[id] ?: extraRows[id] ?: ConnectionsCatalog.fallbackRow(id, computerOnline)
+        when (id) {
+            "api-key" -> r = keysSummary()
+            // Alias of google-key (contract §3).
+            "gemini" -> rows["google-key"]?.takeIf { rows["gemini"] == null }?.let {
+                r = r.copy(state = it.state, found = it.found, reason = it.reason)
+            }
+            "this-mac" -> if (computerOnline) r = r.copy(state = ConnState.On)
+        }
+        if (id in connecting && r.state != ConnState.On) r = r.copy(state = ConnState.Connecting)
+        return r
+    }
+
+    fun state(id: String) = row(id).state
+
+    fun isAvailable(id: String): Boolean = row(id).let { it.available || it.state == ConnState.On }
+
+    /**
+     * Rows behind a server flag stay out of the list until cloud-api sends the row with
+     * `available: true` (iOS isListed): the Claude organization row, while `ALLTERNIT_CLAUDE_LINK`
+     * is off, is missing or `available: false`. A row already linked or needing you always shows.
+     */
+    fun isListed(id: String): Boolean {
+        if (id != "claude-org") return true
+        val r = rows[id] ?: return false
+        return r.available || r.state == ConnState.On || r.state == ConnState.Needs
+    }
+
+    /** "An API key" stands for every key provider. */
+    private fun keysSummary(): ConnectionWire {
+        val keys = ConnectionsCatalog.keyProviders.map { it to rows[it.id] }
+        keys.firstOrNull { it.second?.state == ConnState.Needs }?.let { (p, row) ->
+            return ConnectionWire("api-key", ConnState.Needs,
+                reason = row?.reason ?: ConnectionsCatalog.reasonText(row?.reasonCode, p.name) ?: "${p.name} key needs you")
+        }
+        val on = keys.filter { it.second?.state == ConnState.On }.map { it.first.name }
+        if (on.isNotEmpty()) return ConnectionWire("api-key", ConnState.On, found = if (on.size <= 2) on.joinToString(", ") else "${on.size} keys")
+        return ConnectionWire("api-key")
+    }
+
+    /** The one status line: the four words and nothing else. */
+    fun statusLine(entry: ConnEntry): String {
+        val r = row(entry.id)
+        return when (r.state) {
+            ConnState.Off -> entry.blurb?.let { "Not connected · $it" } ?: "Not connected"
+            ConnState.Connecting -> "Connecting…"
+            ConnState.On -> if (entry.id == "claude-org") "Connected · " + (r.found ?: "Billed to your organization")
+            else r.found?.let { "Connected · $it" } ?: "Connected"
+            ConnState.Needs -> (r.reason ?: ConnectionsCatalog.reasonText(r.reasonCode, entry.name))?.let { "Needs you · $it" } ?: "Needs you"
+        }
+    }
+
+    fun unavailableReason(id: String): String {
+        val r = row(id)
+        return r.unavailableReason ?: ConnectionsCatalog.reasonText(r.reasonCode, ConnectionsCatalog.entry(id)?.name ?: id) ?: "Not available yet."
+    }
+
+    fun setConnecting(id: String, on: Boolean) {
+        connecting = if (on) connecting + id else connecting - id
+    }
+
+    fun apply(row: ConnectionWire) {
+        if (row.id !in ConnectionsCatalog.knownIds) return
+        connecting = connecting - row.id
+        rows = rows + (row.id to row)
+    }
+
+    fun markOn(id: String) {
+        connecting = connecting - id
+        rows = rows + (id to (rows[id] ?: ConnectionWire(id)).copy(state = ConnState.On, reason = null, reasonCode = null))
+    }
+}
+
+/**
+ * One paged, searchable slice of the connections catalog (an open More panel, or one group of
+ * the browse page): 24 entries a page, the next page from `next_cursor`.
+ */
+internal class CatalogPager(val group: String?) {
+    var query by mutableStateOf("")
+    var entries by mutableStateOf<List<CatalogEntry>>(emptyList())
+        private set
+    var total by mutableStateOf(0)
+        private set
+    var loading by mutableStateOf(false)
+        private set
+    var loaded by mutableStateOf(false)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+    private var cursor: String? = null
+    private var generation = 0
+
+    val hasMore: Boolean get() = cursor != null
+
+    suspend fun reload() {
+        val gen = ++generation
+        loading = true
+        error = null
+        val r = runCatching { ConnectionsCatalogClient.page(group, query) }
+        if (gen != generation) return
+        r.onSuccess { p -> entries = p.entries; total = p.total; cursor = p.nextCursor }
+            .onFailure { e -> error = ConnectionsClient.describe(e); entries = emptyList(); total = 0; cursor = null }
+        loading = false
+        loaded = true
+    }
+
+    suspend fun loadMore() {
+        val c = cursor ?: return
+        if (loading) return
+        val gen = generation
+        loading = true
+        val r = runCatching { ConnectionsCatalogClient.page(group, query, c) }
+        if (gen != generation) return
+        r.onSuccess { p ->
+            val have = entries.map { it.id }.toSet()
+            entries = entries + p.entries.filter { it.id !in have }
+            cursor = p.nextCursor
+        }.onFailure { e -> error = ConnectionsClient.describe(e) }
+        loading = false
+    }
+}

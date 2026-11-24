@@ -1,0 +1,30 @@
+name: Files drive Windows helper
+
+# Plan step 24 done check: the cfapi sync-root helper's tests on a Windows runner
+# (registers a real sync root, unpackaged). The installer itself is built and
+# checked in release-desktop.yml (build-windows), which runs the same test.
+# Not on every push or PR: the build train dispatches or calls it.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-root:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      # Full checkout: the helper's path dependencies inherit workspace
+      # dependencies from the root Cargo.toml.
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - name: Unit + sync-root tests
+        shell: bash
+        run: cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml -- --nocapture --test-threads=1
+      - name: Release build
+        shell: bash
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml

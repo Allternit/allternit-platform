@@ -1,0 +1,13 @@
+{
+  "type": "ErrorBody",
+  "valid": true,
+  "case": "Commit before all chunks arrived.",
+  "message": {
+    "error": "chunk_missing",
+    "code": "chunk_missing",
+    "message": "Some chunks have not been uploaded yet.",
+    "missing_chunks": [
+      "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ]
+  }
+}

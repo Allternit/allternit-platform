@@ -9,6 +9,7 @@
  */
 
 import { api } from "@/lib/api-client";
+import type { DecisionOutcome, V1Decision } from "@/lib/decisions";
 
 export const PROJECT_HEADER = "X-Allternit-Project";
 
@@ -298,6 +299,26 @@ export interface V1TracingTest {
   message: string;
 }
 
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "consumed";
+export type ApprovalSource = "twin" | "computer";
+
+export interface V1Approval {
+  id: string;
+  object: "approval";
+  source: ApprovalSource;
+  source_ref: string;
+  account_id: string | null;
+  conversation_id?: string | null;
+  response_id?: string | null;
+  kind: string;
+  proposed_action: Record<string, unknown>;
+  status: ApprovalStatus;
+  expires_at: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
 /** A `/v1` client bound to one project. */
 export function v1(projectId: string) {
   const headers = { [PROJECT_HEADER]: projectId };
@@ -323,6 +344,11 @@ export function v1(projectId: string) {
     listConversations: (agentId: string, after?: string | null) =>
       api.get<V1Page<V1Conversation>>(`/v1/agents/${enc(agentId)}/conversations${qs({ limit: 50, after })}`, opts),
     getConversation: (id: string) => api.get<V1Conversation>(`/v1/conversations/${enc(id)}`, opts),
+
+    listApprovals: (params: { status?: ApprovalStatus; source?: ApprovalSource; after?: string | null } = {}) =>
+      api.get<V1Page<V1Approval>>(`/v1/approvals${qs({ limit: 50, ...params })}`, opts),
+    decideApproval: (id: string, decision: "approve" | "deny", reason?: string) =>
+      api.post<V1Approval>(`/v1/approvals/${enc(id)}`, { decision, ...(reason ? { reason } : {}) }, opts),
 
     listModelKeys: () => api.get<{ data: V1ModelKey[] }>("/v1/model_keys", opts),
     putModelKey: (provider: ModelProvider, apiKey: string) =>
@@ -354,6 +380,11 @@ export function v1(projectId: string) {
     phoneHistory: (serial: string, runId?: string | null) =>
       api.get<V1PhoneHistory>(`/v1/phones/${enc(serial)}/history${qs({ run_id: runId })}`, opts),
     phoneLive: (serial: string) => api.post<V1PhoneLive>(`/v1/phones/${enc(serial)}/live`, undefined, opts),
+
+    listDecisions: (after?: string | null) => api.get<V1Page<V1Decision>>(`/v1/decisions${qs({ limit: 50, after })}`, opts),
+    getDecision: (id: string) => api.get<V1Decision>(`/v1/decisions/${enc(id)}`, opts),
+    recordOutcomes: (id: string, outcomes: Record<string, DecisionOutcome>) =>
+      api.patch<V1Decision>(`/v1/decisions/${enc(id)}`, { outcomes }, opts),
 
     getTracing: () => api.get<V1ProjectTracing>(`/v1/projects/${enc(projectId)}/tracing`, opts),
     putTracing: (input: { endpoint: string; headers?: Record<string, string>; service_name?: string; enabled?: boolean }) =>

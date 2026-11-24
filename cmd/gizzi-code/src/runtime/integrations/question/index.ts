@@ -3,6 +3,10 @@ import { BusEvent } from "@/shared/bus/bus-event"
 import { Identifier } from "@/shared/id/id"
 import { Instance } from "@/runtime/context/project/instance"
 import { Log } from "@/shared/util/log"
+import { Database, and, eq, gte, inArray, lt } from "@/runtime/session/storage/db"
+import { SessionTable } from "@/runtime/session/session.sql"
+import { Scheduler } from "@/runtime/automation/scheduler"
+import { QuestionAsyncTable } from "@/runtime/integrations/question/question.sql"
 import z from "zod/v4"
 
 export namespace Question {
@@ -104,8 +108,12 @@ export namespace Question {
           callID: z.string(),
         })
         .optional(),
+      // ask_user_later: the turn did not wait; the answer starts a new turn.
+      async: z.boolean().optional().describe("Asked with ask_user_later: answering starts a new turn"),
+      assumption: z.string().optional().describe("What the agent is doing until the answer arrives"),
+      time: z.object({ created: z.number() }).optional(),
     })
-    
+
   export type Request = z.infer<typeof Request>
 
   export const Answer = z.array(z.string())
@@ -148,6 +156,9 @@ export namespace Question {
       }
     > = {}
 
+    // ask_user_later expiry: once when the instance starts, then hourly.
+    Scheduler.register({ id: "question.async.expiry", interval: ASYNC_SWEEP_MS, run: async () => void (await expireDue()) })
+
     return {
       pending,
     }
@@ -155,6 +166,11 @@ export namespace Question {
 
   // A question waiting for its answer keeps a settings reload from wiping it (Instance.disposeAll).
   Instance.registerBusyCheck(async () => Object.keys((await state()).pending).length > 0)
+
+  /** Starts this instance's question state at boot, so the ask_user_later expiry sweep runs without waiting for the first question. */
+  export async function init() {
+    await state()
+  }
 
   export async function ask(input: {
     sessionID: string
@@ -209,6 +225,7 @@ export namespace Question {
     const s = await state()
     const existing = s.pending[input.requestID]
     if (!existing) {
+      if (await replyAsync(input.requestID, input.answers)) return
       log.warn("reply for unknown request", { requestID: input.requestID })
       return
     }
@@ -247,6 +264,7 @@ export namespace Question {
     const s = await state()
     const existing = s.pending[requestID]
     if (!existing) {
+      if (await closeAsync(requestID, "dismissed")) return
       log.warn("reject for unknown request", { requestID })
       return
     }
@@ -268,7 +286,255 @@ export namespace Question {
     }
   }
 
-  export async function list() {
-    return state().then((x) => Object.values(x.pending).map((x) => x.info))
+  /** Questions waiting for an answer: blocking ones in memory, then ask_user_later asks from the database. */
+  export async function list(): Promise<Request[]> {
+    const live = await state().then((x) => Object.values(x.pending).map((x) => x.info))
+    return [...live, ...listAsync()]
+  }
+
+  /*
+   * ask_user_later: questions whose turn does not wait. Each ask is a row in
+   * question_async (persisted, so it survives a restart). Answering starts a
+   * new turn in the thread, like a routine delivery; an ask nobody answers
+   * expires after ASYNC_EXPIRY_MS, silently to the model (the card shows
+   * "Expired"). A subagent's ask belongs to its root session.
+   */
+
+  export const ASYNC_MAX_PENDING = 3
+  export const ASYNC_MAX_QUESTIONS = 3
+  export const ASYNC_MAX_ASSUMPTION = 300
+  export const ASYNC_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000
+  const ASYNC_SWEEP_MS = 60 * 60 * 1000
+  const MAX_PARENT_DEPTH = 32
+
+  /** Marks the text part of a turn started by an answer (`[answer to your question <id>]`). */
+  export const ANSWER_MARK = "answer to your question"
+
+  export class AsyncLimitError extends Error {
+    constructor(public readonly pending: number) {
+      super(
+        `This thread already has ${pending} questions waiting for the user (the limit is ${ASYNC_MAX_PENDING}). ` +
+          "Don't ask another one now: continue with your assumptions, and ask again after one is answered or expires.",
+      )
+    }
+  }
+
+  /** How an answer becomes a turn. A seam so tests can watch it without a model. */
+  export const asyncTurn = {
+    async start(input: { sessionID: string; requestID: string; text: string }): Promise<void> {
+      const { SessionPrompt } = await import("@/runtime/session/prompt")
+      // Same path as a routine delivery: a user turn; a busy session queues it.
+      await SessionPrompt.prompt({
+        sessionID: input.sessionID,
+        parts: [{ type: "text", text: input.text, metadata: { askUserLater: { id: input.requestID } } }],
+      })
+    },
+  }
+
+  /** The thread a session belongs to: walk parentID up to the top session. */
+  export async function rootSessionID(sessionID: string): Promise<string> {
+    const { Session } = await import("@/runtime/session")
+    let id = sessionID
+    const seen = new Set<string>()
+    for (let depth = 0; depth < MAX_PARENT_DEPTH && !seen.has(id); depth++) {
+      seen.add(id)
+      const info = await Session.get(id).catch(() => undefined)
+      if (!info?.parentID) break
+      id = info.parentID
+    }
+    return id
+  }
+
+  type AsyncRow = typeof QuestionAsyncTable.$inferSelect
+
+  function asyncRequest(row: AsyncRow): Request {
+    return {
+      id: row.id,
+      sessionID: row.root_session_id,
+      questions: row.questions as Info[],
+      async: true,
+      assumption: row.assumption,
+      time: { created: row.created_at },
+    }
+  }
+
+  function expiryCutoff(now = Date.now()) {
+    return now - ASYNC_EXPIRY_MS
+  }
+
+  /**
+   * Every session this runtime stores, in any project. A live terminal session
+   * sits in the default project while Desktop or a phone may ask through
+   * another project's instance, so asks are listed runtime-wide: every device
+   * sees every pending ask. A row whose root is not a stored session (a
+   * terminal ask with no engine attached, answered there with /answer) has no
+   * thread an answer could start a turn in, so it is not listed.
+   */
+  function runtimeSessions(db: Database.TxOrDb) {
+    return db.select({ id: SessionTable.id }).from(SessionTable)
+  }
+
+  /** Pending, unexpired asks: of one thread when `rootSessionID` is given, else of every session on this runtime. */
+  function listAsync(rootSessionID?: string): Request[] {
+    try {
+      const rows = Database.use((db) =>
+        db
+          .select()
+          .from(QuestionAsyncTable)
+          .where(
+            and(
+              eq(QuestionAsyncTable.status, "pending"),
+              gte(QuestionAsyncTable.created_at, expiryCutoff()),
+              rootSessionID
+                ? eq(QuestionAsyncTable.root_session_id, rootSessionID)
+                : inArray(QuestionAsyncTable.root_session_id, runtimeSessions(db)),
+            ),
+          )
+          .orderBy(QuestionAsyncTable.created_at)
+          .all(),
+      )
+      return rows.map(asyncRequest)
+    } catch (error) {
+      // The blocking questions still list when the database can't be read.
+      log.error("listing ask_user_later asks failed", { error: error instanceof Error ? error.message : String(error) })
+      return []
+    }
+  }
+
+  /** Pending ask_user_later asks of one thread (its root session). */
+  export async function listPendingAsync(rootSessionID: string): Promise<Request[]> {
+    return listAsync(rootSessionID)
+  }
+
+  /**
+   * Persists an ask and publishes it (`question.asked` with `async: true`).
+   * Returns at once. Throws AsyncLimitError when the thread already has
+   * ASYNC_MAX_PENDING asks waiting.
+   */
+  export async function askLater(input: { sessionID: string; questions: Info[]; assumption: string }): Promise<Request> {
+    await state()
+    await expireDue()
+    const root = await rootSessionID(input.sessionID)
+    const waiting = listAsync(root).length
+    if (waiting >= ASYNC_MAX_PENDING) throw new AsyncLimitError(waiting)
+    const id = Identifier.ascending("question")
+    const created = Date.now()
+    const assumption = input.assumption.trim().slice(0, ASYNC_MAX_ASSUMPTION)
+    Database.use((db) =>
+      db
+        .insert(QuestionAsyncTable)
+        .values({
+          id,
+          session_id: input.sessionID,
+          root_session_id: root,
+          questions: input.questions,
+          assumption,
+          status: "pending",
+          created_at: created,
+        })
+        .run(),
+    )
+    log.info("asked later", { id, root, questions: input.questions.length })
+    const info: Request = {
+      id,
+      sessionID: root,
+      questions: input.questions,
+      async: true,
+      assumption,
+      time: { created },
+    }
+    Bus.publish(Event.Asked, info)
+    return info
+  }
+
+  /** The answer turn's text: marked, one line per question, readable by the model. */
+  export function formatAsyncAnswer(request: Pick<Request, "id" | "questions" | "assumption">, answers: Answer[]): string {
+    const lines = [`[${ANSWER_MARK} ${request.id}]`, "The user answered the question you asked earlier with ask_user_later:"]
+    request.questions.forEach((q, i) => {
+      lines.push(`- ${q.question}`, `  → ${formatAnswer(q, answers[i]) || "(no answer)"}`)
+    })
+    if (request.assumption) {
+      lines.push(
+        `You had assumed: ${request.assumption}`,
+        "If the answer differs, adjust the work you did on that assumption; if it matches, carry on.",
+      )
+    }
+    return lines.join("\n")
+  }
+
+  /** Answers an ask_user_later ask: status answered, then a new turn. False when no such pending ask. */
+  async function replyAsync(requestID: string, answers: Answer[]): Promise<boolean> {
+    // The status guard makes a double reply start one turn, not two.
+    const row = Database.use((db) =>
+      db
+        .update(QuestionAsyncTable)
+        .set({ status: "answered", answered_at: Date.now(), answer: { answers } })
+        .where(
+          and(
+            eq(QuestionAsyncTable.id, requestID),
+            eq(QuestionAsyncTable.status, "pending"),
+            gte(QuestionAsyncTable.created_at, expiryCutoff()),
+          ),
+        )
+        .returning()
+        .get(),
+    )
+    if (!row) return false
+    log.info("answered later", { requestID, answers })
+    Bus.publish(Event.Replied, { sessionID: row.root_session_id, requestID, answers })
+    const text = formatAsyncAnswer(asyncRequest(row), answers)
+    void asyncTurn.start({ sessionID: row.root_session_id, requestID, text }).catch((error) =>
+      log.error("answer turn failed to start", {
+        requestID,
+        sessionID: row.root_session_id,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return true
+  }
+
+  /** Closes a pending ask without a turn (dismissed by the user). False when no such pending ask. */
+  async function closeAsync(requestID: string, status: "dismissed"): Promise<boolean> {
+    const row = Database.use((db) =>
+      db
+        .update(QuestionAsyncTable)
+        .set({ status })
+        .where(and(eq(QuestionAsyncTable.id, requestID), eq(QuestionAsyncTable.status, "pending")))
+        .returning()
+        .get(),
+    )
+    if (!row) return false
+    log.info("ask_user_later ask closed", { requestID, status })
+    Bus.publish(Event.Rejected, { sessionID: row.root_session_id, requestID })
+    return true
+  }
+
+  /**
+   * Expires every ask on this runtime older than ASYNC_EXPIRY_MS, whatever
+   * its project (terminal asks included): status expired and
+   * `question.rejected` on the sweeping instance's bus, no turn (silent to the
+   * model). Returns the ids. The status guard makes a sweep from a second
+   * instance a no-op. Listing and replying ignore an expired ask even before a
+   * sweep runs.
+   */
+  export async function expireDue(now = Date.now()): Promise<string[]> {
+    const rows = Database.use((db) =>
+      db
+        .update(QuestionAsyncTable)
+        .set({ status: "expired" })
+        .where(
+          and(
+            eq(QuestionAsyncTable.status, "pending"),
+            lt(QuestionAsyncTable.created_at, expiryCutoff(now)),
+          ),
+        )
+        .returning()
+        .all(),
+    )
+    for (const row of rows) {
+      log.info("ask_user_later ask expired", { requestID: row.id })
+      Bus.publish(Event.Rejected, { sessionID: row.root_session_id, requestID: row.id })
+    }
+    return rows.map((row) => row.id)
   }
 }

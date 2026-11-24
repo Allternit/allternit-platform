@@ -5,6 +5,7 @@ pub mod account_erase;
 pub mod audit;
 pub mod auto_topup;
 pub mod billing_disputes;
+pub mod brain_runners;
 pub mod cloud_phones;
 pub mod contabo_runtime_service;
 pub mod cost_service;
@@ -12,17 +13,39 @@ pub mod customer_emails;
 pub mod event_store;
 pub mod fabric_ledger;
 pub mod executor_service;
+pub mod files_tokens;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
+pub mod connections;
+/// The connect kit's "More" list: `GET /api/v1/connections/catalog` (contract section 11).
+pub mod connections_catalog;
+pub mod copilot;
+/// Link your Claude organization: profile, PAR, code exchange, status, revoke (oauth-linked-billing B2).
+pub mod claude_link;
+pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
+/// Allternit Meetings: calendar sync (Google + ICS) and the `meeting_join` auto-join run.
+pub mod meeting_calendar;
+/// Allternit Meetings: sealed Chrome profiles of the Meet bot accounts (docs/meetings/BOT-ACCOUNTS.md).
+pub mod bot_profiles;
+/// Allternit Meetings: one pod per meeting session (docs/meetings/CONTRACT.md).
+pub mod meeting_launcher;
 pub mod node_resolution;
+/// Sign in with Allternit: OAuth apps (CONTRACT-oauth-linked-billing-2026-11, Part A).
+pub mod oauth_apps;
+/// Who pays for an `alt_oat_` inference call: reserve, then settle (A8).
+pub mod oauth_spend;
+pub mod oauth_tokens;
 pub mod ops_alert;
 pub mod provisioning;
 pub mod quota_service;
 pub mod r2;
 pub mod run_service;
 pub mod scheduler_service;
+pub mod store_apple;
+pub mod store_billing;
+pub mod store_google;
 pub mod task_service;
 pub mod hard_line;
 pub mod open_lane;
@@ -54,14 +77,15 @@ pub use hosted_runtime_lifecycle::{
     HostedWakeTarget,
 };
 pub use inference_settlement::{
-    check_inference_allowed, credit_balance_row, meter_json_response, meter_stream_response,
-    settle_inference, StreamSettlement, UsageMeteringBody,
+    check_inference_allowed, cloud_models_entitlement, credit_balance_row, meter_json_response,
+    meter_stream_response, settle_inference, CloudModelsEntitlement, StreamSettlement,
+    UsageMeteringBody,
 };
 pub use inference_pool::{
     check_free_tier_pool, free_tier_pool_policy, FreeTierPoolPolicy, InferencePoolService, PoolRow,
 };
 pub use inference_keys::{
-    byok_base_url, byok_enabled, mask_key, should_route_byok, InferenceKeyInfo,
+    byok_base_url, byok_enabled, is_key_provider, mask_key, should_route_byok, InferenceKeyInfo,
     InferenceKeyService, KeyValidator,
 };
 pub use node_resolution::{
@@ -77,7 +101,9 @@ pub use provisioning::{
     ProvisionDefaults, ProvisionError, ProvisionSpec, ProvisioningService, SuspendReason, INIT_SCRIPT,
     free_incus_name_for, note_runtime_attached, start_free_computer_task,
     touch_provisioned_activity, FreeDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult,
-    TIER_FREE, TIER_PAID,
+    TIER_FREE, TIER_PAID, TIER_CREDIT, credit_computers_enabled, start_credit_computer_task,
+    CreditDefaults, CreditStart, CreditTick, CREDIT_SIZE_ID, plan_hours_usage, PlanHoursDefaults,
+    PlanHoursUsage, PLAN_OVERAGE_LEDGER_SOURCE,
 };
 pub use quota_service::{QuotaService, SharedQuotaService, UserQuota};
 pub use run_service::{RunListFilter, RunService, RunServiceImpl};

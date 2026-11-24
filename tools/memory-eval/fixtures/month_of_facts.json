@@ -1,0 +1,1104 @@
+{
+ "user": "Mara Quill (invented, synthetic)",
+ "note": "Entirely synthetic. No real person. 30 days, 2026-10-01 to 2026-10-30.",
+ "facts": [
+  {
+   "id": "f001",
+   "date": "2026-10-01",
+   "slot": "city",
+   "label": "current city",
+   "value": "Tallis Bay",
+   "text": "I live in Tallis Bay.",
+   "question": "Which city does Mara live in?",
+   "paraphrases": [
+    "Where is Mara's home city?",
+    "What town does Mara call home right now?",
+    "Mara currently lives in which city?"
+   ]
+  },
+  {
+   "id": "f004",
+   "date": "2026-10-01",
+   "slot": "job_title",
+   "label": "job title",
+   "value": "junior analyst",
+   "text": "My job title is junior analyst.",
+   "question": "What is Mara's job title?",
+   "paraphrases": [
+    "What does Mara's business card say her role is?",
+    "Which title does Mara hold at work?",
+    "Mara's current position at work is what?"
+   ]
+  },
+  {
+   "id": "f007",
+   "date": "2026-10-01",
+   "slot": "employer",
+   "label": "employer",
+   "value": "Brightwell Freight",
+   "text": "I work for Brightwell Freight.",
+   "question": "Who does Mara work for?",
+   "paraphrases": [
+    "Which company pays Mara's salary?",
+    "Mara's employer is which company?",
+    "What is the name of the firm Mara works at?"
+   ]
+  },
+  {
+   "id": "f010",
+   "date": "2026-10-01",
+   "slot": "pet_name",
+   "label": "dog's name",
+   "value": "Biscuit",
+   "text": "My dog is called Biscuit.",
+   "question": "What is the name of Mara's dog?",
+   "paraphrases": [
+    "What does Mara call her dog?",
+    "Which name does Mara's dog answer to?",
+    "Mara's dog goes by what name?"
+   ]
+  },
+  {
+   "id": "f014",
+   "date": "2026-10-01",
+   "slot": "commute",
+   "label": "commute",
+   "value": "bus route 14",
+   "text": "I get to work by bus route 14.",
+   "question": "How does Mara get to work?",
+   "paraphrases": [
+    "What is Mara's way of commuting?",
+    "Which transport does Mara use for her daily commute?",
+    "Mara travels to the office by what means?"
+   ]
+  },
+  {
+   "id": "f023",
+   "date": "2026-10-01",
+   "slot": "book",
+   "label": "current book",
+   "value": "The Salt Orchard",
+   "text": "I am reading The Salt Orchard.",
+   "question": "What book is Mara reading?",
+   "paraphrases": [
+    "Which novel is on Mara's nightstand?",
+    "What is Mara's current read?",
+    "Mara is partway through which book?"
+   ]
+  },
+  {
+   "id": "f027",
+   "date": "2026-10-01",
+   "slot": "project",
+   "label": "main project",
+   "value": "Q3 route audit",
+   "text": "My main project is the Q3 route audit.",
+   "question": "What is Mara's main project at work?",
+   "paraphrases": [
+    "Which project takes most of Mara's time?",
+    "What is Mara mainly working on?",
+    "Mara's top work project is called what?"
+   ]
+  },
+  {
+   "id": "f030",
+   "date": "2026-10-01",
+   "slot": "manager",
+   "label": "manager",
+   "value": "Dov Ellery",
+   "text": "My manager is Dov Ellery.",
+   "question": "Who is Mara's manager?",
+   "paraphrases": [
+    "Who does Mara report to?",
+    "Which person is Mara's direct boss?",
+    "Mara's line manager is who?"
+   ]
+  },
+  {
+   "id": "f033",
+   "date": "2026-10-01",
+   "slot": "car",
+   "label": "car",
+   "value": "old blue sedan",
+   "text": "I drive a old blue sedan.",
+   "question": "What car does Mara drive?",
+   "paraphrases": [
+    "Which vehicle does Mara own?",
+    "What is parked in Mara's driveway?",
+    "Mara's car is which model?"
+   ]
+  },
+  {
+   "id": "f042",
+   "date": "2026-10-01",
+   "slot": "bedtime",
+   "label": "bedtime",
+   "value": "11 pm",
+   "text": "My bedtime is 11 pm.",
+   "question": "What time does Mara go to bed?",
+   "paraphrases": [
+    "When does Mara turn in for the night?",
+    "What is Mara's usual lights-out time?",
+    "Mara sleeps at what hour?"
+   ]
+  },
+  {
+   "id": "f045",
+   "date": "2026-10-01",
+   "slot": "team_size",
+   "label": "team size",
+   "value": "four people",
+   "text": "My team has four people.",
+   "question": "How big is Mara's team?",
+   "paraphrases": [
+    "How many people are on Mara's team?",
+    "What is the headcount of Mara's team?",
+    "Mara's team consists of how many people?"
+   ]
+  },
+  {
+   "id": "f056",
+   "date": "2026-10-01",
+   "slot": "landlord",
+   "label": "landlord",
+   "value": "Mr. Halvorsen",
+   "text": "My landlord is Mr. Halvorsen.",
+   "question": "Who is Mara's landlord?",
+   "paraphrases": [
+    "Who does Mara pay rent to?",
+    "Mara rents her flat from whom?",
+    "Which person owns Mara's rented flat?"
+   ]
+  },
+  {
+   "id": "f060",
+   "date": "2026-10-01",
+   "slot": "language",
+   "label": "language course",
+   "value": "Spanish",
+   "text": "I am learning Spanish.",
+   "question": "What language is Mara learning?",
+   "paraphrases": [
+    "Which language course is Mara taking?",
+    "Mara studies what language?",
+    "What tongue is Mara trying to pick up?"
+   ]
+  },
+  {
+   "id": "f063",
+   "date": "2026-10-01",
+   "slot": "savings",
+   "label": "savings goal",
+   "value": "a bike",
+   "text": "I am saving for a bike.",
+   "question": "What is Mara saving for?",
+   "paraphrases": [
+    "What is Mara's savings goal?",
+    "Which purchase is Mara putting money aside for?",
+    "Mara is setting money aside for what?"
+   ]
+  },
+  {
+   "id": "f066",
+   "date": "2026-10-01",
+   "slot": "breakfast",
+   "label": "breakfast",
+   "value": "porridge with pears",
+   "text": "My breakfast is porridge with pears.",
+   "question": "What does Mara eat for breakfast?",
+   "paraphrases": [
+    "What is Mara's usual morning meal?",
+    "Which breakfast does Mara have each day?",
+    "Mara starts the day eating what?"
+   ]
+  },
+  {
+   "id": "f013",
+   "date": "2026-10-02",
+   "slot": "cat_name",
+   "label": "cat's name",
+   "value": "Juniper",
+   "text": "My cat is called Juniper.",
+   "question": "What is the name of Mara's cat?",
+   "paraphrases": [
+    "What does Mara call her cat?",
+    "Which name does Mara's cat answer to?",
+    "Mara's cat goes by what name?"
+   ]
+  },
+  {
+   "id": "f020",
+   "date": "2026-10-02",
+   "slot": "gym_day",
+   "label": "gym day",
+   "value": "Tuesdays",
+   "text": "I go to the gym on Tuesdays.",
+   "question": "On which day does Mara go to the gym?",
+   "paraphrases": [
+    "Which weekday is Mara's gym day?",
+    "What day of the week does Mara work out?",
+    "Mara trains at the gym on what day?"
+   ]
+  },
+  {
+   "id": "f039",
+   "date": "2026-10-02",
+   "slot": "lunch",
+   "label": "lunch spot",
+   "value": "Noodle Kettle",
+   "text": "I eat lunch at Noodle Kettle.",
+   "question": "Where does Mara eat lunch?",
+   "paraphrases": [
+    "What is Mara's usual lunch place?",
+    "Which spot does Mara go to at noon?",
+    "Mara has lunch at which place?"
+   ]
+  },
+  {
+   "id": "f017",
+   "date": "2026-10-03",
+   "slot": "coffee",
+   "label": "coffee order",
+   "value": "a large oat latte",
+   "text": "My coffee order is a large oat latte.",
+   "question": "What is Mara's coffee order?",
+   "paraphrases": [
+    "What does Mara usually order at the cafe?",
+    "Which drink does Mara get each morning?",
+    "Mara's regular coffee is what?"
+   ]
+  },
+  {
+   "id": "f036",
+   "date": "2026-10-03",
+   "slot": "hobby",
+   "label": "hobby",
+   "value": "pottery",
+   "text": "My hobby this month is pottery.",
+   "question": "What is Mara's hobby?",
+   "paraphrases": [
+    "What does Mara do for fun?",
+    "Which pastime is Mara into?",
+    "Mara spends her free time on what?"
+   ]
+  },
+  {
+   "id": "f050",
+   "date": "2026-10-03",
+   "slot": "sister",
+   "label": "sister's city",
+   "value": "Lisk Harbour",
+   "text": "My sister lives in Lisk Harbour.",
+   "question": "Where does Mara's sister live?",
+   "paraphrases": [
+    "Which city is Mara's sister based in?",
+    "Mara's sister has settled in what city?",
+    "What town is home to Mara's sister?"
+   ]
+  },
+  {
+   "id": "f034",
+   "date": "2026-10-04",
+   "slot": "car",
+   "label": "car",
+   "value": "grey hatchback",
+   "text": "I drive a grey hatchback.",
+   "question": "What car does Mara drive?",
+   "paraphrases": [
+    "Which vehicle does Mara own?",
+    "What is parked in Mara's driveway?",
+    "Mara's car is which model?"
+   ],
+   "supersedes": "f033"
+  },
+  {
+   "id": "f052",
+   "date": "2026-10-04",
+   "slot": "phone",
+   "label": "phone",
+   "value": "Fennel F3",
+   "text": "My phone is a Fennel F3.",
+   "question": "What phone does Mara use?",
+   "paraphrases": [
+    "Which handset does Mara carry?",
+    "Mara's mobile phone is what model?",
+    "What kind of phone is in Mara's pocket?"
+   ]
+  },
+  {
+   "id": "f064",
+   "date": "2026-10-04",
+   "slot": "savings",
+   "label": "savings goal",
+   "value": "a new laptop",
+   "text": "I am saving for a new laptop.",
+   "question": "What is Mara saving for?",
+   "paraphrases": [
+    "What is Mara's savings goal?",
+    "Which purchase is Mara putting money aside for?",
+    "Mara is setting money aside for what?"
+   ],
+   "supersedes": "f063"
+  },
+  {
+   "id": "f043",
+   "date": "2026-10-05",
+   "slot": "bedtime",
+   "label": "bedtime",
+   "value": "midnight",
+   "text": "My bedtime is midnight.",
+   "question": "What time does Mara go to bed?",
+   "paraphrases": [
+    "When does Mara turn in for the night?",
+    "What is Mara's usual lights-out time?",
+    "Mara sleeps at what hour?"
+   ],
+   "supersedes": "f042"
+  },
+  {
+   "id": "f058",
+   "date": "2026-10-05",
+   "slot": "plant",
+   "label": "favourite plant",
+   "value": "rubber plant",
+   "text": "My favourite houseplant is the rubber plant.",
+   "question": "What is Mara's favourite houseplant?",
+   "paraphrases": [
+    "Which plant does Mara like best?",
+    "Mara's best-loved plant at home is what?",
+    "What houseplant is Mara fondest of?"
+   ]
+  },
+  {
+   "id": "f048",
+   "date": "2026-10-06",
+   "slot": "doctor",
+   "label": "doctor",
+   "value": "Dr. Ines Marlowe",
+   "text": "My doctor is Dr. Ines Marlowe.",
+   "question": "Who is Mara's doctor?",
+   "paraphrases": [
+    "Which physician does Mara see?",
+    "Who is Mara's family doctor?",
+    "Mara's regular doctor is who?"
+   ]
+  },
+  {
+   "id": "f061",
+   "date": "2026-10-06",
+   "slot": "language",
+   "label": "language course",
+   "value": "Portuguese",
+   "text": "I am learning Portuguese.",
+   "question": "What language is Mara learning?",
+   "paraphrases": [
+    "Which language course is Mara taking?",
+    "Mara studies what language?",
+    "What tongue is Mara trying to pick up?"
+   ],
+   "supersedes": "f060"
+  },
+  {
+   "id": "f054",
+   "date": "2026-10-07",
+   "slot": "allergy",
+   "label": "allergy",
+   "value": "cashews",
+   "text": "I am allergic to cashews.",
+   "question": "What is Mara allergic to?",
+   "paraphrases": [
+    "Which allergy does Mara have?",
+    "Mara must avoid what because of an allergy?",
+    "What triggers Mara's allergy?"
+   ]
+  },
+  {
+   "id": "f024",
+   "date": "2026-10-08",
+   "slot": "book",
+   "label": "current book",
+   "value": "A Map of Lanterns",
+   "text": "I am reading A Map of Lanterns.",
+   "question": "What book is Mara reading?",
+   "paraphrases": [
+    "Which novel is on Mara's nightstand?",
+    "What is Mara's current read?",
+    "Mara is partway through which book?"
+   ],
+   "supersedes": "f023"
+  },
+  {
+   "id": "f005",
+   "date": "2026-10-09",
+   "slot": "job_title",
+   "label": "job title",
+   "value": "data analyst",
+   "text": "My job title is data analyst.",
+   "question": "What is Mara's job title?",
+   "paraphrases": [
+    "What does Mara's business card say her role is?",
+    "Which title does Mara hold at work?",
+    "Mara's current position at work is what?"
+   ],
+   "supersedes": "f004"
+  },
+  {
+   "id": "f028",
+   "date": "2026-10-10",
+   "slot": "project",
+   "label": "main project",
+   "value": "fuel-cost dashboard",
+   "text": "My main project is the fuel-cost dashboard.",
+   "question": "What is Mara's main project at work?",
+   "paraphrases": [
+    "Which project takes most of Mara's time?",
+    "What is Mara mainly working on?",
+    "Mara's top work project is called what?"
+   ],
+   "supersedes": "f027"
+  },
+  {
+   "id": "f002",
+   "date": "2026-10-11",
+   "slot": "city",
+   "label": "current city",
+   "value": "Orrin Falls",
+   "text": "I live in Orrin Falls.",
+   "question": "Which city does Mara live in?",
+   "paraphrases": [
+    "Where is Mara's home city?",
+    "What town does Mara call home right now?",
+    "Mara currently lives in which city?"
+   ],
+   "supersedes": "f001"
+  },
+  {
+   "id": "f057",
+   "date": "2026-10-11",
+   "slot": "landlord",
+   "label": "landlord",
+   "value": "Ms. Ansell",
+   "text": "My landlord is Ms. Ansell.",
+   "question": "Who is Mara's landlord?",
+   "paraphrases": [
+    "Who does Mara pay rent to?",
+    "Mara rents her flat from whom?",
+    "Which person owns Mara's rented flat?"
+   ],
+   "supersedes": "f056"
+  },
+  {
+   "id": "f015",
+   "date": "2026-10-12",
+   "slot": "commute",
+   "label": "commute",
+   "value": "bicycle",
+   "text": "I get to work by bicycle.",
+   "question": "How does Mara get to work?",
+   "paraphrases": [
+    "What is Mara's way of commuting?",
+    "Which transport does Mara use for her daily commute?",
+    "Mara travels to the office by what means?"
+   ],
+   "supersedes": "f014"
+  },
+  {
+   "id": "f021",
+   "date": "2026-10-13",
+   "slot": "gym_day",
+   "label": "gym day",
+   "value": "Thursdays",
+   "text": "I go to the gym on Thursdays.",
+   "question": "On which day does Mara go to the gym?",
+   "paraphrases": [
+    "Which weekday is Mara's gym day?",
+    "What day of the week does Mara work out?",
+    "Mara trains at the gym on what day?"
+   ],
+   "supersedes": "f020"
+  },
+  {
+   "id": "f011",
+   "date": "2026-10-14",
+   "slot": "pet_name",
+   "label": "dog's name",
+   "value": "Pepper",
+   "text": "My dog is called Pepper.",
+   "question": "What is the name of Mara's dog?",
+   "paraphrases": [
+    "What does Mara call her dog?",
+    "Which name does Mara's dog answer to?",
+    "Mara's dog goes by what name?"
+   ],
+   "supersedes": "f010"
+  },
+  {
+   "id": "f040",
+   "date": "2026-10-15",
+   "slot": "lunch",
+   "label": "lunch spot",
+   "value": "the rooftop garden",
+   "text": "I eat lunch at the rooftop garden.",
+   "question": "Where does Mara eat lunch?",
+   "paraphrases": [
+    "What is Mara's usual lunch place?",
+    "Which spot does Mara go to at noon?",
+    "Mara has lunch at which place?"
+   ],
+   "supersedes": "f039"
+  },
+  {
+   "id": "f025",
+   "date": "2026-10-16",
+   "slot": "book",
+   "label": "current book",
+   "value": "Winter at Corvane",
+   "text": "I am reading Winter at Corvane.",
+   "question": "What book is Mara reading?",
+   "paraphrases": [
+    "Which novel is on Mara's nightstand?",
+    "What is Mara's current read?",
+    "Mara is partway through which book?"
+   ],
+   "supersedes": "f024"
+  },
+  {
+   "id": "f008",
+   "date": "2026-10-17",
+   "slot": "employer",
+   "label": "employer",
+   "value": "Harbor & Pine Logistics",
+   "text": "I work for Harbor & Pine Logistics.",
+   "question": "Who does Mara work for?",
+   "paraphrases": [
+    "Which company pays Mara's salary?",
+    "Mara's employer is which company?",
+    "What is the name of the firm Mara works at?"
+   ],
+   "supersedes": "f007"
+  },
+  {
+   "id": "f031",
+   "date": "2026-10-18",
+   "slot": "manager",
+   "label": "manager",
+   "value": "Priya Okonkwo-Hale",
+   "text": "My manager is Priya Okonkwo-Hale.",
+   "question": "Who is Mara's manager?",
+   "paraphrases": [
+    "Who does Mara report to?",
+    "Which person is Mara's direct boss?",
+    "Mara's line manager is who?"
+   ],
+   "supersedes": "f030"
+  },
+  {
+   "id": "f046",
+   "date": "2026-10-18",
+   "slot": "team_size",
+   "label": "team size",
+   "value": "nine people",
+   "text": "My team has nine people.",
+   "question": "How big is Mara's team?",
+   "paraphrases": [
+    "How many people are on Mara's team?",
+    "What is the headcount of Mara's team?",
+    "Mara's team consists of how many people?"
+   ],
+   "supersedes": "f045"
+  },
+  {
+   "id": "f018",
+   "date": "2026-10-19",
+   "slot": "coffee",
+   "label": "coffee order",
+   "value": "a small black americano",
+   "text": "My coffee order is a small black americano.",
+   "question": "What is Mara's coffee order?",
+   "paraphrases": [
+    "What does Mara usually order at the cafe?",
+    "Which drink does Mara get each morning?",
+    "Mara's regular coffee is what?"
+   ],
+   "supersedes": "f017"
+  },
+  {
+   "id": "f037",
+   "date": "2026-10-20",
+   "slot": "hobby",
+   "label": "hobby",
+   "value": "bouldering",
+   "text": "My hobby this month is bouldering.",
+   "question": "What is Mara's hobby?",
+   "paraphrases": [
+    "What does Mara do for fun?",
+    "Which pastime is Mara into?",
+    "Mara spends her free time on what?"
+   ],
+   "supersedes": "f036"
+  },
+  {
+   "id": "f059",
+   "date": "2026-10-20",
+   "slot": "plant",
+   "label": "favourite plant",
+   "value": "fiddle-leaf fig",
+   "text": "My favourite houseplant is the fiddle-leaf fig.",
+   "question": "What is Mara's favourite houseplant?",
+   "paraphrases": [
+    "Which plant does Mara like best?",
+    "Mara's best-loved plant at home is what?",
+    "What houseplant is Mara fondest of?"
+   ],
+   "supersedes": "f058"
+  },
+  {
+   "id": "f029",
+   "date": "2026-10-21",
+   "slot": "project",
+   "label": "main project",
+   "value": "depot capacity model",
+   "text": "My main project is the depot capacity model.",
+   "question": "What is Mara's main project at work?",
+   "paraphrases": [
+    "Which project takes most of Mara's time?",
+    "What is Mara mainly working on?",
+    "Mara's top work project is called what?"
+   ],
+   "supersedes": "f028"
+  },
+  {
+   "id": "f062",
+   "date": "2026-10-21",
+   "slot": "language",
+   "label": "language course",
+   "value": "Norwegian",
+   "text": "I am learning Norwegian.",
+   "question": "What language is Mara learning?",
+   "paraphrases": [
+    "Which language course is Mara taking?",
+    "Mara studies what language?",
+    "What tongue is Mara trying to pick up?"
+   ],
+   "supersedes": "f061"
+  },
+  {
+   "id": "f006",
+   "date": "2026-10-22",
+   "slot": "job_title",
+   "label": "job title",
+   "value": "analytics lead",
+   "text": "My job title is analytics lead.",
+   "question": "What is Mara's job title?",
+   "paraphrases": [
+    "What does Mara's business card say her role is?",
+    "Which title does Mara hold at work?",
+    "Mara's current position at work is what?"
+   ],
+   "supersedes": "f005"
+  },
+  {
+   "id": "f067",
+   "date": "2026-10-22",
+   "slot": "breakfast",
+   "label": "breakfast",
+   "value": "toast and eggs",
+   "text": "My breakfast is toast and eggs.",
+   "question": "What does Mara eat for breakfast?",
+   "paraphrases": [
+    "What is Mara's usual morning meal?",
+    "Which breakfast does Mara have each day?",
+    "Mara starts the day eating what?"
+   ],
+   "supersedes": "f066"
+  },
+  {
+   "id": "f044",
+   "date": "2026-10-23",
+   "slot": "bedtime",
+   "label": "bedtime",
+   "value": "10:30 pm",
+   "text": "My bedtime is 10:30 pm.",
+   "question": "What time does Mara go to bed?",
+   "paraphrases": [
+    "When does Mara turn in for the night?",
+    "What is Mara's usual lights-out time?",
+    "Mara sleeps at what hour?"
+   ],
+   "supersedes": "f043"
+  },
+  {
+   "id": "f003",
+   "date": "2026-10-24",
+   "slot": "city",
+   "label": "current city",
+   "value": "Verrow",
+   "text": "I live in Verrow.",
+   "question": "Which city does Mara live in?",
+   "paraphrases": [
+    "Where is Mara's home city?",
+    "What town does Mara call home right now?",
+    "Mara currently lives in which city?"
+   ],
+   "supersedes": "f002"
+  },
+  {
+   "id": "f049",
+   "date": "2026-10-24",
+   "slot": "doctor",
+   "label": "doctor",
+   "value": "Dr. Kasimir Odell",
+   "text": "My doctor is Dr. Kasimir Odell.",
+   "question": "Who is Mara's doctor?",
+   "paraphrases": [
+    "Which physician does Mara see?",
+    "Who is Mara's family doctor?",
+    "Mara's regular doctor is who?"
+   ],
+   "supersedes": "f048"
+  },
+  {
+   "id": "f016",
+   "date": "2026-10-25",
+   "slot": "commute",
+   "label": "commute",
+   "value": "the light-rail line",
+   "text": "I get to work by the light-rail line.",
+   "question": "How does Mara get to work?",
+   "paraphrases": [
+    "What is Mara's way of commuting?",
+    "Which transport does Mara use for her daily commute?",
+    "Mara travels to the office by what means?"
+   ],
+   "supersedes": "f015"
+  },
+  {
+   "id": "f053",
+   "date": "2026-10-25",
+   "slot": "phone",
+   "label": "phone",
+   "value": "Fennel F4",
+   "text": "My phone is a Fennel F4.",
+   "question": "What phone does Mara use?",
+   "paraphrases": [
+    "Which handset does Mara carry?",
+    "Mara's mobile phone is what model?",
+    "What kind of phone is in Mara's pocket?"
+   ],
+   "supersedes": "f052"
+  },
+  {
+   "id": "f065",
+   "date": "2026-10-25",
+   "slot": "savings",
+   "label": "savings goal",
+   "value": "a deposit on a flat",
+   "text": "I am saving for a deposit on a flat.",
+   "question": "What is Mara saving for?",
+   "paraphrases": [
+    "What is Mara's savings goal?",
+    "Which purchase is Mara putting money aside for?",
+    "Mara is setting money aside for what?"
+   ],
+   "supersedes": "f064"
+  },
+  {
+   "id": "f035",
+   "date": "2026-10-26",
+   "slot": "car",
+   "label": "car",
+   "value": "green electric wagon",
+   "text": "I drive a green electric wagon.",
+   "question": "What car does Mara drive?",
+   "paraphrases": [
+    "Which vehicle does Mara own?",
+    "What is parked in Mara's driveway?",
+    "Mara's car is which model?"
+   ],
+   "supersedes": "f034"
+  },
+  {
+   "id": "f051",
+   "date": "2026-10-26",
+   "slot": "sister",
+   "label": "sister's city",
+   "value": "Quillon Heights",
+   "text": "My sister lives in Quillon Heights.",
+   "question": "Where does Mara's sister live?",
+   "paraphrases": [
+    "Which city is Mara's sister based in?",
+    "Mara's sister has settled in what city?",
+    "What town is home to Mara's sister?"
+   ],
+   "supersedes": "f050"
+  },
+  {
+   "id": "f012",
+   "date": "2026-10-27",
+   "slot": "pet_name",
+   "label": "dog's name",
+   "value": "Mochi",
+   "text": "My dog is called Mochi.",
+   "question": "What is the name of Mara's dog?",
+   "paraphrases": [
+    "What does Mara call her dog?",
+    "Which name does Mara's dog answer to?",
+    "Mara's dog goes by what name?"
+   ],
+   "supersedes": "f011"
+  },
+  {
+   "id": "f022",
+   "date": "2026-10-27",
+   "slot": "gym_day",
+   "label": "gym day",
+   "value": "Saturdays",
+   "text": "I go to the gym on Saturdays.",
+   "question": "On which day does Mara go to the gym?",
+   "paraphrases": [
+    "Which weekday is Mara's gym day?",
+    "What day of the week does Mara work out?",
+    "Mara trains at the gym on what day?"
+   ],
+   "supersedes": "f021"
+  },
+  {
+   "id": "f047",
+   "date": "2026-10-27",
+   "slot": "team_size",
+   "label": "team size",
+   "value": "twelve people",
+   "text": "My team has twelve people.",
+   "question": "How big is Mara's team?",
+   "paraphrases": [
+    "How many people are on Mara's team?",
+    "What is the headcount of Mara's team?",
+    "Mara's team consists of how many people?"
+   ],
+   "supersedes": "f046"
+  },
+  {
+   "id": "f055",
+   "date": "2026-10-27",
+   "slot": "allergy",
+   "label": "allergy",
+   "value": "shellfish",
+   "text": "I am allergic to shellfish.",
+   "question": "What is Mara allergic to?",
+   "paraphrases": [
+    "Which allergy does Mara have?",
+    "Mara must avoid what because of an allergy?",
+    "What triggers Mara's allergy?"
+   ],
+   "supersedes": "f054"
+  },
+  {
+   "id": "f009",
+   "date": "2026-10-28",
+   "slot": "employer",
+   "label": "employer",
+   "value": "Northgate Supply",
+   "text": "I work for Northgate Supply.",
+   "question": "Who does Mara work for?",
+   "paraphrases": [
+    "Which company pays Mara's salary?",
+    "Mara's employer is which company?",
+    "What is the name of the firm Mara works at?"
+   ],
+   "supersedes": "f008"
+  },
+  {
+   "id": "f019",
+   "date": "2026-10-28",
+   "slot": "coffee",
+   "label": "coffee order",
+   "value": "a flat white",
+   "text": "My coffee order is a flat white.",
+   "question": "What is Mara's coffee order?",
+   "paraphrases": [
+    "What does Mara usually order at the cafe?",
+    "Which drink does Mara get each morning?",
+    "Mara's regular coffee is what?"
+   ],
+   "supersedes": "f018"
+  },
+  {
+   "id": "f026",
+   "date": "2026-10-28",
+   "slot": "book",
+   "label": "current book",
+   "value": "The Quiet Engine",
+   "text": "I am reading The Quiet Engine.",
+   "question": "What book is Mara reading?",
+   "paraphrases": [
+    "Which novel is on Mara's nightstand?",
+    "What is Mara's current read?",
+    "Mara is partway through which book?"
+   ],
+   "supersedes": "f025"
+  },
+  {
+   "id": "f032",
+   "date": "2026-10-28",
+   "slot": "manager",
+   "label": "manager",
+   "value": "Tobias Wren",
+   "text": "My manager is Tobias Wren.",
+   "question": "Who is Mara's manager?",
+   "paraphrases": [
+    "Who does Mara report to?",
+    "Which person is Mara's direct boss?",
+    "Mara's line manager is who?"
+   ],
+   "supersedes": "f031"
+  },
+  {
+   "id": "f038",
+   "date": "2026-10-29",
+   "slot": "hobby",
+   "label": "hobby",
+   "value": "sketching",
+   "text": "My hobby this month is sketching.",
+   "question": "What is Mara's hobby?",
+   "paraphrases": [
+    "What does Mara do for fun?",
+    "Which pastime is Mara into?",
+    "Mara spends her free time on what?"
+   ],
+   "supersedes": "f037"
+  },
+  {
+   "id": "f041",
+   "date": "2026-10-29",
+   "slot": "lunch",
+   "label": "lunch spot",
+   "value": "Saffron Counter",
+   "text": "I eat lunch at Saffron Counter.",
+   "question": "Where does Mara eat lunch?",
+   "paraphrases": [
+    "What is Mara's usual lunch place?",
+    "Which spot does Mara go to at noon?",
+    "Mara has lunch at which place?"
+   ],
+   "supersedes": "f040"
+  }
+ ],
+ "day_notes": [
+  {
+   "date": "2026-10-01",
+   "text": "Dear diary, I live in Tallis Bay. My job title is junior analyst. I work for Brightwell Freight. My dog is called Biscuit. I get to work by bus route 14. I am reading The Salt Orchard. My main project is the Q3 route audit. My manager is Dov Ellery. I drive a old blue sedan. My bedtime is 11 pm. My team has four people. My landlord is Mr. Halvorsen. I am learning Spanish. I am saving for a bike. My breakfast is porridge with pears. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-02",
+   "text": "Quick note, My cat is called Juniper. I go to the gym on Tuesdays. I eat lunch at Noodle Kettle. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-03",
+   "text": "End of day, My coffee order is a large oat latte. My hobby this month is pottery. My sister lives in Lisk Harbour. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-04",
+   "text": "Today, I drive a grey hatchback. My phone is a Fennel F3. I am saving for a new laptop. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-05",
+   "text": "Dear diary, My bedtime is midnight. My favourite houseplant is the rubber plant. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-06",
+   "text": "Quick note, My doctor is Dr. Ines Marlowe. I am learning Portuguese. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-07",
+   "text": "End of day, I am allergic to cashews. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-08",
+   "text": "Today, I am reading A Map of Lanterns. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-09",
+   "text": "Dear diary, My job title is data analyst. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-10",
+   "text": "Quick note, My main project is the fuel-cost dashboard. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-11",
+   "text": "End of day, I live in Orrin Falls. My landlord is Ms. Ansell. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-12",
+   "text": "Today, I get to work by bicycle. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-13",
+   "text": "Dear diary, I go to the gym on Thursdays. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-14",
+   "text": "Quick note, My dog is called Pepper. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-15",
+   "text": "End of day, I eat lunch at the rooftop garden. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-16",
+   "text": "Today, I am reading Winter at Corvane. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-17",
+   "text": "Dear diary, I work for Harbor & Pine Logistics. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-18",
+   "text": "Quick note, My manager is Priya Okonkwo-Hale. My team has nine people. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-19",
+   "text": "End of day, My coffee order is a small black americano. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-20",
+   "text": "Today, My hobby this month is bouldering. My favourite houseplant is the fiddle-leaf fig. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-21",
+   "text": "Dear diary, My main project is the depot capacity model. I am learning Norwegian. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-22",
+   "text": "Quick note, My job title is analytics lead. My breakfast is toast and eggs. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-23",
+   "text": "End of day, My bedtime is 10:30 pm. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-24",
+   "text": "Today, I live in Verrow. My doctor is Dr. Kasimir Odell. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-25",
+   "text": "Dear diary, I get to work by the light-rail line. My phone is a Fennel F4. I am saving for a deposit on a flat. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-26",
+   "text": "Quick note, I drive a green electric wagon. My sister lives in Quillon Heights. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-27",
+   "text": "End of day, My dog is called Mochi. I go to the gym on Saturdays. My team has twelve people. I am allergic to shellfish. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-28",
+   "text": "Today, I work for Northgate Supply. My coffee order is a flat white. I am reading The Quiet Engine. My manager is Tobias Wren. Nothing else worth writing down."
+  },
+  {
+   "date": "2026-10-29",
+   "text": "Dear diary, My hobby this month is sketching. I eat lunch at Saffron Counter. Nothing else worth writing down."
+  }
+ ]
+}

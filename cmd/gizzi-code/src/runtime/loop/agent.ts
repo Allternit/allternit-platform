@@ -21,6 +21,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { Skill } from "@/runtime/skills/skill"
 import { BUILTIN_CATALOG, CATALOG_ALIASES, catalogAgent, isModelClass, MODEL_CLASSES } from "@/runtime/agents/builtin-catalog"
 import { CatalogSync } from "@/runtime/agents/catalog-sync"
+import { CREDENTIAL_PATH_RULES } from "@/runtime/tools/guard/permission/credential-paths"
 
 const HarnessConfigSchema = z.object({
   mode: z.enum(["byok", "cloud", "local", "subprocess"]),
@@ -132,6 +133,86 @@ export namespace Agent {
       task_output: "allow",
       task_stop: "ask",
       goal_budget: "allow",
+      current_time: "allow",
+      // The tool itself is free; its network kinds (weather, places, currency,
+      // link, images) ask under websearch/webfetch inside the tool, so they
+      // follow the rules the user already set for the web.
+      lookup: "allow",
+      // Reaches only the session's owner; push is opt-in per call and rate-limited server side.
+      send_user_message: "allow",
+      // Scheduled tasks: the action is the pattern. Reading the list is free;
+      // create, update, delete and run_now ask (not ALWAYS_ASK, so "always" holds).
+      automation: {
+        "*": "ask",
+        list: "allow",
+      },
+      // A question that doesn't block: it waits in the thread; the turn goes on.
+      // Allowed for every agent, unlike the blocking `question` (denied by default).
+      ask_user_later: "allow",
+      // Primitives Wave B. agent_control: the action is the pattern; closing an
+      // agent (and everything under it) asks, the rest act on own children freely.
+      wait_agents: "allow",
+      agent_control: {
+        "*": "allow",
+        close: "ask",
+      },
+      tool_search: "allow",
+      get_context_remaining: "allow",
+      history_recall: "allow",
+      // Wave D recall: reads of the user's own memory, past chats and this
+      // session's saved outputs. thread_wait only waits; it changes nothing.
+      memory_list: "allow",
+      thread_search: "allow",
+      thread_read: "allow",
+      thread_recent: "allow",
+      thread_wait: "allow",
+      resource: "allow",
+      // A short wait inside the turn (max 15 min) that wakes on the user's next message.
+      sleep: "allow",
+      // One worker per CSV row, so every call costs real model calls: always
+      // asks (the card shows the rows, concurrency and model). The pattern is
+      // `<mode>:<subagent_type>`, so allowing a sample never allows a full run.
+      // Its workers can't fan out: agent-batch.ts gives each worker session
+      // deny rules for WORKER_DENIED_TOOLS (task, agent_swarm, agent_batch,
+      // batch, sleep...), which come after these and win.
+      agent_batch: "ask",
+      // Seeing the user's screen: the tool asks once per session ("always" holds).
+      screen_context: "ask",
+      // Hidden browser tasks: every call asks, naming the sites and goals.
+      browser_tasks: "ask",
+      // Wave D connect and settings. Tools a connector_search load mounts keep
+      // their own rules. settings: the action is the pattern; the risk gate
+      // (confirm/locked keys) is on the server. The plan agent denies write.
+      connector_search: "allow",
+      connector_suggest: "allow",
+      settings: "allow",
+      // Prompt-gap tools (G3 contract; each is registered only once its module
+      // sets `available`). worktree_exit and pr_comments: the action is the
+      // pattern. Removing a worktree and posting a PR reply ask; keep and list
+      // are free. user_location: the precision is the pattern; approximate is
+      // free, precise asks (its lane makes precise ask every time).
+      worktree_enter: "ask",
+      worktree_exit: {
+        "*": "ask",
+        keep: "allow",
+      },
+      // Read-only and advisory: a review on a deeper tier, like `task`.
+      second_opinion: "allow",
+      pr_comments: {
+        "*": "ask",
+        list: "allow",
+      },
+      status_update: "allow",
+      // Stays on the device until the person sends it.
+      feedback_note: "allow",
+      user_location: {
+        "*": "ask",
+        approximate: "allow",
+      },
+      voice_control: "allow",
+      // Asking the person who is being abusive defeats the purpose; the tool
+      // itself requires an earlier warning and refuses outside Gizzi's own chats.
+      end_conversation: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
@@ -142,39 +223,14 @@ export namespace Agent {
       plan_exit: "deny",
       // Sensitive credentials and git control paths require review by default.
       // Public key and environment-template variants remain ordinary project files.
+      // One list (credential-paths.ts): send_user_message refuses the same files.
       read: {
         "*": "allow",
-        "*.env": "ask",
-        "*.env.*": "ask",
-        "*id_rsa*": "ask",
-        "*id_ed25519*": "ask",
-        "*id_ecdsa*": "ask",
-        "*credentials*": "ask",
-        ".git/*": "ask",
-        "*/.git/*": "ask",
-        "*.env.example": "allow",
-        "*.env.sample": "allow",
-        "*.env.template": "allow",
-        "*id_rsa.pub": "allow",
-        "*id_ed25519.pub": "allow",
-        "*id_ecdsa.pub": "allow",
+        ...CREDENTIAL_PATH_RULES,
       },
       edit: {
         "*": "allow",
-        "*.env": "ask",
-        "*.env.*": "ask",
-        "*id_rsa*": "ask",
-        "*id_ed25519*": "ask",
-        "*id_ecdsa*": "ask",
-        "*credentials*": "ask",
-        ".git/*": "ask",
-        "*/.git/*": "ask",
-        "*.env.example": "allow",
-        "*.env.sample": "allow",
-        "*.env.template": "allow",
-        "*id_rsa.pub": "allow",
-        "*id_ed25519.pub": "allow",
-        "*id_ecdsa.pub": "allow",
+        ...CREDENTIAL_PATH_RULES,
       },
     }, "default")
     // Tagged "user" so auto mode in app sessions keeps the person's own asks.
@@ -205,6 +261,11 @@ export namespace Agent {
           PermissionNext.fromConfig({
             question: "allow",
             plan_exit: "allow",
+            // Plan mode changes nothing: settings reads work, writes are refused.
+            settings: { write: "deny" },
+            // No new worktree and no PR replies while planning.
+            worktree_enter: "deny",
+            pr_comments: { reply: "deny" },
             external_directory: {
               [path.join(Global.Path.data, "plans", "*")]: "allow",
             },
@@ -227,6 +288,9 @@ export namespace Agent {
           PermissionNext.fromConfig({
             todoread: "deny",
             todowrite: "deny",
+            // The parent's chat and call belong to the parent: a subagent never ends them.
+            end_conversation: "deny",
+            voice_control: "deny",
           }),
           user,
         ),
@@ -578,7 +642,7 @@ export namespace Agent {
       const result = streamObject({
         ...params,
         providerOptions: ProviderTransform.providerOptions(model, {
-          instructions: SystemPrompt.instructions(),
+          instructions: SystemPrompt.instructions(model),
           store: false,
         }),
         onError: () => {},

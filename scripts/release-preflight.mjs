@@ -330,6 +330,14 @@ function checkPackagingDryRun(jobs) {
   // cleanly without the binary (phone-link-ipc.ts passes binary: null). Make it
   // `advisory: false, optional: false` once anisette.allternit.com is live.
   bins.push({ name: 'allternit-sideload', optional: true, advisory: true, flag: null, darwinOnly: true });
+  // The iPhone Mirroring helper for the `mirror` Phone Use route
+  // (cmd/allternit-mirror, SwiftPM, staged by prepare-mirror.cjs, which
+  // hard-fails on macOS without it). Windows and Linux have no such route.
+  bins.push({ name: 'allternit-mirror', optional: false, flag: null, darwinOnly: true });
+  // The Mac Bluetooth keyboard helper for the `bt-mac` Phone Use route
+  // (cmd/allternit-bthid, SwiftPM, staged by prepare-bthid.cjs, which
+  // hard-fails on macOS without it). Windows and Linux have no such route.
+  bins.push({ name: 'allternit-bthid', optional: false, flag: null, darwinOnly: true });
 
   // Platform jobs = jobs that invoke electron-builder. Jobs that invoke it
   // via an npm script (build:electron / dist / pack) run the
@@ -621,6 +629,52 @@ function checkPhoneRemoteBundle() {
   pass('phone-remote: desktop extraResources bundles surfaces/phone-remote/server (index.mjs + lib/ + sc_capture.swift) and the input helper (input/*.py)');
 }
 
+/* ── Check 7b: Allternit Tune source is bundled for Studio ── */
+
+function checkStudioTuneBundle() {
+  // Studio (allternit-api src/studio/engines.rs) installs the Allternit Tune
+  // engine's venv from services/model-training. The app carries the source
+  // (no venv, no wheels) at Resources/model-training; backend-manager.ts
+  // passes ALLTERNIT_TUNE_SOURCE (runtime package copy first), and runtime
+  // packages carry it for cloud computers. Without it GET /studio/engines
+  // reports the engine files missing and install fails.
+  const pkg = JSON.parse(read('surfaces/allternit-desktop/package.json'));
+  const entries = (pkg.build && pkg.build.extraResources) || [];
+  const entry = entries.find((e) => e && e.to === 'model-training');
+  if (!entry) {
+    fail(
+      'studio: desktop package.json build.extraResources has no entry copying ' +
+        'services/model-training to Resources/model-training — Studio cannot install Allternit Tune.'
+    );
+    return;
+  }
+  const fromDir = path.join(desktopDir, entry.from);
+  const missing = ['requirements.txt', path.join('allternit_tune', 'server.py')]
+    .map((f) => path.join(fromDir, f))
+    .filter((p) => !fs.existsSync(p));
+  if (missing.length > 0) {
+    fail(
+      'studio: model-training extraResources source is incomplete: ' +
+        missing.map((p) => path.relative(repoRoot, p)).join(', ')
+    );
+    return;
+  }
+  const filter = entry.filter || [];
+  if (!filter.includes('!tests/**') || !filter.some((f) => f.includes('__pycache__'))) {
+    fail('studio: model-training extraResources must ship source only (exclude tests/ and __pycache__/)');
+    return;
+  }
+  if (!read('surfaces/allternit-desktop/src/main/backend-manager.ts').includes('ALLTERNIT_TUNE_SOURCE')) {
+    fail('studio: backend-manager.ts does not pass ALLTERNIT_TUNE_SOURCE to allternit-api');
+    return;
+  }
+  if (!read('surfaces/allternit-desktop/scripts/runtime-package.cjs').includes("'model-training/requirements.txt'")) {
+    fail('studio: runtime-package.cjs does not pack model-training/ (runtime updates and cloud computers would lack it)');
+    return;
+  }
+  pass('studio: Allternit Tune source (services/model-training) is bundled, passed as ALLTERNIT_TUNE_SOURCE and packed into runtime packages');
+}
+
 /* ── Check 8: updater feed matches electron-builder publish target ── */
 
 function checkUpdaterFeed() {
@@ -628,6 +682,7 @@ function checkUpdaterFeed() {
   const publish = (pkg.build && Array.isArray(pkg.build.publish) ? pkg.build.publish : [])[0] || {};
   const publishOwner = publish.owner;
   const publishRepo = publish.repo;
+  const updaterSrc = read('surfaces/allternit-desktop/src/main/app-updater-logic.ts');
   const mainSrc = read('surfaces/allternit-desktop/src/main/unified-main.ts');
   const manifestSrc = read('surfaces/allternit-desktop/src/main/manifest.ts');
   const expected = `${publishOwner}/${publishRepo}`;
@@ -637,14 +692,23 @@ function checkUpdaterFeed() {
     fail('updater: surfaces/allternit-desktop/package.json build.publish is missing owner/repo');
     return;
   }
-  const repoRe = new RegExp(`repo:\\s*['"]${expected}['"]`);
-  if (repoRe.test(mainSrc)) {
-    pass(`updater: updateElectronApp repo is ${expected} (matches publish)`);
+  // electron-updater (app-updater.ts) is the one app updater on every OS; its
+  // feed is DESKTOP_RELEASE_OWNER/DESKTOP_RELEASE_REPO in app-updater-logic.ts.
+  const ownerM = /DESKTOP_RELEASE_OWNER\s*=\s*'([^']+)'/.exec(updaterSrc);
+  const repoM = /DESKTOP_RELEASE_REPO\s*=\s*'([^']+)'/.exec(updaterSrc);
+  const updaterFeed = ownerM && repoM ? `${ownerM[1]}/${repoM[1]}` : null;
+  if (updaterFeed === expected) {
+    pass(`updater: electron-updater feed is ${expected} (matches publish)`);
   } else {
     fail(
-      `updater: unified-main.ts updateElectronApp repo does not match electron-builder publish ` +
+      `updater: app-updater-logic.ts feed ${updaterFeed ?? '(not found)'} does not match electron-builder publish ` +
         `${expected} — auto-update would look at a 404 feed (desktop-v1.1.1 consumer-packaging P5).`
     );
+  }
+  if (/update-electron-app|\bautoUpdater\.(checkForUpdates|quitAndInstall)\(/.test(mainSrc)) {
+    fail('updater: unified-main.ts still uses update-electron-app / Electron autoUpdater; app-updater.ts is the only updater');
+  } else {
+    pass('updater: no update-electron-app / built-in autoUpdater in unified-main.ts');
   }
   const feedRe = new RegExp(`desktopFeedUrl:\\s*'https://github.com/${expected}/releases/latest'`);
   if (feedRe.test(manifestSrc)) {
@@ -674,6 +738,7 @@ checkDesktopPrepareScripts();
   checkWindowsPnpmShim();
   checkSidecarGuards(jobs);
   checkPhoneRemoteBundle();
+  checkStudioTuneBundle();
   checkUpdaterFeed();
 
   console.log('release-preflight: release-desktop.yml checks\n');

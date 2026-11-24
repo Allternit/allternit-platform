@@ -61,6 +61,13 @@ struct GroupsListView: View {
     @AppStorage("allternit-overview-layout:phone:groups") private var layoutRaw = OverviewLayout.list.rawValue
 
     private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
+    @State private var searching = false
+    @State private var query = ""
+
+    private var shownGroups: [BotGroupChat] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return needle.isEmpty ? store.groups : store.groups.filter { $0.name.lowercased().contains(needle) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,10 +78,16 @@ struct GroupsListView: View {
                         .tracking(0.6)
                         .foregroundColor(Color("TextTertiary"))
                     Spacer()
-                    OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
+                    ProjectsPill(searching: $searching, filtersActive: false, searchLabel: "Search group chats",
+                                 filterLabel: "Layout") {
+                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list).padding(12)
+                    }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.vertical, 4)
+                if searching || !query.isEmpty {
+                    ProjectsSearchField(query: $query, placeholder: "Search group chats")
+                }
             }
             if layout != .list && !store.groups.isEmpty {
                 ScrollView {
@@ -110,7 +123,7 @@ struct GroupsListView: View {
     }
 
     private var cards: [OverviewCardItem] {
-        store.groups.map { group in
+        shownGroups.map { group in
             OverviewCardItem(
                 id: group.id,
                 title: group.name,
@@ -131,7 +144,7 @@ struct GroupsListView: View {
                                   message: "No group chats yet.",
                                   actionTitle: "New group chat", action: { isCreating = true })
             } else {
-                ForEach(store.groups) { group in
+                ForEach(shownGroups) { group in
                     NavigationLink(value: BotRoute.group(group.id)) { GroupRowLabel(group: group) }
                         .swipeActions {
                             Button("Delete", role: .destructive) {
@@ -248,7 +261,7 @@ struct GroupChatView: View {
     @State private var isBackgroundPresented = false
     @ObservedObject private var backdrops = StageBackdropStore.shared
     @ObservedObject private var botColors = BotColorStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     /// The room's background: its own look, else Settings (Plain when off).
     private var backdropVariant: String { backdrops.variant(for: .group, scope: .group(groupId)) }
@@ -496,7 +509,7 @@ struct GroupStageView: View {
     let onDock: () -> Void
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var colors = BotColorStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var floating = false
 
     /// The members' colours, each bot's own (the web palette for the rest).
@@ -788,7 +801,7 @@ enum GroupVendorLabels {
 }
 
 /// Add bots to a room (web useVendorPhoneThreads addToGroup): any bot not
-/// in it yet, vendor bots included; a vendor bot joins as `source: "vendor"`
+/// in it yet, Connected bots included; a Connected bot joins as `source: "vendor"`
 /// and answers through its own connection. Rooms hold up to 6 members.
 struct AddGroupMembersSheet: View {
     let group: BotGroupChat

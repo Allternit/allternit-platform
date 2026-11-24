@@ -12,7 +12,7 @@ import { Installation } from "@/shared/installation"
 
 import { Database, NotFoundError, eq, and, or, gte, isNull, isNotNull, desc, like, inArray, lt } from "@/runtime/session/storage/db"
 import type { SQL } from "@/runtime/session/storage/db"
-import { SessionTable, MessageTable, PartTable } from "@/runtime/session/session.sql"
+import { SessionTable, MessageTable, PartTable, MessageBranchTable } from "@/runtime/session/session.sql"
 import { SessionTrace } from "@/runtime/session/trace"
 import { ProjectTable } from "@/runtime/context/project/project.sql"
 import { Storage } from "@/runtime/session/storage/storage"
@@ -30,6 +30,67 @@ import { Global } from "@/runtime/context/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/shared/util/iife"
 import { SecretRedactor } from "@/runtime/session/environment/redactor"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
+import { NamedError } from "@allternit/gizzi-util/error.js"
+import { readFileSync } from "fs"
+import fs from "fs/promises"
+
+/**
+ * Ended chats (end_conversation): `{ at, reason }` per session id, in a small
+ * JSON registry under Global.Path.data (no column, like the worktree
+ * registry). Read synchronously by Session.fromRow from the cached copy.
+ */
+export namespace SessionEnded {
+  export const Reason = z.enum(["sustained_abuse", "user_requested"])
+  export const Info = z.object({ at: z.number(), reason: Reason })
+  export type Info = z.infer<typeof Info>
+
+  let cache: Record<string, Info> | undefined
+  let writeQueue: Promise<void> = Promise.resolve()
+
+  function file() {
+    return path.join(Global.Path.data, "session-ended.json")
+  }
+
+  function load(): Record<string, Info> {
+    if (cache) return cache
+    const store: Record<string, Info> = {}
+    try {
+      const json = JSON.parse(readFileSync(file(), "utf8")) as Record<string, unknown>
+      for (const [id, value] of Object.entries(json ?? {})) {
+        const parsed = Info.safeParse(value)
+        if (parsed.success) store[id] = parsed.data
+      }
+    } catch {
+      // No file or a broken one: no chat counts as ended.
+    }
+    cache = store
+    return cache
+  }
+
+  export function infoFor(sessionID: string): Info | undefined {
+    return load()[sessionID]
+  }
+
+  /** Records the end (first one wins) and writes the registry. */
+  export async function mark(sessionID: string, reason: Info["reason"]): Promise<Info> {
+    const store = load()
+    const info = store[sessionID] ?? { at: Date.now(), reason }
+    store[sessionID] = info
+    const target = file()
+    const body = JSON.stringify(store, null, 2)
+    writeQueue = writeQueue
+      .catch(() => {})
+      .then(async () => {
+        await fs.mkdir(path.dirname(target), { recursive: true })
+        const tmp = `${target}.${process.pid}.tmp`
+        await fs.writeFile(tmp, body)
+        await fs.rename(tmp, target)
+      })
+    await writeQueue
+    return info
+  }
+}
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -104,6 +165,8 @@ export namespace Session {
           }
         : undefined,
       sourceExport: row.source_export ?? undefined,
+      worktree: SessionWorktree.infoFor(row.id),
+      ended: SessionEnded.infoFor(row.id),
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -222,7 +285,12 @@ export namespace Session {
             .object({
               modelID: z.string(),
               label: z.string(),
-              funds: z.object({ kind: z.enum(["balance", "plan", "free", "none"]), usd: z.number().optional() }),
+              // "free" stays readable for sessions paused before the free allowance ended (2026-11-15).
+              funds: z.object({
+                kind: z.enum(["balance", "plan", "free", "none"]),
+                usd: z.number().optional(),
+                reason: z.enum(["credits_required", "credits_exhausted"]).optional(),
+              }),
             })
             .optional(),
         })
@@ -367,6 +435,10 @@ export namespace Session {
           at: z.number(),
         })
         .optional(),
+      /** The git worktree the session works in (worktree_enter); kept in the worktree registry, not a column. */
+      worktree: z.object({ path: z.string(), branch: z.string().optional() }).optional(),
+      /** Set once the chat ended (end_conversation); it then refuses new prompts. Kept in the ended registry, not a column. */
+      ended: SessionEnded.Info.optional(),
     })
     
   export type Info = z.output<typeof Info>
@@ -512,30 +584,63 @@ export namespace Session {
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, string>()
+      await copyMessages(session.id, msgs, input.messageID)
+      return session
+    },
+  )
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
-        const newID = Identifier.ascending("message")
-        idMap.set(msg.info.id, newID)
+  /**
+   * Write `msgs` (gizzi's stored message + parts shape) into `sessionID`
+   * with fresh, ascending message and part ids, keeping each assistant
+   * message's link to its user message. Stops before `stopBefore` when given.
+   * Shared by `fork` and `importSession`.
+   */
+  async function copyMessages(sessionID: string, msgs: MessageV2.WithParts[], stopBefore?: string) {
+    const idMap = new Map<string, string>()
+    for (const msg of msgs) {
+      if (stopBefore && msg.info.id >= stopBefore) break
+      const newID = Identifier.ascending("message")
+      idMap.set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = await updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
+      const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+      const cloned = await updateMessage({
+        ...msg.info,
+        sessionID,
+        id: newID,
+        ...(parentID && { parentID }),
+      })
+
+      for (const part of msg.parts) {
+        await updatePart({
+          ...part,
+          id: Identifier.ascending("part"),
+          messageID: cloned.id,
+          sessionID,
         })
-
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
-            sessionID: session.id,
-          })
-        }
       }
+    }
+  }
+
+  /**
+   * Create a session from a transcript in gizzi's own stored shape (POST
+   * /session/import). The self-hosted Agents Server uses it to rebuild a
+   * session from its Postgres events after a restart, so the next turn sees
+   * the earlier messages. Messages are written in the order given, with new
+   * ids, through the same writer `fork` uses.
+   */
+  export const importSession = fn(
+    z.object({
+      title: z.string().optional(),
+      agentID: z.string().optional(),
+      messages: z.array(MessageV2.WithParts),
+    }),
+    async (input) => {
+      const session = await createNext({
+        directory: Instance.directory,
+        title: input.title,
+        agentID: input.agentID,
+      })
+      await copyMessages(session.id, input.messages)
       return session
     },
   )
@@ -690,6 +795,41 @@ export namespace Session {
           .where(eq(SessionTable.id, input.sessionID))
           .returning()
           .get()
+        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const info = fromRow(row)
+        Database.effect(() => Bus.publish(Event.Updated, { info }))
+        return info
+      })
+    },
+  )
+
+  /** Publishes the session again after worktree_enter / worktree_exit changed its `worktree` field. */
+  export const worktreeChanged = fn(Identifier.schema("session"), async (sessionID) => {
+    return Database.use((db) => {
+      const row = db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  })
+
+  /** What clients show when a prompt reaches an ended chat. */
+  export const ENDED_MESSAGE = "This chat has ended. Start a new chat."
+
+  export const EndedError = NamedError.create(
+    "SessionEndedError",
+    z.object({ sessionID: z.string(), at: z.number(), reason: SessionEnded.Reason }),
+  )
+
+  /** Ends the chat (end_conversation): records `ended` and publishes the session. */
+  export const setEnded = fn(
+    z.object({ sessionID: Identifier.schema("session"), reason: SessionEnded.Reason }),
+    async (input) => {
+      await get(input.sessionID)
+      await SessionEnded.mark(input.sessionID, input.reason)
+      return Database.use((db) => {
+        const row = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
         if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
         const info = fromRow(row)
         Database.effect(() => Bus.publish(Event.Updated, { info }))
@@ -1108,6 +1248,8 @@ export namespace Session {
     Database.use((db) => {
       db.delete(PartTable).where(eq(PartTable.session_id, sessionID)).run()
       db.delete(MessageTable).where(eq(MessageTable.session_id, sessionID)).run()
+      // Earlier turn versions point at the cleared messages; they go too.
+      db.delete(MessageBranchTable).where(eq(MessageBranchTable.session_id, sessionID)).run()
       Database.effect(() => Bus.publish(Event.Cleared, { sessionID }))
     })
   })

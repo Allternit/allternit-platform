@@ -1,0 +1,16 @@
+Send the user a message they will see in this thread, with finished files and, when it matters, a notification on their devices.
+
+Use it to hand over a finished deliverable or an important update during long or unattended work: a report you wrote, a build that finished, a blocker you hit while the user is away. Do not use it for your normal reply; the user already sees that.
+
+Files:
+- Attach only real deliverables (a report, an export, a screenshot of the result), not scratch or intermediate files.
+- A file must be inside the project, the session's working folder or the scratchpad. Credential files (.env, private keys) are refused. At most 5 files, 25 MB each.
+- Images, PDF, Markdown and HTML render inline by default; other files show as a file to open. Set `display` to change that.
+
+Notify:
+- none (default): the message waits in the thread.
+- push: also notify the user's devices. Only when they would want to be interrupted: a long task they are waiting on has finished, or you are blocked.
+- needs_you: only when the user must decide or act before work can go on.
+Send no more than a few of these per task. Pushes are rate-limited.
+
+The result says whether a push was requested. "requested" does not mean the user has seen it; never tell the user it reached their phone.

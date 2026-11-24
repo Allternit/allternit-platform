@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/principals.json",
+  "title": "Files drive: principals",
+  "description": "Who is calling and what they may touch.",
+  "$defs": {
+    "RootGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "permissions"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "permissions": {
+          "$ref": "common.json#/$defs/Permissions"
+        },
+        "item_scope": {
+          "$ref": "common.json#/$defs/ItemId",
+          "description": "Guests and agents: only this folder and below."
+        }
+      }
+    },
+    "WhoAmIResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "computer_id",
+        "grants",
+        "freshness"
+      ],
+      "properties": {
+        "principal": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RootGrant"
+          }
+        },
+        "freshness": {
+          "$ref": "common.json#/$defs/Freshness"
+        }
+      }
+    },
+    "AgentGrant": {
+      "type": "object",
+      "description": "Scope a runtime agent session carries. No grant, no file access beyond its working folder.",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "task_id",
+        "root_ids",
+        "tools",
+        "approved_by",
+        "expires_at"
+      ],
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "root_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/RootId"
+          }
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/ItemId"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fixed tool set the owner approved for this task or rule."
+        },
+        "approved_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "UnlockRequest": {
+      "type": "object",
+      "description": "Body of POST /api/v1/computer-files/:computer_id/unlock. Sent only right after a successful local biometric check or an explicit user click (section 12).",
+      "additionalProperties": false,
+      "required": [
+        "device_id"
+      ],
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The x-allternit-device-id of the device that just unlocked. The runtime refuses the token on a request whose x-allternit-device-id differs."
+        }
+      }
+    },
+    "UnlockResponse": {
+      "type": "object",
+      "description": "A short-lived protected-root unlock token. Send it as x-allternit-unlock until expires_at.",
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "expires_at"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^fut1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "FilesUnlockClaims": {
+      "type": "object",
+      "description": "Decoded body of an unlock token (fut1). Ed25519-signed by cloud-api with the Files token key.",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "typ",
+        "user_id",
+        "device_id",
+        "computer_id",
+        "iat",
+        "exp",
+        "kid"
+      ],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "typ": {
+          "type": "string",
+          "const": "files_unlock"
+        },
+        "user_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "At most iat + 300."
+        },
+        "kid": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

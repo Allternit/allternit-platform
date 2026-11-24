@@ -165,8 +165,7 @@ struct AgentActivityListView: View {
         let state = store.state(for: thread.threadId)
         let unread = store.isUnread(thread.threadId)
         return Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailThread = thread
         }) {
             HStack(alignment: .top, spacing: 12) {

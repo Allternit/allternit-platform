@@ -288,9 +288,45 @@ These Cloud API routes authenticate with a Clerk session, resolve the caller's d
 
 HTTP **428** means the account has no healthy node (pair a desktop/VPS or start a provisioned instance). The original `Authorization` header is forwarded. SSE is not buffered.
 
+## Model hosts
+
+A device you own (today an Allternit browser tab with WebGPU) can serve a small model to your agents. It holds a WebSocket at `/api/v1/model-hosts/connect`, and callers use the Chat Completions-compatible routes under `/api/v1/model-hosts/v1` (`models`, `chat/completions`) with a Clerk session, an API token or a paired runtime device token. State is in memory only. See [Model host relay](/api/model-host-relay).
+
 ## Artifacts v2
 
 Unlike the relayed namespaces above, artifacts are stored in Cloud API Postgres itself, so every surface sees the same records. That includes the ones made on a cloud computer or by gizzi. Routes are under `/api/v2/artifacts`, plus a no-auth public link route `/api/v2/public/artifacts/{id}` and `/api/v2/org/artifact-settings`. See [Artifacts v2](/api/artifacts-v2).
+
+## Thread shares
+
+Read-only links to a snapshot of a conversation. All routes are under `/api/v2` and need your bearer token, except the public read.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v2/thread-shares` | Create a share, or return the existing one for the session. |
+| `PUT` | `/api/v2/thread-shares/:token` | Replace the snapshot. |
+| `DELETE` | `/api/v2/thread-shares/:token` | Stop sharing. `204`. |
+| `GET` | `/api/v2/thread-shares?sessionId=` | Find the share for a session. |
+| `GET` | `/api/v2/public/threads/:token` | Public read, no auth. Returns `{title, messages, updatedAt}`. |
+
+```bash
+curl -X POST https://api.allternit.com/api/v2/thread-shares \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"sessionId":"sess_9c1d","title":"Auth review","snapshot":[{"role":"user","text":"Review the auth module","images":[],"tools":[]}]}'
+# 201 (new) or 200 (existing): {"token":"...","url":"https://ai.allternit.com/t/...","updatedAt":"..."}
+```
+
+The server cleans the snapshot. A kept message is exactly `role` (`user` or `assistant`), `text`, `images` and `tools`.
+
+| Limit | Value |
+| --- | --- |
+| Request body | 2 MB |
+| Text per message | 20,000 characters |
+| Images | PNG, JPEG, WebP or GIF data URLs, 300 KB each, 10 per thread |
+| Tool names | names only, 80 characters each, 50 per message |
+| Messages | 2,000 |
+| Title | 300 characters |
+
+Errors: `400` (`bad_body`, `bad_session_id`), `401`, `404` (`not_found`), `413` (`too_large`), `422` (`empty_snapshot`). See [Share a thread by link](/guides/share-a-thread).
 
 ## Provisioned instances
 
@@ -668,6 +704,7 @@ X-RateLimit-Reset: 1723575600
 | `STRIPE_WEBHOOK_SECRET` | Billing webhook verification. |
 | `OPEN_LANE_BASE_URL` / `OPEN_LANE_API_KEY` | Optional. Chat Completions-compatible server for the open-lane `-open` models; unset hides them. See [Open lane](/api/open-lane). |
 | `OPEN_LANE_MODEL_MAP` / `OPEN_LANE_MODERATION_MODEL` | Optional. Open-lane upstream model names and the hard-line moderation model. |
+| `ALLTERNIT_MODEL_HOST_WS_BASE` | Optional. Public ws base for model host sockets, e.g. `wss://api.allternit.com`. Default: the request's host. |
 | `ALLTERNIT_VIEWER_WS_BASE` | Optional. Public ws base for the cloud computer viewer, e.g. `wss://api.allternit.com`. Default: the request's host. |
 
 ## Related pages
@@ -676,6 +713,7 @@ X-RateLimit-Reset: 1723575600
 - [Allternit API](/api/allternit-api)
 - [Authentication](/api/authentication)
 - [Open lane and refusal handoff](/api/open-lane)
+- [Model host relay](/api/model-host-relay)
 - [Agent Sessions](/api/agent-sessions)
 - [BYOC Runtime](/byoc/overview)
 - [BYOC Deploy Wizard](/byoc/deploy-wizard)

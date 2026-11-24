@@ -105,6 +105,15 @@ if (cmd === 'save') {
     process.exit(0);
   }
   const { hash, bins, files } = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  // A cache restored by prefix can belong to another leg (release run 44646898318: the x64 Linux leg
+  // restored the arm64 cache, "reused" target/aarch64-.../allternit-api and then had no x64 binary).
+  // When the caller names the binaries it needs, reuse only a cache built for exactly those.
+  const want = args.bin.map(rel);
+  if (want.length && (want.length !== bins.length || want.some((b) => !bins.includes(b)))) {
+    console.log(`Cached build is for ${bins.join(', ')}, not ${want.join(', ')}; building.`);
+    output('hit', 'false');
+    process.exit(0);
+  }
   if (hashOf(files) !== hash || !bins.every((_, i) => fs.existsSync(path.join(dir, `bin-${i}`)))) {
     console.log('Rust inputs changed since the cached build; building.');
     output('hit', 'false');

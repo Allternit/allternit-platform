@@ -6,3 +6,12 @@
 821a5254d765fd52330bcf1bcbd8e8188bdb8dce:tools/system-one-local/test/hook.test.ts:curl-auth-header:146
 a28cb7186ff5d01d0ccbbfde2fdace0bec610d48:cmd/gizzi-code/src/runtime/tools/mcp/apps.ts:generic-api-key:84
 6e1b62b80c5d56139e4b683a7a3912aa264da54c:sdk/mcp-events/test/mcp-events.test.ts:generic-api-key:24
+2fbd8b6ce17f9b87dca61abfac005f462c75c645:cmd/allternit-cloud-api/src/routes/zoom_tests.rs:generic-api-key:62
+# 2026-11-20: Android Keystore alias names ("allternit-voice-keys-v1"), not secrets
+8e596992b2a8e0d98ffc644160075e05e3bfaf3b:surfaces/allternit-mobile/android/feature/chat/src/main/java/com/allternit/feature/chat/voice/VoiceEngines.kt:generic-api-key:90
+b2eaad20e989496888d0718099ac880cc97c8c46:surfaces/allternit-mobile/android/feature/settings/src/main/java/com/allternit/feature/settings/VoicePage.kt:generic-api-key:96
+# Train 20261120-1908: RFC 6455 sample websocket key + host-probe masking fixtures (fake tokens that test masking)
+5c4fe3669538529cbbf596ce14befdbf0ad798a9:platform/host-probe/fixtures/logs/mask-cases.txt:generic-api-key:35
+5c4fe3669538529cbbf596ce14befdbf0ad798a9:platform/host-probe/fixtures/logs/mask-cases.txt:jwt:30
+5c4fe3669538529cbbf596ce14befdbf0ad798a9:platform/host-probe/fixtures/logs/mask-cases.txt:private-key:51
+acfbb0728dc25fdfa933440e59c206c377fe6158:cmd/allternit-cloud-api/src/routes/computers_host_tests.rs:generic-api-key:486

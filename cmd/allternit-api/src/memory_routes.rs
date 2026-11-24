@@ -21,6 +21,8 @@ use crate::AppState;
 
 pub fn memory_router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/memory/feedback-notes", get(proxy_feedback_notes_list))
+        .route("/memory/feedback-notes/:id", delete(proxy_feedback_notes_delete))
         .route("/memory", get(list_memory))
         .route("/memory/health", get(memory_health))
         .route("/memory/consolidate", post(memory_consolidate))
@@ -52,6 +54,64 @@ pub fn memory_router() -> Router<Arc<AppState>> {
         .route("/memory/procedural/match", get(match_procedural_memory_handler))
         .route("/memory/procedural/:id/use", post(record_procedural_memory_use_handler))
         .route("/memory/procedural/:id", get(get_procedural_memory_handler).post(update_procedural_memory_handler).delete(delete_procedural_memory_handler))
+}
+
+// ── Feedback notes (served by the gizzi runtime) ────────────────────────────
+
+async fn proxy_feedback_notes(
+    headers: &HeaderMap,
+    method: reqwest::Method,
+    path: String,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Feedback notes are private to the person: same sign-in check as every other memory route.
+    if get_user(headers).is_none() {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response();
+    }
+    let client = crate::agent_session_routes::gizzi_client(headers);
+    let url = format!("{}{}", crate::agent_session_routes::gizzi_base(), path);
+    match client.request(method, &url).send().await {
+        Ok(resp) => {
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let content_type = resp.headers().get(reqwest::header::CONTENT_TYPE).cloned();
+            match resp.bytes().await {
+                Ok(body) => {
+                    let mut out = (status, body.to_vec()).into_response();
+                    if let Some(ct) = content_type {
+                        out.headers_mut().insert(axum::http::header::CONTENT_TYPE, ct);
+                    }
+                    out
+                }
+                Err(_) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({"error": "gizzi runtime response failed"})),
+                )
+                    .into_response(),
+            }
+        }
+        Err(_) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "gizzi runtime unreachable"})),
+        )
+            .into_response(),
+    }
+}
+
+async fn proxy_feedback_notes_list(headers: HeaderMap) -> axum::response::Response {
+    proxy_feedback_notes(&headers, reqwest::Method::GET, "/memory/feedback-notes".to_string()).await
+}
+
+async fn proxy_feedback_notes_delete(
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    proxy_feedback_notes(
+        &headers,
+        reqwest::Method::DELETE,
+        format!("/memory/feedback-notes/{}", urlencoding::encode(&id)),
+    )
+    .await
 }
 
 // ── Health ──────────────────────────────────────────────────────────────────
@@ -1148,18 +1208,18 @@ async fn retain_turn_v2_handler(
         };
     }
 
-    // The assistant's reply labels the session's last shadow recall
-    // (which shown evidence the answer used) — WP-M1c outcome labels.
+    // The assistant's reply labels the session's last recall (which shown
+    // evidence the answer used): the shadow recall when S1 is on (WP-M1c) and
+    // the incumbent recall when Sleep stage `labels_live` is on (step 3.1).
+    // label_from_answer checks both switches.
     if payload.role == "assistant" {
         if let Some(session_id) = payload.session_id.clone() {
             let client = crate::memory_relations::S1Client::from_env();
-            if client.enabled {
-                let (db, uid, answer) = (state.db.clone(), user.user_id.clone(), payload.content.clone());
-                tokio::spawn(async move {
-                    let r = crate::memory_retrieve::label_from_answer(&client, &db, &uid, &session_id, &answer).await;
-                    tracing::debug!(?r, "memory retrieve labels");
-                });
-            }
+            let (db, uid, answer) = (state.db.clone(), user.user_id.clone(), payload.content.clone());
+            tokio::spawn(async move {
+                let r = crate::memory_retrieve::label_from_answer(&client, &db, &uid, &session_id, &answer).await;
+                tracing::debug!(?r, "memory retrieve labels");
+            });
         }
     }
 

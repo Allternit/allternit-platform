@@ -25,15 +25,17 @@ enum SettingsLoadFailure: Equatable, Sendable {
             }
         }
         if let api = error as? APIError {
+            // A read refused by the compute gate (409 compute_required, 428
+            // "pair a device") is not an error: the page shows the
+            // no-computer state (contract C5).
+            if api.isComputeGateRefusal { return .computerOffline(CalmCopy.noComputerDetail) }
             switch api {
             case .httpError(let status, let message):
                 if status == 401 { return .signedOut }
-                // 428: cloud-api's "no data-plane node, pair a device"
-                // (data_plane_fallback.rs).
-                if status == 428 || status == 502 || status == 503 || status == 504 {
-                    return .computerOffline(status == 428 ? "" : message ?? "")
+                if status == 502 || status == 503 || status == 504 {
+                    return .computerOffline(calmMessageText(message) ?? "")
                 }
-                return .error(message ?? "Something went wrong. Try again.")
+                return .error(plainErrorText(api))
             case .transport(let inner):
                 return from(inner)
             case .decoding:
@@ -43,7 +45,14 @@ enum SettingsLoadFailure: Equatable, Sendable {
             }
         }
         if error is URLError { return .offline }
-        return .error(FriendlyErrorMessage.from(error.localizedDescription))
+        return .error(FriendlyErrorMessage.from(error))
+    }
+
+    /// The account has no computer (compute gate), as opposed to one that
+    /// is offline.
+    var isNoComputer: Bool {
+        if case .computerOffline(let detail) = self { return detail == CalmCopy.noComputerDetail }
+        return false
     }
 
     /// One sentence for an inline error under a form.
@@ -66,15 +75,16 @@ struct SettingsFailureView: View {
     /// What couldn't load, e.g. "your skills".
     let subject: String
     let retry: () -> Void
-    @State private var safariURL: IdentifiableURL? = nil
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 4) {
             content
-            // Signed out is the person's own state, not an outage.
-            if failure != .signedOut {
+            // Signed out and no computer are the person's own state, not an
+            // outage.
+            if failure != .signedOut && !failure.isNoComputer {
                 Button("Check system status") {
-                    safariURL = IdentifiableURL(url: SystemStatusClient.pageURL)
+                    openURL(SystemStatusClient.pageURL)
                 }
                 .font(.footnote)
                 .foregroundColor(Color("TextSecondary"))
@@ -83,7 +93,6 @@ struct SettingsFailureView: View {
                 .accessibilityHint("Opens status.allternit.com")
             }
         }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 
     @ViewBuilder
@@ -91,6 +100,15 @@ struct SettingsFailureView: View {
         switch failure {
         case .signedOut:
             SettingsSignedOutView(message: "Sign in to see \(subject).")
+        case .computerOffline where failure.isNoComputer:
+            FriendlyInlineStateView(
+                style: .empty,
+                icon: "desktopcomputer",
+                title: CalmCopy.noComputer,
+                message: CalmCopy.noComputerDetail,
+                actionTitle: "Try again",
+                action: retry
+            )
         case .computerOffline:
             FriendlyInlineStateView(
                 style: .offline,

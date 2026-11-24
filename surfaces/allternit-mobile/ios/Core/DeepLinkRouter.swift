@@ -33,6 +33,8 @@ enum DeepLink: Equatable, Sendable {
     case invite(URL)
     /// The Computers view (`/computers`).
     case computers
+    /// One computer's console detail (`/computers/<id>`, a `computer_alert` push).
+    case computerConsole(String)
     /// Decisions: questions and approvals waiting on you (approval pushes).
     case decisions
     /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
@@ -56,6 +58,9 @@ enum DeepLink: Equatable, Sendable {
     /// (`allternit://phone-run/<runId>`, the iMessage card's
     /// `https://ai.allternit.com/?allternit_phone_run=<runId>`).
     case phoneRun(String)
+    /// Meetings (`/meetings`), or one meeting's live page / recap
+    /// (`/meetings/<id>`: the MCP `page_url`, notification taps, the Live Activity).
+    case meetings(String?)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -78,6 +83,24 @@ enum DeepLink: Equatable, Sendable {
         }
         return nil
     }
+
+    /// Where a tapped push leads, from its `url` and its `data`.
+    ///
+    /// The `url` wins when it names a place (a bot thread, a call, …). An
+    /// agent's message to its owner (`agent.message.sent`, send_user_message)
+    /// or a needs-you nudge (`thread.needs_user`) from a session with no bot
+    /// carries no thread link (`url` is "/"), so it opens the chat session
+    /// by `data.sessionId`.
+    static func forPush(urlPath: String?, event: String?, sessionId: String?) -> DeepLink? {
+        if let urlPath, !urlPath.isEmpty, let link = parse(path: urlPath) { return link }
+        guard let event, sessionRoutedEvents.contains(event),
+              let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionId.isEmpty else { return nil }
+        return .session(sessionId)
+    }
+
+    /// Push events that fall back to their session when no link is given.
+    static let sessionRoutedEvents: Set<String> = ["agent.message.sent", "thread.needs_user"]
 
     /// Parses an app path such as a push notification's `url`.
     static func parse(path: String) -> DeepLink? {
@@ -130,6 +153,9 @@ enum DeepLink: Equatable, Sendable {
         case "settings":
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
+            if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty, id != "console" {
+                return .computerConsole(id)
+            }
             return .computers
         case "phone-task":
             guard let goal = query["goal"], !goal.isEmpty else { return nil }
@@ -156,6 +182,10 @@ enum DeepLink: Equatable, Sendable {
             return .routine(segments[1])
         case "handoff":
             return .handoff
+        case "meetings":
+            let id = segments.count >= 2 ? segments[1].removingPercentEncoding : nil
+            // `allternit://meetings/calendar-connected` is the calendar consent return.
+            return .meetings(id == "calendar-connected" || id == "zoom-connected" ? nil : id)
         default:
             return nil
         }
@@ -188,6 +218,12 @@ final class DeepLinkRouter: ObservableObject {
     /// A push notification's `url` path.
     func open(path: String) {
         guard let link = DeepLink.parse(path: path) else { return }
+        enqueue(link)
+    }
+
+    /// A tapped push: its `url`, else its session (see `DeepLink.forPush`).
+    func openPush(urlPath: String?, event: String?, sessionId: String?) {
+        guard let link = DeepLink.forPush(urlPath: urlPath, event: event, sessionId: sessionId) else { return }
         enqueue(link)
     }
 

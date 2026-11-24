@@ -35,6 +35,10 @@ When you text your bot's own Allternit number and the bot starts a phone task fr
 - **Only the thread's own number sends.** If the thread's number does not belong to that bot, or the number has no texting account, no status texts are sent. A failed text never stops the task.
 - A refused task (a paused bot, or a thread you don't own) sends no status texts.
 
+## Skills and App Maps
+
+A **skill** is a fixed list of steps you saved from a run. An [App Map](/guides/phone-app-maps) is a set of screens your bot learns by itself as it works. Both replay with no model call, and both pass the same [approvals](/guides/phone-approvals) as any other tap. Use a skill for one job you repeat. Maps help every task in an app. **Stop** now stops phone tasks, skill replays and Explore runs.
+
 ## Run history
 
 Each phone tool call becomes one step in the history: the tool, its arguments, whether it worked, how long it took, and a screenshot when the call returned one. Steps that ran close together form one **run**. A run starts again after five minutes with no calls, and every `phone.task` and every skill replay is its own run.
@@ -109,7 +113,12 @@ The API is served by the local allternit-api (`cmd/allternit-api/src/phone_runs.
 | `POST /phones/skills` | `{run_id, name, serial?, from_step?, to_step?, description?, input_names?}` | `{ok, skill, steps}` |
 | `DELETE /phones/skills/:name` | none | `{ok}` |
 | `POST /phones/skills/:name/run` | `{serial?, inputs?, bot_id?, brain?, background?}` | `{ok, status, skill, serial, run_id, model_calls, healed, steps, error, duration_ms}`, or `202 {ok, status: "running", run_id, skill, serial}` with `background: true` |
-| `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?, background?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}`, or `202 {ok, status: "running", run_id, serial}` with `background: true` |
+| `GET /phones/maps` | `?platform=android\|ios` | `{ok, maps: [{app, platform, app_version, name, screens, edges, routable_edges, stale_edges, truncated, last_seen}]}` |
+| `GET /phones/maps/:app` | `?platform=` | `{ok, map}`, or `404 map_not_found`. `403 money_app` for banking and payment apps. |
+| `DELETE /phones/maps/:app` | `?platform=` | `{ok, deleted}`. Deletes the map file. |
+| `POST /phones/maps/:app/explore` | `{serial, minutes?, max_screens?}` | `202 {ok, status: "running", run_id, serial, app}`. Android only. See [App Maps](/guides/phone-app-maps). |
+| `POST /api/aci/stop/:run_id` | none | Stops a task, a skill run or an Explore run. |
+| `POST /phones/:serial/task` | `{goal, max_steps?, bot_id?, brain?, vision?, background?}` | `{ok, status, result, steps, model_calls, run_id, serial, duration_ms}`, or `202 {ok, status: "running", run_id, serial}` with `background: true` |
 | `POST /phones/:serial/tool` | `{name, arguments?, run_id?}` | The phone tool's result plus `run_id` and `tool`. One gateway call, exactly as a bot makes it, so texts, calls and other sensitive actions still need approval. A sensitive call answers `approval_required`; retry with `_hold` in the arguments after you approve. See [Phone approval holds](/api/phone-holds). Waits up to 80 s; `504` on timeout, `502` when the gateway can't be reached. |
 
 A step has `{id, run_id, serial, at, tool, label, args, ok, error?, duration_ms, ui?, target?, source?, thumbnail?, snapshot}`. `thumbnail` is a small PNG data URL. `source` is `bot`, `skill`, `task` or `routine`. A run summary is `{run_id, serial, started_at, ended_at, steps, failed, source, thumbnail}`, newest first. For `POST /phones/:serial/task`, use the serial `-` to let Desktop pick the only connected phone. The task route answers 503 when Desktop's phone gateway isn't running.
@@ -117,3 +126,5 @@ A step has `{id, run_id, serial, at, tool, label, args, ok, error?, duration_ms,
 Every recorded step also writes a `phone.step` row to the owner ledger, and every task or skill run that ends (from the route, a background run or a routine) writes `phone.run.completed`. The event forwarder (`runtime_events.rs`) sends them to the cloud, where they become [Platform API webhooks](/api/platform/phones#webhooks). They carry ids, the tool, the label, `ok`, the error and timings, never frames, screen text or typed values. An unpaired runtime writes nothing. Developers reach these routes from their own servers through [`/v1/phones`](/api/platform/phones), which relays to this Desktop.
 
 Desktop posts a history step after every phone tool call, without waiting for it (`surfaces/allternit-desktop/src/main/phone-runs.ts`). It strips typed text first, shrinks frames to 1280 px JPEG, and attaches the element a tap landed on from the bot's last full screen read. Replays and tasks tag their gateway calls with `_run_id` and `_source`. Desktop drops those keys before running the tool.
+
+Task and skill reports add `tokens_in`, `tokens_out`, `map_steps`, `screenshots_sent` and `fallbacks`, and `phone.run.completed` carries them. `vision` is `auto` or `always`; any other value is `400 invalid_args`. Explore ends with `phone.run.completed` and `source: "explore"`, with a report of screens and taps and a `truncated` reason when it stopped early. Maps are described in [Phone App Maps](/guides/phone-app-maps).

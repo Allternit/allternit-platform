@@ -19,9 +19,65 @@ Draft for App Store Connect. Register 1 voice: plain, no hype, no guarantees. Eo
 
 Note: entered for 1.0.1 on 2026-11-11 (Eoj approved). Old values: name `Allternit`, subtitle `Your bots, chats and computer`. Reason: ASO Scout scored the old title 9/30, and App Store search on iPhone ranked "allternit" #75 because it spell-corrects to "alternative". Apple counts each word once across name, subtitle and keywords, so no word repeats. The rating prompt ships in the next build after 1.0.1.
 
+## Age rating (Eoj's console step, 18+)
+
+Our Terms of Service and sign-in say users must be 18 or older, so the store rating must say 18+ too. This is set in App Store Connect, not in code. Do it before the next submission:
+
+1. App Store Connect → the app → App Information → Age Rating → Edit.
+2. Questionnaire: answer "None" for every content row (violence, sexual content, profanity, horror, gambling, medical, alcohol and drugs, contests).
+3. Unrestricted web access: **Yes** (the in-app browser and links reach the open web).
+4. Chat, user-generated content and AI features: answer **Yes** where the form asks about chat with other users, shared user content, or generative AI. Bots talk to people and models can produce unvetted text.
+5. Age rating override: set the higher rating to **18+**, so the final rating is 18+ whatever the questionnaire calculates. If the form has no override field, the "Unrestricted web access" answer already forces the highest band; record the final rating shown.
+6. Save, then check the product page preview shows 18+. Also restrict nothing else: availability stays worldwide unless a storefront needs a different minimum age.
+
+Labels change between App Store Connect versions; match the intent (18+, web access Yes) if wording differs.
+
 ## Promotional text (170)
 
-Talk to your bots, answer what they ask, and check on the work your computer is doing, from your iPhone.
+Allternit, the open source alternative: Apache 2.0 code, the AI models and subscriptions you already have, and your own computer. Your bots and chats on your iPhone.
+
+Entered in App Store Connect 2026-11-12 on 1.0.1 (live) and 1.0.2 (Eoj approved). Before that the field was empty in App Store Connect.
+
+## Queued for the next version: "Allternit, the open source alternative" (Eoj approved 2026-11-12)
+
+1.0.2 was in review on 2026-11-12, so these wait for the next editable version. The name stays `Allternit: AI Agents & Bots` (Eoj: keep the name; search ranks us high on it).
+
+| Field | Value |
+|---|---|
+| Subtitle (30) | The open source alternative |
+| Keywords (100) | assistant,chatbot,remote,computer,desktop,automation,workflow,approval,mac,pc,alternit,gizzi,llm |
+| Screenshot 1 | the tagline card, 1290x2796: `~/Desktop/Allternit/Marketing/Campaigns/2026-11-12-mobile-apps-live/out/store/appstore-1290x2796.png`; current screenshots move to 2 onward |
+
+Description (replaces the one below when entered):
+
+```
+Allternit, the open source alternative.
+
+WHY WE CALL IT THAT
+• Open source. The Allternit platform is open source under the Apache 2.0 license. You can read the code, run it and change it at github.com/Allternit.
+• Your models and subscriptions. Use the AI models and subscriptions you already have, or the models on Allternit Cloud. You are not tied to one AI company.
+• Your own computer. Code and automations run on a computer you choose: Allternit Desktop on your Mac or PC, or a cloud computer you add.
+• Open standards. Bots connect to apps and services through MCP, an open protocol, so a tool you add works across your workspace.
+
+CHAT
+Start a chat, attach files and see answers stream in. Artifacts made in a chat are saved to your library.
+
+BOTS
+Your bots are listed with their status. Open one for its threads, tasks, routines, memory and channels. Group chats let several bots work on one request. Bots ask before anything that matters, and you approve from your phone.
+
+YOUR COMPUTER
+The app reaches your computer through Allternit's cloud, so your phone doesn't need to be on the same network. You can watch a computer's screen and take control.
+
+NEEDS YOU
+The Inbox collects what your bots are waiting on: approvals, held messages, missed calls and failed runs. Notifications tell you when a bot needs you, and tapping one opens the right place.
+
+ACCOUNT
+Allternit for iPhone uses the same account as ai.allternit.com and Allternit Desktop, so your chats, bots, projects and settings are the same everywhere. Sign in with Apple or your Allternit account. You can export your data and delete your account in Settings.
+
+Allternit needs an Allternit account. Code and automation features need a computer paired to that account.
+```
+
+Google Play (same day, sent to Play review 2026-11-12): title unchanged (`Allternit`); short description `Allternit, the open source alternative. Open code, your models, your computer.`; full description opens with the same "WHY WE CALL IT THAT" section.
 
 ## Description (4000)
 
@@ -73,13 +129,13 @@ Entered in App Store Connect on 2026-11-09 (version 1.0.1, not submitted yet).
 - **Contact:** support@allternit.com (forwards to allternitpbc@gmail.com through Cloudflare Email Routing; checked live 2026-11-04).
 - **Sign-in:** demo account `appreview@allternit.com`; the password is in `~/.appstoreconnect/demo-account.txt` and in App Store Connect. Never write it here.
 - **Demo computer:** a computer paired to the demo account that stays online during review (Eoj: cloud computer on standby). Without it, Code and Automation show "Connect a computer", which is the correct state but hides those features from review.
-- **Demo brain and credit (2026-11-09):** Allternit Cloud only, default `allternit/glm-5.3`; Codex is off (it was a personal ChatGPT Plus login with its own quota). $5 Cloud credit. The four bot routines are paused during review so they don't spend it; resume them after approval.
+- **Demo brain and credit (2026-11-09; credits required from 2026-11-15):** Allternit Cloud models now need a positive credit balance (no free allowance), so the demo account must stay funded before every submission. Allternit Cloud only, default `allternit/glm-5.3`; Codex is off (it was a personal ChatGPT Plus login with its own quota). $5 Cloud credit. The four bot routines are paused during review so they don't spend it; resume them after approval.
 - **Review video:** `reports/app-review-build27.mp4` in the workspace, attached in App Review Information. Recorded over USB on iPhone (4) with build 27 and the demo account.
 - **Notes for the reviewer:**
 
 > Allternit is a workspace for AI agents ("bots"). Sign in with the demo account above. Home is a chat. The drawer (☰, top left) has Inbox, Projects, Artifacts, Automation, Decisions and Settings; the dial next to it switches between Home, Bots, Code and ACI. The demo account has a cloud computer attached, so Code and Automation work.
 >
-> First chat: a new chat asks you to pick a brain before the first message. Choose **GLM 5.3 (Allternit Cloud)**; it is paid for on the demo account. The five demo bots already use GLM 5.3. The attached video walks through sign-in, chat, a bot, MCP Apps, Billing, account deletion and screen sharing.
+> First chat: a new chat asks you to pick a brain before the first message. Choose **GLM 5.3 (Allternit Cloud)**. Allternit Cloud models use credits, and the demo account has credits on it, so they answer. On an account with no credits the Cloud models show a lock and "Needs credits"; on the US storefront the sheet links to our website to buy credits, and elsewhere it shows no price and no link. The five demo bots already use GLM 5.3. The attached video walks through sign-in, chat, a bot, MCP Apps, Billing, account deletion and screen sharing.
 >
 > Account deletion: Settings → Account → Delete account (type DELETE to confirm).
 >
@@ -130,4 +186,22 @@ No tracking. No third-party advertising.
 - [ ] Server decision on what deletion does (today: account closed, data kept until privacy@ request; paid plans not cancelled) — the delete screen says this plainly.
 - [x] Screenshots: 6 uploaded at 6.7" in App Store Connect.
 - [ ] Demo account signs in and its computer is online (fresh accounts get PRECONDITION_REQUIRED without one).
+- [ ] Demo account has a Cloud credit balance above $5 (`GET /api/v1/billing/credits` shows `cloud_models.allowed: true`); at $0 the Cloud demo stops answering.
 - [ ] Apple Developer: if the App Store team is not the personal team MQ85968PQP, delete the identifier `com.allternit.mobile.screen` registered on MQ85968PQP during a device test (identifiers are unique across Apple), then register the app IDs on the paid team.
+
+## Subscription terms
+
+Shown in the app next to the purchase buttons (plan step 6) and pasted at the end of the App Store description when the subscriptions go live. Apple requires the auto-renewal disclosure, the price and period, and working Terms and Privacy links. Both links were checked on 2026-11-17: allternit.com/terms and allternit.com/privacy are real routes in the site.
+
+In the app and in the description:
+
+```
+Allternit Plus is $24.99 per month, Allternit Max is $124.99 per month, and Allternit Ultra is $249.99 per month. Prices are for the United States and may differ elsewhere. Payment is charged to your Apple Account at confirmation of purchase. A subscription renews automatically each month unless you turn off auto-renew at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the period ends, at the same price. Manage or cancel a subscription in Settings > your name > Subscriptions on your iPhone. Cancelling stops the next renewal; you keep the plan until the period ends. Credit packs are one-time purchases. Refunds are handled by Apple at reportaproblem.apple.com.
+
+Terms of Use: https://allternit.com/terms
+Privacy Policy: https://allternit.com/privacy
+```
+
+App Store Connect fields: put the Privacy Policy URL in the Privacy Policy field (already set) and the Terms link in the app description, since the standard Apple license is used. If App Store Connect offers a Terms of Use field, use https://allternit.com/terms.
+
+Products, ids and prices: `store-products.md`. Custom pages: `custom-product-pages.md`. Events: `in-app-events.md`. Accessibility: `accessibility-labels.md`.

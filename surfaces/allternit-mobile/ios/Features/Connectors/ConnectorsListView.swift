@@ -11,6 +11,11 @@ import SafariServices
 struct ConnectorsListView: View {
     @Environment(\.dismiss) private var dismiss
 
+    /// A connector to start connecting as soon as the list loads (Settings ›
+    /// Connections › More). nil = the plain browser, no change in behaviour.
+    var initialConnectorId: String? = nil
+    @State private var didStartInitial = false
+
     @State private var connectors: [Connector] = []
     @State private var isLoading = false
     @State private var loadError: String? = nil
@@ -58,6 +63,8 @@ struct ConnectorsListView: View {
                 searchBar
                 Divider().background(Color("BorderSubtle"))
                 ScrollView {
+                    // Meetings: the calendar step, until a calendar is connected.
+                    MeetingsConnectorsPrompt()
                     content
                 }
                 .refreshable { await loadConnectors() }
@@ -238,12 +245,27 @@ struct ConnectorsListView: View {
         loadError = nil
         do {
             connectors = try await client.listConnectors()
+            await startInitialConnectIfNeeded()
         } catch is CancellationError {
             // View disappeared mid-flight — keep current state.
         } catch {
             loadError = error.localizedDescription
         }
         isLoading = false
+    }
+
+    /// Starts the connect flow once for the preselected connector. A connector
+    /// that is already connected or can't connect is only searched for.
+    @MainActor
+    private func startInitialConnectIfNeeded() async {
+        guard let id = initialConnectorId, !didStartInitial else { return }
+        didStartInitial = true
+        guard let connector = connectors.first(where: { $0.id == id }) else { return }
+        if connector.isConnected || !connector.connectable {
+            searchText = connector.name
+        } else {
+            await performConnect(connector, apiKey: nil)
+        }
     }
 
     @MainActor

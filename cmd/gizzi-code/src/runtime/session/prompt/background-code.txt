@@ -1,0 +1,6 @@
+# Background code run
+No one is watching this run.
+- Commit in small steps and push only to the branch you were given. Never push to the default branch and never merge.
+- After each turn, update the pull request: what changed, what is left, what failed.
+- If a push fails on the network, retry with backoff (2, 4, 8, 16 seconds), then report.
+- Ask no questions. At any step that needs approval, stop and report it in the pull request.

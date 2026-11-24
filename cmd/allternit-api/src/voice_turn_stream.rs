@@ -6,7 +6,13 @@
 //! message the channel path sends, and turn the session's bus events into the
 //! call stream's `text.delta` and `tool` events as they happen. A `tool` event
 //! carries the call's `input` once known and, when it ends, its `output` or
-//! `error` (each bounded to [`TOOL_DETAIL_MAX`] characters).
+//! `error` (each bounded to [`TOOL_DETAIL_MAX`] characters). A finished
+//! `voice_control` call also yields a `control` event (`language`, `speed`,
+//! `reply_mode`, `end_call`) that the voice client applies.
+//!
+//! No voice engine reads style tags yet, so `[tag]`-style markup (`[laughs]`)
+//! is stripped from spoken text ([`strip_voice_tags`]) and `voice_tags` is
+//! never stamped on a turn.
 //!
 //! Vendor-bound and placed (remote) sessions have no local event stream; the
 //! caller falls back to the final-reply behaviour for those (see
@@ -71,6 +77,7 @@ impl TurnFold {
     }
 
     fn say(&mut self, out: &mut Vec<Value>, text: String) {
+        let text = strip_voice_tags(&text);
         if !text.is_empty() {
             self.spoke = true;
             out.push(json!({ "type": "text.delta", "text": text }));
@@ -81,7 +88,9 @@ impl TurnFold {
     fn push_text(&mut self, out: &mut Vec<Value>, delta: &str) {
         let delta = self.cards.push(delta);
         self.buf.push_str(&delta);
-        if let Some((i, c)) = self.buf.char_indices().rev().find(|(_, c)| c.is_whitespace()) {
+        // An unclosed `[tag` waits for its `]`, so a tag split across deltas is still stripped.
+        let upto = open_tag_start(&self.buf).unwrap_or(self.buf.len());
+        if let Some((i, c)) = self.buf[..upto].char_indices().rev().find(|(_, c)| c.is_whitespace()) {
             let rest = self.buf.split_off(i + c.len_utf8());
             let head = std::mem::replace(&mut self.buf, rest);
             self.say(out, head);
@@ -210,8 +219,85 @@ impl TurnFold {
                 ev["error"] = json!(e);
             }
             out.push(ev);
+            if status == "done" && name == VOICE_CONTROL_TOOL {
+                out.extend(control_event(&state["metadata"]));
+            }
         }
     }
+}
+
+/// The runtime tool whose finished calls become `control` events.
+pub(crate) const VOICE_CONTROL_TOOL: &str = "voice_control";
+
+/// `{"type":"control", language?, speed?, reply_mode?, end_call?}` from a
+/// finished `voice_control` call's metadata; none when the tool refused.
+pub(crate) fn control_event(meta: &Value) -> Option<Value> {
+    if meta["ok"] != true {
+        return None;
+    }
+    let mut ev = json!({ "type": "control" });
+    if let Some(l) = meta["language"].as_str().filter(|l| !l.is_empty()) {
+        ev["language"] = json!(l);
+    }
+    if let Some(s) = meta["speed"].as_f64() {
+        ev["speed"] = json!(s);
+    }
+    if let Some(m) = meta["reply_mode"].as_str() {
+        ev["reply_mode"] = json!(m);
+    }
+    if meta["action"] == "end_call" || meta["end_call"] == true {
+        ev["end_call"] = json!(true);
+    }
+    (ev.as_object().map_or(0, |o| o.len()) > 1).then_some(ev)
+}
+
+/// The longest `[tag]` treated as a style tag (characters inside the brackets).
+const VOICE_TAG_MAX: usize = 32;
+
+fn is_tag_char(c: char) -> bool {
+    c.is_alphabetic() || matches!(c, ' ' | '-' | '_' | '\'')
+}
+
+/// Where an unclosed `[tag` that could still become a style tag starts.
+fn open_tag_start(s: &str) -> Option<usize> {
+    let i = s.rfind('[')?;
+    let tail = &s[i + 1..];
+    (!tail.contains(']') && tail.chars().count() <= VOICE_TAG_MAX && tail.chars().all(is_tag_char)).then_some(i)
+}
+
+/// Spoken text without `[tag]`-style markup (`[laughs]`, `[soft whisper]`).
+/// Only letters, spaces, `-`, `_` and `'` count as a tag, so `[1]` stays and a
+/// Markdown link `[text](url)` is left for the link handling.
+pub(crate) fn strip_voice_tags(s: &str) -> String {
+    if !s.contains('[') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('[') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let tag = after.find(']').filter(|&j| {
+            let inner = &after[..j];
+            let n = inner.chars().count();
+            n > 0 && n <= VOICE_TAG_MAX && inner.chars().all(is_tag_char) && !inner.trim().is_empty() && !after[j + 1..].starts_with('(')
+        });
+        match tag {
+            Some(j) => {
+                rest = &after[j + 1..];
+                // No doubled space where the tag was.
+                if out.is_empty() || out.ends_with(char::is_whitespace) {
+                    rest = rest.trim_start_matches([' ', '\t']);
+                }
+            }
+            None => {
+                out.push('[');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The most of a tool call's arguments or result passed on (characters).
@@ -427,6 +513,47 @@ async fn drive(client: &Client, base: &str, session_id: &str, path: &str, payloa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn style_tags_are_stripped_from_spoken_text() {
+        assert_eq!(strip_voice_tags("[laughs] Sure, I can do that."), "Sure, I can do that.");
+        assert_eq!(strip_voice_tags("That's great [soft laugh] news."), "That's great news.");
+        assert_eq!(strip_voice_tags("Okay[sighs]."), "Okay.");
+        // Not tags: numbers, links, empty or overlong brackets, an unclosed one.
+        assert_eq!(strip_voice_tags("See note [1]."), "See note [1].");
+        assert_eq!(strip_voice_tags("Open [the docs](https://x.y)."), "Open [the docs](https://x.y).");
+        assert_eq!(strip_voice_tags("a [] b [ok"), "a [] b [ok");
+        let long = format!("[{}]", "a".repeat(VOICE_TAG_MAX + 1));
+        assert_eq!(strip_voice_tags(&long), long);
+    }
+
+    #[test]
+    fn a_tag_split_across_deltas_is_still_stripped() {
+        let mut fold = TurnFold::new("s1");
+        let mut out = Vec::new();
+        fold.feed(&part("text", "p1"), &mut out);
+        for d in ["Well ", "[la", "ughs] that ", "works."] {
+            fold.feed(&delta("p1", d), &mut out);
+        }
+        fold.flush(&mut out);
+        let said: String = out.iter().filter_map(|e| e["text"].as_str()).collect();
+        assert_eq!(said, "Well that works.");
+    }
+
+    #[test]
+    fn a_finished_voice_control_call_yields_one_control_event() {
+        let call = |status: &str, meta: Value| json!({ "type": "message.part.updated", "properties": { "part": {
+            "id": "p7", "type": "tool", "tool": "voice_control", "callID": "v1", "sessionID": "s1",
+            "state": { "status": status, "input": { "action": "end_call" }, "metadata": meta } } } });
+        let mut fold = TurnFold::new("s1");
+        let mut out = Vec::new();
+        fold.feed(&call("running", json!({})), &mut out);
+        fold.feed(&call("completed", json!({ "ok": true, "action": "end_call" })), &mut out);
+        let controls: Vec<_> = out.iter().filter(|e| e["type"] == "control").collect();
+        assert_eq!(controls, vec![&json!({ "type": "control", "end_call": true })]);
+        assert_eq!(control_event(&json!({ "ok": true, "action": "set_speed", "speed": 1.5 })), Some(json!({ "type": "control", "speed": 1.5 })));
+        assert_eq!(control_event(&json!({ "ok": false, "action": "end_call" })), None);
+    }
     use axum::{body::Body, response::Response, routing::{get, post}, Router};
     use std::sync::{Arc, Mutex};
 

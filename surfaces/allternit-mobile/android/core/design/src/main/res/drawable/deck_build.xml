@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:fillColor="#FF1E293B"
+        android:pathData="M 9.71875 5.925781 L 15.066406 5.925781 C 16.210938 5.925781 17.136719 6.851562 17.136719 7.996094 L 17.136719 13.34375 C 17.136719 14.484375 16.210938 15.414062 15.066406 15.414062 L 9.71875 15.414062 C 8.578125 15.414062 7.648438 14.484375 7.648438 13.34375 L 7.648438 7.996094 C 7.648438 6.851562 8.578125 5.925781 9.71875 5.925781 Z M 9.71875 5.925781" />
+    <path
+        android:fillColor="#FF1E293B"
+        android:fillAlpha="0.7"
+        android:pathData="M 20.933594 5.925781 L 26.28125 5.925781 C 27.421875 5.925781 28.351562 6.851562 28.351562 7.996094 L 28.351562 13.34375 C 28.351562 14.484375 27.421875 15.414062 26.28125 15.414062 L 20.933594 15.414062 C 19.789062 15.414062 18.863281 14.484375 18.863281 13.34375 L 18.863281 7.996094 C 18.863281 6.851562 19.789062 5.925781 20.933594 5.925781 Z M 20.933594 5.925781" />
+    <path
+        android:fillColor="#FF1E293B"
+        android:fillAlpha="0.7"
+        android:pathData="M 9.71875 17.136719 L 15.066406 17.136719 C 16.210938 17.136719 17.136719 18.0625 17.136719 19.207031 L 17.136719 24.554688 C 17.136719 25.699219 16.210938 26.625 15.066406 26.625 L 9.71875 26.625 C 8.578125 26.625 7.648438 25.699219 7.648438 24.554688 L 7.648438 19.207031 C 7.648438 18.0625 8.578125 17.136719 9.71875 17.136719 Z M 9.71875 17.136719" />
+    <path
+        android:fillColor="#FF1E293B"
+        android:strokeColor="#FF1E293B"
+        android:strokeWidth="2.76"
+        android:strokeLineCap="round"
+        android:pathData="M 19.726562 21.96875 L 27.488281 21.96875 M 23.605469 18 L 23.605469 25.933594" />
+</vector>

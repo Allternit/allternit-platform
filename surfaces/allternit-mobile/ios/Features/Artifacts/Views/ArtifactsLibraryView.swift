@@ -32,6 +32,7 @@ struct ArtifactsLibraryView: View {
     @State private var showingOfficeDocuments = false
     @State private var showingConnectors = false
     @State private var searchDraft = ""
+    @State private var searching = false
     @State private var tilesShown = false
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
@@ -47,7 +48,12 @@ struct ArtifactsLibraryView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                LibrarySectionHeader(title: nil, onMenu: { openLibraryDrawer($isSidebarOpen) }) { filterMenu }
+                LibrarySectionHeader(title: nil, onMenu: { openLibraryDrawer($isSidebarOpen) }) {
+                    ProjectsPill(searching: $searching, filtersActive: filtersOn, searchLabel: "Search artifacts") { filterPopover }
+                }
+                if searching || !searchDraft.isEmpty {
+                    ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         titleRow
@@ -63,14 +69,14 @@ struct ArtifactsLibraryView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await store.reload() }
             }
-            LibraryFloatingBar(
-                query: $searchDraft,
-                placeholder: "Search artifacts",
-                newLabel: "New artifact",
-                wide: .search
-            ) {
+            // Floating "New artifact": keeps every item the old bar's menu had.
+            Menu {
                 newMenuItems
+            } label: {
+                ProjectsNewLabel(title: "New artifact")
             }
+            .accessibilityLabel("New artifact")
+            .padding(.bottom, 14)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .fullScreenCover(item: $openArtifact) { summary in
@@ -116,6 +122,14 @@ struct ArtifactsLibraryView: View {
             Task { await uploadVideo(item) }
         }
         #if DEBUG
+        .task {
+            // `-calm-artifacts-filter=<kind>` / `-calm-artifacts-list` (DEBUG only).
+            if launchArgumentEnabled("calm-artifacts-list") { layoutRaw = LibraryLayout.list.rawValue }
+            if let value = launchArgumentValue("calm-artifacts-filter"), let kind = ArtifactTileFilter.kind(fromArgument: value) {
+                store.kind = kind
+                await store.reload()
+            }
+        }
         .fullScreenCover(item: $debugOfficeDocumentId) { id in
             V2ArtifactView(artifactId: id.wrappedValue)
         }
@@ -128,6 +142,10 @@ struct ArtifactsLibraryView: View {
             }
             if let idx = args.firstIndex(of: "-open-office-document-id"), args.indices.contains(idx + 1) {
                 debugOfficeDocumentId = .init(wrappedValue: args[idx + 1])
+            }
+            // `-calm-artifact-viewer|comments|share[=<id>]` (phone calm I12).
+            if CalmArtifactLaunch.isActive {
+                debugOfficeDocumentId = .init(wrappedValue: CalmArtifactLaunch.artifactId)
             }
         }
         #endif
@@ -154,43 +172,60 @@ struct ArtifactsLibraryView: View {
                 .tracking(-0.3)
                 .foregroundColor(Color("TextPrimary"))
             Spacer()
-            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
         }
         .padding(.top, 4)
     }
 
     private var filtersOn: Bool { store.scope != .all || store.kind != nil }
 
-    private var filterMenu: some View {
-        Menu {
-            Section("Show") {
-                LibraryMenuCheck(title: "Saved work", checked: !store.archived) { setArchived(false) }
-                LibraryMenuCheck(title: "Archive", icon: "archivebox", checked: store.archived) { setArchived(true) }
-            }
-            Section("Owner") {
+    private var filterPopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                    .padding(.bottom, 6)
+                popoverLabel("Show")
+                popoverCheck("Saved work", on: !store.archived) { setArchived(false) }
+                popoverCheck("Archive", on: store.archived) { setArchived(true) }
+                popoverLabel("Owner")
                 ForEach(ArtifactLibraryStore.Scope.allCases) { scope in
-                    LibraryMenuCheck(title: scope.label, checked: store.scope == scope) {
+                    popoverCheck(scope.label, on: store.scope == scope) {
                         store.scope = scope
                         Task { await store.reload() }
                     }
                 }
-            }
-            Section("Kind") {
-                LibraryMenuCheck(title: "All kinds", checked: store.kind == nil) {
-                    store.kind = nil
-                    Task { await store.reload() }
-                }
+                popoverLabel("Kind")
+                popoverCheck("All kinds", on: store.kind == nil) { setKind(nil) }
                 ForEach(ArtifactV2Kind.filterKinds) { kind in
-                    LibraryMenuCheck(title: kind.label, icon: kind.systemImage, checked: store.kind == kind) {
-                        store.kind = kind
-                        Task { await store.reload() }
-                    }
+                    popoverCheck(kind.label, on: store.kind == kind) { setKind(kind) }
                 }
             }
-        } label: {
-            LibraryRoundLabel(icon: "slider.horizontal.3", dot: filtersOn)
+            .padding(16)
         }
-        .accessibilityLabel("Filter and sort")
+        .frame(minWidth: 260, maxHeight: 460)
+    }
+
+    private func popoverLabel(_ text: String) -> some View {
+        Text(text).font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+    }
+
+    private func popoverCheck(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(.system(size: 15))
+                Spacer(minLength: 12)
+                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func setKind(_ kind: ArtifactV2Kind?) {
+        guard store.kind != kind else { return }
+        store.kind = kind
+        Task { await store.reload() }
     }
 
     private func setArchived(_ value: Bool) {
@@ -247,8 +282,9 @@ struct ArtifactsLibraryView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(Array(tiles.enumerated()), id: \.element) { index, kind in
-                        Button { start(kind) } label: { createCard(kind) }
+                        Button { tileTapped(kind) } label: { createCard(kind) }
                             .buttonStyle(.plain)
+                            .accessibilityAddTraits(selectedTile == kind ? .isSelected : [])
                             // amt2-enter: the row slides in on open, 45 ms apart.
                             .opacity(tilesShown ? 1 : 0)
                             .offset(x: tilesShown ? 0 : 28)
@@ -262,7 +298,7 @@ struct ArtifactsLibraryView: View {
             }
             .padding(.horizontal, -16)
             .onAppear {
-                if UIAccessibility.isReduceMotionEnabled { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
+                if ReducedMotion.current { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
             }
         }
     }
@@ -289,8 +325,8 @@ struct ArtifactsLibraryView: View {
                 }
             }
             .frame(width: 136, height: 95)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(selectedTile == kind ? Color("FillNeutral") : Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(selectedTile == kind ? Color("TextPrimary") : Color("BorderStrong"), lineWidth: selectedTile == kind ? 2 : 1))
             .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -309,8 +345,27 @@ struct ArtifactsLibraryView: View {
         }
     }
 
+    private var selectedTile: ArtifactStudioKind? {
+        ArtifactTileFilter.selectedTile(for: store.kind, in: tiles)
+    }
+
+    /// Tap filters to the tile's kind, tap again clears; a tile with no
+    /// matching kind (Build, Deep Research) still creates.
+    private func tileTapped(_ tile: ArtifactStudioKind) {
+        switch ArtifactTileFilter.tap(tile, current: store.kind) {
+        case .noFilter:
+            start(tile)
+        case .filter(let kind):
+            Haptics.selection()
+            setKind(kind)
+        case .clear:
+            Haptics.selection()
+            setKind(nil)
+        }
+    }
+
     private func start(_ kind: ArtifactStudioKind) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         Task {
             do {
                 studio = try await launcher.launch(kind)
@@ -533,6 +588,7 @@ struct ArtifactsLibraryView: View {
                 }
             }
             sectionLabel("Your artifacts").padding(.bottom, -4)
+            if let tile = selectedTile { newRow(tile) }
             if !store.archived && !filtered {
                 ForEach(launcher.editorSessions) { session in
                     editorSessionRow(session)
@@ -549,7 +605,7 @@ struct ArtifactsLibraryView: View {
     private func editorSessionRow(_ session: ArtifactStudioSession) -> some View {
         HStack(spacing: 4) {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 studio = session
             } label: {
                 HStack(spacing: 10) {
@@ -625,7 +681,14 @@ struct ArtifactsLibraryView: View {
                 action: ("Try again", retry)
             )
         case .loaded:
-            if items.isEmpty {
+            if items.isEmpty, let kind = store.kind, !store.archived, store.searchText.isEmpty, store.scope == .all {
+                Text(ArtifactTileFilter.emptyText(kind: kind, tile: selectedTile))
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .accessibilityAddTraits(.updatesFrequently)
+            } else if items.isEmpty {
                 stateMessage(
                     icon: nil,
                     title: filtered ? "Nothing matches" : store.archived ? "No archived artifacts" : "No artifacts yet",
@@ -636,18 +699,9 @@ struct ArtifactsLibraryView: View {
                             : "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
                     action: filtered ? ("Clear filters", clearFilters) : nil
                 )
-            } else if store.kind != nil || layout != .list {
-                group(items)
             } else {
-                // List groups by kind; Grid and Deck are one gallery.
-                ForEach(kindGroups(items), id: \.self) { kind in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(ArtifactV2Kind(rawValue: kind)?.label ?? kind.capitalized)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Color("TextTertiary"))
-                        group(items.filter { $0.kind == kind })
-                    }
-                }
+                // Rows carry "Kind · Edited <time>", so list, grid and deck are one flat set.
+                group(items)
             }
             if store.isLoadingMore {
                 Text("Loading…")
@@ -674,9 +728,30 @@ struct ArtifactsLibraryView: View {
         Task { await store.reload() }
     }
 
-    private func kindGroups(_ items: [ArtifactV2Summary]) -> [String] {
-        var seen = Set<String>()
-        return items.map(\.kind).filter { seen.insert($0).inserted }
+    /// D8: while filtered, the list starts with "New <Kind>" (the tile's old create action).
+    private func newRow(_ tile: ArtifactStudioKind) -> some View {
+        Button { start(tile) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 96, height: 58)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                Text(ArtifactTileFilter.newRowTitle(tile))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer(minLength: 0)
+                if launcher.launching == tile { ProgressView().controlSize(.small) }
+            }
+            .padding(9)
+            .background(Color("BgPanel"))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(launcher.launching != nil)
+        .accessibilityLabel(ArtifactTileFilter.newRowTitle(tile))
     }
 
     @ViewBuilder
@@ -708,7 +783,7 @@ struct ArtifactsLibraryView: View {
             layout: layout,
             archived: store.archived,
             onOpen: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 openArtifact = summary
             },
             onArchive: { changeArchive(summary) },
@@ -902,14 +977,14 @@ private struct ArtifactLibraryCard: View {
     private var horizontal: some View {
         HStack(spacing: 12) {
             thumbnail
-                .frame(width: 96, height: 72)
+                .frame(width: 96, height: 58)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(summary.title)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(2)
-                Text(edited)
+                Text(ArtifactTileFilter.subtitle(kindLabel: kindLabel, edited: edited))
                     .font(.system(size: 12))
                     .foregroundColor(Color("TextTertiary"))
                     .lineLimit(1)
@@ -919,7 +994,7 @@ private struct ArtifactLibraryCard: View {
             more
         }
         .padding(9)
-        .frame(minHeight: 90)
+        .frame(minHeight: 76)
     }
 
     private var vertical: some View {

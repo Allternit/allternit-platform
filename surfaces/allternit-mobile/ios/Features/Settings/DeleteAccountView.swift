@@ -173,12 +173,12 @@ struct DeleteAccountView: View {
         isDeleting = true
         errorMessage = nil
         defer { isDeleting = false }
-        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        Haptics.warning()
         do {
             try await authManager.deleteAccount()
             AccountPlanStore.shared.reset()
             isDeleted = true
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
         } catch {
             errorMessage = FriendlyErrorMessage.from(error.localizedDescription)
         }

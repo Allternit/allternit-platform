@@ -1,0 +1,21 @@
+appId: ${APP_ID}
+---
+# Verifies the Code tab opens (the old status-filter sheet no longer exists on main; the header menu button is the stable marker).
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-code-filter: true
+# iOS-only: system notification prompt. TODO(android step N): POST_NOTIFICATIONS dialog (grant via adb or Android branch).
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "Dismiss notifications prompt"
+          optional: true
+- assertVisible:
+    id: "phoneMenuButton"
+- takeScreenshot: code_filter_sheet
+- stopApp

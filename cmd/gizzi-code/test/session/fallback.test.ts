@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { APICallError } from "ai"
 import { Instance } from "../../src/runtime/context/project/instance"
@@ -16,6 +16,15 @@ Log.init({ print: false })
 // given provider error, or it returns a stream yielding the given events.
 const streamCalls: { providerID: string; modelID: string }[] = []
 let streamScript: Array<{ throw?: unknown; events?: unknown[] }> = []
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back once this file is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+})
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {

@@ -793,36 +793,12 @@ fn resolve_attention_linked<'a>(
         }
     }
     if link_parents {
-        release_parents(st, s, &rec.owner, id, &resolution).await.map_err(|e| ApiError::internal(e, rid))?;
+        for pid in s.release_parents(&rec.owner, id, &resolution, "resolved").await.map_err(|e| ApiError::internal(e, rid))? {
+            executor::spawn(st.clone(), pid);
+        }
     }
     Ok(Json(json!({ "object": "attention_response", "attention_id": id, "resolution": resolution, "run": public_run(&rec) })).into_response())
     })
-}
-
-/// G2: a child template's request was answered on the child itself: resolve
-/// every parent item linked to it with the same resolution and re-queue
-/// those parents (their drive re-checks the child under the fence).
-async fn release_parents(st: &Arc<AppState>, s: &AgencyStore, owner: &str, child_att: &str, resolution: &Value) -> anyhow::Result<()> {
-    for mut p in s.list_runs(owner).await? {
-        if p.run["status"] != "needs_attention" { continue; }
-        let mut hit = None;
-        for a in p.attention.iter_mut().filter(|a| a["reason"] == effect_template::CHILD_ATTENTION_REASON && a["status"] == "open" && a["child_attention_id"] == child_att) {
-            a["status"] = json!("resolved");
-            a["resolution"] = resolution.clone();
-            hit = a["id"].as_str().map(str::to_string);
-        }
-        let Some(pid) = hit else { continue };
-        let run_id = p.run["id"].as_str().unwrap_or_default().to_string();
-        let v = p.run["version"].as_i64().unwrap_or(0);
-        s.emit(&run_id, v, "attention.resolved", json!({ "data": { "attention_id": pid, "resolution": resolution } })).await?;
-        if p.attention.iter().any(|a| a["status"] == "open") {
-            s.save(p).await?;
-            continue;
-        }
-        s.transition(p, "waiting", Some("answered; queued to re-check the template run (committed steps replay from the journal)")).await?;
-        executor::spawn(st.clone(), run_id);
-    }
-    Ok(())
 }
 
 // ── WP-P1 production safety routes ──────────────────────────────────────────

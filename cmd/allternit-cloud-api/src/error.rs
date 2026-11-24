@@ -98,6 +98,23 @@ pub enum ApiError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    /// Compute gate (CONTRACT-compute-gate-2026-11-13 section 4): agent
+    /// entry by an account with no computer. 409 with the contract body
+    /// (`{"error":{"code":"compute_required",...}}`) passed through verbatim,
+    /// built by `routes::account_compute::compute_required_body`.
+    #[error("Compute required")]
+    ComputeRequired(serde_json::Value),
+
+    /// Cloud credits gate (CONTRACT-cloud-credits-2026-11-15): an Allternit
+    /// Cloud model call by an account with no positive credit balance. 402
+    /// with the contract body (`{"error":{"type":"billing_error","code":...,
+    /// "packs":[...]}}`), built by
+    /// `services::inference_settlement::credits_required_body`. `code` is
+    /// `credits_required` (no credits row) or `credits_exhausted` (a row at
+    /// or below 0).
+    #[error("Credits required: {code}")]
+    CreditsRequired { code: &'static str, balance_usd: f64 },
 }
 
 impl From<sqlx::migrate::MigrateError> for ApiError {
@@ -117,6 +134,16 @@ impl IntoResponse for ApiError {
         // so server logs show the root cause instead of a generic message.
         // so fly.io logs show the root cause instead of a generic message.
         warn!(error = %self, "ApiError response");
+
+        // The compute gate's body is a contract shared by every client.
+        if let ApiError::ComputeRequired(body) = &self {
+            return (StatusCode::CONFLICT, Json(body.clone())).into_response();
+        }
+        // So is the Cloud credits gate's.
+        if let ApiError::CreditsRequired { code, balance_usd } = &self {
+            let body = crate::services::inference_settlement::credits_required_body(code, *balance_usd);
+            return (StatusCode::PAYMENT_REQUIRED, Json(body)).into_response();
+        }
 
         let (status, error_code, message) = match &self {
             ApiError::DeploymentNotFound(id) => {
@@ -206,6 +233,18 @@ impl IntoResponse for ApiError {
                 msg.clone(),
             ),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
+            // Answered above with its contract body; kept for exhaustiveness.
+            ApiError::ComputeRequired(_) => (
+                StatusCode::CONFLICT,
+                "compute_required",
+                "Agents need a computer. Link your own, subscribe, or buy credits.".to_string(),
+            ),
+            // Answered above with its contract body; kept for exhaustiveness.
+            ApiError::CreditsRequired { code, .. } => (
+                StatusCode::PAYMENT_REQUIRED,
+                *code,
+                crate::services::inference_settlement::credits_message(code).to_string(),
+            ),
             ApiError::PreconditionRequired(msg) => (
                 StatusCode::PRECONDITION_REQUIRED,
                 "PRECONDITION_REQUIRED",
@@ -254,6 +293,15 @@ impl IntoResponse for ApiError {
             code: error_code.to_string(),
         });
 
-        (status, body).into_response()
+        let capacity = matches!(&self, ApiError::ServiceUnavailable(m)
+            if crate::services::provisioning::is_capacity_message(m));
+        let mut response = (status, body).into_response();
+        if capacity {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(crate::services::provisioning::CAPACITY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }

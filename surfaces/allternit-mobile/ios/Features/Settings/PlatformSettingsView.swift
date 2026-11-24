@@ -47,6 +47,7 @@ struct PlatformSettingsView: View {
                 }
             }
             .font(.subheadline)
+            .accessibilityIdentifier("platformLanguage")
 
             Picker("Timezone", selection: $settings.timezone) {
                 ForEach(SettingsStore.timezones, id: \.self) { tz in
@@ -54,6 +55,7 @@ struct PlatformSettingsView: View {
                 }
             }
             .font(.subheadline)
+            .accessibilityIdentifier("platformTimezone")
 
             Toggle(isOn: $settings.showSystemMessages) {
                 Text("Show system messages")

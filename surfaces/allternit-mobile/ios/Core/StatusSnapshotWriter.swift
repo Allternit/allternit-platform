@@ -43,6 +43,6 @@ enum StatusSnapshotWriter {
     /// The widget reads this when its environment does not carry Reduce Motion.
     @MainActor
     static func syncReduceMotion() {
-        WidgetFlags.reduceMotion = UIAccessibility.isReduceMotionEnabled
+        WidgetFlags.reduceMotion = ReducedMotion.current
     }
 }

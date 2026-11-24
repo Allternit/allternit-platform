@@ -63,6 +63,12 @@
       "critical": false
     },
     {
+      "id": "freeweights",
+      "name": "Freeweights",
+      "group": "freeweights",
+      "critical": false
+    },
+    {
       "id": "services",
       "name": "Services and booking",
       "group": "services",
@@ -91,7 +97,7 @@
       "method": "GET",
       "expect_status": 200,
       "follow_redirects": false,
-      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "body_marker": "<title>Allternit",
       "critical": true,
       "role": "page",
       "vantages": [
@@ -108,7 +114,7 @@
       "method": "GET",
       "expect_status": 200,
       "follow_redirects": false,
-      "body_marker": "<title>Allternit — Agentic OS</title>",
+      "body_marker": "<title>Allternit",
       "critical": true,
       "role": "page",
       "vantages": [
@@ -524,6 +530,74 @@
       "body_marker": "\"status\":\"ok\"",
       "critical": false,
       "role": "ready"
+    },
+    {
+      "id": "freeweights",
+      "component_id": "freeweights",
+      "name": "freeweights.allternit.com",
+      "url": "https://freeweights.allternit.com/",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "<title>Allternit Freeweights",
+      "critical": false,
+      "role": "page",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-catalog",
+      "component_id": "freeweights",
+      "name": "Freeweights API",
+      "url": "https://freeweights.allternit.com/api/models?limit=1",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": "\"modelId\":",
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-resolve",
+      "component_id": "freeweights",
+      "name": "Freeweights pinned resolve (HEAD)",
+      "url": "https://freeweights.allternit.com/Qwen/Qwen3-ASR-1.7B/resolve/7278e1e70fe206f11671096ffdd38061171dd6e5/generation_config.json",
+      "method": "HEAD",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": null,
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
+    },
+    {
+      "id": "freeweights-minisig",
+      "component_id": "freeweights",
+      "name": "Freeweights manifest signature",
+      "url": "https://freeweights.allternit.com/manifests/Qwen/Qwen3-ASR-1.7B.json.minisig",
+      "method": "GET",
+      "expect_status": 200,
+      "follow_redirects": false,
+      "body_marker": null,
+      "critical": false,
+      "role": "live",
+      "vantages": [
+        "cloudflare",
+        "allternit-standby"
+      ],
+      "timeout_ms": 8000
     }
   ]
 }

@@ -6,7 +6,7 @@
  * "wrapped". The provider's windows arrive the way live headers do
  * (ProviderQuotas.record), in the middle of the turn.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { Session } from "../../src/runtime/session"
@@ -19,6 +19,15 @@ Log.init({ print: false })
 type Step = { finish: "tool-calls" | "stop"; before?: () => void }
 let script: Step[] = []
 const calls: { system: string[]; tail: string[] }[] = []
+
+// Bun keeps a mock.module override for the rest of the run, other test files
+// included, so the real modules go back once this file is done.
+const realLLMModule = { ...(await import("../../src/runtime/session/llm")) }
+const realProviderModule = { ...(await import("../../src/runtime/providers/provider")) }
+afterAll(() => {
+  mock.module("../../src/runtime/session/llm", () => realLLMModule)
+  mock.module("../../src/runtime/providers/provider", () => realProviderModule)
+})
 
 mock.module("../../src/runtime/session/llm", () => ({
   LLM: {

@@ -1,16 +1,31 @@
 //! In-memory model cache store with persistence helpers.
 
-use crate::cache::model::{CachedModel, ModelStatus};
+use crate::cache::model::{CachedModel, FileVerification, ModelSource, ModelStatus};
+use allternit_model_source::Verification;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use tracing::warn;
+
+/// File (next to `models_dir`, in the service's data dir) that keeps
+/// registered Studio outputs across restarts. Downloads are rebuilt from the
+/// models folder; a Studio output lives in its job folder, so only this file
+/// knows about it.
+pub const STUDIO_OUTPUTS_FILE: &str = "studio-outputs.json";
+
+/// A `POST /models/studio-output` record (id `studio--<job>--<kind>`).
+fn is_registered_output(m: &CachedModel) -> bool {
+    m.source == ModelSource::StudioOutput && m.id.starts_with("studio--")
+}
 
 /// Manages the local model cache metadata.
 #[derive(Clone)]
 pub struct ModelStore {
     models_dir: PathBuf,
     models: Arc<RwLock<HashMap<String, CachedModel>>>,
+    /// One writer of [`STUDIO_OUTPUTS_FILE`] at a time.
+    persist: Arc<Mutex<()>>,
 }
 
 impl ModelStore {
@@ -19,7 +34,73 @@ impl ModelStore {
         Self {
             models_dir: models_dir.into(),
             models: Arc::new(RwLock::new(HashMap::new())),
+            persist: Arc::new(Mutex::new(())),
         }
+    }
+
+    /// Where registered Studio outputs are saved.
+    pub fn studio_outputs_file(&self) -> PathBuf {
+        self.models_dir
+            .parent()
+            .unwrap_or(&self.models_dir)
+            .join(STUDIO_OUTPUTS_FILE)
+    }
+
+    /// Load the saved Studio outputs (call once at start). Entries whose
+    /// files are gone are dropped, and the file is rewritten without them.
+    /// Returns how many were loaded.
+    pub async fn load_studio_outputs(&self) -> usize {
+        let file = self.studio_outputs_file();
+        let saved: Vec<CachedModel> = match tokio::fs::read(&file).await {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(list) => list,
+                Err(err) => {
+                    warn!(file = %file.display(), %err, "studio outputs file is not readable; ignoring it");
+                    return 0;
+                }
+            },
+            Err(_) => return 0,
+        };
+        let total = saved.len();
+        let mut loaded = 0;
+        {
+            let mut models = self.models.write().await;
+            for model in saved {
+                if !is_registered_output(&model) || !model.path.exists() {
+                    continue;
+                }
+                models.entry(model.id.clone()).or_insert(model);
+                loaded += 1;
+            }
+        }
+        if loaded != total {
+            if let Err(err) = self.save_studio_outputs().await {
+                warn!(file = %file.display(), %err, "could not rewrite studio outputs file");
+            }
+        }
+        loaded
+    }
+
+    /// Save every Studio output record (atomic replace).
+    pub async fn save_studio_outputs(&self) -> std::io::Result<()> {
+        let _one_writer = self.persist.lock().await;
+        let mut outputs: Vec<CachedModel> = self
+            .models
+            .read()
+            .await
+            .values()
+            .filter(|m| is_registered_output(m))
+            .cloned()
+            .collect();
+        outputs.sort_by(|a, b| a.id.cmp(&b.id));
+        let file = self.studio_outputs_file();
+        if let Some(dir) = file.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let tmp = file.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(&outputs).map_err(std::io::Error::other)?;
+        tokio::fs::write(&tmp, bytes).await?;
+        tokio::fs::rename(&tmp, &file).await
     }
 
     /// Directory where models are stored.
@@ -88,6 +169,29 @@ impl ModelStore {
         if let Some(model) = models.get_mut(id) {
             model.set_ready();
         }
+    }
+
+    /// Record how a model's files were checked.
+    pub async fn set_verification(
+        &self,
+        id: &str,
+        verification: Verification,
+        files: Vec<FileVerification>,
+    ) {
+        let mut models = self.models.write().await;
+        if let Some(model) = models.get_mut(id) {
+            model.set_verification(verification, files);
+        }
+    }
+
+    /// Ids of records for `repo_id` (any revision / quantization).
+    pub async fn ids_for_repo(&self, repo_id: &str) -> Vec<String> {
+        let models = self.models.read().await;
+        models
+            .values()
+            .filter(|m| m.repo_id == repo_id)
+            .map(|m| m.id.clone())
+            .collect()
     }
 
     /// Mark a model as failed.

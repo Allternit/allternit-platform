@@ -75,9 +75,17 @@ Response:
   "resetsAt": "2026-08-17T00:00:00Z",
   "credits": 150,
   "monthToDateUsageUsd": 12.4,
-  "recentTransactions": []
+  "recentTransactions": [],
+  "cloud_models": {
+    "allowed": true,
+    "reason": null,
+    "balance_usd": 150,
+    "byok_providers": []
+  }
 }
 ```
+
+`cloud_models` says whether the account can run Allternit Cloud models now. It is the same object as on `GET /api/v1/billing/credits`; see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models). Cloud models need a credit balance above $0, and Free accounts have no free monthly allowance: a Free account with no credits row reports `credits: 0`, `weeklyLimit: 0` and `weeklyUsed: 0`. A response without `cloud_models` (an older server) means not locked.
 
 If no cloud API is configured or the service is unreachable, the endpoint returns `503 Service Unavailable` with a clear error.
 
@@ -109,6 +117,8 @@ Served by the Allternit Cloud API (`https://api.allternit.com`). Small per-accou
 
 Auth: a Clerk session JWT, or an API token with the `account` scope.
 
+**Device tokens may read /me/flags.** `GET` also accepts a paired computer's runtime device credential (`allternit_runtime_…`) and answers with the flags of the account that owns the device. This is how a gizzi that is only paired reads `files_drive`. It is read-only: a `PUT` with a device credential is a `403`. The credential must be valid, unexpired and not revoked. No other route accepts it because of this (device credentials elsewhere keep only their existing narrow routes, such as Cloud chat completions).
+
 The only flag today is `botsIntroSeenAt`: when the person finished or skipped the **Meet your bots** card (an ISO-8601 time). Every allowed flag is always present in the response, `null` when unset.
 
 Response (both methods):
@@ -131,8 +141,8 @@ Response (both methods):
 |--------|------|------|
 | 400 | `BAD_REQUEST` | Body isn't an object, is empty, names an unknown flag, or a value isn't an ISO-8601 time. |
 | 415 / 422 | — | `PUT` without `Content-Type: application/json`, or a body that isn't valid JSON (plain-text error). |
-| 401 | `UNAUTHORIZED` | Missing or invalid Clerk session or API token. |
-| 403 | `FORBIDDEN` | API token without the `account` scope. |
+| 401 | `UNAUTHORIZED` / `TOKEN_EXPIRED` | Missing or invalid Clerk session, API token or device credential, or an expired or revoked device credential. |
+| 403 | `FORBIDDEN` | API token without the `account` scope, or a `PUT` with a device credential. |
 | 404 | `NOT_FOUND` | The account doesn't exist in Clerk. |
 | 503 | `SERVICE_UNAVAILABLE` | `CLERK_SECRET_KEY` isn't configured, or Clerk couldn't be reached. Nothing was changed. |
 

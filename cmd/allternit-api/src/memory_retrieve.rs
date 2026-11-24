@@ -14,7 +14,11 @@
 //!   evidence the incumbent showed the model is `used` when the reply
 //!   restates it (lexical overlap, weak label, source `memory.answer_used`),
 //!   else `unused`; items only the pipeline found were never shown, so they
-//!   get `not_shown` and no S1 outcome.
+//!   get `not_shown` and no S1 outcome. With Allternit Sleep stage
+//!   `labels_live` on (step 3.1) it also labels the incumbent recall itself,
+//!   S1 or not: `memory_recall_logs.label_used` = JSON array of the result ids
+//!   the reply used, `label_source = 'answer'`, `labeled_at` (see
+//!   [`label_incumbent`]).
 //!
 //! Spaces: facts / entities / observations / documents (index chunks of
 //! memory documents) / procedures (`procedural_memory`) / notes
@@ -277,6 +281,7 @@ fn load_chunk(conn: &Connection, user_id: &str, id: &str) -> rusqlite::Result<Op
                 content: r.get(1)?,
                 metadata: json!({ "source_type": r.get::<_, String>(2)?, "source_id": r.get::<_, String>(3)?, "chunk_index": r.get::<_, i64>(4)? }),
                 timestamp: r.get(5)?,
+                dispute: None,
             })
         },
     )
@@ -292,7 +297,7 @@ fn load_note_or_procedure(conn: &Connection, t: &str, user_id: &str, agent_id: O
          FROM procedural_memory WHERE id = ?1 AND user_id = ?2 AND (agent_id IS NULL OR ?3 IS NULL OR agent_id = ?3)"
     };
     conn.query_row(sql, params![id, user_id, agent_id], |r| {
-        Ok(RecallResult { id: r.get(0)?, item_type: t.into(), score: 0.0, content: r.get(1)?, metadata: json!({}), timestamp: r.get(2)? })
+        Ok(RecallResult { id: r.get(0)?, item_type: t.into(), score: 0.0, content: r.get(1)?, metadata: json!({}), timestamp: r.get(2)?, dispute: None })
     })
     .optional()
 }
@@ -493,8 +498,42 @@ pub async fn retrieve(
         b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)).then(a.2.cmp(&b.2))
     });
     out.evidence = scored.into_iter().take(cfg.k).map(|(_, _, _, e)| e).collect();
+    {
+        let conn = db.connect()?;
+        let mut items: Vec<RecallResult> = out.evidence.iter().map(|e| e.item.clone()).collect();
+        attach_disputes(&conn, user_id, &mut items);
+        for (e, i) in out.evidence.iter_mut().zip(items) {
+            e.item.dispute = i.dispute;
+        }
+    }
     out.latency_ms = started.elapsed().as_millis();
     Ok(out)
+}
+
+// ─── Dispute monitor ────────────────────────────────────────────────────────
+
+/// The Sleep conflict monitor at recall (D10, step 6.1): every recalled fact
+/// that is a side of a dispute still in play gets `dispute` set (both sides,
+/// the pick if any, and the reason). Nothing is removed or reordered, so a
+/// dispute never blocks an answer. A no-op with the `disputes` stage off, and
+/// best effort: a failed lookup leaves the results as they were.
+pub fn attach_disputes(conn: &Connection, user_id: &str, results: &mut [RecallResult]) {
+    let ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+    let notes = match crate::sleep::disputes::notes_for(conn, user_id, &ids) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::debug!(error = %e, "dispute notes not attached");
+            return;
+        }
+    };
+    if notes.is_empty() {
+        return;
+    }
+    for r in results.iter_mut().filter(|r| r.item_type == "fact") {
+        if let Some(n) = notes.get(&r.id) {
+            r.dispute = Some(n.clone());
+        }
+    }
 }
 
 // ─── Shadow ─────────────────────────────────────────────────────────────────
@@ -588,13 +627,82 @@ pub struct LabelReport {
     pub unused: Vec<String>,
     pub not_shown: usize,
     pub outcomes_reported: usize,
+    /// Sleep step 3.1: the incumbent recall labelled on `memory_recall_logs`
+    /// (None when stage `labels_live` is off or there was nothing to label).
+    pub incumbent: Option<IncumbentLabel>,
 }
 
-/// Label the newest unlabelled shadow recall of this session (last 30 min)
-/// from the assistant's reply. See module docs.
+/// Answer-used labels written on one incumbent `memory_recall_logs` row.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct IncumbentLabel {
+    pub recall_id: String,
+    pub used: Vec<String>,
+    pub unused: Vec<String>,
+}
+
+/// `memory_recall_logs.label_source` for labels taken from the reply.
+pub const INCUMBENT_LABEL_SOURCE: &str = "answer";
+
+/// Sleep step 3.1 (stage `labels_live`): label the incumbent recall the turn
+/// actually used, i.e. the session's newest recall in the last 30 minutes, from
+/// the assistant's reply. Skips when that recall is already labelled (a later
+/// reply never relabels an earlier turn's recall).
+///
+/// `memory_recall_logs` stores one row per recall with every shown item in the
+/// `results` JSON, so the labels live on that row as V291 defines them:
+/// `label_used` = JSON array of the result ids the reply used; every other id in
+/// `results` is unused. `label_source = 'answer'`, `labeled_at = now`. No S1 call.
+pub fn label_incumbent(conn: &Connection, user_id: &str, session_id: &str, answer: &str) -> rusqlite::Result<Option<IncumbentLabel>> {
+    let newest: Option<(String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT id, results, labeled_at FROM memory_recall_logs
+             WHERE user_id = ?1 AND session_id = ?2 AND created_at >= datetime('now', '-30 minutes')
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![user_id, session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((recall_id, results, None)) = newest else { return Ok(None) };
+    let shown: Vec<RecallResult> = serde_json::from_str(&results).unwrap_or_default();
+    let (used, unused): (Vec<&RecallResult>, Vec<&RecallResult>) = shown.iter().partition(|r| answer_uses(answer, &r.content));
+    let label = IncumbentLabel {
+        recall_id,
+        used: used.iter().map(|r| r.id.clone()).collect(),
+        unused: unused.iter().map(|r| r.id.clone()).collect(),
+    };
+    conn.execute(
+        "UPDATE memory_recall_logs SET label_used = ?2, label_source = ?3, labeled_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND labeled_at IS NULL",
+        params![label.recall_id, json!(label.used).to_string(), INCUMBENT_LABEL_SOURCE],
+    )?;
+    // Sleep `rem` stage: a kept REM link whose endpoint the answer used is an insight;
+    // raise both ends (no-op with the stage off). Never fails the labelling.
+    for r in used.iter().filter(|r| r.item_type == "fact") {
+        if let Err(e) = crate::sleep::rem::note_link_used(conn, user_id, &r.id) {
+            tracing::debug!(fact = %r.id, "rem insight note skipped: {e}");
+        }
+    }
+    Ok(Some(label))
+}
+
+/// From the assistant's reply: with Sleep stage `labels_live` on, label the
+/// incumbent recall ([`label_incumbent`]); with S1 on, label the newest
+/// unlabelled shadow recall of this session (last 30 min). See module docs.
 pub async fn label_from_answer(client: &S1Client, db: &DbHandle, user_id: &str, session_id: &str, answer: &str) -> LabelReport {
     let mut report = LabelReport::default();
     let Ok(conn) = db.connect() else { return report };
+    let labels_live = crate::sleep::config::load(&conn, user_id)
+        .map(|c| c.stage_on(crate::sleep::types::Stage::LabelsLive))
+        .unwrap_or(false);
+    if labels_live {
+        match label_incumbent(&conn, user_id, session_id, answer) {
+            Ok(l) => report.incumbent = l,
+            Err(e) => debug!(error = %e, "memory incumbent labels not written"),
+        }
+    }
+    if !client.enabled {
+        return report;
+    }
     let log: Option<(String, String)> = conn
         .query_row(
             "SELECT l.id, l.results FROM memory_recall_logs l

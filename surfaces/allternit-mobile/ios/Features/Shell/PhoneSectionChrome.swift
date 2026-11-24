@@ -112,7 +112,7 @@ struct PhoneFloatingBar: View {
                 Spacer(minLength: 0)
             }
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 onNew()
             } label: {
                 if searching {

@@ -436,7 +436,7 @@ struct MeetYourBotsView: View {
 
     @StateObject private var model = MeetYourBotsModel()
     @ObservedObject private var hub = AgentHubStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var notificationsOn = false
     @State private var askingNotifications = false
     @State private var leadSheet: LeadSheet?
@@ -497,7 +497,7 @@ struct MeetYourBotsView: View {
                 NavigationStack {
                     VendorConnectView(offerMain: true) { first, main in
                         let ids = [main ?? first].compactMap { $0 }
-                        Task { await model.adoptLeader(BotSetupOutcome(botIds: ids, mainBotId: main, summary: "Vendor bot connected.")) }
+                        Task { await model.adoptLeader(BotSetupOutcome(botIds: ids, mainBotId: main, summary: "Connected bot added.")) }
                     }
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { leadSheet = nil } } }
                 }

@@ -1,0 +1,138 @@
+name: Publish Desktop release
+
+# Publishes a finished release-desktop.yml run to Allternit/desktop (the public
+# download + auto-update repo) and mirrors the installers to runtime.allternit.com,
+# server-to-server. Before 2026-11-19 a person downloaded ~6 GB of artifacts and
+# uploaded them from a Mac; that broke when the Mac's link dropped large uploads
+# (v1.1.16). Nothing large leaves a workstation now.
+#
+#   gh workflow run publish-desktop-release.yml -R Allternit/allternit-platform \
+#     -f run_id=<release-desktop run> -f version=1.1.16 -f notes="$(cat notes.md)"
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: release-desktop.yml run whose artifacts to publish
+        required: true
+      version:
+        description: Version without the v (must match the artifacts, e.g. 1.1.16)
+        required: true
+      notes:
+        description: Release notes (Markdown)
+        required: true
+      mirror:
+        description: Mirror installers to runtime.allternit.com (R2)
+        type: boolean
+        default: true
+      exclude:
+        description: Optional extended regex of file names to leave out (e.g. a known-bad installer)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to Allternit/desktop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      V: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.DESKTOP_RELEASE_TOKEN }}
+    steps:
+      - name: Token present
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::secret DESKTOP_RELEASE_TOKEN is not set"; exit 1; }
+
+      - name: Download the run's installers
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          # Every installer + updater feed artifact: macOS, Windows, and Linux x64/arm64
+          # (.deb, .rpm, AppImage, latest-linux*.yml). Same set release-desktop.yml attaches.
+          pattern: allternit-desktop-*
+          merge-multiple: true
+          path: raw
+
+      - name: Pick the release files
+        env:
+          EXCLUDE: ${{ inputs.exclude }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find raw -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' \
+            -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.blockmap' -o -name 'latest*.yml' \) -print0 |
+          while IFS= read -r -d '' f; do
+            b=$(basename "$f")
+            if [ -n "$EXCLUDE" ] && printf '%s\n' "$b" | grep -Eq -e "$EXCLUDE"; then echo "excluded $b"; continue; fi
+            cp "$f" "dist/$b"
+          done
+
+      - name: Check the version matches
+        run: |
+          set -euo pipefail
+          ls -l dist
+          for y in dist/latest.yml dist/latest-mac.yml dist/latest-linux.yml dist/latest-linux-arm64.yml; do
+            grep -qx "version: $V" "$y" || { echo "::error::$y is not version $V"; head -1 "$y"; exit 1; }
+          done
+          for p in "Allternit-Desktop-$V-arm64.dmg" "Allternit-Desktop-$V-x64.dmg" "Allternit-Setup-$V.exe" \
+                   "Allternit-Desktop-$V-amd64.deb" "Allternit-Desktop-$V-arm64.deb"; do
+            [ -f "dist/$p" ] || { echo "::error::missing dist/$p"; exit 1; }
+          done
+          for g in "Allternit-Desktop-$V-x86_64.rpm" "Allternit-Desktop-$V-x86_64.AppImage"; do
+            [ -f "dist/$g" ] || { echo "::error::missing dist/$g"; exit 1; }
+          done
+          ls dist/*.rpm | grep -Eq -- '-(aarch64|arm64)\.rpm$' || { echo "::error::missing the arm64 .rpm"; exit 1; }
+          # A draft of this version is fine (the next step deletes it); a public one is not.
+          if [ "$(gh release view "v$V" -R Allternit/desktop --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            echo "::error::v$V is already published on Allternit/desktop"; exit 1
+          fi
+
+      - name: Remove an unfinished draft of this version
+        run: |
+          gh api repos/Allternit/desktop/releases --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"v$V\") | .id" |
+          while read -r id; do gh api -X DELETE "repos/Allternit/desktop/releases/$id"; echo "deleted draft $id"; done
+
+      - name: Publish v${{ inputs.version }}
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NOTES" > notes.md
+          gh release create "v$V" -R Allternit/desktop --title "Allternit Desktop v$V" \
+            --notes-file notes.md --draft dist/*
+          n=$(gh api repos/Allternit/desktop/releases --jq ".[] | select(.tag_name == \"v$V\") | [.assets[] | select(.state == \"uploaded\")] | length")
+          want=$(ls dist | wc -l)
+          [ "$n" = "$want" ] || { echo "::error::$n of $want assets uploaded; left as draft"; exit 1; }
+          gh release edit "v$V" -R Allternit/desktop --draft=false --latest
+          gh release view "v$V" -R Allternit/desktop --json url,isDraft,assets --jq '"\(.url) draft=\(.isDraft) assets=\(.assets|length)"'
+
+  mirror:
+    name: Mirror installers to runtime.allternit.com
+    needs: publish
+    if: inputs.mirror
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+      R2_SECRET: ${{ secrets.R2_SECRET }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install boto3
+      - name: Mirror v${{ inputs.version }}
+        run: bash scripts/mirror-desktop-release.sh "${{ inputs.version }}" --apply

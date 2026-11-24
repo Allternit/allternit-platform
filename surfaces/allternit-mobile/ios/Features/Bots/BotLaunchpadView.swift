@@ -13,6 +13,8 @@ struct BotLaunchpadView: View {
     @ObservedObject private var status = BotStatusStore.shared
     @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
+    /// Filters the roster; set by the Bots header's search pill.
+    var searchQuery: String = ""
 
     /// The roster layout, kept per scope like the web's useOverviewLayout
     /// (`allternit.session-overview.layout.bots-home-roster`).
@@ -95,14 +97,10 @@ struct BotLaunchpadView: View {
 
     private var roster: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("YOUR TEAM")
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(0.72)
-                    .foregroundColor(Color("TextTertiary"))
-                Spacer()
-                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
-            }
+            Text("YOUR TEAM")
+                .font(.system(size: 12, weight: .semibold))
+                .tracking(0.72)
+                .foregroundColor(Color("TextTertiary"))
             Group {
                 switch layout {
                 case .list: rosterList
@@ -111,11 +109,8 @@ struct BotLaunchpadView: View {
                 }
             }
             .transition(.opacity)
-            if let error = hub.loadError, bots.isEmpty {
-                Text("Couldn't load your bots: \(error)")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(Color("TextTertiary"))
-            }
+            // Account bots + the no-computer line (no error when there is no computer).
+            AccountBotsStrip(hubError: hub.loadError, hasBots: !bots.isEmpty)
         }
     }
 
@@ -134,6 +129,8 @@ struct BotLaunchpadView: View {
                 : members.contains(where: { $0 == .working || $0 == .talking }) ? .working : .idle
             return RosterEntry.group(group, status: status)
         }
+        let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !needle.isEmpty { out = out.filter { $0.name.lowercased().contains(needle) } }
         return out
     }
 
@@ -393,6 +390,8 @@ struct BotLaunchpadView: View {
 
     private func refresh() async {
         await store.refreshAll()
+        // Bots saved to the account (no computer needed) + the no-computer state.
+        await ProjectsLibraryStore.shared.load()
     }
 
     private func createFromTemplate(_ template: AgentTemplate) {
@@ -723,7 +722,7 @@ struct BotLaunchComposer: View {
                     }
                 }
                 Section {
-                    Button(action: onAddBot) { Label("Add a vendor bot…", systemImage: "powerplug") }
+                    Button(action: onAddBot) { Label("Add a Connected bot…", systemImage: "powerplug") }
                 }
             } label: {
                 Image(systemName: "chevron.down")

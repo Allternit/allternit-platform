@@ -242,6 +242,7 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
                         let (db, user) = (db.clone(), user_id.to_string());
                         tokio::spawn(async move {
                             apns::revoke(&db, &user, &revoke).await;
+                            super::fcm::revoke(&db, &user, &revoke).await;
                         });
                     }
                     tokio::spawn(super::live_activity::on_snapshot(db.clone(), user_id.to_string(), runtime_id.to_string(), previous));

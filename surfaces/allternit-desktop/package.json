@@ -1,6 +1,6 @@
 {
   "name": "@allternit/desktop",
-  "version": "1.1.14",
+  "version": "1.1.20",
   "description": "Allternit Desktop: your bots, chats, projects and code, with this computer paired to your Allternit account.",
   "main": "dist/main/unified-main.js",
   "type": "module",
@@ -11,7 +11,7 @@
     "electron"
   ],
   "scripts": {
-    "dev": "npm run build:auth-renderer && npm run build:call-bridge && NODE_ENV=development electron .",
+    "dev": "npm run prepare:keychain-addon && npm run build:auth-renderer && npm run build:call-bridge && NODE_ENV=development electron .",
     "dev:auth-renderer": "vite --config vite.auth-renderer.config.ts --port 5174",
     "prepare:platform-static": "node scripts/prepare-platform-static.cjs",
     "prepare:office-addins": "node scripts/prepare-office-addins.cjs",
@@ -30,16 +30,19 @@
     "download:lima": "node scripts/download-lima.cjs",
     "prepare:lume": "node scripts/prepare-lume.cjs",
     "prepare:factory": "node scripts/prepare-factory.cjs",
+    "prepare:files-mount": "node scripts/prepare-files-mount.cjs",
     "prepare:sideload": "node scripts/prepare-sideload.cjs",
+    "prepare:mirror": "node scripts/prepare-mirror.cjs",
+    "prepare:bthid": "node scripts/prepare-bthid.cjs",
     "config:company": "cd ../.. && pnpm run config:company:write",
-    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
-    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
+    "build:electron": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mirror && npm run prepare:bthid && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run prepare:keychain-addon && npm run prepare:meeting-bot && npm run prepare:file-provider && npm run prepare:files-mount && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac",
+    "build:electron:dmg": "npm run config:company && npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mirror && npm run prepare:bthid && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run prepare:keychain-addon && npm run prepare:meeting-bot && npm run prepare:file-provider && npm run prepare:files-mount && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs --mac dmg",
     "start": "electron .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p src/main/tsconfig.json && tsc --noEmit -p src/preload/tsconfig.json && tsc -p src/renderer/call-bridge/tsconfig.json",
     "test:e2e": "pnpm run build && playwright test",
-    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
-    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
+    "pack": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mirror && npm run prepare:bthid && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run prepare:keychain-addon && npm run prepare:meeting-bot && npm run prepare:file-provider && npm run prepare:files-mount && npm run runtime:stamp && npm run verify:packaged-resources && node scripts/build-local.cjs --dir",
+    "dist": "npm run prepare:platform-static && npm run prepare:office-addins && npm run prepare:cua-driver && npm run prepare:allternit-driver && npm run prepare:acu-gateway && npm run download:lima && npm run prepare:lume && npm run prepare:factory && npm run prepare:sideload && npm run prepare:mirror && npm run prepare:bthid && npm run prepare:mesh-node && npm run prepare:office-engine && npm run prepare:api-binary && npm run prepare:connector-catalog && npm run prepare:connector-sidecar && npm run prepare:subs-gateway && npm run prepare:system-one && npm run prepare:keychain-addon && npm run prepare:meeting-bot && npm run prepare:file-provider && npm run prepare:files-mount && npm run runtime:stamp && npm run build && npm run verify:packaged-resources && node scripts/build-local.cjs",
     "verify:packaged-resources": "node scripts/verify-packaged-resources.cjs",
     "stage:api-binary": "node scripts/stage-api-binary.cjs",
     "runtime:stamp": "node scripts/runtime-package.cjs stamp",
@@ -48,18 +51,21 @@
     "stage:local-engine": "node scripts/stage-local-engine-binary.cjs",
     "prepare:connector-sidecar": "node scripts/prepare-connector-sidecar.cjs",
     "prepare:subs-gateway": "node scripts/prepare-subs-gateway.cjs",
-    "prepare:system-one": "node scripts/prepare-system-one.cjs"
+    "prepare:system-one": "node scripts/prepare-system-one.cjs",
+    "prepare:keychain-addon": "node scripts/prepare-keychain-addon.cjs",
+    "prepare:meeting-bot": "node scripts/prepare-meeting-bot.cjs",
+    "prepare:file-provider": "node scripts/prepare-file-provider.cjs"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.30.0",
     "@modelcontextprotocol/client": "catalog:",
     "electron-log": "^5.2.0",
     "electron-store": "^8.2.0",
+    "electron-updater": "6.8.11",
     "fix-path": "^4.0.0",
     "livekit-client": "2.22.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "update-electron-app": "^3.0.0",
     "ws": "^8.18.3",
     "zod": "^3.22.4"
   },
@@ -95,6 +101,9 @@
   },
   "build": {
     "appId": "com.allternit.desktop",
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "productName": "Allternit Desktop",
     "asar": true,
     "protocols": [
@@ -192,6 +201,22 @@
         "to": "connector-sidecar/migrations"
       },
       {
+        "from": "../../services/model-training",
+        "to": "model-training",
+        "filter": [
+          "**/*",
+          "!tests/**",
+          "!tools/**",
+          "!**/__pycache__/**",
+          "!.venv/**",
+          "!.scratch/**",
+          "!.pytest_cache/**",
+          "!**/*.egg-info/**",
+          "!.gitignore",
+          "!requirements-dev.txt"
+        ]
+      },
+      {
         "from": "resources/connector-sidecar/dist",
         "to": "connector-sidecar/dist"
       },
@@ -202,6 +227,20 @@
       {
         "from": "resources/subs-gateway/node_modules",
         "to": "subs-gateway/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/meeting-bot",
+        "to": "meeting-bot",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/meeting-bot/node_modules",
+        "to": "meeting-bot/node_modules",
         "filter": [
           "**/*"
         ]
@@ -322,11 +361,26 @@
       "category": "public.app-category.productivity",
       "darkModeSupport": true,
       "identity": "-",
+      "signIgnore": [
+        "Contents/MacOS/allternit-files-domains$",
+        "\\.(png|jpe?g|webp|gif|ico|icns|bmp|tiff?|ttf|otf|woff2?|eot|pdf|pak|pyc|mp3|mp4|m4a|wav|ogg|webm)$"
+      ],
       "binaries": [
         "Contents/Resources/computer-use/cua-driver",
         "Contents/Resources/computer-use/driver/python/bin/python3.12"
       ],
       "extraResources": [
+        {
+          "from": "resources/meeting-bot-native/darwin-${arch}/",
+          "to": "meeting-bot/node_modules/",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "native/keychain/build/keychain.node",
+          "to": "native/keychain/keychain.node"
+        },
         {
           "from": "resources/lima/darwin/",
           "to": "lima/",
@@ -382,6 +436,7 @@
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Allternit uses automation to carry out computer-use actions you approve, and sends a text message through Messages only after you approve it.",
         "NSMicrophoneUsageDescription": "Allternit uses the microphone for voice calls and on-device dictation.",
+        "NSBluetoothAlwaysUsageDescription": "Allternit uses Bluetooth so this Mac can act as a keyboard and mouse for your own iPhone, after you pair them.",
         "NSLocationUsageDescription": "When you turn on location sharing, your bots get your rough location so they can help with local times, places and weather.",
         "NSLocationWhenInUseUsageDescription": "When you turn on location sharing, your bots get your rough location so they can help with local times, places and weather.",
         "NSDesktopFolderUsageDescription": "Allternit opens projects and runs your agents in folders you choose on the Desktop.",
@@ -419,8 +474,27 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "category": "Utility",
@@ -433,21 +507,18 @@
       "desktop": {
         "entry": {
           "Name": "Allternit Desktop",
-          "Comment": "Fully offline AI platform with local VM execution",
+          "StartupWMClass": "allternit-desktop",
+          "Comment": "Your bots, chats, projects and code, paired with your Allternit account",
           "Keywords": "AI;Agents;Chat;Productivity;"
         }
       },
       "extraResources": [
         {
-          "from": "resources/lima/linux/",
-          "to": "lima/",
+          "from": "resources/meeting-bot-native/linux-${arch}/",
+          "to": "meeting-bot/node_modules/",
           "filter": [
-            "limactl"
+            "**/*"
           ]
-        },
-        {
-          "from": "resources/lima/README.md",
-          "to": "lima/README.md"
         },
         {
           "from": "resources/computer-use/driver/",
@@ -458,7 +529,7 @@
           "to": "decision-runtime/"
         },
         {
-          "from": "resources/computer-use/driver-python/linux-x64/",
+          "from": "resources/computer-use/driver-python/linux-${arch}/",
           "to": "computer-use/driver/python/"
         },
         {
@@ -482,17 +553,20 @@
           "to": "computer-use/acu/"
         },
         {
-          "from": "resources/computer-use/acu-site/linux-x64/",
+          "from": "resources/computer-use/acu-site/linux-${arch}/",
           "to": "computer-use/acu/site-packages/"
         }
       ]
     },
     "appImage": {
-      "artifactName": "Allternit-${version}${env.ALLTERNIT_BUILD_SUFFIX}.AppImage"
+      "artifactName": "Allternit-Desktop-${version}${env.ALLTERNIT_BUILD_SUFFIX}-${arch}.AppImage"
     },
     "deb": {
+      "afterInstall": "build/linux/after-install.sh",
       "depends": [
         "git",
+        "bubblewrap",
+        "lsof",
         "libgtk-3-0",
         "libnotify4",
         "libnss3",
@@ -502,11 +576,42 @@
         "libatspi2.0-0",
         "libuuid1",
         "libsecret-1-0",
-        "libasound2t64 | libasound2"
+        "libgbm1",
+        "libasound2t64 | libasound2",
+        "python3"
       ],
       "packageCategory": "utils",
       "priority": "optional",
-      "compression": "xz"
+      "compression": "xz",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "rpm": {
+      "packageName": "allternit-desktop",
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh",
+      "depends": [
+        "git",
+        "bubblewrap",
+        "lsof",
+        "(gtk3 or libgtk-3-0)",
+        "(libnotify or libnotify4)",
+        "(nss or mozilla-nss)",
+        "(libXScrnSaver or libXss1)",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "(libsecret or libsecret-1-0)",
+        "(mesa-libgbm or libgbm1)",
+        "(alsa-lib or libasound2)",
+        "python3"
+      ],
+      "packageCategory": "Utility",
+      "compression": "xz",
+      "fpm": [
+        "--rpm-rpmbuild-define",
+        "_build_id_links none"
+      ]
     },
     "win": {
       "target": [
@@ -532,6 +637,17 @@
       },
       "verifyUpdateCodeSignature": false,
       "extraResources": [
+        {
+          "from": "resources/files-win/",
+          "to": "files-win/"
+        },
+        {
+          "from": "resources/meeting-bot-native/win32-${arch}/",
+          "to": "meeting-bot/node_modules/",
+          "filter": [
+            "**/*"
+          ]
+        },
         {
           "from": "resources/computer-use/driver/",
           "to": "computer-use/driver/"
@@ -598,6 +714,7 @@
         "releaseType": "release"
       }
     ],
+    "afterPack": "scripts/embed-file-provider.cjs",
     "afterSign": "scripts/notarize.cjs",
     "artifactName": "Allternit-Desktop-${version}${env.ALLTERNIT_BUILD_SUFFIX}-${arch}.${ext}"
   }

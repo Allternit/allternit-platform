@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:strokeColor="#FF3F6212"
+        android:strokeWidth="2.2425"
+        android:pathData="M 12.824219 11.101562 L 23.175781 11.101562" />
+    <path
+        android:strokeColor="#FF3F6212"
+        android:strokeWidth="2.2425"
+        android:pathData="M 12.824219 11.101562 L 18 24.898438" />
+    <path
+        android:strokeColor="#FF3F6212"
+        android:strokeWidth="2.2425"
+        android:pathData="M 23.175781 11.101562 L 18 24.898438" />
+    <path
+        android:fillColor="#FF3F6212"
+        android:pathData="M 15.757812 10.238281 C 15.757812 12.332031 14.058594 14.03125 11.960938 14.03125 C 9.867188 14.03125 8.167969 12.332031 8.167969 10.238281 C 8.167969 8.140625 9.867188 6.441406 11.960938 6.441406 C 14.058594 6.441406 15.757812 8.140625 15.757812 10.238281 Z M 15.757812 10.238281" />
+    <path
+        android:fillColor="#FF3F6212"
+        android:fillAlpha="0.7"
+        android:pathData="M 27.832031 10.238281 C 27.832031 12.332031 26.132812 14.03125 24.039062 14.03125 C 21.941406 14.03125 20.242188 12.332031 20.242188 10.238281 C 20.242188 8.140625 21.941406 6.441406 24.039062 6.441406 C 26.132812 6.441406 27.832031 8.140625 27.832031 10.238281 Z M 27.832031 10.238281" />
+    <path
+        android:fillColor="#FF3F6212"
+        android:pathData="M 15.585938 22.484375 L 20.414062 22.484375 C 21.367188 22.484375 22.140625 23.257812 22.140625 24.210938 L 22.140625 27.316406 C 22.140625 28.269531 21.367188 29.039062 20.414062 29.039062 L 15.585938 29.039062 C 14.632812 29.039062 13.859375 28.269531 13.859375 27.316406 L 13.859375 24.210938 C 13.859375 23.257812 14.632812 22.484375 15.585938 22.484375 Z M 15.585938 22.484375" />
+</vector>

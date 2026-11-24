@@ -1,0 +1,33 @@
+---
+title: 'status_update'
+description: 'Short progress notes during long work'
+---
+
+## Overview
+
+`status_update` publishes the current phase of long work, so you can see where the assistant is without opening every step. It is always loaded, with no search needed.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `phase` | string | The current phase in a few words, up to 40 characters, such as "Running tests" |
+| `note` | string, optional | One short sentence of progress, up to 200 characters |
+
+About 12 long-running tools also take an optional `label` of 3 to 8 words, up to 60 characters. It is the step title in the app, the terminal and iOS. The runtime removes it before the tool runs.
+
+## Quiet check-in
+
+A background command that stays silent for 10 minutes gets one notice per quiet period. This runs in both the runtime and the terminal.
+
+## Result
+
+The phase, the note and the time it was published. The runtime publishes it as `session.status`, so the phase shows in the status line until the session goes idle. Use it at phase changes on long tasks.
+
+## Permission
+
+Read-only and allowed in every mode.
+
+## Surfaces
+
+A label on the activity row, the status line and the Diagnostics list on Desktop, web, phone layout, PWA and iOS. The terminal shows it on the tool header and the status line. Android follows the PWA.

@@ -166,6 +166,17 @@ const PREFER_SUBTASK = [
   "Independent subtasks on separate computers go in one run_parallel call. For a high-value subtask, best_of N with N sandbox computers runs N rollouts and a judge picks one by their step narratives (never on the person's own machine).",
 ].join(" ")
 
+/**
+ * Steering for per-app access tiers (Wave C decision 1). The executor checks
+ * every call against the app in front; the runtime turns access_required into
+ * an ask and retries the step once (index.ts grantAccessFor).
+ */
+export const ACCESS_TIERS = [
+  "On the person's own computer each app runs at a tier: read (see it), click (also pointer input) or full (also typing and keys). An app with no grant is read only; browsers top out at read, terminals and IDEs at click.",
+  "When you know a task needs more than read, call resolve_access, then request_access with the lowest tier that does the job and a short reason; the person approves every request. A step refused with access_required is asked for and retried once by the runtime.",
+  "tier_exceeded means the app can't be granted that tier: don't retry it; read the app instead or ask the person to do that step. Sandbox and cloud computers need no grant.",
+].join(" ")
+
 export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, members: readonly ToolsetMemberSpec[]): string {
   const frame = choice.grid
     ? "Coordinates are on a 0-1000 grid over the whole screen on both axes (0,0 top-left, 1000,1000 bottom-right)."
@@ -177,7 +188,7 @@ export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, mem
       : "Use a web browser session: navigate, look at the page, click, type and read text."
   const structured =
     toolset === "computer"
-      ? `\n${PREFER_STRUCTURED}\n${PREFER_SUBTASK}\nThe structured members (${V2_STRUCTURED_MEMBERS.map((m) => m.name).join(", ")}) live in the computer_v2 tool.`
+      ? `\n${PREFER_STRUCTURED}\n${PREFER_SUBTASK}\n${ACCESS_TIERS}\nThe structured members (${V2_STRUCTURED_MEMBERS.map((m) => m.name).join(", ")}) live in the computer_v2 tool.`
       : ""
   return [
     `${TOOL_MARKER[toolset]} ${what} Set \`action\` to one of the actions below and pass that action's fields.`,
@@ -201,6 +212,7 @@ export function toolDescriptionV2(members: readonly ToolsetMemberSpec[]): string
     "run_batch runs many steps in one call and stops at the first failed check, then returns one fresh read — batch aggressively.",
     "use_credential types a vault secret or TOTP code into the focused field; the value is never shown to you.",
     "request_human pauses for a person (CAPTCHA, 2FA, judgment calls) and resumes the session when they signal done.",
+    ACCESS_TIERS,
     "",
     ...lines,
   ].join("\n")

@@ -110,6 +110,9 @@ export const SessionTable = sqliteTable(
       label: string
       at: number
     }>(),
+    // Primitives Wave B: a child agent's name path from the root ("/root/build/tests",
+    // at most 3 levels below the root); null for unnamed and top-level sessions.
+    task_name: text(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
@@ -122,6 +125,7 @@ export const SessionTable = sqliteTable(
     index("session_surface_idx").on(table.surface),
     index("session_pinned_idx").on(table.pinned),
     index("session_source_idx").on(table.source_harness, table.source_session_id),
+    index("session_task_name_idx").on(table.parent_id, table.task_name),
   ],
 )
 
@@ -150,6 +154,26 @@ export const PartTable = sqliteTable(
     data: text({ mode: "json" }).notNull().$type<PartData>(),
   },
   (table) => [index("part_message_idx").on(table.message_id), index("part_session_idx").on(table.session_id)],
+)
+
+/**
+ * Earlier versions of a turn. `SessionRevert.cleanup()` deletes the messages
+ * at/after the revert pointer on the next send (Retry, Edit); before it does,
+ * it keeps them here as one row so reply versions survive a reload.
+ * `payload` is the removed messages (info + parts, tool outputs capped).
+ */
+export const MessageBranchTable = sqliteTable(
+  "message_branch",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    anchor_message_id: text().notNull(),
+    created_at: integer().notNull(),
+    payload: text({ mode: "json" }).notNull().$type<MessageV2.WithParts[]>(),
+  },
+  (table) => [index("message_branch_session_idx").on(table.session_id, table.created_at)],
 )
 
 /** Append-only replay ledger. Mutable message/part tables remain the current-state projection. */
@@ -182,6 +206,12 @@ export const TodoTable = sqliteTable(
     status: text().notNull(),
     priority: text().notNull(),
     position: integer().notNull(),
+    // Primitives Wave B (all nullable; rows written before it still read):
+    // the item's stable id, its present-tense label while in progress, and
+    // the ids of items that must finish first.
+    item_id: text(),
+    active_form: text(),
+    blocked_by: text({ mode: "json" }).$type<string[]>(),
     ...Timestamps,
   },
   (table) => [

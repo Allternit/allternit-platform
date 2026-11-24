@@ -48,4 +48,15 @@
             android:targetPackage="com.allternit.app"
             android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity" />
     </shortcut>
+    <shortcut
+        android:shortcutId="allternit_inbox_tasks"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_inbox"
+        android:shortcutShortLabel="@string/shortcut_inbox_tasks_short"
+        android:shortcutLongLabel="@string/shortcut_inbox_tasks_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="@string/files_app_id"
+            android:targetClass="com.allternit.app.files.InboxActivity" />
+    </shortcut>
 </shortcuts>

@@ -34,6 +34,7 @@
 import { spawn } from "node:child_process"
 import { Sandbox } from "../integrations/shell/sandbox"
 import { executeInVM } from "../vm"
+import { createBackoff } from "./daemon-util"
 
 const API = (process.env.ALLTERNIT_API_URL ?? "http://127.0.0.1:8013").replace(/\/+$/, "")
 const TOKEN = process.env.ALLTERNIT_GIZZI_TOKEN ?? readTokenFile()
@@ -154,8 +155,7 @@ export async function runFabricWorker(opts: RunFabricWorkerOptions = {}): Promis
   }
 
   // Daemon backoff state (reset on every successful claim).
-  let backoffMs = 1000
-  const BACKOFF_MAX_MS = 30_000
+  const backoff = createBackoff()
 
   while (true) {
     if (daemon?.shouldStop()) {
@@ -168,11 +168,11 @@ export async function runFabricWorker(opts: RunFabricWorkerOptions = {}): Promis
         method: "POST",
         body: JSON.stringify({ wait_secs: 25, lease_ttl_secs: LEASE_SECS }),
       })
-      backoffMs = 1000
+      backoff.reset()
     } catch (e) {
-      log("warn", "worker.claim_failed", { error: (e as Error).message, backoff_ms: daemon ? backoffMs : 2000 })
-      await sleep(daemon ? backoffMs + Math.floor(Math.random() * 250) : 2000)
-      if (daemon) backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS)
+      log("warn", "worker.claim_failed", { error: (e as Error).message, backoff_ms: daemon ? backoff.currentMs : 2000 })
+      if (daemon) await backoff.wait()
+      else await sleep(2000)
       continue
     }
 

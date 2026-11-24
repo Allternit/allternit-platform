@@ -1,0 +1,12 @@
+{
+  "type": "MoveRequest",
+  "valid": true,
+  "case": "Normal: rename + move with base_rev.",
+  "message": {
+    "item_id": "it_doc000001",
+    "base_rev": "7-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "new_parent_id": "it_tax000001",
+    "new_name": "Lease 2026.pdf",
+    "on_conflict": "fail"
+  }
+}

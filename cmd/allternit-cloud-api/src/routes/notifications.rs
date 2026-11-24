@@ -50,6 +50,11 @@
 //! approval opens `/?allternit_inbox=<id>`. [`super::apns::payload`] turns these into the per-device
 //! APNs alert; Web Push sends them as they are.
 //!
+//! An agent's own message to its owner (`agent.message.sent`, from gizzi's `send_user_message` through the
+//! runtime's `POST /bot-routing/user/notify`) pushes at level normal, so quiet hours hold it. Its tag is
+//! `agent-msg-<thread or session>` (one collapse key per thread), its buttons `AGENT_MESSAGE`, and it goes
+//! through the same per-thread and hourly limiter as other messages ([`web_push::allow_message_push`]).
+//!
 //! Finished runs (`agent.run.completed`) push by default only when the run failed or took
 //! [`LONG_RUN_SECS`] or longer ([`run_worth_pushing`]); turned on explicitly, every run pushes;
 //! turned off, none does.
@@ -139,12 +144,21 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("thread.needs_user", true),
     // The app already pushed channel and in-app messages before the sink.
     ("message.received", true),
+    // An agent asked to tell its owner something (send_user_message). Level normal: quiet hours apply.
+    ("agent.message.sent", true),
     ("call.ended", true),
     ("inbox.item.created", false),
     ("vendor.ticket.created", false),
     ("subscription.login_needed", true),
     ("subscription.signed_in", false),
     ("usage.threshold", true),
+    // Every guest access is an event for agents; it is never a push unless the owner turns it on.
+    ("files.share.accessed", false),
+    // A file dropped in a computer's Inbox waits for the owner's OK; a task result is quieter.
+    ("files.inbox.dropped", true),
+    ("files.task.result", false),
+    // Nothing was lost (both versions are kept), so a conflict copy is not a push unless turned on.
+    ("files.conflict", false),
     // A failed or missed routine, a bot with no one to run it: the server pushes it and sends it again until it is fixed.
     ("attention.opened", true),
     ("attention.resolved", false),
@@ -171,7 +185,7 @@ pub fn level(event: &str, data: &Value) -> Level {
             _ => Level::Normal,
         },
         "approval.requested" | "thread.needs_user" | "subscription.login_needed" => Level::NeedsYou,
-        "message.received" | "call.ended" => Level::Normal,
+        "message.received" | "call.ended" | "agent.message.sent" => Level::Normal,
         _ => Level::Low,
     }
 }
@@ -638,7 +652,7 @@ pub fn summary_body(items: &[HeldItem]) -> Option<String> {
     fn bucket(i: &HeldItem) -> usize {
         match i.0.as_str() {
             _ if critical(i) => 0,
-            "message.received" => 1,
+            "message.received" | "agent.message.sent" => 1,
             "call.ended" => 2,
             "approval.requested" => 3,
             "thread.needs_user" => 4,
@@ -811,7 +825,9 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
     let bot_name = s(data, &["botName", "bot_name"]);
     let thread_title = s(data, &["threadTitle", "thread_title"]);
     let link = thread_link(bot, thread).unwrap_or_else(|| "/".into());
-    let who = bot_name.unwrap_or("Your bot");
+    // A session with no bot (a chat, Gizzi Code) is named by its title.
+    let session_title = s(data, &["sessionTitle", "session_title"]);
+    let who = bot_name.or(session_title).unwrap_or("Your bot");
     let mut msg = PushMessage {
         kind: "event",
         title: String::new(),
@@ -885,6 +901,14 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
                 (None, Some(p)) => format!("channel-{p}"),
                 _ => "msg".into(),
             };
+            msg.kind = "message";
+        }
+        "agent.message.sent" => {
+            msg.title = clip(bot_name.or(session_title).unwrap_or("Your agent"), 80);
+            msg.body = s(data, &["text", "preview"]).map(|t| clip(t, 200)).unwrap_or_else(|| "Sent you a message. Open it to read it.".into());
+            // One collapse key per thread (a session with no bot is its own thread).
+            let key = thread.or(s(data, &["sessionId", "session_id"])).unwrap_or("you");
+            msg.tag = format!("agent-msg-{}", clip(key, 80));
             msg.kind = "message";
         }
         "call.ended" => {
@@ -967,6 +991,43 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             msg.tag = format!("usage-{meter}-{period}");
             msg.url = "/".into();
         }
+        "files.share.accessed" => {
+            let access = &data["access"];
+            let action = s(access, &["action"]).unwrap_or("opened");
+            msg.title = "Shared folder activity".into();
+            msg.body = match s(access, &["result"]) {
+                Some("denied") => format!("A guest was turned away ({action})."),
+                _ => format!("A guest used a shared folder ({action})."),
+            };
+            msg.tag = format!("files-share-{}", clip(s(access, &["share_id"]).unwrap_or("share"), 40));
+        }
+        "files.inbox.dropped" => {
+            // The file is untrusted: only its name is shown, never its content.
+            let name = clip(s(data, &["name"]).unwrap_or("A file"), 80);
+            msg.title = "File in Inbox".into();
+            msg.body = match s(data, &["task_state"]) {
+                Some("approved_by_rule") => format!("{name} was picked up by a folder rule."),
+                _ => format!("{name} is waiting for your OK."),
+            };
+            msg.tag = format!("files-inbox-{}", clip(s(data, &["task_id"]).unwrap_or("task"), 40));
+        }
+        "files.conflict" => {
+            let conflict = &data["conflict"];
+            let name = clip(s(conflict, &["conflict_name"]).unwrap_or("a conflict copy"), 80);
+            msg.title = "File conflict".into();
+            msg.body = format!("A newer version existed, so both were kept. Your copy is {name}");
+            msg.tag = format!("files-conflict-{}", clip(s(conflict, &["original_item_id"]).unwrap_or("item"), 40));
+        }
+        "files.task.result" => {
+            let (title, body) = match s(data, &["status"]) {
+                Some("failed") => ("Inbox task failed", "A task on a file in your Inbox failed."),
+                Some("rejected") => ("Inbox task rejected", "You rejected a task on a file in your Inbox."),
+                _ => ("Inbox task finished", "The result is saved next to the file."),
+            };
+            msg.title = title.into();
+            msg.body = body.into();
+            msg.tag = format!("files-task-{}", clip(s(data, &["task_id"]).unwrap_or("task"), 40));
+        }
         _ => return None,
     }
     enrich(&mut msg, event, data);
@@ -977,7 +1038,7 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
 pub const APPROVAL_KINDS: [&str; 5] = ["approval", "held_send", "email_draft", "factory_approval", "gizzi_permission"];
 
 /// The notification buttons for an event (`APPROVAL_INLINE`, `APPROVAL_REVIEW`, `BOT_REPLY`, `RUN_DONE`,
-/// `NEEDS_FIX`; the app registers the same identifiers), chosen from `inboxKind` before the event name so an
+/// `NEEDS_FIX`, `AGENT_MESSAGE`; the app registers the same identifiers), chosen from `inboxKind` before the event name so an
 /// email draft that arrives as `thread.needs_user` still gets approval buttons. Inline Approve only when the
 /// runtime says the whole text and recipient fit (`approveInline`) and sent the `contentHash` the approve call
 /// must echo. Approval buttons need an `inboxId` to act on.
@@ -994,6 +1055,7 @@ pub fn category(event: &str, data: &Value) -> Option<&'static str> {
         "message.received" if s(data, &["senderKind", "sender_kind"]) == Some("bot") => Some("BOT_REPLY"),
         "thread.needs_user" if kind.is_none() => Some("BOT_REPLY"),
         "agent.run.completed" => Some("RUN_DONE"),
+        "agent.message.sent" => Some("AGENT_MESSAGE"),
         "attention.opened" => Some("NEEDS_FIX"),
         _ => None,
     }
@@ -1031,7 +1093,7 @@ fn enrich(msg: &mut PushMessage, event: &str, data: &Value) {
         inbox = s(data, &["attention_id", "attentionId"]).map(|id| format!("attention:{id}"));
     }
     let category = category(event, data);
-    let private = data.get("private").and_then(Value::as_bool).unwrap_or(matches!(event, "approval.requested" | "message.received" | "thread.needs_user"));
+    let private = data.get("private").and_then(Value::as_bool).unwrap_or(matches!(event, "approval.requested" | "message.received" | "thread.needs_user" | "agent.message.sent"));
     let avatar = s(data, &["botAvatar", "botAvatarUrl", "avatarUrl"]).filter(|u| u.starts_with("https://") && !u.contains(['\n', '\r', ' ']));
     let Some(d) = msg.data.as_object_mut() else { return };
     for (out, keys) in [("runtimeId", ["runtimeId", "runtime_id"]), ("sessionId", ["sessionId", "session_id"]), ("contentHash", ["contentHash", "content_hash"]), ("senderKind", ["senderKind", "sender_kind"])] {
@@ -1256,10 +1318,11 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
         return Outcome::Held;
     }
     let msg = page_if_urgent(db, user, lvl, msg).await;
-    if event == "message.received" && !web_push::allow_message_push(db, user, &msg.tag).await {
+    if matches!(event.as_str(), "message.received" | "agent.message.sent") && !web_push::allow_message_push(db, user, &msg.tag).await {
         return Outcome::Skipped;
     }
-    let sent = if apns_only { super::apns::send_to_user(db, user, &msg).await } else { web_push::send_to_user(db, transport, vapid, user, &msg).await };
+    // Phone-only events go to the native apps: iPhones (APNs) and Android phones (FCM).
+    let sent = if apns_only { super::apns::send_to_user(db, user, &msg).await + super::fcm::send_to_user(db, user, &msg).await } else { web_push::send_to_user(db, transport, vapid, user, &msg).await };
     if sent > 0 {
         Outcome::Sent
     } else {
@@ -1346,7 +1409,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn schema(db: &PgPool) {
         events_backbone_schema(db).await;
-        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql"), include_str!("../../migrations_pg/111_apns_device_tokens.sql"), include_str!("../../migrations_pg/120_ios_system_surfaces.sql")] {
+        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql"), include_str!("../../migrations_pg/111_apns_device_tokens.sql"), include_str!("../../migrations_pg/120_ios_system_surfaces.sql"), include_str!("../../migrations_pg/152_device_token_platform.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
     }
@@ -1446,6 +1509,28 @@ pub(crate) mod tests {
         // Long text is cut.
         let m = message_for("message.received", &json!({ "text": "x".repeat(1000) })).unwrap();
         assert!(m.body.chars().count() <= 241);
+    }
+
+    #[test]
+    fn an_agent_message_is_on_by_default_at_level_normal_with_its_own_buttons() {
+        assert!(allternit_events::find("agent.message.sent").is_some_and(|e| e.agents && !e.platform));
+        assert!(pushable().any(|e| e.name == "agent.message.sent"));
+        assert!(default_enabled("agent.message.sent"));
+        // Normal, so quiet hours hold it; an agent's message never pages.
+        assert_eq!(level("agent.message.sent", &json!({})), Level::Normal);
+        assert!(QuietHours { enabled: true, start_min: 0, end_min: 1439, ..Default::default() }.holds_at(Level::Normal, utc("2026-11-17T12:00:00Z")));
+
+        let m = message_for("agent.message.sent", &json!({ "botName": "Olive", "botId": "b1", "threadId": "t1", "text": "Your Q3 report is ready" })).unwrap();
+        assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str(), m.url.as_str()), ("Olive", "Your Q3 report is ready", "agent-msg-t1", "/?allternit_thread=t1&bot=b1"));
+        assert_eq!((m.data["category"].as_str(), m.data["level"].as_str(), m.data["private"].as_bool()), (Some("AGENT_MESSAGE"), Some("normal"), Some(true)));
+        // A session with no bot (Gizzi Code): its title names it, and the session is the collapse key.
+        let m = message_for("agent.message.sent", &json!({ "sessionTitle": "Fix the build", "sessionId": "ses_1", "threadId": "ses_1", "text": "x".repeat(500) })).unwrap();
+        assert_eq!((m.title.as_str(), m.tag.as_str(), m.url.as_str()), ("Fix the build", "agent-msg-ses_1", "/"));
+        assert_eq!(m.data["sessionId"], "ses_1");
+        assert!(m.body.chars().count() <= 201);
+        // Its needs-you twin (thread.needs_user, urgency normal) is named the same way and stays below urgent.
+        let n = message_for("thread.needs_user", &json!({ "sessionTitle": "Fix the build", "reason": "Which branch?", "urgency": "normal" })).unwrap();
+        assert_eq!((n.title.as_str(), n.data["level"].as_str()), ("Fix the build needs you", Some("needs_you")));
     }
 
     fn utc(s: &str) -> DateTime<Utc> {

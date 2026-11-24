@@ -1,10 +1,17 @@
-// Scheduled prompts, stored in <project>/.claude/scheduled_tasks.json.
+// Scheduled prompts for this terminal session: the in-memory session queue,
+// plus the older tasks stored in <project>/.claude/scheduled_tasks.json.
+//
+// The file store takes no new tasks (A2-5): the `automation` tool
+// (tools/AutomationTool) adds only session tasks, and tasks that must outlast
+// the session go to the user's account or this computer's scheduler. Existing
+// file entries still load, fire, list and delete (deleting, firing a one-shot
+// and stamping lastFiredAt rewrite the file; nothing adds to it).
 //
 // Tasks come in two flavors:
 //   - One-shot (recurring: false/undefined) — fire once, then auto-delete.
 //   - Recurring (recurring: true) — fire on schedule, reschedule from now,
-//     persist until explicitly deleted via CronDelete or auto-expire after
-//     a configurable limit (DEFAULT_CRON_JITTER_CONFIG.recurringMaxAgeMs).
+//     persist until explicitly deleted via the automation tool or auto-expire
+//     after a configurable limit (DEFAULT_CRON_JITTER_CONFIG.recurringMaxAgeMs).
 //
 // File format:
 //   { "tasks": [{ id, cron, prompt, createdAt, recurring?, permanent? }] }
@@ -51,8 +58,8 @@ export type CronTask = {
    * When true, the task is exempt from recurringMaxAgeMs auto-expiry.
    * System escape hatch for assistant mode's built-in tasks (catch-up/
    * morning-checkin/dream) — the installer's writeIfMissing() skips existing
-   * files so re-install can't recreate them. Not settable via CronCreateTool;
-   * only written directly to scheduled_tasks.json by src/assistant/install.ts.
+   * files so re-install can't recreate them. Not settable by the automation
+   * tool; only ever written directly to scheduled_tasks.json by assistant mode.
    */
   permanent?: boolean
   /**
@@ -182,45 +189,38 @@ export async function writeCronTasks(
 }
 
 /**
- * Append a task. Returns the generated id. Caller is responsible for having
- * already validated the cron string (the tool does this via validateInput).
+ * Add a task to this session's in-memory queue (bootstrap/state.ts). Returns
+ * the generated id. Caller is responsible for having already validated the
+ * cron string (the automation tool does this before calling).
  *
- * When `durable` is false the task is held in process memory only
- * (bootstrap/state.ts) — it fires on schedule this session but is never
- * written to .claude/scheduled_tasks.json and dies with the process. The
- * scheduler merges session tasks into its tick loop directly, so no file
- * change event is needed.
+ * The task fires on schedule this session but is never written to
+ * .claude/scheduled_tasks.json and dies with the process: the file store
+ * takes no new tasks. The scheduler merges session tasks into its tick loop
+ * directly, so no file change event is needed.
  */
 export async function addCronTask(
   cron: string,
   prompt: string,
   recurring: boolean,
-  durable: boolean,
   agentId?: string,
 ): Promise<string> {
-  // Short ID — 8 hex chars is plenty for MAX_JOBS=50, avoids slice/prefix
-  // juggling between the tool layer (shows short IDs) and disk.
+  // Short ID — 8 hex chars is plenty for a session queue and keeps the
+  // jitter hash (jitterFrac) working.
   const id = randomUUID().slice(0, 8)
-  const task = {
+  addSessionCronTask({
     id,
     cron,
     prompt,
     createdAt: Date.now(),
     ...(recurring ? { recurring: true } : {}),
-  }
-  if (!durable) {
-    addSessionCronTask({ ...task, ...(agentId ? { agentId } : {}) })
-    return id
-  }
-  const tasks = await readCronTasks()
-  tasks.push(task)
-  await writeCronTasks(tasks)
+    ...(agentId ? { agentId } : {}),
+  })
   return id
 }
 
 /**
  * Remove tasks by id. No-op if none match (e.g. another session raced us).
- * Used for both fire-once cleanup and explicit CronDelete.
+ * Used for both fire-once cleanup and an explicit delete (automation tool).
  *
  * When called with `dir` undefined (REPL path), also sweeps the in-memory
  * session store — the caller doesn't know which store an id lives in.
@@ -252,7 +252,7 @@ export async function removeCronTasks(
  * so N fires in one scheduler tick = one read-modify-write, not N. Only
  * touches file-backed tasks — session tasks die with the process, no point
  * persisting their fire time. No-op if none of the ids match (task was
- * deleted between fire and write — e.g. user ran CronDelete mid-tick).
+ * deleted between fire and write — e.g. the task was deleted mid-tick).
  *
  * Scheduler lock means at most one process calls this; chokidar picks up
  * the write and triggers a reload which re-seeds `nextFireAt` from the

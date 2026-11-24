@@ -1,0 +1,44 @@
+---
+title: "Platform API test projects"
+description: "Allternit's own sandbox projects that can do billable Platform API work without a card, for live checks."
+---
+
+**Status: AVAILABLE (internal).** See [status labels](/architecture#status-labels).
+
+Every Platform API project needs a card and a plan before it can do billable work. Without one, the API answers `402 payment_method_required` (see [Billing](/api/platform/billing)). Allternit's own live checks need a project that can run decisions, responses, messages, agents and texts without a card. That project is an **internal test project**.
+
+## What it is
+
+A project with `env = 'sandbox'` and `billing_status = 'internal'`:
+
+- The card check passes. `GET /api/v1/platform/projects/{id}/billing` shows `payment_method: true`.
+- Its usage is recorded like any other project's, but it is never sent to Stripe, because Stripe gets usage only from `env = 'live'` projects on a paid plan. Nobody is billed.
+- The monthly spend cap still applies ($100 by default), so a leaked test key can't run up an unlimited model bill.
+- On a live project, `internal` does nothing: the card check still answers 402.
+
+No API route, console screen or Stripe webhook sets `internal`. Webhooks only change projects that have a Stripe subscription, and an internal project has none. Only an operator sets it, in the production database.
+
+## Make one
+
+Create a sandbox project in the console (platform.allternit.com, **Projects → New**, environment Sandbox), mint an `alt_test_` key, then on the cloud-api host:
+
+```bash
+ssh vps-root
+sudo -u postgres psql -d allternit -c \
+  "UPDATE platform_projects SET billing_status = 'internal' WHERE id = '<proj_…>' AND env = 'sandbox';"
+```
+
+The command should print `UPDATE 1`. Model calls on the project still use Allternit's provider keys, so they cost Allternit real money. Keep test calls small.
+
+## Turn one off
+
+```bash
+sudo -u postgres psql -d allternit -c \
+  "UPDATE platform_projects SET billing_status = NULL WHERE id = '<proj_…>';"
+```
+
+Revoke its keys (`UPDATE api_keys SET revoked_at = now() WHERE project_id = '<proj_…>'`) when the project is no longer needed.
+
+## Code
+
+`billing::INTERNAL_BILLING_STATUS` and `billing::internal_test_project` in `cmd/allternit-cloud-api/src/routes/platform_v1/billing.rs`. The test `internal_billing_status_unlocks_sandbox_projects_only` in `tests_p5.rs` checks both sides of the rule.

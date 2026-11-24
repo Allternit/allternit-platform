@@ -72,6 +72,7 @@ pub(crate) fn length_rule(style: &str) -> &'static str {
     match style {
         "concise" => "Length (Concise): the bottom line plus at most 3 bullets. Use a template's section names as bold lead-ins instead of headings, and skip the title and dateline.",
         "detailed" => "Length (Detailed): the full template, with reasoning, examples and edge cases inside each section.",
+        "learning" => "Learning style: The person wants to learn, not only get the answer. Give a little context, then ask one guiding question per turn. Let them try; after two or three wrong tries, or when they ask, give the answer and explain it. Show the reasoning before any verdict. Praise good method plainly, with no superlatives. If they drift off task, steer back gently.",
         "custom" => "Length: follow the user's custom instructions; where they say nothing, the bottom line then the template's sections, each a few lines.",
         _ => "Length (Balanced): the bottom line, then the template's sections, each a few lines.",
     }
@@ -166,9 +167,9 @@ mod tests {
     /// SHA-256 of the two shared files. allternit-ai's answer-shapes.test.ts
     /// pins the same values: change a file in both repos, then both pins.
     const SHAPES_MD_SHA256: &str =
-        "534afbf8f28416ad72981ec898e3a7e12a778e1dfbc9ac67b9105e0a19301f08";
+        "a46f17125a79a4b359203856398502cd07c881eb4ba158af729024d906645825";
     const TEMPLATES_JSON_SHA256: &str =
-        "a92ff59eff6128c314c65d224ac64016a7134b404849d0bb3c1d69fd20dbdd7f";
+        "7792f7b460c58b114681eff771ec1cbed9f961046374ca288b60da8eecba8ba7";
 
     fn sha(text: &str) -> String {
         Sha256::digest(text.as_bytes())
@@ -193,7 +194,7 @@ mod tests {
 
     #[test]
     fn block_has_rules_templates_and_one_length_line_per_style() {
-        for style in ["concise", "balanced", "detailed", "custom"] {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
             let block = answer_shapes_block(style);
             assert!(block.starts_with(ANSWER_SHAPES_MARKER));
             assert!(block.contains("Open with the bottom line"));

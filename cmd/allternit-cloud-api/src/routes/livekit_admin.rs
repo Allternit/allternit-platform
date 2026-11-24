@@ -136,6 +136,13 @@ pub trait LiveKitAdminClient: Send + Sync {
     async fn create_room_with_agent(&self, _room: &str, _agent_name: &str, _metadata: &str) -> Result<(), LiveKitError> {
         Err(LiveKitError::NotConfigured)
     }
+    /// [`Self::create_room_with_agent`] with the room's empty timeout: how long
+    /// LiveKit keeps a room nobody has joined. Phone calls join within seconds
+    /// (120 s); a meeting pod connects only once the call admits the bot, which
+    /// can take the whole admit window.
+    async fn create_room_with_agent_timeout(&self, room: &str, agent_name: &str, metadata: &str, _empty_timeout_secs: u32) -> Result<(), LiveKitError> {
+        self.create_room_with_agent(room, agent_name, metadata).await
+    }
     /// Publish a data packet on a room's data channel (call controls).
     async fn send_data(&self, room: &str, topic: &str, payload: &[u8]) -> Result<(), LiveKitError>;
     /// Mint a client token for one room. Listen is receive-only
@@ -388,10 +395,14 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
     }
 
     async fn create_room_with_agent(&self, room: &str, agent_name: &str, metadata: &str) -> Result<(), LiveKitError> {
+        self.create_room_with_agent_timeout(room, agent_name, metadata, 120).await
+    }
+
+    async fn create_room_with_agent_timeout(&self, room: &str, agent_name: &str, metadata: &str, empty_timeout_secs: u32) -> Result<(), LiveKitError> {
         // https://docs.livekit.io/reference/server/server-apis/#createroom : CreateRoomRequest.agents[] {agentName, metadata}
         let body = json!({
             "name": room,
-            "emptyTimeout": 120,
+            "emptyTimeout": empty_timeout_secs,
             "agents": [{ "agentName": agent_name, "metadata": metadata }],
         });
         self.post("RoomService", "CreateRoom", body).await?;

@@ -8,7 +8,7 @@ Allternit's public MCP servers support **MCP Events** with webhook delivery. Ins
 | Server | URL | Scope |
 |---|---|---|
 | Agents server | `https://mcp.allternit.com/mcp` | `agents:read` |
-| Vendor bot connector | `https://mcp.allternit.com/mcp/bots/<bot id>` | `bots:act`, bound to that bot |
+| Connected bot connector | `https://mcp.allternit.com/mcp/bots/<bot id>` | `bots:act`, bound to that bot |
 
 Both advertise `"events": { "listChanged": false }` in `server/discover`. The edge answers `events/*` itself, so subscribing works while your computer is asleep. Events are produced on your computer, so they arrive once it's back online.
 
@@ -29,7 +29,7 @@ Both advertise `"events": { "listChanged": false }` in `server/discover`. The ed
 | `subscription.signed_in` | That subscription is signed in again. | `provider` |
 | `usage.threshold` | Your monthly cloud spend crossed your budget alert threshold, or reached the whole budget. Once per crossing; `data` is `{meter: "cloud_spend", percent, used, limit, period, currency}`. See [usage.threshold](/api/notifications#usage-alerts). | `meter` |
 
-### Vendor bot connector
+### Connected bot connector
 
 | Event | When |
 |---|---|
@@ -119,7 +119,7 @@ X-MCP-Subscription-Id: sub_3f2a…
 
 ## When access ends
 
-If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), or stop one subscription in [Connected apps](#seeing-and-ending-subscriptions), the subscriptions end at once, and each callback gets one signed message:
+If you remove the app's approval in Allternit (or revoke a connected bot CLI key), or stop one subscription in [Connected apps](#seeing-and-ending-subscriptions), the subscriptions end at once, and each callback gets one signed message:
 
 ```json
 { "type": "terminated", "subscriptionId": "sub_3f2a…",
@@ -142,7 +142,7 @@ The routes behind it (cloud API, Clerk session or `compute`-scoped API key; `503
 |---|---|
 | `GET /api/v1/mcp/approvals` | Each approval carries `subscriptions: [{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt, lastError}]`: that app's subscriptions for the target that haven't ended. `active: false` means it is past `refreshBefore` and the app hasn't renewed it. `lastError` is the newest failed delivery's error (`HTTP 503`, `timed out`, `connection failed`, …) when nothing was delivered after it. `subscriptions: null` means they couldn't be read; the approvals still list. The callback URL and secret are never returned. |
 | `DELETE /api/v1/mcp/events/subscriptions/:id` | `{ok: true}`, and the callback gets a signed `terminated` message. `404 {"error":"not_found"}` for a subscription that isn't yours or has already ended. |
-| `GET /api/v1/events/catalog` | Signed-in users. `{events: [{name, title, description, servers}]}`: every registered event with a short plain-words `title` (for example `"Approval requests"`), its description, and which servers offer it (`agents` = the agents server, `bot` = a vendor bot connector, `platform` = [Platform API webhooks](/api/platform/webhooks)). |
+| `GET /api/v1/events/catalog` | Signed-in users. `{events: [{name, title, description, servers}]}`: every registered event with a short plain-words `title` (for example `"Approval requests"`), its description, and which servers offer it (`agents` = the agents server, `bot` = a connected bot connector, `platform` = [Platform API webhooks](/api/platform/webhooks)). |
 
 ```bash
 curl https://api.allternit.com/api/v1/events/catalog -H "Authorization: Bearer $CLERK_SESSION"

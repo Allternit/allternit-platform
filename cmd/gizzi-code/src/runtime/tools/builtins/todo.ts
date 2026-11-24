@@ -16,15 +16,16 @@ export const TodoWriteTool = Tool.define("todowrite", {
       metadata: {},
     })
 
+    const { todos, warnings } = Todo.normalize(params.todos)
     await Todo.update({
       sessionID: ctx.sessionID,
-      todos: params.todos,
+      todos,
     })
     return {
-      title: `${params.todos.filter((x) => x.status !== "completed").length} todos`,
-      output: JSON.stringify(params.todos, null, 2),
+      title: `${todos.filter((x) => x.status !== "completed").length} todos`,
+      output: JSON.stringify(todos, null, 2) + (warnings.length ? `\n\nNote: ${warnings.join("; ")}` : ""),
       metadata: {
-        todos: params.todos,
+        todos,
       },
     }
   },

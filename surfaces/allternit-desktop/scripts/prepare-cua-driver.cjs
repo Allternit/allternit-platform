@@ -6,6 +6,12 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const VERSION = '0.34.0';
+// Linux is built from source at this commit of tag cua-driver-rs-v${VERSION}
+// (scripts/build-linux-sidecars.sh cua-driver, cargo-zigbuild at glibc 2.27, the floor,
+// since it calls memfd_create): the upstream Linux prebuilt needs glibc 2.30, above the
+// Linux Desktop floor (2.27, Ubuntu 18.04). macOS and Windows still use the upstream
+// release assets below.
+const LINUX_SOURCE_COMMIT = 'b0968e1b12834e485dda68789541a3cc57664a9f';
 const RELEASE = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${VERSION}`;
 const outputRoot = path.resolve(__dirname, '..', 'resources', 'computer-use');
 
@@ -16,8 +22,8 @@ const ASSETS = {
     binary: 'cua-driver',
   },
   linux: {
-    asset: `cua-driver-rs-${VERSION}-linux-x86_64-binary.tar.gz`,
-    sha256: '629ac96eff829d4dfd5cf221f3f2165c2d813aed91e5efb7b20777a741cd70a7',
+    // Not downloaded: built from source (see LINUX_SOURCE_COMMIT).
+    builtFromSource: true,
     binary: 'cua-driver',
   },
   win32: {
@@ -97,6 +103,17 @@ async function prepareTarget(platform) {
   const output = path.join(platformDir, spec.binary);
   fs.mkdirSync(platformDir, { recursive: true });
 
+  if (spec.builtFromSource) {
+    if (fs.existsSync(output)) {
+      console.log(`Cua Driver ${VERSION} (built from source) present for ${platform} at ${output}`);
+      return { ...spec, binarySha256: sha256File(output) };
+    }
+    const hint = `run scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/computer-use/${platform} cua-driver from the repo root`;
+    if (process.platform === platform) throw new Error(`Cua Driver for ${platform} is built from source and is missing at ${output}: ${hint}`);
+    console.warn(`Cua Driver for ${platform} not staged (built from source on ${platform} only): ${hint}`);
+    return null;
+  }
+
   const versionPath = path.join(outputRoot, 'VERSION.json');
   if (fs.existsSync(output) && fs.existsSync(versionPath)) {
     try {
@@ -149,7 +166,8 @@ async function prepareTarget(platform) {
   }
   const prepared = {};
   for (const platform of targets) {
-    prepared[platform] = await prepareTarget(platform);
+    const result = await prepareTarget(platform);
+    if (result) prepared[platform] = result;
   }
   const darwin = prepared.darwin || ASSETS.darwin;
   fs.writeFileSync(path.join(outputRoot, 'VERSION.json'), JSON.stringify({
@@ -159,10 +177,10 @@ async function prepareTarget(platform) {
     source: `${RELEASE}/${darwin.asset}`,
     platforms: Object.fromEntries(
       Object.entries(ASSETS).map(([platform, spec]) => [platform, {
-        asset: spec.asset,
-        sha256: spec.sha256,
+        ...(spec.builtFromSource
+          ? { source: `https://github.com/trycua/cua/tree/${LINUX_SOURCE_COMMIT}/libs/cua-driver/rust (built from source)`, commit: LINUX_SOURCE_COMMIT }
+          : { asset: spec.asset, sha256: spec.sha256, source: `${RELEASE}/${spec.asset}` }),
         binary: spec.binary,
-        source: `${RELEASE}/${spec.asset}`,
         // Hash of the staged binary; kept for platforms not staged this run
         // only when that platform was already staged at this version.
         ...(prepared[platform]?.binarySha256

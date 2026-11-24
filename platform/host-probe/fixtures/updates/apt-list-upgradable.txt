@@ -1,0 +1,6 @@
+Listing...
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+openssl/noble-updates,noble-security 3.0.13-0ubuntu3.4 amd64 [upgradable from: 3.0.13-0ubuntu3.2]
+curl/noble-updates 8.5.0-2ubuntu10.5 amd64 [upgradable from: 8.5.0-2ubuntu10.4]
+libc6/stable-security,stable 2.36-9+deb12u4 amd64 [upgradable from: 2.36-9+deb12u3]
+libstdc++6/noble-updates 1:14.2.0-4ubuntu2~24.04 amd64 [upgradable from: 1:14.1.0-1ubuntu1]

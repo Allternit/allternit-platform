@@ -13,7 +13,7 @@
  *      <platform>-<arch>/mesh-node) — same binary gizzi-code's mesh.ts uses —
  *      when it is at least as new as the mesh-node source.
  *   2. Build from source via infrastructure/mesh/tsnet-ios/build-sidecar.sh
- *      (darwin-arm64 / linux-x64), or an equivalent `go build` for win32-x64
+ *      (darwin-arm64 / linux-x64 / linux-arm64), or an equivalent `go build` for win32-x64
  *      (mirrors the GOOS/GOARCH mapping in release-gizzi-code.yml). Requires
  *      Go on PATH.
  *   3. Download the latest gizzi-code GitHub release asset (the v0.2.2+
@@ -99,7 +99,8 @@ function stageFromBuild() {
     if (!run('go', ['build', '-ldflags=-s -w', '-o', VENDOR_BINARY, './cmd/mesh-node'], { cwd: SIDECAR_DIR, env })) {
       return false;
     }
-  } else if (PLATFORM_ARCH === 'darwin-arm64' || PLATFORM_ARCH === 'linux-x64') {
+  } else if (PLATFORM_ARCH === 'darwin-arm64' || PLATFORM_ARCH === 'linux-x64' || PLATFORM_ARCH === 'linux-arm64') {
+    // CGO_ENABLED=0: a static Go binary, no glibc floor; linux-arm64 = the arm64 Linux Desktop.
     if (!run('bash', ['build-sidecar.sh'], { cwd: SIDECAR_DIR })) return false;
   } else {
     return false;

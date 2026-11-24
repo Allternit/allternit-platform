@@ -92,7 +92,8 @@ const referenced = new Set(
 
 // 2. Navigation references map to existing .mdx files.
 // Nav icons are asset paths (e.g. /icons/play.svg), not pages: check the file exists instead.
-const isAsset = (s) => /\.(svg|png|jpe?g|webp|gif)$/i.test(s);
+// OpenAPI specs named by an `openapi` group (e.g. api-reference/platform-v1.yaml) are files too.
+const isAsset = (s) => /\.(svg|png|jpe?g|webp|gif|ya?ml|json)$/i.test(s);
 for (const asset of [...referenced].filter(isAsset)) {
   if (!fs.existsSync(path.join(DOCS_DIR, asset.replace(/^\//, '')))) fail(`docs.json references missing asset: ${asset}`);
 }
@@ -166,12 +167,14 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('guides/always-on-bots.mdx')) continue;
       // The iPhone app guide names the vendor bots it connects, the CLI sessions it continues and the apps MCP servers come from.
       if (mdxPath.endsWith('guides/iphone-app.mdx')) continue;
+      // The Android app guide mirrors the iPhone guide: same vendor bots, CLI sessions and model labels.
+      if (mdxPath.endsWith('guides/android-app.mdx')) continue;
       // First-run setup and the sign-in screen name the subscription brains and vendor bots people can connect.
       if (['guides/first-run-setup.mdx', 'architecture/first-run-setup.mdx', 'surfaces/sign-in.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The bot setup picker (and the Meet your bots card that hosts it) names the vendor bots it connects and quotes their on-screen labels.
       if (['guides/bot-setup-picker.mdx', 'architecture/bot-setup-picker.mdx', 'guides/meet-your-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Runtime task visibility and the local vendor catalog describe named CLI integrations.
-      if (['surfaces/native-agent.mdx', 'guides/local-vendor-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['surfaces/native-agent.mdx', 'guides/local-connected-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Subagents and the CLI configuration page document how each brain (Claude Code, Codex) gets the subagent catalog.
       if (['cli/configuration.mdx', 'guides/subagents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Tree process protection/hook paths and subagent evals document the
@@ -188,16 +191,18 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Funding operations documents the actual upstream providers, model ids and request options.
       if (mdxPath.endsWith('operations/upstream-funding.mdx')) continue;
       // Vendor-bot pages must name the vendors whose bots and connectors they cover.
-      if (['guides/bot-phone.mdx', 'guides/keep-vendor-bots-online.mdx', 'guides/vendor-bots-on-the-phone.mdx', 'guides/vendor-bots-use-your-phone.mdx', 'guides/how-vendor-bots-connect.mdx', 'guides/allternit-bot-cli.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['guides/bot-phone.mdx', 'guides/keep-connected-bots-online.mdx', 'guides/connected-bots-on-the-phone.mdx', 'guides/connected-bots-use-your-phone.mdx', 'guides/how-connected-bots-connect.mdx', 'guides/allternit-bot-cli.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;
       // Phone Link drives the vendor AI apps signed in on the user's own phone; it has to name them.
       if (mdxPath.endsWith('guides/phone-link.mdx')) continue;
       // Vendor bots connect to named vendor accounts; photo avatars run on the
       // named subscription/key lanes and quote their on-screen button labels.
-      if (mdxPath.endsWith('guides/vendor-bots.mdx')) continue;
+      if (mdxPath.endsWith('guides/connected-bots.mdx')) continue;
       if (mdxPath.endsWith('guides/bot-avatars.mdx')) continue;
       // Customize's import paths name the tools agents and instructions come from (Claude Code, Codex, CLAUDE.md, AGENTS.md).
       if (mdxPath.endsWith('guides/customize.mdx')) continue;
+      // Workspace files lists the exact folders the runtime's path scope allows or refuses, including other agent CLIs' dot-folders.
+      if (mdxPath.endsWith('api/workspace-files.mdx')) continue;
       // Porting an MCP App from another host has to name that host and its globals.
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
@@ -223,7 +228,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       // Connections lists the AI apps it reads on a linked phone, and the context window
       // page explains how each brain's own /context or session record is read.
-      if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Use your plan names each AI plan and which work with no computer; add-a-connection names the key providers.
+      if (['guides/connections.mdx', 'api/connections.mdx', 'surfaces/context-window.mdx', 'guides/use-your-plan.mdx', 'build-on-allternit/add-a-connection.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Agent steps reads each CLI brain's own task tools and web-search output, so it names them.
       if (mdxPath.endsWith('guides/agent-steps.mdx')) continue;
       // Progress and response parts map each brain's own plan, citation and search events, so they name them.
@@ -231,16 +237,32 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Live sessions, delivery and the team roster list the CLI sessions they reach by name and their session addresses.
       if (['guides/live-sessions.mdx', 'guides/live-session-delivery.mdx', 'guides/team-roster.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Connecting a vendor from chat and picking a worker bot's brain name the catalog vendors and their sign-in flows.
-      if (['guides/connect-vendor-from-chat.mdx', 'guides/worker-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['guides/connect-from-chat.mdx', 'guides/worker-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The phone add-ons ship as a Claude Code plugin and a Codex skill, and the MCP servers page
       // points to them; both have to name those clients and their install commands.
       if (['api/platform/sdks/claude-code-codex.mdx', 'api/mcp-servers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The chat bridge reads `.claude/CLAUDE.md` by name; the Skills note names Claude CLI brains and their own skills.
       if (['api/bot-hub.mdx', 'guides/memory-and-learning.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // Voice: bring-your-own-key voice names the two providers whose keys people paste (OpenAI, ElevenLabs).
-      if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Voice: bring-your-own-key voice names the two providers whose keys people connect (OpenAI, ElevenLabs), including the saved-key API.
+      if (['guides/voice.mdx', 'surfaces/voice.mdx', 'api/voice-tickets.mdx', 'api/voice-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Self-Hosted Agents: the customer picks their own model provider, so these pages name the
+      // supported providers, their settings ids (`provider: anthropic`) and example model_map keys.
+      if (['self-hosted/configuration.mdx', 'self-hosted/models.mdx', 'self-hosted/networking.mdx', 'self-hosted/operations.mdx', 'self-hosted/overview.mdx', 'self-hosted/quickstart.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // POST /v1/messages is a compatibility endpoint: the page has to name the request shape it accepts so SDK users can point at it.
+      if (mdxPath.endsWith('api/platform/messages.mdx')) continue;
       // Managed connector auth: the connector gateway guide gives each AI app's setup steps, and the managed-auth pages name the outside issuers (Claude orgs) people trust.
       if (['guides/connectors-in-other-apps.mdx', 'guides/connectors.mdx', 'guides/managed-authorization.mdx', 'security/allternit-idjag-issuer.mdx', 'security/trusting-outside-issuers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Brain runner ops: each box runs the named vendor programs unmodified, so the page lists their versions, sign-in commands and allowed domains.
+      if (mdxPath.endsWith('operations/brain-runner.mdx')) continue;
+      // Linking a Claude organization (Anthropic Linked billing) is that integration: the guide and ops page name the provider, its routes and error codes; external keys links to that guide by its path.
+      if (['guides/claude-organization.mdx', 'operations/claude-linked-billing.mdx', 'admin/external-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Harness & Bots 2.0: runtimes are the coding CLIs themselves (Claude Code, Codex, Antigravity…), so the
+      // runtime registry, picker, runtime views, system layers and bot/runtime CLI pages name them and their brains.
+      if (['api/runtimes.mdx', 'build-on-allternit/add-a-runtime.mdx', 'cli/runtime.mdx', 'cli/bot.mdx', 'concepts/agent-model.mdx', 'concepts/control-layer.mdx', 'concepts/system-layers.mdx', 'guides/agent-card.mdx', 'guides/brains-and-access.mdx', 'guides/runtime-views.mdx', 'guides/runtimes.mdx', 'architecture.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Guard's model picker lists the detected CLI brains and their source ids by name.
+      if (mdxPath.endsWith('guides/guard.mdx')) continue;
+      // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).
+      if (mdxPath.endsWith('cli/connect.mdx')) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );

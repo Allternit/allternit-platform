@@ -1,0 +1,96 @@
+{
+  "type": "SharesResponse",
+  "valid": true,
+  "case": "Every role.",
+  "message": {
+    "shares": [
+      {
+        "share_id": "sh_view_download",
+        "computer_id": "cmp_mac_studio",
+        "root_id": "rt_shared",
+        "item_id": "it_shr000001",
+        "role": "view_download",
+        "link_url": "https://ai.allternit.com/s/view_downloadx9",
+        "created_at": "2026-11-15T14:00:00Z",
+        "created_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "passcode_required": true,
+        "guest_wake": false,
+        "guest_count": 1,
+        "expires_at": "2026-11-22T14:00:00Z"
+      },
+      {
+        "share_id": "sh_upload_only",
+        "computer_id": "cmp_mac_studio",
+        "root_id": "rt_shared",
+        "item_id": "it_shr000001",
+        "role": "upload_only",
+        "link_url": "https://ai.allternit.com/s/upload_onlyx9",
+        "created_at": "2026-11-15T14:00:00Z",
+        "created_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "passcode_required": false,
+        "guest_wake": false,
+        "guest_count": 1
+      },
+      {
+        "share_id": "sh_edit",
+        "computer_id": "cmp_mac_studio",
+        "root_id": "rt_shared",
+        "item_id": "it_shr000001",
+        "role": "edit",
+        "link_url": "https://ai.allternit.com/s/editx9",
+        "created_at": "2026-11-15T14:00:00Z",
+        "created_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "passcode_required": false,
+        "guest_wake": true,
+        "guest_count": 1
+      },
+      {
+        "share_id": "sh_comment",
+        "computer_id": "cmp_mac_studio",
+        "root_id": "rt_shared",
+        "item_id": "it_shr000001",
+        "role": "comment",
+        "link_url": "https://ai.allternit.com/s/commentx9",
+        "created_at": "2026-11-15T14:00:00Z",
+        "created_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "passcode_required": false,
+        "guest_wake": false,
+        "guest_count": 1
+      },
+      {
+        "share_id": "sh_old",
+        "computer_id": "cmp_mac_studio",
+        "root_id": "rt_shared",
+        "item_id": "it_shr000001",
+        "role": "view_download",
+        "link_url": "https://ai.allternit.com/s/view_downloadold1",
+        "created_at": "2026-11-15T14:00:00Z",
+        "created_by": {
+          "kind": "owner",
+          "id": "user_2abc",
+          "display_name": "Eoj"
+        },
+        "passcode_required": false,
+        "guest_wake": false,
+        "guest_count": 1,
+        "revoked_at": "2026-11-15T14:05:00Z"
+      }
+    ]
+  }
+}

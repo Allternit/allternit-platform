@@ -90,6 +90,20 @@ The tools are the same as for Android, so a bot doesn't need to know which kind 
 
 When a command gets no answer, the result is `uncertain`, never success. The bot is told to look at the screen before it tries again.
 
+## Bluetooth mode (no cable to the iPhone)
+
+The board can also pair with your iPhone over Bluetooth as a keyboard and mouse named **Allternit Keyboard**, so nothing plugs into the iPhone. It still connects to your computer over Wi-Fi, so power it from the computer, a charger or any USB port. This works with Allternit Desktop on Windows and Linux too, because it needs no Mac.
+
+1. Update the board to the latest software (it needs firmware 1.1.0 or newer), then switch it to Bluetooth mode. The board restarts and is disarmed.
+2. On the iPhone, open Settings → Bluetooth and choose **Allternit Keyboard**, within about 10 meters of the board. There is no code to type.
+3. Press the board's button to arm it, as usual. The iPhone needs AssistiveTouch turned on (Settings → Accessibility → Touch → AssistiveTouch) to show the pointer.
+
+Until the iPhone is paired, Allternit shows **Pair your iPhone with this Bluetooth keyboard and mouse in Settings > Bluetooth**. Everything else works as with the cable: the button arms, **Stop** disarms, and the board lets go when nobody is driving. It keeps only the one iPhone it paired with; to use another iPhone, choose to pair again in Allternit, or forget the pairing and remove **Allternit Keyboard** from the iPhone's Bluetooth list. Scrolling is vertical only in Bluetooth mode.
+
+<Note>
+The Settings switch for Bluetooth mode comes with a later Settings update. The Desktop app already supports it.
+</Note>
+
 ## Safety
 
 - **Only your computer can drive your board.** Desktop and the board each prove they hold the board's key before any command is sent. Every command is signed and numbered, so it can't be replayed. The key is set over USB, so setup needs the board in your hand.
@@ -97,6 +111,7 @@ When a command gets no answer, the result is `uncertain`, never success. The bot
 - **It lets go when nobody is driving.** If the Wi-Fi link drops, or nothing arrives from Desktop for 10 seconds, the board releases every key and button. It disarms itself after 30 minutes without use, or one minute without your computer.
 - **Only your phone can feed the screen.** Your computer accepts AirPlay only from a phone that entered its code, so nobody else on the Wi-Fi can show the bot a fake screen.
 - **The board can't tell what a tap means.** A tap can open a payment sheet as easily as a settings page, and the board has no way to tell them apart. Keep it disarmed when you aren't using it, and watch **View** when the bot does anything that matters.
+- **Bluetooth mode is no looser.** The board only sends Bluetooth input while armed, and drops it the moment you disarm, the link is lost, or the iPhone disconnects. Other phones can't pair unless you open pairing from Allternit.
 - iOS doesn't mirror some screens, such as passcode entry, Apple Pay and DRM video, so the bot can't see them.
 
 ## Limits
@@ -108,7 +123,8 @@ When a command gets no answer, the result is `uncertain`, never success. The bot
 
 ## For developers
 
-- **Desktop code:** `surfaces/allternit-desktop/src/main/phone-usb-agent.ts` (manager and tools), `phone-usb-agent-link.ts` (the authenticated TCP link on port 7300, advertised over mDNS as `_allternit-usba._tcp`), `phone-usb-agent-protocol.ts` (USBA/1, with `ReferenceBoard` mirroring the firmware), `phone-usb-agent-pointer.ts` (calibration and aiming), `phone-usb-agent-vision.ts`, `phone-usb-agent-provision.ts` (USB serial setup) and `phone-airplay.ts` (UxPlay, run as its own process).
+- **Desktop code:** `surfaces/allternit-desktop/src/main/phone-usb-agent.ts` (manager and tools), `phone-usb-agent-link.ts` (the authenticated TCP link on port 7300, advertised over mDNS as `_allternit-usba._tcp`), `phone-usb-agent-protocol.ts` (USBA/1, with `ReferenceBoard` mirroring the firmware), `phone-hid-core.ts` (calibration, aiming and keys, shared with the Bluetooth keyboard/mouse routes), `phone-usb-agent-pointer.ts` (the board as that core's sender), `phone-usb-agent-vision.ts`, `phone-usb-agent-provision.ts` (USB serial setup) and `phone-airplay.ts` (UxPlay, run as its own process).
+- **Bluetooth mode:** `hardware/usb-agent/firmware/usb_agent/bt_hid.cpp` (the board's Bluetooth LE keyboard and mouse, the same report map as the Android app and the Mac tool); Desktop's `UsbAgentManager.setMode`, `pairBluetooth` and `forgetBluetooth` send the `mode`, `bt pair` and `bt forget` commands, and the board's `mode` and `bluetooth` state is in `UsbAgentInfo`.
 - **Firmware, protocol and safety model:** `hardware/usb-agent/README.md`.
 - **Installing firmware:** Desktop ships `resources/phone/usb-agent/usb-agent-firmware.bin` with a `firmware.json` manifest (version, SHA-256), built reproducibly by `hardware/usb-agent/build-firmware.sh`. The setup page flashes it with Espressif's esptool-js over Web Serial; Desktop only lets Allternit's own pages use serial, and only for Espressif boards (USB vendor 0x303A), picked without a chooser.
 - **Storage:** board keys are sealed with the OS keychain in `<userData>/phone/usb-agents.json`; calibration is stored per board next to them.

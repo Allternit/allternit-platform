@@ -11,4 +11,5 @@ Usage:
 - Any line longer than 2000 characters is truncated.
 - Call this tool in parallel when you know there are multiple files you want to read.
 - Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
+- Before you summarize a file, say how much of it you read. If part was cut off, read the rest in smaller pieces or say what you did not read.
 - This tool can read image files and PDFs and return them as file attachments.

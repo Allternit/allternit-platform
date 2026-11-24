@@ -102,6 +102,9 @@ jobs:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           VITE_ALLTERNIT_GATEWAY_URL: 'https://api.allternit.com'
           VITE_ALLTERNIT_CLOUD_API_URL: 'https://api.allternit.com'
+          # Console features whose server side is on in production (cloud-api .env).
+          VITE_LOG_BODIES: '1'
+          VITE_KEY_IP_ALLOWLIST: '1'
 
       - name: Deploy platform.allternit.com to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3

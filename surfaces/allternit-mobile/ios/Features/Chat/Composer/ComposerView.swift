@@ -1,4 +1,5 @@
 import SwiftUI
+import Speech
 
 import UIKit
 // MARK: - Composer
@@ -60,7 +61,8 @@ struct ComposerView: View {
     var placeholderOverride: String? = nil
     /// The picked bot's colour on the card's border (Bots home To: chip).
     var accentBorder: Color? = nil
-    /// The Auto / Ask / Read-only pill (chat only; the Bots home has none).
+    /// "Permission · Auto ›" in the + sheet (chat only; the Bots home and bot
+    /// threads have none). The composer row has no permission pill (C2).
     var showsPermission: Bool = true
     /// The tray above the card (ThreadComposer `topDeck`): a bot thread's
     /// tabs — the open thread · Threads · Tasks · Bot.
@@ -75,13 +77,22 @@ struct ComposerView: View {
     var artifactKind: ArtifactStudioKind? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
-    /// "Run on my phone" in the "+" sheet, and the "On <phone>" chip while armed.
+    /// "Run on my phone" (chat ⋯ menu, or the + sheet when the host has no
+    /// ⋯ menu), and the "On <phone>" chip while armed.
     var allowsPhoneRun: Bool = false
+    /// The host's chat ⋯ menu holds Run on my phone and Capture to brain, so
+    /// the + sheet leaves them out (ChatView's Home chat).
+    var chatMenuHoldsExtras: Bool = false
     var armedPhoneName: String? = nil
     var onClearPhone: (() -> Void)? = nil
+    /// The computer chip above the card (contract C4). On in every chat,
+    /// Bots and bot thread composer.
+    var showsComputerChip: Bool = true
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
+    /// A bot chat: the runtime, brain and bot chips take the model chip's place.
+    @Environment(\.chatBot) private var chatBot
     @StateObject private var modelStore = ModelStore.shared
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
@@ -92,7 +103,22 @@ struct ComposerView: View {
     @State private var isMicPrimingPresented = false
     @State private var isFocused = false
     @State private var placeholderIndex = 0
-    @State private var upgradeURL: IdentifiableURL? = nil
+    // Purchase pages go to the browser via the Open links in rule (step 30).
+    @Environment(\.openURL) private var openURL
+    /// The In-App Purchase sheet, where the App Store sells plans.
+    @State private var isStoreSheetPresented = false
+    /// Deck fold: open at rest; the "tools" tab or a swipe folds it, and the
+    /// choice persists per device.
+    @State private var deckFolded = UserDefaults.standard.bool(forKey: deckFoldedDefaultsKey)
+    /// One of the deck's sheets is up: keeps the band open under it.
+    @State private var deckSheetActive = false
+    /// Dictation (C3): the mic left of the voice button.
+    @StateObject private var dictation = DictationController()
+    @State private var dictationBase = ""
+    @ObservedObject private var chipStore = ComputerChipStore.shared
+    @ReducedMotion private var reduceMotion
+    /// The + sheet grows from the + (iOS 18 zoom).
+    @Namespace private var plusZoom
 
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
@@ -102,6 +128,24 @@ struct ComposerView: View {
 
     private var hasDraft: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentStore.attachments.isEmpty
+    }
+
+    /// The deck band shows (it is folded at rest). Hosts with no deck never.
+    private var deckBandOpen: Bool {
+        deckOpen(folded: deckFolded)
+    }
+
+    private var forcedDeckOpen: Bool {
+        #if DEBUG
+        return launchArgumentEnabled("calm-deck-open")
+        #else
+        return false
+        #endif
+    }
+
+    /// Dictation needs a speech recognizer for the current language.
+    private var dictationAvailable: Bool {
+        SFSpeechRecognizer()?.isAvailable ?? false
     }
 
     private var canSend: Bool {
@@ -136,18 +180,80 @@ struct ComposerView: View {
                 .padding(.bottom, 6)
             }
 
+            // The computer chip (C4): no computer, can't reach it, waking, or a
+            // compute gate notice. ✕ folds it into the dot on +.
+            if showsComputerChip {
+                ComputerChipSlot(dismissible: showsAttach)
+                    .zIndex(1)
+            }
+
+            // One calm line when dictation can't start.
+            if let dictationError = dictation.errorMessage {
+                Text(plainErrorText(message: dictationError))
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .task(id: dictationError) {
+                        try? await Task.sleep(for: .seconds(5))
+                        if !Task.isCancelled { dictation.errorMessage = nil }
+                    }
+            }
+
             card
                 .zIndex(1)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onEnded { value in
+                            guard deck != .none, !isTerminal else { return }
+                            let next = nextSwipedOpen(current: !deckFolded, startY: value.startLocation.y, endY: value.location.y)
+                            guard next == deckFolded else { return }
+                            setDeckFolded(!next)
+                        }
+                )
 
-            if deck != .none, !isTerminal {
-                ComposerDeckBand(variant: deck, inputText: $inputText, sessionKind: artifactKind, onAllArtifacts: onAllArtifacts)
+            // The tab shows only while the band is folded. An open band
+            // joins the card directly; a swipe down on the card folds it.
+            if deck != .none, !isTerminal, !(deckBandOpen || forcedDeckOpen) {
+                HStack {
+                    ComposerToolsTab { setDeckFolded(false) }
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .zIndex(1)
+                .transition(.opacity)
+            }
+
+            if deck != .none, !isTerminal, deckBandOpen || forcedDeckOpen {
+                ComposerDeckBand(
+                    variant: deck, inputText: $inputText, sessionKind: artifactKind,
+                    onAllArtifacts: onAllArtifacts, onSheetActive: { deckSheetActive = $0 }
+                )
                     .zIndex(0)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // With no tab while open, VoiceOver folds it from here.
+                    .accessibilityAction(named: Text("Hide tools")) { setDeckFolded(true) }
+                    .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
         .animation(DeckMotion.animation, value: deck)
+        .background(ComposerFrameReporter())
+        .onChange(of: dictation.transcript) { _, transcript in
+            guard dictation.isRecording || !transcript.isEmpty else { return }
+            inputText = dictationBase + transcript
+        }
         .sheet(isPresented: $isPlusSheetPresented) {
-            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: sessionId, allowsPhoneRun: allowsPhoneRun)
+            ComposerPlusSheet(
+                attachmentStore: attachmentStore,
+                sessionId: sessionId,
+                allowsPhoneRun: allowsPhoneRun,
+                showsPermission: plusShowsPermission,
+                chatMenuHoldsExtras: chatMenuHoldsExtras,
+                fadesIn: reduceMotion
+            )
+            .composerPlusZoomDestination(plusZoom, enabled: !reduceMotion)
         }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)
@@ -155,8 +261,8 @@ struct ComposerView: View {
         .sheet(isPresented: $isMicPrimingPresented) {
             PermissionPrimingSheet(permission: .microphone) { onVoiceMode() }
         }
-        .sheet(item: $upgradeURL) { item in
-            SafariView(url: item.url)
+        .sheet(isPresented: $isStoreSheetPresented) {
+            StorePurchaseSheet(focus: .plan)
         }
         .onAppear {
             modelStore.fetchModelsIfNeeded()
@@ -165,7 +271,12 @@ struct ComposerView: View {
             // `-open-plus-sheet` / `-open-model-picker` (DEBUG only): jump
             // straight to a composer sheet for screenshots (simctl has no
             // tap injection).
-            if launchArgumentEnabled("open-plus-sheet") { isPlusSheetPresented = true }
+            if showsAttach,
+               launchArgumentEnabled(LaunchArgument.openPlusSheet)
+                || launchArgumentEnabled(LaunchArgument.openPlusPermission)
+                || launchArgumentEnabled(LaunchArgument.openPlusComputer) {
+                isPlusSheetPresented = true
+            }
             if launchArgumentEnabled("open-model-picker") { isModelPickerPresented = true }
             if launchArgumentEnabled("open-mic-priming") { isMicPrimingPresented = true }
             // `-enable-agent-mode` (DEBUG only): arm the first deck mode.
@@ -222,6 +333,7 @@ struct ComposerView: View {
                     terminal: isTerminal,
                     onFocusChange: { isFocused = $0 }
                 )
+                .accessibilityIdentifier("composerInput")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -245,36 +357,56 @@ struct ComposerView: View {
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
     }
 
+    /// The + sheet shows "Permission · Auto ›" where the pill used to show.
+    private var plusShowsPermission: Bool {
+        showsPermission && (mode == .chat || mode == .cowork)
+    }
+
+    /// + opens "Add to chat": it grows from the + (iOS 18+); under reduced
+    /// motion it appears without the slide and fades in.
+    private func openPlusSheet() {
+        Haptics.light()
+        if reduceMotion {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { isPlusSheetPresented = true }
+        } else {
+            isPlusSheetPresented = true
+        }
+    }
+
     private var controlsRow: some View {
         HStack(spacing: 6) {
             HStack(spacing: 4) {
                 if showsAttach {
-                    Button(action: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        isPlusSheetPresented = true
-                    }) {
+                    Button(action: openPlusSheet) {
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .medium))
                             .foregroundColor(Color("TextSecondary"))
                             .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
                             .frame(width: 44, height: 44)
                             .background(Color("FillNeutral"), in: Circle())
+                            // The folded computer chip.
+                            .overlay(alignment: .topTrailing) {
+                                if showsComputerChip { ComputerChipDot().offset(x: -3, y: 3) }
+                            }
+                            .composerPlusZoomSource(plusZoom, enabled: !reduceMotion)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Add files")
+                    .accessibilityLabel("Add to chat")
                 }
-
-                // How freely this chat works: Auto · Ask · Read-only (chat only).
-                if showsPermission, mode == .chat || mode == .cowork {
-                    ChatPermissionPill(sessionId: sessionId)
-                }
+                // Permission (Auto · Ask · Read-only) lives in the + sheet (C2).
             }
             .fixedSize()
 
             Spacer(minLength: 0)
 
             HStack(spacing: 8) {
-                modelChip
+                if let chatBot {
+                    ComposerAgentChips(bot: chatBot)
+                } else {
+                    modelChip
+                }
                 // How full this chat's context is, and the plan's usage.
                 ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
                 sendSlot
@@ -324,6 +456,9 @@ struct ComposerView: View {
     private var sendSlot: some View {
         HStack(spacing: 8) {
             WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime, hidden: hasDraft)
+            // Dictation fills the draft, which swaps voice for Send: keep the
+            // mic here while recording so it can be stopped.
+            if dictation.isRecording, hasDraft, !isStreaming, !isTerminal { micButton }
             sendButton
         }
     }
@@ -364,6 +499,34 @@ struct ComposerView: View {
             .disabled(!canSend)
             .accessibilityLabel("Send message")
         } else {
+            HStack(spacing: 0) {
+                if showsMic { micButton }
+                voiceButton
+            }
+        }
+    }
+
+    /// The mic shows beside voice mode (no draft) and while recording, so it
+    /// can always be stopped. Hidden where dictation isn't available.
+    private var showsMic: Bool {
+        showsVoice && !isTerminal && (dictationAvailable || dictation.isRecording)
+    }
+
+    private var micButton: some View {
+        Button(action: toggleDictation) {
+            Image(systemName: dictation.isRecording ? "mic.fill" : "mic")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(dictation.isRecording ? Color("AccentPrimary") : Color("TextSecondary"))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dictate")
+        .accessibilityValue(dictation.isRecording ? "Recording" : "")
+    }
+
+    private var voiceButton: some View {
+        Group {
             Button(action: voiceModeTapped) {
                 Image(systemName: "waveform")
                     .font(.system(size: 17, weight: .bold))
@@ -393,9 +556,15 @@ struct ComposerView: View {
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(2)
                 Spacer(minLength: 4)
-                if storefront.allowsPurchaseLinks {
+                // The App Store sheet where it sells plans (it carries the web
+                // link on the US storefront), else the web on the US storefront.
+                if storefront.canBuy(.plan) {
                     Button("Upgrade") {
-                        upgradeURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
+                        if storefront.showsStoreButtons(for: .plan) {
+                            isStoreSheetPresented = true
+                        } else {
+                            openURL(AccountPlanStore.shared.upgradeURL)
+                        }
                     }
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
@@ -428,7 +597,7 @@ struct ComposerView: View {
 
     private func voiceModeTapped() {
         guard isVoiceModeEnabled else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if DictationController.systemPromptsPending(), !AppPermission.microphone.hasPrimed {
             // App-owned explainer before the system prompts, once per install.
             isMicPrimingPresented = true
@@ -443,8 +612,26 @@ struct ComposerView: View {
             isModelPickerPresented = true
             return
         }
+        dictation.stop()
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
+    }
+
+    private func toggleDictation() {
+        Haptics.light()
+        if dictation.isRecording {
+            dictation.stop()
+        } else {
+            dictationBase = inputText.isEmpty || inputText.hasSuffix(" ") ? inputText : inputText + " "
+            Task { await dictation.start() }
+        }
+    }
+
+    /// Fold or unfold the deck and remember it on this device.
+    private func setDeckFolded(_ folded: Bool) {
+        Haptics.selection()
+        UserDefaults.standard.set(folded, forKey: deckFoldedDefaultsKey)
+        withAnimation(reduceMotion ? nil : Motion.deck) { deckFolded = folded }
     }
 
     /// One staged attachment: image thumbnail or a file chip, X to unstage.
@@ -474,7 +661,7 @@ struct ComposerView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
 
             Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 attachmentStore.remove(id: attachment.id)
             }) {
                 Image(systemName: "xmark")
@@ -550,7 +737,7 @@ enum ComposerPlaceholders {
 /// Three small bars beside Stop while a turn runs (web allternit-waveform-bar).
 private struct StreamingBars: View {
     @State private var phase = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
@@ -676,7 +863,7 @@ struct ComposerTextView: UIViewRepresentable {
         ])
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         let placeholderLabel = UILabel()
 
@@ -691,12 +878,108 @@ struct ComposerTextView: UIViewRepresentable {
             updatePlaceholder(textView)
         }
 
+        // Tap outside the composer: resigns focus, so the keyboard goes away
+        // and (with an empty draft) the deck folds. The recognizer sits on the
+        // window, never cancels touches, and skips controls, text inputs and
+        // anything inside a composer, so links, buttons and messages work as
+        // before.
+        private var outsideTap: UITapGestureRecognizer?
+        private weak var editingView: UITextView?
+
+        private func installOutsideTap(for textView: UITextView) {
+            guard outsideTap == nil, let window = textView.window else { return }
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleOutsideTap))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            window.addGestureRecognizer(tap)
+            outsideTap = tap
+            editingView = textView
+        }
+
+        private func removeOutsideTap() {
+            if let tap = outsideTap { tap.view?.removeGestureRecognizer(tap) }
+            outsideTap = nil
+            editingView = nil
+        }
+
+        @objc private func handleOutsideTap() {
+            editingView?.resignFirstResponder()
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let view = touch.view, let window = view.window else { return false }
+            var v: UIView? = view
+            while let cur = v {
+                if cur is UIControl || cur is UITextView || cur is UITextField { return false }
+                v = cur.superview
+            }
+            return !ComposerHitRegion.contains(touch.location(in: window))
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.onFocusChange?(true)
+            installOutsideTap(for: textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.onFocusChange?(false)
+            removeOutsideTap()
         }
+    }
+}
+
+/// Window-space frames of every on-screen composer (deck, chips and all), so a
+/// tap inside one never counts as "outside".
+enum ComposerHitRegion {
+    nonisolated(unsafe) private static var frames: [UUID: CGRect] = [:]
+    static func set(_ id: UUID, _ frame: CGRect?) { frames[id] = frame }
+    static func contains(_ point: CGPoint) -> Bool { frames.values.contains { $0.contains(point) } }
+}
+
+private struct ComposerFrameReporter: View {
+    @State private var id = UUID()
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { ComposerHitRegion.set(id, proxy.frame(in: .global)) }
+                .onChange(of: proxy.frame(in: .global)) { _, f in ComposerHitRegion.set(id, f) }
+                .onDisappear { ComposerHitRegion.set(id, nil) }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The grey "tools" pull tab under the composer's bottom-left edge: flat top
+/// joined to the card, rounded bottom corners. It shows only while the deck
+/// is folded and unfolds it; the open band has no tab (swipe down folds it).
+struct ComposerToolsTab: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("tools")
+                    .font(.system(size: 10))
+            }
+            .foregroundColor(Color("TextSecondary").opacity(0.8))
+            .padding(.horizontal, 10)
+            .frame(minWidth: 44, minHeight: 24)
+            .background(
+                UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10, style: .continuous)
+                    .fill(Color("FillNeutral"))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show tools")
+        .accessibilityHint("Swipe down on the message box to hide them again")
+        .accessibilityAddTraits(.isButton)
     }
 }

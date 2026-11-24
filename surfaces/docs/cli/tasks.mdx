@@ -111,3 +111,7 @@ The file is created automatically on first use. Each task includes an `id`, `nam
 - [Gizzi Code Overview](/cli/overview)
 - [Configuration](/cli/configuration)
 - [Headless Execution](/cli/headless-execution)
+
+## Scheduled tasks (CronCreate retired)
+
+The `CronCreate`, `CronList` and `CronDelete` tools are retired. Agents now schedule work with the [automation tool](/tools/automation). Tasks made by the old tools still fire, list and delete. Without an Allternit account, scheduled tasks use this computer's scheduler, so `gizzi serve` must be running.

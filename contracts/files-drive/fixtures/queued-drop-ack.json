@@ -1,0 +1,9 @@
+{
+  "type": "QueuedDropAck",
+  "valid": true,
+  "case": "The runtime pulled a queued drop into Inbox on wake.",
+  "message": {
+    "state": "delivered",
+    "item_id": "it_9q2w7x4k"
+  }
+}

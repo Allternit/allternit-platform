@@ -9,7 +9,11 @@ export type CloudGateFeature =
   | "files"
   | "serviceAccounts"
   | "security"
-  | "gizziUsage";
+  | "gizziUsage"
+  | "caching"
+  | "tags"
+  | "routingPolicy"
+  | "routeCredentials";
 
 interface GateCopy {
   title: string;
@@ -54,6 +58,34 @@ const GATE_COPY: Record<CloudGateFeature, GateCopy> = {
       "Gizzi Code usage isn't reported on Allternit Cloud yet. Project usage shows your Platform API usage.",
     ctaLabel: "Go to project usage",
     to: "/platform/usage",
+  },
+  caching: {
+    title: "Caching",
+    caption:
+      "Cache reporting isn't available on Allternit Cloud yet. Project usage shows your Platform API requests and tokens.",
+    ctaLabel: "Go to project usage",
+    to: "/platform/usage",
+  },
+  tags: {
+    title: "Tags",
+    caption:
+      "Tags aren't available on Allternit Cloud yet. Use projects to separate apps and environments.",
+    ctaLabel: "Go to projects",
+    to: "/platform/projects",
+  },
+  routingPolicy: {
+    title: "Routing policy",
+    caption:
+      "Provider routing policy applies to a paired Allternit runtime and isn't available on Allternit Cloud. Models lists what Allternit Cloud serves.",
+    ctaLabel: "Go to models",
+    to: "/models",
+  },
+  routeCredentials: {
+    title: "Route credentials",
+    caption:
+      "Bring-your-own route credentials apply to a paired Allternit runtime and aren't available on Allternit Cloud. Project API keys call Allternit Cloud directly.",
+    ctaLabel: "Go to API keys",
+    to: "/api-keys",
   },
 };
 

@@ -69,6 +69,15 @@
       "priority": 5,
       "triggers": ["status", "progress", "update on", "what changed", "where are we", "recap", "standup", "report"],
       "sections": ["Done", "In progress", "Blocked", "Next"]
+    },
+    {
+      "id": "result-list",
+      "name": "Result list",
+      "when": "\"find all X in these files\"",
+      "priority": 3,
+      "triggers": ["find all", "find every", "every occurrence", "all occurrences", "every mention", "all mentions", "which files", "which lines", "grep"],
+      "sections": [],
+      "note": "the count, then a row per match: file, lines, why it matched, cite token"
     }
   ]
 }

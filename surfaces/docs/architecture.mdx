@@ -221,6 +221,41 @@ The surfaces are the Experience plane today. They hold no agent logic of their o
   </Card>
 </CardGroup>
 
+## Runtimes, brains and bots
+
+Every agent in Allternit is four parts picked separately: a **Runtime** (how it works), a **Brain** (how it thinks), a **Bot** (who it is) and a **View** (how you watch it). Allternit's own runtime is one of 36 runtimes; Claude Code, Codex, Antigravity, Kimi Code, OpenCode, Hermes and the others sit beside it. Under all of them is one **control layer** that Allternit owns. See [The agent model](/concepts/agent-model).
+
+```mermaid
+flowchart TB
+  subgraph regs["Four registries, one per part"]
+    direction LR
+    RR[("Runtime registry<br/>cli-catalog.json runtimes[]")]
+    BR[("Brain registry<br/>provider registry + tools[].models")]
+    BOT[("Bot registry<br/>agents · config.botBrain · botKind")]
+    VR[("View registry<br/>look tokens + look packs + bot packs")]
+  end
+  subgraph surfaces["Every surface reads the same registries"]
+    direction LR
+    D["Desktop"] --- W["Web · phone · PWA"] --- I["iPhone"] --- A["Android"] --- G["Gizzi Code"]
+  end
+  regs --> surfaces
+  surfaces --> RUN["Runtime runs the turn<br/>adapter: ACP · stream JSON · app server · text"]
+  RUN == "every tool call" ==> CL
+  subgraph CL["Control layer"]
+    direction LR
+    P["Policy"] --- TB["Tool broker"] --- M["Memory"] --- PV["Provenance"] --- BI["Billing"]
+  end
+```
+
+| Registry | Source | Served by | Docs |
+|---|---|---|---|
+| **Runtimes** | `runtimes[]` in `cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json` (version 3) | `GET /api/v1/runtimes` on allternit-api and cloud-api | [Runtimes](/guides/runtimes), [Runtimes API](/api/runtimes) |
+| **Brains** | The provider registry and each CLI's models in the same catalog's `tools[]`; each brain carries its access (plan, key, local, credits) | The model lists every picker and `/model` read | [Brains and access](/guides/brains-and-access) |
+| **Bots** | Agent records; runtime, brain and view live in `agents.config` (`botBrain`, `agentView`), with a computed `botKind` | [Agents API](/api/agents) | [Agent card](/guides/agent-card), [Connected bots](/guides/connected-bots) |
+| **Views** | Look tokens in each runtime entry, TypeScript look packs, and [bot packs](/plugins/guides/bot-packs) for connected bots | Inside the runtime entry | [Runtime views](/guides/runtime-views) |
+
+The **control layer** is the same for every runtime: policy, the tool broker, memory, provenance and billing. A runtime keeps its own vendor prompt; Allternit appends its layer and enforces policy outside the runtime, at the tool broker. See [Control layer](/concepts/control-layer) and [System layers](/concepts/system-layers).
+
 ## What is live today
 
 Checked against main on 2026-09-30. Production verified: no, unless a row says so.
@@ -307,7 +342,7 @@ Full split: [API Overview](/api/overview).
 
 <AccordionGroup>
   <Accordion title="Local desktop">
-    Allternit Desktop runs Allternit API and Gizzi on the user's machine and pairs the node to the account. Best for day-to-day work on a laptop.
+    Allternit Desktop runs Allternit API and Gizzi on the user's machine and pairs the node to the account. Best for day-to-day work on a laptop. Both get one shared internal service token so Gizzi's connector and tool MCP servers work. See [Internal service token](/operations/hosted-driver#internal-service-token-desktop-and-cloud-computers).
   </Accordion>
 
   <Accordion title="User-paired (BYOC)">

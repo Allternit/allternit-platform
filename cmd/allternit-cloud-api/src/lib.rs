@@ -57,6 +57,51 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "https://m.allternit.com",
 ];
 
+/// Production CORS decision: any configured origin on any route, or a
+/// Freeweights origin on a Freeweights route.
+pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> bool {
+    configured.iter().any(|allowed| allowed == origin)
+        || (routes::freeweights::FREEWEIGHTS_CORS_ORIGINS.contains(&origin)
+            && routes::freeweights::is_freeweights_cors_path(path))
+}
+
+/// Sign in with Allternit endpoints a browser-only public app (PKCE) calls
+/// from its own origin (contract A1, "CORS:"). They read no cookies.
+pub const OAUTH_PUBLIC_CORS_PATHS: [&str; 4] = [
+    "/oauth2/token",
+    "/oauth2/revoke",
+    "/oauth2/userinfo",
+    "/.well-known/oauth-authorization-server",
+];
+
+/// `Access-Control-Allow-Origin: *` without credentials for
+/// [`OAUTH_PUBLIC_CORS_PATHS`]; every other path passes through untouched to
+/// the global CORS layer. It wraps that layer because the global layer answers
+/// every OPTIONS request itself and sets `allow-credentials` on every
+/// response, so a layer on the route could neither see a preflight nor drop
+/// the credentials header.
+async fn oauth_public_cors(request: axum::extract::Request, next: axum_middleware::Next) -> axum::response::Response {
+    use axum::{http::HeaderValue, response::IntoResponse};
+    if !OAUTH_PUBLIC_CORS_PATHS.contains(&request.uri().path()) {
+        return next.run(request).await;
+    }
+    let preflight = request.method() == Method::OPTIONS;
+    let mut response = if preflight {
+        axum::http::StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    if preflight {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, OPTIONS"));
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("authorization, content-type"));
+        headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("3600"));
+    }
+    response
+}
+
 /// API application state
 pub struct ApiState {
     pub db: sqlx::PgPool,
@@ -72,8 +117,6 @@ pub struct ApiState {
     pub rate_limiter: Arc<RateLimiter>,
     /// Public-route rate limiter for pairing and relay endpoints
     pub public_rate_limiter: Arc<RateLimiter>,
-    /// Tight per-user limiter for the free inference path (no credits row)
-    pub free_inference_rate_limiter: Arc<RateLimiter>,
     /// Cost service for tracking run costs
     pub cost_service: Arc<dyn services::CostService>,
     /// Quota service for free-tier guardrails
@@ -349,7 +392,19 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Runtime registry (static, public; same JSON allternit-api embeds).
+        .merge(routes::runtimes::routes())
+        // Files drive: wake consent, wake settings, endpoints, token keys
+        // (each handler resolves the user itself).
+        .merge(routes::computer_files::routes())
+        // Brain runner boxes dial in here with their own token (no session,
+        // no compute gate; CONTRACT-connections-2026-11 section 9.7).
+        .merge(routes::brain_runners::routes(services::brain_runners::shared(&state.db)))
         .merge(routes::runtime_viewer::routes())
+        // Model hosts (a phone/browser tab serving a small model to its owner's
+        // agents): each handler resolves the caller itself; the device socket
+        // takes a single-use ticket. All state in memory.
+        .merge(routes::model_hosts::routes())
         .merge(routes::phone_live::routes())
         // Channels hybrid relay: management routes check the Clerk session;
         // /channels/in/:key is public, the unguessable key is the credential.
@@ -371,6 +426,18 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // ALLTERNIT_IDJAG_ES256_PEM.
         .merge(routes::managed_auth::routes())
         .merge(routes::edge_auth::routes())
+        // Link your Claude organization: our issuer's JWKS and discovery
+        // (public; 503 without ALLTERNIT_ANTHROPIC_CLIENT_ES256_PEM).
+        .merge(routes::anthropic_client_issuer::routes())
+        // Link your Claude organization: start/status/unlink check the Clerk session
+        // in the handler; the callback has none (single-use state). 503 until
+        // ALLTERNIT_CLAUDE_LINK=1 and the B1 env are set.
+        .merge(routes::claude_link::routes())
+        // Sign in with Allternit: RFC 8414 metadata, /oauth2/authorize (public; never
+        // redirects to an unregistered URI) and the consent API (Clerk session only).
+        .merge(routes::oauth_server::routes())
+        // The person's grants (Clerk session only) and the admin app review (admin session).
+        .merge(routes::oauth_grants::routes())
         // The event registry in plain words (signed-in users; Settings › Connected apps).
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
@@ -418,6 +485,12 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
         .merge(routes::runtime_files::routes())
+        // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
+        // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
+        .merge(routes::files_gateway::routes())
+        // Files key sharing (contracts/files-drive SPEC section 13): owner only, every handler resolves the
+        // caller; stores public keys and sealed envelopes, never the Files root key.
+        .merge(routes::files_keys::routes())
         // Artifacts v2 (docs/design/artifacts-v2.md): every handler resolves
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.
@@ -467,6 +540,25 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Clerk session or `account` API token per-request, 503 without
         // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
         .merge(routes::me_flags::routes())
+        // Allternit Meetings: user routes (Clerk session, `compute` API
+        // token or device token, checked per request), settings and usage,
+        // and the pod-token routes. Unique prefixes /api/v1/meetings,
+        // /api/v1/meeting-sessions, /api/v1/me/meeting-*,
+        // /api/v1/orgs/:org/meeting-settings.
+        .merge(routes::meetings::routes())
+        // Meetings calendar connections: Google OAuth start (Clerk session)
+        // and callback (state-verified, no session), ICS feeds. Unique prefix
+        // /api/v1/calendar.
+        .merge(routes::calendar_oauth::routes())
+        // Zoom for Meetings: /api/v1/zoom/* and the pod-token
+        // /api/v1/meeting-sessions/:sid/zoom-tokens (docs/meetings/ZOOM.md).
+        .merge(routes::zoom::routes())
+        // Compute gate (which computer the account has, chat-only choice);
+        // Clerk session or `account` API token per-request.
+        .merge(routes::account_compute::routes())
+        // Account preferences (project pad templates + per-mode default);
+        // Clerk session or `account` API token per-request, never gated on compute.
+        .merge(routes::account_prefs::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())
@@ -488,9 +580,31 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
         .merge(routes::billing_subscriptions::routes())
+        // Store purchases (Apple / Google) under the unique prefix
+        // /api/v1/billing/store/*: preflight verifies the Clerk session
+        // per-request and answers 503 store_billing_not_configured while that
+        // store's secrets are unset (services::store_billing::StoreConfig).
+        .merge(routes::billing_store::routes())
+        // Freeweights entitlement claim: Clerk session or alt_ key verified per
+        // request; 503 entitlement_unavailable when
+        // FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY is unset.
+        .merge(routes::freeweights::routes())
         // BYOK inference keys verify the Clerk session per-request and answer
         // 503 inference_keys_not_configured when ALLTERNIT_CREDENTIALS_KEY is unset.
         .merge(routes::inference_keys::routes())
+        // Voice keys saved to the account + the QR handoff relay: signed-in
+        // Clerk session only (API tokens 403), keys returned decrypted to their
+        // owner, sealed at rest with the credential cipher.
+        .merge(routes::voice_keys::routes())
+        // Connect kit account rows (CONTRACT-connections-2026-11): signed-in
+        // Clerk session only (API tokens 403); never gated on compute.
+        .merge(routes::connections::routes())
+        // Plan chat store (CONTRACT-connections-2026-11 section 9.10): Clerk
+        // session only, never gated on compute.
+        .merge(routes::plan_threads::routes())
+        // Account projects (migration 149): Clerk session or a paired
+        // runtime's signed request; never gated on compute.
+        .merge(routes::account_projects::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
@@ -556,6 +670,13 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // 503 mesh_not_configured when HEADSCALE_API_KEY is unset.
         .merge(routes::mesh::routes())
         .merge(routes::paired_computers::routes())
+        // Computers console list (signed in or device token, same caller rule).
+        .merge(routes::computers_console::routes())
+        // Computers console history: GET /api/v1/computers/:id/metrics (same caller rule).
+        .merge(routes::computer_metrics::routes())
+        // Computers console live host data, approvals and port forwards through
+        // the runtime relay; never wakes a computer (same caller rule).
+        .merge(routes::computers_host::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
         .merge(routes::registered_phones::routes())
@@ -653,13 +774,23 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 }
             }
         }
-        let allowed_origins: Vec<_> = origin_list
-            .iter()
-            .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
-            .collect();
-
+        // Freeweights origins reach only the Freeweights routes and the public
+        // plan catalog (routes::freeweights::is_freeweights_cors_path), not the
+        // rest of the API.
         CorsLayer::new()
-            .allow_origin(allowed_origins)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                move |origin: &axum::http::HeaderValue, parts: &axum::http::request::Parts| {
+                    origin
+                        .to_str()
+                        .map(|origin| cors_origin_allowed(origin, parts.uri.path(), &origin_list))
+                        .unwrap_or(false)
+                },
+            ))
+            .expose_headers([
+                axum::http::HeaderName::from_static("x-request-id"),
+                axum::http::HeaderName::from_static("x-next-cursor"),
+                axum::http::header::CONTENT_DISPOSITION,
+            ])
             .allow_methods([
                 Method::GET,
                 Method::POST,
@@ -711,6 +842,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .fallback(routes::data_plane_fallback::fallback)
         .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
+        // Outside the global CORS layer: the OAuth token endpoints answer any origin.
+        .layer(axum_middleware::from_fn(oauth_public_cors))
         .layer(axum::middleware::from_fn_with_state(
             state.metrics_state.clone(),
             crate::middleware::metrics::metrics_middleware,
@@ -822,8 +955,13 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
         let _ = shutdown_tx.send(());
     });
 
-    // Start server with graceful shutdown
-    axum::serve(listener, router)
+    // Start server with graceful shutdown. ConnectInfo carries the TCP peer so
+    // key IP allowlists can trust `X-Real-IP` only from a loopback proxy
+    // (services::api_keys::client_ip) and the rate limiter can key by address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         })
@@ -836,6 +974,19 @@ pub async fn start_server(state: Arc<ApiState>, addr: &str) -> Result<(), ApiErr
 #[cfg(test)]
 mod cors_origin_tests {
     use super::DEFAULT_CORS_ORIGINS;
+
+    #[test]
+    fn freeweights_origins_reach_only_freeweights_routes() {
+        let configured: Vec<String> = DEFAULT_CORS_ORIGINS.iter().map(|o| o.to_string()).collect();
+        for origin in ["https://freeweights.allternit.com", "https://fw-preview.allternit.com"] {
+            assert!(super::cors_origin_allowed(origin, "/api/v1/freeweights/entitlement", &configured));
+            assert!(super::cors_origin_allowed(origin, "/api/v1/billing/plans", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/api-keys", &configured));
+            assert!(!super::cors_origin_allowed(origin, "/api/v1/billing/subscription", &configured));
+        }
+        assert!(super::cors_origin_allowed("https://ai.allternit.com", "/api/v1/api-keys", &configured));
+        assert!(!super::cors_origin_allowed("https://evil.example", "/api/v1/freeweights/entitlement", &configured));
+    }
 
     #[test]
     fn desktop_loopback_ui_is_an_allowed_origin() {

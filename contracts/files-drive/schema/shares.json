@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/files-drive/v1/shares.json",
+  "title": "Files drive: guest sharing",
+  "description": "Capability tokens signed by cloud-api, re-checked by the runtime.",
+  "$defs": {
+    "ShareRole": {
+      "type": "string",
+      "enum": [
+        "view_download",
+        "upload_only",
+        "edit",
+        "comment"
+      ]
+    },
+    "Share": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "share_id",
+        "computer_id",
+        "root_id",
+        "item_id",
+        "role",
+        "link_url",
+        "created_at",
+        "created_by",
+        "passcode_required",
+        "guest_wake",
+        "guest_count"
+      ],
+      "properties": {
+        "share_id": {
+          "type": "string"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "role": {
+          "$ref": "#/$defs/ShareRole"
+        },
+        "link_url": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "created_by": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "passcode_required": {
+          "type": "boolean"
+        },
+        "guest_wake": {
+          "type": "boolean",
+          "description": "Guests may wake the computer (owner pays)."
+        },
+        "revoked_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "guest_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "CreateShareRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "item_id",
+        "role",
+        "guest_wake"
+      ],
+      "properties": {
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "role": {
+          "$ref": "#/$defs/ShareRole"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "passcode": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "guest_wake": {
+          "type": "boolean"
+        },
+        "invite_emails": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ShareResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "share"
+      ],
+      "properties": {
+        "share": {
+          "$ref": "#/$defs/Share"
+        }
+      }
+    },
+    "SharesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shares"
+      ],
+      "properties": {
+        "shares": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Share"
+          }
+        }
+      }
+    },
+    "GuestRedeemRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_token"
+      ],
+      "properties": {
+        "link_token": {
+          "type": "string"
+        },
+        "passcode": {
+          "type": "string"
+        },
+        "guest_name": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "ShareSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "folder_name",
+        "owner_display_name",
+        "can_wake",
+        "computer_state"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/ShareRole"
+        },
+        "folder_name": {
+          "type": "string"
+        },
+        "owner_display_name": {
+          "type": "string"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "can_wake": {
+          "type": "boolean"
+        },
+        "computer_state": {
+          "$ref": "common.json#/$defs/ComputerState"
+        }
+      }
+    },
+    "GuestSessionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_token",
+        "expires_at",
+        "guest_id",
+        "share"
+      ],
+      "properties": {
+        "capability_token": {
+          "type": "string",
+          "pattern": "^fgt1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        },
+        "expires_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "guest_id": {
+          "type": "string"
+        },
+        "share": {
+          "$ref": "#/$defs/ShareSummary"
+        }
+      }
+    },
+    "GuestCapabilityClaims": {
+      "type": "object",
+      "description": "Decoded body of a guest token. Ed25519-signed by cloud-api.",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "typ",
+        "share_id",
+        "guest_id",
+        "owner_user_id",
+        "computer_id",
+        "root_id",
+        "item_id",
+        "role",
+        "guest_wake",
+        "passcode_ok",
+        "iat",
+        "exp",
+        "kid"
+      ],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "typ": {
+          "type": "string",
+          "const": "files_guest"
+        },
+        "share_id": {
+          "type": "string"
+        },
+        "guest_id": {
+          "type": "string"
+        },
+        "owner_user_id": {
+          "type": "string"
+        },
+        "computer_id": {
+          "$ref": "common.json#/$defs/ComputerId"
+        },
+        "root_id": {
+          "$ref": "common.json#/$defs/RootId"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId",
+          "description": "Scope: this folder (or file) and below."
+        },
+        "role": {
+          "$ref": "#/$defs/ShareRole"
+        },
+        "guest_wake": {
+          "type": "boolean"
+        },
+        "passcode_ok": {
+          "type": "boolean"
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "At most iat + 3600; the guest page refreshes it."
+        },
+        "kid": {
+          "type": "string"
+        }
+      }
+    },
+    "QueuedDrop": {
+      "type": "object",
+      "description": "Upload-only drop received while the computer slept. The runtime pulls it into Inbox on next wake.",
+      "additionalProperties": false,
+      "required": [
+        "drop_id",
+        "share_id",
+        "guest_id",
+        "name",
+        "size",
+        "content_hash",
+        "r2_key",
+        "received_at",
+        "state"
+      ],
+      "properties": {
+        "drop_id": {
+          "type": "string"
+        },
+        "share_id": {
+          "type": "string"
+        },
+        "guest_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "$ref": "common.json#/$defs/Blake3"
+        },
+        "r2_key": {
+          "type": "string",
+          "description": "In the owner's own bucket: files-drops/<computer_id>/<drop_id>"
+        },
+        "received_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "delivered",
+            "rejected"
+          ]
+        }
+      }
+    },
+    "QueuedDropsResponse": {
+      "type": "object",
+      "description": "GET /api/v1/computer-files/drops, signed by the computer itself (like its presence heartbeat): the drops cloud-api kept while it slept, oldest first, at most 100. The runtime pulls each one into its Inbox root as an untrusted file from that guest, then acks it.",
+      "additionalProperties": false,
+      "required": [
+        "drops"
+      ],
+      "properties": {
+        "drops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QueuedDrop"
+          }
+        }
+      }
+    },
+    "QueuedDropAck": {
+      "type": "object",
+      "description": "POST /api/v1/computer-files/drops/:drop_id/ack (runtime-signed). delivered: the file is in Inbox as item_id; rejected: it failed its size or content_hash check, or its name could not be used. Either way cloud-api deletes the R2 copy.",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "delivered",
+            "rejected"
+          ]
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "ShareAccess": {
+      "type": "object",
+      "description": "One audit row per guest access.",
+      "additionalProperties": false,
+      "required": [
+        "share_id",
+        "guest_id",
+        "action",
+        "result",
+        "at"
+      ],
+      "properties": {
+        "share_id": {
+          "type": "string"
+        },
+        "guest_id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "redeem",
+            "list",
+            "download",
+            "upload",
+            "comment",
+            "wake"
+          ]
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "error": {
+          "$ref": "common.json#/$defs/ErrorCode"
+        },
+        "at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "CommentCreateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "body"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      }
+    },
+    "Comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comment_id",
+        "item_id",
+        "author",
+        "body",
+        "created_at"
+      ],
+      "properties": {
+        "comment_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "$ref": "common.json#/$defs/ItemId"
+        },
+        "author": {
+          "$ref": "common.json#/$defs/PrincipalRef"
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "common.json#/$defs/Timestamp"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+---
+title: 'Autonomy modes'
+description: 'Auto, Ask before actions and Read-only: how much the assistant does on its own, and what Auto never does'
+---
+
+## What you choose
+
+You see three choices. They are the permission pill in the web app, the phone layout and the iOS app, and the permission modes in the Gizzi Code terminal. No new picker was added.
+
+| Choice | What the assistant does |
+|---|---|
+| Auto | Does the work without stopping to ask for each step. It still asks before anything outside its limits (see below). |
+| Ask before actions | Asks you before a step that changes something, such as an edit, a command or a message. |
+| Read-only | Looks, reads and plans. It changes nothing. This is plan mode. |
+
+## How the choice reaches the assistant
+
+The assistant reads your choice from a short block of guidance for the turn.
+
+- Auto, and the terminal modes that act without asking (accept edits, don't ask, yolo, bypass), load the Auto block.
+- Ask before actions, and the terminal modes `default` and `manual`, load the Ask block.
+- Read-only already has plan mode guidance, so no mode block loads on top of it.
+
+See [System prompts](/core/system-prompts) for where each block loads.
+
+## What Auto never does
+
+Auto removes the stops, not the limits. Even in Auto the assistant:
+
+- never destroys shared state, such as deleting a shared branch, force pushing, or dropping data other people use;
+- never sends a secret or credential to a place you have not approved;
+- never posts or sends anything you did not ask for, such as a comment, a message or an email.
+
+If a step needs one of these, it stops and asks, the same as in Ask before actions.
+
+## Related
+
+- [Permission profiles](/cli/permission-profiles)
+- [Background runs](/cli/background-runs)

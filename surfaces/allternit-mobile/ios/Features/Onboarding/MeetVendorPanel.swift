@@ -1,7 +1,7 @@
 import SwiftUI
 
 // -----------------------------------------------------------------------------
-// Meet your bots → Who leads → a vendor bot (Claude, Duet, ChatGPT, Grok,
+// Meet your bots → Who leads → a Connected bot (Claude, Duet, ChatGPT, Grok,
 // Meta AI), connected right in the step the way the web's useBotSetup vendor
 // mode and BotSetupPanels do: the pack's head, "How to connect" profiles,
 // "It will be able to", the terms warning, extra fields, the connect state
@@ -204,7 +204,7 @@ final class MeetVendorSetup: ObservableObject {
     private func ready(_ r: ConnectResult) async {
         let first = r.bots.first?.botId
         var main: String?
-        let name = pack?.displayName ?? "Vendor bot"
+        let name = pack?.displayName ?? "Connected bot"
         if makeMain, let first {
             do {
                 let roster = try await MeetAgentsAPI.roster()

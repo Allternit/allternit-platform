@@ -491,6 +491,7 @@ async fn launch_instance(
         resources: None,
         toolchains: vec![],
         network_enabled: false,
+        files: Vec::new(),
     };
 
     let execution = execute_sandbox_or_subprocess(&state, &request).await;

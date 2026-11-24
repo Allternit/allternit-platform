@@ -31,7 +31,19 @@ import {
   readSoul,
   updateBot,
   type Bot,
+  type BotBrain,
 } from "@/runtime/bots/bot-store"
+import { platformRequest } from "@/runtime/bots/platform-api"
+import {
+  fits,
+  getRuntime,
+  listRuntimes,
+  resolveRuntime,
+  type AccessKind,
+  type BotBrainLike,
+  type RuntimeEntry,
+} from "@/runtime/providers/discovery/runtime-registry"
+import { CLI_CATALOG } from "@/runtime/providers/discovery/subprocess"
 import {
   ensureCapabilityEpoch,
   openCanonicalChat,
@@ -63,6 +75,217 @@ function exitOk(): never {
 }
 
 /* -------------------------------------------------------------------------- */
+/* runtime + brain (Harness & Bots 2.0: --runtime / --brain)                  */
+/* -------------------------------------------------------------------------- */
+
+const PROVIDER_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  xai: "xAI",
+  moonshot: "Moonshot",
+}
+
+function providerName(id: string): string {
+  return PROVIDER_NAMES[id] ?? id.charAt(0).toUpperCase() + id.slice(1)
+}
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]!
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const keep = row[j]!
+      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = keep
+    }
+  }
+  return row[b.length]!
+}
+
+/** Runtime ids whose id or alias is close to `input` (substring or a small typo). */
+export function closeRuntimeIds(input: string): string[] {
+  const key = input.toLowerCase()
+  const scored: { id: string; score: number }[] = []
+  for (const r of listRuntimes()) {
+    const names = [r.id, r.name, ...(r.aliases ?? [])].map((n) => n.toLowerCase())
+    let best = Infinity
+    for (const n of names) {
+      if (n.includes(key) || key.includes(n)) best = Math.min(best, 0)
+      else best = Math.min(best, editDistance(key, n))
+    }
+    if (best <= Math.max(2, Math.floor(key.length / 3))) scored.push({ id: r.id, score: best })
+  }
+  return scored.sort((a, b) => a.score - b.score).slice(0, 4).map((s) => s.id)
+}
+
+/** The runtime for `--runtime <id|alias>`, or an error that lists close matches. */
+export function runtimeOrThrow(id: string): RuntimeEntry {
+  const r = getRuntime(id)
+  if (r) return r
+  const close = closeRuntimeIds(id)
+  throw new BotStoreError(
+    `unknown runtime '${id}'.` +
+      (close.length > 0 ? ` Did you mean: ${close.join(", ")}?` : "") +
+      " See `gizzi runtime catalog --all`.",
+  )
+}
+
+/**
+ * Whether a brain with this provider id fits the runtime. Besides the
+ * registry rule (`fits`), a CLI's own provider id (claude-cli/…, codex-cli/…)
+ * fits the runtime built on that CLI.
+ */
+/** Kept as a name for callers; the rule lives in the registry's `fits`. */
+export function brainFits(r: RuntimeEntry, provider: string): boolean {
+  return fits(r, provider)
+}
+
+/** The first brain that fits a vendor-locked runtime: its CLI's default model. */
+export function firstFittingBrain(r: RuntimeEntry): string | undefined {
+  const tool = r.tool ? CLI_CATALOG.find((t) => t.id === r.tool) : undefined
+  const model = tool?.models?.find((m) => m.default) ?? tool?.models?.[0]
+  return tool && model ? `${tool.id}/${model.id}` : undefined
+}
+
+function brainProvider(brain: string): string {
+  const slash = brain.indexOf("/")
+  if (slash <= 0 || slash === brain.length - 1) {
+    throw new BotStoreError(`--brain must be provider/model, e.g. claude-cli/claude-sonnet-5-5 (got '${brain}')`)
+  }
+  return brain.slice(0, slash)
+}
+
+/** `access` when the brain says it plainly: a CLI sign-in, a local model, or Allternit credits. */
+function deriveAccess(r: RuntimeEntry, provider: string): AccessKind | undefined {
+  let access: AccessKind | undefined
+  if (provider === "allternit" || provider === "allternit-cloud") access = "credits"
+  else if (CLI_CATALOG.some((t) => t.id === provider || (t.aliases ?? []).includes(provider))) access = "plan"
+  else if (["ollama", "lmstudio", "llamacpp"].includes(provider)) access = "local"
+  else if (r.adapter.kind === "native") access = "key"
+  return access && r.access.includes(access) ? access : undefined
+}
+
+/** `--brain`, with `--model` as its alias. Both given and different is an error. */
+export function pickedBrain(args: { brain?: unknown; model?: unknown }): string | undefined {
+  const brain = args.brain as string | undefined
+  const model = args.model as string | undefined
+  if (brain !== undefined && model !== undefined && brain !== model) {
+    throw new BotStoreError(`--brain '${brain}' and --model '${model}' name different brains; pass one`)
+  }
+  return brain ?? model
+}
+
+export interface BrainChange {
+  /** New bot.model (the legacy pin, kept equal to modelRef); undefined = unchanged. */
+  model?: string | null
+  /** New botBrain record; undefined = unchanged. */
+  botBrain?: BotBrain
+  /** The one-line auto-switch note, when the brain changed to fit the runtime. */
+  note?: string
+}
+
+/**
+ * Apply `--runtime` / `--brain` to a bot's record (contract: Compatibility).
+ * `brain` "" clears the pin. With no runtime picked now or before, a brain is
+ * only the legacy model pin (old `--model` behaviour).
+ */
+export function applyRuntimeBrain(input: {
+  prev?: BotBrain | null
+  currentModel?: string | null
+  runtime?: string
+  brain?: string
+}): BrainChange {
+  const { prev, currentModel, runtime: runtimeArg, brain: brainArg } = input
+  if (runtimeArg === undefined && brainArg === undefined) return {}
+  const runtime = runtimeArg !== undefined ? runtimeOrThrow(runtimeArg) : prev?.runtime ? getRuntime(prev.runtime) : undefined
+  if (!runtime) {
+    // No runtime anywhere: --brain/--model is the plain model pin, as before.
+    return { model: brainArg === undefined ? undefined : brainArg || null }
+  }
+
+  let brain: string | undefined = brainArg !== undefined ? brainArg || undefined : (currentModel ?? undefined)
+  let autoSwitchedFrom: string | undefined
+  let note: string | undefined
+  if (brain && !brainFits(runtime, brainProvider(brain))) {
+    const fallback = firstFittingBrain(runtime)
+    const only = runtime.brains === "any" ? "" : runtime.brains.map(providerName).join(" or ")
+    if (!fallback) {
+      throw new BotStoreError(
+        `${runtime.name} runs ${only} models only, and gizzi can't pick one for you. Pass --brain <provider>/<model>.`,
+      )
+    }
+    autoSwitchedFrom = brain
+    brain = fallback
+    note = `${runtime.name} runs ${only} models only, so the brain changed to ${fallback}.`
+  }
+
+  const sameRuntime = prev?.runtime === runtime.id
+  const {
+    mode: _mode,
+    harness: _harness,
+    uhpHarnessId: _uhp,
+    modelRef: _modelRef,
+    access: _access,
+    autoSwitchedFrom: _switched,
+    nativeSessionId,
+    ...kept
+  } = (prev ?? {}) as BotBrain & { nativeSessionId?: string }
+  const base = {
+    ...kept,
+    // A native session belongs to the runtime that made it.
+    ...(sameRuntime && typeof nativeSessionId === "string" ? { nativeSessionId } : {}),
+    runtime: runtime.id,
+  }
+  // resolveRuntime recomputes mode/harness/uhpHarnessId from the runtime.
+  const next = resolveRuntime(base as unknown as BotBrainLike) as unknown as BotBrain
+  if (brain) {
+    next.modelRef = brain
+    const access = deriveAccess(runtime, brainProvider(brain))
+    if (access) next.access = access
+  }
+  if (autoSwitchedFrom) next.autoSwitchedFrom = autoSwitchedFrom
+  const modelChanged = brainArg !== undefined || autoSwitchedFrom !== undefined
+  return { botBrain: next, model: modelChanged ? (brain ?? null) : undefined, note }
+}
+
+/**
+ * The vendor's name when this bot is a Connected bot (its platform agent has
+ * a vendor execution binding: GET /agents/:id says `botKind: "connected"`),
+ * else null. A bot with no platform link, or no answer from the platform
+ * (signed out, offline), is not treated as Connected.
+ */
+export async function connectedVendor(bot: Bot): Promise<string | null> {
+  const id = bot.platform?.id
+  if (!id) return null
+  const path = `/api/v1/agents/${encodeURIComponent(id)}`
+  try {
+    const res = await platformRequest<{ agent?: { botKind?: string } }>("GET", path, undefined, { timeoutMs: 10_000 })
+    if (res?.agent?.botKind !== "connected") return null
+  } catch {
+    return null
+  }
+  try {
+    const res = await platformRequest<{ binding?: { vendor?: string | null } }>(
+      "GET",
+      `/api/v1/gateway/bots/${encodeURIComponent(id)}/execution-binding`,
+      undefined,
+      { timeoutMs: 10_000 },
+    )
+    const vendor = res?.binding?.vendor
+    if (vendor) return getRuntime(vendor)?.vendor ?? providerName(vendor)
+  } catch {
+    // fall through to the generic name
+  }
+  return "Its vendor"
+}
+
+function printBrainChange(change: BrainChange): void {
+  if (change.note) UI.println(UI.Style.TEXT_WARNING + change.note + UI.Style.RESET)
+}
+
+/* -------------------------------------------------------------------------- */
 /* create                                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -84,9 +307,17 @@ export const BotCreateCommand = cmd({
         type: "string",
         describe: "what the bot is for",
       })
+      .option("runtime", {
+        type: "string",
+        describe: "runtime id or alias the bot runs on (see `gizzi runtime catalog`), e.g. claude, codex, allternit",
+      })
+      .option("brain", {
+        type: "string",
+        describe: "brain (provider/model), e.g. claude-cli/claude-sonnet-5-5",
+      })
       .option("model", {
         type: "string",
-        describe: "model pin (provider/model), e.g. claude-cli/claude-sonnet-5-5",
+        describe: "same as --brain (kept for older scripts)",
       })
       .option("soul", {
         type: "string",
@@ -96,7 +327,8 @@ export const BotCreateCommand = cmd({
       .example(
         "gizzi agents bot create reviewer --model claude-cli/claude-sonnet-5-5 --soul ./SOUL.md",
         "with a model pin and custom persona",
-      ),
+      )
+      .example("gizzi agents bot create coder --runtime codex", "run the bot on Codex with its default brain"),
   handler: async (args) => {
     await guard(async () => {
       const name = args.name as string
@@ -108,16 +340,22 @@ export const BotCreateCommand = cmd({
         }
         soul = await readFile(soulPath, "utf8")
       }
+      const brain = pickedBrain(args)
+      const change = applyRuntimeBrain({ runtime: args.runtime as string | undefined, brain })
       const bot = await createBot({
         name,
         title: (args.title as string | undefined) ?? name,
         description: args.description as string | undefined,
-        model: args.model as string | undefined,
+        model: change.model !== undefined ? change.model : brain,
+        botBrain: change.botBrain,
         soul,
       })
+      printBrainChange(change)
       UI.println(
         UI.Style.TEXT_SUCCESS + `🤖 Bot '${bot.name}' created` + UI.Style.RESET,
       )
+      if (bot.botBrain?.runtime) UI.println(`  Runtime: ${getRuntime(bot.botBrain.runtime)?.name ?? bot.botBrain.runtime}`)
+      if (bot.model) UI.println(`  Brain: ${bot.model}`)
       UI.println(`  Home: ${botDir(bot.name)}`)
       UI.println("  Edit SOUL.md to give the bot a persona, then `gizzi agents bot chat " + bot.name + "`.")
       exitOk()
@@ -191,6 +429,11 @@ async function printBot(bot: Bot): Promise<void> {
   UI.println(`  Title:             ${bot.title}`)
   UI.println(`  Description:       ${bot.description || "—"}`)
   UI.println(`  Model:             ${bot.model ?? "—"}`)
+  if (bot.botBrain?.runtime) {
+    const r = getRuntime(bot.botBrain.runtime)
+    UI.println(`  Runtime:           ${r ? `${r.name} (${r.id})` : bot.botBrain.runtime}`)
+    if (bot.botBrain.autoSwitchedFrom) UI.println(`  Brain switched from: ${bot.botBrain.autoSwitchedFrom}`)
+  }
   UI.println(`  Avatar:            ${bot.avatar ? bot.avatar.kind : "—"}`)
   UI.println(
     `  Canonical session: ${
@@ -222,7 +465,7 @@ async function printBot(bot: Bot): Promise<void> {
 
 export const BotEditCommand = cmd({
   command: "edit <name>",
-  describe: "Edit a bot's identity metadata (title / description / model)",
+  describe: "Edit a bot's identity metadata (title / description) and its runtime and brain",
   builder: (yargs) =>
     yargs
       .positional("name", {
@@ -238,28 +481,50 @@ export const BotEditCommand = cmd({
         type: "string",
         describe: "new description",
       })
+      .option("runtime", {
+        type: "string",
+        describe: "runtime id or alias to run on (see `gizzi runtime catalog`)",
+      })
+      .option("brain", {
+        type: "string",
+        describe: "new brain (provider/model); pass an empty string to clear",
+      })
       .option("model", {
         type: "string",
-        describe: "new model pin (provider/model); pass an empty string to clear",
+        describe: "same as --brain (kept for older scripts)",
       }),
   handler: async (args) => {
     await guard(async () => {
       const name = args.name as string
+      const brain = pickedBrain(args)
+      const runtime = args.runtime as string | undefined
       const hasPatch =
         args.title !== undefined ||
         args.description !== undefined ||
-        args.model !== undefined
+        brain !== undefined ||
+        runtime !== undefined
       if (!hasPatch) {
-        throw new BotStoreError("nothing to update — pass at least one of --title, --description, --model")
+        throw new BotStoreError("nothing to update — pass at least one of --title, --description, --runtime, --brain")
+      }
+      let change: BrainChange = {}
+      if (brain !== undefined || runtime !== undefined) {
+        const current = await getBot(name)
+        if (!current) throw new BotStoreError(`bot '${name}' not found`)
+        const vendor = await connectedVendor(current)
+        if (vendor) throw new BotStoreError(`This is a Connected bot. ${vendor} runs its runtime and brain.`)
+        change = applyRuntimeBrain({ prev: current.botBrain, currentModel: current.model, runtime, brain })
       }
       const bot = await updateBot(name, {
         title: args.title as string | undefined,
         description: args.description as string | undefined,
-        model: args.model !== undefined ? (args.model as string) || null : undefined,
+        model: change.model,
+        botBrain: change.botBrain,
       })
+      printBrainChange(change)
       UI.println(UI.Style.TEXT_SUCCESS + `✓ Bot '${bot.name}' updated` + UI.Style.RESET)
       UI.println(`  Title: ${bot.title}`)
-      UI.println(`  Model: ${bot.model ?? "—"}`)
+      if (bot.botBrain?.runtime) UI.println(`  Runtime: ${getRuntime(bot.botBrain.runtime)?.name ?? bot.botBrain.runtime}`)
+      UI.println(`  Brain: ${bot.model ?? "—"}`)
       exitOk()
     })
   },

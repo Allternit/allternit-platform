@@ -1,0 +1,127 @@
+---
+title: 'Operations'
+description: 'Run the Agents Server day to day: migrations, backups, key rotation, upgrades, doctor, and the Helm charts.'
+---
+
+<Note>
+**Status: Private beta.** The commands below were checked in an end-to-end run on 2026-11-13. Flags can still change. Check `allternit-agents-server admin help` on your build.
+</Note>
+
+## Admin commands
+
+The admin CLI is part of the server binary. With Docker Compose, run it inside the server container: `docker compose exec server allternit-agents-server admin ...`.
+
+Every command takes `--config <path>` (or `-c`) to point at the settings file.
+
+| Command | What it does |
+|---|---|
+| `admin setup [--name N] [--force-new-admin]` | Runs migrations, mints the first admin API key and prints it once. Refuses when a key exists, unless `--force-new-admin`. |
+| `admin migrate` | Applies database migrations. Safe to run again: it does nothing when the schema is current. |
+| `admin keys list` | Lists server API keys with role and status. |
+| `admin keys create --role admin\|developer\|viewer [--name N]` | Creates a server API key and prints it once. |
+| `admin keys revoke <key id>` | Revokes a key. The last active admin key cannot be revoked. |
+| `admin env-keys list --environment <env id>` | Lists the environment's keys. |
+| `admin env-keys create --environment <env id> [--name N]` | Creates an environment key (`aek_...`) and prints it once. |
+| `admin env-keys revoke --environment <env id> <key id>` | Revokes an environment key. |
+| `admin rotate-key` | Re-seals every stored credential with `secrets.encryption_key_ref`. See [Rotate keys](#rotate-keys). |
+| `admin doctor [--offline]` | Checks settings, database, gizzi, inference, egress and OpenTelemetry. `--offline` skips the checks that call out. |
+
+```bash
+docker compose exec server allternit-agents-server admin keys create --role developer --name ci --config /etc/allternit/settings.yaml
+```
+
+## Migrate
+
+The compose bundle runs a one-shot `migrate` container before the server starts. Run it again after every upgrade:
+
+```bash
+docker compose run --rm migrate
+```
+
+The self-hosted schema is its own small PostgreSQL schema. It is not shared with any other Allternit product.
+
+## Backups
+
+**PostgreSQL.** All state lives in the database: agents, environments, sessions, the event log, the work queue, tool calls, key hashes and encrypted credentials. Back it up with your usual PostgreSQL tooling, for example:
+
+```bash
+# use the user and database names from your .env
+docker compose exec postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > agents-$(date +%F).dump
+```
+
+Back up these too:
+
+- The settings file.
+- The encryption key that `secrets.encryption_key_ref` points to. Without it, stored credentials in a restored database cannot be read.
+
+**SQLite mode** (no `database.url`): stop the server, then copy `data_dir`.
+
+Test a restore before you need one.
+
+## Rotate keys
+
+**Encryption key for stored credentials.**
+
+1. Add the new key in your secret store.
+2. In the settings file, point `secrets.encryption_key_ref` at the new key and move the old key's reference into `secrets.previous_key_refs`.
+3. Run `admin rotate-key --config <path>`. It re-seals every stored credential with the new key. Values sealed with the old key stay readable because it is in `previous_key_refs`.
+4. Remove the old key from your secret store and from `previous_key_refs`.
+
+The server can keep running. `admin rotate-key` writes each credential only if nobody changed it since it was read. When a credential changed in between, the command reads it again and retries, up to 3 times, and reports how many it retried. A credential that kept changing on every try is listed as failed and the command exits non-zero; run it again. A credential deleted meanwhile is skipped.
+
+If the command reports credentials that did not open with any key, add the key that sealed them to `previous_key_refs` and run it again.
+
+**Server API keys.** Create a new key, switch the client to it, then revoke the old key (`DELETE /v1/api_keys/{id}`). The last admin key cannot be revoked.
+
+**Environment keys.** Create a new key for the environment, roll it out to the workers, then revoke the old one. Workers still using the old key get `401` on their next call.
+
+## Upgrades
+
+1. Back up the database.
+2. Pull the new images.
+3. Run `migrate`.
+4. Restart the server, then the workers. With several replicas, roll them one at a time (see below).
+
+On a graceful shutdown the server ends open long-polls at once, so workers and clients reconnect without waiting for their poll to time out. Sessions continue after a restart: the server rebuilds each session from its event log in PostgreSQL, and the next turn sees the earlier messages. Leases are stored in the database, so workers keep renewing once the server is back. An item whose lease ran out during the restart is claimed again.
+
+A turn that is running when a replica stops is the exception. On `SIGTERM` the replica stops taking new turns: `/health/ready` and new messages answer `503 agent_loop_unavailable`, so the load balancer and clients move to another replica, while workers are still served. The server waits `server.shutdown_grace` (default `45s`) for running turns to finish. If it does not, the session ends with status `error` and the error code `server_restarted`. Resend the message. See [Known limits](/self-hosted/overview#known-limits).
+
+## Run several replicas
+
+Several server replicas share one PostgreSQL database. They need PostgreSQL. SQLite is single node.
+
+- **Helm.** Set `replicaCount` in the `agents-server` chart values, for example `3`. The chart refuses to render more than one replica with a SQLite database URL. With more than one replica it also adds a PodDisruptionBudget.
+- **Rolling updates.** The chart uses a rolling update with `maxUnavailable: 0`, so a new pod is ready before an old one stops. Each stopping replica waits up to `server.shutdown_grace` for its turns.
+- **Live events.** Replicas tell each other about new events with PostgreSQL `LISTEN`. Give the server a direct PostgreSQL connection for this. Behind PgBouncer, use session mode, or point the server at the database directly. Without `LISTEN`, events arrive by polling, within 1 to 5 seconds.
+- **Own data directory per replica.** Each replica keeps its id in `<data_dir>/replica-id`. Never share `data_dir` between replicas: a second replica with the same id would end the first one's turns when it starts. The Helm chart gives each pod its own `emptyDir`.
+- **Check it.** `GET /v1/server/info` shows `replicas`, the number of live replicas.
+
+Docker Compose stays at one replica. One host gives no availability gain. Use Helm for several replicas.
+
+A replica that dies without a clean stop is noticed after 45 seconds. Its running turns then end with `server_restarted`.
+
+## Upgrade from 1.0
+
+Migration 003 runs when the server starts, or with `admin migrate`. It does these things:
+
+- It adds a rule that a session has at most one open work item. Before it adds the rule, it cancels older duplicate open items, so each session keeps one.
+- It adds the tables and columns that replicas, idempotency keys and worker affinity use.
+
+Back up the database first. After migration 003, a 1.0 server refuses to start on that database. There is no rollback without a restore: restore the backup, then start the old version. See [Known limits](/self-hosted/overview#known-limits).
+
+## Doctor
+
+`admin doctor` prints one line per check and exits non-zero when one fails. It covers the settings file and secret references, the database (and migrations on PostgreSQL), the gizzi binary, reachability of the inference host, the egress rules and the OpenTelemetry setup. `admin doctor --offline` skips the checks that make network calls. Run it after any change to the settings or the deployment.
+
+## Kubernetes
+
+Helm charts live at `deploy/selfhost/charts/`:
+
+- `agents-server`: the server, its migrate job and its settings.
+- `sandboxes`: the workers.
+
+Use your own PostgreSQL (managed or operator-run) and give the server its URL through a secret reference.
+
+The agents-server chart writes the settings file from `settings` in its values. With the default provider, `anthropic`, it adds `credentials.api_key: env:ANTHROPIC_API_KEY` and a model map entry when you set none. With any other provider (see [Models](/self-hosted/models)), set `settings.inference` in full: the provider, its credentials or `gateway`, and `model_map`. Nothing from the Anthropic defaults is added. If the provider or gateway listens on a port other than 443, also set `networkPolicy.provider.ports`.
+
+The sandboxes chart's README has the pod settings bubblewrap needs, and the extra node changes for a test cluster on kind.

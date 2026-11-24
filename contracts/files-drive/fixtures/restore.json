@@ -1,0 +1,9 @@
+{
+  "type": "RestoreRequest",
+  "valid": true,
+  "case": "Restore from trash, keep both if the name came back.",
+  "message": {
+    "trash_id": "tr_19",
+    "on_conflict": "keep_both"
+  }
+}

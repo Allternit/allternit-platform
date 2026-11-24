@@ -68,19 +68,12 @@ struct AutomationTasksListView: View {
                 // toggle + title + "+" — this surface has no parent sheet to
                 // dismiss, unlike ProjectsListView's sheet-hosted variant).
                 HStack {
-                    Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
+                    // Tap opens the drawer; hold fans the modes out (step 24).
+                    PhoneMenuButton {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
                             isSidebarOpen.toggle()
                         }
-                    }) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.title3)
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Open sidebar")
 
                     Menu {
                         ForEach(AutomationKind.allCases, id: \.self) { kind in
@@ -108,8 +101,7 @@ struct AutomationTasksListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -243,8 +235,7 @@ struct AutomationTasksListView: View {
 
     private func jobRow(_ job: CronJob) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailJob = job
         }) {
             HStack(spacing: 12) {
@@ -294,8 +285,7 @@ struct AutomationTasksListView: View {
             message: "Schedule a prompt to run automatically — daily digests, recurring reminders, anything on a timer.",
             actionTitle: "Create automation task",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

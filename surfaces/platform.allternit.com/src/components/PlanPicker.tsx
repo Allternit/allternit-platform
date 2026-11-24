@@ -11,6 +11,23 @@ export interface LiveBillingPlan {
   plan_tier: string;
 }
 
+/** The `freeweights` block of GET /billing/plans. Perks show only when status is "offered". */
+export interface FreeweightsPerkLine {
+  key: string;
+  label: string;
+  value: number | string;
+  unit?: string;
+}
+export interface FreeweightsPerks {
+  status: string;
+  plans?: Partial<Record<PlanId, FreeweightsPerkLine[]>>;
+}
+
+function formatPerkLine(line: FreeweightsPerkLine): string {
+  const unit = line.unit ? ` ${line.unit}` : "";
+  return `FREEWEIGHTS ${line.label.toUpperCase()}: ${String(line.value).toUpperCase()}${unit.toUpperCase()}`;
+}
+
 function formatLivePrice(value: number): string {
   return `$${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(2)}`;
 }
@@ -153,7 +170,9 @@ export function PlanPicker({
   onSubscribe,
   onSelect,
   onSwitch,
+  storeBilledBy,
   livePlans,
+  freeweights,
   busyPlanId,
   memberName,
   renewsAt,
@@ -168,7 +187,11 @@ export function PlanPicker({
   onSubscribe?: (planId: PlanId) => void;
   onSelect?: (planId: PlanId) => void;
   onSwitch?: () => void;
+  /** "Apple" or "Google" when the plan is billed by a store: other plan cards are locked. */
+  storeBilledBy?: string | null;
   livePlans?: LiveBillingPlan[];
+  /** `freeweights` block from /billing/plans. Renders nothing unless status is "offered". */
+  freeweights?: FreeweightsPerks | null;
   busyPlanId?: PlanId | null;
   /** Shown on the member card when the account has a paid plan. */
   memberName?: string | null;
@@ -219,6 +242,8 @@ export function PlanPicker({
               <span className={`${btn} block text-center opacity-60`} style={buttonStyle}>FREE TIER</span>
             ) : plan.id === subscribedPlanId ? (
               <span className={`${btn} block border text-center`} style={{ borderColor: ink.text }}>CURRENT PLAN</span>
+            ) : storeBilledBy && subscribedPlanId ? (
+              <span className={`${btn} block border text-center opacity-70`} style={{ borderColor: ink.text }}>BILLED BY {storeBilledBy.toUpperCase()}</span>
             ) : subscribedPlanId && onSwitch ? (
               <button type="button" onClick={onSwitch} className={btn} style={buttonStyle}>SWITCH IN MANAGE BILLING</button>
             ) : (
@@ -267,6 +292,10 @@ export function PlanPicker({
                   {plan.features.map((feature) => (
                     <li key={feature}>{feature}</li>
                   ))}
+                  {freeweights?.status === "offered" &&
+                    (freeweights.plans?.[plan.id] ?? []).map((line) => (
+                      <li key={`fw-${line.key}`}>{formatPerkLine(line)}</li>
+                    ))}
                 </ul>
               </div>
               <div className="relative flex w-[150px] shrink-0 items-end p-2.5" style={{ borderLeft: `1.5px dashed ${ink.light ? "rgba(255,255,255,.3)" : "rgba(0,0,0,.25)"}` }}>

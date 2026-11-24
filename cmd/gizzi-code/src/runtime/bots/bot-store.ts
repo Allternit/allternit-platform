@@ -11,6 +11,7 @@
  * driven directly from bun tests. Phase B2 builds canonical-session chat on
  * top of `canonicalSession`; phase B3 adds routines.
  */
+import { refuseIfPersonOnly } from "@/runtime/providers/person-plan/rules"
 import { existsSync } from "node:fs"
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -65,6 +66,23 @@ export const BotPlatformLinkSchema = z.object({
   syncHash: z.string().nullable(),
 })
 
+/**
+ * The bot's runtime and brain (Harness & Bots 2.0 contract, `config.botBrain`).
+ * Absent in bot.json written before `--runtime`/`--brain` existed; other keys
+ * the platform adds are kept.
+ */
+export const BotBrainSchema = z
+  .object({
+    mode: z.string().optional(),
+    harness: z.string().optional(),
+    uhpHarnessId: z.string().optional(),
+    modelRef: z.string().optional(),
+    runtime: z.string().optional(),
+    access: z.enum(["plan", "key", "local", "credits"]).optional(),
+    autoSwitchedFrom: z.string().optional(),
+  })
+  .loose()
+
 export const BotSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string(),
@@ -76,6 +94,8 @@ export const BotSchema = z.object({
   capabilityEpoch: z.string().nullable(),
   /** Absent in bot.json written before registration existed. */
   platform: BotPlatformLinkSchema.nullable().optional(),
+  /** Absent until a runtime is picked with `--runtime` / `--brain`. */
+  botBrain: BotBrainSchema.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -84,6 +104,7 @@ export type BotAvatar = z.infer<typeof BotAvatarSchema>
 export type BotCanonicalSession = z.infer<typeof BotCanonicalSessionSchema>
 export type BotPlatformLink = z.infer<typeof BotPlatformLinkSchema>
 export type Bot = z.infer<typeof BotSchema>
+export type BotBrain = z.infer<typeof BotBrainSchema>
 
 /** Fields `updateBot` accepts — identity metadata only, never the canonical session. */
 export interface BotPatch {
@@ -91,6 +112,8 @@ export interface BotPatch {
   description?: string
   /** Pass null to clear the model pin. */
   model?: string | null
+  /** Runtime + brain record; pass null to clear it. */
+  botBrain?: BotBrain | null
 }
 
 /* -------------------------------------------------------------------------- */
@@ -222,6 +245,7 @@ export interface CreateBotInput {
   title: string
   description?: string
   model?: string | null
+  botBrain?: BotBrain | null
   /** Content for SOUL.md; a starter template is written when omitted. */
   soul?: string
 }
@@ -229,6 +253,12 @@ export interface CreateBotInput {
 export interface BotStoreOptions {
   /** Injectable clock for tests. */
   now?: Date
+}
+
+/** A bot never runs on the person's own plan (chatgpt/…, plan/…, copilot-plan/…): those answer only the person's sends. */
+function validateBotModel(model: string | null | undefined): void {
+  const refused = refuseIfPersonOnly(model, "bot")
+  if (refused) throw new BotStoreError(refused)
 }
 
 /**
@@ -241,6 +271,7 @@ export async function createBot(
   opts: BotStoreOptions = {},
 ): Promise<Bot> {
   validateBotName(input.name)
+  validateBotModel(input.model)
   const dir = botDir(input.name)
   if (existsSync(dir)) {
     throw new BotStoreError(`bot '${input.name}' already exists at ${dir}`)
@@ -256,6 +287,7 @@ export async function createBot(
     avatar: null,
     canonicalSession: null,
     capabilityEpoch: null,
+    ...(input.botBrain ? { botBrain: input.botBrain } : {}),
     createdAt: now,
     updatedAt: now,
   }
@@ -315,7 +347,11 @@ export async function updateBot(
   const bot = await readBot(dir)
   if (patch.title !== undefined) bot.title = patch.title
   if (patch.description !== undefined) bot.description = patch.description
-  if (patch.model !== undefined) bot.model = patch.model
+  if (patch.model !== undefined) {
+    validateBotModel(patch.model)
+    bot.model = patch.model
+  }
+  if (patch.botBrain !== undefined) bot.botBrain = patch.botBrain
   bot.updatedAt = (opts.now ?? new Date()).toISOString()
   await writeJsonAtomic(await botJsonPath(dir), bot)
   return bot
@@ -406,6 +442,7 @@ export async function cloneBot(
       title: source.title,
       description: source.description,
       model: source.model,
+      botBrain: source.botBrain ?? null,
       soul: soul ?? undefined,
     },
     opts,

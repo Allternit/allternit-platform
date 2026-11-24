@@ -140,9 +140,9 @@ A message that is only a file (no text) arrives as `[file: name]` so it still re
 
 Not built. Starting a Teams chat with someone the bot has no conversation reference for needs the two-tenant proactive-messaging spike, which needs a second Microsoft tenant to test against. Until then the start route answers `409 no_conversation_reference`: "Teams only lets the bot message a conversation it already has a reference for. Have the person install or message the bot in Teams first."
 
-## Vendor bots
+## Connected bots
 
-A vendor bot's `post_message` tool (see [Vendor bots use your phone](/guides/vendor-bots-use-your-phone)) calls this same start path with the directing bot, so every rule above, the channel policy and approvals apply. A refusal comes back as one plain sentence (for example "Telegram bots can only message a person who has messaged the bot first."), and a send that needs approval says "That needs the owner's approval in Allternit first."
+A connected bot's `post_message` tool (see [Connected bots use your phone](/guides/connected-bots-use-your-phone)) calls this same start path with the directing bot, so every rule above, the channel policy and approvals apply. A refusal comes back as one plain sentence (for example "Telegram bots can only message a person who has messaged the bot first."), and a send that needs approval says "That needs the owner's approval in Allternit first."
 
 ## Mail threads
 
@@ -165,4 +165,4 @@ An invalid `folder` is `400 invalid_folder`.
 
 ## Source
 
-`cmd/allternit-api/src/channel_start.rs` (start, plus `VendorStarter` for vendor bots), `channel_files.rs` (attachment parsing and caps), `channel_discord_dm.rs` (DM client). Cloud: `cmd/allternit-cloud-api/src/routes/discord_app.rs` (`/dm`) and `slack_app.rs` (`/send` with `files`). The first message uses `channel_gateway::send`; email uses `agent_email_routes::send_email_with_files`.
+`cmd/allternit-api/src/channel_start.rs` (start, plus `VendorStarter` for connected bots), `channel_files.rs` (attachment parsing and caps), `channel_discord_dm.rs` (DM client). Cloud: `cmd/allternit-cloud-api/src/routes/discord_app.rs` (`/dm`) and `slack_app.rs` (`/send` with `files`). The first message uses `channel_gateway::send`; email uses `agent_email_routes::send_email_with_files`.

@@ -7,9 +7,25 @@ import {
   LayoutIcon,
   ArrowLeftRightIcon,
 } from "@hugeicons/core-free-icons";
+import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { formatApiError } from "@/lib/api-client";
-import { CodeTemplateBlock } from "@/components/console-ui";
+import { isCloudGateway } from "@/lib/availability";
+import { useProjectContext } from "@/lib/project-context";
+import { getPlaygroundKey, gatewayBaseUrl } from "@/lib/console-gateway";
+import {
+  DEFAULT_PARAMS,
+  PLAYGROUND_MODES,
+  buildModeRequestBody,
+  imageContent,
+  isPlaygroundMode,
+  messagesToEditable,
+  paramsFromBody,
+  redactImages,
+  type PlaygroundMode,
+  type PlaygroundParams,
+} from "@/lib/playground-request";
+import { fetchReplayRequest, getSharedPrompt, type PromptBody, type SavedPrompt } from "@/lib/saved-prompts";
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
 import {
   loadModelAutoPolicy,
@@ -20,6 +36,10 @@ import {
 import { PLAYGROUND_TEMPLATES } from "@/lib/playground-templates";
 import type { ChatCompletionMessage } from "@/lib/console-gateway";
 import { MessagesEditor, type EditableMessage } from "./playground/MessagesEditor";
+import { AdvancedPanel } from "./playground/AdvancedPanel";
+import { Inspector } from "./playground/Inspector";
+import { ExportPanel } from "./playground/ExportPanel";
+import { PromptsPanel } from "./playground/PromptsPanel";
 import { ModelPicker } from "./playground/ModelPicker";
 import { OutputPane } from "./playground/OutputPane";
 import { useChatRun } from "./playground/useChatRun";
@@ -33,54 +53,50 @@ const SEGMENT_CLASS =
   "inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors";
 
 interface PersistedState {
+  /** Which route Run calls: chat completions, Responses or Messages. */
+  mode: PlaygroundMode;
   model: string;
   systemPrompt: string;
   messages: EditableMessage[];
-  temperature: number;
-  maxTokens: number;
+  params: PlaygroundParams;
 }
 
 function loadPersisted(): PersistedState {
   const fallback: PersistedState = {
+    mode: "chat",
     model: "auto",
     systemPrompt: "",
-    messages: [
-      {
-        id: "msg-initial",
-        role: "user",
-        content: "",
-      },
-    ],
-    temperature: 0.7,
-    maxTokens: 4096,
+    messages: [{ id: "msg-initial", role: "user", content: "" }],
+    params: DEFAULT_PARAMS,
   };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const parsed = JSON.parse(raw) as Partial<PersistedState> & {
+      temperature?: number;
+      maxTokens?: number;
+    };
+    const legacy: Partial<PlaygroundParams> = {};
+    if (typeof parsed.temperature === "number") legacy.temperature = parsed.temperature;
+    if (typeof parsed.maxTokens === "number") legacy.maxTokens = parsed.maxTokens;
     return {
+      mode: isPlaygroundMode(parsed.mode) ? parsed.mode : fallback.mode,
       model: typeof parsed.model === "string" ? parsed.model : fallback.model,
-      systemPrompt:
-        typeof parsed.systemPrompt === "string"
-          ? parsed.systemPrompt
-          : fallback.systemPrompt,
+      systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "",
+      // Images and tool turns are not persisted: data URLs are large and stale tool ids are useless.
       messages: Array.isArray(parsed.messages)
-        ? parsed.messages.filter(
-            (m): m is EditableMessage =>
-              !!m &&
-              typeof m.id === "string" &&
-              (m.role === "user" || m.role === "assistant") &&
-              typeof m.content === "string"
-          )
+        ? parsed.messages
+            .filter(
+              (m): m is EditableMessage =>
+                !!m &&
+                typeof m.id === "string" &&
+                (m.role === "user" || m.role === "assistant") &&
+                typeof m.content === "string" &&
+                !m.toolCalls
+            )
+            .map(({ id, role, content }) => ({ id, role, content }))
         : fallback.messages,
-      temperature:
-        typeof parsed.temperature === "number"
-          ? parsed.temperature
-          : fallback.temperature,
-      maxTokens:
-        typeof parsed.maxTokens === "number"
-          ? parsed.maxTokens
-          : fallback.maxTokens,
+      params: { ...DEFAULT_PARAMS, ...legacy, ...(parsed.params ?? {}) },
     };
   } catch {
     return fallback;
@@ -89,30 +105,44 @@ function loadPersisted(): PersistedState {
 
 function buildMessages(
   systemPrompt: string,
-  messages: EditableMessage[]
+  messages: EditableMessage[],
+  withImages: boolean
 ): ChatCompletionMessage[] {
   const out: ChatCompletionMessage[] = [];
-  if (systemPrompt.trim()) {
-    out.push({ role: "system", content: systemPrompt.trim() });
-  }
+  if (systemPrompt.trim()) out.push({ role: "system", content: systemPrompt.trim() });
   for (const m of messages) {
-    if (m.content.trim()) out.push({ role: m.role, content: m.content });
+    if (m.role === "tool") {
+      out.push({ role: "tool", content: m.content, tool_call_id: m.toolCallId });
+    } else if (m.role === "assistant") {
+      if (m.content.trim() || m.toolCalls?.length) {
+        out.push({
+          role: "assistant",
+          content: m.content.trim() ? m.content : null,
+          ...(m.toolCalls?.length ? { tool_calls: m.toolCalls } : {}),
+        });
+      }
+    } else if (m.content.trim() || (withImages && m.images?.length)) {
+      out.push({ role: "user", content: imageContent(m.content, withImages ? (m.images ?? []) : []) });
+    }
   }
   return out;
 }
 
-function gatewayBase(): string {
-  return String(
-    import.meta.env.VITE_ALLTERNIT_GATEWAY_URL || "https://api.allternit.com"
-  ).replace(/\/+$/, "");
-}
-
 export function PlaygroundPage(): React.ReactNode {
+  const location = useLocation();
+  const cloud = isCloudGateway();
+  const { project } = useProjectContext();
+  const projectId = project?.id ?? null;
+
   const [persisted, setPersisted] = useState<PersistedState>(loadPersisted);
   const [view, setView] = useState<"form" | "code">("form");
   const [compare, setCompare] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [formErrors, setFormErrors] = useState<string[]>([]);
 
   const [models, setModels] = useState<ConsoleModel[]>([]);
+  // Until the catalog arrives, "auto" can't resolve yet: not an error.
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [policy, setPolicy] = useState<ModelAutoPolicy>(loadModelAutoPolicy);
 
@@ -120,22 +150,58 @@ export function PlaygroundPage(): React.ReactNode {
   const laneA = useChatRun();
   const laneB = useChatRun();
 
+  // Responses mode: the next single run continues this stored response.
+  const [lastResponseId, setLastResponseId] = useState<string | null>(null);
+  const mode = persisted.mode;
+  const previousResponseId = mode === "responses" ? lastResponseId : null;
+
+  useEffect(() => {
+    const s = single.state;
+    if (
+      s.mode === "responses" &&
+      s.responseId?.startsWith("resp_") &&
+      (s.finishReason === "completed" || s.finishReason === "incomplete")
+    ) {
+      setLastResponseId(s.responseId);
+    }
+    // Only a new reply id should set it; clearing it by hand must stick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [single.state.responseId]);
+
+  const setMode = useCallback(
+    (next: PlaygroundMode) => {
+      setPersisted((p) => (p.mode === next ? p : { ...p, mode: next }));
+      setLastResponseId(null);
+    },
+    []
+  );
+
   const [laneBConfig, setLaneBConfig] = useState({
     model: "auto",
     temperature: 0.7,
     maxTokens: 4096,
   });
 
+  const setParams = useCallback(
+    (patch: Partial<PlaygroundParams>) =>
+      setPersisted((p) => ({ ...p, params: { ...p.params, ...patch } })),
+    []
+  );
+
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      // Image data URLs stay out of localStorage.
+      const slim = {
+        ...persisted,
+        messages: persisted.messages.map(({ images: _i, ...rest }) => rest),
+      };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
     } catch {
       // Persistence is best-effort.
     }
   }, [persisted]);
 
-  // Deep link from dashboard model cards: /playground?model=<id> preselects
-  // that model once, without touching localStorage beyond the normal sync.
+  // Deep link from dashboard model cards: /playground?model=<id>.
   useEffect(() => {
     const param = new URLSearchParams(window.location.search).get("model");
     if (param) {
@@ -143,19 +209,35 @@ export function PlaygroundPage(): React.ReactNode {
     }
   }, []);
 
+  // Live model list. On cloud it is read with the minted project key.
   useEffect(() => {
     let active = true;
-    fetchConsoleModels()
+    setModelsError(null);
+    const load = async () => {
+      let key: string | undefined;
+      if (cloud && projectId) {
+        try {
+          key = await getPlaygroundKey(projectId);
+        } catch {
+          key = undefined;
+        }
+      }
+      return fetchConsoleModels(key);
+    };
+    load()
       .then((list) => {
         if (active) setModels(list);
       })
       .catch((err) => {
         if (active) setModelsError(formatApiError(err, "model catalog"));
+      })
+      .finally(() => {
+        if (active) setModelsLoaded(true);
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [cloud, projectId]);
 
   const handlePolicyChange = useCallback((next: ModelAutoPolicy) => {
     setPolicy(next);
@@ -168,47 +250,93 @@ export function PlaygroundPage(): React.ReactNode {
     [models, policy]
   );
 
+  const selectedModel = useMemo(() => {
+    const id = resolveModel(persisted.model);
+    return models.find((m) => m.id === id) ?? null;
+  }, [models, persisted.model, resolveModel]);
+
+  // Unknown (no catalog) means allowed: only a known "no vision" model blocks images.
+  const supportsVision = selectedModel ? selectedModel.supports_vision === true : true;
+  const supportsTools = selectedModel ? selectedModel.supports_tools === true : true;
+  const hasImages = persisted.messages.some((m) => (m.images?.length ?? 0) > 0);
+  const imagesBlocked = hasImages && !supportsVision;
+
   const effectiveMessages = useMemo(
-    () => buildMessages(persisted.systemPrompt, persisted.messages),
-    [persisted.systemPrompt, persisted.messages]
+    () => buildMessages(persisted.systemPrompt, persisted.messages, supportsVision),
+    [persisted.systemPrompt, persisted.messages, supportsVision]
   );
 
   const anyRunning = single.state.running || laneA.state.running || laneB.state.running;
 
+  const runLane = useCallback(
+    async (
+      lane: typeof single,
+      model: string,
+      messages: ChatCompletionMessage[],
+      params: PlaygroundParams,
+      previous: string | null = null
+    ) => {
+      const { body, errors } = buildModeRequestBody(mode, model, messages, params, {
+        previousResponseId: previous,
+      });
+      setFormErrors(errors);
+      if (errors.length > 0) return;
+      await lane.run({ body, mode, projectId });
+    },
+    [mode, projectId]
+  );
+
   const handleRunSingle = useCallback(async () => {
     const model = resolveModel(persisted.model);
-    if (!model) {
-      return;
-    }
-    await single.run({
-      model,
-      messages: effectiveMessages,
-      temperature: persisted.temperature,
-      maxTokens: persisted.maxTokens,
-    });
-  }, [resolveModel, persisted, effectiveMessages, single]);
+    if (!model) return;
+    await runLane(single, model, effectiveMessages, persisted.params, previousResponseId);
+  }, [resolveModel, persisted, effectiveMessages, single, runLane, previousResponseId]);
+
+  const handleToolResults = useCallback(
+    async (results: Record<string, string>) => {
+      const model = resolveModel(persisted.model);
+      if (!model) return;
+      const calls = single.state.toolCalls;
+      const added: EditableMessage[] = [
+        {
+          id: `msg-${Date.now()}-a`,
+          role: "assistant",
+          content: single.state.text,
+          toolCalls: calls,
+        },
+        ...calls.map((t, i) => ({
+          id: `msg-${Date.now()}-t${i}`,
+          role: "tool" as const,
+          content: results[t.id] ?? "",
+          toolCallId: t.id,
+        })),
+      ];
+      const nextMessages = [...persisted.messages, ...added];
+      setPersisted((p) => ({ ...p, messages: nextMessages }));
+      await runLane(
+        single,
+        model,
+        buildMessages(persisted.systemPrompt, nextMessages, supportsVision),
+        persisted.params,
+        previousResponseId
+      );
+    },
+    [resolveModel, persisted, single, runLane, supportsVision, previousResponseId]
+  );
 
   const handleRunCompare = useCallback(async () => {
     const modelA = resolveModel(persisted.model);
     const modelB = resolveModel(laneBConfig.model);
-    // Sequential, per the compare-mode contract — each lane reports its own error.
-    if (modelA) {
-      await laneA.run({
-        model: modelA,
-        messages: effectiveMessages,
-        temperature: persisted.temperature,
-        maxTokens: persisted.maxTokens,
-      });
-    }
+    // Sequential, per the compare-mode contract; each lane reports its own error.
+    if (modelA) await runLane(laneA, modelA, effectiveMessages, persisted.params);
     if (modelB) {
-      await laneB.run({
-        model: modelB,
-        messages: effectiveMessages,
+      await runLane(laneB, modelB, effectiveMessages, {
+        ...persisted.params,
         temperature: laneBConfig.temperature,
         maxTokens: laneBConfig.maxTokens,
       });
     }
-  }, [resolveModel, persisted, laneBConfig, effectiveMessages, laneA, laneB]);
+  }, [resolveModel, persisted, laneBConfig, effectiveMessages, laneA, laneB, runLane]);
 
   const handleStop = useCallback(() => {
     single.stop();
@@ -216,40 +344,125 @@ export function PlaygroundPage(): React.ReactNode {
     laneB.stop();
   }, [single, laneA, laneB]);
 
-  const curlSnippet = useMemo(() => {
-    const body = {
-      model: resolveModel(persisted.model) ?? persisted.model,
-      messages: effectiveMessages,
-      temperature: persisted.temperature,
-      max_tokens: persisted.maxTokens,
-      stream: true,
+  const exportBuild = useMemo(
+    () =>
+      buildModeRequestBody(
+        mode,
+        resolveModel(persisted.model) ?? persisted.model,
+        redactImages(effectiveMessages),
+        persisted.params,
+        { previousResponseId }
+      ),
+    [mode, resolveModel, persisted, effectiveMessages, previousResponseId]
+  );
+  const modeLabel = PLAYGROUND_MODES.find((m) => m.id === mode)?.label ?? mode;
+
+  const applyTemplate = useCallback(
+    (templateId: string) => {
+      const template = PLAYGROUND_TEMPLATES.find((t) => t.id === templateId);
+      if (!template) return;
+      setPersisted((prev) => ({
+        ...prev,
+        systemPrompt: template.systemPrompt,
+        messages: [
+          { id: `msg-${Date.now()}`, role: "user", content: template.starterMessage },
+        ],
+      }));
+      setLastResponseId(null);
+      single.reset();
+    },
+    [single]
+  );
+
+  const loadBody = useCallback(
+    (body: PromptBody | Record<string, unknown>) => {
+      const rec = body as Record<string, unknown>;
+      const { systemPrompt, messages } = messagesToEditable(rec.messages);
+      const hasParams = typeof rec.params === "object" && rec.params !== null;
+      setPersisted((prev) => ({
+        mode: prev.mode,
+        model: typeof rec.model === "string" ? rec.model : prev.model,
+        systemPrompt: typeof rec.systemPrompt === "string" ? rec.systemPrompt : systemPrompt,
+        messages: messages.length > 0 ? messages : prev.messages,
+        params: hasParams
+          ? { ...DEFAULT_PARAMS, ...(rec.params as Partial<PlaygroundParams>) }
+          : paramsFromBody(rec),
+      }));
+      setLastResponseId(null);
+      single.reset();
+      setView("form");
+    },
+    [single]
+  );
+
+  // Shared prompt (/playground/shared/:token) and replay (?replay=<id> or navigation state).
+  useEffect(() => {
+    let active = true;
+    const sharedMatch = location.pathname.match(/\/playground\/shared\/([^/]+)/);
+    const search = new URLSearchParams(location.search);
+    const state = (location.state ?? {}) as { replay?: unknown; replayRequestId?: string };
+    const replayId =
+      search.get("replay") ??
+      state.replayRequestId ??
+      (typeof state.replay === "string" ? state.replay : null);
+
+    if (sharedMatch) {
+      getSharedPrompt(decodeURIComponent(sharedMatch[1]))
+        .then((p) => {
+          if (!active) return;
+          loadBody(p.body);
+          setNotice(`Loaded shared prompt "${p.name}". Nothing runs until you press Run.`);
+        })
+        .catch((err) => {
+          if (active) setNotice(formatApiError(err, "This shared prompt could not be loaded. Sign in and check the link."));
+        });
+    } else if (state.replay && typeof state.replay === "object") {
+      loadBody(state.replay as Record<string, unknown>);
+      setNotice("Loaded the request to replay. Nothing runs until you press Run.");
+    } else if (replayId) {
+      fetchReplayRequest(replayId, search.get("scope") === "org" ? "org" : "me")
+        .then((body) => {
+          if (!active) return;
+          if (body) {
+            loadBody(body);
+            setNotice("Loaded the request to replay. Nothing runs until you press Run.");
+          } else {
+            setNotice("That request's body was not stored, so it cannot be replayed. Request bodies are kept only when the project turns on body logging.");
+          }
+        })
+        .catch((err) => {
+          if (active) setNotice(formatApiError(err, "Could not load that request."));
+        });
+    }
+    return () => {
+      active = false;
     };
-    return [
-      `curl ${gatewayBase()}/v1/chat/completions \\`,
-      '  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \\',
-      '  -H "Content-Type: application/json" \\',
-      `  -d '${JSON.stringify(body, null, 2)}'`,
-    ].join("\n");
-  }, [resolveModel, persisted, effectiveMessages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search, location.key]);
 
-  const applyTemplate = useCallback((templateId: string) => {
-    const template = PLAYGROUND_TEMPLATES.find((t) => t.id === templateId);
-    if (!template) return;
-    setPersisted((prev) => ({
-      ...prev,
-      systemPrompt: template.systemPrompt,
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          role: "user",
-          content: template.starterMessage,
-        },
-      ],
-    }));
-    single.reset();
-  }, [single]);
+  const getPromptBody = useCallback(
+    (): PromptBody => ({
+      model: persisted.model,
+      systemPrompt: persisted.systemPrompt,
+      messages: buildMessages("", persisted.messages, false),
+      params: persisted.params,
+    }),
+    [persisted]
+  );
 
-  const autoUnresolved = persisted.model === "auto" && resolveModel("auto") === null;
+  const autoUnresolved = modelsLoaded && persisted.model === "auto" && resolveModel("auto") === null;
+  const cloudNeedsProject = cloud && !projectId;
+  const runDisabled =
+    effectiveMessages.length === 0 || autoUnresolved || imagesBlocked || cloudNeedsProject;
+
+  const price = {
+    promptPrice: selectedModel?.prompt_price,
+    completionPrice: selectedModel?.completion_price,
+  };
+
+  const detailsClass =
+    "rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3";
+  const summaryClass = "cursor-pointer text-[13px] font-semibold text-[var(--text-primary)]";
 
   return (
     <div className="space-y-6">
@@ -262,8 +475,39 @@ export function PlaygroundPage(): React.ReactNode {
             Try models, tune parameters, and iterate on prompts before shipping
             them to code.
           </p>
+          {isCloudGateway() ? (
+            <p className="m-0 mt-1 text-[12px] text-[var(--text-tertiary)]">
+              {mode === "chat"
+                ? "Chat completions runs use your Allternit credits. The project spend cap does not apply."
+                : "Responses and Messages runs bill the selected project and count toward its spend cap."}
+            </p>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="API"
+            className="inline-flex max-w-full overflow-x-auto rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-0.5"
+          >
+            {PLAYGROUND_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={mode === m.id}
+                disabled={anyRunning}
+                onClick={() => setMode(m.id)}
+                className={cn(
+                  SEGMENT_CLASS,
+                  "shrink-0 whitespace-nowrap disabled:cursor-not-allowed",
+                  mode === m.id
+                    ? "bg-[var(--accent-primary)] text-[var(--ui-text-inverse)]"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
           <div className="inline-flex rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-0.5">
             <button
               type="button"
@@ -308,18 +552,43 @@ export function PlaygroundPage(): React.ReactNode {
         </div>
       </div>
 
+      {notice && (
+        <p className="m-0 rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2 text-[12px] text-[var(--text-secondary)]">
+          {notice}
+        </p>
+      )}
+      {cloudNeedsProject && (
+        <p className="m-0 text-[12px] text-[var(--status-error)]">
+          Select a project to run requests. The Playground bills the selected project.
+        </p>
+      )}
+      {formErrors.map((e) => (
+        <p key={e} className="m-0 text-[12px] text-[var(--status-error)]">
+          {e}
+        </p>
+      ))}
+      {exportBuild.ignored.length > 0 && (
+        <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+          Not sent in {modeLabel} mode: {exportBuild.ignored.join(", ")}.
+        </p>
+      )}
+      {imagesBlocked && (
+        <p className="m-0 text-[12px] text-[var(--status-error)]">
+          The selected model does not accept images. Pick a model with vision or remove the images.
+        </p>
+      )}
+
       {view === "code" ? (
         <div className="space-y-4">
           <p className="m-0 text-[13px] text-[var(--text-secondary)]">
-            This is the exact request the form sends — a streaming chat
-            completion against the gateway with a virtual key.
+            This is the exact request the form sends, as code you can run.
           </p>
-          <CodeTemplateBlock language="bash" code={curlSnippet} />
+          <ExportPanel mode={mode} body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
         </div>
       ) : compare ? (
         <div className="space-y-5">
           <div className="grid gap-5 lg:grid-cols-2">
-            <div className="space-y-4 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+            <div className="min-w-0 space-y-4 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
               <ModelPicker
                 idPrefix="lane-a"
                 models={models}
@@ -330,10 +599,10 @@ export function PlaygroundPage(): React.ReactNode {
                 onPolicyChange={handlePolicyChange}
               />
               <ParamRow
-                temperature={persisted.temperature}
-                maxTokens={persisted.maxTokens}
-                onTemperature={(v) => setPersisted((p) => ({ ...p, temperature: v }))}
-                onMaxTokens={(v) => setPersisted((p) => ({ ...p, maxTokens: v }))}
+                temperature={persisted.params.temperature}
+                maxTokens={persisted.params.maxTokens}
+                onTemperature={(v) => setParams({ temperature: v })}
+                onMaxTokens={(v) => setParams({ maxTokens: v })}
                 idPrefix="lane-a"
               />
               <OutputPane
@@ -342,7 +611,7 @@ export function PlaygroundPage(): React.ReactNode {
                 idleCaption="Run to see output for this model."
               />
             </div>
-            <div className="space-y-4 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+            <div className="min-w-0 space-y-4 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
               <ModelPicker
                 idPrefix="lane-b"
                 models={models}
@@ -366,18 +635,18 @@ export function PlaygroundPage(): React.ReactNode {
               />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <RunButton
               running={laneA.state.running || laneB.state.running}
               onRun={() => void handleRunCompare()}
               onStop={handleStop}
-              disabled={effectiveMessages.length === 0 || autoUnresolved}
+              disabled={runDisabled}
             />
             {autoUnresolved && <AutoUnresolvedNote />}
           </div>
         </div>
       ) : (
-        <div className="grid items-start gap-6 lg:grid-cols-[1fr_300px]">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="min-w-0 space-y-5">
             <div className="space-y-1.5">
               <label
@@ -401,14 +670,7 @@ export function PlaygroundPage(): React.ReactNode {
             <MessagesEditor
               messages={persisted.messages}
               onChange={(messages) => setPersisted((p) => ({ ...p, messages }))}
-            />
-
-            <ParamRow
-              temperature={persisted.temperature}
-              maxTokens={persisted.maxTokens}
-              onTemperature={(v) => setPersisted((p) => ({ ...p, temperature: v }))}
-              onMaxTokens={(v) => setPersisted((p) => ({ ...p, maxTokens: v }))}
-              idPrefix="pg"
+              supportsVision={supportsVision}
             />
 
             <ModelPicker
@@ -421,12 +683,41 @@ export function PlaygroundPage(): React.ReactNode {
               onPolicyChange={handlePolicyChange}
             />
 
-            <div className="flex items-center gap-2">
+            <details className={detailsClass} open>
+              <summary className={summaryClass}>Parameters, tools and response format</summary>
+              <div className="pt-3">
+                <AdvancedPanel
+                  idPrefix="pg"
+                  params={persisted.params}
+                  onChange={setParams}
+                  supportsTools={supportsTools}
+                />
+              </div>
+            </details>
+
+            {previousResponseId && (
+              <p className="m-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--text-tertiary)]">
+                <span>
+                  Continues{" "}
+                  <code className="break-all font-mono text-[var(--text-secondary)]">{previousResponseId}</code>
+                  . Only the messages after the last assistant turn are sent.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLastResponseId(null)}
+                  className="rounded-md px-1.5 py-0.5 font-semibold text-[var(--accent-primary)] hover:bg-[var(--surface-hover)]"
+                >
+                  Start fresh
+                </button>
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
               <RunButton
                 running={single.state.running}
                 onRun={() => void handleRunSingle()}
                 onStop={handleStop}
-                disabled={effectiveMessages.length === 0 || autoUnresolved}
+                disabled={runDisabled}
               />
               {autoUnresolved && <AutoUnresolvedNote />}
             </div>
@@ -435,7 +726,36 @@ export function PlaygroundPage(): React.ReactNode {
               title="Output"
               state={single.state}
               idleCaption="Run the request to see the model's response stream here."
+              onContinueWithToolResults={(r) => void handleToolResults(r)}
             />
+
+            <details className={detailsClass}>
+              <summary className={summaryClass}>Inspector</summary>
+              <div className="pt-3">
+                <Inspector state={single.state} {...price} />
+              </div>
+            </details>
+
+            <details className={detailsClass}>
+              <summary className={summaryClass}>Export code</summary>
+              <div className="pt-3">
+                <ExportPanel mode={mode} body={exportBuild.body} baseUrl={gatewayBaseUrl()} errors={exportBuild.errors} />
+              </div>
+            </details>
+
+            <details className={detailsClass}>
+              <summary className={summaryClass}>Saved prompts and sharing</summary>
+              <div className="pt-3">
+                <PromptsPanel
+                  projectId={projectId}
+                  getBody={getPromptBody}
+                  onLoad={(p: SavedPrompt) => {
+                    loadBody(p.body);
+                    setNotice(`Opened "${p.name}".`);
+                  }}
+                />
+              </div>
+            </details>
           </div>
 
           <aside className="space-y-2 lg:sticky lg:top-0">
@@ -468,7 +788,7 @@ export function PlaygroundPage(): React.ReactNode {
 
       {anyRunning && (
         <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
-          Requests are billed to your organization through the gateway.
+          Requests are billed to {cloud ? "the selected project" : "your organization"} through the gateway.
         </p>
       )}
     </div>
@@ -566,8 +886,7 @@ function RunButton({
 function AutoUnresolvedNote(): React.ReactNode {
   return (
     <span className="text-[12px] text-[var(--status-error)]">
-      Auto policy resolves to no model — adjust the policy or pick a concrete
-      model.
+      No model matches the Auto policy. Pick a model from the list or change the policy.
     </span>
   );
 }

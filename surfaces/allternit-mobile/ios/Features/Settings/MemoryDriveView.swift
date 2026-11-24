@@ -139,6 +139,60 @@ enum MemoryDriveAPI {
         return result.purged ?? entryIds.count
     }
 
+    /// A conflict copy beside the memory it conflicts with.
+    struct ConflictPair: Identifiable, Sendable {
+        let path: String
+        let copy: Entry
+        let original: Entry?
+        let originalPath: String?
+        var id: String { "\(path)#\(copy.resolvedId)" }
+    }
+
+    /// Reads every file and pairs each `conflict_of` entry with its original.
+    static func conflicts(files: [MemoryDriveFileEntry], drive: String) async -> [ConflictPair] {
+        var contents: [(String, MemoryDriveFile)] = []
+        for f in files where !f.path.hasPrefix("twin/") && f.path.hasSuffix(".md") {
+            if let file = try? await Self.file(f.path, drive: drive) { contents.append((f.path, file)) }
+        }
+        var byId: [String: (String, Entry)] = [:]
+        for (path, file) in contents {
+            for e in entries(in: file.content) where e.conflictOf == nil { byId[e.resolvedId] = (path, e) }
+        }
+        var out: [ConflictPair] = []
+        for (path, file) in contents {
+            for e in entries(in: file.content) {
+                guard let target = e.conflictOf else { continue }
+                let o = byId[target]
+                out.append(ConflictPair(path: path, copy: e, original: o?.1, originalPath: o?.0))
+            }
+        }
+        return out
+    }
+
+    /// Rewrites one line of a file: `replacement` nil drops it. Refused (409) when the file changed.
+    static func rewrite(path: String, line: String, with replacement: String?, drive: String) async throws {
+        let file = try await Self.file(path, drive: drive)
+        var lines = file.content.components(separatedBy: "\n")
+        guard let i = lines.firstIndex(of: line) else { throw APIError.httpError(statusCode: 409, message: nil) }
+        if let replacement { lines[i] = replacement } else { lines.remove(at: i) }
+        try await save(file, content: lines.joined(separator: "\n"), drive: drive)
+    }
+
+    /// Keep the original: drop the copy.
+    static func keepOriginal(_ pair: ConflictPair, drive: String) async throws {
+        try await rewrite(path: pair.path, line: pair.copy.raw, with: nil, drive: drive)
+    }
+
+    /// Keep the copy: it becomes the memory (conflict_of removed); the original is dropped.
+    static func keepCopy(_ pair: ConflictPair, drive: String) async throws {
+        let cleaned = pair.copy.raw
+            .replacingOccurrences(of: "; conflict_of: \(pair.copy.conflictOf ?? "")", with: "")
+        try await rewrite(path: pair.path, line: pair.copy.raw, with: cleaned, drive: drive)
+        if let original = pair.original, let op = pair.originalPath {
+            try await rewrite(path: op, line: original.raw, with: nil, drive: drive)
+        }
+    }
+
     static func reindex() async throws {
         try await APIClient.shared.post(path: "memory/drive/reindex")
     }
@@ -177,6 +231,10 @@ enum MemoryDriveAPI {
         let source: String
         let added: String
         let entryId: String?
+        /// Id of the memory this entry is a conflict copy of (`conflict_of`).
+        var conflictOf: String? = nil
+        /// The whole line as stored, so a keep/discard can rewrite it.
+        var raw: String = ""
         var id: Int { index }
 
         /// The entry's id, or `entry-<sha256(text\0source\0added)>` when the line has none.
@@ -201,7 +259,7 @@ enum MemoryDriveAPI {
                 meta[String(part[..<sep.lowerBound])] = String(part[sep.upperBound...])
             }
             guard let source = meta["source"], let added = meta["added"] else { continue }
-            out.append(Entry(index: out.count, text: text, source: source, added: added, entryId: meta["id"]))
+            out.append(Entry(index: out.count, text: text, source: source, added: added, entryId: meta["id"], conflictOf: meta["conflict_of"], raw: line))
         }
         return out
     }
@@ -231,6 +289,8 @@ struct MemoryDriveView: View {
     @State private var search = ""
     @State private var notice: String? = nil
     @State private var reindexing = false
+    @State private var conflicts: [MemoryDriveAPI.ConflictPair] = []
+    @State private var resolving: String? = nil
 
     private var mount: MemoryDriveMount? { mounts.first { $0.ref == drive } }
     private var canWrite: Bool { (mount?.canWrite ?? (drive == MemoryDriveAPI.personal)) && info?.access != "read" }
@@ -247,6 +307,7 @@ struct MemoryDriveView: View {
                 Section { SettingsSignedOutView(message: "Sign in to see your Memory Drive.") }
             } else {
                 driveSection
+                conflictsSection
                 filesSection
             }
         }
@@ -307,6 +368,52 @@ struct MemoryDriveView: View {
         } footer: {
             if let notice { Text(notice) }
         }
+    }
+
+    @ViewBuilder
+    private var conflictsSection: some View {
+        if !conflicts.isEmpty {
+            Section {
+                ForEach(conflicts) { pair in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(pair.path).font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                        Text(pair.original?.text ?? "Original not found")
+                            .font(.subheadline).foregroundColor(Color("TextPrimary"))
+                        Text(pair.copy.text)
+                            .font(.subheadline).foregroundColor(Color("TextSecondary"))
+                        if canWrite {
+                            HStack {
+                                Button("Keep this") { Task { await resolve(pair, keepCopy: false) } }
+                                Spacer()
+                                Button("Keep other") { Task { await resolve(pair, keepCopy: true) } }
+                            }
+                            .font(.footnote.weight(.semibold))
+                            .buttonStyle(.borderless)
+                            .disabled(resolving != nil)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text("\(conflicts.count) \(conflicts.count == 1 ? "memory needs" : "memories need") a look")
+            } footer: {
+                Text("Two edits clashed. The first line is the memory you had; the second is the other copy.")
+            }
+        }
+    }
+
+    @MainActor
+    private func resolve(_ pair: MemoryDriveAPI.ConflictPair, keepCopy: Bool) async {
+        resolving = pair.id
+        defer { resolving = nil }
+        do {
+            if keepCopy { try await MemoryDriveAPI.keepCopy(pair, drive: drive) }
+            else { try await MemoryDriveAPI.keepOriginal(pair, drive: drive) }
+            notice = "Saved."
+        } catch {
+            notice = MemoryDriveAPI.message(error)
+        }
+        await load(mountsToo: false)
     }
 
     @ViewBuilder
@@ -391,9 +498,12 @@ struct MemoryDriveView: View {
             let list = try await MemoryDriveAPI.tree(current)
             guard current == drive else { return }
             files = list
+            let found = await MemoryDriveAPI.conflicts(files: list, drive: current)
+            if current == drive { conflicts = found }
         } catch {
             guard current == drive else { return }
             files = []
+            conflicts = []
             failure = SettingsLoadFailure.from(error)
             failureText = MemoryDriveAPI.message(error)
         }

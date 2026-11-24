@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, powerMonitor, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, net, powerMonitor, session, shell } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,15 @@ import {
 } from './auth-https-forward.js';
 import { PORTS } from './config.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
+import { isEncryptionAvailable, KeychainUnavailableError } from './os-crypt.js';
+import {
+  assertLocalEnvelopeAllowed,
+  openOsEncrypted,
+  SAFE_STORAGE_HEADER,
+  sealWithOsEncryption,
+  secretsReady,
+} from './secure-store.js';
+import { internalServiceLaunchEnvironment, loadOrCreateInternalServiceToken } from './internal-service-token.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 import {
@@ -28,8 +37,23 @@ import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
-import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import { isDesktopAuthNavigation, pairingLookupFailureMessage, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import {
+  PairingFailure,
+  pairingErrorView,
+  pairingFailureKindForStatus,
+  platformLabel,
+  type PairingPhase,
+  type PairingState,
+} from './pairing-state.js';
+import { renderPairingCard, type PairingComputerInfo } from './startup-page.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
+import {
+  clerkFrontendApiHost,
+  clerkSessionFromJwtPayload,
+  clerkTokenRequest,
+  jwtFromClerkTokenResponse,
+} from './clerk-session-refresh.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
   consumeProvisionedBootstrap,
@@ -48,7 +72,6 @@ const REQUEST_CLERK_WAIT_MS = 4_000;
 const RENDERER_CLERK_WAIT_MS = 1_500;
 // One-shot flows that need a real token wait out a full hidden refresh.
 export const FULL_CLERK_REFRESH_WAIT_MS = 25_000;
-const SAFE_STORAGE_HEADER = 'allternit-safe-storage-v1\n';
 const LOCAL_STORAGE_HEADER = 'allternit-local-aes-gcm-v1\n';
 
 /**
@@ -223,12 +246,15 @@ export class DesktopAuthManager {
   private readonly identityPath = path.join(app.getPath('userData'), 'auth', 'runtime-identity.json');
   private readonly platformKeyPath = path.join(app.getPath('userData'), 'auth', 'platform-encryption-key.bin');
   private readonly connectorSidecarTokensPath = path.join(app.getPath('userData'), 'auth', 'connector-sidecar-tokens.json');
+  private readonly internalServiceTokenPath = path.join(app.getPath('userData'), 'auth', 'internal-service-token');
   private readonly legacySessionPath = path.join(app.getPath('userData'), 'auth', 'desktop-session.json');
   private readonly accountsPath = path.join(app.getPath('userData'), 'auth', 'desktop-accounts.json');
   private signInResolver: ((session: DesktopAuthSession) => void) | null = null;
   private signInRejecter: ((error: Error) => void) | null = null;
   private startupGateResolver: ((session: DesktopAuthSession) => void) | null = null;
   private splashWindow: BrowserWindow | null = null;
+  /** Where the pairing card is; a failure is reported against this step. */
+  private pairingPhase: PairingPhase = 'welcome';
   private clerkTokenResolver: ((payload: ClerkSessionPayload) => void) | null = null;
   private clerkTokenRejecter: ((error: Error) => void) | null = null;
   private authWindow: BrowserWindow | null = null;
@@ -236,6 +262,8 @@ export class DesktopAuthManager {
   private authSessionProtocolRegistered = false;
   private oauthPopupInFlight = false;
   private pendingClerkEmail: string | null = null;
+  /** The last direct (windowless) Clerk refresh failed; logged once per streak. */
+  private directRefreshFailing = false;
   // Clerk session JWT for cloud calls. Never makes a caller wait out the
   // hidden-window refresh (see clerk-token-broker.ts).
   private readonly clerkTokens = new ClerkTokenBroker({
@@ -249,6 +277,10 @@ export class DesktopAuthManager {
   constructor() {
     ipcMain.on('auth:start-login', () => {
       void this.handleLoginRequest();
+    });
+    // Pairing card "Cancel": stop this attempt and go back to Welcome.
+    ipcMain.on('auth:cancel-login', () => {
+      this.cancelLogin();
     });
     // Kept for older startup-window bundles. Human login method selection now
     // belongs entirely to Clerk inside the desktop app.
@@ -293,7 +325,7 @@ export class DesktopAuthManager {
 
     ipcMain.handle('auth:clerk-error', (_event, message: string) => {
       log.warn('[Auth] Clerk renderer error:', message);
-      this.clerkTokenRejecter?.(new Error(message));
+      this.clerkTokenRejecter?.(new PairingFailure('sign-in', `Clerk renderer error: ${message}`));
       this.clerkTokenResolver = null;
       this.clerkTokenRejecter = null;
     });
@@ -303,6 +335,9 @@ export class DesktopAuthManager {
 
   async initialize(): Promise<void> {
     log.info('[Auth] Initializing paired runtime identity');
+    // Packaged macOS already passed the startup Keychain gate (this returns at
+    // once); a dev build unlocks lazily here only if the identity is sealed.
+    await secretsReady(this.identityPath);
     // After sleep the relay socket is usually dead without a TCP reset; the
     // watchdog would notice within ~75s, but the phone is in use right now.
     powerMonitor?.on?.('resume', () => {
@@ -346,7 +381,7 @@ export class DesktopAuthManager {
   /**
    * Connector encryption is owned by Electron main, not the frequently rebuilt
    * Rust API. Packaged builds protect this key with the signed application's
-   * `safeStorage`; development uses the existing authenticated local envelope
+   * OS encryption (os-crypt.ts); development uses the existing authenticated local envelope
    * so rebuilds cannot trigger recurring Keychain ACL prompts.
    */
   getPlatformEncryptionEnvironment(): Record<string, string> {
@@ -356,6 +391,9 @@ export class DesktopAuthManager {
         key = this.decodeSecret(fs.readFileSync(this.platformKeyPath));
         if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error('Connector key has an invalid format');
       } catch (error) {
+        // A locked Keychain is not a corrupt key: replacing it would orphan
+        // every connector secret encrypted with it.
+        if (error instanceof KeychainUnavailableError) throw error;
         log.warn('[Auth] Connector encryption key is unreadable; replacing it:', error);
         this.quarantineCorruptFile(this.platformKeyPath);
         key = null;
@@ -364,7 +402,7 @@ export class DesktopAuthManager {
     if (!key) {
       key = randomBytes(32).toString('hex');
       fs.mkdirSync(path.dirname(this.platformKeyPath), { recursive: true });
-      fs.writeFileSync(this.platformKeyPath, this.encodeSecret(key), { mode: 0o600 });
+      fs.writeFileSync(this.platformKeyPath, this.encodeSecret(key, this.platformKeyPath), { mode: 0o600 });
     }
     return { ALLTERNIT_ENCRYPTION_KEY: key };
   }
@@ -374,7 +412,7 @@ export class DesktopAuthManager {
    * connector sidecar (see cmd/allternit-api/src/open_connector_proxy.rs and
    * services/open-connector/PROVENANCE.md). Same persistence pattern as
    * getPlatformEncryptionEnvironment() above — generated once, protected by
-   * the same authenticated local envelope / OS safeStorage in packaged
+   * the same authenticated local envelope / OS encryption in packaged
    * builds, reused across restarts so existing connector connections don't
    * silently invalidate every relaunch.
    */
@@ -392,6 +430,7 @@ export class DesktopAuthManager {
           throw new Error('Connector sidecar tokens have an invalid format');
         }
       } catch (error) {
+        if (error instanceof KeychainUnavailableError) throw error;
         log.warn('[Auth] Connector sidecar tokens are unreadable; replacing them:', error);
         this.quarantineCorruptFile(this.connectorSidecarTokensPath);
         tokens = null;
@@ -400,7 +439,11 @@ export class DesktopAuthManager {
     if (!tokens) {
       tokens = { admin: randomBytes(24).toString('hex'), runtime: randomBytes(24).toString('hex') };
       fs.mkdirSync(path.dirname(this.connectorSidecarTokensPath), { recursive: true });
-      fs.writeFileSync(this.connectorSidecarTokensPath, this.encodeSecret(JSON.stringify(tokens)), { mode: 0o600 });
+      fs.writeFileSync(
+        this.connectorSidecarTokensPath,
+        this.encodeSecret(JSON.stringify(tokens), this.connectorSidecarTokensPath),
+        { mode: 0o600 },
+      );
     }
     return {
       // The sidecar binds an ephemeral port and announces it at start; ask
@@ -411,6 +454,33 @@ export class DesktopAuthManager {
       ALLTERNIT_CONNECTOR_SIDECAR_ADMIN_TOKEN: tokens.admin,
       ALLTERNIT_CONNECTOR_SIDECAR_RUNTIME_TOKEN: tokens.runtime,
     };
+  }
+
+  /**
+   * The shared ALLTERNIT_INTERNAL_SERVICE_TOKEN for allternit-api and gizzi
+   * (see internal-service-token.ts). Generated once, encrypted like the
+   * connector sidecar tokens, reused across restarts. An explicit env export
+   * wins so dev setups that already share a token keep working.
+   */
+  getInternalServiceToken(): string {
+    const explicit = process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN?.trim();
+    if (explicit) return explicit;
+    return loadOrCreateInternalServiceToken({
+      filePath: this.internalServiceTokenPath,
+      encode: (value) => this.encodeSecret(value, this.internalServiceTokenPath),
+      decode: (raw) => this.decodeSecret(raw),
+      quarantine: (filePath) => this.quarantineCorruptFile(filePath),
+      warn: (message, error) => log.warn(message, error),
+    });
+  }
+
+  /**
+   * Launch env that lets gizzi's bundled `allternit-connectors` /
+   * `allternit-tools` MCP servers reach allternit-api's `/internal/*` routes:
+   * the same token for both, plus the runtime's paired owner for gizzi.
+   */
+  getInternalServiceLaunchEnvironment(): { api: Record<string, string>; gizzi: Record<string, string> } {
+    return internalServiceLaunchEnvironment(this.getInternalServiceToken(), this.session?.userId);
   }
 
   /** Main-process-only snapshot for narrow request brokering. */
@@ -517,7 +587,7 @@ export class DesktopAuthManager {
     }
     const pairingId = url.searchParams.get('pairing_id');
     if (pairingId && this.pendingPairing?.pairing.pairingId === pairingId) {
-      this.notifySplash('auth:login-started', 'Approved — securely pairing this runtime…');
+      this.notifyPairing({ phase: 'approving' });
       void this.exchangePendingPairing(this.pendingPairing);
     }
     return true;
@@ -555,10 +625,11 @@ export class DesktopAuthManager {
     const visibleWindow = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
     visibleWindow?.setAlwaysOnTop(false);
+    this.notifyPairing({ phase: clerkToken ? 'approving' : 'signing-in' });
 
     try {
       const session = await this.startPairing(undefined, clerkToken);
-      this.notifySplash('auth:login-success', 'Runtime paired — starting Allternit…');
+      this.notifyPairing({ phase: 'paired', email: session.userEmail });
       this.signInResolver?.(session);
       this.signInResolver = null;
       this.signInRejecter = null;
@@ -566,7 +637,10 @@ export class DesktopAuthManager {
       this.startupGateResolver = null;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error('Runtime pairing failed');
-      this.notifySplash('auth:login-failed', failure.message);
+      // The raw reason goes to the log; the window shows a plain card.
+      log.warn(`[Auth] Pairing ended in phase ${this.pairingPhase}:`, failure.message);
+      const view = pairingErrorView(failure, this.pairingPhase === 'signing-in' ? 0 : 1);
+      this.notifyPairing(view ? { phase: 'error', error: view } : { phase: 'welcome' });
       this.signInRejecter?.(failure);
       this.signInResolver = null;
       this.signInRejecter = null;
@@ -574,6 +648,8 @@ export class DesktopAuthManager {
   }
 
   private async startPairing(bootstrap?: ProvisionedBootstrap, clerkToken?: string): Promise<DesktopAuthSession> {
+    // machineId() and persistIdentity() need the Keychain unlocked (packaged builds).
+    await secretsReady(this.identityPath, path.join(app.getPath('userData'), 'machine-id.bin'));
     if (this.pendingPairing) return this.pendingPairing.promise;
 
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -598,7 +674,11 @@ export class DesktopAuthManager {
       body: JSON.stringify(bootstrap ? provisionedPairingBody(pairingBody, bootstrap) : pairingBody),
     });
     if (!response.ok) {
-      throw new Error(`Allternit pairing is unavailable (${response.status})`);
+      throw new PairingFailure(
+        pairingFailureKindForStatus(response.status),
+        `Allternit pairing is unavailable (${response.status})`,
+        response.status,
+      );
     }
     const pairing = await response.json() as PairingStartResponse;
 
@@ -609,7 +689,7 @@ export class DesktopAuthManager {
       rejectPairing = reject;
     });
     const timeout = setTimeout(() => {
-      this.clearPendingPairing(new Error('Pairing expired. Choose Get started to try again.'));
+      this.clearPendingPairing(new Error('Pairing expired before it finished.'));
     }, PAIRING_TIMEOUT_MS);
     const pending: PendingPairing = {
       pairing,
@@ -640,11 +720,14 @@ export class DesktopAuthManager {
           ? { token: clerkToken, userId: '', email: this.pendingClerkEmail ?? '' }
           : await this.requestClerkSession({ hidden: false });
         this.closeAuthWindow();
+        this.notifyPairing({ phase: 'approving' });
         this.pendingClerkEmail = preferredEmail(clerk.email, emailFromJwt(clerk.token));
         this.cacheClerkToken(clerk.token);
         await this.completePairingWithClerkToken(clerk.token, pending);
       } catch (error) {
         log.warn('[Auth] Pairing with Clerk token failed:', error);
+        // A cancelled attempt can fail late; never clear a newer attempt.
+        if (this.pendingPairing !== pending) return;
         this.closeAuthWindow();
         this.clearPendingPairing(error instanceof Error ? error : new Error('Clerk sign-in failed'));
       }
@@ -664,7 +747,7 @@ export class DesktopAuthManager {
     const authDir = join(__dirname, '../renderer/auth');
     const servingDomain = this.clerkAuthServingDomain();
     if (!servingDomain) {
-      throw new Error('Clerk auth serving domain is not configured. Rebuild with NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY set.');
+      throw new PairingFailure('sign-in', 'Clerk auth serving domain is not configured. Rebuild with NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY set.');
     }
     const authSession = this.prepareAuthSession(authDir, servingDomain);
     this.authWindowBaseUrl = `https://${servingDomain}${AUTH_WINDOW_PATH_PREFIX}/`;
@@ -677,7 +760,8 @@ export class DesktopAuthManager {
       resizable: false,
       alwaysOnTop: !hidden,
       titleBarStyle: 'hiddenInset',
-      title: 'Allternit — Sign in',
+      title: 'Allternit',
+      autoHideMenuBar: true,
       parent: hidden ? undefined : this.splashWindow ?? undefined,
       modal: hidden ? false : Boolean(this.splashWindow),
       webPreferences: {
@@ -687,6 +771,9 @@ export class DesktopAuthManager {
         session: authSession,
       },
     });
+
+    window.on('page-title-updated', (event) => event.preventDefault());
+    if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
 
     window.webContents.on('console-message', (event) => {
       log.info(`[AuthRenderer] ${event.message} (${event.sourceId}:${event.lineNumber})`);
@@ -786,10 +873,13 @@ export class DesktopAuthManager {
 
     window.loadURL(this.authWindowBaseUrl).catch((err) => {
       log.error('[Auth] Failed to load auth renderer:', err);
-      this.clerkTokenRejecter?.(err instanceof Error ? err : new Error('Auth renderer failed to load'));
+      this.clerkTokenRejecter?.(new PairingFailure('sign-in', `Auth renderer failed to load: ${err instanceof Error ? err.message : String(err)}`));
     });
 
     window.on('closed', () => {
+      // closeAuthWindow() already let go of this window (and may have opened
+      // the next one): only a window the user closed ends the sign-in.
+      if (this.authWindow !== window) return;
       this.authWindow = null;
       if (this.clerkTokenRejecter) {
         this.clerkTokenRejecter(new Error('Sign-in window was closed.'));
@@ -802,12 +892,18 @@ export class DesktopAuthManager {
     return window;
   }
 
+  /**
+   * Destroy, not close: close() can be vetoed (a beforeunload in the Clerk
+   * page, a hidden window that never finished loading), and the reference was
+   * dropped either way, so a vetoed window stayed alive, hidden and orphaned.
+   * destroy() still emits 'closed'.
+   */
   private closeAuthWindow(): void {
-    log.info('[Auth] closeAuthWindow called; authWindow =', this.authWindow ? 'present' : 'null');
-    if (this.authWindow && !this.authWindow.isDestroyed()) {
-      this.authWindow.close();
-    }
+    const window = this.authWindow;
     this.authWindow = null;
+    if (!window) return;
+    log.info('[Auth] destroying the sign-in window');
+    if (!window.isDestroyed()) window.destroy();
   }
 
   /**
@@ -826,16 +922,19 @@ export class DesktopAuthManager {
    * foo-123.clerk.accounts.dev -> foo-123.accounts.dev
    */
   private clerkAuthServingDomain(): string | null {
+    const frontendApiHost = this.clerkFrontendApiHost();
+    if (!frontendApiHost) return null;
+    return frontendApiHost.endsWith('.clerk.accounts.dev')
+      ? frontendApiHost.replace('.clerk.accounts.dev', '.accounts.dev')
+      : frontendApiHost.replace(/^clerk\./, 'accounts.');
+  }
+
+  /** The Clerk Frontend API host from the publishable key in clerk-config.json. */
+  private clerkFrontendApiHost(): string | null {
     try {
       const configPath = join(__dirname, '../renderer/auth/clerk-config.json');
       const { publishableKey } = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { publishableKey?: string };
-      const encoded = publishableKey?.split('_')[2];
-      if (!encoded) return null;
-      const frontendApiHost = Buffer.from(encoded, 'base64').toString('utf8').replace(/\$+$/, '');
-      if (!frontendApiHost) return null;
-      return frontendApiHost.endsWith('.clerk.accounts.dev')
-        ? frontendApiHost.replace('.clerk.accounts.dev', '.accounts.dev')
-        : frontendApiHost.replace(/^clerk\./, 'accounts.');
+      return clerkFrontendApiHost(publishableKey);
     } catch (error) {
       log.warn('[Auth] Could not decode Clerk auth serving domain:', error);
       return null;
@@ -979,19 +1078,12 @@ export class DesktopAuthManager {
   async reconnectCloud(): Promise<CloudReconnectResult> {
     if (!this.session) return { ok: false, error: 'This device is not signed in.' };
     if (this.pendingPairing) return { ok: false, error: 'Sign-in is already in progress.' };
-    // A background refresh may own the (hidden) auth window: end it first, and
-    // wait for the window to close so its close event can't end this sign-in.
+    // A background refresh may own the (hidden) auth window: end it first.
+    // Its late 'closed' event is ignored once it is no longer authWindow.
     this.clerkTokenRejecter?.(new Error('Replaced by a visible sign-in'));
     this.clerkTokenResolver = null;
     this.clerkTokenRejecter = null;
-    const previous = this.authWindow;
-    if (previous && !previous.isDestroyed()) {
-      await new Promise<void>((resolve) => {
-        previous.once('closed', () => resolve());
-        previous.close();
-      });
-    }
-    this.authWindow = null;
+    this.closeAuthWindow();
     try {
       const clerk = await this.requestClerkSession({ hidden: false });
       this.closeAuthWindow();
@@ -1017,6 +1109,19 @@ export class DesktopAuthManager {
       if (cached) return cached;
       throw new Error('Pairing in progress');
     }
+    // One Frontend API call with the sign-in cookie, like clerk-js does. The
+    // hidden auth window is only the fallback (it loads the whole Clerk page).
+    try {
+      const token = await this.refreshClerkTokenDirect();
+      if (this.directRefreshFailing) log.info('[Auth] Clerk token refresh without a window works again');
+      this.directRefreshFailing = false;
+      return token;
+    } catch (error) {
+      if (!this.directRefreshFailing) {
+        log.warn('[Auth] Clerk token refresh without a window failed; using the hidden sign-in window:', error instanceof Error ? error.message : error);
+      }
+      this.directRefreshFailing = true;
+    }
     try {
       const clerk = await this.requestClerkSession({ hidden: true, timeoutMs: 20_000 });
       this.closeAuthWindow();
@@ -1027,6 +1132,50 @@ export class DesktopAuthManager {
       this.closeAuthWindow();
       throw error;
     }
+  }
+
+  /**
+   * POST /v1/client/sessions/<sid>/tokens on the Clerk Frontend API with the
+   * auth partition's cookies (net.fetch + bypassCustomProtocolHandlers, the
+   * same path forwardThroughAuthSession uses), keeping any rotated cookie.
+   */
+  private async refreshClerkTokenDirect(): Promise<string> {
+    const cached = this.clerkTokens.cachedToken();
+    const sessionInfo = clerkSessionFromJwtPayload(cached ? decodeJwtPayload(cached) : null);
+    if (!sessionInfo) throw new Error('no cached Clerk session token to refresh');
+    const frontendApiHost = this.clerkFrontendApiHost();
+    if (!frontendApiHost) throw new Error('Clerk Frontend API host unknown');
+    const request = clerkTokenRequest({
+      frontendApiHost,
+      originHost: this.clerkAuthServingDomain(),
+      sessionId: sessionInfo.sessionId,
+      organizationId: sessionInfo.organizationId,
+    });
+    const authSession = session.fromPartition(AUTH_SESSION_PARTITION);
+    const cookies = await authSession.cookies.get({ url: request.url });
+    if (cookies.length === 0) throw new Error('no Clerk cookies in the auth session');
+    const headers = new Headers(request.headers);
+    headers.set('Cookie', cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '));
+    const response = await net.fetch(request.url, {
+      method: request.method,
+      headers,
+      body: request.body,
+      bypassCustomProtocolHandlers: true,
+      signal: AbortSignal.timeout(15_000),
+    });
+    for (const raw of setCookiesFromResponse(response)) {
+      try {
+        await setCookieOnSession(authSession, cookieFromSetCookieHeader(raw, request.url));
+      } catch (error) {
+        log.warn('[Auth] Failed to persist Clerk Set-Cookie:', error);
+      }
+    }
+    if (!response.ok) throw new Error(`Clerk token endpoint answered ${response.status}`);
+    const token = jwtFromClerkTokenResponse(await response.json(), sessionInfo.sessionId, decodeJwtPayload);
+    if (!token) throw new Error('Clerk token response had no token for this session');
+    const email = preferredEmail(emailFromJwt(token));
+    if (email) this.applyAccountEmail(email);
+    return token;
   }
 
   private applyAccountEmail(email: string): void {
@@ -1090,7 +1239,13 @@ export class DesktopAuthManager {
     );
     log.info('[Auth] Pairing lookup status:', lookup.status);
     if (!lookup.ok) {
-      throw new Error('This pairing request is invalid or expired. Please try again.');
+      const body = await lookup.json().catch(() => ({})) as { code?: string; error?: unknown };
+      log.warn('[Auth] Pairing lookup failed:', lookup.status, body.code ?? '');
+      throw new PairingFailure(
+        pairingFailureKindForStatus(lookup.status, body.code ?? ''),
+        pairingLookupFailureMessage(lookup.status, body.code),
+        lookup.status,
+      );
     }
 
     // Approve it with the Clerk-authenticated user.
@@ -1107,8 +1262,13 @@ export class DesktopAuthManager {
     );
     log.info('[Auth] Pairing approve status:', approve.status);
     if (!approve.ok) {
-      const payload = await approve.json().catch(() => ({})) as { message?: string; error?: string };
-      throw new Error(payload.message || payload.error || 'Allternit could not approve this runtime.');
+      const payload = await approve.json().catch(() => ({})) as { code?: string; message?: string; error?: string };
+      const serverText = [payload.code, payload.message, payload.error].filter(Boolean).join(' ');
+      throw new PairingFailure(
+        pairingFailureKindForStatus(approve.status, serverText),
+        `Pairing approve failed (${approve.status}): ${serverText || 'no detail'}`,
+        approve.status,
+      );
     }
 
     // Exchange for the device credential. The exchange may return 428 if the
@@ -1161,7 +1321,12 @@ export class DesktopAuthManager {
         const payload = await response.json().catch(() => null) as { error?: string; message?: string } | null;
         log.warn('[Auth] Pairing exchange failed:', response.status, payload);
         if (response.status >= 500) return false;
-        throw new Error(payload?.message || payload?.error || `Pairing failed (${response.status})`);
+        const serverText = [payload?.message, payload?.error].filter(Boolean).join(' ');
+        throw new PairingFailure(
+          pairingFailureKindForStatus(response.status, serverText),
+          `Pairing exchange failed (${response.status}): ${serverText || 'no detail'}`,
+          response.status,
+        );
       }
 
       const exchange = await response.json() as PairingExchangeResponse;
@@ -1196,7 +1361,7 @@ export class DesktopAuthManager {
         log.warn('[Auth] Pairing poll could not reach Allternit Cloud; retrying');
         return false;
       }
-      this.clearPendingPairing(error instanceof Error ? error : new Error('Pairing failed'));
+      if (this.pendingPairing === pending) this.clearPendingPairing(error instanceof Error ? error : new Error('Pairing failed'));
       return true;
     } finally {
       pending.exchangeInFlight = false;
@@ -1253,7 +1418,7 @@ export class DesktopAuthManager {
     if (response.status === 401 || response.status === 403) {
       this.clearSession();
       await this.clearCurrentAccountFlag();
-      this.notifySplash('auth:login-failed', 'This runtime was revoked. Pair it again to continue.');
+      this.notifyPairing({ phase: 'error', error: pairingErrorView(new PairingFailure('revoked', 'Runtime revoked'))! });
       return;
     }
     if (response.status === 429) {
@@ -1270,7 +1435,7 @@ export class DesktopAuthManager {
     this.runtimeIdentity = identity;
     this.session = this.toSession(identity);
     fs.mkdirSync(path.dirname(this.identityPath), { recursive: true });
-    fs.writeFileSync(this.identityPath, this.encodeSecret(JSON.stringify(identity)));
+    fs.writeFileSync(this.identityPath, this.encodeSecret(JSON.stringify(identity), this.identityPath));
     this.persistDaemonIdentity(identity);
   }
 
@@ -1316,6 +1481,9 @@ export class DesktopAuthManager {
       }
       return parsed;
     } catch (error) {
+      // Keychain pending/denied/failing: the identity is fine, it just can't be
+      // opened right now. Quarantining it here forced a re-pair (data loss).
+      if (error instanceof KeychainUnavailableError) throw error;
       log.warn('[Auth] Runtime identity is unreadable:', error);
       this.quarantineCorruptFile(this.identityPath);
       return null;
@@ -1869,14 +2037,16 @@ export class DesktopAuthManager {
     try {
       const v = this.decodeSecret(fs.readFileSync(sealedPath)).trim();
       if (valid(v)) id = v;
-    } catch {
+    } catch (error) {
+      // A locked Keychain must not mint a second machine id for this Mac.
+      if (error instanceof KeychainUnavailableError) throw error;
       // missing or unreadable: adopt the shared copy or make a new one below
     }
     if (!id) id = readShared() ?? randomBytes(24).toString('base64url');
     if (!fs.existsSync(sealedPath)) {
       try {
         fs.mkdirSync(path.dirname(sealedPath), { recursive: true });
-        fs.writeFileSync(sealedPath, this.encodeSecret(id), { mode: 0o600 });
+        fs.writeFileSync(sealedPath, this.encodeSecret(id, sealedPath), { mode: 0o600 });
       } catch (error) {
         log.warn('[Auth] Could not seal the machine id', error);
       }
@@ -1892,13 +2062,14 @@ export class DesktopAuthManager {
     return id;
   }
 
-  private encodeSecret(value: string): Buffer {
-    // In production Electron's signed main process is the sole Keychain owner.
-    // Dev builds use authenticated local encryption so rebuilding the API or
-    // Electron does not cause repeated macOS Keychain prompts.
-    if (app.isPackaged && safeStorage.isEncryptionAvailable()) {
-      return Buffer.from(`${SAFE_STORAGE_HEADER}${safeStorage.encryptString(value).toString('base64')}`, 'utf8');
-    }
+  private encodeSecret(value: string, target: string): Buffer {
+    // In production Electron's signed main process is the sole Keychain owner
+    // (os-crypt.ts). Dev builds use authenticated local encryption so
+    // rebuilding the API or Electron does not cause repeated macOS Keychain
+    // prompts. A Keychain that is merely unavailable never downgrades or
+    // overwrites a Keychain-sealed file (assertLocalEnvelopeAllowed throws).
+    if (app.isPackaged && isEncryptionAvailable()) return sealWithOsEncryption(value);
+    assertLocalEnvelopeAllowed(target);
     const key = this.localHardwareKey();
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -1909,10 +2080,7 @@ export class DesktopAuthManager {
 
   private decodeSecret(raw: Buffer): string {
     const value = raw.toString('utf8');
-    if (value.startsWith(SAFE_STORAGE_HEADER)) {
-      if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS credential storage is unavailable');
-      return safeStorage.decryptString(Buffer.from(value.slice(SAFE_STORAGE_HEADER.length), 'base64'));
-    }
+    if (value.startsWith(SAFE_STORAGE_HEADER)) return openOsEncrypted(value);
     if (value.startsWith(LOCAL_STORAGE_HEADER)) {
       const payload = Buffer.from(value.slice(LOCAL_STORAGE_HEADER.length), 'base64');
       const iv = payload.subarray(0, 12);
@@ -1971,6 +2139,25 @@ export class DesktopAuthManager {
     }
   }
 
+  /** Stop the running pairing attempt (pairing card "Cancel"); back to Welcome. */
+  private cancelLogin(): void {
+    log.info('[Auth] Pairing cancelled from the pairing window');
+    this.clerkTokenRejecter?.(new Error('Sign-in window was closed.'));
+    this.clerkTokenResolver = null;
+    this.clerkTokenRejecter = null;
+    this.closeAuthWindow();
+    if (this.pendingPairing) this.clearPendingPairing(new Error('Sign-in window was closed.'));
+    else this.notifyPairing({ phase: 'welcome' });
+  }
+
+  /** Re-render the startup window's pairing card for `state`. */
+  private notifyPairing(state: PairingState): void {
+    this.pairingPhase = state.phase;
+    const window = this.splashWindow;
+    if (!window || window.isDestroyed()) return;
+    window.webContents.send('pairing:render', renderPairingCard(state, pairingComputerInfo()));
+  }
+
   private notifySplash(channel: string, message: string): void {
     const window = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
@@ -1979,6 +2166,13 @@ export class DesktopAuthManager {
 }
 
 export const authManager = new DesktopAuthManager();
+
+/** This computer's name and OS for the pairing card (the name pairing sends). */
+let cachedComputerInfo: PairingComputerInfo | null = null;
+export function pairingComputerInfo(): PairingComputerInfo {
+  cachedComputerInfo ??= { computerName: machineHostname(), platformLabel: platformLabel(process.platform) };
+  return cachedComputerInfo;
+}
 
 /**
  * This machine's name for runtime pairing. On macOS `os.hostname()` follows

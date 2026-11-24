@@ -770,7 +770,7 @@ async fn send_held(state: &Arc<AppState>, owner: &str, approval_id: &str) -> Val
     let text = serde_json::from_str::<Value>(&detail).ok().and_then(|d| d["text"].as_str().map(str::to_string)).unwrap_or_default();
     let Some(binding) = crate::channel_gateway::binding_for_thread(&state.db, owner, &thread) else { return json!({ "state": "no_binding" }) };
     let Some(tx) = crate::channel_transports::transport_for(state, &binding) else { return json!({ "state": "channel_offline", "provider": binding.provider }) };
-    let req = crate::channel_gateway::SendReq { text, posting_identity_id: None, correlation_id: corr, consequential: Some(true), allternit_approval_id: Some(approval_id.to_string()), files: vec![] };
+    let req = crate::channel_gateway::SendReq { text, posting_identity_id: None, correlation_id: corr, consequential: Some(true), allternit_approval_id: Some(approval_id.to_string()), files: vec![], calling_session: None };
     match crate::channel_gateway::send(&state.db, tx.as_ref(), owner, &thread, &req).await {
         Ok(crate::channel_gateway::SendOutcome::Sent { .. }) | Ok(crate::channel_gateway::SendOutcome::Replay { .. }) => json!({ "state": "sent" }),
         Ok(crate::channel_gateway::SendOutcome::Unconfirmed { .. }) => json!({ "state": "unconfirmed" }),

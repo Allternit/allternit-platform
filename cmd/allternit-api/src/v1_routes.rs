@@ -242,6 +242,45 @@ pub(crate) fn record_gizzi_permission_ask(conn: &rusqlite::Connection, user_id: 
 /// raw gizzi fields the decide route needs to relay the decision back to the
 /// runtime (requestId) and the modal renders with (toolName, patterns,
 /// always, messageId).
+/// The `metadata` of the chat stream's `tool_permission` frame: what the
+/// composer's approval card renders. Carries the ask's own card content
+/// (subscription / projectSend / summary) and, for `run_code`, the script,
+/// language and input files so the card shows what will run (the web's
+/// ComposerPermissionInfoBar / RunCodeDetail).
+pub(crate) fn tool_permission_frame_metadata(
+    session_id: &str,
+    request_id: &str,
+    props: &serde_json::Value,
+) -> serde_json::Value {
+    let permission = props.get("permission").and_then(|v| v.as_str());
+    let meta = |key: &str| {
+        props
+            .pointer(&format!("/metadata/{key}"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    let mut out = json!({
+        "sessionId": session_id,
+        "patterns": props.get("patterns").cloned().unwrap_or_else(|| json!([])),
+        "requestId": request_id,
+        "grantKey": permission.and_then(crate::task_grants::approval_grant_key),
+        // D16 cards (send / provider question) render from this.
+        "subscription": meta("subscription"),
+        // Bot-to-project sends: the card shows the project and message.
+        "projectSend": meta("projectSend"),
+        "summary": meta("summary"),
+    });
+    if permission == Some("run_code") {
+        for key in ["code", "language", "files", "code_truncated"] {
+            let value = meta(key);
+            if !value.is_null() {
+                out[key] = value;
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn gizzi_permission_approval_content(props: &serde_json::Value) -> serde_json::Value {
     let permission = props
         .get("permission")
@@ -967,11 +1006,69 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// `computer: true` (contracts/pet-offers `turnOptions.computer`), which turns
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
+///
+/// Seven prompt hints also pass. Six only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `run_kind: "background_code"` (a code run nobody
+/// watches) and `voice_tags: "on"` (spoken-tag style), plus
+/// `form_factor: "phone"` and `reply_mode: "voice"`,
+/// which the runtime reads to add its small-screen and spoken-reply prompt
+/// blocks; `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds
+/// the short `writing` card manual; and `screen_context: "available"`, sent by
+/// a client that answers `capture_screen_context` requests. The seventh is
+/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
+/// runtime uses for the date in its environment section and the
+/// `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
-    body.get("metadata")
-        .and_then(|m| m.get("tools"))
-        .filter(|t| t.is_object())
-        .map(|tools| json!({ "tools": tools.clone() }))
+    let meta = body.get("metadata")?;
+    let mut out = serde_json::Map::new();
+    if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
+        out.insert("tools".to_string(), tools.clone());
+    }
+    for (key, allowed) in VALUED_TURN_HINTS {
+        if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
+            out.insert(key.to_string(), json!(allowed));
+        }
+    }
+    if let Some(zone) = turn_time_zone(meta) {
+        out.insert("time_zone".to_string(), json!(zone));
+    }
+    if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
+}
+
+/// `stored_turn_metadata` plus the person-turn marker: the browser composer's
+/// `metadata.turn: "person"` (only that value) rides through so Cloud serves
+/// person-only models (gizzi adds `x-allternit-turn: person` from it). Never
+/// set on a bot turn, whatever the body says.
+fn gizzi_turn_metadata(body: &serde_json::Value, is_bot_turn: bool) -> Option<serde_json::Value> {
+    let mut meta = stored_turn_metadata(body);
+    if !is_bot_turn && body.pointer("/metadata/turn").and_then(|v| v.as_str()) == Some("person") {
+        let obj = meta.get_or_insert_with(|| json!({}));
+        obj["turn"] = json!("person");
+    }
+    meta
+}
+
+/// Turn hints that pass only with their one allowed value (the other hint,
+/// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
+/// agent_session_routes' message send.
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 6] = [
+    ("form_factor", "phone"),
+    ("reply_mode", "voice"),
+    ("answer_cards", "widgets"),
+    ("screen_context", "available"),
+    ("run_kind", "background_code"),
+    ("voice_tags", "on"),
+];
+
+/// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
+/// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
+/// the spelling chrono_tz names it). Separate from the opt-in `client_location`.
+pub(crate) fn turn_time_zone(meta: &serde_json::Value) -> Option<String> {
+    let zone = meta.get("time_zone")?.as_str()?.trim();
+    if zone.is_empty() || zone.len() > 64 {
+        return None;
+    }
+    zone.parse::<chrono_tz::Tz>().ok().map(|tz| tz.name().to_string())
 }
 
 /// Compose the final system-instructions block for an agent-chat request.
@@ -1132,6 +1229,12 @@ enum ToolFrameState {
     Ended,
 }
 
+/// Tools whose settled `tool_result` frame carries the part's `state.metadata`
+/// (send_user_message: text + files + push; automation: the saved automation;
+/// lookup: the validated answer card the client draws in place of a
+/// model-written one).
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings", "second_opinion", "pr_comments", "status_update", "feedback_note", "user_location", "voice_control", "end_conversation", "worktree_enter", "worktree_exit"];
+
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
 /// or `tool_error` when it settles — the wire the workspace client parses.
@@ -1151,9 +1254,16 @@ fn tool_frames_for_part(
     let status = part.pointer("/state/status").and_then(|v| v.as_str()).unwrap_or("");
     let tool_name = part.get("tool").and_then(|v| v.as_str()).unwrap_or("tool");
     let settled = status == "completed" || status == "error";
+    // G4 label: the tool part's `metadata.label` (stripped from the args by
+    // Tool.define, saved on the part), passed through unchanged on every frame.
+    let label = part
+        .pointer("/metadata/label")
+        .or_else(|| part.pointer("/state/metadata/label"))
+        .filter(|v| v.is_string())
+        .cloned();
     let mut frames = Vec::new();
     if !sent.contains_key(call_id) && (settled || status == "pending" || status == "running") {
-        frames.push(json!({
+        let mut start = json!({
             "type": "content_block_start",
             "messageId": msg_id,
             "content_block": {
@@ -1162,26 +1272,49 @@ fn tool_frames_for_part(
                 "name": tool_name,
                 "input": part.pointer("/state/input").cloned().unwrap_or_else(|| json!({})),
             },
-        }));
+        });
+        if let Some(label) = &label {
+            start["label"] = label.clone();
+            start["content_block"]["label"] = label.clone();
+        }
+        frames.push(start);
         sent.insert(call_id.to_string(), ToolFrameState::Started);
     }
     if settled {
         frames.push(if status == "completed" {
-            json!({
+            // run_code's `files[]` + `run` are added by the caller off the
+            // async stream (gizzi_chat_stream::run_code_payload_async).
+            let mut frame = json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            })
+            });
+            // Tools whose client card reads the part's metadata (send_user_message:
+            // text + files + push) get it on the live frame too, so the card shows
+            // while the reply streams, not only after a reload.
+            if METADATA_CARD_TOOLS.contains(&tool_name) {
+                if let Some(meta) = part.pointer("/state/metadata").filter(|m| m.is_object()) {
+                    frame["metadata"] = meta.clone();
+                }
+            }
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
+            frame
         } else {
-            json!({
+            let mut frame = json!({
                 "type": "tool_error",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "error": part.pointer("/state/error").and_then(|v| v.as_str()).unwrap_or("Tool execution failed"),
-            })
+            });
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
+            frame
         });
         sent.insert(call_id.to_string(), ToolFrameState::Ended);
     }
@@ -1653,10 +1786,17 @@ async fn agent_chat_bridge(
 
     // Opt-in location (Settings → Privacy → "Share my location with bots",
     // off by default): checked and rounded here, then sent to gizzi as the
-    // turn-only `turnSystem` layer — never in `system` (gizzi stores that on
-    // the user message), never stored, never logged. Invalid → ignored.
-    let location_layer = crate::client_location::from_body(&body_json, chrono::Utc::now())
-        .map(|loc| crate::client_location::location_layer(&loc));
+    // turn-only `turnSystem` layer (prose for the model) and the turn-only
+    // `turnLocation` value (structured, for lookup's "here") — never in
+    // `system` or `metadata` (gizzi stores both on the user message), never
+    // stored, never logged. Invalid → ignored.
+    let shared_location = crate::client_location::from_body(&body_json, chrono::Utc::now());
+    let location_layer = shared_location
+        .as_ref()
+        .map(crate::client_location::location_layer);
+    let turn_location = shared_location
+        .as_ref()
+        .map(crate::client_location::turn_value);
 
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
@@ -2142,12 +2282,17 @@ async fn agent_chat_bridge(
         {
             gizzi_payload["turnSystem"] = json!(layers);
         }
+        // The same location, structured, for tools (lookup "here"): turn-only
+        // like `turnSystem`, so gizzi never parses the layer's wording.
+        if let Some(value) = &turn_location {
+            gizzi_payload["turnLocation"] = value.clone();
+        }
 
         // Composer tool options (the + menu / mobile "+" sheet):
         // `metadata.tools` carries {webSearch, research, toolAccess:
         // "auto"|"on_demand"|"always", disabledConnectors: [app ids]}. gizzi
         // applies them to this turn only (SessionPrompt.resolveTools).
-        if let Some(metadata) = stored_turn_metadata(&body_json) {
+        if let Some(metadata) = gizzi_turn_metadata(&body_json, bot_marker.is_some()) {
             gizzi_payload["metadata"] = metadata;
         }
         if let Some(action_id) = &subscription_action {
@@ -2250,6 +2395,9 @@ async fn agent_chat_bridge(
         // Newest assistant usage seen on the bus (message.updated carries the
         // full message info incl. tokens) — attached to the finish frame.
         let mut last_usage: Option<serde_json::Value> = None;
+        // Memory entries the turn's memory tools touched (gizzi `memory_refs`),
+        // attached to the finish frame's metadata for the "Used memory" chip.
+        let mut last_memory_refs: Option<serde_json::Value> = None;
         // Assistant messages whose open-lane handoff frame went out.
         let mut handoffs_sent = std::collections::HashSet::<String>::new();
         // Latest context report (session.context.updated) and whether the
@@ -2394,6 +2542,9 @@ async fn agent_chat_bridge(
                             if let Some(usage) = usage_from_message_info(info) {
                                 last_usage = Some(usage);
                             }
+                            if let Some(refs) = info.get("memory_refs").filter(|r| r.as_array().is_some_and(|a| !a.is_empty())) {
+                                last_memory_refs = Some(refs.clone());
+                            }
                             // Open lane: a refused turn answered by an open
                             // model (gizzi sets `handoff` on the message).
                             if let Some(handoff) = handoff_from_message_info(info) {
@@ -2485,8 +2636,21 @@ async fn agent_chat_bridge(
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
-                            for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                            for mut frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
                                 let settled_ok = frame["type"] == "tool_result";
+                                // run_code: produced files → uploads (once per call, via
+                                // its manifest), `files[]` + `run` on the frame. The file
+                                // I/O runs on the blocking pool, not this stream.
+                                if settled_ok && frame["toolName"] == "run_code" {
+                                    if let Some(payload) = crate::gizzi_chat_stream::run_code_payload_async(
+                                        part.clone(),
+                                        Some(session_id.to_string()),
+                                    )
+                                    .await
+                                    {
+                                        crate::gizzi_chat_stream::merge_run_code_payload(&mut frame, payload);
+                                    }
+                                }
                                 yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                                 // MCP Apps: a completed tool whose connector declares a
                                 // ui:// resource also yields an `mcp_app` frame.
@@ -2625,6 +2789,16 @@ async fn agent_chat_bridge(
                             .and_then(|t| t.as_str())
                             .unwrap_or("");
 
+                        // G4: status_update's `phase` + `note` ride the status
+                        // object; forward it whole so they pass unchanged.
+                        if let Some(status) = props.get("status").filter(|s| s.get("phase").is_some() || s.get("note").is_some()) {
+                            yield Ok(sse_frame(trace_cursor).data(json!({
+                                "type": "session_status",
+                                "messageId": msg_id,
+                                "status": status,
+                            }).to_string()));
+                        }
+
                         if status_type == "busy" {
                             was_busy = true;
                         } else if status_type == "idle" && was_busy {
@@ -2705,12 +2879,18 @@ async fn agent_chat_bridge(
                             // INSERT OR IGNORE: gizzi may re-publish the ask
                             // (e.g. after an SSE reconnect replay); the row is
                             // keyed by the request id so it stays idempotent.
-                            let _ = tokio::task::spawn_blocking(
+                            let (ap_db, ap_uid, ap_rid, ap_content) = (db.clone(), uid.clone(), rid.clone(), content.clone());
+                            let fresh = tokio::task::spawn_blocking(
                                 move || -> Result<bool, rusqlite::Error> {
                                     record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)
                                 },
                             )
                             .await;
+                            // Autopilot (floor_autopilot_eval): a fresh ask from a bot thread may be
+                            // approved once by the main bot under the user's rules. Never blocks the stream.
+                            if matches!(fresh, Ok(Ok(true))) {
+                                tokio::spawn(crate::floor_autopilot_eval::after_permission_ask(ap_db, ap_uid, ap_rid, ap_content));
+                            }
 
                             yield Ok(sse_frame(trace_cursor).data(json!({
                                 "type": "tool_permission",
@@ -2723,32 +2903,7 @@ async fn agent_chat_bridge(
                                     .pointer("/tool/messageID")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(""),
-                                "metadata": {
-                                    "sessionId": session_id,
-                                    "patterns": props
-                                        .get("patterns")
-                                        .cloned()
-                                        .unwrap_or_else(|| json!([])),
-                                    "requestId": request_id,
-                                    "grantKey": props
-                                        .get("permission")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(crate::task_grants::approval_grant_key),
-                                    // D16 cards (send / provider question) render from this.
-                                    "subscription": props
-                                        .pointer("/metadata/subscription")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                    // Bot-to-project sends: the card shows the project and message.
-                                    "projectSend": props
-                                        .pointer("/metadata/projectSend")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                    "summary": props
-                                        .pointer("/metadata/summary")
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null),
-                                },
+                                "metadata": tool_permission_frame_metadata(&session_id, &request_id, &props),
                             }).to_string()));
                         }
                     }
@@ -2882,9 +3037,11 @@ async fn agent_chat_bridge(
                 }
             }
         }
-        yield Ok(sse_frame(trace_cursor).data(
-            cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
-        ));
+        let mut finish_frame = cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref());
+        if let Some(refs) = last_memory_refs.take() {
+            finish_frame["metadata"]["memoryRefs"] = refs;
+        }
+        yield Ok(sse_frame(trace_cursor).data(finish_frame.to_string()));
     };
 
     Sse::new(stream)
@@ -3084,6 +3241,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tool_permission_frame_carries_the_run_code_script() {
+        // Seen live 2026-11-12: the Chat approval card for run_code showed only
+        // "python" because the frame dropped the ask's code/files.
+        let props = json!({
+            "permission": "run_code",
+            "patterns": ["python"],
+            "metadata": {
+                "language": "python",
+                "files": ["sales.csv"],
+                "code": "import pandas as pd",
+                "code_truncated": false
+            }
+        });
+        let m = tool_permission_frame_metadata("ses_1", "per_1", &props);
+        assert_eq!(m["code"], "import pandas as pd");
+        assert_eq!(m["files"], json!(["sales.csv"]));
+        assert_eq!(m["language"], "python");
+        assert_eq!(m["code_truncated"], false);
+        assert_eq!(m["patterns"], json!(["python"]));
+        assert_eq!(m["requestId"], "per_1");
+        // Other permissions do not copy arbitrary ask metadata.
+        let bash = json!({ "permission": "bash", "patterns": ["ls"], "metadata": { "code": "x" } });
+        assert!(tool_permission_frame_metadata("ses_1", "per_2", &bash).get("code").is_none());
+    }
+
+    #[test]
     fn handoff_frame_reads_the_message_handoff() {
         let info = json!({"id": "m", "role": "assistant", "handoff": {"from": "claude-cli/claude-sonnet", "to": "allternit/glm-5.3-flash-open"}});
         assert_eq!(
@@ -3122,6 +3305,90 @@ mod tests {
             .map(|loc| crate::client_location::location_layer(&loc))
             .unwrap();
         assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
+
+    #[test]
+    fn turn_location_is_sent_only_when_location_sharing_is_on() {
+        let at = chrono::Utc::now().to_rfc3339();
+        // Sharing on: the client adds `client_location` to the send.
+        let on = json!({
+            "chatId": "c1",
+            "message": "weather here?",
+            "metadata": { "tools": { "webSearch": true } },
+            "client_location": {
+                "lat": 40.712_8, "lon": -74.006_1, "accuracy_m": 30.0,
+                "time_zone": "America/New_York", "at": at
+            }
+        });
+        let value = crate::client_location::from_body(&on, chrono::Utc::now())
+            .map(|loc| crate::client_location::turn_value(&loc))
+            .unwrap();
+        assert_eq!(value["lat"], json!(40.71));
+        assert_eq!(value["lon"], json!(-74.01));
+        assert_eq!(value["accuracy_m"], json!(1000));
+        assert_eq!(value["time_zone"], json!("America/New_York"));
+        assert!(value["at"].as_str().is_some_and(|s| !s.is_empty()));
+        // It never rides the stored metadata, and needs no turn hint.
+        assert_eq!(stored_turn_metadata(&on).unwrap(), json!({ "tools": { "webSearch": true } }));
+        // Sharing off (no `client_location`), or a location the server rejects: no value.
+        let off = json!({ "chatId": "c1", "message": "weather here?", "metadata": { "client_location": { "lat": 40.71, "lon": -74.01 } } });
+        assert_eq!(crate::client_location::from_body(&off, chrono::Utc::now()), None);
+        let stale = json!({ "client_location": {
+            "lat": 40.71, "lon": -74.01, "time_zone": "America/New_York", "at": "2020-01-01T00:00:00Z"
+        } });
+        assert_eq!(crate::client_location::from_body(&stale, chrono::Utc::now()), None);
+    }
+
+    #[test]
+    fn agent_chat_forwards_person_turn() {
+        let body = json!({ "metadata": { "turn": "person", "tools": { "webSearch": true } } });
+        assert_eq!(
+            gizzi_turn_metadata(&body, false).unwrap(),
+            json!({ "tools": { "webSearch": true }, "turn": "person" })
+        );
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "person" } }), false), Some(json!({ "turn": "person" })));
+        // Only the exact value passes.
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "bot" } }), false), None);
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": true } }), false), None);
+    }
+
+    #[test]
+    fn bot_path_never_sets_person_turn() {
+        let body = json!({ "metadata": { "turn": "person", "tools": { "webSearch": true } } });
+        assert_eq!(gizzi_turn_metadata(&body, true).unwrap(), json!({ "tools": { "webSearch": true } }));
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "person" } }), true), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_keeps_only_the_prompt_hints() {
+        let body = json!({ "metadata": {
+            "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+            "time_zone": "America/Chicago", "screen_context": "available", "x": 1
+        } });
+        let kept = stored_turn_metadata(&body).unwrap();
+        assert_eq!(
+            kept,
+            json!({
+                "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+                "time_zone": "America/Chicago", "screen_context": "available"
+            })
+        );
+        assert_eq!(kept.as_object().unwrap().len(), 5);
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 7, "six valued hints plus time_zone");
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all", "screen_context": "yes" } });
+        assert_eq!(stored_turn_metadata(&body), None);
+        let body = json!({ "metadata": { "answer_cards": true } });
+        assert_eq!(stored_turn_metadata(&body), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_only_a_valid_time_zone() {
+        let zone = |value: serde_json::Value| stored_turn_metadata(&json!({ "metadata": { "time_zone": value } }));
+        assert_eq!(zone(json!("Asia/Kolkata")), Some(json!({ "time_zone": "Asia/Kolkata" })));
+        assert_eq!(zone(json!(" UTC ")), Some(json!({ "time_zone": "UTC" })));
+        for bad in [json!("Mars/Olympus"), json!("+05:00"), json!(""), json!(7), json!("A".repeat(65))] {
+            assert_eq!(zone(bad), None);
+        }
     }
 
     #[test]
@@ -3215,6 +3482,34 @@ mod tests {
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
         assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+    }
+
+    #[test]
+    fn send_user_message_frames_carry_the_card_metadata() {
+        let mut sent = HashMap::new();
+        let meta = json!({"text": "Report ready", "files": [{"name": "r.md", "size": 5, "display": "render"}], "push": "sent"});
+        let done = json!({"type": "tool", "tool": "send_user_message", "callID": "c2",
+            "state": {"status": "completed", "input": {}, "output": "Delivered", "metadata": meta}});
+        let frames = tool_frames_for_part(&done, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["text"], "Report ready");
+        assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
+
+        // The automation card (Cancel needs the routine id) shows live too.
+        let mut sent = HashMap::new();
+        let meta = json!({"action": "create", "status": "ok", "automation": {"id": "routine-1", "title": "Call the bank"}});
+        let made = json!({"type": "tool", "tool": "automation", "callID": "c4",
+            "state": {"status": "completed", "input": {}, "output": "Scheduled", "metadata": meta}});
+        let frames = tool_frames_for_part(&made, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["automation"]["id"], "routine-1");
+
+        // Other tools keep their frames unchanged (no metadata leak).
+        let mut sent = HashMap::new();
+        let other = json!({"type": "tool", "tool": "bash", "callID": "c3",
+            "state": {"status": "completed", "input": {}, "output": "ok", "metadata": {"secret": 1}}});
+        let frames = tool_frames_for_part(&other, "m1", &mut sent);
+        assert!(frames.iter().find(|f| f["type"] == "tool_result").unwrap().get("metadata").is_none());
     }
 
     #[test]
@@ -3351,7 +3646,7 @@ mod tests {
 
     #[test]
     fn compose_sends_the_shapes_with_each_response_style() {
-        for style in ["concise", "balanced", "detailed", "custom"] {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
             let out = compose_system_instructions(None, None, None, None, style, "", None, None).unwrap();
             assert!(out.contains("## Answer shape\n"), "{style}");
             assert!(out.contains("Open with the bottom line"), "{style}");

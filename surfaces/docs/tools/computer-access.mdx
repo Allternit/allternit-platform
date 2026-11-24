@@ -1,0 +1,84 @@
+---
+title: 'Computer access tiers'
+description: 'How an agent gets access to an app on a computer: resolve_access, request_access, the read, click and full tiers, category ceilings, session grants and the access routes'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED. Code: `cmd/allternit-api/src/computer_access.rs`, checked inside `assess()` in `computer_safety.rs`. Contract: the `access` block of `contracts/computer-toolset/allternit-computer-v2.json`.
+</Note>
+
+## Overview
+
+On this device and on paired computers, an agent starts with read-only access to every app. To do more it asks for a tier on a named app, and the person approves. The grant lasts one session. Sandbox and cloud computers need no grant and always run at full.
+
+Two members of the [computer toolset](/tools/computer-toolset) handle this. They run inside allternit-api, not in the driver.
+
+| Member | What it does |
+|---|---|
+| `resolve_access` | Looks up apps by name or bundle id. Returns each app's name, `bundle_id`, `category` and `max_tier`. An app it can't identify comes back as category `unknown` with `max_tier` `read`. |
+| `request_access` | Asks the person for a tier on one or more apps, with a short `reason` (at most 200 characters). The person always approves. |
+
+Call `resolve_access` first, then `request_access` for the lowest tier that does the job.
+
+## Tiers
+
+| Tier | Allows |
+|---|---|
+| `read` | See the app: `screenshot`, `zoom`, `read_ui`, `verify`, `cursor_position`, `wait`. |
+| `click` | Everything in `read`, plus pointer input: the click members, `left_click_drag`, `left_mouse_down` and `left_mouse_up`, `scroll`, `mouse_move`, and `act` ops `click`, `menu` and `focus`. |
+| `full` | Everything in `click`, plus keyboard and text entry: `type`, `key`, `hold_key`, `act` ops `set_value`, `select` and `press`, `run_batch` steps that use them, and `use_credential`. |
+
+## Category ceilings
+
+Each app has a category. The category sets the highest tier it can be granted.
+
+| Category | Ceiling |
+|---|---|
+| Browsers | `read` |
+| Terminals | `click` |
+| IDEs | `click` |
+| Other identified apps | `full` |
+| Unknown (can't be identified) | `read` |
+
+A `request_access` above the ceiling fails with `tier_exceeded`. Browsers stay at `read` on purpose: use the [browser toolset](/tools/computer-toolset) for web pages. Terminals and IDEs stay at `click` so an agent can't type commands into them through the screen. Use the shell tool, which has its own rules.
+
+## How a call is checked
+
+`assess()` checks every call against the app that is actually in front, not the app the model named.
+
+- A call above that app's granted tier fails with `access_required`. The model is told to call `resolve_access`, then `request_access`.
+- An app with no grant is read only.
+- An app that can't be identified fails closed: it counts as `unknown`, ceiling `read`.
+- On Linux the frontmost app comes from `xdotool`. On Windows it comes from the driver or PowerShell. When the platform can't name the app at all, the tier check is skipped and the step is written to the audit log as such. The deny lists, the irreversible-action rules and the rest of [computer-use safety](/tools/computer-safety) still apply.
+- Deny lists win over grants. An app on a computer's deny list can't be unlocked by `request_access`.
+- Existing `allow_apps` entries in the computer's safety settings count as standing grants, capped at the category ceiling.
+
+## Grants
+
+- A grant lasts for one session and at most 12 hours.
+- Grants are held in memory only. Nothing is stored, so restarting allternit-api clears them and there is no migration.
+- The person sees each ask as a card in the app with the apps, the tier and the reason. Allternit Desktop, ai.allternit.com (including the phone layout), m.allternit.com, iOS and Gizzi Code all show it.
+- **Settings, Computers, Safety** lists the current grants with a **Revoke** button.
+
+### Routes
+
+```http
+GET    /api/v1/computers/:id/access
+DELETE /api/v1/computers/:id/access
+```
+
+`GET` lists the live grants for the computer (app, bundle id, tier, expiry). `DELETE` revokes them. Both need the same access to the computer as the other computer routes.
+
+## Error codes
+
+| Code | Meaning |
+|---|---|
+| `access_required` | The app in front has no grant for this action's tier. Call `resolve_access`, then `request_access`. |
+| `tier_exceeded` | The requested tier is above the app's category ceiling (`max_tier`). |
+
+## Related pages
+
+- [Computer toolset](/tools/computer-toolset)
+- [Computer-use safety](/tools/computer-safety)
+- [Action review](/tools/action-review)
+- [Computers and apps](/guides/computers-and-apps)

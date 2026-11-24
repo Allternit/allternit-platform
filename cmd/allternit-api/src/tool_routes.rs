@@ -1479,7 +1479,7 @@ async fn list_tools() -> impl IntoResponse {
     let mut tools = vec![
         json!({ "id": "shell.exec", "name": "Shell Execute", "description": "Execute shell commands" }),
         json!({ "id": "bash", "name": "Bash", "description": "Execute a shell command with optional timeout and restart control" }),
-        json!({ "id": "code_execution", "name": "Code Execution", "description": "Execute code in a sandboxed environment" }),
+        json!({ "id": "code_execution", "name": "Code Execution", "description": "Runs code on the API host. Requires host control. Not sandboxed." }),
         json!({ "id": "file.read", "name": "File Read", "description": "Read file contents" }),
         json!({ "id": "file.write", "name": "File Write", "description": "Write to a file" }),
         json!({ "id": "file.list", "name": "File List", "description": "List directory contents" }),

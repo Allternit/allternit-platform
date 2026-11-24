@@ -37,9 +37,17 @@ struct ProjectsListView: View {
     /// Which kind the New project sheet is making.
     @State private var newMode: LibraryProject.Mode = .chat
     @State private var isCreateSheetPresented = false
+    @State private var isSearching = false
+    @State private var showExplainer = false
+    /// "Cover and pad": the detail opens with its cover and pad editor.
+    @State private var openLookProjectId: String? = nil
+    @ReducedMotion private var reduced
     @State private var editing: LibraryProject? = nil
     @State private var deleting: LibraryProject? = nil
     @State private var createError: String? = nil
+    /// Bot picked in New project with a computer: the bot form opens next.
+    @State private var opensBotForm = false
+    @State private var isNewBotPresented = false
 
     /// The Show menu (ProjectView CATEGORY_CONFIG, the kinds iOS has).
     private enum Category: String, CaseIterable {
@@ -118,26 +126,35 @@ struct ProjectsListView: View {
         NavigationStack(path: $navigator.path) {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) { filterMenu }
+                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) {
+                        ProjectsPill(searching: $isSearching, filtersActive: filtersOn) { filterPopover }
+                    }
+                    if isSearching || !searchText.isEmpty {
+                        ProjectsSearchField(query: $searchText)
+                    }
                     HStack(spacing: 8) {
                         countsLine
-                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
                     content
                 }
-                LibraryFloatingBar(
-                    query: $searchText,
-                    placeholder: "Search projects",
-                    newLabel: "New project",
-                    wide: .new,
-                    newMenu: {
-                        Button { startNew(.chat) } label: { Label("Chat project", systemImage: "bubble.left") }
-                        Button { startNew(.code) } label: { Label("Code project", systemImage: "chevron.left.forwardslash.chevron.right") }
-                        Button { startNew(.design) } label: { Label("Design project", systemImage: "paintpalette") }
-                    }
-                )
+                ProjectsNewButton { newProjectTapped() }
+                    .padding(.bottom, 14)
+                if showExplainer {
+                    ProjectsExplainerCard(
+                        onOK: {
+                            ProjectsExplainer.markSeen()
+                            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = false }
+                            startNew(.chat)
+                        },
+                        onDismiss: {
+                            ProjectsExplainer.markSeen()
+                            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = false }
+                        }
+                    )
+                    .zIndex(5)
+                }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -145,7 +162,8 @@ struct ProjectsListView: View {
                 ProjectDetailView(
                     project: project,
                     onNewChat: onNewChatInProject,
-                    onOpenChat: onOpenChat
+                    onOpenChat: onOpenChat,
+                    opensLook: project.id == openLookProjectId
                 )
             }
             .navigationDestination(item: $codeDetail) { project in
@@ -156,16 +174,29 @@ struct ProjectsListView: View {
             }
         }
         .environmentObject(navigator)
-        .sheet(isPresented: $isCreateSheetPresented) {
-            NewProjectSheet { title, description in
-                createProject(mode: newMode, title: title, description: description)
-            }
+        .sheet(isPresented: $isCreateSheetPresented, onDismiss: {
+            if opensBotForm { opensBotForm = false; isNewBotPresented = true }
+        }) {
+            NewProjectSheet(
+                onCreate: { title, description in
+                    createProject(mode: newMode, title: title, description: description)
+                },
+                onCreateAndStyle: { title, description in
+                    createProject(mode: .chat, title: title, description: description, opensLook: true)
+                },
+                kind: $newMode
+            )
+        }
+        .sheet(isPresented: $isNewBotPresented) {
+            NewBotSheet { _ in Task { await library.load() } }
         }
         .fullScreenCover(item: $designCanvas) { project in
             DesignProjectCanvasView(project: project, createdHere: project.id == newDesignProjectId)
         }
         .sheet(item: $editing) { project in
-            EditProjectDetailsSheet(project: project) { title, description in
+            EditProjectDetailsSheet(project: project, onCoverAndPad: project.cowork.map { cowork in
+                { detailProject = cowork; openLookProjectId = cowork.id }
+            }) { title, description in
                 try await library.updateDetails(project, title: title, description: description)
             }
         }
@@ -187,16 +218,20 @@ struct ProjectsListView: View {
                 detailProject = projectStore.projects.first
             }
             // `-open-new-project` (DEBUG only): opens the create sheet.
-            if launchArgumentEnabled("open-new-project") {
+            if launchArgumentEnabled("open-new-project") || launchArgumentEnabled("calm-new-project") {
                 isCreateSheetPresented = true
             }
+            // `-calm-projects-pill` (DEBUG only): opens the search + filter pill's popover state (search field shown).
+            if launchArgumentEnabled("calm-projects-pill") { isSearching = true }
+            // `-calm-projects-explainer` (DEBUG only): shows the explainer regardless of the once-key.
+            if launchArgumentEnabled("calm-projects-explainer") { showExplainer = true }
         }
         #endif
     }
 
     private func openMenu() {
         if let onOpenSidebar {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptics.medium()
             onOpenSidebar()
         } else {
             dismiss()
@@ -207,29 +242,39 @@ struct ProjectsListView: View {
 
     private var filtersOn: Bool { category != .all || sortBy != .recent || showArchived }
 
-    private var filterMenu: some View {
-        Menu {
-            Section("Show") {
-                ForEach(Category.allCases, id: \.self) { option in
-                    checked("\(option.label)  \(count(option))", on: category == option) { category = option }
-                }
+    /// Popover behind the pill's filter button: List · Grid · Deck (the shared
+    /// OverviewLayoutSwitch) plus the existing Show · Sort by · Archived filters.
+    private var filterPopover: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(.bottom, 6)
+            Text("Show").font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary"))
+            ForEach(Category.allCases, id: \.self) { option in
+                checked("\(option.label)  \(count(option))", on: category == option) { category = option }
             }
-            Section("Sort by") {
-                ForEach(Sort.allCases, id: \.self) { option in
-                    checked(option.label, on: sortBy == option) { sortBy = option }
-                }
+            Text("Sort by").font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+            ForEach(Sort.allCases, id: \.self) { option in
+                checked(option.label, on: sortBy == option) { sortBy = option }
             }
             checked("Show archived  \(allProjects.filter(\.isArchived).count)", on: showArchived) { showArchived.toggle() }
-        } label: {
-            PhoneFilterButtonLabel(active: filtersOn)
+                .padding(.top, 6)
         }
-        .accessibilityLabel("Filter and sort")
+        .padding(16)
+        .frame(minWidth: 260)
     }
 
     private func checked(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            if on { Label(title, systemImage: "checkmark") } else { Text(title) }
+            HStack {
+                Text(title).font(.system(size: 15))
+                Spacer(minLength: 12)
+                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Content
@@ -249,18 +294,46 @@ struct ProjectsListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Errors lead the list (a failed bot load must not blank the rest).
+    /// No computer: the computer's lists are empty by design, not failing.
+    private var noComputer: Bool {
+        library.noComputer || ProjectsLibraryStore.isNoComputerMessage(projectStore.loadError)
+    }
+
+    /// Notices lead the list (a failed bot load must not blank the rest).
+    /// No computer reads as one neutral line; a real failure is a calm line
+    /// with Retry. Nothing here is red.
     @ViewBuilder
     private var errors: some View {
-        let botError = (category == .all || category == .bot) ? library.botProjectsError : nil
-        let codeError = (category == .all || category == .code || category == .design) ? library.workspaceProjectsError : nil
-        let loadError = projectStore.loadError.map { _ in "Couldn't load projects. Check the connection and try again." }
-        ForEach([loadError, botError, codeError, createError].compactMap { $0 }.uniqued(), id: \.self) { message in
-            Text(message)
+        let noComputer = self.noComputer
+        let botError = (category == .all || category == .bot) && !noComputer ? library.botProjectsError : nil
+        let codeError = (category == .all || category == .code || category == .design) && !noComputer ? library.workspaceProjectsError : nil
+        let loadError = projectStore.loadError.flatMap { message in
+            noComputer || ProjectsLibraryStore.isNoComputerMessage(message) ? nil : "Couldn't load projects. \(FriendlyErrorMessage.from(message))"
+        }
+        let accountError = noComputer ? library.accountProjectsError : nil
+        if noComputer {
+            NeedsComputerLine(text: "Files and runs need a computer")
+                .padding(.top, 12)
+                .padding(.horizontal, 4)
+        }
+        let failures = [loadError, botError, codeError, accountError].compactMap { $0 }.uniqued()
+        if !failures.isEmpty {
+            FriendlyInlineStateView(
+                style: .offline,
+                icon: "wifi.exclamationmark",
+                title: "Couldn't load everything",
+                message: failures.joined(separator: " "),
+                actionTitle: "Retry",
+                action: { Task { await reload() } }
+            )
+            .padding(.top, 8)
+        }
+        if let createError {
+            Text(createError)
                 .font(.system(size: 13))
-                .foregroundColor(Theme.statusError)
+                .foregroundColor(Color("TextSecondary"))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 16)
+                .padding(.top, 12)
                 .padding(.horizontal, 4)
         }
     }
@@ -352,13 +425,17 @@ struct ProjectsListView: View {
     // MARK: - Actions
 
     private func open(_ project: LibraryProject) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if let cowork = project.cowork {
             detailProject = cowork
         } else if let row = project.workspace {
             if project.mode == .design { designCanvas = row } else { codeDetail = row }
         } else if let bot = project.bot {
             navigator.path = [.project(bot)]
+        } else if project.account != nil {
+            // Code, design and bot work runs on a computer: with none, the
+            // gate explains; with one, the row is on its way there.
+            if noComputer { ComputeStatusStore.shared.noteComputeRequired() } else { Task { await reload() } }
         }
     }
 
@@ -367,18 +444,43 @@ struct ProjectsListView: View {
         await library.load()
     }
 
+    /// First tap shows the explainer; OK opens create. Later taps open create.
+    private func newProjectTapped() {
+        if ProjectsExplainer.seen() {
+            startNew(.chat)
+        } else {
+            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = true }
+        }
+    }
+
     private func startNew(_ mode: LibraryProject.Mode) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         newMode = mode
         isCreateSheetPresented = true
     }
 
     /// New projects open straight into their project page (Claude parity).
-    private func createProject(mode: LibraryProject.Mode, title: String, description: String?) {
+    private func createProject(mode: LibraryProject.Mode, title: String, description: String?, opensLook: Bool = false) {
+        // Bot with a computer: the bot form takes over once this sheet closes.
+        if mode == .bot && !noComputer {
+            opensBotForm = true
+            return
+        }
         Task {
             do {
                 createError = nil
-                if mode == .code {
+                if mode == .bot {
+                    // Saved to the account; the brief runs once a computer connects.
+                    try await library.createAccountProject(kind: .bot, title: title, description: nil, brief: description)
+                } else if noComputer {
+                    let created = try await library.createAccountProject(
+                        kind: AccountProject.Kind(rawValue: mode.rawValue) ?? .chat, title: title, description: description
+                    )
+                    if created.mode == .chat, let row = library.projects(from: projectStore.projects).first(where: { $0.account?.id == created.id }) {
+                        if opensLook { openLookProjectId = created.id }
+                        detailProject = row.cowork
+                    }
+                } else if mode == .code {
                     let created = try await library.createCodeProject(title: title, description: description)
                     newCodeProjectId = created.id
                     codeDetail = created
@@ -387,10 +489,12 @@ struct ProjectsListView: View {
                     newDesignProjectId = created.id
                     designCanvas = created
                 } else {
-                    detailProject = try await projectStore.createProject(title: title, description: description)
+                    let created = try await projectStore.createProject(title: title, description: description)
+                    if opensLook { openLookProjectId = created.id }
+                    detailProject = created
                 }
             } catch {
-                createError = "Couldn't create the project: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                createError = "Couldn't create the project. \(FriendlyErrorMessage.from(error))"
             }
         }
     }
@@ -400,7 +504,7 @@ struct ProjectsListView: View {
             do {
                 try await library.delete(project)
             } catch {
-                createError = "Couldn't delete \(project.title): \(FriendlyErrorMessage.from(error.localizedDescription))"
+                createError = "Couldn't delete \(project.title). \(FriendlyErrorMessage.from(error))"
             }
         }
     }
@@ -413,6 +517,45 @@ private extension Array where Element: Hashable {
     }
 }
 
+// MARK: - Folder look cache
+
+/// In-memory folder looks for the cards, loaded lazily per visible card.
+/// A missing record, a failed request or no paired computer all leave nil and
+/// the card keeps the default palette cover; nothing here blocks the list.
+@MainActor
+final class ProjectLooksCache: ObservableObject {
+    static let shared = ProjectLooksCache()
+
+    private var looks: [String: Appearance] = [:]
+    private var settled: Set<String> = []
+    private var inFlight: [String: Task<Appearance?, Never>] = [:]
+    private let client = AppearanceClient()
+
+    /// The web's key for the same project: `["project", <mode>, <id>]`, where
+    /// chat projects keep their pre-fold `cowork` mode (web
+    /// `projectWorkspaceMode`) so iOS reads the look the web saved.
+    static func key(for project: LibraryProject) -> [String] {
+        let mode = project.mode == .chat ? "cowork" : project.mode.rawValue
+        return AppearanceClient.projectKey(mode: mode, id: project.nativeId)
+    }
+
+    func cached(_ key: [String]) -> Appearance? { looks[AppearanceClient.keyString(key)] }
+
+    func appearance(for key: [String]) async -> Appearance? {
+        let id = AppearanceClient.keyString(key)
+        if settled.contains(id) { return looks[id] }
+        if let task = inFlight[id] { return await task.value }
+        let client = self.client
+        let task = Task { try? await client.appearance(key: key) }
+        inFlight[id] = task
+        let result = await task.value
+        inFlight[id] = nil
+        // A failed request is not cached, so the next visible pass retries it.
+        if result != nil { looks[id] = result; settled.insert(id) }
+        return result
+    }
+}
+
 // MARK: - Card
 
 /// One project on the overview (SessionOverview OverviewCard, phone sizes):
@@ -422,6 +565,9 @@ private struct ProjectOverviewCard<Menu: View>: View {
     let variant: LibraryLayout
     @ViewBuilder let menu: () -> Menu
     let onOpen: () -> Void
+
+    @State private var appearance: Appearance?
+    @ScaledMetric(relativeTo: .body) private var listCoverWidth: CGFloat = 30
 
     private var icon: String {
         switch project.mode {
@@ -493,7 +639,13 @@ private struct ProjectOverviewCard<Menu: View>: View {
         }
         .buttonStyle(.plain)
         .contextMenu { menu() }
-        .accessibilityLabel(project.title + (tone.map { ", \($0.label)" } ?? ""))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(project.title + ", \(modeLabel) project" + (tone.map { ", \($0.label)" } ?? ""))
+        .task(id: project.id) {
+            let key = ProjectLooksCache.key(for: project)
+            if let hit = ProjectLooksCache.shared.cached(key) { appearance = hit; return }
+            appearance = await ProjectLooksCache.shared.appearance(for: key)
+        }
     }
 
     private var moreButton: some View {
@@ -505,14 +657,6 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More for \(project.title)")
-    }
-
-    private var iconView: some View {
-        Image(systemName: icon)
-            .font(.system(size: 15))
-            .foregroundColor(Color("TextSecondary"))
-            .frame(width: 24, height: 24)
-            .padding(.trailing, 4)
     }
 
     private var note: some View {
@@ -535,7 +679,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                     .lineLimit(1)
             }
         }
-        .font(.system(size: 12.5))
+        .font(.caption)
         .foregroundColor(Color("TextTertiary"))
     }
 
@@ -548,7 +692,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
                 }
                 Text(tone.label).lineLimit(1)
             }
-            .font(.system(size: 11.5, weight: .semibold))
+            .font(.caption2.weight(.semibold))
             .foregroundColor(tone.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -558,7 +702,7 @@ private struct ProjectOverviewCard<Menu: View>: View {
 
     private var meta: some View {
         Text(libraryShortAgo(project.updatedAt))
-            .font(.system(size: 12).monospacedDigit())
+            .font(.caption.monospacedDigit())
             .foregroundColor(Color("TextTertiary"))
     }
 
@@ -566,15 +710,17 @@ private struct ProjectOverviewCard<Menu: View>: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    iconView
+                    FolderCoverView(title: project.title, mode: project.mode.rawValue,
+                                    appearance: appearance, width: listCoverWidth, flat: true)
+                        .accessibilityHidden(true)
                     Text(project.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                 }
                 note
                 Text(preview)
-                    .font(.system(size: 12.5))
+                    .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)
             }
@@ -591,26 +737,32 @@ private struct ProjectOverviewCard<Menu: View>: View {
         .frame(minHeight: 60)
     }
 
+    /// Folder cover on top, then the title, note, preview line and status.
     private var tile: some View {
         let deck = variant == .deck
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 4) {
-                iconView
-                Text(project.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 4) {
+                Spacer(minLength: 0)
+                FolderCoverView(title: project.title, mode: project.mode.rawValue,
+                                appearance: appearance, width: deck ? 132 : 100)
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
                 moreButton
+                    .padding(.trailing, -4)
             }
+            Text(project.title)
+                .font(deck ? .headline : .subheadline.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
             note.padding(.top, 2)
             Text(preview)
-                .font(.system(size: 14))
-                .lineSpacing(3)
+                .font(deck ? .subheadline : .footnote)
                 .foregroundColor(Color("TextSecondary"))
+                .lineLimit(deck ? 3 : 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
-                .padding(.top, 6)
+                .padding(.top, 4)
             HStack(spacing: 6) {
                 pill
                 Spacer(minLength: 0)
@@ -619,7 +771,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
             .padding(.top, 4)
         }
         .padding(variant == .grid ? 12 : 16)
-        .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : 200)
+        .frame(width: deck ? OverviewDeck.width : nil, height: deck ? OverviewDeck.height : nil)
+        .frame(minHeight: deck ? nil : 250, alignment: .top)
     }
 }
 
@@ -628,6 +781,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
 /// EditProjectDetailsDialog: name and description.
 private struct EditProjectDetailsSheet: View {
     let project: LibraryProject
+    /// Nil for projects without a pad (code, design, bot).
+    let onCoverAndPad: (() -> Void)?
     let onSave: (String, String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -636,8 +791,9 @@ private struct EditProjectDetailsSheet: View {
     @State private var saving = false
     @State private var error: String? = nil
 
-    init(project: LibraryProject, onSave: @escaping (String, String) async throws -> Void) {
+    init(project: LibraryProject, onCoverAndPad: (() -> Void)? = nil, onSave: @escaping (String, String) async throws -> Void) {
         self.project = project
+        self.onCoverAndPad = onCoverAndPad
         self.onSave = onSave
         _title = State(initialValue: project.title)
         _details = State(initialValue: project.description ?? "")
@@ -646,6 +802,34 @@ private struct EditProjectDetailsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack {
+                        Spacer()
+                        FolderCoverView(title: title.isEmpty ? project.title : title, mode: project.mode.rawValue,
+                                        appearance: nil, width: 110, flat: true)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Folder cover for \(title)")
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                if let onCoverAndPad {
+                    Section {
+                        Button {
+                            Haptics.light()
+                            dismiss()
+                            onCoverAndPad()
+                        } label: {
+                            HStack {
+                                Text("Cover and pad")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .foregroundColor(Color("TextPrimary"))
+                    }
+                }
                 Section("Name") {
                     TextField("Project name", text: $title)
                 }
@@ -659,17 +843,22 @@ private struct EditProjectDetailsSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color("BgPrimary"))
-            .navigationTitle("Edit details")
+            .navigationTitle("Project settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
+                    Button { save() } label: { Image(systemName: "checkmark") }
+                        .accessibilityLabel("Save")
                         .disabled(saving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .onAppear { Haptics.light() }
+        .presentationDetents([.large])
     }
 
     private func save() {

@@ -23,6 +23,9 @@ struct AllternitApp: App {
 
     init() {
         AuthManager.shared.configure(publishableKey: AppConfig.clerkPublishableKey)
+        // In-App Purchase: listen for transactions (renewals, Ask to Buy,
+        // refunds) from launch and post any left unfinished (StoreKit 2).
+        StorePurchaseManager.shared.start()
         // Must register before this initializer returns — BGTaskScheduler
         // requires the handler in place before app launch completes.
         BackgroundRefreshManager.register()
@@ -34,36 +37,53 @@ struct AllternitApp: App {
         // onboarding gate (the ChatView site clears the dictation/priming
         // flags). Clearing here means THIS launch lands on page 1.
         PhoneSurfacesGallery.installIfRequested()
+        CloudCreditsGallery.installIfRequested()
         if launchArgumentEnabled("reset-onboarding") {
             OnboardingStore.shared.reset()
         }
         #endif
     }
 
+    @ViewBuilder
+    private var rootContent: some View {
+        if authManager.isClerkConfigured || shouldSkipAuth {
+            // Only inject Clerk.shared when the SDK was actually
+            // configured; otherwise `Clerk.shared` traps on access.
+            if authManager.isClerkConfigured {
+                gatedContent
+                    // ClerkKitUI views (AuthView) read Clerk from the environment.
+                    .environment(Clerk.shared)
+            } else {
+                gatedContent
+            }
+        } else {
+            // Publishable key placeholder not filled in — LoginGateView
+            // shows the setup hint instead of crashing on Clerk.shared.
+            // DEBUG: still expose the skip-auth affordance so the app can
+            // be opened without a configured Clerk app.
+            LoginGateView(onSkipAuth: {
+                skipAuthRequested = true
+            })
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if authManager.isClerkConfigured || shouldSkipAuth {
-                    // Only inject Clerk.shared when the SDK was actually
-                    // configured; otherwise `Clerk.shared` traps on access.
-                    if authManager.isClerkConfigured {
-                        gatedContent
-                            // ClerkKitUI views (AuthView) read Clerk from the environment.
-                            .environment(Clerk.shared)
-                    } else {
-                        gatedContent
-                    }
+                #if DEBUG
+                if CalmGallery.isEnabled {
+                    // -calm-gallery: glass, haptics and motion presets (phone calm I1).
+                    CalmGalleryView()
                 } else {
-                    // Publishable key placeholder not filled in — LoginGateView
-                    // shows the setup hint instead of crashing on Clerk.shared.
-                    // DEBUG: still expose the skip-auth affordance so the app can
-                    // be opened without a configured Clerk app.
-                    LoginGateView(onSkipAuth: {
-                        skipAuthRequested = true
-                    })
+                    rootContent
                 }
+                #else
+                rootContent
+                #endif
             }
             .environmentObject(authManager)
+            // Settings → App → Open links in: one openURL handler for the whole app.
+            .openLinksHandler()
             .reviewPrompt()
             .sheet(isPresented: $authManager.isPresentingAuth, onDismiss: {
                 authManager.refreshAuthState()
@@ -72,9 +92,7 @@ struct AllternitApp: App {
                 // SwiftUI may evaluate the content view eagerly. Avoid touching
                 // Clerk.shared unless the SDK is actually configured.
                 if authManager.isClerkConfigured {
-                    AuthView(
-                        mode: authManager.authEntryMode == .signUp ? .signUp : .signIn
-                    )
+                    clerkAuthSheet
                         .environment(Clerk.shared)
                         // Skip Clerk's Create organization step (AuthManager).
                         .task(id: Clerk.shared.session?.status) {
@@ -85,16 +103,24 @@ struct AllternitApp: App {
                 }
             }
             .onAppear { AppLockStore.shared.appeared() }
+            .task { await AgentAskStore.shared.refreshAll() }
             .onChange(of: scenePhase) { _, newPhase in
                 AppLockStore.shared.sceneChanged(newPhase)
                 if newPhase == .active {
                     authManager.refreshAuthState()
                     PushNotificationManager.shared.clearBadge()
+                    // Voice keys saved to the account: newer copy wins (no-op while off).
+                    Task { await VoiceKeySync.shared.sync() }
+                    // Pending asks (incl. async ones that arrived while closed).
+                    Task { await AgentAskStore.shared.refreshAll() }
                 } else if newPhase == .background {
                     BackgroundRefreshManager.scheduleNextRefresh()
                 }
             }
             .onOpenURL { url in
+                // A shortcut a bot ran finished (x-callback,
+                // allternit://shortcut-result): answer that run, open nothing.
+                if ShortcutBridge.shared.handle(url: url) { return }
                 // Universal Links (ai./m.allternit.com) and allternit:// open
                 // in the workspace; anything else is a document to view.
                 if DeepLinkRouter.shared.open(url: url) { return }
@@ -116,6 +142,18 @@ struct AllternitApp: App {
                     LocalDocumentView(fileURL: url)
                 }
             }
+        }
+    }
+
+    /// Clerk's sheet; after "Switch account" (I14b) it opens with that
+    /// account's email filled in (`AuthView.initialIdentifier`).
+    @ViewBuilder
+    private var clerkAuthSheet: some View {
+        let view = AuthView(mode: authManager.authEntryMode == .signUp ? .signUp : .signIn)
+        if authManager.authEntryMode == .signIn, let email = authManager.pendingSignInEmail {
+            view.initialIdentifier(email)
+        } else {
+            view
         }
     }
 
@@ -193,10 +231,43 @@ struct AllternitApp: App {
         launchArgumentEnabled("autosend")
             || launchArgumentEnabled("open-settings")
             || launchArgumentEnabled("open-settings-memory")
+            || launchArgumentEnabled("open-settings-connections")
             || launchArgumentEnabled("open-settings-platform")
             || launchArgumentEnabled("open-settings-data")
             || launchArgumentEnabled("open-settings-brain-spike")
+            || launchArgumentEnabled(LaunchArgument.calmSettings)
+            || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
+            || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
+            || launchArgumentEnabled(LaunchArgument.calmUsage)
+            || launchArgumentEnabled("open-usage")
             || launchArgumentEnabled("open-plus-sheet")
+            || launchArgumentEnabled("open-plus-permission")
+            || launchArgumentEnabled("open-plus-computer")
+            || launchArgumentEnabled("open-chat-menu")
+            || launchArgumentEnabled("calm-drawer-open")
+            || launchArgumentEnabled("calm-gallery")
+            || launchArgumentEnabled("calm-chip")
+            || launchArgumentEnabled("calm-deck-open")
+            || launchArgumentEnabled("calm-swipe-tip")
+            || launchArgumentEnabled("calm-fan")
+            || launchArgumentEnabled("calm-shelf")
+            || launchArgumentEnabled("calm-recents-select")
+            || launchArgumentEnabled("calm-overview-menu")
+            || launchArgumentEnabled("calm-search")
+            || launchArgumentEnabled("calm-jump-button")
+            || launchArgumentEnabled("calm-code-sessions")
+            || launchArgumentValue("calm-code-filter") != nil
+            || launchArgumentEnabled("calm-code-scheduled")
+            || launchArgumentEnabled("calm-code-start")
+            || launchArgumentEnabled("calm-code-device")
+            || launchArgumentEnabled("calm-code-connect")
+            || launchArgumentEnabled("calm-projects-pill")
+            || launchArgumentEnabled("calm-projects-explainer")
+            || launchArgumentEnabled("calm-new-project")
+            || launchArgumentValue("calm-artifacts-filter") != nil
+            || launchArgumentEnabled("calm-artifacts-list")
+            || CalmArtifactLaunch.isActive
+            || launchArgumentEnabled("open-mode-dial")
             || launchArgumentEnabled("open-incognito")
             || launchArgumentEnabled("enable-agent-mode")
             || launchArgumentEnabled("open-agent-sheet")
@@ -278,6 +349,7 @@ struct LoginGateView: View {
                     .foregroundStyle(palette.ink)
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("loginHeadline")
                 Text("Chat, build and work together.\nAll in one place.")
                     .font(.system(size: 13))
                     .multilineTextAlignment(.center)
@@ -296,6 +368,10 @@ struct LoginGateView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(Color(hex: "#141413").ignoresSafeArea())
         .environment(\.colorScheme, .dark)
+        // "Switch account" (I14b): the email form opens with that account's
+        // email filled in; Continue hands it to Clerk (`initialIdentifier`).
+        .onAppear(perform: applyPendingEmail)
+        .onChange(of: auth.pendingSignInEmail) { _, _ in applyPendingEmail() }
         .sheet(item: $emailAuth, onDismiss: { auth.refreshAuthState() }) { start in
             if auth.isClerkConfigured {
                 emailAuthView(start.identifier)
@@ -353,6 +429,7 @@ struct LoginGateView: View {
                 } else {
                     Button("Continue with email") { showEmail = true; emailFocused = true }
                         .buttonStyle(SignInButtonStyle(kind: .outline))
+                        .accessibilityIdentifier("loginContinueEmail")
                 }
             }
             .disabled(!auth.isClerkConfigured)
@@ -365,8 +442,7 @@ struct LoginGateView: View {
             #if DEBUG
             if let onSkipAuth {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onSkipAuth()
                 }) {
                     Text("Continue without signing in")
@@ -377,10 +453,11 @@ struct LoginGateView: View {
                         .padding(.vertical, 12)
                 }
                 .padding(.top, 4)
+                .accessibilityIdentifier("loginSkipAuth")
             }
             #endif
 
-            Text("By continuing you agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
+            Text("By continuing you confirm you are 18 or older and agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
                 .font(.system(size: 11.5))
                 .lineSpacing(2)
                 .foregroundStyle(palette.mut)
@@ -424,6 +501,12 @@ struct LoginGateView: View {
             }
             .buttonStyle(SignInButtonStyle(kind: .ink))
         }
+    }
+
+    private func applyPendingEmail() {
+        guard let pending = auth.pendingSignInEmail, !pending.isEmpty else { return }
+        email = pending
+        showEmail = true
     }
 
     private func continueWithEmail() {

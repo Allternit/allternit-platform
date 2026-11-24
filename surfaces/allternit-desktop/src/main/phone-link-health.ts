@@ -336,3 +336,91 @@ export class PhoneLinkHealthMonitor {
     return health;
   }
 }
+
+// ── Phone Use route health (docs/contracts/CONTRACT-phone-use-2026-11-16.md §5) ──
+// The states above are the iCTRL helper's. The Phone Use router (phone-route.ts)
+// reports one of these per route instead; the helper becomes the legacy-helper
+// route and keeps its own states underneath.
+
+/** Every "needs you" code, in contract order. */
+export const NEEDS_YOU_CODES = [
+  'MAC_LOCKED',
+  'MIRROR_WINDOW_HIDDEN',
+  'MIRROR_PHONE_IN_USE',
+  'BROADCAST_STOPPED',
+  'BT_NOT_PAIRED',
+  'ASSISTIVETOUCH_OFF',
+  'FULL_KEYBOARD_ACCESS_OFF',
+  'APP_NOT_FOREGROUND',
+  'SHORTCUT_NOT_INSTALLED',
+  'HELPER_RETIRING',
+  'MAC_PERMISSION_MISSING',
+  'DEVICE_ACCESS_OFF',
+] as const;
+
+export type NeedsYouCode = (typeof NEEDS_YOU_CODES)[number];
+
+/**
+ * The one fixed sentence per code, shown to the user as-is (contract §5).
+ * `<name>` and `<date>` are filled by needsYou().
+ */
+export const NEEDS_YOU_SENTENCES: Readonly<Record<NeedsYouCode, string>> = {
+  MAC_LOCKED: 'Unlock your Mac so I can use your iPhone through it.',
+  MIRROR_WINDOW_HIDDEN: 'Open iPhone Mirroring on your Mac and keep its window showing.',
+  MIRROR_PHONE_IN_USE: 'Your iPhone is in use right now. Lock it, or I can use another way if you let me.',
+  BROADCAST_STOPPED: 'Start the screen broadcast in the Allternit app on your iPhone.',
+  BT_NOT_PAIRED: 'Pair your iPhone with this Bluetooth keyboard and mouse in Settings > Bluetooth.',
+  ASSISTIVETOUCH_OFF: 'Turn on AssistiveTouch on your iPhone (Settings > Accessibility > Touch).',
+  FULL_KEYBOARD_ACCESS_OFF: 'Turn on Full Keyboard Access on your iPhone (Settings > Accessibility > Keyboards).',
+  APP_NOT_FOREGROUND: 'Open the Allternit app on your iPhone.',
+  SHORTCUT_NOT_INSTALLED: 'Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions.',
+  HELPER_RETIRING: 'The old Allternit helper is being retired. Switch to the app and set up a new route before <date>.',
+  MAC_PERMISSION_MISSING: 'Allow Allternit in System Settings > Privacy & Security > <name> on your Mac.',
+  DEVICE_ACCESS_OFF: 'Turn on <name> in the Allternit app on your iPhone (Settings > Device Access).',
+};
+
+export interface NeedsYou {
+  code: NeedsYouCode;
+  /** The user-facing sentence from NEEDS_YOU_SENTENCES, filled. */
+  message: string;
+}
+
+export function isNeedsYouCode(value: unknown): value is NeedsYouCode {
+  return typeof value === 'string' && (NEEDS_YOU_CODES as readonly string[]).includes(value);
+}
+
+/** A needs-you state with its sentence. `date` is an ISO date, shown as e.g. "December 16, 2026". */
+export function needsYou(code: NeedsYouCode, fill: { name?: string; date?: string } = {}): NeedsYou {
+  let message = NEEDS_YOU_SENTENCES[code];
+  if (fill.name !== undefined) message = message.replace('<name>', fill.name);
+  if (fill.date !== undefined) {
+    const at = Date.parse(fill.date);
+    const shown = Number.isFinite(at)
+      ? new Date(at).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' })
+      : fill.date;
+    message = message.replace('<date>', shown);
+  }
+  return { code, message };
+}
+
+/**
+ * One route's health for one phone:
+ *   healthy      the route can act now (`notice` = something the user should know, the call still runs)
+ *   needs_you    the route exists for this phone but the user must do something first
+ *   unavailable  the route is not set up for this phone, or not built yet; the router skips it silently
+ */
+export type RouteHealth =
+  | { state: 'healthy'; notice?: NeedsYou }
+  | { state: 'needs_you'; needsYou: NeedsYou }
+  | { state: 'unavailable'; reason: string };
+
+/**
+ * The legacy-helper route (the iCTRL helper, deprecated). `online` is the link
+ * lane's own answer (healthIsOnline / phoneWorks above). Once a removal date is
+ * set (plan decision D2), every healthy answer carries HELPER_RETIRING as a
+ * notice: existing links keep working until that date.
+ */
+export function legacyHelperRouteHealth(online: boolean, retiresAt?: string | null): RouteHealth {
+  if (!online) return { state: 'unavailable', reason: 'No iPhone helper link answers for this phone.' };
+  return retiresAt ? { state: 'healthy', notice: needsYou('HELPER_RETIRING', { date: retiresAt }) } : { state: 'healthy' };
+}

@@ -1,0 +1,52 @@
+---
+title: "Computer pricing"
+description: "Plans with an included hosted computer, hours past the included hours, the credits computer's hourly price, sleep, and what happens at zero credits."
+---
+
+Current prices are shown in the app and returned by `GET /api/v1/account/compute-status`. The tables below are the current prices and can change.
+
+## Plans with an included computer
+
+Each plan includes one hosted computer.
+
+| Plan | Per month | Computer | Included running hours |
+| --- | --- | --- | --- |
+| Plus | $20 | 2 cores, 4 GB, 20 GB disk | 200 a month |
+| Max | $100 | 4 cores, 8 GB, 40 GB disk | not decided yet |
+| Ultra | $200 | 8 cores, 16 GB, 80 GB disk | not decided yet |
+
+These are the base sizes. A plan's computer can burst to twice the cores and memory (Plus 4 cores and 8 GB, Max 8 cores and 16 GB, Ultra 16 cores and 32 GB). No computer runs with less than 4 GB.
+
+Hours for Max and Ultra are not final.
+
+### Hours past the included hours
+
+Running hours count per calendar month in UTC. Only running time counts: a sleeping or stopped computer uses no hours. The count starts at zero on the first day of each month.
+
+After the included hours, each extra hour is paid from your credit balance at the computer-on-credits running price, $0.10 an hour, charged per minute (rate divided by 60 each minute). Plus includes 200 hours, so the 201st hour is the first one paid from credits.
+
+When your credits reach $0 while you are past the included hours, the plan's computer stops and the account shows as suspended. Nothing is deleted, because the plan still pays for the computer. It can run again when you add credits, or when the next month starts and the included hours begin again. We email you when it stops, and when about 24 hours and about 2 hours of extra running time are left on your credits.
+
+Used, included and extra hours for the month are returned in `computer.hours` by [`GET /api/v1/account/compute-status`](/api/account-compute-status).
+
+## Computer on credits
+
+A hosted computer billed per minute from your credit balance (rate divided by 60 each minute).
+
+| Size | Running | Stopped |
+| --- | --- | --- |
+| Medium, 2 cores, 8 GB | $0.10 an hour | $0.005 an hour |
+
+Starting needs at least $5 in credits. See [Computer on credits](/guides/credits-computer).
+
+## Sleep
+
+Hosted computers sleep after 30 idle minutes and wake when an agent needs them. Hosted computers run on Allternit servers. When they are full, a new computer can't start until room frees up, and the app says so.
+
+## When credits reach $0
+
+For a computer on credits: the computer stops and the account shows as suspended. The disk is kept for 14 days, then the computer is deleted. We email you when it stops, after 7 days and the day before it is deleted. Add credits and start the computer again to keep it.
+
+## Free accounts
+
+Free accounts do not get a hosted computer. Free accounts can link their own computer, chat through a plan or API key they connect, or chat with Allternit Cloud models after buying credits. See [Choose how agents run](/guides/choose-how-agents-run).

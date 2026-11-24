@@ -48,8 +48,12 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.5.4: pet offers: Error help notifications for app error/crash dialogs.
   // Same release key (cert 3f8a3951…). versionCode 14.
   '0.5.4': '727dfbdea87ebb859a6e5a58c286bea11a6c6e556165efe7c1d6d7504e77204b',
+  // 0.7.2: screen share (MediaProjection + taps) and Control my iPhone by Bluetooth,
+  // gate G1 of the android-screen-share plan (2026-11-18). Same release key
+  // (cert 3f8a3951…). versionCode 18. 16 KB page-aligned native libraries.
+  '0.7.2': '38f4cf28a67ccc79883421eaa6ef2d1599ae3786f5b036497e0ef4a155966b5c',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.5.4';
+export const ANDROID_HELPER_VERSION: string | null = '0.7.2';
 
 export interface AndroidHelperManifest {
   version: string;

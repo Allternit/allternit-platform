@@ -1,0 +1,95 @@
+---
+title: 'Phone shell behaviour'
+description: 'The rules the phone layout and the iPhone app share: composer deck, permission, mic, computer chip, calm errors, Code status signals, accounts and the menu hold.'
+---
+
+The phone layout (`allternit-ai`, `src/fabric-session/phone/`) and the iPhone app follow one contract. This page is for developers. For the user view, see [Composer](/guides/chat-composer#on-a-phone) and [Code session list](/guides/code-session-list).
+
+## Contract
+
+| Id | Rule |
+| --- | --- |
+| C1 | The deck band is open at rest and joins the composer card's bottom edge. A swipe down of 24 px on the card folds it; a swipe up of 24 px opens it. The choice persists per device. On phones (iOS, the native Android app, the ai.allternit.com phone layout, the PWA) the grey **tools** tab shows only while the band is folded, and tapping it opens the band. An open band has no tab between it and the card; screen readers fold it with the band's **Hide tools** action. On Desktop, which has no swipe, the tab stays visible and folds or opens the band. |
+| C2 | The permission pill is removed. **+** shows Permission and a page with Auto, Ask, Read-only, from the same store. |
+| C3 | The mic sits left of the voice button and toggles dictation. A failure shows one calm line. |
+| C4 | The computer chip sits above the composer in Chat, Bots and Code. **✕** shrinks it to a dot on **+**. |
+| C5 | No status number or code in UI text. |
+| C6 | Code status order: Archived, Needs input, Working, Ready for review, Done. |
+| C7 | An account row is a person or one of their orgs. Tapping an org switches with Clerk `setActive`. Tapping a remembered person signs out and opens sign-in with that email filled in. |
+| C8 | Menu hold: tap opens the drawer, hold 0.35 s opens the fan, a further 0.4 s on Bots opens the shelf. |
+
+## Deck open rules
+
+`src/components/composer-deck/deck-open.ts` exports `deckOpen({ focused, hasDraft, swipedOpen, modeArmed })`, `nextSwipedOpen(current, startY, endY)` and `DECK_SWIPE_PX` (24). `ComposerDeck` takes `bandOpen` and `onFocusWithinChange`. Hosts with no deck are unchanged.
+
+## Code status signals (C6)
+
+The node owns the signals, in `cmd/allternit-api/src/code_session_status.rs`. They are session metadata keys that clients cannot write: `needsInput`, `needsInputAt`, `needsInputKind` (`permission` or `question`), `readyForReview`, `readyForReviewAt`. Absent means false.
+
+- `needsInput` is set when a permission or question is asked, and cleared when no ask is pending, on error, on idle and on run start.
+- `readyForReview` is set on idle when the run sent `file.edited` or finished an edit, write, patch or artifact tool. It clears on run start or on `PATCH { markReviewed: true }`.
+- Clients send `markReviewed` when a session is opened. The web does so only while the Code screen is visible: `markSessionReviewed(id)`, `registerCodeViewOpen()`, `sessionApi.markReviewed(id)`.
+- An always-on watcher reads the gizzi `/v1/global/event` stream, so flags update with no client connected. Open clients get `session_flags` events on `/agent-sessions/sync`. The sync stream closes when the gizzi stream ends so clients reconnect.
+- Web helpers: `codeSessionFilterStatus`, `isNeedsInput`, `needsInputKind`, `isReadyForReview` in `src/lib/code-session-status.ts`. Filters live in `components/session-overview/code-session-filter.ts`.
+- Known limits: events while the node is disconnected are missed, and a thread placed on another server takes its flags from that server.
+
+## Menu hold state machine
+
+`src/fabric-session/phone/menu-hold.ts` is a pure reducer: `reduceMenuHold(state, event)` returns `{ state, effects }`. Constants: `HOLD_MS` 350, `BOTS_HOLD_MS` 400, `HOLD_SLOP_PX` 12. State is `{ overlay: 'none' | 'fan' | 'shelf', pressing, held, target, drawerOpen, lockedMode, openedByAction }`. Events: `press`, `release`, `cancel`, `holdTimer`, `botsHoldTimer`, `move`, `pick`, `openFan`, `drawerOpened`, `drawerClosed`, `outsideTap`, `setLocked`. `menuOverlayVisible` never reports the fan or shelf while the drawer is open. `menu-hold.test.ts` includes a random-walk test of that rule. `phone-nav.ts` routes events through `dispatchMenuHold`. With `lockedMode` (the Bots app), a hold goes straight to the shelf.
+
+## Calm errors
+
+`src/lib/errors/plain-error.ts` exports `plainErrorText(err, fallback)`, `stripStatusText`, `statusSentence` and `isComputeGateRefusal`. Use `plainErrorText` for any text shown to a person. A 409 `compute_required` or 428 on a read shows no error: the list shows its empty state and the chip shows. On an action the compute gate sheet opens as before. Chip state comes from `useComputerChip()` in `PhoneNoComputer.tsx`.
+
+## Haptics and accounts
+
+`src/lib/haptics.ts` exports `light`, `medium`, `soft`, `selection`, `setHapticsEnabled` and `isHapticsEnabled`; the setting key is `allternit.haptics`. `src/lib/accounts/switch-account.ts` holds `switchAccount` and `switchAccountCleanup`. Clerk single-session mode is still on for the instance, so there are no session rows. Switching person is done with remembered accounts instead (below).
+
+## Remembered accounts
+
+Accounts used on a device are remembered under one key on both platforms: `allternit-remembered-accounts-v1`. On the web and PWA it is in `localStorage`. On iOS it is in `UserDefaults`. The value holds, for up to 8 accounts, a user id, name, email, avatar, plan label and last-used time. It never holds a password or a token. It is not in the per-person key list, so the person cleanup and sign-out keep it.
+
+- **Web:** `rememberAccount` runs on every Clerk-confirmed sign-in. Helpers: `listRememberedAccounts`, `forgetRememberedAccount`, `setRememberedAccountPlan`, `switchToRememberedAccount`, `addAnotherAccount`, `signInUrlFor`, `readSignInEmail`, `useRememberedAccounts`. A switch runs the person cleanup, then `signOut({ redirectUrl })` to `/sign-in?email=`. The PWA reads `?email=` in `fabric-session/App.tsx`. Electron hides the section.
+- **iOS:** `RememberedAccounts.*`, `PersonSwitchOrder.run` and `AccountSwitch.switchPerson(email:authManager:)`. The email is passed to Clerk's `AuthView.initialIdentifier(_:)` through `AuthManager.pendingSignInEmail`. A person change also runs `AccountSwitchCleanup.resetLocalState(reason:)`. Device credentials are keyed per Clerk user (`RuntimeCredentialKeys`).
+
+## iOS launch arguments (DEBUG builds)
+
+These open a screen directly, for screenshots and checks. They exist in DEBUG builds only, are listed in the onboarding bypass in `AllternitApp.swift`, and are constants on `LaunchArgument`. Add `-sample-workspace` for sample data; the Code ones also take `-code`.
+
+| Argument | Opens |
+| --- | --- |
+| `-calm-gallery` | The design gallery: haptics, motion, glass surfaces. |
+| `-calm-chip=none`, `noComputer`, `cantReach`, `waking`, `gate`, `starting`, `suspended`, `runway` | The computer chip in that state. |
+| `-calm-deck-open` | Chat with the composer deck open. |
+| `-calm-swipe-tip` | The swipe-up tip. |
+| `-open-plus-sheet` | The Add to chat sheet. |
+| `-open-plus-permission` | The Permission page in the sheet. |
+| `-open-plus-computer` | The Computer page in the sheet. |
+| `-open-chat-menu` | The chat ⋯ menu. |
+| `-calm-drawer-open` | The drawer, open. |
+| `-calm-fan` | The mode fan (was `-open-mode-dial`). |
+| `-calm-shelf` | The bots shelf. |
+| `-calm-recents-select` | The recents overview in select mode. |
+| `-calm-overview-menu` | The overview ⋯ menu. |
+| `-calm-search` | Overview search. |
+| `-calm-jump-button` | A chat with the jump-to-latest button. |
+| `-calm-code-sessions` | The Code sessions screen. |
+| `-calm-code-filter=` | The Code sessions screen on one filter. |
+| `-calm-code-scheduled` | Scheduled routines. |
+| `-calm-code-start` | Start a session. |
+| `-calm-code-device` | A computer's sheet. |
+| `-calm-code-connect` | The connect sheet. |
+| `-open-code-overview` | The card overview. |
+| `-calm-projects-pill` | Projects with the pill menu open. |
+| `-calm-projects-explainer` | The Projects explainer. |
+| `-calm-new-project` | The new project sheet. |
+| `-calm-artifacts-filter=` | Artifacts filtered to one kind. |
+| `-calm-artifacts-list` | The flat artifacts list. |
+| `-calm-artifact-viewer`, `-calm-artifact-comments`, `-calm-artifact-share` | The native viewer, its Comments sheet, its Share panel. Optional `=<id>`. |
+| `-calm-settings` | Settings. |
+| `-calm-settings-advanced` | The Advanced section. |
+| `-calm-settings-info` | The ⓘ menu. |
+| `-calm-accounts` | The accounts card with remembered rows. |
+| `-calm-accounts-switch-failed` | The accounts card after a refused switch. |
+| `-calm-signin-prefill` | Sign-in with an email filled in. |
+| `-calm-usage` | The Usage page. |

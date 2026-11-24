@@ -84,6 +84,8 @@ async fn ctx(apps: ChannelApps) -> Ctx {
         include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
+        // `phone_numbers.agent_id`: an agent's definition lists its bound numbers.
+        include_str!("../../../migrations_pg/070_platform_calls.sql"),
         include_str!("../../../migrations_pg/075_platform_channels.sql"),
         include_str!("../../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
@@ -91,6 +93,7 @@ async fn ctx(apps: ChannelApps) -> Ctx {
         // The twin approve/deny aliases resolve through `platform_approvals`.
         include_str!("../../../migrations_pg/121_platform_items.sql"),
         include_str!("../../../migrations_pg/122_platform_approvals.sql"),
+        include_str!("../../../migrations_pg/126_key_governance.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }

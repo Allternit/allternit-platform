@@ -45,6 +45,13 @@ export interface SecurityConfig {
    * per call because the platform URL is resolved during initialization.
    */
   getAppOrigins: () => string[];
+  /**
+   * Exact file:// pages bundled with the app that may call guarded IPC (the
+   * Connect screen, static/connect.html). A file URL's origin is "null", so
+   * these are matched by full path, never by origin: any other local file
+   * stays untrusted.
+   */
+  getAppFileUrls?: () => string[];
 }
 
 let config: SecurityConfig | null = null;
@@ -85,11 +92,25 @@ function trustedOrigins(): Set<string> {
   return origins;
 }
 
+function trustedFilePaths(): Set<string> {
+  const paths = new Set<string>();
+  for (const fileUrl of config?.getAppFileUrls?.() ?? []) {
+    try {
+      const url = new URL(fileUrl);
+      if (url.protocol === 'file:') paths.add(url.pathname);
+    } catch {
+      // Ignore malformed configured file URLs.
+    }
+  }
+  return paths;
+}
+
 /** True when the URL belongs to a first-party app origin (or app scheme). */
 export function isTrustedAppUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     if (ALLOWED_APP_SCHEMES.has(url.protocol)) return true;
+    if (url.protocol === 'file:') return trustedFilePaths().has(url.pathname);
     return trustedOrigins().has(url.origin);
   } catch {
     return false;
@@ -266,7 +287,9 @@ function buildContentSecurityPolicy(): string {
       'ws://127.0.0.1:*', 'ws://localhost:*',
       'allternit-api:', 'allternit-gizzi:',
     ],
-    'media-src': ["'self'", 'blob:'],
+    // ElevenLabs voice previews (Settings > Voice picker) play straight from
+    // the vendor: storage.googleapis.com and api.us.elevenlabs.io (2026-11-13).
+    'media-src': ["'self'", 'blob:', 'data:', 'https://storage.googleapis.com', 'https://*.elevenlabs.io'],
     'worker-src': ["'self'", 'blob:'],
     'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:'],
     'object-src': ["'none'"],

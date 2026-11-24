@@ -38,6 +38,9 @@ pub mod calls;
 pub mod channels;
 pub mod computers;
 pub mod console;
+pub mod console_governance;
+pub mod console_playground;
+pub mod console_pricing;
 pub mod conversations;
 pub mod decisions;
 pub mod error;
@@ -51,6 +54,7 @@ pub mod mailboxes;
 pub mod model_keys;
 pub mod model_messages;
 pub mod numbers;
+pub mod oauth_apps;
 pub mod page;
 pub mod phones;
 pub mod project_billing;
@@ -81,7 +85,7 @@ use serde::de::DeserializeOwned;
 
 use crate::ApiState;
 
-pub use caller::{PlatformCaller, ProjectEnv};
+pub use caller::{CallerBilling, OAuthCaller, PlatformCaller, ProjectEnv};
 pub use error::PlatformError;
 pub use page::{build_page, Page, PageParams};
 pub use slots::{acquire_slot, release_slot, SlotGuard};
@@ -277,8 +281,14 @@ pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::
         .router
         .layer(axum::middleware::from_fn_with_state(ps.clone(), v1_middleware));
 
+    // Console route files, one per lane (console Waves 1–6): every one sits
+    // behind console_gate with the projects and keys routes.
     let console = console::routes()
         .merge(project_billing::routes())
+        .merge(console_playground::routes())
+        .merge(console_pricing::routes())
+        .merge(console_governance::routes())
+        .merge(oauth_apps::routes())
         .layer(axum::middleware::from_fn_with_state(ps, console_gate));
 
     Router::new().merge(v1).merge(console)
@@ -309,21 +319,23 @@ async fn v1_middleware(
     next: Next,
 ) -> Response {
     // The Agency API owns `/v1/agents` and `/v1/decisions` for everything but project
-    // keys, whether or not the Platform API is switched on. Clerk and `allternit_*`
+    // keys (and OAuth access tokens, which get the Platform's 403 below), whether or
+    // not the Platform API is switched on. Clerk and `allternit_*`
     // callers of `/v1/decisions` (Desktop, computer use) keep reaching the agency node;
-    // project keys get the Platform Decisions resource (`decisions.rs`).
+    // project keys and console sessions get the Platform Decisions resource
+    // (`decisions.rs`), every method: `GET /v1/decisions` (the list) included.
     // Handlers that call the agency node (`decisions.rs`) take it from here, so tests
     // can point `router_with_agency` at a stand-in node.
     request.extensions_mut().insert(ps.agency.clone());
     let console_project = console_project(&request);
     if matches!(request.uri().path(), "/v1/agents" | "/v1/decisions") {
-        let project_key = request
+        let platform_bearer = request
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .is_some_and(|t| caller::is_project_key_token(t.trim()));
-        if !project_key && console_project.is_none() {
+            .is_some_and(|t| caller::is_platform_bearer(t.trim()));
+        if !platform_bearer && console_project.is_none() {
             return crate::routes::agency_forward::forward(ps.api.clone(), ps.agency.clone(), request).await;
         }
     }
@@ -340,12 +352,16 @@ async fn v1_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
     let authenticated = match (&console_project, token) {
-        // A project key always wins; the console header only applies to a session.
-        (Some(project_id), Some(t)) if !caller::is_project_key_token(t) => {
+        // A project key (or OAuth token) always wins; the console header only
+        // applies to a session.
+        (Some(project_id), Some(t)) if !caller::is_platform_bearer(t) => {
             let (headers, test) = (request.headers().clone(), test_principal(&request));
             console_v1_caller(db, headers, test, project_id).await
         }
-        _ => caller::authenticate(db, token).await,
+        _ => {
+            let client_ip = crate::services::api_keys::client_ip_from_request(&request);
+            caller::authenticate_from(db, token, client_ip).await
+        }
     };
     let caller = match authenticated {
         Ok(c) => c,
@@ -359,16 +375,7 @@ async fn v1_middleware(
 
     let rate = match limits::check_rate_limit(db, &caller).await {
         Ok(info) => info,
-        Err((error, info)) => {
-            let mut response = error.into_response();
-            info.apply(response.headers_mut());
-            if let Ok(v) = header::HeaderValue::from_str(
-                &(info.reset_unix - chrono::Utc::now().timestamp()).max(1).to_string(),
-            ) {
-                response.headers_mut().insert(header::RETRY_AFTER, v);
-            }
-            return response;
-        }
+        Err((error, info)) => return limits::rate_limited_response(error, info),
     };
 
     request.extensions_mut().insert(caller.clone());
@@ -434,6 +441,8 @@ mod tests_p2_tools;
 #[cfg(test)]
 mod tests_p5_console;
 #[cfg(test)]
+mod tests_governance;
+#[cfg(test)]
 mod tests_p3;
 #[cfg(test)]
 mod tests_p5;
@@ -445,3 +454,5 @@ mod tests_p6_computers;
 mod tests_p7_phones;
 #[cfg(test)]
 mod tests_p7_mail;
+#[cfg(test)]
+mod tests_oauth_caller;

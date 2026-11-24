@@ -201,7 +201,8 @@ struct BrowserProxyRequest {
     headers: HashMap<String, String>,
     #[serde(default)]
     body: String,
-    #[serde(default)]
+    /// The web client sends both spellings; the Files SPEC uses `body_encoding`.
+    #[serde(default, alias = "body_encoding")]
     body_encoding: String,
 }
 
@@ -257,6 +258,11 @@ pub(crate) struct SocketTicket {
     /// The capability the ticketed path requires; the socket pump routes the
     /// tunnel to a connection granting it (multi-connection mode).
     pub(crate) required_capability: String,
+    /// A raw TCP stream ticket (`POST /api/v1/computers/:id/forward`): the
+    /// socket pump carries bytes only (binary frames both ways, no
+    /// `allternit_socket_ready` text frame) and holds the client's first bytes
+    /// until the node answers `socket_ready`.
+    pub(crate) raw_stream: bool,
     expires_at: Instant,
 }
 
@@ -454,6 +460,9 @@ pub(crate) async fn connect_or_wake_runtime(
     )
     .await?;
     // Not a hosted runtime: a provisioned (free, sleeping) computer?
+    // A waking computer on Orgo restores its disk from storage first, so the
+    // wait for it is longer (`ProvisioningService::wake_wait_for_device`).
+    let mut wake_wait = WAKE_WAIT_TIMEOUT;
     let waking = match outcome {
         crate::services::HostedWakeOutcome::NotWakeable => return Ok(RelayConnect::Offline),
         crate::services::HostedWakeOutcome::NotHosted => {
@@ -463,7 +472,12 @@ pub(crate) async fn connect_or_wake_runtime(
                     return Ok(RelayConnect::Offline)
                 }
                 crate::services::ProvisionedWakeOutcome::AlreadyActive => false,
-                crate::services::ProvisionedWakeOutcome::Waking => true,
+                crate::services::ProvisionedWakeOutcome::Waking => {
+                    if let Some(longer) = provisioning.wake_wait_for_device(runtime_id).await {
+                        wake_wait = longer;
+                    }
+                    true
+                }
             }
         }
         crate::services::HostedWakeOutcome::Waking => true,
@@ -471,8 +485,15 @@ pub(crate) async fn connect_or_wake_runtime(
     };
     // The machine is (or was already) starting: poll the hub until the daemon
     // reconnects, bounded so a wedged boot does not pin the request.
-    let deadline = Instant::now() + WAKE_WAIT_TIMEOUT;
+    let deadline = Instant::now() + wake_wait;
     loop {
+        // A wake the host refused for capacity will not finish: say so now
+        // instead of waiting out the deadline and answering "starting".
+        if waking {
+            if let Some(message) = provisioning.wake_capacity_failure_for_device(runtime_id).await {
+                return Err(ApiError::ServiceUnavailable(message));
+            }
+        }
         if let Some(connection) = relay_hub()
             .read()
             .await
@@ -496,6 +517,153 @@ pub(crate) async fn connect_or_wake_runtime(
 fn socket_tickets() -> &'static Mutex<HashMap<String, SocketTicket>> {
     static TICKETS: OnceLock<Mutex<HashMap<String, SocketTicket>>> = OnceLock::new();
     TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) const FILES_V2_PREFIX: &str = "/api/v1/files/v2";
+
+/// `/api/v1/files/v2` or anything under it (query and fragment ignored).
+pub(crate) fn is_files_v2_path(path: &str) -> bool {
+    let bare = path.split(['?', '#']).next().unwrap_or_default();
+    bare == FILES_V2_PREFIX || bare.starts_with("/api/v1/files/v2/")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FilesWakeGate {
+    /// Not a v2 Files path: today's behaviour (touch activity, wake on demand).
+    Legacy,
+    /// v2 Files, no ticket: answer only from an already-connected runtime,
+    /// else from the asleep snapshot.
+    NoWake,
+    /// v2 Files with a valid wake ticket: wait for the consented wake, but
+    /// never start one and never touch activity.
+    TicketWait,
+}
+
+async fn files_wake_gate(
+    db: &sqlx::PgPool,
+    request: &RelayRequest,
+    user_id: &str,
+    runtime_id: &str,
+) -> Result<FilesWakeGate, Response> {
+    use crate::routes::computer_files as cf;
+    use allternit_files_core::ErrorCode;
+    if !is_files_v2_path(&request.path) {
+        return Ok(FilesWakeGate::Legacy);
+    }
+    let Some(ticket) = request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(cf::WAKE_TICKET_HEADER))
+        .map(|(_, value)| value.as_str())
+    else {
+        return Ok(FilesWakeGate::NoWake);
+    };
+    let Some(key) = cf::wake_key() else {
+        return Err(cf::files_error(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::KeyUnavailable, "Files token key is not configured", None, None, None));
+    };
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    match cf::verify_wake_ticket(key, ticket, user_id, runtime_id, now) {
+        Ok(_) => Ok(FilesWakeGate::TicketWait),
+        Err(cf::TicketError::Expired) => Err(cf::files_error(
+            StatusCode::CONFLICT,
+            ErrorCode::WakeConsentRequired,
+            "The wake ticket expired; ask for consent again",
+            Some(allternit_files_core::ComputerState::Asleep),
+            Some(cf::wake_hint(db, runtime_id).await),
+            None,
+        )),
+        Err(_) => Err(cf::files_error(StatusCode::FORBIDDEN, ErrorCode::Forbidden, "The wake ticket is not valid for this computer", None, None, None)),
+    }
+}
+
+/// A v2 Files request to a computer with no relay connection (SPEC section
+/// 9). Never wakes, never touches activity. `roots`, `list`, `stat`,
+/// `changes` and name `search` come from the asleep snapshot in the user's R2
+/// space (owner's `files_drive` flag on); other metadata answers `asleep`;
+/// content needs consent (`wake_consent_required`).
+async fn files_asleep_response(db: &sqlx::PgPool, user_id: &str, runtime_id: &str, request: &RelayRequest) -> Response {
+    use crate::routes::{computer_files as cf, computer_files_snapshot as snap};
+    use allternit_files_core::{ComputerState, ErrorCode};
+    let hint = cf::wake_hint(db, runtime_id).await;
+    let body = decode_relay_body(&request.body, &request.body_encoding);
+    match snap::classify(&request.method, &request.path, &body) {
+        snap::AsleepRequest::Content => cf::files_error(
+            StatusCode::CONFLICT,
+            ErrorCode::WakeConsentRequired,
+            "Opening this needs the computer awake; ask for consent",
+            Some(ComputerState::Asleep),
+            Some(hint),
+            None,
+        ),
+        snap::AsleepRequest::Metadata => snap::miss_response(snap::SnapshotMiss::Unavailable, hint),
+        snap::AsleepRequest::Snapshot(query) => {
+            let store = if cf::files_drive_on(user_id) { snap::snapshot_store() } else { None };
+            let Some(store) = store else {
+                return snap::miss_response(snap::SnapshotMiss::Unavailable, hint);
+            };
+            match snap::answer(store.as_ref(), runtime_id, &query).await {
+                Ok(response) => response,
+                Err(miss) => snap::miss_response(miss, hint),
+            }
+        }
+    }
+}
+
+/// Look up (and, with `wait`, poll for) a relay connection without ever
+/// starting a wake.
+async fn connect_without_wake(
+    runtime_id: &str,
+    required: &str,
+    path: &str,
+    wait: Duration,
+) -> Option<Arc<RuntimeConnection>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(connection) = relay_hub()
+            .read()
+            .await
+            .get(runtime_id)
+            .and_then(|entries| select_connection(entries, required, path))
+        {
+            return Some(connection);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(WAKE_POLL_INTERVAL).await;
+    }
+}
+
+pub(crate) async fn runtime_is_connected(runtime_id: &str) -> bool {
+    relay_hub()
+        .read()
+        .await
+        .get(runtime_id)
+        .map(|entries| !entries.is_empty())
+        .unwrap_or(false)
+}
+
+/// Start a wake without waiting for it (Files wake consent). `Some(true)` =
+/// already awake, `Some(false)` = waking, `None` = cannot be woken.
+pub(crate) async fn start_wake(state: &ApiState, runtime_id: &str) -> Result<Option<bool>, ApiError> {
+    use crate::services::{HostedWakeOutcome, ProvisionedWakeOutcome};
+    let outcome = crate::services::wake_hosted_runtime_for_device(
+        &state.db,
+        &state.contabo_runtime_service,
+        &state.quota_service,
+        runtime_id,
+    )
+    .await?;
+    Ok(match outcome {
+        HostedWakeOutcome::NotWakeable => None,
+        HostedWakeOutcome::Waking => Some(false),
+        HostedWakeOutcome::AlreadyActive => Some(true),
+        HostedWakeOutcome::NotHosted => match state.provisioning_service.wake_for_device(runtime_id).await? {
+            ProvisionedWakeOutcome::NotProvisioned | ProvisionedWakeOutcome::NotWakeable => None,
+            ProvisionedWakeOutcome::AlreadyActive => Some(true),
+            ProvisionedWakeOutcome::Waking => Some(false),
+        },
+    })
 }
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -532,6 +700,8 @@ pub(crate) async fn issue_socket_ticket(
     runtime_id: &str,
     path: String,
 ) -> Result<serde_json::Value, ApiError> {
+    // Compute gate, as for relayed requests (no-op unless the flag is on).
+    crate::routes::account_compute::require_compute(&state.db, user_id).await?;
     let capabilities = runtime_capabilities(&state.db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -555,17 +725,32 @@ pub(crate) async fn issue_socket_ticket(
             "Runtime pairing does not grant {required}"
         )));
     }
-    match connect_or_wake_runtime(
-        &state.db,
-        &state.contabo_runtime_service,
-        &state.quota_service,
-        &state.provisioning_service,
-        runtime_id,
-        &required,
-        &validation.path,
-    )
-    .await?
-    {
+    // Files drive change feed (`/api/v1/files/v2/subscribe`): never wakes and
+    // never touches activity (SPEC section 9). A sleeping computer has no
+    // live feed; clients poll `changes`, which the asleep snapshot answers.
+    let files_v2 = is_files_v2_path(&validation.path);
+    let connect = if files_v2 {
+        match connect_without_wake(runtime_id, &required, &validation.path, Duration::ZERO).await {
+            Some(connection) => RelayConnect::Connected(connection),
+            None => {
+                return Err(ApiError::ServiceUnavailable(
+                    "The computer is asleep; poll changes instead".to_string(),
+                ))
+            }
+        }
+    } else {
+        connect_or_wake_runtime(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            runtime_id,
+            &required,
+            &validation.path,
+        )
+        .await?
+    };
+    match connect {
         RelayConnect::Connected(_) => {}
         RelayConnect::Warming => {
             return Err(ApiError::ServiceUnavailable(
@@ -578,10 +763,27 @@ pub(crate) async fn issue_socket_ticket(
             ));
         }
     }
-    services_touch_runtime(&state.db, runtime_id).await;
+    if !files_v2 {
+        services_touch_runtime(&state.db, runtime_id).await;
+    }
 
+    let ticket = store_socket_ticket(runtime_id, path, required, false).await;
+    Ok(serde_json::json!({
+        "ticket": ticket,
+        "expiresInSeconds": SOCKET_TICKET_TTL.as_secs(),
+    }))
+}
+
+/// How long a minted socket ticket can be redeemed.
+pub(crate) const SOCKET_TICKET_TTL: Duration = Duration::from_secs(30);
+/// How long a raw stream waits for the node's `socket_ready`.
+const RAW_STREAM_READY_TIMEOUT: Duration = Duration::from_secs(15);
+/// Most client bytes a raw stream holds before the node is ready.
+const RAW_STREAM_MAX_QUEUED_BYTES: usize = 1024 * 1024;
+
+async fn store_socket_ticket(runtime_id: &str, path: String, required: String, raw_stream: bool) -> String {
     let ticket = Uuid::new_v4().to_string();
-    let expires_at = Instant::now() + Duration::from_secs(30);
+    let expires_at = Instant::now() + SOCKET_TICKET_TTL;
     let mut tickets = socket_tickets().lock().await;
     tickets.retain(|_, value| value.expires_at > Instant::now());
     tickets.insert(
@@ -590,13 +792,51 @@ pub(crate) async fn issue_socket_ticket(
             runtime_id: runtime_id.to_string(),
             path,
             required_capability: required,
+            raw_stream,
             expires_at,
         },
     );
-    Ok(serde_json::json!({
-        "ticket": ticket,
-        "expiresInSeconds": 30,
-    }))
+    ticket
+}
+
+/// Mint a raw TCP stream ticket for `path` on a runtime owned by `owner_id`
+/// (Computers console port forward). Never wakes: `Ok(None)` when the runtime
+/// holds no relay connection that may serve the path. The caller has already
+/// authorized the acting user (who may be an organization member).
+pub(crate) async fn issue_stream_ticket(
+    db: &sqlx::PgPool,
+    owner_id: &str,
+    runtime_id: &str,
+    path: String,
+) -> Result<Option<String>, ApiError> {
+    crate::routes::account_compute::require_compute(db, owner_id).await?;
+    let capabilities = runtime_capabilities(db, runtime_id, owner_id).await?;
+    if !capabilities.iter().any(|capability| capability == "runtime:connect") {
+        return Err(ApiError::Forbidden(
+            "Runtime is not allowed to accept relayed sockets".to_string(),
+        ));
+    }
+    let validation = RelayRequest {
+        method: "GET".to_string(),
+        path: path.clone(),
+        headers: HashMap::new(),
+        body: String::new(),
+        body_encoding: "utf8".to_string(),
+    };
+    validate_proxy_request(&validation)?;
+    let required = required_capability(&validation.path, "GET").to_string();
+    if !capabilities.iter().any(|capability| capability == &required) {
+        return Err(ApiError::Forbidden(format!(
+            "Runtime pairing does not grant {required}"
+        )));
+    }
+    if connect_without_wake(runtime_id, &required, &validation.path, Duration::ZERO)
+        .await
+        .is_none()
+    {
+        return Ok(None);
+    }
+    Ok(Some(store_socket_ticket(runtime_id, path, required, true).await))
 }
 
 /// Consume a socket ticket, discarding expired ones. Returns `None` for
@@ -639,6 +879,7 @@ pub(crate) async fn upgrade_with_socket_ticket(
             ticket.runtime_id,
             ticket.path,
             ticket.required_capability,
+            ticket.raw_stream,
             relay_socket_id,
             quota_service,
             db,
@@ -682,6 +923,23 @@ pub(crate) async fn answer_test_request(
         }
         let _ = waiter.chunks.send(Ok(decode_relay_body(body, "utf8")));
     }
+}
+
+/// Test seam for a streamed relay response: send the head of one relayed
+/// request and hand back the body channel, so a test can push chunks one by
+/// one (SSE) and check each reaches the client before the stream ends.
+/// Dropping the sender ends the body, as `response_end` does.
+#[cfg(test)]
+pub(crate) async fn start_test_stream(
+    connection: &Arc<RuntimeConnection>,
+    request_id: &str,
+    status: u16,
+    headers: HashMap<String, String>,
+) -> Option<mpsc::UnboundedSender<Result<Bytes, Infallible>>> {
+    let mut waiter = connection.pending.lock().await.remove(request_id)?;
+    let head = waiter.head.take()?;
+    let _ = head.send(RelayHead { status, headers });
+    Some(waiter.chunks)
 }
 
 /// Like [`register_test_connection`] but with an explicit client identity and
@@ -781,11 +1039,38 @@ fn runtime_frame_to_browser_message(frame: &RuntimeSocketFrame) -> Message {
     }
 }
 
+/// Raw stream mode: every client payload (text or binary) is bytes for the
+/// TCP stream, sent base64-encoded.
+pub(crate) fn raw_frame_to_cloud(socket_id: &str, message: &Message) -> Option<CloudMessage> {
+    let bytes: &[u8] = match message {
+        Message::Text(body) => body.as_bytes(),
+        Message::Binary(body) => body.as_slice(),
+        _ => return None,
+    };
+    Some(CloudMessage::SocketData {
+        socket_id: socket_id.to_string(),
+        body: STANDARD.encode(bytes),
+        body_encoding: "base64".to_string(),
+    })
+}
+
+/// Raw stream mode: node bytes go out as binary frames; the ready handshake
+/// is never shown to the client (it would corrupt the TCP stream).
+pub(crate) fn raw_runtime_frame_to_client(frame: &RuntimeSocketFrame) -> Option<Message> {
+    match frame {
+        RuntimeSocketFrame::Ready => None,
+        RuntimeSocketFrame::Data(body, _) => Some(Message::Binary(body.to_vec())),
+        RuntimeSocketFrame::Close(..) => Some(Message::Close(None)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn browser_socket(
     socket: WebSocket,
     runtime_id: String,
     path: String,
     required_capability: String,
+    raw_stream: bool,
     relay_socket_id: String,
     quota_service: crate::services::SharedQuotaService,
     db: sqlx::PgPool,
@@ -799,7 +1084,11 @@ async fn browser_socket(
         let _ = quota_service.close_relay_socket(&relay_socket_id, 0).await;
         return;
     };
-    let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
+    // Files drive feed sockets never reset the idle clock (SPEC section 9).
+    let touches_activity = !is_files_v2_path(&path);
+    if touches_activity {
+        let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
+    }
     let mut last_activity_write = Instant::now();
     let socket_id = Uuid::new_v4().to_string();
     let (runtime_sender, mut runtime_events) = mpsc::unbounded_channel();
@@ -823,19 +1112,46 @@ async fn browser_socket(
     }
 
     let mut egress_bytes: i64 = 0;
+    // Raw streams hold the client's bytes until the node's TCP dial is ready.
+    let mut ready = !raw_stream;
+    let mut queued: Vec<CloudMessage> = Vec::new();
+    let mut queued_bytes: usize = 0;
+    let ready_deadline = tokio::time::Instant::now() + RAW_STREAM_READY_TIMEOUT;
     let (mut sink, mut stream) = socket.split();
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(ready_deadline), if !ready => {
+                let _ = sink.send(Message::Close(None)).await;
+                break;
+            }
             browser = stream.next() => {
                 match browser {
                     Some(Ok(message)) => match message {
                         Message::Text(_) | Message::Binary(_) => {
-                            if last_activity_write.elapsed() >= Duration::from_secs(60) {
+                            if touches_activity && last_activity_write.elapsed() >= Duration::from_secs(60) {
                                 let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
                                 last_activity_write = Instant::now();
                             }
-                            if let Some(outbound) = browser_frame_to_cloud(&socket_id, &message) {
-                                let _ = connection.sender.send(outbound);
+                            let outbound = if raw_stream {
+                                raw_frame_to_cloud(&socket_id, &message)
+                            } else {
+                                browser_frame_to_cloud(&socket_id, &message)
+                            };
+                            if let Some(outbound) = outbound {
+                                if ready {
+                                    let _ = connection.sender.send(outbound);
+                                } else {
+                                    queued_bytes += match &message {
+                                        Message::Text(body) => body.len(),
+                                        Message::Binary(body) => body.len(),
+                                        _ => 0,
+                                    };
+                                    if queued_bytes > RAW_STREAM_MAX_QUEUED_BYTES {
+                                        let _ = sink.send(Message::Close(None)).await;
+                                        break;
+                                    }
+                                    queued.push(outbound);
+                                }
                             }
                         }
                         Message::Ping(body) => {
@@ -853,13 +1169,28 @@ async fn browser_socket(
                     break;
                 };
                 if let RuntimeSocketFrame::Data(body, _) = &frame {
-                    if last_activity_write.elapsed() >= Duration::from_secs(60) {
+                    if touches_activity && last_activity_write.elapsed() >= Duration::from_secs(60) {
                         let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
                         last_activity_write = Instant::now();
                     }
                     egress_bytes += body.len() as i64;
                 }
                 let is_close = matches!(frame, RuntimeSocketFrame::Close(..));
+                if raw_stream {
+                    if matches!(frame, RuntimeSocketFrame::Ready) {
+                        ready = true;
+                        for outbound in queued.drain(..) {
+                            let _ = connection.sender.send(outbound);
+                        }
+                        queued_bytes = 0;
+                        continue;
+                    }
+                    let Some(message) = raw_runtime_frame_to_client(&frame) else { continue };
+                    if sink.send(message).await.is_err() || is_close {
+                        break;
+                    }
+                    continue;
+                }
                 if sink.send(runtime_frame_to_browser_message(&frame)).await.is_err() || is_close {
                     break;
                 }
@@ -1162,6 +1493,10 @@ pub(crate) async fn relay_request_to_runtime_with(
     extra_allowed: &[&str],
     trusted: HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    // Compute gate: every relayed request is agent entry. An account with no
+    // computer (or only a suspended one) gets the contract's 409 before any
+    // wake. A no-op unless ALLTERNIT_COMPUTE_GATE=on.
+    crate::routes::account_compute::require_compute(db, user_id).await?;
     let capabilities = runtime_capabilities(db, runtime_id, user_id).await?;
     if !capabilities
         .iter()
@@ -1181,19 +1516,50 @@ pub(crate) async fn relay_request_to_runtime_with(
             "Runtime pairing does not grant {required_capability}"
         )));
     }
-    services_touch_runtime(db, runtime_id).await;
-
-    let connection = match connect_or_wake_runtime(
-        db,
-        contabo_runtime_service,
-        quota_service,
-        provisioning,
-        runtime_id,
-        required_capability,
-        &request.path,
-    )
-    .await?
-    {
+    // Files drive (SPEC section 9): /api/v1/files/v2/* never wakes a computer
+    // and never touches its idle timer. Only POST /computer-files/:id/
+    // wake-consent wakes; a request carrying its ticket may wait for that wake.
+    let gate = match files_wake_gate(db, &request, user_id, runtime_id).await {
+        Ok(gate) => gate,
+        Err(response) => return Ok(response),
+    };
+    let connect = match gate {
+        FilesWakeGate::Legacy => {
+            services_touch_runtime(db, runtime_id).await;
+            connect_or_wake_runtime(
+                db,
+                contabo_runtime_service,
+                quota_service,
+                provisioning,
+                runtime_id,
+                required_capability,
+                &request.path,
+            )
+            .await?
+        }
+        FilesWakeGate::NoWake => {
+            match connect_without_wake(runtime_id, required_capability, &request.path, Duration::ZERO).await {
+                Some(connection) => RelayConnect::Connected(connection),
+                None => return Ok(files_asleep_response(db, user_id, runtime_id, &request).await),
+            }
+        }
+        FilesWakeGate::TicketWait => {
+            match connect_without_wake(runtime_id, required_capability, &request.path, WAKE_WAIT_TIMEOUT).await {
+                Some(connection) => RelayConnect::Connected(connection),
+                None => {
+                    return Ok(crate::routes::computer_files::files_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        allternit_files_core::ErrorCode::Waking,
+                        "The computer is waking; retry shortly",
+                        Some(allternit_files_core::ComputerState::Waking),
+                        None,
+                        Some(WAKE_WAIT_TIMEOUT.as_secs()),
+                    ))
+                }
+            }
+        }
+    };
+    let connection = match connect {
         RelayConnect::Connected(connection) => connection,
         RelayConnect::Warming => {
             return Ok((
@@ -1208,6 +1574,65 @@ pub(crate) async fn relay_request_to_runtime_with(
             ).into_response());
         }
     };
+    dispatch_relay(connection, runtime_id, request, extra_allowed, trusted).await
+}
+
+/// Outcome of [`relay_request_no_wake`].
+pub(crate) enum NoWakeRelay {
+    /// The runtime answered (any status); the body streams through.
+    Response(Response),
+    /// No live relay connection may serve the request. Nothing was woken.
+    Offline,
+}
+
+/// Relay one allow-listed request to a runtime owned by `owner_id`, signed
+/// for the runtime's `relay_auth`, only when the runtime already holds a live
+/// relay connection. Never wakes a computer and never resets its idle clock
+/// (Computers console D3: reading a computer must not keep it awake). The
+/// caller has already authorized the acting user, who may be an organization
+/// member rather than the owner. The response streams through unbuffered
+/// (SSE included), exactly like [`relay_request_to_runtime`].
+pub(crate) async fn relay_request_no_wake(
+    db: &sqlx::PgPool,
+    owner_id: &str,
+    runtime_id: &str,
+    request: RelayRequest,
+    mut trusted: HashMap<String, String>,
+) -> Result<NoWakeRelay, ApiError> {
+    crate::routes::account_compute::require_compute(db, owner_id).await?;
+    let capabilities = runtime_capabilities(db, runtime_id, owner_id).await?;
+    if !capabilities.iter().any(|capability| capability == "runtime:connect") {
+        return Err(ApiError::Forbidden(
+            "Runtime is not allowed to accept relayed requests".to_string(),
+        ));
+    }
+    validate_proxy_request(&request)?;
+    let required = required_capability(&request.path, &request.method);
+    if !capabilities.iter().any(|capability| capability == required) {
+        return Err(ApiError::Forbidden(format!(
+            "Runtime pairing does not grant {required}"
+        )));
+    }
+    let Some(connection) = connect_without_wake(runtime_id, required, &request.path, Duration::ZERO).await else {
+        return Ok(NoWakeRelay::Offline);
+    };
+    let body = decode_relay_body(&request.body, &request.body_encoding);
+    trusted.extend(
+        runtime_signature_headers(db, owner_id, runtime_id, &request.method, &request.path, &body).await?,
+    );
+    dispatch_relay(connection, runtime_id, request, &[], trusted)
+        .await
+        .map(NoWakeRelay::Response)
+}
+
+/// Send one request on a live relay connection and stream the answer back.
+async fn dispatch_relay(
+    connection: Arc<RuntimeConnection>,
+    runtime_id: &str,
+    request: RelayRequest,
+    extra_allowed: &[&str],
+    trusted: HashMap<String, String>,
+) -> Result<Response, ApiError> {
     let request_id = Uuid::new_v4().to_string();
     // The path without its query (queries can carry tokens), for the timeout log.
     let logged_path = request.path.split('?').next().unwrap_or_default().to_string();
@@ -1424,6 +1849,11 @@ fn filtered_response_headers(headers: HashMap<String, String>) -> HashMap<String
                     | "etag"
                     | "last-modified"
                     | "x-request-id"
+                    // Files drive ranged reads answer 206 with these.
+                    | "content-range"
+                    | "accept-ranges"
+                    // `waking` retries over the relay.
+                    | "retry-after"
             )
         })
         .collect()
@@ -1572,6 +2002,13 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     // Subscriptions: the one-use human action minted for a
                     // task send, checked by the runtime (D16).
                     | "x-allternit-human-action"
+                    // Files drive (contracts/files-drive SPEC sections 2, 9):
+                    // wake ticket, ranged reads, conditional writes and the
+                    // protected-root unlock proof.
+                    | "x-allternit-wake-ticket"
+                    | "range"
+                    | "if-match"
+                    | "x-allternit-unlock"
             )
         })
         .collect()
@@ -1593,6 +2030,10 @@ pub(crate) fn relay_headers_from_http(headers: &HeaderMap) -> HashMap<String, St
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "files_wake_tests.rs"]
+mod files_wake_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,4 @@
+# Fetched by Frameworks/fetch-llama.sh (binary, not in git)
+Frameworks/llama.xcframework/
+.build/
+.swiftpm/

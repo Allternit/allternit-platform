@@ -14,6 +14,7 @@ import { sortBy } from "remeda"
 import type { DiscoveredModel, DiscoveredProvider } from "./discovery"
 import { Discovery } from "./discovery"
 import { SUBPROCESS_PROVIDERS } from "./discovery/subprocess"
+import { SelfhostInference } from "./selfhost-inference"
 import { ProviderOffer } from "./offer"
 import { ModelsDev } from "./adapters/models"
 import { currentDefaultBrain, defaultRankOf } from "./default-brain"
@@ -270,7 +271,12 @@ export namespace ModelList {
    * list is discovery only). `all` adds every models.dev provider.
    */
   export async function build(opts: { all?: boolean } = {}): Promise<Section[]> {
-    const discovered = Discovery.last().length > 0 ? Discovery.last() : await Discovery.run()
+    // Self-hosted inference: only the server's model_map, no local CLI/provider discovery.
+    const discovered = SelfhostInference.enabled()
+      ? []
+      : Discovery.last().length > 0
+        ? Discovery.last()
+        : await Discovery.run()
     const { Provider } = await import("./provider")
     let configured: Record<string, ConfiguredProvider> = await Promise.resolve()
       .then(() => Provider.list())
