@@ -16,8 +16,10 @@ Under the three rows, the card names the [control layer](/concepts/control-layer
 | Where | What you see |
 |---|---|
 | A bot's page (bot settings) | The full card |
-| **New agent** / Create bot | The full card |
-| The chat composer | Compact chips: one per row, each opening the same choices |
+| **New agent** / Create bot | The full card, as the first block under **More options** |
+| The chat composer (every chat, and the Code composer) | Compact chips: one per row, each opening the same choices |
+| Settings › Connections › **Runtimes** | Every runtime, with a detail view and **New chat on** / **New bot on** |
+| Bots home, before your first bot | A **Pick how your bot works** card that opens Create bot with this card first |
 
 The card reads the same runtime list on every surface, from the [runtime registry](/api/runtimes). If the list can't be loaded, it uses the copy built into the app and says so.
 
@@ -43,7 +45,20 @@ The brain row only lists brains that fit the runtime. Each brain shows its acces
 
 ## Compact chips in chat
 
-In a bot chat, the composer shows three chips: runtime, brain, bot. In a plain chat on Allternit's own runtime, it shows only the model picker, as before. In a plain chat on another runtime, a runtime chip sits beside it.
+Every chat has the chips, so you can see and change how a chat works even with no bots and no computer.
+
+- **A bot chat** shows three chips: runtime, brain, bot.
+- **A plain chat** shows two: runtime (Allternit unless the chat runs on another runtime) and brain (the model picker).
+- **The Code composer** shows the same two chips, with the Coding runtimes listed first.
+
+Picking another runtime starts a new chat (or Code session) on it and carries over what you had typed. Allternit never quietly falls back to another runtime. If the runtime can't start, the list stays open with one line and a button:
+
+| What's wrong | What you see |
+|---|---|
+| No computer online | "Claude Code runs on a computer. Pair a computer to use it." with **Pair a computer** |
+| The CLI isn't on your computer | "Claude Code isn't installed on Sam's Mac." |
+| You are signed out | "Sign in to use Claude Code." with **Sign in** |
+| The server refuses (brain or plan not allowed on that runtime) | The server's own message, for example "Claude's plan can't be used inside OpenCode. Use an API key, or pick Claude Code." |
 
 <Frame caption="A plain chat on Codex: the runtime chip beside the brain.">
   <img src="/images/runtimes/composer-runtime-chip.jpg" alt="Composer with a Codex runtime chip and a Claude Sonnet 5 brain chip" />
@@ -52,6 +67,10 @@ In a bot chat, the composer shows three chips: runtime, brain, bot. In a plain c
 <Frame caption="A bot chat with the brain list open (left) and the runtime list open, grouped by category (right).">
   <img src="/images/runtimes/composer-popovers.jpg" alt="Composer brain and runtime popovers with access badges and the summary sentence" />
 </Frame>
+
+## Create bot: Runtime and Brain first
+
+In **Create bot**, the card is the first thing under **More options**, above instructions, tools and the bot's computer. Opened from **New bot on &lt;Runtime&gt;** or **Pick how your bot works**, Create bot opens **More options**, scrolls to the card, and picks the runtime for you when one was chosen. The phone sheet does the same.
 
 ## How a pick flows
 
