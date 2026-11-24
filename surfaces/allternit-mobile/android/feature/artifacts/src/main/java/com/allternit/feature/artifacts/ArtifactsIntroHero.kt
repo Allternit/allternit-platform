@@ -32,16 +32,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.allternit.core.api.MeFlagsClient
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.BlockText
 import com.allternit.core.design.IntroKeys
-import com.allternit.core.design.IntroSeenStore
+import com.allternit.core.design.LocalIntroSeenStore
 import com.allternit.core.design.IntroSheet
 import com.allternit.core.design.PolishGlass
 import com.allternit.core.design.rememberReducedMotion
@@ -148,14 +146,11 @@ internal fun ArtifactsIntroHero(modifier: Modifier = Modifier) {
  */
 @Composable
 internal fun ArtifactsIntroHost(signedIn: Boolean) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember {
-        val client = MeFlagsClient(LibraryNet.okHttp, LibraryNet.config.cloudBaseUrl)
-        IntroSeenStore(context, fetch = { client.read() }, push = { k, iso -> client.write(k, iso) })
-    }
+    // The shell's one store; null while signed out, and then no intro shows.
+    val store = LocalIntroSeenStore.current ?: return
     var show by remember { mutableStateOf(false) }
-    LaunchedEffect(signedIn) {
+    LaunchedEffect(signedIn, store) {
         if (!signedIn || store.isSeen(IntroKeys.ARTIFACTS)) return@LaunchedEffect
         store.refresh()
         show = !store.isSeen(IntroKeys.ARTIFACTS)

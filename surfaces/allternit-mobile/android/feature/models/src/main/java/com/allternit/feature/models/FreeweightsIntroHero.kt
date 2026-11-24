@@ -31,21 +31,18 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.allternit.core.api.MeFlagsClient
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.BlockText
 import com.allternit.core.design.IntroKeys
-import com.allternit.core.design.IntroSeenStore
+import com.allternit.core.design.LocalIntroSeenStore
 import com.allternit.core.design.IntroSheet
 import com.allternit.core.design.PolishGlass
 import com.allternit.core.design.rememberReducedMotion
-import com.allternit.feature.artifacts.LibraryNet
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
 
@@ -158,19 +155,16 @@ private fun ProgressRing(progress: Float, size: Dp = 22.dp) {
 
 /**
  * Shows the Freeweights first-visit sheet once per account (`introFreeweightsSeenAt`). Nothing shows while signed out,
- * and an intro already seen on this device never waits on the network. The store is built the way the Artifacts
- * lane (#2848) builds it, from [MeFlagsClient]; swap for the shared one once it is wired.
+ * and an intro already seen on this device never waits on the network. The store is the shell's shared
+ * [LocalIntroSeenStore].
  */
 @Composable
 internal fun FreeweightsIntroHost(signedIn: Boolean) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember {
-        val client = MeFlagsClient(LibraryNet.okHttp, LibraryNet.config.cloudBaseUrl)
-        IntroSeenStore(context, fetch = { client.read() }, push = { k, iso -> client.write(k, iso) })
-    }
+    // The shell's one store; null while signed out, and then no intro shows.
+    val store = LocalIntroSeenStore.current ?: return
     var show by remember { mutableStateOf(false) }
-    LaunchedEffect(signedIn) {
+    LaunchedEffect(signedIn, store) {
         if (!signedIn || store.isSeen(IntroKeys.FREEWEIGHTS)) return@LaunchedEffect
         store.refresh()
         show = !store.isSeen(IntroKeys.FREEWEIGHTS)

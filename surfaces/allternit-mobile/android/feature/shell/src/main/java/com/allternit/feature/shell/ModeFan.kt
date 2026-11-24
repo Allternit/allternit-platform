@@ -28,21 +28,6 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 
-/** Hamburger only opens the drawer. Shelves owns mode selection. */
-@Composable
-internal fun PhoneMenuButton(mode: ShellMode, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val c = AllternitTheme.colors
-    Box(modifier.size(44.dp).clip(CircleShape).testTag("phoneMenuButton")
-        .clickable(role = Role.Button, onClickLabel = "Open menu", onClick = onOpen)
-        .semantics { contentDescription = "Open menu. ${mode.label} mode" }, contentAlignment = Alignment.Center) {
-        Icon(painterResource(com.allternit.core.design.R.drawable.ph_list), null, tint = c.textPrimary, modifier = Modifier.size(22.dp))
-        Box(Modifier.align(Alignment.BottomEnd).offset(x = (-4).dp, y = (-4).dp).size(15.dp)
-            .clip(CircleShape).background(c.textPrimary).testTag("phoneMenuModeBadge${mode.raw}"), contentAlignment = Alignment.Center) {
-            Icon(painterResource(mode.icon), null, tint = c.bgPrimary, modifier = Modifier.size(9.dp))
-        }
-    }
-}
-
 /** Drawer entry to Shelves, retaining the Bots unread badge. */
 @Composable
 internal fun ModeDialButton(mode: ShellMode, botsWaiting: Int, onOpenHub: () -> Unit) {

@@ -17,7 +17,7 @@ When a flow gains an `id:` selector, add its row here in the same change.
 | `loginSkipAuth` | 01 | `ios/App/AllternitApp.swift:456` | `android/feature/onboarding/.../SignInScreen.kt` |
 | `chatNewChat` | 02 | `ios/Features/Chat/Views/ChatView.swift:63` | `android/feature/shell/.../ShellScreens.kt` |
 | `composerInput` | 02 | `ios/Features/Chat/Composer/ComposerView.swift:355` | `android/feature/shell/.../Composer.kt` |
-| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | `android/feature/shell/.../ModeFan.kt` |
+| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | `android/feature/shell/.../WorkspaceShell.kt` (ShellMenuButton) |
 | `modeDial` | 03, 08, 09 | `ios/Features/Shell/ModeDialView.swift:433` | `android/feature/shell/.../ShellDrawer.kt` |
 | `modeFanCardbots` | 03 | `ios/Features/Shell/ModeDialView.swift:370` (built as "modeFanCard\(mode.rawValue)") | `android/feature/shell/.../ModeFan.kt` |
 | `drawerRowprojects` | 04 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id projects) | `android/feature/shell/.../ShellDrawer.kt` |

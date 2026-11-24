@@ -90,8 +90,13 @@ class AutomationHost(
 )
 
 private enum class Top(val label: String) { Scheduled("Scheduled"), Board("Board") }
-private enum class TaskTab(val label: String, val type: TaskType?) {
-    All("All", null), Goals("Goals", TaskType.Goal), Routines("Routines", TaskType.Routine), Loops("Loops", TaskType.Loop), Heartbeats("Agent Heartbeats", TaskType.Heartbeat)
+/** Icons follow iOS TaskTab.icon (calendar check, target, clock, repeat, cpu). */
+private enum class TaskTab(val label: String, val type: TaskType?, val icon: Int) {
+    All("All", null, DesignR.drawable.ph_calendar_check),
+    Goals("Goals", TaskType.Goal, DesignR.drawable.ph_target),
+    Routines("Routines", TaskType.Routine, DesignR.drawable.ph_clock),
+    Loops("Loops", TaskType.Loop, DesignR.drawable.ph_repeat),
+    Heartbeats("Agent Heartbeats", TaskType.Heartbeat, DesignR.drawable.ph_cpu),
 }
 internal enum class RoutinesView(val label: String) { List("List"), Graph("Graph"), Calendar("Calendar") }
 private enum class TaskSort(val label: String) { Date("Date"), Name("Name"), Type("Type") }
@@ -160,16 +165,18 @@ fun AutomationRoot(host: AutomationHost) {
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (host.signedIn && store.noComputer) NoComputerState(onRetry = { scope.launch { store.load() } })
-                            if (host.signedIn) SlidingSegmented(Top.entries.map { it.label }, top.ordinal, { top = Top.entries[it] }, Modifier.testTag("automationTop"))
+                            if (host.signedIn) SlidingSegmented(Top.entries.map { it.label }, top.ordinal, { top = Top.entries[it] }, Modifier.testTag("automationTop"), itemTag = { "automationTop" + Top.entries[it].name })
                             if (host.signedIn && top == Top.Scheduled) {
                                 FilterPills(
                                     TaskTab.entries.map { t -> t.label + (t.type?.let { ty -> " " + store.of(ty).size } ?: if (store.tasks.isNotEmpty()) " " + store.tasks.size else "") },
                                     tab.ordinal, { tab = TaskTab.entries[it] }, Modifier.testTag("automationTabs"),
+                                    itemTag = { "automationTab" + TaskTab.entries[it].name },
+                                    icon = { TaskTab.entries[it].icon },
                                 )
-                                if (tab != TaskTab.Goals) SlidingSegmented(RoutinesView.entries.map { it.label }, view.ordinal, { view = RoutinesView.entries[it] }, Modifier.testTag("automationViews"))
+                                if (tab != TaskTab.Goals) SlidingSegmented(RoutinesView.entries.map { it.label }, view.ordinal, { view = RoutinesView.entries[it] }, Modifier.testTag("automationViews"), itemTag = { "automationView" + RoutinesView.entries[it].name })
                                 if (listMode) {
                                     if (searchOpen || query.isNotEmpty()) LibrarySearchField(query, "Search tasks", "automationSearch") { query = it }
-                                    FilterPills(TaskSort.entries.map { "Sort: " + it.label }, sort.ordinal, { sort = TaskSort.entries[it] }, Modifier.testTag("automationSort"))
+                                    FilterPills(TaskSort.entries.map { "Sort: " + it.label }, sort.ordinal, { sort = TaskSort.entries[it] }, Modifier.testTag("automationSort"), itemTag = { "automationSort" + TaskSort.entries[it].name })
                                 }
                             }
                         }
