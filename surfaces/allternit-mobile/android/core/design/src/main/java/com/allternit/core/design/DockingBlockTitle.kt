@@ -276,8 +276,13 @@ fun rememberDockOffset(state: LazyListState): () -> Float {
     }
 }
 
-/** The page scroll in dp that the nearest [ProvideDockScroll] gave. 0 (title stays big) with no provider. */
-val LocalDockOffset = compositionLocalOf<() -> Float> { { 0f } }
+/**
+ * The page scroll in dp that the nearest [ProvideDockScroll] gave, or null when no screen
+ * provides one. Shared headers (LibraryHeader, SPage, ACI headers) dock only when this is
+ * non-null, so a screen that never opts in keeps today's header. A provided offset of 0
+ * (page at rest) means "docking page, title big", which is not the same as "no provider".
+ */
+val LocalDockOffset = compositionLocalOf<(() -> Float)?> { null }
 
 /** Gives headers inside [content] (LibraryHeader, SPage, ACI headers) the page scroll [offset] in dp. */
 @Composable
