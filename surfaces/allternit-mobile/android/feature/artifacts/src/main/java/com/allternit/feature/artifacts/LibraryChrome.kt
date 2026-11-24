@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.GlassPill
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 
@@ -98,24 +100,15 @@ fun Modifier.glassSurface(shape: androidx.compose.ui.graphics.Shape): Modifier {
         .clip(shape).background(c.bgPanel.copy(alpha = 0.92f)).border(BorderStroke(0.5.dp, c.borderSubtle), shape)
 }
 
-/** iOS ProjectsNewButton / "New artifact": the floating white capsule with a "+", a hairline border and a soft shadow. */
+/** The floating "New artifact" / "New project" glass pill with a "+". */
 @Composable
 fun LibraryNewButton(label: String, testTag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    val view = LocalView.current
-    val shape = RoundedCornerShape(25.dp)
-    Row(
-        modifier.height(50.dp)
-            .shadow(8.dp, shape, ambientColor = Color.Black.copy(alpha = 0.10f), spotColor = Color.Black.copy(alpha = 0.10f))
-            .clip(shape).background(Color.White).border(BorderStroke(0.5.dp, c.borderStrong), shape)
-            .testTag(testTag)
-            .clickable(role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
-            .padding(horizontal = 22.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(painterResource(DesignR.drawable.ph_plus), null, tint = Color(0xFF141413), modifier = Modifier.size(16.dp))
-        Text(label, color = Color(0xFF141413), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    GlassPill(onClick = onClick, modifier = modifier.testTag(testTag), height = 50.dp, contentPadding = PaddingValues(horizontal = 22.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+            Text(label, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
