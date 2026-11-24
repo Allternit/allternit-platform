@@ -124,7 +124,7 @@ fun ModelsRoot(host: ModelsHost) {
     val context = LocalContext.current
     var segment by remember { mutableStateOf(Segment.Catalog) }
     var filter by remember { mutableStateOf(FwFilter.Fits) }
-    var face by remember { mutableStateOf(Face.List) }
+    var face by remember { mutableStateOf(Face.Grid) }
     var query by remember { mutableStateOf("") }
     var catalog by remember { mutableStateOf<List<FwRow>>(emptyList()) }
     var ranked by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -168,7 +168,7 @@ fun ModelsRoot(host: ModelsHost) {
         when (segment) {
             Segment.Device -> Column(Modifier.fillMaxSize()) {
                 Spacer(Modifier.height(52.dp))
-                SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.padding(horizontal = 14.dp, vertical = 4.dp).testTag("modelsSegments"))
+                SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.padding(horizontal = 14.dp, vertical = 4.dp).testTag("modelsSegments"), itemTag = { "modelsSegment${Segment.entries[it].name}" })
                 OnThisPhoneScreen(host) { segment = Segment.Catalog }
             }
             Segment.Catalog -> PullToRefreshBox(isRefreshing = loading && catalog.isNotEmpty(), onRefresh = { attempt++ }, modifier = Modifier.fillMaxSize()) {
@@ -179,10 +179,10 @@ fun ModelsRoot(host: ModelsHost) {
                         title = { Box(Modifier.padding(top = 12.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Freeweights" }) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.testTag("modelsSegments"))
+                            SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.testTag("modelsSegments"), itemTag = { "modelsSegment${Segment.entries[it].name}" })
                             LibrarySearchField(query, "Search Freeweights", "modelsSearch") { query = it; limit = 40 }
-                            SlidingSegmented(Face.entries.map { it.label }, face.ordinal, { face = Face.entries[it] }, Modifier.testTag("modelsFace"))
-                            FilterPills(FwFilter.entries.map { it.label }, filter.ordinal, { filter = FwFilter.entries[it]; limit = 40 }, Modifier.testTag("modelsFilter"))
+                            SlidingSegmented(Face.entries.map { it.label }, face.ordinal, { face = Face.entries[it] }, Modifier.testTag("modelsFace"), itemTag = { "modelsFace${Face.entries[it].raw}" })
+                            FilterPills(FwFilter.entries.map { it.label }, filter.ordinal, { filter = FwFilter.entries[it]; limit = 40 }, Modifier.testTag("modelsFilter"), itemTag = { "modelsFilter${FwFilter.entries[it].name}" })
                             SectionLabel("Models")
                             when {
                                 loading && catalog.isEmpty() -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }

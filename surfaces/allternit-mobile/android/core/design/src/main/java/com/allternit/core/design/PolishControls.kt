@@ -43,6 +43,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -174,6 +175,8 @@ fun FilterPills(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Optional test tag per option (null for none). */
+    itemTag: ((Int) -> String?)? = null,
 ) {
     val colors = AllternitTheme.colors
     val view = LocalView.current
@@ -193,6 +196,7 @@ fun FilterPills(
                 Box(
                     Modifier
                         .height(34.dp)
+                        .then(itemTag?.invoke(i)?.let { Modifier.testTag(it) } ?: Modifier)
                         .onGloballyPositioned { frames[i] = it.positionInParent().x to it.size.width.toFloat() }
                         .clip(CircleShape)
                         .then(if (picked) Modifier else Modifier.background(colors.fillNeutral))
@@ -218,6 +222,8 @@ fun SlidingSegmented(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Optional test tag per option (null for none). */
+    itemTag: ((Int) -> String?)? = null,
 ) {
     val colors = AllternitTheme.colors
     val view = LocalView.current
@@ -241,6 +247,7 @@ fun SlidingSegmented(
                     Modifier
                         .width(segment)
                         .height(34.dp)
+                        .then(itemTag?.invoke(i)?.let { Modifier.testTag(it) } ?: Modifier)
                         .semantics { selected = i == selectedIndex }
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Tab) {
                             if (i != selectedIndex) {
