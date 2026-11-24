@@ -23,6 +23,25 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.LocalDockOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,18 +117,58 @@ internal object AciRelay {
     }
 }
 
+/**
+ * Draws [title] as the docking block title from inside a header: a screen-sized, touch-free overlay that is
+ * pinned to the screen origin whatever the header's own position or the page scroll ([counterScroll] for a header
+ * that scrolls with the page). [titleTop] and [barCenter] get the header's root y (at scroll 0) in dp.
+ */
+@Composable
+internal fun AciDockOverlay(
+    title: String,
+    offset: () -> Float,
+    counterScroll: Boolean,
+    titleTop: (anchorY: Float) -> Dp,
+    barCenter: (anchorY: Float) -> Dp,
+) {
+    val d = LocalDensity.current.density
+    val conf = LocalConfiguration.current
+    var ox by remember { mutableFloatStateOf(0f) }
+    var oy by remember { mutableFloatStateOf(0f) }
+    Box(
+        Modifier.size(0.dp)
+            .onGloballyPositioned {
+                val p = it.positionInRoot()
+                ox = p.x
+                oy = p.y + if (counterScroll) offset() * d else 0f
+            }
+            .wrapContentSize(Alignment.TopStart, unbounded = true)
+            .offset { IntOffset(-ox.roundToInt(), -(oy - (if (counterScroll) offset() * d else 0f)).roundToInt()) },
+    ) {
+        DockingBlockTitle(
+            text = title, scrollOffset = offset, barCenter = barCenter(oy / d), top = titleTop(oy / d),
+            modifier = Modifier.requiredSize(conf.screenWidthDp.dp, conf.screenHeightDp.dp),
+        )
+    }
+}
+
 /** A full-width top bar: Back chevron text, centred title (iOS inline navigation title). */
 @Composable
 internal fun AciTopBar(title: String, backTitle: String, onBack: () -> Unit, trailing: @Composable () -> Unit = {}) {
     val c = AllternitTheme.colors
+    val dock = LocalDockOffset.current
     Box(Modifier.fillMaxWidth().heightIn(min = 52.dp).background(c.bgPrimary)) {
         Row(
             Modifier.heightIn(min = 52.dp).clickable(onClickLabel = "Back to $backTitle") { onBack() }.padding(horizontal = 14.dp).testTag("aciBack"),
             verticalAlignment = Alignment.CenterVertically,
         ) { Text("‹ $backTitle", color = c.textPrimary, fontSize = 15.sp) }
+        // With a dock scroll the title is the block title: big in the page, spelled into this bar's centre.
         Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 96.dp))
+            modifier = Modifier.align(Alignment.Center).padding(horizontal = 96.dp)
+                .then(if (dock != null) Modifier.alpha(0f).clearAndSetSemantics { } else Modifier))
         Box(Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)) { trailing() }
+        if (dock != null) {
+            AciDockOverlay(title, dock, counterScroll = false, titleTop = { DockSpec.TOP.dp }, barCenter = { y -> (y + 26f).dp })
+        }
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
 }
