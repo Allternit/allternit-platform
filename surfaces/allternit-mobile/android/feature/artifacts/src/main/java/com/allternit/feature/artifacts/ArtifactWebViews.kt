@@ -235,14 +235,17 @@ sealed interface PageSource {
 @Composable
 fun ArtifactPageWebView(source: PageSource, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    // A remote page shows the dot band until the real page-finished event; inline html is instant, so it gets no field.
+    var pageLoading by remember(source) { mutableStateOf(source is PageSource.Url) }
+    Box(modifier) {
     AndroidView(
-        modifier = modifier.testTag("artifactPageWeb"),
+        modifier = Modifier.fillMaxSize().testTag("artifactPageWeb"),
         factory = { ctx ->
             WebView(ctx).apply {
                 lockDown(js = true, domStorage = source is PageSource.Url)
                 webViewClient = object : WebViewClient() {
                     var settled = false
-                    override fun onPageFinished(view: WebView, url: String?) { settled = true }
+                    override fun onPageFinished(view: WebView, url: String?) { settled = true; pageLoading = false }
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         if (!request.isForMainFrame) return false
                         if (!settled && !request.hasGesture()) return false
@@ -257,6 +260,8 @@ fun ArtifactPageWebView(source: PageSource, modifier: Modifier = Modifier) {
         update = { web -> if (web.tag != source) load(web, source) },
         onRelease = { it.destroy() },
     )
+    if (source is PageSource.Url) com.allternit.core.design.DotLoadingOverlay(pageLoading, Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary).testTag("artifactPageDots"))
+    }
 }
 
 private fun load(web: WebView, source: PageSource) {
@@ -499,14 +504,7 @@ fun ArtifactLiveWebView(
             )
         }
         when (val p = phase) {
-            LivePhase.Loading -> Column(
-                Modifier.fillMaxSize().background(c.bgPrimary),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-            ) {
-                CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "Opening ${route.noun}" }, strokeWidth = 2.dp, color = c.textSecondary)
-                Text("Opening ${route.noun}…", color = c.textSecondary, fontSize = 14.sp)
-            }
+            LivePhase.Loading -> Unit
             is LivePhase.Failed -> Box(Modifier.fillMaxSize().background(c.bgPrimary)) {
                 FriendlyState(
                     style = FriendlyStyle.Error,
@@ -519,6 +517,11 @@ fun ArtifactLiveWebView(
             }
             LivePhase.Ready -> Unit
         }
+        // The band dot field holds the box until the page reports ready (or fails), then fades out.
+        com.allternit.core.design.DotLoadingOverlay(
+            phase is LivePhase.Loading,
+            Modifier.fillMaxSize().background(c.bgPrimary).semantics { contentDescription = "Opening ${route.noun}" }.testTag("artifactLiveDots"),
+        )
         if (preparing) {
             Text(
                 "Preparing download…", color = c.textPrimary, fontSize = 13.sp,
