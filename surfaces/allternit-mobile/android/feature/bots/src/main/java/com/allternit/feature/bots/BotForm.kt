@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.feature.artifacts.LibraryField
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.LibrarySheet
@@ -411,12 +412,14 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
         )
     }
 
+    val formScroll = rememberScrollState()
     LibrarySheet(
+        dockScroll = rememberDockOffset(formScroll),
         title = if (editing) "Edit bot" else "Create bot", testTag = if (editing) "editBotSheet" else "newBotSheet", onDismiss = onDismiss,
         leading = LibrarySheetAction("Cancel", enabled = !saving, testTag = "botFormCancel", onClick = onDismiss),
         trailing = LibrarySheetAction(if (editing) (if (saving) "Saving…" else "Save bot") else (if (saving) "Creating…" else "Create"), enabled = canSave || !saving, bold = true, testTag = "botFormSave", onClick = ::submit),
     ) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 680.dp).verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 680.dp).verticalScroll(formScroll).imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (host?.signedIn == false) Text(if (editing) "Sign in to edit this bot." else "Sign in to make a bot.", color = c.textSecondary, fontSize = 14.sp)
             (error ?: look.error)?.let { ErrorLine(it, Modifier.padding(horizontal = 0.dp)) }
             when {
