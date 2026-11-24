@@ -78,6 +78,11 @@ struct DeepLinkHost: ViewModifier {
             }
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView()
+                    // Passed in, not inherited: Sign in closes this sheet and opens the
+                    // root sign-in sheet in the same tick, and SettingsView redraws
+                    // once more after its presenter's environment is gone (crash 11-22).
+                    .environmentObject(AuthManager.shared)
+                    .environmentObject(modeStore)
             }
             // Connections › Runtimes "New chat on …" closes Settings onto the chat.
             .onReceive(NotificationCenter.default.publisher(for: .shellNewChatOnRuntime)) { _ in
