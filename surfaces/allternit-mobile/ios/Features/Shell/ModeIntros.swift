@@ -273,7 +273,7 @@ private struct HeroCode: View {
                 Spacer()
                 GeometryReader { g in
                     Rectangle()
-                        .fill(LinearGradient(colors: [Color(hex: "#D97757"), Color(hex: "#C9A27E")], startPoint: .leading, endPoint: .trailing))
+                        .fill(LinearGradient(colors: [Color(hex: "#D97757"), Color(hex: "#E8A285")], startPoint: .leading, endPoint: .trailing))
                         .frame(width: g.size.width * progress, height: 3)
                 }
                 .frame(height: 3)
