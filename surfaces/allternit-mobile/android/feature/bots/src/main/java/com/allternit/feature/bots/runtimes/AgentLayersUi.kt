@@ -73,6 +73,7 @@ import com.allternit.feature.artifacts.LibraryLayoutSwitch
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.bots.BotAvatar
+import com.allternit.core.design.ProviderLogoMark
 import com.allternit.core.design.R as DesignR
 
 /*
@@ -399,18 +400,9 @@ private fun Badge(text: String, tone: BadgeTone) {
     }
 }
 
-/** A runtime or provider mark: its initial on a neutral tile (iOS ModelProviderMark). */
+/** A runtime or provider mark: its brand logo, else a neutral glyph (iOS ModelProviderMark). */
 @Composable
-internal fun Mark(key: String, size: Dp) {
-    val c = AllternitTheme.colors
-    val letter = when {
-        key == "allternit" -> "A"
-        else -> providerName(key).take(1).uppercase()
-    }
-    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(c.fillNeutral).border(1.dp, c.borderSubtle, RoundedCornerShape(size * 0.28f)), contentAlignment = Alignment.Center) {
-        Text(letter, color = c.textPrimary, fontSize = (size.value * 0.46f).sp, fontWeight = FontWeight.SemiBold)
-    }
-}
+internal fun Mark(key: String, size: Dp) = ProviderLogoMark(key, size)
 
 @Composable
 private fun InitialTile(name: String, size: Dp) {
