@@ -124,6 +124,8 @@ fun AgentChipsRow(
     onOpenConnections: (() -> Unit)?,
     modifier: Modifier = Modifier,
     iconOnly: Boolean = false,
+    /** The surface the chip sits on (the composer card); defaults to the page background. */
+    chipBackground: Color = Color.Unspecified,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -138,44 +140,18 @@ fun AgentChipsRow(
         is RegistryState.Error -> RegistryNotice("Couldn't load the runtimes. ${s.message}") { scope.launch { RuntimeRegistry.load(context, force = true) } }
         else -> null
     }
-    Row(modifier.testTag("composerAgentChips"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        AgentLayer.entries.forEach { layer ->
-            val locked = model.locked && layer != AgentLayer.Bot
-            AgentChip(
-                layer = layer, text = model.chipText(layer), locked = locked, iconOnly = iconOnly,
-                mark = when (layer) { AgentLayer.Runtime -> model.runtime?.let { it.tool ?: it.id } ?: model.runtimeId; AgentLayer.Brain -> model.brainProvider ?: "allternit"; AgentLayer.Bot -> "" },
-                bot = if (layer == AgentLayer.Bot) agent.bot else null,
-            ) { open = layer }
-        }
-    }
-    open?.let { layer ->
-        AgentLayerSheet(
-            model, layer, agent.note, onDismiss = { open = null },
+    // The vendor-run chip of a Connected bot, or the one Runtime·Brain chip. Plain-chat warnings stay on the brain.
+    RuntimeBrainChip(
+        runtimeKey = model.runtime?.let { it.tool ?: it.id } ?: model.runtimeId, runtimeName = model.runtimeName, brainName = model.brainName,
+        background = if (chipBackground == Color.Unspecified) AllternitTheme.colors.bgPrimary else chipBackground,
+        modifier = modifier.testTag("composerAgentChips"), lockedVendor = if (model.locked) model.vendor else null, iconOnly = iconOnly,
+    ) { open = AgentLayer.Runtime }
+    if (open != null) {
+        RuntimeBrainSheet(
+            model, plainChat = false, note = agent.note, onDismiss = { open = null },
             // An auto-switch keeps the sheet open so its note is read; any other pick closes it.
             onChange = { ch -> agent.apply(ch); if (ch.note == null) open = null },
             registryNotice = notice, brainsLoading = brainsLoading, onOpenConnections = onOpenConnections,
         )
-    }
-}
-
-@Composable
-private fun AgentChip(layer: AgentLayer, text: String, locked: Boolean, iconOnly: Boolean, mark: String, bot: BotRecord?, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
-    val view = LocalView.current
-    Row(
-        Modifier.heightIn(min = 44.dp).widthIn(min = if (iconOnly) 44.dp else 0.dp).clip(RoundedCornerShape(10.dp))
-            .background(if (locked) c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.6f) else Color.Transparent)
-            // A locked chip (Connected bot) is read, not opened: the vendor runs the runtime and brain.
-            .clickable(enabled = !locked, role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
-            .semantics(mergeDescendants = true) { contentDescription = "${layer.label}, ${layer.hint}: $text${if (locked) ", locked" else ""}" }
-            .testTag("composerAgentChip${layer.name}")
-            .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-    ) {
-        if (locked) Icon(painterResource(DesignR.drawable.ph_lock), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
-        if (bot != null) Box(Modifier.size(20.dp)) { BotAvatar(bot, 20.dp) } else if (!locked) Mark(mark, 20.dp)
-        // Full accessible labels remain on icon-only chips, including vendor-locked layers.
-        if (!iconOnly) Text(text, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
-        if (!locked && !iconOnly) Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
     }
 }

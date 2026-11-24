@@ -1,15 +1,9 @@
 package com.allternit.feature.bots.runtimes
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,25 +15,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
-import com.allternit.core.design.Haptics
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import com.allternit.core.design.R as DesignR
 
 /*
  * Runtime + Brain in every chat (Harness & Bots 2.0 fix): a plain chat's composer shows a Runtime
@@ -117,10 +104,13 @@ fun ChatRuntimeChip(
     onBrainSwitch: (BrainOption) -> Unit,
     modifier: Modifier = Modifier,
     iconOnly: Boolean = false,
+    /** The surface the chip sits on (the composer card); defaults to the page background. */
+    chipBackground: Color = Color.Unspecified,
+    /** Opens the existing model picker (effort, limits); shown as the sheet's last row. */
+    onOpenModelPicker: (() -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
-    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val registry by RuntimeRegistry.state.collectAsState()
     var open by remember { mutableStateOf(false) }
@@ -139,21 +129,17 @@ fun ChatRuntimeChip(
         botId = null, botName = "This chat", locked = false, vendorName = null,
     )
 
-    Row(
-        modifier.heightIn(min = 44.dp).widthIn(min = if (iconOnly) 44.dp else 0.dp).clip(RoundedCornerShape(10.dp))
-            .clickable(role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); blocked = null; open = true }
-            .semantics(mergeDescendants = true) { contentDescription = "Runtime, How it works: ${current.name}" }
-            .testTag("composerRuntimeChip")
-            .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-    ) {
-        Mark(current.tool ?: current.id, 20.dp)
-        if (!iconOnly) {
-            Text(current.name, color = c.textSecondary, fontSize = 14.sp, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
-            Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
-        }
+    // The dot: the existing availability check, run once per runtime (null = no check, ready).
+    var dot by remember { mutableStateOf(RuntimeDot.Ready) }
+    LaunchedEffect(current.id, blocked) {
+        dot = if (current.id == "allternit") RuntimeDot.Ready
+        else runCatching { ChatRuntime.check?.invoke(current) }.getOrElse { RuntimeCheck.Failed(it.message ?: "Check failed") }.toDot()
     }
+    RuntimeBrainChip(
+        runtimeKey = current.tool ?: current.id, runtimeName = current.name, brainName = model.brainName,
+        background = if (chipBackground == Color.Unspecified) c.bgPrimary else chipBackground, modifier = modifier.testTag("composerRuntimeChip"),
+        dot = dot, iconOnly = iconOnly,
+    ) { blocked = null; open = true }
 
     if (open) {
         val notice = when (val s = registry) {
@@ -161,12 +147,21 @@ fun ChatRuntimeChip(
             is RegistryState.Error -> RegistryNotice("Couldn't load the runtimes. ${s.message}") { scope.launch { RuntimeRegistry.load(context, force = true) } }
             else -> null
         }
-        AgentLayerSheet(
-            model, AgentLayer.Runtime, note = null, onDismiss = { open = false },
+        RuntimeBrainSheet(
+            model, plainChat = true, note = null, onDismiss = { open = false },
+            onOpenModelPicker = onOpenModelPicker?.let { go -> { open = false; go() } },
             onChange = { ch ->
-                val id = (ch.botBrain["runtime"] as? JsonPrimitive)?.content ?: return@AgentLayerSheet
-                val r = runtimes.runtime(id) ?: return@AgentLayerSheet
-                if (r.id == current.id) { open = false; return@AgentLayerSheet }
+                // A brain pick writes the shell's model selection; a runtime pick starts a chat on it.
+                if (ch.layer == AgentLayer.Brain) {
+                    val ref = ch.botBrain["modelRef"] as? JsonObject
+                    val key = "${ref.s("providerID")}/${ref.s("modelID")}"
+                    brains.firstOrNull { it.key == key }?.let(onBrainSwitch)
+                    open = false
+                    return@RuntimeBrainSheet
+                }
+                val id = (ch.botBrain["runtime"] as? JsonPrimitive)?.content ?: return@RuntimeBrainSheet
+                val r = runtimes.runtime(id) ?: return@RuntimeBrainSheet
+                if (r.id == current.id) { open = false; return@RuntimeBrainSheet }
                 checking = r.id
                 blocked = null
                 scope.launch {
