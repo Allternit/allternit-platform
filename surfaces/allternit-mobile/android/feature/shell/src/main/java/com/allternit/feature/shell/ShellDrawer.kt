@@ -58,6 +58,14 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitRadii
+import com.allternit.core.design.GlassCircleButton
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.PolishHaptic
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
@@ -192,8 +200,8 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // D4: tap closes the drawer, then the mode fan opens out of ☰ (iOS ModeDialButton).
-        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenFan = onModeDial)
+        // The mode icon opens Shelves after closing the drawer.
+        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenHub = onModeDial)
         // ShellWordmark: the pixel mark; suffixed marks run smaller to fit beside the buttons.
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),
@@ -227,44 +235,42 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
     }
 }
 
-/** 40dp neutral circle (`phone-round-btn`). */
+/** 40dp glass circle (`phone-round-btn`): Inbox and Search. */
 @Composable
 private fun RoundButton(icon: Int, label: String, testTag: String, onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    val view = LocalView.current
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(c.fillNeutral)
-            .testTag(testTag)
-            .clickable(role = Role.Button, onClickLabel = label) {
-                Haptics.perform(view, Haptics.Kind.Tap)
-                onClick()
-            }
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) {
+    GlassCircleButton(onClick = onClick, contentDescription = label, modifier = Modifier.testTag(testTag)) {
         Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
     }
 }
 
-/** `phone-nav-row`: 46dp, 24dp glyph column, 17sp label. */
+/** A row's press highlight: the neutral fill while a finger is down, with the .98 row press scale. */
+@Composable
+private fun Modifier.rowPress(source: MutableInteractionSource): Modifier {
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.98f else 1f, spring(dampingRatio = 0.7f, stiffness = 600f), label = "rowPress")
+    val fill = AllternitTheme.colors.fillNeutral
+    return this.graphicsLayer { scaleX = scale; scaleY = scale }.background(if (pressed) fill else Color.Transparent)
+}
+
+/** `phone-nav-row`: 50dp, 24dp glyph column, 17sp label. */
 @Composable
 private fun DrawerNavRow(label: String, icon: Int, testTag: String, dot: Boolean = false, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
+    val source = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(AllternitRadii.MD))
             .testTag(testTag)
-            .clickable(role = Role.Button) {
+            .rowPress(source)
+            .clickable(interactionSource = source, indication = null, role = Role.Button) {
                 Haptics.perform(view, Haptics.Kind.Tap)
                 onClick()
             }
-            .height(46.dp)
+            .height(50.dp)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -433,17 +439,19 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val time = relativeTime(session.timestampMillis)
+    val source = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(AllternitRadii.MD))
             .testTag("recentRow${session.id}")
-            .clickable(role = Role.Button) {
+            .rowPress(source)
+            .clickable(interactionSource = source, indication = null, role = Role.Button) {
                 Haptics.perform(view, Haptics.Kind.Tap)
                 onClick()
             }
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -499,6 +507,10 @@ private fun DrawerFooter(
     val c = AllternitTheme.colors
     val view = LocalView.current
     var newMenu by remember { mutableStateOf(false) }
+    // The New pill is a glass pill (press scale .94) that keeps its press-and-hold menu.
+    val pillSource = remember { MutableInteractionSource() }
+    val pillPressed by pillSource.collectIsPressedAsState()
+    val pillScale by animateFloatAsState(if (pillPressed) 0.94f else 1f, spring(dampingRatio = 0.49f, stiffness = 600f), label = "newPillPress")
     val name = account?.displayName ?: "Not signed in"
     Row(
         modifier = modifier
@@ -509,21 +521,13 @@ private fun DrawerFooter(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .testTag("drawerSettings")
-                .clickable(role = Role.Button, onClickLabel = "Open settings") {
-                    Haptics.perform(view, Haptics.Kind.Tap)
-                    onSettings()
-                }
-                .semantics { contentDescription = "$name. Settings" },
-            contentAlignment = Alignment.Center,
+        GlassCircleButton(
+            onClick = onSettings,
+            contentDescription = "$name. Settings",
+            modifier = Modifier.testTag("drawerSettings"),
+            size = 44.dp,
         ) {
-            Box(Modifier.size(37.5.dp).clip(CircleShape).border(2.5.dp, c.borderSubtle, CircleShape), contentAlignment = Alignment.Center) {
-                AccountAvatar(account, size = 30)
-            }
+            AccountAvatar(account, size = 30)
         }
         Box(
             modifier = Modifier
@@ -588,13 +592,16 @@ private fun DrawerFooter(
         Box {
         Row(
             modifier = Modifier
-                .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black.copy(alpha = 0.10f), spotColor = Color.Black.copy(alpha = 0.10f))
-                .clip(RoundedCornerShape(22.dp))
-                .background(c.bgPrimary)
-                .border(1.dp, c.textPrimary.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                .graphicsLayer { scaleX = pillScale; scaleY = pillScale }
+                .shadow(6.dp, CircleShape, ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.12f))
+                .clip(CircleShape)
+                .background(PolishGlass.fill())
+                .border(1.dp, PolishGlass.border(), CircleShape)
                 .testTag("drawerNewPill")
                 // Tap starts the mode's new item; press and hold opens more ways to start (iOS newPill Menu).
                 .combinedClickable(
+                    interactionSource = pillSource,
+                    indication = null,
                     role = Role.Button,
                     onLongClickLabel = "More ways to start",
                     onLongClick = if (newOptions.isEmpty()) null else ({
@@ -602,7 +609,7 @@ private fun DrawerFooter(
                         newMenu = true
                     }),
                 ) {
-                    Haptics.perform(view, Haptics.Kind.Tap)
+                    PolishHaptic.perform(view, PolishHaptic.Kind.Light)
                     onNew()
                 }
                 .semantics { contentDescription = "${mode.newLabel}. Press and hold for more ways to start" }

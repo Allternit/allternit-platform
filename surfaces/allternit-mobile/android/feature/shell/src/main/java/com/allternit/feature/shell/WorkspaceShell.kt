@@ -49,8 +49,8 @@ import androidx.compose.ui.unit.dp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
-import com.allternit.core.design.Haptics
-import com.allternit.core.design.Motion
+import androidx.compose.foundation.layout.size
+import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.chat.ChatBackends
 import com.allternit.feature.chat.ChatViewModel
@@ -67,6 +67,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
+
+/** The contract's push spring (stiffness 380, damping 36): damping ratio = 36 / (2 * sqrt(380)). */
+private val PushSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9234f, stiffness = 380f)
+
+/** The glass ☰ (panel A). The mode badge is gone (D1); the label still names the mode. */
+@Composable
+internal fun ShellMenuButton(mode: ShellMode, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    com.allternit.core.design.GlassCircleButton(
+        onClick = onOpen,
+        contentDescription = "Open menu. ${mode.label} mode",
+        modifier = modifier.testTag("phoneMenuButton"),
+    ) {
+        androidx.compose.material3.Icon(
+            androidx.compose.ui.res.painterResource(DesignR.drawable.ph_list),
+            contentDescription = null,
+            tint = AllternitTheme.colors.textPrimary,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
 
 /** What fills the page under the drawer. Chat, sections and settings are stubs until later steps. */
 private sealed interface ShellPage {
@@ -85,8 +105,8 @@ private sealed interface ShellPage {
 /**
  * The signed-in shell (iOS MainWorkspaceView, PWA PhoneShell): one page fills the screen, no
  * bottom bar. The drawer is min(80%, 360dp) wide (iOS sidebarWidth), springs in from the left (☰ tap or a pan from
- * the left edge), and the page pushes right with it, scaled to 0.94 with rounded corners. Holding
- * ☰ fans the modes out over everything; the fan and the drawer are never open together.
+ * the left edge), and the page pushes right with it, scaled to 0.94 with rounded corners.
+ * ☰ opens only the drawer; its mode icon opens the Shelves hub.
  *
  * [account] is null for the debug "Continue without signing in" path: no API calls then.
  * [openSettingsOnStart] opens Settings first (a first-run checklist fix).
@@ -132,6 +152,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     com.allternit.feature.chat.BrowserImageHost(chat)
     val hold = remember { MenuHoldState() }
+    var hubOpen by remember { mutableStateOf(false) }
     val drawer = remember { AnchoredDraggableState(if (launch.sidebar) DrawerValue.Open else DrawerValue.Closed) }
     // Wave C sheets: Inbox (drawer tray), Quick task and Continue CLI session (New pill hold).
     val inbox = remember { InboxStore(chatBackend) }
@@ -180,22 +201,29 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
 
     fun setDrawer(open: Boolean) {
-        scope.launch { drawer.animateTo(if (open) DrawerValue.Open else DrawerValue.Closed, Motion.standardSpring()) }
+        scope.launch { drawer.animateTo(if (open) DrawerValue.Open else DrawerValue.Closed, PushSpring) }
     }
 
-    // One light haptic per open (any way of opening), the fan closes, and Recents refresh
+    // One light haptic per open (any way of opening), the hub closes, and Recents refresh
     // each time the drawer is revealed (iOS onChange(isSidebarOpen)).
     LaunchedEffect(drawer.settledValue) {
-        if (drawer.settledValue == DrawerValue.Open) {
-            Haptics.perform(view, Haptics.Kind.Tap)
-            hold.dispatch(MenuHoldEvent.DrawerOpened)
+        if (drawer.settledValue == DrawerValue.Open && drawer.targetValue == DrawerValue.Open) {
+            PolishHaptic.perform(view, PolishHaptic.Kind.Light)
+            hubOpen = false
             if (account != null) store.load()
-        } else {
-            hold.dispatch(MenuHoldEvent.DrawerClosed)
         }
     }
 
-    /** The hold machine's switchMode effect (it already closed the fan and played the haptic). */
+    // A soft haptic when the drawer starts closing (the open haptic is above).
+    var lastDrawerTarget by remember { mutableStateOf(drawer.targetValue) }
+    LaunchedEffect(drawer.targetValue) {
+        if (lastDrawerTarget == DrawerValue.Open && drawer.targetValue == DrawerValue.Closed) {
+            PolishHaptic.perform(view, PolishHaptic.Kind.Soft)
+        }
+        lastDrawerTarget = drawer.targetValue
+    }
+
+    /** Mode changes return to that mode’s home. */
     fun pickMode(m: ShellMode) {
         if (m != mode) {
             mode = m
@@ -251,25 +279,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
         }
     }
-    /** Open a bot's main chat in Bots mode (the ☰ bots shelf, iOS MenuHoldController .openBot). */
+    /** Open a bot’s main chat from Shelves or an existing navigation link. */
     fun openBotChat(botId: String) {
         mode = ShellMode.Bots
         ShellModePrefs.save(context, ShellMode.Bots)
         botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = botId)
         page = ShellPage.Home
     }
-    // ☰ hold: the mode fan and the bots shelf (iOS MenuHoldController.install in MainWorkspaceView).
-    hold.install(
-        scope = scope,
-        view = view,
-        isDrawerOpen = { drawer.targetValue == DrawerValue.Open },
-        isDrawerShown = { drawer.offset.let { !it.isNaN() && it > 0.5f } },
-        openDrawer = { setDrawer(true) },
-        closeDrawer = { setDrawer(false) },
-        switchMode = ::pickMode,
-        openBot = ::openBotChat,
-        shelfBotIds = { botsStore.bots.map { it.id } },
-    )
     // Wave F4a: the live view of a linked phone (iOS ACIComputersPane fullScreenCover PhoneLiveView).
     var phoneLive by remember { mutableStateOf<com.allternit.feature.computer.CloudPhone?>(null) }
 
@@ -311,13 +327,55 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     // Wave D: what the Projects and Artifacts screens need from the shell.
     val shellMenuButton: @Composable () -> Unit = {
-        PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
+        ShellMenuButton(mode = mode, onOpen = { setDrawer(true) })
+    }
+    fun openHubSection(m: ShellMode, section: HubSection) {
+        pickMode(m)
+        hubOpen = false
+        setDrawer(false)
+        when (val target = section.target) {
+            HubTarget.AllChats -> page = ShellPage.AllChats
+            is HubTarget.Rail -> page = ShellPage.Section(RailRow(target.id, section.label, section.icon))
+            is HubTarget.Bots -> {
+                botsLaunch = when (target.hint) {
+                    BotsHint.Root -> com.allternit.feature.bots.BotsLaunch(resetRoot = true)
+                    BotsHint.MainBot -> com.allternit.feature.bots.BotsLaunch(openMain = true)
+                    BotsHint.Groups -> com.allternit.feature.bots.BotsLaunch(route = com.allternit.feature.bots.BotRoute.Groups)
+                    BotsHint.Office -> com.allternit.feature.bots.BotsLaunch(route = com.allternit.feature.bots.BotRoute.Office)
+                }
+                page = ShellPage.Home
+            }
+        }
+    }
+    fun newItem() {
+        chat.startNewSession()
+        if (mode == ShellMode.Bots) botsLaunch = com.allternit.feature.bots.BotsLaunch(resetRoot = true)
+        if (mode == ShellMode.Aci) com.allternit.feature.computer.AciNav.open(com.allternit.feature.computer.AciTab.Agent)
+        openPage(ShellPage.Home)
+    }
+    LaunchedEffect(hubOpen, account?.userId) {
+        if (hubOpen && account != null) {
+            store.load()
+            runCatching { botsStore.refreshAll() }
+        }
+    }
+    val composerChrome: @Composable (Boolean, Boolean, (() -> Unit)?) -> Unit = { toolsOpen, sessionOpen, newAction ->
+        if (!hubOpen) {
+            ComposerOrbs(mode, sessionOpen && !toolsOpen, botsStore.waitingCount,
+                onPickMode = ::pickMode,
+                onOpenHub = { focusManager.clearFocus(); hubOpen = true },
+                onNew = newAction ?: ::newItem,
+                onQuickTask = { focusManager.clearFocus(); quickTaskOpen = true })
+        }
     }
     // Wave F3: ACI mode's host (iOS ACITabView): the relay for runs and workflows, ☰, sign-in.
     val aciHost = com.allternit.feature.computer.AciHost(
         signedIn = account != null,
         backend = chatBackend,
         menuButton = shellMenuButton,
+        composerControls = { sessionOpen, onNew ->
+            androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = 16.dp)) { composerChrome(false, sessionOpen, onNew) }
+        },
         openSignIn = { page = ShellPage.Settings },
         restorePoints = { done -> com.allternit.feature.settings.CloudBackupsPage(done) },
     )
@@ -394,8 +452,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onVoiceMode = spec.onVoiceMode,
                 // iOS bot composers pass playGamesAnytime: true.
                 playGamesAnytime = true,
+                sessionOpen = spec.sessionOpen,
+                onNewItem = spec.onNewThread,
                 agentChips = spec.agent?.let { agent ->
-                    @Composable { BotAgentChips(models, agent, onOpenConnections = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_brain)) }) }
+                    @Composable { iconOnly: Boolean -> BotAgentChips(models, agent, iconOnly = iconOnly, onOpenConnections = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_brain)) }) }
                 },
             )
         },
@@ -432,16 +492,16 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     }
 
     val drawerOpen = drawer.settledValue == DrawerValue.Open || drawer.targetValue == DrawerValue.Open
-    BackHandler(enabled = hold.fanOpen || drawerOpen || page != ShellPage.Home) {
+    BackHandler(enabled = hubOpen || drawerOpen || page != ShellPage.Home) {
         when {
-            hold.fanOpen -> hold.closeFan()
+            hubOpen -> hubOpen = false
             drawerOpen -> setDrawer(false)
             else -> page = ShellPage.Home
         }
     }
 
     // Every Text in the shell uses the bundled sans (iOS SF Pro sizes); the headline sets Serif itself.
-    CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans)) {
+    CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans), LocalComposerOrbs provides composerChrome) {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -462,7 +522,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 drawer.targetValue,
             )
         }
-        val fling = AnchoredDraggableDefaults.flingBehavior(drawer, { distance: Float -> distance * 0.25f }, Motion.standardSpring())
+        val fling = AnchoredDraggableDefaults.flingBehavior(drawer, { distance: Float -> distance * 0.25f }, PushSpring)
         val offset = drawer.offset.let { if (it.isNaN()) 0f else it }
         val p = if (widthPx > 0f) (offset / widthPx).coerceIn(0f, 1f) else 0f
 
@@ -482,17 +542,17 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        translationX = p * widthPx
-                        val s = 1f - 0.06f * p
+                        translationX = p * 300.dp.toPx()
+                        val s = 1f - 0.08f * p
                         scaleX = s
                         scaleY = s
                         transformOrigin = TransformOrigin(0f, 0.5f)
-                        shape = if (p > 0f) RoundedCornerShape((36 * p).dp) else RectangleShape
+                        shape = if (p > 0f) RoundedCornerShape((38 * p).dp) else RectangleShape
                         clip = p > 0f
                     }
                     .background(c.bgPrimary),
             ) {
-                Box(Modifier.fillMaxSize().then(if (drawerOpen) Modifier.clearAndSetSemantics {} else Modifier)) {
+                Box(Modifier.fillMaxSize().then(if (drawerOpen || hubOpen) Modifier.clearAndSetSemantics {} else Modifier)) {
                     when (val current = page) {
                         ShellPage.Home -> if (mode == ShellMode.Bots) {
                             com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
@@ -504,12 +564,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             store = store,
                             models = models,
                             menuButton = {
-                                PhoneMenuButton(
+                                ShellMenuButton(
                                     mode = mode,
-                                    hold = hold,
-                                    holdEnabled = !drawerOpen,
                                     onOpen = { setDrawer(true) },
-                                    onPick = ::pickMode,
                                 )
                             },
                             onNewChat = { draft ->
@@ -525,7 +582,6 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     }
                                 }
                             },
-                            onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             // The microphone permission was asked on the home composer; the chat starts voice mode.
                             onVoiceMode = {
@@ -551,12 +607,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             store = store,
                             models = models,
                             menuButton = {
-                                PhoneMenuButton(
+                                ShellMenuButton(
                                     mode = mode,
-                                    hold = hold,
-                                    holdEnabled = !drawerOpen,
                                     onOpen = { setDrawer(true) },
-                                    onPick = ::pickMode,
                                 )
                             },
                             // New chat: the home with an empty composer (iOS startNewChat).
@@ -786,7 +839,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.16f * p))
+                            .background(Color(0xFF1F1E1D).copy(alpha = 0.06f * p))
                             .testTag("drawerScrim")
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -800,7 +853,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
             // Left-edge pan opens the drawer. It starts under the header so ☰ keeps its taps,
             // and sits outside the moving page so drag deltas are not measured in a moving frame.
-            if (drawer.settledValue == DrawerValue.Closed && !hold.fanOpen) {
+            if (drawer.settledValue == DrawerValue.Closed && !hubOpen) {
                 val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp
                 Box(
                     Modifier
@@ -836,8 +889,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     mode = mode,
                     account = account,
                     store = store,
-                    // D4: the machine closes the drawer and fans the modes out of ☰ at once.
-                    onModeDial = { hold.openFan() },
+                    // Shelves is also reachable from screens without a composer.
+                    onModeDial = { setDrawer(false); focusManager.clearFocus(); hubOpen = true },
                     botsWaiting = botsStore.waitingCount,
                     onRow = { row -> openPage(ShellPage.Section(row)) },
                     onOpenSession = {
@@ -860,23 +913,35 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             }
         }
 
-        MenuOverlayHost(hold = hold, current = mode, botsStore = botsStore, signedIn = account != null)
-        // The shelf's Create a bot: a new bot opens straight into its chat (iOS MenuOverlayHost sheet).
-        if (hold.isCreateBotPresented) {
-            com.allternit.feature.bots.NewBotSheet(
-                store = botsStore,
-                host = botsHost,
-                onBrowseTemplates = null,
-                onDismiss = { hold.isCreateBotPresented = false },
-                onCreated = { ids ->
-                    hold.isCreateBotPresented = false
-                    scope.launch {
-                        botsStore.refreshAll()
-                        ids.firstOrNull()?.let { openBotChat(it) }
-                    }
-                },
-            )
-        }
+        ModeHubSheet(
+            visible = hubOpen,
+            currentMode = mode,
+            botsWaiting = botsStore.waitingCount,
+            itemsFor = { m, section ->
+                when (section.id) {
+                    "recents", "sessions" -> store.of(m).take(4).map { HubItem(it.id, it.title) }
+                    "main-bot" -> botsStore.agents.filter { it.isMainBot }.take(1).map { HubItem(it.id, it.displayName) }
+                    "bots" -> botsStore.bots.take(4).map { HubItem(it.id, it.displayName) }
+                    "groups" -> botsStore.groups.take(4).map { HubItem(it.id, it.name, it.lastLine) }
+                    "bot-projects" -> botsStore.projects.take(4).map { HubItem(it.id, it.title) }
+                    else -> emptyList()
+                }
+            },
+            onPickMode = { pickMode(it); hubOpen = false },
+            onOpenSection = { m, section -> openHubSection(m, section) },
+            onOpenItem = { m, section, item ->
+                hubOpen = false
+                if (section.id == "recents" || section.id == "sessions") {
+                    store.sessions.firstOrNull { it.id == item.key }?.let { openInItsMode(it) }
+                } else if (section.id == "bots" || section.id == "main-bot") openBotChat(item.key)
+                else if (section.id == "groups" || section.id == "bot-projects") {
+                    pickMode(ShellMode.Bots)
+                    botsLaunch = if (section.id == "groups") com.allternit.feature.bots.BotsLaunch(route = com.allternit.feature.bots.BotRoute.Group(item.key))
+                        else com.allternit.feature.bots.BotsLaunch(projectId = item.key)
+                } else openHubSection(m, section)
+            },
+            onDismiss = { hubOpen = false },
+        )
 
         if (inboxOpen) {
             InboxSheet(
@@ -955,8 +1020,6 @@ private fun launchSection(tab: String): RailRow? {
             else -> null
         }
 }
-
-private fun drawerOpenNow(drawer: AnchoredDraggableState<DrawerValue>): Boolean = drawer.settledValue == DrawerValue.Open
 
 /**
  * The StageBackdrop behind a project screen (iOS ProjectDetailView: the project's own look, else

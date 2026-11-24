@@ -75,6 +75,7 @@ data class AciHost(
     val backend: ChatBackend,
     val menuButton: @Composable () -> Unit,
     val openSignIn: () -> Unit,
+    val composerControls: @Composable (sessionOpen: Boolean, onNew: () -> Unit) -> Unit = { _, _ -> },
     /** Opens a linked phone's live view (iOS ACIComputersPane fullScreenCover PhoneLiveView); wave F4a. */
     val openPhoneLive: ((CloudPhone) -> Unit)? = null,
     /** The existing cloud restore points page (feature:settings), opened from the console Backups tab. */
@@ -151,16 +152,19 @@ fun AciRoot(host: AciHost) {
             when (tab) {
                 AciTab.Agent -> when (val d = destination) {
                     AciDestination.Landing -> AciBrowserLanding(
+                        controls = { host.composerControls(false) { destination = AciDestination.Landing } },
                         onOpen = { destination = AciDestination.Browser(it) },
                         onRunGoal = { destination = AciDestination.Agent(it) },
                     )
                     is AciDestination.Browser -> AciWebBrowser(
                         initialUrl = d.url,
+                        controls = { host.composerControls(true) { destination = AciDestination.Landing } },
                         onExit = { destination = AciDestination.Landing },
                         onStartAgentRun = { destination = AciDestination.Agent(it) },
                     )
                     is AciDestination.Agent -> AciAgentRunView(
                         goal = d.goal,
+                        controls = { host.composerControls(true) { destination = AciDestination.Landing } },
                         client = remember(host.backend) { AciAgentClient(host.backend) },
                         onExit = { destination = AciDestination.Landing },
                     )
@@ -233,7 +237,7 @@ private fun AciTargetPicker(backend: ChatBackend, devices: List<AciDevice>, modi
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> Unit) {
+private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> Unit, controls: @Composable () -> Unit = {}) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val shortcuts = remember { AciShortcutsStore(context) }
@@ -279,6 +283,7 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                     Text(tagline.uppercase(), color = c.textSecondary, fontSize = 14.sp, letterSpacing = 1.1.sp, maxLines = 1)
                     Box(Modifier.width(32.dp).height(1.dp).background(c.borderStrong))
                 }
+                controls()
                 // The search/URL form: 56 dp neutral field, accent button.
                 Row(
                     Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral)

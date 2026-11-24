@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -122,6 +123,7 @@ fun AgentChipsRow(
     brainsLoading: Boolean,
     onOpenConnections: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    iconOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -140,7 +142,7 @@ fun AgentChipsRow(
         AgentLayer.entries.forEach { layer ->
             val locked = model.locked && layer != AgentLayer.Bot
             AgentChip(
-                layer = layer, text = model.chipText(layer), locked = locked, compact = layer != AgentLayer.Brain,
+                layer = layer, text = model.chipText(layer), locked = locked, iconOnly = iconOnly,
                 mark = when (layer) { AgentLayer.Runtime -> model.runtime?.let { it.tool ?: it.id } ?: model.runtimeId; AgentLayer.Brain -> model.brainProvider ?: "allternit"; AgentLayer.Bot -> "" },
                 bot = if (layer == AgentLayer.Bot) agent.bot else null,
             ) { open = layer }
@@ -157,23 +159,23 @@ fun AgentChipsRow(
 }
 
 @Composable
-private fun AgentChip(layer: AgentLayer, text: String, locked: Boolean, compact: Boolean, mark: String, bot: BotRecord?, onClick: () -> Unit) {
+private fun AgentChip(layer: AgentLayer, text: String, locked: Boolean, iconOnly: Boolean, mark: String, bot: BotRecord?, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
-        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp))
+        Modifier.heightIn(min = 44.dp).widthIn(min = if (iconOnly) 44.dp else 0.dp).clip(RoundedCornerShape(10.dp))
             .background(if (locked) c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.6f) else Color.Transparent)
             // A locked chip (Connected bot) is read, not opened: the vendor runs the runtime and brain.
             .clickable(enabled = !locked, role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
             .semantics(mergeDescendants = true) { contentDescription = "${layer.label}, ${layer.hint}: $text${if (locked) ", locked" else ""}" }
             .testTag("composerAgentChip${layer.name}")
             .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
     ) {
         if (locked) Icon(painterResource(DesignR.drawable.ph_lock), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
         if (bot != null) Box(Modifier.size(20.dp)) { BotAvatar(bot, 20.dp) } else if (!locked) Mark(mark, 20.dp)
-        // Runtime and bot chips stay icon-sized on a phone (a2); the brain chip and locked chips carry text.
-        if (!compact || locked) Text(text, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
-        if (!locked) Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
+        // Full accessible labels remain on icon-only chips, including vendor-locked layers.
+        if (!iconOnly) Text(text, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
+        if (!locked && !iconOnly) Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
     }
 }

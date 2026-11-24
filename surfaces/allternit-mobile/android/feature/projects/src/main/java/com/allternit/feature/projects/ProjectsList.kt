@@ -62,7 +62,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.ui.platform.LocalDensity
 import com.allternit.core.design.AllternitStatic
+import com.allternit.core.design.BlockText
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.IntroKeys
+import com.allternit.core.design.IntroSeenStore
+import com.allternit.core.design.IntroSheet
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.SectionLabel
+import com.allternit.core.design.TabPage
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
@@ -93,6 +106,10 @@ class ProjectsNav(
     val runtimeGet: RuntimeGet = { Result.failure(IllegalStateException("No computer")) },
     /** Wave E: a bot project opens the bot project page in Bots mode (iOS BotProjectPage); null keeps the project detail. */
     val openBotProject: ((projectId: String) -> Unit)? = null,
+    /** Opens the connect-a-computer flow; the no-computer card shows its glass Connect button only when this is set. */
+    val onConnect: (() -> Unit)? = null,
+    /** The shell's intro store (wired to MeFlagsClient); null falls back to a device-only store. */
+    val introStore: IntroSeenStore? = null,
 )
 
 private enum class ProjectSort(val label: String) { Recent("Recent"), Name("Name"), Created("Created") }
@@ -137,6 +154,10 @@ fun ProjectsListScreen(
     var deleteFor by remember { mutableStateOf<LibraryProject?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var pendingOpenId by remember { mutableStateOf(initialProjectId) }
+    val gridState = rememberLazyGridState()
+    val density = LocalDensity.current.density
+    val introStore = remember(nav.introStore) { nav.introStore ?: IntroSeenStore(context, { null }, { _, _ -> false }) }
+    var introOpen by remember { mutableStateOf(false) }
 
     fun reload() { scope.launch { store.load() } }
     fun open(p: LibraryProject, asksForFolder: Boolean = false) {
@@ -150,6 +171,12 @@ fun ProjectsListScreen(
     }
 
     LaunchedEffect(signedIn) { if (signedIn) store.load() }
+    LaunchedEffect(signedIn) {
+        if (signedIn) {
+            introStore.refresh()
+            if (!introStore.isSeen(IntroKeys.PROJECTS)) introOpen = true
+        }
+    }
     LaunchedEffect(store.projects) {
         store.projects.forEach { p -> if (!looks.containsKey(p.id)) looks[p.id] = AppearanceClient.get(p.mode, p.nativeId) }
         pendingOpenId?.let { id -> store.projects.firstOrNull { it.nativeId == id || it.id == id }?.let { open(it); pendingOpenId = null } }
@@ -188,33 +215,52 @@ fun ProjectsListScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().testTag("projectsList")) {
-            LibraryHeader(
-                title = "Projects", onBack = null, leading = leading, glass = true,
-                trailing = {
-                    LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search projects", "projectsSearch") { searching = !searching }
-                    LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "projectsFilter") { filterOpen = true }
-                },
-            )
-            Text(
-                "$openCount open · $working working · $needs need${if (needs == 1) "s" else ""} you",
-                color = c.textTertiary, fontSize = 12.5.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("projectsCounts"),
-            )
+            Box(Modifier.height(52.dp))
             if (searching) LibrarySearchField(query, "Search projects", "projectsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { query = it }
             val full: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+            val gutter = Modifier.padding(horizontal = 14.dp)
+            val cardGutter = Modifier.padding(horizontal = if (layout == LibraryLayout.Grid) 6.dp else 14.dp)
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Fixed(if (layout == LibraryLayout.Grid) 2 else 1),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(start = if (layout == LibraryLayout.Grid) 12.dp else 16.dp, end = if (layout == LibraryLayout.Grid) 12.dp else 16.dp, top = 8.dp, bottom = 96.dp),
+                contentPadding = PaddingValues(start = if (layout == LibraryLayout.Grid) 8.dp else 0.dp, end = if (layout == LibraryLayout.Grid) 8.dp else 0.dp, top = 0.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(if (layout == LibraryLayout.List) 8.dp else 12.dp),
             ) {
-                notice?.let { n -> item(key = "notice", span = full) { Text(n, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.clickable { notice = null }) } }
+                item(key = "page", span = full) {
+                    // The block title is an overlay that docks into the top bar; this spacer keeps its room.
+                    TabPage(
+                        description = "Keep a job's chats, tasks and board together, and see what is working.",
+                        title = { Box(Modifier.height((DockSpec.TOP - 52f + 34f).dp)) },
+                    ) {}
+                }
+                notice?.let { n -> item(key = "notice", span = full) { Text(n, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = gutter.clickable { notice = null }) } }
                 // iOS: small red inline lines, one per failed source, above the grey empty text.
                 if (store.noComputer) item(key = "nocomputer", span = full) {
-                    Text("No computer connected. Connect a computer or start Allternit Cloud to use this.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("projectsNoComputer"))
+                    val cardShape = RoundedCornerShape(16.dp)
+                    Row(
+                        gutter.fillMaxWidth().clip(cardShape).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), cardShape).padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("No computer connected. Connect a computer or start Allternit Cloud to use this.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f).testTag("projectsNoComputer"))
+                        nav.onConnect?.let { connect ->
+                            GlassPill(onClick = connect, height = 34.dp, modifier = Modifier.testTag("projectsConnect")) {
+                                Text("Connect", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
                 } else store.failures.forEachIndexed { i, f ->
                     item(key = "failure$i", span = full) {
-                        Text(f, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.clickable { reload() }.then(if (i == 0) Modifier.testTag("projectsError") else Modifier))
+                        Text(f, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = gutter.clickable { reload() }.then(if (i == 0) Modifier.testTag("projectsError") else Modifier))
+                    }
+                }
+                if (signedIn) item(key = "label", span = full) {
+                    Column(gutter) {
+                        SectionLabel("Your projects \u00b7 $openCount open", Modifier.testTag("projectsCounts"))
+                        if (working > 0 || needs > 0) {
+                            Text("$working working \u00b7 $needs need${if (needs == 1) "s" else ""} you", color = c.textTertiary, fontSize = 12.5.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        }
                     }
                 }
                 when {
@@ -225,28 +271,60 @@ fun ProjectsListScreen(
                     }
                     store.loading && store.projects.isEmpty() -> item(key = "loading", span = full) { LibrarySpinner("Loading projects") }
                     store.loaded && store.projects.isEmpty() -> item(key = "empty", span = full) {
-                        Text("No projects yet. Create one to organize your chats, tasks, code workspaces and design canvases.", color = c.textTertiary, fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 16.dp).testTag("projectsEmpty"))
+                        EmptyBox(
+                            "No projects yet",
+                            "Tap New project to start one. Its chats, tasks and files stay together.",
+                            gutter.testTag("projectsEmpty"),
+                        )
                     }
                     store.loaded && visible.isEmpty() && store.projects.isNotEmpty() -> item(key = "noresults", span = full) {
-                        Text("No projects match your search.", color = c.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(vertical = 24.dp))
+                        Text("No projects match your search.", color = c.textSecondary, fontSize = 15.sp, modifier = gutter.padding(vertical = 24.dp))
                     }
                     layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(visible, key = { it.id }) { p -> ProjectCard(p, looks[p.id], LibraryLayout.Deck, Modifier.width(300.dp), { open(p) }, { actionsFor = p }) }
                         }
                     }
-                    else -> items(visible, key = { it.id }) { p -> ProjectCard(p, looks[p.id], layout, Modifier, { open(p) }, { actionsFor = p }) }
+                    else -> items(visible, key = { it.id }) { p -> ProjectCard(p, looks[p.id], layout, cardGutter, { open(p) }, { actionsFor = p }) }
                 }
             }
         }
-        // iOS ProjectsNewButton: the floating "New project" capsule.
-        LibraryNewButton(
-            "New project", "projectsNew",
-            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp),
-        ) {
-            val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
-            if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
+        // The block title docks into the bar as the page scrolls; the header sits on top of its band.
+        val dockOffset = remember(gridState, density) {
+            { if (gridState.firstVisibleItemIndex > 0) DockSpec.DOCK * 2f else gridState.firstVisibleItemScrollOffset / density }
         }
+        DockingBlockTitle("Projects", dockOffset, modifier = Modifier.fillMaxSize().statusBarsPadding())
+        Column(Modifier.statusBarsPadding()) {
+            LibraryHeader(
+                title = "", onBack = null, leading = leading, glass = true,
+                trailing = {
+                    LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search projects", "projectsSearch") { searching = !searching }
+                    LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "projectsFilter") { filterOpen = true }
+                },
+            )
+        }
+        // iOS ProjectsNewButton: the floating "New project" capsule.
+        GlassPill(
+            onClick = {
+                val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
+                if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
+            },
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp).testTag("projectsNew"),
+            height = 50.dp,
+            contentPadding = PaddingValues(horizontal = 22.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                Text("New project", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        if (introOpen) IntroSheet(
+            title = "Keep each job in one place.",
+            line = "A project keeps its chats, tasks and board together. See what's working and what is waiting on you.",
+            onContinue = { introOpen = false; scope.launch { introStore.markSeen(IntroKeys.PROJECTS) } },
+            eyebrow = { BlockText("PROJECTS", height = 10.dp, color = PolishGlass.Coral) },
+            hero = { ProjectsIntroHero() },
+        )
         if (explainerOpen) ProjectsExplainer {
             context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE).edit().putBoolean(EXPLAINER_KEY, true).apply()
             explainerOpen = false

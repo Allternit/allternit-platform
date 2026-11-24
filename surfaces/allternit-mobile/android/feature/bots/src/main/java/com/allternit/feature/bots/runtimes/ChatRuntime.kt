@@ -3,6 +3,7 @@ package com.allternit.feature.bots.runtimes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,6 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
@@ -114,6 +116,7 @@ fun ChatRuntimeChip(
     brainKey: String?,
     onBrainSwitch: (BrainOption) -> Unit,
     modifier: Modifier = Modifier,
+    iconOnly: Boolean = false,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -137,15 +140,19 @@ fun ChatRuntimeChip(
     )
 
     Row(
-        modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp))
+        modifier.heightIn(min = 44.dp).widthIn(min = if (iconOnly) 44.dp else 0.dp).clip(RoundedCornerShape(10.dp))
             .clickable(role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); blocked = null; open = true }
             .semantics(mergeDescendants = true) { contentDescription = "Runtime, How it works: ${current.name}" }
             .testTag("composerRuntimeChip")
             .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
     ) {
         Mark(current.tool ?: current.id, 20.dp)
-        Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
+        if (!iconOnly) {
+            Text(current.name, color = c.textSecondary, fontSize = 14.sp, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
+            Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
+        }
     }
 
     if (open) {
