@@ -1,421 +1,61 @@
 //! Terminal API routes: Code Mode terminals backed by the Allternit Factory
 //! pane engine.
 //!
-//! Same HTTP contract as before (create/input/close/resize/stream), but every
-//! terminal is a pane in the pane engine (`allternit-factory pane`, the
-//! Factory's agent session), so a terminal tile, a Gizzi PTY and a Factory
-//! agent pane are the same thing: it shows in the agent wall as workspace
-//! `term-<id>`, and an agent started in it is detected like any other pane.
-//!
-//! - The pane engine owns the PTY: terminals survive allternit-api restarts
-//!   and UI reconnects. The session id is the pane engine's terminal id, so
-//!   nothing here has to be remembered or recovered.
-//! - The stream replays the kept scrollback (up to 2 MiB), then live output,
-//!   then `{"type":"exit","exit_code"}` when the shell exits (additive: older
-//!   clients ignore unknown types). The connection then stays open with pings
-//!   so an EventSource doesn't reconnect and replay again.
-//! - The socket comes from `allternit-factory pane tty ensure` (which starts
-//!   the engine when it is down), or `$ALLTERNIT_FACTORY_PANE_SOCKET`. The
-//!   binary is `$ALLTERNIT_FACTORY_BIN`, else `allternit-factory` next to
-//!   this executable, else on `PATH`.
-//! - Transport: a Unix socket on macOS/Linux. On Windows the pane engine
-//!   listens on a named pipe and `ensure` reports its marker file path; the
-//!   pipe is `\\.\pipe\<that path>` (see [`pipe_name`]). Only the dial
-//!   differs; the protocol is the same newline JSON.
+//! The terminal service itself (the pane engine socket client, the terminal
+//! records, list, create validation, graceful close and the SSE stream body)
+//! is the `allternit-terminal-service` crate (`factory/terminal-service`),
+//! shared with allternit-node. This module is the axum adapter: the same
+//! routes, bodies, status codes and JSON as before, mounted at `/terminal`.
 
 use axum::{
     body::Body,
-    extract::{FromRef, Json, Path, State},
+    extract::{FromRef, Json, Path, Query, State},
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
-use bytes::Bytes;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::Mutex;
-use tracing::{debug, warn};
-use uuid::Uuid;
+use tracing::debug;
 
-use crate::terminal_list::{validate_env, TerminalRecord, TerminalRecords};
+pub(crate) use allternit_terminal_service::{agent_request, factory_bin};
+pub use allternit_terminal_service::{
+    CreateTerminalRequest, ListQuery, PaneError, Reply, TerminalCloseRequest, TerminalInputRequest,
+    TerminalMessageResponse, TerminalResizeRequest, TerminalService,
+    TerminalService as TerminalSessionStore,
+};
+
 use crate::AppState;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pane engine socket client
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// One connection to the pane engine.
-#[cfg(unix)]
-type PaneStream = tokio::net::UnixStream;
-#[cfg(windows)]
-type PaneStream = tokio::net::windows::named_pipe::NamedPipeClient;
-
-/// The named pipe the pane engine serves for `socket` (the path `pane tty
-/// ensure` reports). Mirrors the pane's own mapping (interprocess
-/// `GenericNamespaced` prepends `\\.\pipe\`); a value that already is a
-/// local pipe path (e.g. a preset `$ALLTERNIT_FACTORY_PANE_SOCKET`) is kept.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn pipe_name(socket: &std::path::Path) -> String {
-    let s = socket.to_string_lossy();
-    if s.starts_with(r"\\.\pipe\") {
-        s.into_owned()
-    } else {
-        format!(r"\\.\pipe\{s}")
-    }
-}
-
-#[cfg(unix)]
-async fn dial(path: &std::path::Path) -> std::io::Result<PaneStream> {
-    tokio::net::UnixStream::connect(path).await
-}
-
-#[cfg(windows)]
-async fn dial(path: &std::path::Path) -> std::io::Result<PaneStream> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    // ERROR_PIPE_BUSY: every server instance is taken; the engine creates a
-    // new one per accepted connection, so wait briefly and retry.
-    const ERROR_PIPE_BUSY: i32 = 231;
-    let name = pipe_name(path);
-    let mut tries = 0;
-    loop {
-        match ClientOptions::new().open(&name) {
-            Ok(client) => return Ok(client),
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && tries < 50 => {
-                tries += 1;
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-/// Pane engine errors, mapped to HTTP statuses at the route.
-#[derive(Debug)]
-pub enum PaneError {
-    /// The engine can't be reached or started (503).
-    Unavailable(String),
-    /// No such terminal (404).
-    NotFound(String),
-    /// The engine refused the call (500).
-    Engine(String),
-}
-
-impl PaneError {
-    fn status(&self) -> StatusCode {
-        match self {
-            PaneError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            PaneError::NotFound(_) => StatusCode::NOT_FOUND,
-            PaneError::Engine(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    fn message(self) -> String {
-        match self {
-            PaneError::Unavailable(m) | PaneError::NotFound(m) | PaneError::Engine(m) => m,
-        }
-    }
-}
-
-pub(crate) fn factory_bin() -> PathBuf {
-    if let Some(bin) = std::env::var_os("ALLTERNIT_FACTORY_BIN").filter(|v| !v.is_empty()) {
-        return PathBuf::from(bin);
-    }
-    if let Some(sibling) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            exe.parent()
-                .map(|dir| dir.join(format!("allternit-factory{}", std::env::consts::EXE_SUFFIX)))
-        })
-        .filter(|p| p.is_file())
-    {
-        return sibling;
-    }
-    PathBuf::from("allternit-factory")
-}
-
-/// Where terminals live: the pane engine's socket, resolved once and again
-/// whenever a connect fails (the engine restarted or was never started).
+/// The service as an axum state part. A local type, because
+/// `FromRef<Arc<AppState>>` can't be implemented here for the crate's own
+/// type (orphan rule). Routes take it from the app state, or from a bare
+/// store (tests).
 #[derive(Clone)]
-pub struct TerminalSessionStore {
-    socket: Arc<Mutex<Option<PathBuf>>>,
-    /// The `allternit-factory` binary (`None`: resolved by [`factory_bin`]).
-    bin: Option<PathBuf>,
-    /// What this API created (title, command, cwd, time), which the engine's
-    /// terminal info lacks. Read by `GET /list`.
-    pub(crate) records: TerminalRecords,
-}
+pub struct Terminals(pub TerminalSessionStore);
 
-impl Default for TerminalSessionStore {
-    fn default() -> Self {
-        Self::new()
+impl FromRef<Arc<AppState>> for Terminals {
+    fn from_ref(state: &Arc<AppState>) -> Self {
+        Terminals(state.terminal_sessions.clone())
     }
 }
 
-impl TerminalSessionStore {
-    pub fn new() -> Self {
-        let preset = std::env::var_os("ALLTERNIT_FACTORY_PANE_SOCKET")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from);
-        Self {
-            socket: Arc::new(Mutex::new(preset)),
-            bin: None,
-            records: Default::default(),
-        }
-    }
-
-    /// A store pinned to one socket and binary (tests).
-    pub fn with_socket(path: PathBuf, bin: PathBuf) -> Self {
-        Self {
-            socket: Arc::new(Mutex::new(Some(path))),
-            bin: Some(bin),
-            records: Default::default(),
-        }
-    }
-
-    /// Runs `allternit-factory pane tty ensure`: starts the pane engine when
-    /// it is down and reports its socket.
-    async fn ensure(&self) -> Result<PathBuf, PaneError> {
-        let bin = self.bin.clone().unwrap_or_else(factory_bin);
-        let out = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(&bin)
-                .args(["pane", "tty", "ensure"])
-                .stdin(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .map_err(|_| PaneError::Unavailable("the Factory pane engine did not start within 30s".into()))?
-        .map_err(|e| {
-            PaneError::Unavailable(format!(
-                "the Factory pane engine could not be started ({}: {e})",
-                bin.display()
-            ))
-        })?;
-        if !out.status.success() {
-            return Err(PaneError::Unavailable(format!(
-                "the Factory pane engine could not be started: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        }
-        let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| {
-            PaneError::Unavailable(format!("unexpected output from {} pane tty ensure: {e}", bin.display()))
-        })?;
-        v["socket"]
-            .as_str()
-            .map(PathBuf::from)
-            .ok_or_else(|| PaneError::Unavailable("pane tty ensure reported no socket".into()))
-    }
-
-    async fn connect(&self) -> Result<PaneStream, PaneError> {
-        let mut socket = self.socket.lock().await;
-        if let Some(path) = socket.as_ref() {
-            if let Ok(stream) = dial(path).await {
-                return Ok(stream);
-            }
-        }
-        let path = self.ensure().await?;
-        let stream = dial(&path).await.map_err(|e| {
-            PaneError::Unavailable(format!("the Factory pane engine is not reachable at {}: {e}", path.display()))
-        })?;
-        *socket = Some(path);
-        Ok(stream)
-    }
-
-    /// Opens a connection and sends one request (the pane engine serves one
-    /// request per connection). Returns the reader, positioned at the
-    /// response line.
-    async fn open(&self, method: &str, params: Value) -> Result<BufReader<PaneStream>, PaneError> {
-        let mut stream = self.connect().await?;
-        let frame = json!({ "id": Uuid::new_v4().to_string(), "method": method, "params": params });
-        let mut line = frame.to_string();
-        line.push('\n');
-        stream
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| PaneError::Unavailable(format!("pane engine write: {e}")))?;
-        Ok(BufReader::new(stream))
-    }
-
-    async fn read_response(reader: &mut BufReader<PaneStream>) -> Result<Value, PaneError> {
-        let mut buf = String::new();
-        let n = reader
-            .read_line(&mut buf)
-            .await
-            .map_err(|e| PaneError::Unavailable(format!("pane engine read: {e}")))?;
-        if n == 0 {
-            return Err(PaneError::Unavailable("the pane engine closed the connection".into()));
-        }
-        let resp: Value = serde_json::from_str(buf.trim()).map_err(|e| PaneError::Engine(e.to_string()))?;
-        if let Some(err) = resp.get("error") {
-            let code = err["code"].as_str().unwrap_or("error");
-            let msg = err["message"].as_str().unwrap_or("unknown").to_string();
-            return Err(match code {
-                "terminal_not_found" => PaneError::NotFound(msg),
-                _ => PaneError::Engine(format!("{code}: {msg}")),
-            });
-        }
-        Ok(resp.get("result").cloned().unwrap_or(Value::Null))
-    }
-
-    /// One request, one response.
-    pub async fn request(&self, method: &str, params: Value) -> Result<Value, PaneError> {
-        let mut reader = self.open(method, params).await?;
-        Self::read_response(&mut reader).await
+impl FromRef<TerminalSessionStore> for Terminals {
+    fn from_ref(store: &TerminalSessionStore) -> Self {
+        Terminals(store.clone())
     }
 }
 
-fn default_shell() -> String {
-    if cfg!(windows) {
-        // Empty: the pane engine's default shell (PowerShell on Windows).
-        String::new()
-    } else {
-        "/bin/zsh".into()
-    }
-}
-
-/// The argv for a new terminal. Empty runs the pane engine's default shell.
-/// On Windows a Unix shell path (the web UI defaults to `/bin/zsh`) can't
-/// run, so it also means the default shell (PowerShell). Elsewhere an empty
-/// shell, or an absolute path that isn't on this computer (zsh on a Linux
-/// cloud computer), runs `$SHELL` or bash when there is one, instead of a
-/// spawn that fails with ENOENT.
-fn shell_command(shell: &str) -> Vec<String> {
-    let shell = shell.trim();
-    if cfg!(windows) && (shell.is_empty() || shell.starts_with('/')) {
-        return Vec::new();
-    }
-    let exists = |path: &str| std::path::Path::new(path).exists();
-    if !shell.is_empty() && (!shell.starts_with('/') || exists(shell)) {
-        return vec![shell.to_string()];
-    }
-    std::env::var("SHELL")
-        .ok()
-        .filter(|path| path.starts_with('/') && exists(path))
-        .or_else(|| exists("/bin/bash").then(|| "/bin/bash".to_string()))
-        .map(|path| vec![path])
-        .unwrap_or_default()
-}
-
-fn default_cols() -> u16 {
-    80
-}
-
-fn default_rows() -> u16 {
-    24
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Request/response types (unchanged contract)
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTerminalRequest {
-    #[serde(default = "default_shell")]
-    pub shell: String,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default = "default_cols")]
-    pub cols: u16,
-    #[serde(default = "default_rows")]
-    pub rows: u16,
-    /// Run this program instead of the shell (with `args`).
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Added to the terminal's environment, over `TERM`/`COLORTERM`.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    /// The terminal's name in `GET /list` and the agent wall.
-    #[serde(default)]
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TerminalMessageResponse {
-    pub success: bool,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TerminalInputRequest {
-    pub content: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TerminalResizeRequest {
-    pub cols: u16,
-    pub rows: u16,
-}
-
-fn sse_data_event(data: &str) -> String {
-    let payload = serde_json::json!({ "type": "data", "data": data });
-    format!("data: {}\n\n", payload)
-}
-
-fn sse_exit_event(exit_code: &Value) -> String {
-    let payload = serde_json::json!({ "type": "exit", "exit_code": exit_code });
-    format!("data: {}\n\n", payload)
-}
-
-fn err_response(status: StatusCode, message: String) -> (StatusCode, Json<TerminalMessageResponse>) {
+fn reply(r: Reply) -> (StatusCode, Json<TerminalMessageResponse>) {
     (
-        status,
-        Json(TerminalMessageResponse {
-            success: false,
-            message,
-            data: None,
-        }),
-    )
-}
-
-pub(crate) fn pane_err(err: PaneError) -> (StatusCode, Json<TerminalMessageResponse>) {
-    let status = err.status();
-    err_response(status, err.message())
-}
-
-fn ok(message: &str, data: Option<Value>) -> (StatusCode, Json<TerminalMessageResponse>) {
-    (
-        StatusCode::OK,
-        Json(TerminalMessageResponse {
-            success: true,
-            message: message.into(),
-            data,
-        }),
-    )
-}
-
-/// Terminal ids double as session ids; reject anything else before it
-/// reaches the engine.
-fn valid_session_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-fn not_found(session_id: &str) -> (StatusCode, Json<TerminalMessageResponse>) {
-    err_response(
-        StatusCode::NOT_FOUND,
-        format!("Terminal session '{}' not found", session_id),
+        StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(r.body),
     )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Routes
 // ─────────────────────────────────────────────────────────────────────────────
-
-impl FromRef<Arc<AppState>> for TerminalSessionStore {
-    fn from_ref(state: &Arc<AppState>) -> Self {
-        state.terminal_sessions.clone()
-    }
-}
 
 pub fn terminal_router() -> Router<Arc<AppState>> {
     routes()
@@ -426,11 +66,11 @@ pub fn terminal_router() -> Router<Arc<AppState>> {
 pub fn routes<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    TerminalSessionStore: FromRef<S>,
+    Terminals: FromRef<S>,
 {
     Router::new()
         .route("/create", post(create_terminal))
-        .route("/list", get(crate::terminal_list::list_terminals))
+        .route("/list", get(list_terminals))
         .route("/:session_id/input", post(terminal_input))
         .route("/:session_id/close", post(terminal_close))
         .route("/:session_id/resize", post(terminal_resize))
@@ -438,13 +78,20 @@ where
 }
 
 async fn create_terminal(
-    State(store): State<TerminalSessionStore>,
+    State(Terminals(store)): State<Terminals>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> impl IntoResponse {
     match create_with(&store, request, None).await {
         Ok(session_id) => {
             debug!(%session_id, "Terminal session created (factory pane)");
-            ok("Terminal session created", Some(json!({ "session_id": session_id })))
+            (
+                StatusCode::OK,
+                Json(TerminalMessageResponse {
+                    success: true,
+                    message: "Terminal session created".into(),
+                    data: Some(serde_json::json!({ "session_id": session_id })),
+                }),
+            )
         }
         Err(err) => err,
     }
@@ -458,338 +105,50 @@ pub(crate) async fn create_with(
     request: CreateTerminalRequest,
     shown: Option<Vec<String>>,
 ) -> Result<String, (StatusCode, Json<TerminalMessageResponse>)> {
-    if let Err(message) = validate_env(&request.env) {
-        return Err(err_response(StatusCode::BAD_REQUEST, message));
-    }
-    let session_id = Uuid::new_v4().to_string();
-    let cwd = request.cwd.clone().or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned())
-    });
-    let program = request
-        .command
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty());
-    let custom_command = program.is_some();
-    let argv: Vec<String> = match program {
-        Some(program) => std::iter::once(program.to_string())
-            .chain(request.args.iter().cloned())
-            .collect(),
-        None => shell_command(&request.shell),
-    };
-    let title = request
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string);
-    // Browser shells need a real terminal type whatever the engine inherited
-    // (an engine started from a service can have TERM=dumb); the caller's env
-    // goes over it.
-    let mut env: HashMap<String, String> = HashMap::from([
-        ("TERM".to_string(), "xterm-256color".to_string()),
-        ("COLORTERM".to_string(), "truecolor".to_string()),
-    ]);
-    env.extend(request.env.clone());
-    store
-        .request(
-            "factory.terminal.create",
-            json!({
-                "terminal_id": session_id,
-                "label": title,
-                "cwd": cwd,
-                "cols": request.cols,
-                "rows": request.rows,
-                "command": argv,
-                "env": env,
-            }),
-        )
-        .await
-        .map_err(pane_err)?;
-    store
-        .records
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(
-            session_id.clone(),
-            TerminalRecord {
-                title,
-                command: shown.unwrap_or(argv),
-                cwd,
-                created_at: chrono::Utc::now().to_rfc3339(),
-                custom_command,
-            },
-        );
-    Ok(session_id)
+    store.create(request, shown).await.map_err(reply)
 }
 
-/// The user's login shell, for running an agent command with the PATH their own
-/// terminal has (`$SHELL`, else zsh).
-pub(crate) fn login_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .filter(|p| p.starts_with('/') && std::path::Path::new(p).exists())
-        .unwrap_or_else(|| "/bin/zsh".to_string())
-}
-
-/// A create request that runs `argv` in `cwd` through the user's login shell
-/// (`$SHELL -lc 'exec "$0" "$@"' argv…`: no quoting, the agent replaces the
-/// shell, so the terminal's pid is the agent's).
-pub(crate) fn agent_request(argv: &[String], cwd: &str, title: &str, cols: u16, rows: u16) -> CreateTerminalRequest {
-    let mut args = vec!["-lc".to_string(), r#"exec "$0" "$@""#.to_string()];
-    args.extend(argv.iter().cloned());
-    CreateTerminalRequest {
-        shell: String::new(),
-        cwd: Some(cwd.to_string()),
-        cols,
-        rows,
-        command: Some(login_shell()),
-        args,
-        env: HashMap::new(),
-        title: Some(title.to_string()),
+async fn list_terminals(State(Terminals(store)): State<Terminals>, Query(query): Query<ListQuery>) -> Response {
+    match store.list(query.preview).await {
+        Ok(v) => Json(v).into_response(),
+        Err(err) => reply(err).into_response(),
     }
 }
 
 async fn terminal_input(
-    State(store): State<TerminalSessionStore>,
+    State(Terminals(store)): State<Terminals>,
     Path(session_id): Path<String>,
     Json(request): Json<TerminalInputRequest>,
 ) -> impl IntoResponse {
-    if !valid_session_id(&session_id) {
-        return not_found(&session_id);
-    }
-    // Raw bytes straight through: a real PTY treats '\r' as Enter.
-    match store
-        .request(
-            "factory.terminal.write",
-            json!({ "terminal_id": session_id, "data": request.content }),
-        )
-        .await
-    {
-        Ok(_) => ok("Input forwarded", None),
-        Err(PaneError::NotFound(_)) => not_found(&session_id),
-        Err(err @ PaneError::Unavailable(_)) => pane_err(err),
-        Err(err) => {
-            // The shell exited or its queue is full: the input is dropped,
-            // as typing into a closed terminal is.
-            warn!(err = %err.message(), %session_id, "Failed to send terminal input");
-            ok("Input forwarded", None)
-        }
-    }
+    reply(store.input(&session_id, &request.content).await)
 }
 
 async fn terminal_resize(
-    State(store): State<TerminalSessionStore>,
+    State(Terminals(store)): State<Terminals>,
     Path(session_id): Path<String>,
     Json(request): Json<TerminalResizeRequest>,
 ) -> impl IntoResponse {
-    if !valid_session_id(&session_id) {
-        return not_found(&session_id);
-    }
-    match store
-        .request(
-            "factory.terminal.resize",
-            json!({ "terminal_id": session_id, "cols": request.cols, "rows": request.rows }),
-        )
-        .await
-    {
-        Ok(_) => ok("Terminal resized", None),
-        Err(PaneError::NotFound(_)) => not_found(&session_id),
-        Err(err @ PaneError::Unavailable(_)) => pane_err(err),
-        Err(err) => {
-            warn!(err = %err.message(), %session_id, "Failed to resize terminal");
-            ok("Terminal resized", None)
-        }
-    }
-}
-
-/// `POST /:id/close` body (optional; old clients send none).
-#[derive(Debug, Default, Deserialize)]
-pub struct TerminalCloseRequest {
-    /// Ask the terminal's program to quit (SIGTERM, up to 10 s) before the
-    /// pane closes. Only for a terminal created with a `command`; a shell
-    /// closes as before. Never SIGKILL.
-    #[serde(default)]
-    pub graceful: bool,
-}
-
-const GRACEFUL_WAIT: Duration = Duration::from_secs(10);
-
-/// The engine's view of a terminal: `(running, pid)`.
-async fn terminal_proc(store: &TerminalSessionStore, session_id: &str) -> Option<(bool, Option<u32>)> {
-    let got = store
-        .request("factory.terminal.get", json!({ "terminal_id": session_id }))
-        .await
-        .ok()?;
-    let t = &got["terminal"];
-    Some((
-        t["running"].as_bool().unwrap_or(false),
-        t["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
-    ))
-}
-
-/// SIGTERM the program of a terminal this API started with a `command`, and
-/// wait up to 10 s for the engine to report it exited. The pid is the
-/// engine's own child, read again right before the signal.
-async fn stop_program(store: &TerminalSessionStore, session_id: &str) {
-    let custom = store
-        .records
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(session_id)
-        .is_some_and(|r| r.custom_command);
-    if !custom {
-        return;
-    }
-    let Some((true, Some(pid))) = terminal_proc(store, session_id).await else { return };
-    #[cfg(unix)]
-    {
-        // SAFETY: plain SIGTERM to the terminal's own running program.
-        let r = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-        if r != 0 {
-            return;
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        return;
-    }
-    let deadline = tokio::time::Instant::now() + GRACEFUL_WAIT;
-    while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        match terminal_proc(store, session_id).await {
-            Some((true, Some(p))) if p == pid => continue,
-            _ => return,
-        }
-    }
-    warn!(%session_id, pid, "terminal program did not exit within 10 s of SIGTERM; closing the pane");
+    reply(store.resize(&session_id, request.cols, request.rows).await)
 }
 
 async fn terminal_close(
-    State(store): State<TerminalSessionStore>,
+    State(Terminals(store)): State<Terminals>,
     Path(session_id): Path<String>,
     body: Option<Json<TerminalCloseRequest>>,
 ) -> impl IntoResponse {
-    if valid_session_id(&session_id) {
-        if body.is_some_and(|Json(b)| b.graceful) {
-            stop_program(&store, &session_id).await;
-        }
-        match store
-            .request("factory.terminal.close", json!({ "terminal_id": session_id }))
-            .await
-        {
-            Ok(_) | Err(PaneError::NotFound(_)) => {}
-            Err(err) => warn!(err = %err.message(), %session_id, "Failed to close terminal"),
-        }
-    }
-    ok("Terminal session closed", None)
+    let graceful = body.is_some_and(|Json(b)| b.graceful);
+    reply(store.close(&session_id, graceful).await)
 }
 
-async fn terminal_stream(
-    State(store): State<TerminalSessionStore>,
-    Path(session_id): Path<String>,
-) -> impl IntoResponse {
-    if !valid_session_id(&session_id) {
-        return not_found(&session_id).into_response();
-    }
-    let opened = store
-        .open(
-            "factory.terminal.output",
-            json!({ "terminal_id": session_id, "replay": true, "follow": true }),
+async fn terminal_stream(State(Terminals(store)): State<Terminals>, Path(session_id): Path<String>) -> Response {
+    match store.stream(&session_id).await {
+        Ok(stream) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            Body::from_stream(stream),
         )
-        .await;
-    let mut reader = match opened {
-        Ok(r) => r,
-        Err(err) => return pane_err(err).into_response(),
-    };
-    if let Err(err) = TerminalSessionStore::read_response(&mut reader).await {
-        return match err {
-            PaneError::NotFound(_) => not_found(&session_id).into_response(),
-            err => pane_err(err).into_response(),
-        };
-    }
-
-    let stream = async_stream::stream! {
-        let mut live = true;
-        // Outside the loop: `read_line` keeps a partial line here when the
-        // ping timer wins the select, so nothing is lost.
-        let mut line = String::new();
-        loop {
-            tokio::select! {
-                read = reader.read_line(&mut line), if live => {
-                    match read {
-                        Ok(0) | Err(_) => break, // the engine went away
-                        Ok(_) => {
-                            let parsed = serde_json::from_str::<Value>(line.trim());
-                            line.clear();
-                            let frame: Value = match parsed {
-                                Ok(f) => f,
-                                Err(_) => continue,
-                            };
-                            match frame["type"].as_str() {
-                                Some("output") => {
-                                    let chunk = frame["data"].as_str().unwrap_or("");
-                                    if !chunk.is_empty() {
-                                        yield Ok::<_, std::convert::Infallible>(Bytes::from(sse_data_event(chunk)));
-                                    }
-                                }
-                                Some("exit") => {
-                                    yield Ok(Bytes::from(sse_exit_event(&frame["exit_code"])));
-                                    // Stay open (pings only): ending the
-                                    // stream would make the client reconnect
-                                    // and replay the scrollback again.
-                                    live = false;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_secs(15)) => {
-                    yield Ok(Bytes::from("event: ping\ndata: {}\n\n"));
-                }
-            }
-        }
-    };
-
-    let body = Body::from_stream(stream);
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/event-stream")],
-        body,
-    )
-        .into_response()
-}
-
-#[cfg(test)]
-mod transport_tests {
-    use super::*;
-
-    #[test]
-    fn pipe_name_prefixes_the_marker_path_like_the_pane_engine() {
-        assert_eq!(
-            pipe_name(std::path::Path::new(r"C:\Users\me\AppData\herdr\ao\herdr.sock")),
-            r"\\.\pipe\C:\Users\me\AppData\herdr\ao\herdr.sock"
-        );
-        assert_eq!(pipe_name(std::path::Path::new(r"\\.\pipe\x")), r"\\.\pipe\x");
-    }
-
-    #[test]
-    fn shell_command_runs_the_default_shell_when_empty() {
-        if cfg!(windows) {
-            assert!(shell_command("").is_empty());
-            assert!(shell_command("  ").is_empty());
-            assert!(shell_command("/bin/zsh").is_empty());
-            assert_eq!(shell_command("pwsh.exe"), vec!["pwsh.exe".to_string()]);
-        } else {
-            assert_eq!(shell_command("/bin/sh"), vec!["/bin/sh".to_string()]);
-            // Missing or empty: $SHELL or bash when this computer has one, else the engine's default.
-            assert_eq!(shell_command("/no/such/shell"), shell_command(""));
-            assert!(shell_command("").iter().all(|path| std::path::Path::new(path).exists()));
-        }
+            .into_response(),
+        Err(err) => reply(err).into_response(),
     }
 }
 
@@ -803,7 +162,10 @@ mod tests {
     use super::*;
     use axum::http::Request;
     use http_body_util::BodyExt;
+    use serde_json::{json, Value};
     use std::collections::HashMap;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
     use tokio::sync::Notify;
     use tower::ServiceExt;
@@ -1095,6 +457,7 @@ mod list_route_tests {
     use super::*;
     use axum::http::Request;
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     /// `GET /list` is its own route, not a session id: with the engine down it
     /// reaches the engine call (503 JSON) instead of falling through to a 404.
