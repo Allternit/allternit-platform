@@ -73,6 +73,8 @@ internal class RowActions(
     val onShareLink: (() -> Unit)? = null,
     /** Opens an artifact card on the artifact screens (wave D); null keeps the open-the-URL fallback. */
     val onOpenArtifact: ((ArtifactRecord) -> Unit)? = null,
+    /** Settings > Connections (the typed error card's "Open Connections"). */
+    val onOpenConnections: () -> Unit = {},
 )
 
 /**
@@ -114,6 +116,13 @@ internal fun MessageRow(
                     message.toolCalls.forEach { call ->
                         val n = ToolDescriber.normalized(call.toolName)
                         if (call.toolName == "run_code" && (call.files != null || call.run != null)) RunCodeFilesView(call, backend)
+                        if (GenerationProgressDetail.isMediaGenerate(call.toolName)) {
+                            MediaGenerateCard(
+                                call = call, isNewestTurn = isLastAssistant, replyIsLive = message.isStreaming,
+                                onChooseModel = actions.onChooseModel, onConnect = { chatgpt -> if (chatgpt) actions.onConnect("chatgpt") else actions.onOpenConnections() },
+                                onRetry = { actions.onRetry(message.id) },
+                            )
+                        }
                         if (n == "lookup") call.metadata?.obj("card")?.let { AnswerCard(it, call.output, backend) }
                         val suggestion = ConnectorSuggestions.parse(call)
                         if (suggestion != null) {
@@ -206,7 +215,7 @@ internal fun MessageRow(
                     }
                 }
                 message.error?.let {
-                    ChatErrorCard(it, actions.onChooseModel, { actions.onRetry(message.id) }, actions.availableErrorActions) { a -> actions.onErrorAction(message.id, a) }
+                    ChatErrorCard(it, actions.onChooseModel, { actions.onRetry(message.id) }, actions.availableErrorActions, { a -> actions.onErrorAction(message.id, a) }, { chatgpt -> if (chatgpt) actions.onConnect("chatgpt") else actions.onOpenConnections() })
                 }
                 message.artifacts.forEach { a -> ArtifactChip(a, actions.onOpenArtifact) }
                 if (!isUser && !message.isStreaming && message.error == null && message.role == "assistant") {

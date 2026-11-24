@@ -31,7 +31,7 @@ describe("platform credentials", () => {
     process.env.ALLTERNIT_API_TOKEN = "stale-token"
     const seen: string[] = []
     globalThis.fetch = (async (_url: string, init: RequestInit = {}) => {
-      const auth = String((init.headers as Record<string, string>).Authorization)
+      const auth = String(new Headers(init.headers).get("Authorization"))
       seen.push(auth)
       return auth === `Bearer ${loginToken}` ? json({ agents: [] }) : json({ error: "Unauthorized", message: "Invalid token" }, 401)
     }) as typeof fetch
@@ -44,12 +44,32 @@ describe("platform credentials", () => {
     process.env.ALLTERNIT_API_TOKEN = "good-env"
     const seen: string[] = []
     globalThis.fetch = (async (_url: string, init: RequestInit = {}) => {
-      seen.push(String((init.headers as Record<string, string>).Authorization))
+      seen.push(String(new Headers(init.headers).get("Authorization")))
       return json({ ok: true })
     }) as typeof fetch
     const { platformRequest } = await import("../../../src/runtime/bots/platform-api")
     await platformRequest("GET", "/api/v1/agents")
     expect(seen).toEqual(["Bearer good-env"])
+  })
+
+  // Regression (2026-11-12): `gizzi teleport` sent only the first credential, so a stale
+  // ALLTERNIT_API_TOKEN failed every teleport with "Invalid token" while other commands worked.
+  test("fetchWithPlatformToken falls back too, and resends a byte body", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "stale-token"
+    const seen: { auth: string; body: number }[] = []
+    globalThis.fetch = (async (_url: string, init: RequestInit = {}) => {
+      const auth = String(new Headers(init.headers).get("Authorization"))
+      seen.push({ auth, body: (init.body as Uint8Array).byteLength })
+      return auth === `Bearer ${loginToken}` ? json({ id: "tp_1" }) : json({ message: "Invalid token" }, 401)
+    }) as typeof fetch
+    const { fetchWithPlatformToken } = await import("../../../src/runtime/bots/platform-api")
+    const res = await fetchWithPlatformToken("https://example.test/api/v1/teleports/to/x/teleports/1/files/0", {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array([1, 2, 3]),
+    })
+    expect(res?.status).toBe(200)
+    expect(seen).toEqual([{ auth: "Bearer stale-token", body: 3 }, { auth: `Bearer ${loginToken}`, body: 3 }])
   })
 
   test("gizzi login approves in Allternit Desktop when asked to", () => {

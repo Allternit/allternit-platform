@@ -308,8 +308,12 @@ internal fun ConnectionsSettingsScreen(
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             if (store.loadError != null) Text(store.loadError ?: "", color = c.errFg, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("connectionsError"))
             message?.let { Text(it, color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            // The ChatGPT subscription and Codex CLI sit in one card at the top of Brains (List layout, when both rows
+            // are listed); Codex then leaves Coding tools (iOS groupsAccountPair).
+            val groupsPair = layout == LibraryLayout.List && AccountPair.pairsUp((shown("brains") + shown("tools")).map { it.id })
+            val pairEntries = if (groupsPair) listOf(AccountPair.CHATGPT_ID, AccountPair.CODEX_ID).mapNotNull { id -> (shown("brains") + shown("tools")).firstOrNull { it.id == id } } else emptyList()
             for ((group, title, blurb) in CONNECTION_GROUPS) {
-                val rows = shown(group)
+                val rows = shown(group).filter { !(groupsPair && group == "tools" && it.id == AccountPair.CODEX_ID) }
                 if (rows.isEmpty()) continue
                 Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 18.dp), verticalAlignment = Alignment.Bottom) {
                     Text(title, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -332,8 +336,10 @@ internal fun ConnectionsSettingsScreen(
                         if (lay == LibraryLayout.List) {
                             Column(Modifier.fillMaxWidth().background(c.card, RoundedCornerShape(12.dp)).testTag("connectionsGroup_$group")) {
                                 if (group == "brains") {
-                                    brainSections(rows).forEachIndexed { si, (name, list) ->
-                                        if (si > 0) HorizontalDivider(thickness = 0.5.dp, color = c.line)
+                                    val pairIds = pairEntries.map { it.id }.toSet()
+                                    if (pairEntries.isNotEmpty()) AccountPairCard(pairEntries, store, onConnect = { connect(it) }, onDisconnect = { disconnect(it.id, it.name) }, onFallback = ::fallback)
+                                    brainSections(rows.filter { it.id !in pairIds }).forEachIndexed { si, (name, list) ->
+                                        if (si > 0 || pairEntries.isNotEmpty()) HorizontalDivider(thickness = 0.5.dp, color = c.line)
                                         Text(
                                             name.uppercase(), color = c.mut, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
                                             modifier = Modifier.fillMaxWidth().background(AllternitTheme.colors.textPrimary.copy(alpha = 0.03f)).padding(horizontal = 16.dp, vertical = 6.dp),

@@ -272,6 +272,15 @@ public final class FilesClient: @unchecked Sendable {
         try await json(post("/mkdir", MkdirRequest(parentId: parentId, name: name, onConflict: onConflict)), wake: .never)
     }
 
+    /// `POST /roots`: adds a folder as a root. A whole-disk root (`/`, `C:\\`)
+    /// is refused with `FilesError.wholeDiskOff` unless the owner turned that on.
+    public func addRoot(name: String, localPath: String) async throws -> Root {
+        let policy = RootPolicy(read: true, write: true, shareable: false, agentProcess: false, protected: false,
+                                offline: false, replica: false, versions: VersionPolicy(keepCount: 0, keepDays: 0), trashDays: 30)
+        let response: RootResponse = try await json(post("/roots", AddRootRequest(name: name, localPath: localPath, policy: policy)), wake: .never)
+        return response.root
+    }
+
     /// `POST /move` (rename and/or move). A stale `baseRev` is always
     /// `rev_mismatch` (SPEC section 4).
     public func move(_ move: MoveRequest) async throws -> MutationResponse {

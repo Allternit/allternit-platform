@@ -208,6 +208,18 @@ export namespace ProviderError {
       code: credits?.code ?? described.code,
     }
     if (originalName) metadata.originalName = originalName
+    // A person-plan failure (PersonPlanError) keeps the provider's own code and
+    // reset time so the chat stream's error frame can carry them.
+    // The AI SDK may wrap it, so look down the `cause` chain (a few levels) too.
+    let planSource: unknown = input.error
+    for (let depth = 0; depth < 4 && planSource && typeof planSource === "object"; depth++) {
+      if ("providerCode" in planSource || "resetAt" in planSource) break
+      planSource = (planSource as { cause?: unknown }).cause
+    }
+    const planCode = (planSource as { providerCode?: unknown } | undefined)?.providerCode
+    const planReset = (planSource as { resetAt?: unknown } | undefined)?.resetAt
+    if (typeof planCode === "string" && planCode && !credits) metadata.code = planCode
+    if (typeof planReset === "string" && planReset) metadata.resetAt = planReset
 
     return {
       type: "api_error",

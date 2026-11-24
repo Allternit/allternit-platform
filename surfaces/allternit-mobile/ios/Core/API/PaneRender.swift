@@ -1,12 +1,17 @@
 import Foundation
+import CoreFoundation
 
 /// A session agent's request for the app to render something (gizzi
 /// `PaneRender.Request`; web pane-render-bridge.ts): a `media_generate`
 /// image or video drawn from code, or an `artifact_check` of an artifact at
 /// each width. The phone answers it the way the web app does.
 struct PaneRenderRequest: Sendable {
-    enum Kind: String, Sendable { case image, video, check }
+    enum Kind: String, Sendable { case image, video, check; case browserImage = "browser-image" }
 
+    let engine: String?
+    let prompt: String?
+    let toolCall: String?
+    let toolMessageId: String?
     let requestId: String
     let sessionId: String
     let kind: Kind
@@ -39,15 +44,30 @@ struct PaneRenderRequest: Sendable {
             return nil
         }
         func num(_ keys: String...) -> Double? {
-            for k in keys { if let n = obj[k] as? NSNumber { return n.doubleValue } }
+            for k in keys { if let n = obj[k] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { return n.doubleValue } }
             return nil
         }
         guard let requestId = str("request_id", "requestId", "id"),
               let sessionId = str("session_id", "sessionId", "sessionID"),
               let format = str("format"),
-              let code = obj["code"] as? String, !code.isEmpty,
+              let code = obj["code"] as? String,
               let width = num("width"), let height = num("height") else { return nil }
-        let kind = Kind(rawValue: str("kind") ?? "image") ?? .image
+        guard let kind = Kind(rawValue: str("kind") ?? "image"),
+              width.isFinite, height.isFinite, (1...4096).contains(width), (1...4096).contains(height) else { return nil }
+        let prompt = obj["prompt"] as? String
+        if kind == .browserImage {
+            guard str("engine") == "chatgpt-aci", format == "html", code.isEmpty,
+                  let prompt, (1...16000).contains(prompt.count), !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard let timeout = num("timeoutMs", "timeout_ms"), timeout.isFinite, timeout > 0, timeout <= 600_000,
+                  let time = num("time"), time.isFinite else { return nil }
+            let age = Date().timeIntervalSince1970 * 1000 - time
+            guard age >= -30_000, age <= timeout else { return nil }
+        } else if code.isEmpty { return nil }
+        self.engine = str("engine")
+        self.prompt = prompt
+        let tool = obj["toolCall"] as? [String: Any]
+        self.toolCall = tool?["callID"] as? String ?? str("toolCall", "tool_call")
+        self.toolMessageId = tool?["messageID"] as? String
         self.requestId = requestId
         self.sessionId = sessionId
         self.kind = kind
@@ -103,8 +123,39 @@ struct PaneRenderResult: Codable, Sendable {
     var width: Int? = nil
     var height: Int? = nil
     var error: String? = nil
+    var code: String? = nil
+    var executorId: String? = nil
 
     static func failed(_ message: String) -> PaneRenderResult {
         PaneRenderResult(ok: false, error: message)
+    }
+}
+
+/// Reports a pane_render request's progress to the agent about once a second
+/// (a new stage always goes at once), with a small preview. Fire-and-forget:
+/// a failure or an unknown request never fails the render; after the agent
+/// stops waiting (404) it stops reporting.
+@MainActor
+final class PaneRenderProgressReporter {
+    private let requestId: String
+    private let client: AgentChatClient
+    private var throttle = GenerationProgressThrottle()
+    private var ended = false
+
+    init(requestId: String, client: AgentChatClient) {
+        self.requestId = requestId
+        self.client = client
+    }
+
+    /// `make` runs only when the throttle lets this report through, so the
+    /// thumbnail is not drawn for reports that are dropped.
+    func report(stage: GenerationStage, _ make: () -> GenerationProgressDetail) {
+        guard !ended, throttle.shouldSend(stage: stage, now: ProcessInfo.processInfo.systemUptime) else { return }
+        let detail = make()
+        Task { [client, requestId, weak self] in
+            if await client.postPaneRenderProgress(requestId: requestId, detail: detail) == false {
+                self?.ended = true
+            }
+        }
     }
 }

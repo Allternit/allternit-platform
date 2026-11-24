@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:net';
-import { FACTORY_PEER_PORT, findMeshNode, meshHostname, meshNodeArgs, meshNodeLacksAlso, portOpen, serviceFiles, vncHelp } from './computer-pair.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { FACTORY_PEER_PORT, findMeshNode, machineId, meshHostname, meshNodeArgs, meshNodeLacksAlso, portOpen, serviceFiles, vncHelp } from './computer-pair.js';
 
 test('finds mesh-node from the flag, env, PATH, or Allternit Desktop', () => {
   const has = (set: string[]) => (p: string) => set.includes(p);
@@ -57,4 +60,18 @@ test('mesh-node also forwards the Factory peer port, unless it is too old for --
   assert.equal(meshNodeArgs(base, { peer: false }).includes('--also'), false);
   assert.equal(meshNodeLacksAlso('flag provided but not defined: -also\nUsage of mesh-node:'), true);
   assert.equal(meshNodeLacksAlso('MESH_ERROR reason=bad key'), false);
+});
+
+test('uses the machine id Desktop and gizzi share, and makes one only once', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'machine-id-'));
+  const file = path.join(dir, '.allternit', 'machine-id');
+  try {
+    const made = machineId(file);
+    assert.match(made ?? '', /^[A-Za-z0-9_-]{32}$/);
+    assert.equal(machineId(file), made, 'read back, not made again');
+    writeFileSync(file, 'Zk3m9QpL2vX8aB4cD6eF7gH1\n');
+    assert.equal(machineId(file), 'Zk3m9QpL2vX8aB4cD6eF7gH1', 'the id Desktop wrote is used as is');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -9,7 +9,11 @@ import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import {
   Asleep,
+  bytes,
   consoleEnabled,
+  listBackups,
+  restoreBackup,
+  RESTORE_WARNING,
   formatLogLine,
   formatPorts,
   formatServices,
@@ -43,7 +47,6 @@ import {
   cloudBase,
   createRestorePoint,
   listRestorePoints,
-  restoreRestorePoint,
   findRuntime,
   listComputers,
   listRuntimes,
@@ -444,19 +447,35 @@ const ComputersSnapshotCommand = cmd({
   }),
 })
 
-const ComputersRestoreCommand = cmd({
-  command: "restore <computer> <point>",
-  describe: consoleEnabled() ? "restore a computer to a restore point (asks first)" : false,
-  builder: (y: Argv) =>
-    y.positional("computer", { type: "string", demandOption: true }).positional("point", { type: "string", demandOption: true }).option("yes", { type: "boolean", alias: "y", describe: "skip the question" }),
+const ComputersBackupsCommand = cmd({
+  command: "backups <computer>",
+  describe: consoleEnabled() ? "list a cloud computer's backups (restore one with `restore`)" : false,
+  builder: (y: Argv) => y.positional("computer", { type: "string", demandOption: true }).option("json", { type: "boolean", describe: "print JSON" }),
   handler: (args) => gated(async () => {
-    const t = await localComputer(String(args.computer))
-    if (!args.yes && !(await ask(`Restore ${t.name} to ${args.point}? Changes made since then are lost.`))) {
-      process.stdout.write("Not restored.\n")
+    const row = await resolveRow(String(args.computer))
+    const list = await listBackups(row.id)
+    if (args.json) {
+      process.stdout.write(JSON.stringify(list, null, 2) + "\n")
       return
     }
-    await restoreRestorePoint(t.id, String(args.point))
-    process.stdout.write(`${t.name}: restored to ${args.point}.\n`)
+    process.stdout.write((list.backups.length ? list.backups.map((b) => `${pad(b.id, 40)} ${b.createdAt}${b.sizeBytes ? `  ${bytes(b.sizeBytes)}` : ""}`).join("\n") : "No backups yet. The first one is made within a day.") + "\n")
+    if (list.backups.length && !list.canRestore) process.stdout.write("Restoring from a backup isn't available for this computer right now.\n")
+  }),
+})
+
+const ComputersRestoreCommand = cmd({
+  command: "restore <computer> <backup>",
+  describe: consoleEnabled() ? "restore a cloud computer from a backup (asks first; erases changes since then)" : false,
+  builder: (y: Argv) =>
+    y.positional("computer", { type: "string", demandOption: true }).positional("backup", { type: "string", demandOption: true }).option("yes", { type: "boolean", alias: "y", describe: "confirm without asking" }),
+  handler: (args) => gated(async () => {
+    const row = await resolveRow(String(args.computer))
+    if (!args.yes && !(await ask(`Restore ${row.name} from backup ${args.backup}? ${RESTORE_WARNING}`))) {
+      process.stdout.write("Not restored. Pass --yes to confirm without the question.\n")
+      return
+    }
+    await restoreBackup(row.id, String(args.backup))
+    process.stdout.write(`${row.name}: restoring from ${args.backup}. The computer restarts.\n`)
   }),
 })
 
@@ -558,6 +577,7 @@ export const ComputersCommand = cmd({
       .command(ComputersSleepCommand)
       .command(ComputersWakeCommand)
       .command(ComputersSnapshotCommand)
+      .command(ComputersBackupsCommand)
       .command(ComputersRestoreCommand)
       .command(ComputersForwardCommand)
       .command(ComputersKeysCommand)

@@ -318,9 +318,38 @@ object AciApi {
     internal suspend fun consoleWrite(method: String, id: String, tail: String, body: JsonObject?): ConsoleWrite =
         write(ApiCall.request(method, consoleUrl(id, tail, emptyMap()), writeBody(method, body)))
 
+    /**
+     * `PATCH api/v1/computers/:id/file-roots`: `{ wholeDisk: true, confirm: true }` to turn on (the caller held to confirm),
+     * `{ wholeDisk: false }` to turn off. Owner only; 403/409 come back as `Failed` with the server's plain message.
+     */
+    internal suspend fun consoleWholeDisk(id: String, on: Boolean): ConsoleWrite =
+        consoleWrite("PATCH", id, "file-roots", wholeDiskBody(on))
+
     /** `PATCH|DELETE api/v1/computers/paired/:id` (rename / unpair). */
     internal suspend fun consolePairedWrite(method: String, id: String, body: JsonObject?): ConsoleWrite =
         write(ApiCall.request(method, config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/paired").addPathSegment(id).build(), writeBody(method, body)))
+
+    /**
+     * `POST api/v1/computers/:id/unpair {confirm:true}`: revokes every alias of the machine (a bare
+     * `DELETE paired/:id` would leave its runtimes paired). Plain text for 400 confirm_required,
+     * 403 not_owner, 404 and 409 cloud_computer.
+     */
+    internal suspend fun consoleUnpair(id: String): ConsoleWrite {
+        val request = ApiCall.request("POST", consoleUrl(id, "unpair", emptyMap()), "{\"confirm\":true}")
+        val (status, body) = rawCall(request) ?: return ConsoleWrite.Failed("You're offline. Nothing was changed.")
+        val json = runCatching { ApiJson.default.parseToJsonElement(body) }.getOrNull()
+        val error = ((json as? JsonObject)?.get("error") as? JsonPrimitive)?.content
+        return when {
+            status in 200..299 -> ConsoleWrite.Ok(json)
+            status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
+            status == 400 || error == "confirm_required" -> ConsoleWrite.Failed("Confirm to remove this computer. Nothing was changed.")
+            status == 403 || error == "not_owner" -> ConsoleWrite.Failed("Only the person who paired this computer can remove it.")
+            status == 404 && error in listOf("not_found", "computer_not_found") -> ConsoleWrite.Failed("This computer is already gone. Pull to refresh.")
+            status in listOf(404, 405, 501) -> ConsoleWrite.Failed("Removing this computer isn't available on this server yet. Nothing was changed.")
+            status == 409 || error == "cloud_computer" -> ConsoleWrite.Failed("This is an Allternit cloud computer. It can't be unpaired. Remove it from your cloud settings.")
+            else -> ConsoleWrite.Failed("Couldn't remove this computer. Nothing was changed.")
+        }
+    }
 
     private fun writeBody(method: String, body: JsonObject?): String? = body?.toString() ?: if (method == "DELETE" || method == "GET") null else "{}"
 
@@ -332,6 +361,9 @@ object AciApi {
             status in 200..299 -> ConsoleWrite.Ok(json)
             status == 403 && error == "needs_elevation" -> ConsoleWrite.NeedsElevation((json as? JsonObject).str("message").orEmpty())
             status == 409 && (error == null || error == "asleep") -> ConsoleWrite.Asleep
+            // Restore answers with its own plain message (501 while the server gate is off, 404 backup_not_found): show it.
+            (status == 404 || status == 501) && request.url.encodedPath.endsWith("/backups/restore") && !(json as? JsonObject).str("message").isNullOrBlank() ->
+                ConsoleWrite.Failed((json as JsonObject).str("message").orEmpty())
             status == 404 || status == 405 || status == 501 -> ConsoleWrite.Unavailable
             status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
             else -> ConsoleWrite.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "That didn't work. Nothing was changed.")
@@ -505,4 +537,10 @@ class AciAgentClient(private val backend: ChatBackend) {
     suspend fun approve(runId: String, deny: Boolean) {
         backend.runtimeJson("POST", "/api/aci/approve/" + Uri.encode(runId) + if (deny) "?deny=true" else "", "{}")
     }
+}
+
+/** PATCH body for whole-disk Files: `{ wholeDisk: true, confirm: true }` to turn on, `{ wholeDisk: false }` to turn off (not `enabled`). */
+internal fun wholeDiskBody(on: Boolean): JsonObject = kotlinx.serialization.json.buildJsonObject {
+    put("wholeDisk", kotlinx.serialization.json.JsonPrimitive(on))
+    if (on) put("confirm", kotlinx.serialization.json.JsonPrimitive(true))
 }

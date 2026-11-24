@@ -27,6 +27,7 @@ curl https://api.allternit.com/v1/agents \
   "greeting": "Hi, this is Front desk, an AI assistant. How can I help?",
   "model": "allternit", "voice": "af_heart", "tools": ["send_text", "call", "ask_human"],
   "autonomy": "ask", "transfer_targets": [], "business_hours": null, "metadata": {},
+  "runtime": "allternit", "access": null, "agent_view": null,
   "status": "pending", "created_at": "2026-10-06T19:40:02Z", "updated_at": "2026-10-06T19:40:02Z" }
 ```
 
@@ -43,7 +44,37 @@ curl https://api.allternit.com/v1/agents \
 | `transfer_targets` | Up to 20 E.164 numbers a call may be transferred to. |
 | `business_hours` | `{ "tz": "America/Chicago", "mon": ["09:00", "17:00"] }`: `tz` is required, days are `mon` to `sun` with `[open, close]`. With no day listed the agent is always open; once a day is listed, the days left out are closed. Outbound [calls](/api/platform/voice) are placed only inside these hours. `null` clears it. |
 | `metadata` | Your own JSON object, up to 8 KB. |
+| `runtime` | The runtime that runs the agent. Platform agents run on Allternit's hosted runtime, so the only value is `allternit` (the default; agents saved before this field existed read as `allternit`). Any other runtime from [`GET /api/v1/runtimes`](/api/runtimes) runs only on a computer and is refused with `runtime_not_available`: create that agent in the Allternit app instead. `model` stays the brain. See [Runtime rules](#runtime-rules). |
+| `access` | How the brain is paid for: `plan`, `key`, `local` or `credits` (`invalid_access` otherwise). Optional; `null` clears it. |
+| `agent_view` | How the agent's thread is shown: `{ "view": "allternit" \| "runtime" \| "split", "look": "terminal" \| "desktop" }`, either key optional (`invalid_agent_view` otherwise). `agentView` is accepted as the request name too. `null` clears it. |
 | `status` | `pending` until the project's hosted runtime holds the agent (it gets it with the first [conversation](/api/platform/conversations) message), then `ready`. |
+
+### Runtime rules
+
+The rules run only when the request sets `runtime`. A save without `runtime` is never refused for it, and keeps the stored runtime. When `runtime` is set, the answer is `422` with one of these codes:
+
+| Code | Message | When |
+|---|---|---|
+| `runtime_unknown` | No runtime called `<id>`. | The registry has no runtime with that id or alias. |
+| `runtime_not_available` | Platform agents run on Allternit's hosted runtime. `<Runtime>` runs only on a computer: create the agent in the Allternit app instead. | Any runtime other than `allternit` (by id or alias), for example `hermes` or `claude`. It is refused rather than stored and ignored. |
+
+With `runtime: "allternit"` the brain it will run (the `model` in the request, or the stored one) is checked with the same runtime rules every Allternit app uses (see [Runtimes](/api/runtimes)). `allternit` runs every provider's models and takes every provider's plan, so these two codes can't come from a Platform agent today. They are listed for the day other runtimes run here:
+
+| Code | Message |
+|---|---|
+| `brain_not_fit` | `<Runtime>` runs `<Provider>` models only. |
+| `plan_not_allowed_on_runtime` | `<Provider>`'s plan can't be used inside `<Runtime>`. Use an API key, or pick `<own runtime>`. |
+
+```bash
+curl https://api.allternit.com/v1/agents \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "account_id": "acct_7Hq…", "name": "Desk", "runtime": "hermes", "model": "anthropic/claude-sonnet-5-5" }'
+```
+
+```json
+{ "error": { "type": "invalid_request_error", "code": "runtime_not_available", "param": "runtime",
+  "message": "Platform agents run on Allternit's hosted runtime. Hermes runs only on a computer: create the agent in the Allternit app instead." } }
+```
 
 **Limits.** Sandbox projects can have 3 agents (`agent_limit_reached`; deleting one frees its slot). Live projects have no cap; agents after the first 3 are billed per agent per month (see [Usage](/api/platform/usage)).
 

@@ -24,17 +24,26 @@ Status: contract agreed 2026-11-20. Routes are being built in lanes and are not 
 
 ## Node routes (loopback `/v1/host/*`)
 
-Served by `host-probe` on every runtime (allternit-api and the ao shim). Read routes need no approval. The one write route is `POST /v1/host/actions`.
+Served by the shared `host_probe::http` router (feature `http`). **Shipped in allternit-api** (step 1.8) **and on the ao shim** (step 1.8b): the shim (`127.0.0.1:8014`, used by paired servers through `ao fabric` / `allternit-factory pane fabric`) merges the same router with the same logic. It takes its credentials from the ao identity file (`~/.allternit/factory/fabric/identity.json`): relay key = `sha256_hex(deviceToken)`, owner = the paired user id, runtime id = `runtimeId`. An unpaired or expired identity refuses every relayed call and every action, exactly as an unpaired allternit-api does. Read routes need no approval. The one write route is `POST /v1/host/actions`.
 
 | Route | Returns |
 |---|---|
 | `GET /v1/host/snapshot` | `HostSnapshot` |
-| `GET /v1/host/services` | `{ services: HostService[] }` |
-| `GET /v1/host/ports` | `{ ports: HostPort[] }` |
-| `GET /v1/host/updates` | `{ updates: HostUpdate[] }` |
-| `GET /v1/host/findings` | `{ findings: HostFinding[] }` |
-| `GET /v1/host/logs/stream?unit=` | Server-sent events, one `LogLine` JSON object per `data:` line |
+| `GET /v1/host/services` | `{ services: HostService[], providers }` |
+| `GET /v1/host/ports` | `{ ports: HostPort[], sources }` |
+| `GET /v1/host/updates` | `{ updates: HostUpdate[], sources, lastRefreshed?, stale? }` |
+| `GET /v1/host/findings` | `{ findings: HostFinding[], sources?, generatedAt, ageSec, refreshing }` (cached, see below) |
+| `GET /v1/host/logs/stream?unit=&provider?=` | Server-sent events, one `LogLine` JSON object per `data:` line |
+| `GET /v1/host/logs/tail?unit=&lines=` | `{ lines: LogLine[] }` (default 100, at most 1000) |
 | `POST /v1/host/actions` | `HostActionResult` |
+| `GET /v1/host/elevation` | `ElevationStatus` (installed, outdated, missing, notNeeded, unsupported) |
+| `GET /v1/host/elevation/plan` | `SetupPlan`: every file, command and allowed action, shown before approval |
+| `POST /v1/host/elevation/setup` | `ElevationStatus` after one OS admin prompt. 409 `{ error: "needs_terminal", command }` on a headless Linux server, 409 `cancelled`, 503 `helper_missing` |
+| `GET /v1/host/forward?port=N` | WebSocket bridged to TCP `127.0.0.1:N` (see port forward below) |
+
+**Who may call.** A call that came over the relay (`x-allternit-relayed`) must carry the cloud's relay signature (`x-allternit-runtime-sig`, `-ts`, `x-allternit-owner`, keyed by the runtime's relay key, path without query). The cloud adds it only after its caller check and the pairing's `runtime:execute` check, so an unsigned or badly signed relayed call gets 401 `relay_unauthorized`, and an unpaired runtime 503 `not_paired`. A local call (the Desktop UI on loopback) passes the same auth as every other protected local route. The forward socket is the exception: the relay opens it with no headers, and the cloud's single-use ticket is its gate.
+
+**Findings cache.** The updates read alone takes 45 to 60 s on dnf and Windows, so findings are never computed inside a request. The node serves its cached report with `generatedAt` (ISO time of the scan) and `ageSec`, and starts a background rescan when the report is older than 10 minutes or an action ran (`refreshing: true`). Before the first scan finishes the answer is **202** with `findings: []` and `generatedAt: null`. Clients show that as "checking", never as "no problems".
 
 ### HostSnapshot
 
@@ -64,7 +73,9 @@ Linux uses systemd units, macOS uses launchd jobs, Windows uses services.
 
 ### HostFinding
 
-`{ id: string, severity: 'info' | 'warning' | 'critical', category: 'disk' | 'security' | 'service' | 'update' | 'config', title: string, detail: string, suggestedAction?: HostAction }`
+`{ id: string, severity: 'info' | 'warning' | 'critical', category: 'disk' | 'security' | 'service' | 'update' | 'config', title: string, detail: string, suggestedAction?: HostAction, reclaimBytes?: number }`
+
+`reclaimBytes` is set on `space.clean` findings (`disk-full:<mount>` and `space-clean:<item>`): the estimated bytes the suggested clean-up frees. It is only sent when there is an estimate.
 
 ### LogLine
 
@@ -83,12 +94,14 @@ The action list is fixed:
 | `service.start` | service unit name |
 | `service.stop` | service unit name |
 | `service.restart` | service unit name |
-| `port.free` | port number (stops the owning process) |
+| `port.free` | port number (stops the owning process; when the port belongs to a known service, it **stops that service**, and the approval sheet must say so) |
 | `updates.install` | update id, or `all-security` |
 | `space.clean` | clean-up item id from a finding |
 | `snippet.run` | saved snippet id |
 
-An unknown `type` returns 400. A missing or unapproved `approval_id` returns 403 and changes nothing.
+An unknown `type` returns 400. A missing or unapproved `approval_id` returns 403 `{ error: "not_approved" }` and changes nothing. The node accepts only the cloud's `ap1.<jti>.<exp>.<utag>.<sig>` ids: it recomputes the HMAC with its relay key, its runtime id and the request's `type` and `target`, rejects an expired id, and claims the id once in its change store, so a replay is 403. An unpaired node refuses every action. An action that needs admin rights the node does not have returns 403 `{ error: "needs_elevation" }` (set up admin access with `/v1/host/elevation/setup`).
+
+The runtime presence heartbeat (every 60 s) and the paired report carry the `/v1/host/snapshot` body as `hostSample`.
 
 ## Cloud routes (allternit-cloud-api)
 
@@ -111,12 +124,15 @@ Response: `{ "computers": [ConsoleComputer, ...] }`. Web, CLI and iOS accept thi
 | Field | Meaning |
 |---|---|
 | `id` | Console row id. Cloud = `provisioned_instances.id`, paired = `paired_computers.id`, desktop = `runtime_devices.id`. Every `/computers/:id/*` route takes this id. |
-| `runtimeId` | The `runtime_devices.id` the relay is keyed by. Always sent, null when there is none. Terminals use `row.runtimeId ?? row.id` for `allternit-relay://`. |
+| `runtimeId` | The `runtime_devices.id` the relay is keyed by. Always sent, null when there is none. Terminals use `row.runtimeId ?? row.id` for `allternit-relay://`. When a machine has several runtimes, this is the one holding a relay, else the Desktop, else one that reported lately (step 2.10). This is also the "relay id" Files and the terminal use. |
+| `aliases` | Every other id of the same machine (step 2.10): its other runtime devices and code-paired rows; for a cloud computer, its runtime device. Always sent, `[]` when there are none. Every `/computers/:id/*` route, rename and unpair accept an alias and answer for this row. |
+| `pairedId` | The machine's `paired_computers.id` (screen sharing, Factory peer ticket). Left out when it has none. |
 | `kind` | `cloud`, `paired` or `desktop` |
 | `name`, `group`, `provider`, `region`, `os`, `address` | Display fields |
 | `status` | One of the values below |
 | `lastSample` | Newest `HostSnapshot`, or null |
 | `servicesCount`, `lastBackup` | Summary fields |
+| `wholeDisk` | `{ enabled, available, reason?, roots }` (step 2.11). See [Whole-disk files](#whole-disk-files). |
 
 Status values:
 
@@ -201,21 +217,31 @@ Errors:
 
 | Route | Body and result | Status |
 |---|---|---|
-| `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [...] }` | planned (step 2.7) |
-| `POST /api/v1/computers/:id/ssh-keys` | Add a key | planned (step 2.7) |
-| `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | Remove a key | planned (step 2.7) |
-| `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
-| `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
-| `POST /api/v1/computers/:id/restart` | Restart a cloud computer | planned (step 2.4) |
-| `POST /api/v1/computers/:id/move` | `{ location }` | planned (step 2.4) |
-| `POST /api/v1/computers/:id/rebuild` | Held until the backup check passes | planned (step 2.4) |
-| `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes? }] }` | planned (step 2.6) |
-| `POST /api/v1/computers/:id/backups/restore` | `{ backupId }` | planned (step 2.6) |
-| `GET /api/v1/computers/templates` | Starter templates | planned (step 2.4) |
-| `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
-| `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
+| `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [{ id, label, fingerprint, kind, keyType, createdAt, expiresAt }], connect }`. Oldest first. `kind` is `computer` (a person's key, `expiresAt` null) or `agent` (short-lived, `expiresAt` set). The key itself is never sent back. `connect` is `{ host, port, user, command }` from Orgo while the computer runs and has keys, otherwise null. Never wakes the computer | built (step 2.7) |
+| `POST /api/v1/computers/:id/ssh-keys` | `{ label, publicKey, kind?, expiresInMinutes? }` returns 201 with the key's fields plus `requiresRestart` (and a `message` when it is true). `expiresInMinutes` is for agent keys only: default 60, 5 to 1440. 400 `{ error }` with a plain `message`: `private_key` (nothing is stored), `invalid_public_key`, `one_key_only`, `public_key_required`, `too_many_keys` (20 keys or 16 KB), `invalid_kind`, `invalid_expiry`. 409 `key_exists`, 409 `asleep` or `busy` | built (step 2.7) |
+| `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | `{ removed, requiresRestart }`. Removing the last key turns SSH off on the computer. 404 `key_not_found` | built (step 2.7) |
+| `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description?, elevated, timeoutSec?, createdAt, updatedAt }] }` (a bare array is also accepted) | built (step 2.9) |
+| `POST /api/v1/computers/snippets` | `{ name, command, description?, elevated?, timeoutSec? }` returns 201 with the snippet. Limits: 100 per user, name 80, description 280, command 32 KB | built (step 2.9) |
+| `PATCH` or `PUT` `/api/v1/computers/snippets/:id` | any of the same fields; `DELETE` returns `{ removed: true }`. Owner only, others get 404 | built (step 2.9) |
+| `GET /api/v1/computers/snippets/runs?computerId=&limit=` | `{ runs: [{ id, snippetId, snippetName, computerId, approvalId, changeId, status, error, message, createdAt }] }`, newest first, for the Activity tab | built (step 2.9) |
+| `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` (1 to 25 computers; `approvalConfirmed` must be `true`, else 400 `approval_required`) returns `{ runs: [{ computerId, approvalId, changeId, status, error, message }] }`. `status` is `done`, `failed`, `needs_elevation`, `refused`, `asleep`, `offline`, `not_supported` or `not_found`; `error` and `message` are one plain sentence for every status but `done`. Asleep computers are never woken | built (step 2.9) |
+| `POST /api/v1/computers/:id/restart` | No body. `{ instance }`. 409 `{ error: "asleep", status }` when it is not running (never woken), 409 `{ error: "busy", status }` mid-change | built (step 2.4) |
+| `POST /api/v1/computers/:id/move` | `{ location, confirm: true }` returns 202 `{ instance }` (status `provisioning`, same row id). It starts a fresh computer in the new city and erases this one's files: Orgo keeps a computer in the city it was created in, and backups restore only there. The new computer is created first and the old one deleted after, so a refusal changes nothing. 400 `{ error: "confirm_required" }`, 400 `{ error: "invalid_location", locations }`, 409 `{ error: "same_location", location }`, 503 `{ error: "region_unavailable", location }` (old computer kept) | built (step 2.4) |
+| `POST /api/v1/computers/:id/rebuild` | `{ confirm: true }` returns 202 `{ instance }` (status `provisioning` during first boot, same row id). 400 `{ error: "confirm_required" }`. 409 `{ error: "no_recent_backup", latestBackupAt, maxAgeHours: 48 }`: nothing was deleted. 503 `{ error: "region_unavailable", location }`, 503 `{ error: "backup_check_failed" }` | built (step 2.4) |
+| `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes?, kind }], canRestore }`. Finished Orgo daily backups only, newest first. `kind` is `daily` unless Orgo names another. `canRestore` is Orgo's "can be restored now", or null when Orgo does not say. Read only, never wakes the computer. 503 `{ error: "backup_check_failed" }` when Orgo's answer can't be read | built (step 2.6) |
+| `POST /api/v1/computers/:id/backups/restore` | `{ backupId, confirm: true }` returns 202 `{ instance, backupId }`. An in-place restore: same computer, same row id, and what changed since that backup is erased. 400 `{ error: "confirm_required" }`, 400 `{ error: "backup_id_required" }`, 404 `{ error: "backup_not_found" }` (not one of the finished backups), 409 `{ error: "restore_unavailable" }` (Orgo says not now), 409 `{ error: "busy", status }`, 501 `{ error: "not_supported", action: "backup_restore" }` until restores are turned on (below) | built (step 2.6), off by default |
+| `GET /api/v1/computers/templates` | `{ templates: [{ id, name, description? }] }`. An empty list means default Ubuntu only | built (step 2.4) |
+| `PATCH /api/v1/computers/paired/:id` | `{ name }` (1 to 80 characters) returns `{ id, name }`. Renames the whole machine on every surface: `:id` is any console row id or alias, and cloud rows work too. Owner only. 400 `invalid_name`, 403 `not_owner` (shared with you), 404 `not_found` | built (step 2.10) |
+| `POST /api/v1/computers/:id/unpair` | `{ confirm: true }` returns `{ removed: true, id, revokedDevices, removedPaired }`. Removes every alias of the machine at once: revokes each runtime device (Desktop, `gizzi pair`, `ao fabric pair`), deletes its code-paired rows and its name. `:id` is any row id or alias. Owner only. 400 `confirm_required`, 403 `not_owner`, 404 `not_found`, 409 `cloud_computer` (delete a cloud computer from Settings instead). Clients use this for Remove in the console | built (step 2.10) |
+| `DELETE /api/v1/computers/paired/:id` | Removes only that code-paired row (screen sharing). Kept as is for old clients; the machine's runtimes stay paired | exists |
+| `GET /api/v1/computers/:id/file-roots` | `{ id, wholeDisk }` (same object as the console row). Never contacts the computer | built (step 2.11) |
+| `PATCH /api/v1/computers/:id/file-roots` | `{ wholeDisk: true, confirm: true }` or `{ wholeDisk: false }` returns `{ id, wholeDisk }`. Owner only. 400 `invalid_body` / `confirm_required`, 403 `not_owner` (shared with you), 404 `not_found`, 409 `not_a_server` (a Desktop row) / `no_runtime` (no runtime paired yet). Writes `audit_log` `computer.whole_disk.on` or `.off` | built (step 2.11) |
 
-Snippet runs reuse the approval mint above, one approval per computer.
+Snippet runs reuse the approval mint above, one approval per computer (type `snippet.run`, target = the snippet id). The command travels inside the approved action: the cloud sends `POST /v1/host/actions` with `{ type, target, approval_id, snippet: { id, name, script, elevated, timeoutSec } }`, the node never fetches it and saves nothing, and `snippet.id` must equal `target`. Without `snippet` the node still reads `<store>/snippets/<id>.json`. The approval binds the snippet id; the cloud is the authority on the text.
+
+For the routes above that act on cloud computers (restart, move, rebuild, backups, SSH keys), `:id` must be one of the caller's own cloud rows. A paired or desktop id is 404 `{ error: "not_a_cloud_computer" }`, and a computer on a host that cannot do the action is 501 `{ error: "not_supported", action }`. Every error body also carries a plain `message` that clients can show as it is.
+
+Location and template are picked on create: `POST /api/v1/provisioned-instances` takes optional `location` (`nyc`, `chi`, `lon` or `syd`) and `template` (an id from `GET /api/v1/computers/templates`). A location outside those four is 400 `{ error: "invalid_location", locations }`, and a template not on the list is 400 `{ error: "invalid_template" }`. A location asked of a computer that is not routed to Orgo is 400 `{ error: "location_not_available" }`. A full city is 503 `{ error: "region_unavailable", location }`, and no computer or row is left behind. The location is stored in `provisioned_instances.location` and shown as the console row's `region`.
 
 ## Alert push
 
@@ -228,7 +254,17 @@ Offline, CPU and disk rules push to the phone and Desktop. iOS uses APNs categor
 | `rule` | `offline`, `cpu` or `disk` |
 | `value` | Percent for cpu and disk, minutes for offline |
 
-Rule thresholds live in `computer_alert_rules`. Planned (step 2.8).
+Rule thresholds live in `computer_alert_rules` (migrations 154 and 157). Built in step 2.8: the cloud checks every rule once a minute, sends one alert per incident, and sends nothing more until the computer is back under the threshold. The push also carries `category: "COMPUTER_ALERT"`, `event: "computer.alert"`, `level: "needs_you"`, a title and body in plain words, and the link `/computers/<id>`. It goes out through Web Push (browsers and the Desktop app), APNs and FCM, follows the `computer.alert` notification switch and quiet hours, and is also put on the user event feed as `computer.alert`.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/computers/alert-rules` | `{ rules }` of the caller (owner only) |
+| `POST /api/v1/computers/alert-rules` | `{ rule, threshold?, computerId?, durationMinutes?, enabled? }`; no `computerId` = all your computers; one rule per type per scope (409 `rule_exists`) |
+| `PATCH /api/v1/computers/alert-rules/:id` | `{ threshold?, durationMinutes?, enabled? }` |
+| `DELETE /api/v1/computers/alert-rules/:id` | Remove a rule |
+| `GET /api/v1/computers/alerts?computerId=&limit=` | `{ alerts }`: fired and resolved incidents for the Activity tab, newest first |
+
+Thresholds: `offline` is minutes (1 to 1440, default 10), `cpu` and `disk` are percent (1 to 100, default 90). CPU must stay over for `durationMinutes` (1 to 120, default 5). A computer that is asleep, stopped or starting is not offline. Errors carry `{ error, message }`.
 
 ## Approval, change record and undo
 
@@ -253,20 +289,66 @@ The probe never runs as root and no password is stored. Changes that need elevat
 | Windows | An elevated service, installed once. |
 | Orgo cloud | Already root, no setup. |
 
+**Bundling (built in step 1.8b).** The helper binary is `allternit-host-helper` (built from `platform/host-probe/src/bin/`). The runtime looks for it next to its own executable (`elevation::bundled_helper()`), so it ships beside `allternit-api` on every OS, in the Desktop app and in every runtime update (`runtime-package.cjs` lists it with the other binaries):
+
+| OS | Staged at (app / runtime) |
+|---|---|
+| macOS | `Allternit.app/Contents/Resources/bin/allternit-host-helper` (universal, signed with the app) |
+| Windows | `resources\bin\allternit-host-helper.exe` |
+| Linux (AppImage, .deb, cloud computers) | `resources/bin/allternit-host-helper` (glibc floor build) |
+
+Until the helper sits there, `GET /v1/host/elevation/plan` and `POST /v1/host/elevation/setup` answer 503 `helper_missing`.
+
+**Port forward close code.** `GET /v1/host/forward` answers 502 when its TCP dial fails. Every relay client then sends `socket_close` with code 1011 (local failure): the Desktop relay client, the agent daemon and the ao relay. A local socket that ends without a close frame also sends 1011.
+
 ## SSH key model
 
-Each computer gets its own key. Agents get short-lived keys. The probe writes a marked `authorized_keys` block and only edits inside the markers. Paired computers are reached over their mesh IP (the mesh `autogroup:self` rule is untouched). Cloud computers use the Orgo SSH endpoint. Mesh stays off for cloud computers.
+Each computer has its own list of public keys in `computer_ssh_keys` (migration 156): people's keys, and short-lived agent keys that expire. Only public keys are stored. A pasted private key is refused with a plain message before anything is written. Keys are owner-only, like the other cloud settings routes.
+
+- **Cloud computers (built, step 2.7)** use Orgo's Direct SSH (Linux only). Orgo replaces the whole key set on each `POST /computers/{id}/ssh` (one key per line, 16 KB at most) and `DELETE /computers/{id}/ssh` turns SSH off. So every add or remove sends the full current set, under a lock on the computer's row, and the row is written only after Orgo takes it. When Orgo answers `requires_restart: true`, the console says to restart once; the old keys keep working until then. Connect on the port from `connect`, never 22 (port 22 on that host is Orgo's server).
+- **Agent keys** expire after `expiresInMinutes`. A sweep every 5 minutes sends the set without the expired keys, then deletes them. An expired key stays listed (with its past `expiresAt`) until the computer has dropped it, so the list never hides a key that still works.
+- **Rebuild and move** make a fresh disk with no keys, so the list is cleared.
+- **Standby (Incus) and free computers** answer 501 `{ error: "not_supported", action: "ssh_keys" }`.
+- **Paired and desktop computers are not built yet.** They answer 404 `not_a_cloud_computer`. The plan: the probe writes a marked `authorized_keys` block and edits only inside the markers. They are reached over their mesh IP (the mesh `autogroup:self` rule is untouched). Mesh stays off for cloud computers. This needs a node action for keys (the action list above has none), approved through the approval flow.
+- Orgo does not report SSH logins, so there is no last-used time.
 
 ## Cloud computer settings (Orgo)
 
 `CloudComputerSettings`: `{ location, sizeId, diskGb, sleepAfterMin, wakePolicy, image }`.
 
-- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Move, restart, resize, grow disk, clone and rebuild are supported.
-- Rebuild is delete, create and first boot in the same location. It is held until a backup check passes, because it destroys the only disk copy.
-- Daily backups are on.
+- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Restart, rebuild and move are built. Resize, grow disk and clone come in step 2.5.
+- Move (Eoj, 2026-11-21): Orgo keeps a computer in the city it was created in, and its backups restore only there, so moving makes a fresh computer in the new city and erases the old one's files. Clients show a hold-to-confirm sheet that says so in plain words ("Its files are erased and it starts fresh in London"). The new computer is created before the old one is deleted. It gets the Orgo name `<base>-<city>` on the same row id, and pairs on first boot. There is no backup gate, because a backup cannot follow it.
+- Rebuild is delete, create and first boot in the same location, size and template. It is held until an Orgo daily backup newer than 48 hours exists, because it destroys the only disk copy. The row id stays the same. The old runtime device is revoked, and the new computer pairs on first boot.
+- Daily backups are on. Orgo backs up running computers daily and keeps each backup 7 days. The console lists them and restores one in place. It never restores as a new computer: that would make a second, billed computer with no row of ours.
+- Backup restore is off until `ALLTERNIT_ORGO_BACKUP_RESTORE=1` is set on the cloud API. Orgo does not publish the restore request body, so the cloud sends `{ backup_id, in_place: true }`. It accepts only an answer that is an operation on the same computer (`action: "restore"`, its `desktop_id`, or a `poll_url` under it). Any other answer is a 503 and is logged for an operator to check for a stray copy. Turn restores on only after one real in-place restore has been checked.
+- The backup list shape also comes from the docs, because no real answer has been read yet. The cloud reads `backups`, `data` or `items` (or a bare array). Each item needs an `id` and an RFC 3339 or unix time, and counts only when it has no status or a finished one. An answer it can't read is an error, never "no backups". So both rebuild and restore stop with `backup_check_failed` and change nothing.
+- The older restore points in Settings › Computers (`/api/v1/provisioned-instances/:id/snapshots`) are Incus snapshots. On Orgo computers they still answer 501. Clients show the console Backups tab for Orgo daily backups.
 - Image is Ubuntu only (`image: 'ubuntu'`). Starter templates ship only if their `setup.sh` passes.
 - Public URLs are out of scope.
 - Resize, grow, clone and region prices are read from one real request before the UI ships (Eoj gate G3).
+
+## Whole-disk files
+
+Step 2.11. A per-computer setting, **off by default**. Off, the console Files tab shows only the Files drive folder (`~/Allternit` and the other Files drive roots), as before. On, the owner can browse the whole disk of a server they own: a paired machine or an Allternit Cloud computer. Shared rows and Desktop rows never get it (Desktop already reaches its own files locally).
+
+`wholeDisk` on a console row and on `GET|PATCH /api/v1/computers/:id/file-roots`:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | On for the runtime the relay calls (`runtimeId`) |
+| `available` | The row can have it at all |
+| `reason` | When not available: `not_owner`, `not_a_server` or `no_runtime` |
+| `roots` | `[{ id, path, label }]`, only while enabled. `/` (id `disk:/`) on Linux and macOS; on Windows one entry per drive letter in `lastSample.disk[].mount` (`C:\`, id `disk:C:`), else `C:\` |
+
+The setting is stored per machine (migration 160, `computer_whole_disk`, keyed by the 2.10 machine key) together with the machine's runtime ids at the moment it was turned on. A runtime paired later, or a re-pair, starts **off** until the owner turns it on again.
+
+**Enforcement, fail closed.** Every relayed request to a file route (`/api/v1/files/*`, `/api/v1/files/v2/*`, `/api/v1/computers/:id/files/*`) that names a path outside the Files drive is refused with **403 `{ error: "whole_disk_off", message }`** unless the setting is on for that runtime. "Outside" means: an absolute path that is not under a user folder (`/home/<u>`, `/Users/<u>`, `/root`, `/var/home/<u>`, `X:\Users\<u>`), `~other`, a UNC path, any `..` step, or a v2 `POST /roots` body with `kind: "disk"`. Paths are read from the query (`path`, `paths`, `local_path`, `src`, `dest`, `from`, `to`, `source`, `destination`, `dir`, `directory`, `target`) and from small JSON bodies (64 KiB at most; file content is never read). A missing table or a database error counts as off.
+
+The owner's browser proxy (`POST /api/v1/runtime-devices/:id/proxy`) also sends the trusted header **`x-allternit-whole-disk: on`** on file routes while the setting is on. No client can send it (the relay header allow-list drops it), and guest (`files-gateway`) and server-side relays never send it. Nothing in this step wakes a computer: the routes read only the database.
+
+**What the runtime must do (lane A follow-up).** Today `files_scope` keeps every relayed caller inside the home folder, so turning the setting on changes nothing on the computer yet. The runtime must: accept a `kind: "disk"` root (and paths outside home) from a relayed caller only when `x-allternit-whole-disk: on` is present, keep the secrets deny-list and the `O_NOFOLLOW` checks for those paths, hide disk roots from `GET /roots` and answer `whole_disk_off` (403) for them when the header is absent, never share a disk root or hand it to an agent, and keep its change records for writes there.
+
+**What clients must do.** iOS, Android, web (+ phone layout and PWA) and the CLI show a roots switcher in the Files tab only when `wholeDisk.enabled` is true (the Files drive stays the first entry). Settings shows a switch only when `wholeDisk.available` is true; turning it on is a hold-to-confirm sheet that says plainly the agent and you can open, change and delete any file on the computer, then sends `confirm: true`. Show `message` on 403 `whole_disk_off` with a link to that switch.
 
 ## Migrations
 
@@ -274,6 +356,23 @@ Each computer gets its own key. Agents get short-lived keys. The probe writes a 
 |---|---|
 | 153 | Pairing link (`paired_computers.runtime_device_id`), instance location and template |
 | 154 | `computer_metric_samples`, alert rules |
-| 155 | SSH keys, snippets |
+| 155 | Taken by `155_platform_agent_runtime.sql` (Harness & Bots P6, #2784) |
+| 156 | `computer_ssh_keys` (step 2.7) |
+| 157 | `computer_alert_state`, `computer_alert_events`, `computer_alert_rules.duration_minutes` (step 2.8) |
+| 158 | `computer_snippets`, `computer_snippet_runs` (step 2.9) |
+| 159 | `paired_computers.machine_id`, `hostname`, `platform`; `computer_machine_names` (step 2.10). No back-fill: rows are grouped when the list is read |
+| 160 | `computer_whole_disk` (step 2.11): the whole-disk setting per machine, off when no row. Account erase deletes it |
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).
+
+## Whole-disk files: runtime side
+
+Step 2.11b, the runtime half of [Whole-disk files](#whole-disk-files) (cloud side: step 2.11). Where this differs from the cloud section's "What the runtime must do", this section is what the runtime does.
+
+**The grant.** `allternit-api` grants whole-disk access to one request only when all of these hold: it carries `x-allternit-whole-disk: on`, it is relayed (`x-allternit-relayed`), and its cloud relay signature (`x-allternit-runtime-sig`, `-ts`, `x-allternit-owner`, the scheme in `relay_auth`) is valid for this runtime and its paired owner. The middleware `files_scope::whole_disk_gate` checks this on `/api/v1/files/*` and `/api/v1/files/v2/*`. A local caller, an unsigned request, a wrong owner or a body over 8 MiB gets no extra access; the request goes on with the old scope. **The cloud must therefore sign the owner proxy request whenever it adds the header** (`relay_signed_request_to_runtime_with`, not the unsigned variant), or the runtime grants nothing.
+
+**With the grant** (`Caller::WholeDisk`): the home folder and every path outside it, for list, read, raw, exists, mkdir, write and delete. Still refused (`403 path_not_allowed`, reason `protected`): the home secrets deny-list at any depth (`/root/.ssh`, `/home/other/.aws`), its `file_patterns` (`*.pem`, `.env`, `id_rsa*` …), the runtime identity folder `.config/allternit`, the Allternit data folders, and the system stores `/etc/{shadow,gshadow,sudoers,sudoers.d,ssh,master.passwd,allternit}`, `/var/lib/allternit`, `/var/db/{dslocal,sudo}`, `C:\Windows\System32\config`. `..` is refused, symlinks are resolved before the check, and files open with `O_NOFOLLOW` and are checked again on the open file. The disk root itself (`/`, `C:\`) can't be written or deleted (`disk_root_itself`).
+
+**Without the grant**, a relayed path outside home answers `403 { error: "whole_disk_off", message }`, the cloud's body word for word.
+
+**Files drive v2.** The whole disk (`disk:/`, `C:\`) is browsed through the path routes above, not as a drive root: the drive indexes every root it adds. `POST /roots` with `kind: "disk"` (or a folder outside home) adds a **disk root**: one folder outside home that holds neither the home folder nor a system secret store, so `/`, a drive, `/home`, `/Users` and `/etc` are refused (`scope_violation`). It needs the grant (`whole_disk_off` otherwise; a local caller gets the old scope refusal). A disk root is always `shareable: false` and `agent_process: false`, and `PATCH` can't turn either on from any device. Without the grant it is left out of `GET /roots`, and every route on it answers `whole_disk_off`. Guests never reach it, and it is left out of the sleep snapshot. Writes in a disk root keep the drive's versions and trash, as in any root; the legacy path routes keep no change records, as before.

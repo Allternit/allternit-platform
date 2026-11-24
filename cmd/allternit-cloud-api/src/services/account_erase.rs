@@ -172,8 +172,20 @@ pub const ERASE: &[(&str, &str)] = &[
     ("cloud_phones", USER),
     ("computer_pairing_codes", USER),
     ("paired_computers", USER),
-    // Computers console alert rules (migration 154): the owner's own settings.
+    // Alert incidents (migration 157) go before the rules they point at, then
+    // the Activity events, then the owner's rules (migration 154).
+    ("computer_alert_state", "rule_id IN (SELECT id FROM computer_alert_rules WHERE user_id = $1)"),
+    ("computer_alert_events", USER),
     ("computer_alert_rules", USER),
+    // Computers console SSH public keys (migration 156): the owner's own keys.
+    ("computer_ssh_keys", USER),
+    // Computers console snippets and their run history (migration 158).
+    ("computer_snippet_runs", USER),
+    ("computer_snippets", USER),
+    // Names the owner gave a machine in the console (migration 159).
+    ("computer_machine_names", USER),
+    // Whole-disk file roots setting (migration 160).
+    ("computer_whole_disk", USER),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),

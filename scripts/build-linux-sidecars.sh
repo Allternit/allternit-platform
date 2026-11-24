@@ -22,16 +22,17 @@
 #     cua-driver links libX11/libXi: on a host of another arch set CROSS_SYSROOT to a
 #     dir holding the target arch's libx11-dev/libxi-dev/libxtst-dev/libxkbcommon-dev
 #     (+ their runtime libs), e.g. `dpkg-deb -x` of the ports.ubuntu.com .debs.
-#   components: api voice files-mount factory cua-driver   (default: api voice files-mount)
+#   components: api voice files-mount host-helper factory cua-driver   (default: api voice files-mount host-helper)
 #   api -> allternit-api   voice -> allternit-voice-service + allternit-tts
-#   files-mount -> allternit-files-mount   factory -> allternit-factory
+#   files-mount -> allternit-files-mount   host-helper -> allternit-host-helper
+#   factory -> allternit-factory
 #   cua-driver -> cua-driver (trycua/cua built from source at the version and commit
 #     pinned in surfaces/allternit-desktop/scripts/prepare-cua-driver.cjs; the
 #     upstream Linux prebuilt needs glibc 2.30). Needs libx11-dev libxi-dev
 #     libxtst-dev libxkbcommon-dev on the build host.
 #
 # Two build modes, chosen per component:
-#   api, files-mount, factory, cua-driver: cargo-zigbuild with a `.<glibc>` target
+#   api, files-mount, host-helper, factory, cua-driver: cargo-zigbuild with a `.<glibc>` target
 #     suffix pins the symbol versions at ZIG_GLIBC (2.17, older than any distro we
 #     could meet, at no cost; factory and cua-driver at GLIBC_FLOOR, see below). Zig +
 #     cargo-zigbuild pinned below, Zig checksum-verified.
@@ -83,7 +84,7 @@ HOST_MACHINE="$(uname -m)"                          # x86_64 | aarch64
 REPO="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 [ $# -ge 1 ] || { sed -n '2,52p' "${BASH_SOURCE[0]}"; exit 2; }
 OUT="$1"; shift
-COMPONENTS=("$@"); [ ${#COMPONENTS[@]} -gt 0 ] || COMPONENTS=(api voice files-mount)
+COMPONENTS=("$@"); [ ${#COMPONENTS[@]} -gt 0 ] || COMPONENTS=(api voice files-mount host-helper)
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 
 # Linking the allternit-api bins passes >3000 objects to zig, which opens them all
@@ -182,6 +183,7 @@ for c in "${COMPONENTS[@]}"; do
   case "$c" in
     api)         zb --manifest-path cmd/allternit-api/Cargo.toml; put allternit-api allternit-api ;;
     files-mount) zb -p allternit-files-mount; put allternit-files-mount allternit-files-mount ;;
+    host-helper) zb -p host-probe --bin allternit-host-helper; put allternit-host-helper allternit-host-helper ;;
     factory)     zb_floor -p allternit-factory; put allternit-factory allternit-factory ;;
     voice)
       # One target dir per arch: the in-container host differs, so build scripts differ.

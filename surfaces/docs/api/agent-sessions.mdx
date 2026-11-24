@@ -39,6 +39,7 @@ All production requests must include a Clerk session JWT in the `Authorization` 
 | `active` | boolean | `true` unless the session is archived. |
 | `tags` | array | Always empty in current responses. |
 | `environment` | object \| null | Code environment the session runs in: `{ id, name, status, error? }`. `status` is `connecting`, `setting_up`, `ready`, or `failed`. Absent or `null` when the session has no environment. Also copied to `metadata.environment`. |
+| `runtime` | string | The runtime the session's turns run on: the runtime a plain chat was created on, else the runtime of a bot session's `botBrain`, else `allternit`. Ids come from the [runtime registry](/api/runtimes). |
 | `metadata` | object | Runtime metadata including `project_id`, `directory`, `agent_id`, `surface`, `originSurface`, `permission`, `ephemeral`, and `environment`. |
 
 ## Endpoints
@@ -114,7 +115,9 @@ Creates a new Gizzi session. The gateway stamps the model (the request's `model`
 | `agent_name` | string | No | Ignored by the server. |
 | `origin_surface` | string | No | Original surface (`chat`, `cowork`, `code`, `browser`, `design`). |
 | `ephemeral` | boolean | No | If `true`, the session is hidden from lists and deleted on abort. |
-| `metadata` | object | No | Bag carried by clients. `metadata.surface`, `metadata.projectId`, and `metadata.project_id` are read by the gateway. |
+| `metadata` | object | No | Bag carried by clients. `metadata.surface`, `metadata.projectId`, `metadata.project_id`, `metadata.runtime` and `metadata.botBrain` are read by the gateway. |
+| `metadata.runtime` | string | No | A plain chat (no `agent_id`) runs every turn on this runtime, for example `claude` (Claude Code) or `codex`. `allternit` or absent: the default Allternit runtime. |
+| `metadata.botBrain` | object | No | The full runtime pick, in the bot brain shape: `{ runtime, mode, harness \| uhpHarnessId, modelRef?, access?, nativeSessionId? }`. Old-shape objects (`mode` + `harness`, no `runtime`) are normalized. Wins over `metadata.runtime` when both name a runtime. |
 | `project_id` | string | No | Project the session belongs to (top-level form used by the web client). |
 | `model` | object | No | Optional model reference stamped on the session. |
 | `environmentId` | string | No | Code environment to start the session in (`environment_id` also accepted, top-level or in `metadata`). The runtime clones its repos, writes its env vars and runs its setup script before the first turn. |
@@ -167,6 +170,25 @@ curl -X POST https://api.allternit.com/api/v1/agent-sessions \
   The surface `design` is normalized to `chat` for Gizzi compatibility; the original value is preserved in `metadata.originSurface`.
 </Note>
 
+#### Plain chats on a picked runtime
+
+A plain chat created with `metadata.botBrain` or `metadata.runtime` naming a runtime other than `allternit` runs on that runtime, the way a bot with a native-harness brain does. The gateway checks the pick, stores the normalized `botBrain` and `runtime` on the session, and runs every turn on the runtime CLI's provider (for Claude Code, `claude-cli/<model>`). A turn's model is kept when that CLI runs it. Otherwise the turn uses the session brain's model, and if that does not fit, the CLI's default model. The session never falls back to the default runtime without telling you.
+
+| Status | `error` | `message` |
+|--------|---------|-----------|
+| 422 | `runtime_unknown` | `No runtime called <id>.` |
+| 422 | `brain_not_fit` | `<Runtime> runs <Provider> models only.` |
+| 422 | `plan_not_allowed_on_runtime` | `<Provider>'s plan can't be used inside <Runtime>. Use an API key, or pick <own runtime>.` |
+| 409 | `runtime_not_installed` | `<Runtime> isn't installed on this computer.` (the body also carries `runtime`) |
+
+The 422 checks run only when the request names `runtime` itself (in `botBrain` or `metadata.runtime`). The brain checked is `botBrain.modelRef`, else the request's `model`. Show `message` to the user as it is.
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/agent-sessions \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Fix the build","metadata":{"surface":"chat","runtime":"claude","botBrain":{"runtime":"claude","mode":"native_harness","harness":"claude","modelRef":"anthropic/claude-sonnet-5-5","access":"plan"}}}'
+```
+
 ### Get a session
 
 ```http
@@ -201,6 +223,11 @@ Updates the session title, archived state, permission, or surface.
 | `origin_surface` | string | New original surface. |
 | `metadata.permission` | object | Permission policy. |
 | `metadata` | object | Client keys merged into the stored metadata bag. The server-owned status keys (below) are dropped from it. |
+| `metadata.runtime` / `metadata.botBrain` | string / object | Move a plain chat to another runtime. Same shape as on create. |
+
+#### Changing a plain chat's runtime
+
+When an update to a plain chat (not a bot or agent session) carries `metadata.runtime` or `metadata.botBrain`, and the runtime or the brain (`modelRef`) differs from what the session stores, the gateway runs the same checks as [create](#plain-chats-on-a-picked-runtime) before it changes anything. It returns the same `422` (`runtime_unknown`, `brain_not_fit`, `plan_not_allowed_on_runtime`) and `409 runtime_not_installed` bodies. If the checks pass, it stores the new `runtime` and normalized `botBrain`, and the next turn runs on the new runtime's CLI. The old runtime's `agent_session` is dropped unless the new brain names a `nativeSessionId`. Moving to `allternit` stores `runtime: "allternit"`, and turns go back to the default path. An update that sends back the same runtime and brain (for example the whole bag) is not checked. Bot and agent sessions are never checked or moved this way.
 | `markReviewed` | boolean | `true` clears `readyForReview`. Clients send it when the user opens a session. |
 
 #### Session status flags
@@ -312,7 +339,7 @@ Sends a message to the session. `role: "user"` messages are forwarded to the run
 | `noReply` | boolean | No | Record the message without starting a model turn. |
 | `source` | string | No | Where the text was typed (for example `aci`); stored on the text part's metadata. |
 
-The turn runs on `metadata.model`, else the user's chosen default, else (in a bot's thread) the thread's or the bot's saved brain. With none of these, the call returns `409 {"error":"no_brain","message":"Pick a brain first."}` and nothing is sent. A `noReply` message needs no brain.
+In a plain chat created on a runtime, the turn runs on that runtime's CLI (see [Plain chats on a picked runtime](#plain-chats-on-a-picked-runtime)). Otherwise the turn runs on `metadata.model`, else the user's chosen default, else (in a bot's thread) the thread's or the bot's saved brain. With none of these, the call returns `409 {"error":"no_brain","message":"Pick a brain first."}` and nothing is sent. A `noReply` message needs no brain.
 
 #### Example request
 

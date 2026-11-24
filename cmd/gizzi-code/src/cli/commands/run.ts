@@ -657,6 +657,12 @@ export const RunCommand = cmd({
             if ("data" in props.error && props.error.data && typeof props.error.data === "object" && "message" in (props.error.data as object)) {
               err = String((props.error.data as any).message)
             }
+            // A usage limit with a known reset time: say when it resets, in local time.
+            const resetAt = (props.error as any).data?.metadata?.resetAt
+            const resetMs = typeof resetAt === "string" ? Date.parse(resetAt) : NaN
+            if (Number.isFinite(resetMs)) {
+              err += ` Resets at ${new Date(resetMs).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.`
+            }
             error = error ? error + EOL + err : err
             if (emit("error", { error: props.error })) continue
             UI.error(err)

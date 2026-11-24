@@ -32,6 +32,7 @@ const gizziName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code'
 const voiceName = process.platform === 'win32' ? 'allternit-voice-service.exe' : 'allternit-voice-service';
 const ttsName = process.platform === 'win32' ? 'allternit-tts.exe' : 'allternit-tts';
 const factoryName = process.platform === 'win32' ? 'allternit-factory.exe' : 'allternit-factory';
+const hostHelperName = process.platform === 'win32' ? 'allternit-host-helper.exe' : 'allternit-host-helper';
 
 const required = [
   {
@@ -63,6 +64,13 @@ const required = [
     path: path.join(resourcesDir, 'bin', factoryName),
     label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
     buildStep: 'npm run prepare:factory',
+  },
+  {
+    // host_probe::elevation::bundled_helper() looks for it next to allternit-api;
+    // without it /v1/host/elevation/setup answers 503 helper_missing.
+    path: path.join(resourcesDir, 'bin', hostHelperName),
+    label: 'allternit-host-helper (Computers console: the one root helper the setup sheet installs after an OS admin prompt; the runtime finds it next to allternit-api)',
+    buildStep: 'npm run prepare:host-helper',
   },
   ...(process.platform === 'win32'
     ? []

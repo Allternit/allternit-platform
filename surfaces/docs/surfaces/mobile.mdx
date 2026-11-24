@@ -3,6 +3,13 @@ title: Mobile
 description: Allternit iOS client — native SwiftUI surface for chat, tasks, and agent management
 ---
 
+## Composer and Shelves hub
+
+The composer rests on one line and expands when you focus it or enter text. Runtime and Brain chips sit at the top right when it is open. Use the filled **+** for attachments and the sliders button for Tools.
+
+Hold the mode orb above the composer to open the Shelves hub. Each mode has section cards with previews. New sits above the composer when a session is open. Tap its orb for **Quick task** and the current mode’s new item. The drawer keeps its other ways to start. The session overview keeps its bottom New button. Freeweights is in the Home shelves.
+
+
 ## Overview
 
 The **Allternit iOS** client is a native SwiftUI application that brings the Allternit platform to iPhone. It supports chat with agents, task tracking, cloud-instance management, BYOC monitoring, agent hub management, and push-driven live activities.
@@ -301,7 +308,7 @@ The same computers are also reachable inside the app, behind the same `files_dri
 
 On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **☰** or swipe from the left edge) is the desktop rail for the mode you are in, laid out as a phone drawer. It covers 92% of the screen (at most 440 px on a tablet). Tap the strip of chat on the right, or swipe the menu left, to close it.
 
-- **Top line.** The mode dial, the wordmark, **Inbox** and **Search**. The dial is the current mode as a round icon. Tap it and all four modes (**Home**, **Bots**, **Code**, **ACI**, the same as the desktop mode dial) fan out in a labelled arc with the current one filled. Tap one to switch, or tap outside or press Escape to close. Switching modes keeps the menu open on that mode's rail. Bots shows the same unread count as on Desktop. **Search** opens a full-screen search of chats, code threads, agent runs, projects and bots.
+- **Top line.** The current mode icon, wordmark, **Inbox** and **Search**. Tap the mode icon to open the Shelves hub. Choose Home, Bots, Code or ACI, then a section or item. Search opens chats, code threads, agent runs, projects and bots.
 - **Wordmark.** Home shows the A://TERNIT wordmark. Bots shows A://TERNIT BOTS and ACI shows A://TERNIT ACI, set a little smaller so they fit beside the mode icon. Code shows the gizzi code wordmark.
 - **One mode's rail at a time:**
   - **Home:** Projects, Artifacts, Automation Tasks, Customize and **More** (choose which tabs show; the choice is shared with Desktop). Then **Teammates** (your bots, with how many need you), **Pinned**, and **Recents** with a filter, a preview line, the time and a working marker.
@@ -310,7 +317,7 @@ On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **�
   - **Bots:** the Desktop Bots rail, sized for touch. **Home** (the Bots home) and **⋯** at the top, your main bot as a big tile with a crown (tap it for its main chat), the **Promote** row, **Projects**, **Bots** (each with what it is doing; amber means it needs you) and **Group chats** pinned at the bottom above the New button.
 - **Bottom of the menu.** Your avatar with a ring that shows your cloud usage (tap it for Settings), **Phones**, and a floating **New** button: New chat in Home, New thread in Code and Bots, New session in ACI. Press and hold **New** for the other ways to start and **Quick task**.
 
-Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the dial (`PhoneModeWheel.tsx`). The drawer has no visible title bar; its title stays for screen readers. The Bots rail is the Desktop one: `PhoneDrawer` renders `ShellRail` with `embedded` and `mode="bot"` (`BotModeRail` reads `usePhoneSurface()` for touch sizes and turns off drag-to-promote). `phone.css` `.phone-bot-rail` scales its type and keeps **Group chats** above the floating footer.
+Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the Shelves hub (`ModeHubHost.tsx`). The drawer has no visible title bar; its title stays for screen readers. The Bots rail is the Desktop one: `PhoneDrawer` renders `ShellRail` with `embedded` and `mode="bot"` (`BotModeRail` reads `usePhoneSurface()` for touch sizes and turns off drag-to-promote). `phone.css` `.phone-bot-rail` scales its type and keeps **Group chats** above the floating footer.
 
 ## Bot Mode in the iOS app
 
@@ -331,7 +338,7 @@ Developer notes: endpoints are `/api/v1/agents`, `/api/v1/threads` (with `approv
 Jump into a bot's chat without opening the menu.
 
 - **Desktop:** collapse the rail, then hover over (or tab to) the widget at the top left. Your bots appear in a column under it, each with a green dot while it works and an amber dot when it needs you. Click one to open its main chat. The column hides a moment after the pointer leaves, and **Escape** closes it.
-- **Phone:** press and hold **☰**. Tap a bot to open its main chat. A normal tap on **☰** still opens the menu.
+- **Phone:** open the Shelves hub from the mode orb or drawer mode icon, then choose Bots. The ☰ button only opens the drawer.
 
 ## Sheets on the phone
 

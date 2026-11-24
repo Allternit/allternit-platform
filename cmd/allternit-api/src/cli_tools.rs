@@ -415,11 +415,16 @@ pub(crate) fn resolve_binary(binary: &str) -> Option<PathBuf> {
 }
 
 /// gizzi lists providers once per instance; reload it so a CLI that was just
-/// installed or signed in shows up in the model picker.
+/// installed or signed in shows up in the model picker. This asks gizzi's
+/// idle-aware reload (`/instance/reload`): an instance with a running turn or a
+/// waiting question reloads when it goes idle. `/instance/dispose` would abort
+/// the running turn (gizzi `session/prompt.ts` state disposer), so it is not used.
 pub(crate) async fn reload_gizzi() {
-    let url = format!("{}/instance/dispose", crate::agent_session_routes::gizzi_base());
-    if let Err(error) = crate::net_client::client().post(url).timeout(Duration::from_secs(10)).send().await {
-        tracing::warn!(%error, "could not reload gizzi after a CLI install or sign-in");
+    let url = format!("{}/instance/reload", crate::agent_session_routes::gizzi_base());
+    match crate::net_client::client().post(url).timeout(Duration::from_secs(10)).send().await {
+        Ok(res) if res.status().is_success() => {}
+        Ok(res) => tracing::warn!(status = %res.status(), "gizzi did not reload after a CLI install or sign-in (no running turn was stopped)"),
+        Err(error) => tracing::warn!(%error, "could not reload gizzi after a CLI install or sign-in"),
     }
 }
 

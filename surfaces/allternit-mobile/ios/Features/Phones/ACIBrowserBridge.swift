@@ -57,6 +57,7 @@ final class ACIBrowserBridge: ObservableObject {
 
     /// Stop from the banner: refuse further `web.*` calls and stop the run.
     func stopBot() {
+        ACIBrowserImageJob.shared.cancel()
         isStoppedByUser = true
         isBotActive = false
         idleTask?.cancel()
@@ -69,6 +70,9 @@ final class ACIBrowserBridge: ObservableObject {
     // MARK: - web.*
 
     func handle(method: String, params: [String: Any]) async throws -> [String: Any] {
+        guard !ACIBrowserImageJob.shared.isBusy else {
+            throw AppPhoneRPCError(code: "browser_busy", message: "An image job owns this browser. Stop it in its chat first.")
+        }
         guard !isStoppedByUser else {
             throw AppPhoneRPCError(code: "stopped_by_user", message: "The person stopped the bot in the Allternit app.")
         }

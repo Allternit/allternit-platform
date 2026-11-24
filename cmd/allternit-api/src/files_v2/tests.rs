@@ -252,12 +252,20 @@ async fn relayed_caller_cannot_add_secret_or_outside_folders_and_gets_a_locked_d
         format!("{home}/../outside"),
     ] {
         let r = e.post("/roots", &[RELAYED], json!({"name": "X", "local_path": path, "policy": policy_json(true)})).await;
+        // Whole-disk files (step 2.11): a folder outside home answers the cloud's
+        // `403 whole_disk_off` to a relayed caller without the signed grant.
+        if r.json()["error"] == "whole_disk_off" {
+            assert_eq!(r.status, 403, "{path}");
+            assert!(!path.starts_with(&home) || path.contains(".."), "whole_disk_off for a home path: {path}");
+            continue;
+        }
         assert_eq!(r.error().code, ErrorCode::ScopeViolation, "{path}");
     }
     // A symlink inside home that points outside is resolved first.
     std::os::unix::fs::symlink(&e.outside, e.home.join("escape")).unwrap();
     let r = e.post("/roots", &[RELAYED], json!({"name": "X", "local_path": "~/escape", "policy": policy_json(true)})).await;
-    assert_eq!(r.error().code, ErrorCode::ScopeViolation);
+    // It lands outside home, so without the signed grant it is the cloud's whole_disk_off.
+    assert_eq!((r.status.as_u16(), r.json()["error"].as_str()), (403, Some("whole_disk_off")));
 
     std::fs::create_dir_all(e.home.join("Docs")).unwrap();
     let r = e.post("/roots", &[RELAYED], json!({"name": "Docs", "local_path": "~/Docs", "policy": policy_json(true)})).await;

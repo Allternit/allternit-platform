@@ -169,6 +169,9 @@ final class QuickTaskRunner: ObservableObject {
                     if case .streamError(let message) = event {
                         throw QuickTaskError(message: message)
                     }
+                    if case .streamErrorFrame(let frame) = event {
+                        throw QuickTaskError(message: frame.message)
+                    }
                 }
                 self.update(id) { $0.status = .finished }
             } catch {

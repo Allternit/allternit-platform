@@ -14,6 +14,21 @@ regex = { workspace = true }
 dirs = { workspace = true }
 uuid = { workspace = true }
 sysinfo = "0.30"
+# Cloud approval ids (approval.rs): HMAC-SHA256 keyed by the relay key.
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+# Feature `http`: the shared /v1/host/* axum routes (allternit-api, ao shim).
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+
+[features]
+http = ["dep:axum", "dep:tokio", "dep:futures-util"]
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
 
 [target.'cfg(windows)'.dependencies]
 # Named pipe channel to the SYSTEM helper (elevation/win.rs).

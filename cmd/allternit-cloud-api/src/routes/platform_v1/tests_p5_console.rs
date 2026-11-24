@@ -32,6 +32,7 @@ async fn state() -> Arc<ApiState> {
         include_str!("../../../migrations_pg/051_platform_numbers_messaging.sql"),
         include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
+        include_str!("../../../migrations_pg/155_platform_agent_runtime.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),

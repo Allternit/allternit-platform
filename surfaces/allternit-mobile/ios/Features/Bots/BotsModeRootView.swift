@@ -44,6 +44,24 @@ enum BotRoute: Hashable {
     case office
 }
 
+extension BotRoute {
+    /// The bot this screen belongs to, for the mode orb's face. Team-level
+    /// screens (groups, computers, projects, office) have none.
+    var focusedBotId: String? {
+        switch self {
+        case .chat(let id, _), .page(let id), .botComputer(let id), .tasks(let id), .routines(let id),
+             .memory(let id), .channels(let id), .soul(let id), .skills(let id), .usage(let id),
+             .model(let id), .phone(let id), .stage(let id), .home(let id), .settings(let id),
+             .botHome(let id, _):
+            return id
+        case .threads(let id):
+            return id
+        default:
+            return nil
+        }
+    }
+}
+
 /// Bot Mode's navigation path, shared with every pushed screen so async
 /// work (a created group, a resolved chat) can push the next screen.
 @MainActor
@@ -158,6 +176,8 @@ struct BotsModeRootView: View {
             .presentationDetents([.medium, .large])
         }
         .onAppear(perform: openPendingBot)
+        .onChange(of: navigator.path) { _, path in store.focusedBotId = path.last?.focusedBotId }
+        .onDisappear { store.focusedBotId = nil }
         #if DEBUG
         // `-open-bot-chat <name>`: opens that bot's chat once bots load (screenshots).
         .onChange(of: store.bots.count) { _, _ in

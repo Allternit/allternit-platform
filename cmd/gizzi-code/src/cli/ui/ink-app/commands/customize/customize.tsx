@@ -1,4 +1,5 @@
 import figures from 'figures';
+import { BlockTitle } from '../../components/BlockTitle';
 import * as React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Pane } from '../../components/design-system/Pane';
@@ -152,7 +153,7 @@ function Customize({ onDone }: { onDone: (result?: string) => void }): React.Rea
   const start = Math.max(0, Math.min(focusRow - Math.floor(WINDOW / 2), rows.length - WINDOW));
   return <Pane color="permission">
       <Box flexDirection="column">
-        <Text color="remember" bold>Customize</Text>
+        <BlockTitle title="CUSTOMIZE" />
         <Text dimColor>What your chats and bots can use. Same catalog and Add as Allternit Desktop.</Text>
         <Box marginY={1}>{tabs}</Box>
         {rows.slice(start, start + WINDOW).map((row, i) => {

@@ -199,6 +199,19 @@ fi
 chmod +x "$RESOURCES_DIR/bin/allternit-factory"
 ok "allternit-factory → $RESOURCES_DIR/bin/allternit-factory"
 
+# ── 2a'. Vendor allternit-host-helper (Computers console elevation helper;
+#         host_probe::elevation::bundled_helper() finds it next to allternit-api) ──
+step "Vendoring allternit-host-helper…"
+if ! reuse allternit-host-helper "$RESOURCES_DIR/bin/allternit-host-helper"; then
+  (cd "$WORKSPACE_ROOT" && cargo build --release -p host-probe --bin allternit-host-helper)
+  HELPER_BIN="$CARGO_OUT/release/allternit-host-helper"
+  [ -f "$HELPER_BIN" ] || die "allternit-host-helper build failed — binary not found at $HELPER_BIN"
+  cp "$HELPER_BIN" "$RESOURCES_DIR/bin/allternit-host-helper"
+  remember allternit-host-helper "$HELPER_BIN"
+fi
+chmod +x "$RESOURCES_DIR/bin/allternit-host-helper"
+ok "allternit-host-helper → $RESOURCES_DIR/bin/allternit-host-helper"
+
 # ── 2b. Vendor ripgrep (GrepTool backend, Claude Code layout) ───────────────
 step "Vendoring ripgrep…"
 RG_LAYOUT="$(uname -m | sed 's/x86_64/x64/')-$(uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/darwin/')"

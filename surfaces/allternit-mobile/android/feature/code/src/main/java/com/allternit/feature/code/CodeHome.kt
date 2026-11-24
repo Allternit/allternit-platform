@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,9 @@ import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.relativeTime
 import com.allternit.feature.chat.ChatBackend
 import com.allternit.feature.chat.RelayDevice
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
 
@@ -79,9 +83,29 @@ class CodeHost(
     val openConnections: () -> Unit,
 )
 
-/** Owned by the shell for the life of Code mode: the shells and the folder. */
+/**
+ * Owned by the shell for the life of Code mode: the shells, and the computer's terminals and live agent
+ * sessions. [sessions] lives here, one level above the threads screen, so a Move keeps being followed
+ * after that screen closes and its terminal still opens when it is done (iOS CodeModeView owns its
+ * TerminalSessionsStore the same way).
+ */
 class CodeStore(val backend: ChatBackend) {
     val terminal = CodeTerminalStore(backend)
+    val sessions = TerminalSessionsStore(backend)
+
+    /**
+     * Opens the computer's terminal [terminalId] in a Terminal tile and shows the Terminal ([onRoute] is the
+     * shell's route setter, which outlives the screen that asked). Says so on the threads screen when every
+     * tile is taken.
+     */
+    fun openTerminal(terminalId: String, name: String, onRoute: (CodeRoute) -> Unit) {
+        if (terminal.open(terminalId, name)) {
+            sessions.notice = null
+            onRoute(CodeRoute.Terminal)
+        } else {
+            sessions.notice = "All ${CodeTerminalStore.MAX_TILES} terminal tabs are in use. Close one in Terminal to open this."
+        }
+    }
 }
 
 /** Every screen a Code tool can open. */
@@ -183,7 +207,7 @@ fun CodeRouteScreen(host: CodeHost, store: CodeStore, route: CodeRoute, onRoute:
         CodeRoute.Files -> FileBrowserScreen(host.backend, null, onBack = onClose)
         is CodeRoute.Changes -> SessionDiffScreen(host.backend, route.sessionId, onBack = onClose)
         is CodeRoute.Ports -> DevServerPortsScreen(host.backend, route.ptyId, onBack = { onRoute(CodeRoute.Terminal) })
-        CodeRoute.Overview -> CodeOverviewScreen(host, onBack = onClose, onOpen = { host.openSession(it); onClose() })
+        CodeRoute.Overview -> CodeOverviewScreen(host, store, onRoute = onRoute, onBack = onClose, onOpen = { host.openSession(it); onClose() })
         CodeRoute.Computer -> CodeComputerScreen(host, onBack = onClose)
         CodeRoute.Usage -> CodeUsageScreen(host, onBack = onClose)
         CodeRoute.Scheduled -> CodeScheduledScreen(host, onBack = onClose)
@@ -191,15 +215,35 @@ fun CodeRouteScreen(host: CodeHost, store: CodeStore, route: CodeRoute, onRoute:
     }
 }
 
-/** The sessions overview (iOS PhoneCodeSessionsView / CodeOverviewSheet): filters, counts, row actions. */
+/**
+ * The sessions overview (iOS PhoneCodeSessionsView / CodeOverviewSheet): the computer's terminals with live
+ * previews, "On your computer" (agent sessions running outside Allternit, with Move here / Open a copy /
+ * New session here), then the threads with filters, counts and row actions. The two computer sections
+ * poll only while this screen is on screen and the app is in the foreground, and hide on a runtime
+ * without their routes, with no computer, or signed out.
+ */
 @Composable
-internal fun CodeOverviewScreen(host: CodeHost, onBack: () -> Unit, onOpen: (String) -> Unit) {
+internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onBack: () -> Unit, onOpen: (String) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var filter by remember { mutableStateOf<CodeSessionStatus?>(null) }
     var query by remember { mutableStateOf("") }
     var acting by remember { mutableStateOf<CodeSessionRow?>(null) }
     LaunchedEffect(Unit) { host.reloadSessions() }
+    val live = store.sessions
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner) {
+        // Adding the observer replays ON_RESUME when the screen is already in the foreground.
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) live.setActive(true) else if (event == Lifecycle.Event.ON_PAUSE) live.setActive(false)
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            live.setActive(false)
+        }
+    }
+    val openTerminal: (String, String) -> Unit = { id, name -> store.openTerminal(id, name, onRoute) }
     val all = host.sessions()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val shown = all.filter { (filter == null && it.status != CodeSessionStatus.Archived || it.status == filter) && it.title.contains(query, ignoreCase = true) }
@@ -215,7 +259,8 @@ internal fun CodeOverviewScreen(host: CodeHost, onBack: () -> Unit, onOpen: (Str
                 CodePill("${st.label} $n", testTag = "codeFilter-${st.name}", filled = filter == st) { filter = st }
             }
         }
-        if (shown.isEmpty()) {
+        live.notice?.let { Text(it, color = AllternitStatic.StatusWarning, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("codeOverviewNotice")) }
+        if (shown.isEmpty() && !computerSections) {
             EmptyState(
                 if (filter == null) "No threads yet" else "Nothing ${filter?.label?.lowercase()}",
                 "Start a thread from the composer and it appears here.",

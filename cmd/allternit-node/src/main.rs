@@ -47,8 +47,10 @@ fn default_config_path() -> PathBuf {
 }
 
 /// SIGTERM (launchd shutdown) + SIGINT (Ctrl-C): kill and reap every tracked
-/// terminal child, then exit 0. The signal task owns the whole sequence, so a
-/// dying daemon never leaves PTY children behind as zombies.
+/// PTY terminal child, then exit 0. The signal task owns the whole sequence, so a
+/// dying daemon never leaves PTY children behind as zombies. Pane engine
+/// terminals are the engine's: they keep running, and the next daemon lists
+/// and re-attaches them.
 #[cfg(unix)]
 fn install_shutdown_handler(state: Arc<DaemonState>) {
     use tokio::signal::unix::{signal, SignalKind};
@@ -72,7 +74,7 @@ fn install_shutdown_handler(state: Arc<DaemonState>) {
             _ = terminate.recv() => {},
             _ = interrupt.recv() => {},
         }
-        tracing::info!("shutdown signal received; killing terminal sessions");
+        tracing::info!("shutdown signal received; killing PTY terminal sessions");
         state.terminals.shutdown_all();
         std::process::exit(0);
     });
@@ -105,6 +107,9 @@ async fn main() -> anyhow::Result<()> {
                 env!("CARGO_PKG_VERSION"),
             );
             install_shutdown_handler(state.clone());
+            // Which backend serves terminals (logged); requests probe again
+            // while no pane engine has answered.
+            state.engine.get().await;
             relay::run(config, identity, state).await;
             Ok(())
         }

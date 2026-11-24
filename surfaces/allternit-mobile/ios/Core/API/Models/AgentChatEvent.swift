@@ -69,6 +69,11 @@ enum AgentChatEvent: Decodable, Sendable {
     /// ChatViewModel for the inline ⚠️ rendering).
     case streamError(String)
 
+    /// An `{"type":"error"}` frame that says why: `{error, code?, reset_at?}`
+    /// (platform #2807). The chat draws one typed card (usage limit with its
+    /// reset time, signed out, network) instead of the bare sentence.
+    case streamErrorFrame(StreamErrorFrame)
+
     /// Done signal (`{"type":"message_stop"}` or `chunk_type:"done"`).
     case done
 
@@ -230,6 +235,16 @@ enum AgentChatEvent: Decodable, Sendable {
 
     // MARK: - Decoding
 
+    /// `reset_at` as epoch seconds or milliseconds, or as a string of either or an ISO date.
+    private static func resetDate(_ container: KeyedDecodingContainer<CodingKeys>) -> Date? {
+        if let n = (try? container.decodeIfPresent(Double.self, forKey: .resetAt)) ?? nil {
+            return ChatErrorInfo.resetDate(epoch: n)
+        }
+        guard let text = (try? container.decodeIfPresent(String.self, forKey: .resetAt)) ?? nil else { return nil }
+        if let n = Double(text) { return ChatErrorInfo.resetDate(epoch: n) }
+        return ISO8601DateFormatter().date(from: text)
+    }
+
     private enum CodingKeys: String, CodingKey {
         // Discriminators
         case type
@@ -243,6 +258,9 @@ enum AgentChatEvent: Decodable, Sendable {
         case contentBlock = "content_block"
         // tool_result / tool_error / error
         case toolCallId, toolName, error
+        // error: the machine code and the usage-limit reset time
+        case errorCode = "code"
+        case resetAt = "reset_at"
         // finish
         case status, metadata
         // artifact
@@ -428,9 +446,32 @@ enum AgentChatEvent: Decodable, Sendable {
             self = .done
 
         case "error":
-            self = .streamError(
-                try container.decodeIfPresent(String.self, forKey: .error) ?? "Stream error"
-            )
+            let message = (try? container.decodeIfPresent(String.self, forKey: .error)) ?? nil ?? "Stream error"
+            let code = ((try? container.decodeIfPresent(String.self, forKey: .errorCode)) ?? nil)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let reset = Self.resetDate(container)
+            if (code?.isEmpty == false) || reset != nil {
+                self = .streamErrorFrame(StreamErrorFrame(message: message, code: code?.isEmpty == false ? code : nil, resetAt: reset))
+            } else {
+                self = .streamError(message)
+            }
+
+        case "tool_progress":
+            // A running tool's live report: `{toolCallId, toolName, metadata}`.
+            // media_generate carries `progress` + `progress_detail` there; the
+            // call stays running and keeps the newest metadata.
+            let metadata = AgentToolCards.jsonText((try? container.decodeIfPresent(AnyCodable.self, forKey: .metadata)) ?? nil)
+            if let id = try container.decodeIfPresent(String.self, forKey: .toolCallId), metadata != nil {
+                var detail = ToolDetail()
+                detail.metadata = metadata
+                self = .toolCall(ToolCall(
+                    toolCallId: id,
+                    toolName: try container.decodeIfPresent(String.self, forKey: .toolName) ?? "media_generate",
+                    detail: detail
+                ))
+            } else {
+                self = .ignored
+            }
 
         case "artifact", "artifact.created", "artifact-created":
             if let artifact = Self.decodeArtifact(container) {

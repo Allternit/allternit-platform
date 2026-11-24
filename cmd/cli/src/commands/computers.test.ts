@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createComputersCommand, ptyWsUrl } from './computers.js';
+import { createComputersCommand, ptyWsUrl, unpairMessage } from './computers.js';
 import { normalizeApiAlias } from '../argv.js';
 
 function buildProgram(commands: Command[]): Command {
@@ -445,4 +445,109 @@ test('computers ssh mints a pty ws-token then opens the pty socket', async (t) =
     FakeWebSocket.instances[0]?.url,
     'wss://api.example/ws/computers/c-1/pty?token=tok-1',
   );
+});
+
+test('computers unpair posts confirm:true to /unpair and refuses without --yes', async () => {
+  const seen = await withMockedFetch(
+    () => jsonOk({ ok: true }),
+    async () => {
+      await buildProgram([createComputersCommand()]).parseAsync([
+        'node', 'allternit', 'computers', 'unpair', 'alias-1', '--yes',
+      ]);
+    },
+  );
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.method, 'POST');
+  assert.equal(seen[0]?.url, 'https://api.example/api/v1/computers/alias-1/unpair');
+  assert.deepEqual(await seen[0]?.json(), { confirm: true });
+
+  const none = await withMockedFetch(
+    () => jsonOk({}),
+    async () => {
+      await buildProgram([createComputersCommand()]).parseAsync([
+        'node', 'allternit', 'computers', 'unpair', 'alias-1',
+      ]);
+    },
+  );
+  assert.equal(none.length, 0);
+  process.exitCode = 0;
+});
+
+test('unpairMessage maps each server code to a plain sentence', () => {
+  assert.match(unpairMessage('confirm_required'), /Confirm/);
+  assert.match(unpairMessage('not_owner'), /Only the person/);
+  assert.match(unpairMessage('cloud_computer'), /cloud computer/);
+  assert.match(unpairMessage('404 Not Found'), /unpair route/);
+  assert.equal(unpairMessage('weird'), 'weird');
+});
+
+async function captureOutput(fn: () => Promise<void>): Promise<{ out: string; err: string; exitCode: number | string | undefined }> {
+  const outWrite = process.stdout.write.bind(process.stdout);
+  const errWrite = process.stderr.write.bind(process.stderr);
+  let out = '';
+  let err = '';
+  process.stdout.write = ((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => { err += String(chunk); return true; }) as typeof process.stderr.write;
+  process.exitCode = undefined;
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = outWrite;
+    process.stderr.write = errWrite;
+  }
+  const exitCode = process.exitCode;
+  process.exitCode = undefined;
+  return { out, err, exitCode };
+}
+
+test('computers files-roots shows the state and each root', async () => {
+  let result: Awaited<ReturnType<typeof captureOutput>> | undefined;
+  const seen = await withMockedFetch(
+    () => jsonOk({ id: 'c1', wholeDisk: { enabled: true, available: true, roots: [{ id: 'disk:/', path: '/', label: 'Whole disk' }] } }),
+    async () => {
+      result = await captureOutput(() => buildProgram([createComputersCommand()]).parseAsync(['node', 'allternit', 'computers', 'files-roots', 'c1']) as Promise<unknown> as Promise<void>);
+    },
+  );
+  assert.equal(seen[0]?.method, 'GET');
+  assert.equal(new URL(seen[0]?.url ?? '').pathname, '/api/v1/computers/c1/file-roots');
+  assert.match(result?.out ?? '', /Whole-disk browsing: on\./);
+  assert.match(result?.out ?? '', /Whole disk {2}\//);
+});
+
+test('computers files-roots --on without --yes refuses and sends nothing', async () => {
+  let result: Awaited<ReturnType<typeof captureOutput>> | undefined;
+  const seen = await withMockedFetch(
+    () => jsonOk({}),
+    async () => {
+      result = await captureOutput(() => buildProgram([createComputersCommand()]).parseAsync(['node', 'allternit', 'computers', 'files-roots', 'c1', '--on']) as Promise<unknown> as Promise<void>);
+    },
+  );
+  assert.equal(seen.length, 0);
+  assert.equal(result?.exitCode, 1);
+  assert.match(result?.err ?? '', /Anyone using this computer from Allternit can open, change or delete any file on it/);
+  assert.match(result?.err ?? '', /--yes/);
+});
+
+test('computers files-roots --on --yes sends wholeDisk and confirm; --off sends wholeDisk false', async () => {
+  const bodies: unknown[] = [];
+  await withMockedFetch(
+    async (request) => { bodies.push(await request.json()); return jsonOk({ id: 'c1', wholeDisk: { enabled: false, available: true, roots: [] } }); },
+    async () => {
+      await captureOutput(() => buildProgram([createComputersCommand()]).parseAsync(['node', 'allternit', 'computers', 'files-roots', 'c1', '--on', '--yes']) as Promise<unknown> as Promise<void>);
+      await captureOutput(() => buildProgram([createComputersCommand()]).parseAsync(['node', 'allternit', 'computers', 'files-roots', 'c1', '--off']) as Promise<unknown> as Promise<void>);
+    },
+  );
+  assert.deepEqual(bodies, [{ wholeDisk: true, confirm: true }, { wholeDisk: false }]);
+});
+
+test('computers files-roots turns a server refusal into a plain sentence', async () => {
+  let result: Awaited<ReturnType<typeof captureOutput>> | undefined;
+  await withMockedFetch(
+    () => new Response(JSON.stringify({ error: 'not_owner' }), { status: 403, headers: { 'content-type': 'application/json' } }),
+    async () => {
+      result = await captureOutput(() => buildProgram([createComputersCommand()]).parseAsync(['node', 'allternit', 'computers', 'files-roots', 'c1', '--off']) as Promise<unknown> as Promise<void>);
+    },
+  );
+  assert.equal(result?.exitCode, 1);
+  assert.match(result?.err ?? '', /Only the owner of this computer can turn this on\./);
 });

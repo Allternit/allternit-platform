@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::files_scope::{denied_response, Access, Caller, FilesScope, OpenError};
+use crate::files_scope::{denied_response, Access, Caller, FilesScope, OpenError, WholeDiskGrant};
 use crate::AppState;
 
 pub fn file_router() -> Router<Arc<AppState>> {
@@ -31,12 +31,20 @@ pub fn file_routes<S: Clone + Send + Sync + 'static>(scope: Arc<FilesScope>) -> 
         .route("/files/delete", delete(delete_file))
         .route("/files/write", post(write_file))
         .route("/files/bot-writes", post(record_bot_write))
+        // Whole-disk files (step 2.11): grants only a signed relayed request.
+        .layer(axum::middleware::from_fn(crate::files_scope::whole_disk_gate))
         .layer(Extension(scope))
 }
 
 /// Shared scope plus who is asking, extracted once per request.
 type Scope = Extension<Arc<FilesScope>>;
 type Peer = Option<ConnectInfo<SocketAddr>>;
+/// Set by `files_scope::whole_disk_gate` for a signed whole-disk request.
+type Grant = Option<Extension<WholeDiskGrant>>;
+
+fn caller_of(headers: &HeaderMap, peer: &Peer, grant: &Grant) -> Caller {
+    crate::files_scope::caller_with_grant(headers, peer.as_ref().map(|c| c.0), grant.is_some())
+}
 
 /// Resolve `raw` for this request, or the `403` to answer with. Auth decides
 /// who the caller is; this decides which paths that caller may touch (local
@@ -46,10 +54,11 @@ fn scoped(
     scope: &FilesScope,
     headers: &HeaderMap,
     peer: &Peer,
+    grant: &Grant,
     raw: &str,
     access: Access,
 ) -> Result<(PathBuf, Caller), Response> {
-    let caller = crate::files_scope::caller(headers, peer.as_ref().map(|c| c.0));
+    let caller = caller_of(headers, peer, grant);
     scope
         .authorize(raw, caller, access)
         .map(|path| (path, caller))
@@ -131,11 +140,12 @@ async fn file_entry_for(path: &std::path::Path, name: String) -> FileEntry {
 async fn list_files(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<ListQuery>,
 ) -> Response {
     let recursive = params.recursive.as_deref() == Some("true");
-    let caller = crate::files_scope::caller(&headers, peer.as_ref().map(|c| c.0));
+    let caller = caller_of(&headers, &peer, &grant);
     let resolved = match scope.authorize_list(&params.path, caller, recursive) {
         Ok(path) => path,
         Err(denied) => return denied_response(denied),
@@ -191,10 +201,11 @@ async fn list_files(
 async fn read_file(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let (resolved, caller) = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Read) {
         Ok(v) => v,
         Err(denied) => return denied,
     };
@@ -212,10 +223,11 @@ async fn read_file(
 async fn raw_file(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let (resolved, caller) = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Read) {
         Ok(v) => v,
         Err(denied) => return denied,
     };
@@ -229,10 +241,11 @@ async fn raw_file(
 async fn file_exists(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+    let resolved = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Read) {
         Ok((path, _)) => path,
         Err(denied) => return denied,
     };
@@ -250,10 +263,11 @@ async fn file_exists(
 async fn file_exists_json(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Read) {
+    let resolved = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Read) {
         Ok((path, _)) => path,
         Err(denied) => return denied,
     };
@@ -263,10 +277,11 @@ async fn file_exists_json(
 async fn mkdir(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Write) {
+    let resolved = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Write) {
         Ok((path, _)) => path,
         Err(denied) => return denied,
     };
@@ -283,10 +298,11 @@ async fn mkdir(
 async fn delete_file(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<PathQuery>,
 ) -> Response {
-    let resolved = match scoped(&scope, &headers, &peer, &params.path, Access::Delete) {
+    let resolved = match scoped(&scope, &headers, &peer, &grant, &params.path, Access::Delete) {
         Ok((path, _)) => path,
         Err(denied) => return denied,
     };
@@ -323,6 +339,7 @@ struct WriteBody {
 async fn write_file(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Query(params): Query<WriteQuery>,
     Json(body): Json<WriteBody>,
@@ -337,7 +354,7 @@ async fn write_file(
                 .into_response()
         }
     };
-    let (resolved, caller) = match scoped(&scope, &headers, &peer, &target, Access::Write) {
+    let (resolved, caller) = match scoped(&scope, &headers, &peer, &grant, &target, Access::Write) {
         Ok(v) => v,
         Err(denied) => return denied,
     };
@@ -386,10 +403,11 @@ struct BotWriteBody {
 async fn record_bot_write(
     Extension(scope): Scope,
     peer: Peer,
+    grant: Grant,
     headers: HeaderMap,
     Json(body): Json<BotWriteBody>,
 ) -> Response {
-    let caller = crate::files_scope::caller(&headers, peer.as_ref().map(|c| c.0));
+    let caller = caller_of(&headers, &peer, &grant);
     match scope.record_bot_write(&body.path, caller) {
         Ok(()) => Json(json!({"ok": true})).into_response(),
         Err(denied) => denied_response(denied),
@@ -418,6 +436,10 @@ fn mime_for(path: &std::path::Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+#[cfg(test)]
+#[path = "file_routes_whole_disk_tests.rs"]
+mod whole_disk_tests;
+
 #[cfg(test)]
 mod tests {
     //! Scoping of the legacy `/files/*` routes (Files drive plan, step 3).

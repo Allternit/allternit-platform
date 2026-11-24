@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { platformApiBase, platformToken } from '@/runtime/bots/platform-api.js'
+import { fetchWithPlatformToken, platformApiBase } from '@/runtime/bots/platform-api.js'
 import { getImageProcessor } from '../tools/FileReadTool/imageProcessor'
 
 /**
@@ -26,12 +26,9 @@ async function readImage(url: string): Promise<Buffer | null> {
   }
   // Images the Allternit platform hosts may need the signed-in account; no
   // other host ever gets the token.
-  const headers: Record<string, string> = { Accept: 'image/*' }
-  if (new URL(url).origin === new URL(platformApiBase()).origin) {
-    const token = await platformToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-  }
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const init = { headers: { Accept: 'image/*' }, signal: AbortSignal.timeout(TIMEOUT_MS) }
+  const platform = new URL(url).origin === new URL(platformApiBase()).origin
+  const response = (platform ? await fetchWithPlatformToken(url, init) : undefined) ?? (await fetch(url, init))
   if (!response.ok) return null
   if (Number(response.headers.get('content-length') ?? 0) > MAX_BYTES) return null
   const bytes = Buffer.from(await response.arrayBuffer())

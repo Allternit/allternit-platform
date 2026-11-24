@@ -246,7 +246,7 @@ impl PushTransport for HttpTransport {
 #[cfg(test)]
 pub(crate) static TEST_TRANSPORT: std::sync::Mutex<Option<Arc<dyn PushTransport>>> = std::sync::Mutex::new(None);
 
-fn default_transport() -> Arc<dyn PushTransport> {
+pub(crate) fn default_transport() -> Arc<dyn PushTransport> {
     #[cfg(test)]
     if let Some(t) = TEST_TRANSPORT.lock().unwrap().clone() {
         return t;

@@ -27,11 +27,14 @@
 use serde::{Deserialize, Serialize};
 
 pub mod actions;
+pub mod approval;
 pub mod changes;
 pub mod cmd;
 pub mod elevation;
 pub mod findings;
 pub mod helper;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod logs;
 pub mod mask;
 pub mod os;
@@ -43,8 +46,8 @@ pub mod updates;
 pub use actions::{
     clean_items, run_action, ActionEngine, ActionError, ActionRequest, ActionResult, ActionType,
     ApprovalVerifier, CleanItem, Executor, ServiceOp, Snippet, SystemExecutor, UndoAction,
-    WellFormedApproval,
 };
+pub use approval::{relay_key_from_device_token, ApprovalReject, DenyApprovals, RelayKeyApproval};
 pub use changes::{ChangeRecord, ChangeStatus, ChangeStore};
 pub use cmd::SourceStatus;
 pub use elevation::{

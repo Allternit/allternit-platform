@@ -1,0 +1,20 @@
+agy
+joe@joes-MacBook-Pro mockrepo % agy
+^C%
+joe@joes-MacBook-Pro mockrepo %
+joe@joes-MacBook-Pro mockrepo % agy
+
+                  Antigravity CLI 1.5.13
+                  gizziioetrid@gmail.com (Antigravity Starter Quota)
+                  Claude Sonnet 4.6 (Thinking)
+                  /private/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo
+
+
+
+ ┃ Auto is now the default agent mode
+ ┃ Press Shift+Tab to switch agent modes, or change Agent Mode in /config.
+ ┃ esc to dismiss
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> Auto mode: edits & safe commands auto-approved (shift+tab to cycle)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                      auto · Claude Sonnet 4.6 (Thinking)

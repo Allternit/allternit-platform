@@ -140,6 +140,11 @@ struct ACITabView: View {
             }
             #endif
         }
+        .onReceive(NotificationCenter.default.publisher(for: .composerNewItem)) { _ in
+            nav.open(.agent)
+            selectedSessionId = nil
+            destination = .chat(sessionId: nil)
+        }
         .onChange(of: bridge.requestedURL) { _, _ in
             openRequestedURL()
         }

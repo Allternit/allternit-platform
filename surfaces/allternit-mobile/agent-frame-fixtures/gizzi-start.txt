@@ -1,0 +1,5 @@
+gizzi
+joe@joes-MacBook-Pro mockrepo % gizzi
+/^[^C
+joe@joes-MacBook-Pro mockrepo %
+joe@joes-MacBook-Pro mockrepo % gizzi

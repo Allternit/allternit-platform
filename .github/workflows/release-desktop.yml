@@ -200,8 +200,8 @@ jobs:
         # prost-build (allternit-agent-system-rails) shells out to protoc.
         run: brew install protobuf
 
-      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
-      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
+      # Reuse last build's allternit-api, allternit-factory and allternit-node when no
+      # Rust input changed (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
       - name: Restore prebuilt Rust binaries
         uses: actions/cache/restore@v4
         with:
@@ -212,7 +212,7 @@ jobs:
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory --bin target/x86_64-apple-darwin/release/allternit-node --bin target/aarch64-apple-darwin/release/allternit-node
 
       - name: Build allternit-api (x86_64)
         if: steps.prebuilt.outputs.hit != 'true'
@@ -337,6 +337,27 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
 
+      - name: Build allternit-node daemon
+        # The always-on node.core daemon (crate allternit-node-daemon,
+        # cmd/allternit-node): ships beside allternit-factory so
+        # `sudo allternit-node install` keeps this Mac reachable with the app
+        # quit, and serves its terminals from that pane engine. Universal lipo,
+        # like the factory. macOS only: the Linux bundle has no allternit-factory
+        # (cloud images install both from desktop-image.yml), and the daemon has
+        # no Windows service.
+        run: |
+          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
+            cargo build --release -p allternit-node-daemon --target x86_64-apple-darwin
+            cargo build --release -p allternit-node-daemon --target aarch64-apple-darwin
+          fi
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-node \
+            target/aarch64-apple-darwin/release/allternit-node \
+            -output surfaces/allternit-desktop/resources/bin/allternit-node
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-node
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-node
+
       - name: Build Files drive mount helper
         # allternit-files-mount: gizzi files mount (WebDAV on macOS) and Files
         # uploads over 4 MiB. gizzi finds it next to itself in resources/bin;
@@ -352,10 +373,26 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
+      - name: Build host helper (Computers console elevation)
+        # allternit-host-helper: the one root helper the Computers console setup
+        # sheet installs after an OS admin prompt. host_probe::elevation::
+        # bundled_helper() finds it next to allternit-api (Resources/bin).
+        # Universal lipo; electron-builder signs it with the rest of Resources/bin.
+        run: |
+          cargo build --release -p host-probe --bin allternit-host-helper --target x86_64-apple-darwin
+          cargo build --release -p host-probe --bin allternit-host-helper --target aarch64-apple-darwin
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-host-helper \
+            target/aarch64-apple-darwin/release/allternit-host-helper \
+            -output surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-host-helper
+
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory --bin target/x86_64-apple-darwin/release/allternit-node --bin target/aarch64-apple-darwin/release/allternit-node
 
       - name: Save prebuilt Rust binaries
         if: steps.prebuilt.outputs.hit != 'true'
@@ -654,6 +691,17 @@ jobs:
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp target/x86_64-pc-windows-msvc/release/allternit-api.exe \
              surfaces/allternit-desktop/resources/bin/allternit-api.exe
+
+      - name: Build host helper (Computers console elevation)
+        # allternit-host-helper.exe sits next to allternit-api.exe (resources\bin):
+        # host_probe::elevation::bundled_helper() looks for it there. The setup
+        # sheet copies it to %ProgramFiles%\Allternit\HostHelper after a UAC prompt.
+        shell: bash
+        run: |
+          cargo build --release -p host-probe --bin allternit-host-helper --target x86_64-pc-windows-msvc
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-pc-windows-msvc/release/allternit-host-helper.exe \
+             surfaces/allternit-desktop/resources/bin/allternit-host-helper.exe
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree
@@ -1027,6 +1075,15 @@ jobs:
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
+
+      - name: Build host helper (Linux, Computers console elevation)
+        # allternit-host-helper: root helper behind `sudo -n` (sudoers drop-in),
+        # installed by the setup sheet after one admin prompt. Lands in
+        # resources/bin next to allternit-api, where bundled_helper() looks.
+        run: |
+          scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/bin host-helper
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-host-helper
 
       - name: Build Files drive mount helper (Linux)
         # allternit-files-mount: the Linux FUSE mount (gizzi files mount, via

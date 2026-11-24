@@ -50,6 +50,14 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
     var isCreditsRefusal: Bool { code == "credits_required" || code == "credits_exhausted" }
 
     var card: ChatError {
+        // A usage limit or a lapsed sign-in gets the typed card (reason, reset
+        // time when known, the way out); the vendor sentence stays the reason.
+        let typed = ChatErrorInfo.make(message: plainText, code: code)
+        if typed.kind == .usageLimit || typed.kind == .signedOut {
+            var info = typed
+            info.isChatGPT = vendor.lowercased().contains("chatgpt")
+            return ChatError(info: info, raw: message.map { "\(code): \($0)" } ?? code)
+        }
         var error = ChatError(name: code, message: plainText, raw: message.map { "\(code): \($0)" } ?? code)
         error.title = "\(vendor) didn't answer"
         error.detail = plainText

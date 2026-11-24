@@ -163,7 +163,11 @@ struct ConnectionsSettingsView: View {
             ForEach(ConnGroup.allCases, id: \.self) { group in
                 groupSection(group)
             }
-            if visible.isEmpty {
+            // Harness & Bots 2.0: the runtimes (status filters don't apply to them).
+            if status == .all {
+                RuntimesConnectionsSection(layout: layout, query: query)
+            }
+            if visible.isEmpty && !runtimesMatch {
                 Text(query.isEmpty && status == .all ? "Nothing here yet." : query.isEmpty ? "Nothing is \(status.label.lowercased())." : "Nothing matches “\(query)”.")
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))
@@ -181,6 +185,15 @@ struct ConnectionsSettingsView: View {
             guard store.isListed(e.id), status.matches(store.state(e.id)) else { return false }
             return q.isEmpty || e.name.lowercased().contains(q) || (e.blurb ?? "").lowercased().contains(q)
                 || e.group.title.lowercased().contains(q)
+        }
+    }
+
+    /// The Runtimes section shows something (it has no status filter).
+    private var runtimesMatch: Bool {
+        guard status == .all else { return false }
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty || "runtimes".contains(q) || RuntimeRegistryStore.shared.runtimes.contains {
+            [$0.name, $0.vendor, $0.categoryLabel].joined(separator: " ").lowercased().contains(q)
         }
     }
 
@@ -222,9 +235,17 @@ struct ConnectionsSettingsView: View {
         return [("Works on any device", anyDevice), ("Needs your computer", computer), ("Coming soon", soon)].filter { !$0.1.isEmpty }
     }
 
+    /// The ChatGPT subscription and Codex CLI sit in one card at the top of Brains
+    /// (List layout, when both rows are listed). Codex then leaves Coding tools.
+    private var groupsAccountPair: Bool {
+        layout == .list && AccountPair.pairsUp(visible.map(\.id))
+    }
+
     @ViewBuilder
     private func groupSection(_ group: ConnGroup) -> some View {
-        let rows = visible.filter { $0.group == group }
+        let rows = visible.filter { $0.group == group && !(groupsAccountPair && group == .tools && $0.id == AccountPair.codexId) }
+        let pairEntries = (group == .brains && groupsAccountPair)
+            ? [AccountPair.chatgptId, AccountPair.codexId].compactMap { id in visible.first { $0.id == id } } : []
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
@@ -254,9 +275,12 @@ struct ConnectionsSettingsView: View {
                     case .list:
                     PhoneSettingsCard {
                         if group == .brains {
-                            let sections = brainSections(rows)
+                            if !pairEntries.isEmpty {
+                                AccountPairCard { rowList(pairEntries, accountMarks: true) }
+                            }
+                            let sections = brainSections(rows.filter { e in !pairEntries.contains { $0.id == e.id } })
                             ForEach(Array(sections.enumerated()), id: \.element.0) { si, section in
-                                if si > 0 { PhoneCardDivider() }
+                                if si > 0 || !pairEntries.isEmpty { PhoneCardDivider() }
                                 Text(section.0.uppercased())
                                     .font(.system(size: 11, weight: .semibold))
                                     .tracking(0.6)
@@ -307,7 +331,7 @@ struct ConnectionsSettingsView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .top, spacing: 12) {
                             ForEach(cards) { e in
-                                ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                                ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e), accountExtras: cardExtras(e)) { act(e, $0) }
                                     .containerRelativeFrame(.horizontal) { w, _ in w * 0.78 }
                             }
                             if let more, showsMore(more) {
@@ -321,7 +345,7 @@ struct ConnectionsSettingsView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)], alignment: .center, spacing: 12) {
                         ForEach(cards) { e in
-                            ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                            ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e), accountExtras: cardExtras(e)) { act(e, $0) }
                         }
                         if let more, showsMore(more) { moreTile(more, card: true) }
                     }
@@ -331,6 +355,12 @@ struct ConnectionsSettingsView: View {
                 PhoneSettingsCard { rowList(wide) }
             }
         }
+    }
+
+    /// Grid and Deck keep both ChatGPT rows as separate cards (Codex stays in Coding tools) but give them the
+    /// List rows' titles, badges and Powers line. `paired` adds the "signing out of one" line when both show.
+    private func cardExtras(_ e: ConnEntry) -> AccountPair.Extras? {
+        AccountPair.extras(id: e.id, row: store.row(e.id), paired: AccountPair.pairsUp(visible.map(\.id)))
     }
 
     /// The More tile shows only while the list is unfiltered and the server
@@ -346,10 +376,15 @@ struct ConnectionsSettingsView: View {
     }
 
     @ViewBuilder
-    private func rowList(_ rows: [ConnEntry]) -> some View {
+    private func rowList(_ rows: [ConnEntry], accountMarks: Bool = false) -> some View {
         ForEach(Array(rows.enumerated()), id: \.element.id) { i, e in
             if i > 0 { PhoneCardDivider() }
-            ConnectionRowView(entry: e, store: store, opensPage: ConnRoute.opensPage(e, store: store) && store.isAvailable(e.id)) { action in
+            ConnectionRowView(
+                entry: e, store: store,
+                opensPage: ConnRoute.opensPage(e, store: store) && store.isAvailable(e.id),
+                accountExtras: AccountPair.extras(id: e.id, row: store.row(e.id), paired: accountMarks),
+                accountMark: accountMarks
+            ) { action in
                 act(e, action)
             }
         }
