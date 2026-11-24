@@ -7,6 +7,24 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.FilterPills
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.SectionLabel
+import com.allternit.core.design.SlidingSegmented
+import com.allternit.core.design.TabPage
+import com.allternit.core.design.rememberDockOffset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -144,53 +162,71 @@ fun ModelsRoot(host: ModelsHost) {
     }.filter { q.isEmpty() || filter == FwFilter.Everything || it.id.lowercase().contains(q) || it.name.lowercase().contains(q) }
     val visible = if (filter == FwFilter.Everything) shown else shown.take(limit)
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("modelsRoot")) {
-        LibraryHeader(title = "Models", onBack = null, leading = host.menuButton, trailing = {
-            LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Providers and default model", "modelsProviders") { providers = true }
-            LibraryIconButton(DesignR.drawable.ph_arrows_down_up, "Refresh models", "modelsRefresh", enabled = !loading) { attempt++ }
-        })
-        PillRow(Segment.entries, segment, { it.label }, { "modelsSegment${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { segment = it }
+    val scroll = rememberScrollState()
+    val dockOffset = rememberDockOffset(scroll)
+    Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("modelsRoot")) {
         when (segment) {
-            Segment.Device -> OnThisPhoneScreen(host) { segment = Segment.Catalog }
+            Segment.Device -> Column(Modifier.fillMaxSize()) {
+                Spacer(Modifier.height(52.dp))
+                SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.padding(horizontal = 14.dp, vertical = 4.dp).testTag("modelsSegments"), itemTag = { "modelsSegment${Segment.entries[it].name}" })
+                OnThisPhoneScreen(host) { segment = Segment.Catalog }
+            }
             Segment.Catalog -> PullToRefreshBox(isRefreshing = loading && catalog.isNotEmpty(), onRefresh = { attempt++ }, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        LibrarySearchField(query, "Search Freeweights", "modelsSearch", Modifier.weight(1f)) { query = it; limit = 40 }
-                        Row(Modifier.clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(2.dp)) {
-                            Face.entries.forEach { f ->
-                                Text(f.label, color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(if (face == f) c.bgPrimary else androidx.compose.ui.graphics.Color.Transparent)
-                                        .clickable(role = Role.Tab) { face = f }.testTag("modelsFace${f.raw}").padding(horizontal = 8.dp, vertical = 8.dp))
-                            }
-                        }
-                    }
-                    PillRow(FwFilter.entries, filter, { it.label }, { "modelsFilter${it.name}" }) { filter = it; limit = 40 }
-                    when {
-                        loading && catalog.isEmpty() -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }
-                        down != null && catalog.isEmpty() -> FriendlyState(FriendlyStyle.Offline, "Freeweights is not answering", "The catalog couldn't be reached and there is no copy on this phone yet. Check your connection, then try again.", Modifier.padding(top = 20.dp), "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
-                        visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (query.isEmpty()) "Nothing here yet" else "No models match “$query”", "Try Everything, or a family name like qwen, gemma or smollm.", Modifier.padding(top = 20.dp)) { Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary) }
-                        else -> {
-                            Text("This phone can give a model up to ${sizeText(budget)} of memory.", color = c.textSecondary, fontSize = 12.sp)
-                            when (face) {
-                                Face.List -> Column { visible.forEach { m -> ModelRow(m, budget) { selected = m }; Box(Modifier.fillMaxWidth().size(1.dp).background(c.borderSubtle)) } }
-                                Face.Grid -> visible.chunked(2).forEach { pair ->
-                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        pair.forEach { m -> Box(Modifier.weight(1f)) { ModelTile(m, budget) { selected = m } } }
-                                        if (pair.size == 1) Box(Modifier.weight(1f)) {}
+                Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(bottom = 24.dp)) {
+                    Spacer(Modifier.height(52.dp))
+                    TabPage(
+                        description = "Open-weights models with checked licenses. Download one to this phone, or send a pull to your computer.",
+                        title = { Box(Modifier.padding(top = 12.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Freeweights" }) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            SlidingSegmented(Segment.entries.map { it.label }, segment.ordinal, { segment = Segment.entries[it] }, Modifier.testTag("modelsSegments"), itemTag = { "modelsSegment${Segment.entries[it].name}" })
+                            LibrarySearchField(query, "Search Freeweights", "modelsSearch") { query = it; limit = 40 }
+                            SlidingSegmented(Face.entries.map { it.label }, face.ordinal, { face = Face.entries[it] }, Modifier.testTag("modelsFace"), itemTag = { "modelsFace${Face.entries[it].raw}" })
+                            FilterPills(FwFilter.entries.map { it.label }, filter.ordinal, { filter = FwFilter.entries[it]; limit = 40 }, Modifier.testTag("modelsFilter"), itemTag = { "modelsFilter${FwFilter.entries[it].name}" })
+                            SectionLabel("Models")
+                            when {
+                                loading && catalog.isEmpty() -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }
+                                down != null && catalog.isEmpty() -> FriendlyState(FriendlyStyle.Offline, "Freeweights is not answering", "The catalog couldn't be reached and there is no copy on this phone yet. Check your connection, then try again.", Modifier.padding(top = 20.dp), "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
+                                visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (query.isEmpty()) "Nothing here yet" else "No models match “$query”", "Try Everything, or a family name like qwen, gemma or smollm.", Modifier.padding(top = 20.dp)) { Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary) }
+                                else -> {
+                                    Text("This phone can give a model up to ${sizeText(budget)} of memory.", color = c.textSecondary, fontSize = 12.sp)
+                                    when (face) {
+                                        Face.List -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(PolishGlass.track())) {
+                                            visible.forEachIndexed { i, m ->
+                                                ModelRow(m, budget) { selected = m }
+                                                if (i < visible.lastIndex) Box(Modifier.padding(start = 70.dp, end = 14.dp).fillMaxWidth().height(1.dp).background(c.borderSubtle))
+                                            }
+                                        }
+                                        Face.Grid -> visible.chunked(2).forEach { pair ->
+                                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                pair.forEach { m -> Box(Modifier.weight(1f)) { ModelTile(m, budget) { selected = m } } }
+                                                if (pair.size == 1) Box(Modifier.weight(1f)) {}
+                                            }
+                                        }
+                                        Face.Deck -> {
+                                            val pager = rememberPagerState { visible.size }
+                                            HorizontalPager(pager, Modifier.fillMaxWidth().heightIn(min = 300.dp)) { i -> ModelTile(visible[i], budget, big = true) { selected = visible[i] } }
+                                        }
+                                    }
+                                    val more = if (filter == FwFilter.Everything) false else shown.size > visible.size
+                                    if (more) Box(Modifier.fillMaxWidth().padding(top = 4.dp), Alignment.Center) {
+                                        GlassPill(onClick = { limit += 40 }, modifier = Modifier.testTag("modelsMore"), height = 40.dp) {
+                                            Text("Show more (${shown.size - visible.size} left)", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                        }
                                     }
                                 }
-                                Face.Deck -> {
-                                    val pager = rememberPagerState { visible.size }
-                                    HorizontalPager(pager, Modifier.fillMaxWidth().heightIn(min = 300.dp)) { i -> ModelTile(visible[i], budget, big = true) { selected = visible[i] } }
-                                }
                             }
-                            val more = if (filter == FwFilter.Everything) false else shown.size > visible.size
-                            if (more) Text("Show more (${shown.size - visible.size} left)", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { limit += 40 }.testTag("modelsMore").padding(vertical = 12.dp))
                         }
                     }
                 }
             }
         }
+        if (segment == Segment.Catalog) DockingBlockTitle("Freeweights", dockOffset, barCenter = 30.dp, modifier = Modifier.fillMaxSize(), top = 64.dp)
+        LibraryHeader(title = if (segment == Segment.Device) "Models" else "", onBack = null, leading = host.menuButton, glass = true, trailing = {
+            LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Providers and default model", "modelsProviders") { providers = true }
+            LibraryIconButton(DesignR.drawable.ph_arrows_down_up, "Refresh models", "modelsRefresh", enabled = !loading) { attempt++ }
+        })
+        FreeweightsIntroHost(host.signedIn)
     }
     selected?.let { m -> ModelDetailSheet(m, host, onDismiss = { selected = null }) }
     if (providers) ProvidersSheet(onDismiss = { providers = false }, onBenchmark = { providers = false; benchmark = true })
@@ -220,9 +256,12 @@ private fun FitLabel(m: FwRow, budget: Long) {
 @Composable
 private fun ModelTile(m: FwRow, budget: Long, big: Boolean = false, onClick: () -> Unit) {
     val c = AllternitTheme.colors
+    val shape = RoundedCornerShape(20.dp)
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp))
-            .clickable(role = Role.Button, onClickLabel = "Opens the model, its builds and Download", onClick = onClick).testTag("modelTile${m.id}").padding(12.dp),
+        Modifier.fillMaxWidth().clip(shape).background(PolishGlass.track()).background(if (pressed) c.textPrimary.copy(alpha = 0.06f) else Color.Transparent)
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = "Opens the model, its builds and Download", onClick = onClick).testTag("modelTile${m.id}").padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ModelMark(m, if (big) 96 else 56)
@@ -232,17 +271,40 @@ private fun ModelTile(m: FwRow, budget: Long, big: Boolean = false, onClick: () 
     }
 }
 
+/** A row in the grouped card: mark, name, publisher, round tags; the whole row highlights while pressed. */
 @Composable
 private fun ModelRow(m: FwRow, budget: Long, onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).testTag("modelRow${m.id}").padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val size = m.totalSize
+    val fitText = when {
+        size == null || size <= 0 -> "Size unknown"
+        size <= budget -> "Fits this phone"
+        else -> "Too big for this phone"
+    }
+    val fitTint = when {
+        size == null || size <= 0 -> null
+        size <= budget -> AllternitStatic.StatusSuccess
+        else -> AllternitStatic.StatusWarning
+    }
+    Row(
+        Modifier.fillMaxWidth().background(if (pressed) c.textPrimary.copy(alpha = 0.06f) else Color.Transparent)
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick).testTag("modelRow${m.id}")
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         ModelMark(m, 44)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(m.name, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOfNotNull(paramsText(m.params)?.let { "$it params" }, m.publisher.ifEmpty { null }).joinToString(" · "), color = c.textSecondary, fontSize = 11.5.sp, maxLines = 1)
-            FitLabel(m, budget)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FwTag(fitText, tint = fitTint, dot = fitTint != null)
+                m.license?.takeIf { it.isNotBlank() }?.let { FwTag(it) }
+                sizeText(size)?.let { FwTag(it) }
+            }
         }
-        Icon(painterResource(DesignR.drawable.ph_arrow_right), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
+        Icon(painterResource(DesignR.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(13.dp))
     }
 }
 
