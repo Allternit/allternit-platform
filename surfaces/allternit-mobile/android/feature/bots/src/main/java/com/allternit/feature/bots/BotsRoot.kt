@@ -30,6 +30,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -701,7 +704,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
 @Composable
 private fun RosterFace(e: RosterEntry, size: androidx.compose.ui.unit.Dp) {
     val c = AllternitTheme.colors
-    Box(Modifier.size(size)) {
+    val botId = (e as? RosterEntry.Bot)?.bot?.id
+    if (botId != null) DisposableEffect(botId) { onDispose { BotRosterPositions.faces.remove(botId) } }
+    Box(Modifier.size(size).then(if (botId != null) Modifier.onGloballyPositioned { BotRosterPositions.faces[botId] = it.boundsInRoot() } else Modifier)) {
         Box(Modifier.size(size).clip(CircleShape).background(c.bgSecondary), contentAlignment = Alignment.Center) {
             when (e) {
                 is RosterEntry.Bot -> BotAvatar(e.bot, size * 0.84f)
@@ -882,3 +887,12 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
 
 @Composable
 internal fun LibrarySpinnerBox() = com.allternit.feature.artifacts.LibrarySpinner("Loading")
+
+/**
+ * Where each bot's face sits on the Bots home right now (window coordinates), written by the roster as it
+ * lays out and removed when a face leaves the screen. The shell's team arrival lands on these spots; with
+ * none registered the roster is not on screen and the arrival is skipped.
+ */
+object BotRosterPositions {
+    val faces: SnapshotStateMap<String, androidx.compose.ui.geometry.Rect> = androidx.compose.runtime.mutableStateMapOf()
+}
