@@ -32,6 +32,20 @@ The terminal fills the screen in one dark surface. On the iPhone app, the comput
 
 The terminal starts your computer's usual shell. If a computer doesn't have zsh (most Linux cloud computers), it starts that computer's default shell (bash or sh) instead.
 
+## Coding agents in the terminal
+
+When you run a coding agent in the terminal (Claude Code, Codex, Kimi, Antigravity, opencode or Gizzi), Code reads the agent's screen and gives you buttons for it.
+
+- **iPhone app:** the agent's own input box is hidden, and a composer under the terminal drives the agent:
+  - **Message <agent>…** sends what you type to the agent as one prompt.
+  - The status line shows the agent's name and **Idle**, **Working** or **Needs you**. While it works, **Stop** sends Esc.
+  - The agent's mode (**Bypass**, **Plan**, **Accept edits**…) is on the right. Tap it to switch to the next mode (shift+tab).
+  - When the agent asks a question (a permission or a choice), each answer is a button. A button sends the answer's number, or the arrow keys and Enter.
+  - The keys under the terminal still type into the agent.
+- **ai.allternit.com phone layout and m.allternit.com:** the agent's box stays visible and you type in the terminal. Its questions show as buttons above the keys, with **Stop** while it works.
+
+If Code doesn't recognise the screen, or you quit the agent, the full terminal comes back.
+
 ## For developers
 
 - Header: `src/fabric-session/phone/screens/LazyScreen.tsx` (the pencil hides while `usePhonePanes` has panes, so the header keeps three buttons).
@@ -39,3 +53,4 @@ The terminal starts your computer's usual shell. If a computer doesn't have zsh 
 - Prompt: `ChatComposer` puts `bottomDockContent` in the control row (`composer-terminal-dock`) when it is the Code terminal prompt on the phone surface.
 - Swipe rows: `.phone-swipe-row` and `.phone-swipe-row__underlay` in `phone.css` hold the action under the row (`useSwipeActions`' CSS contract).
 - Terminal shell: see [Terminal API](/api/terminal#create-terminal).
+- Coding agents: the screen parser is `src/lib/terminal/agent-frame.ts` (allternit-ai). The iPhone app runs a line-for-line port (`ios/Features/Code/AgentFrame.swift`), and the composer is `AgentComposerBar` (`PhoneCodeTerminal.swift`). Both are tested against the same captured screens (`surfaces/allternit-mobile/agent-frame-fixtures`, copied from the ai repo, which holds the source of truth).

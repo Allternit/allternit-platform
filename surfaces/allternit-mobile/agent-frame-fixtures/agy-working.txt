@@ -1,0 +1,38 @@
+^C%
+joe@joes-MacBook-Pro mockrepo %
+joe@joes-MacBook-Pro mockrepo % agy
+
+                  Antigravity CLI 1.5.13
+                  gizziioetrid@gmail.com (Antigravity Starter Quota)
+                  Claude Sonnet 4.6 (Thinking)
+                  /private/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo
+
+
+────────────────────────────────────────────────────────────
+> Create notes.md with the line: hello. Then say done.
+
+⚠ Sign-in update needed
+  ⎿  Your sign-in is missing permissions that are now required, so some requests may fail. Run /logout to sign in
+     again.
+
+○ Thought for 2.6s (The user wants me to create a notes.md file with the line "hello" and then say done.)
+● Edited 1 file (notes.md) (ctrl+o to expand)
+
+  Done. Created notes.md with the line hello.
+
+────────────────────────────────────────────────────────────
+> Create notes2.md with the line: hello. Then say done.
+
+○ Thought for 2.2s (Simple file creation task.)
+● Edited 1 file (notes2.md) (ctrl+o to expand)
+
+  Done. Created notes2.md with the line hello.
+
+────────────────────────────────────────────────────────────
+> Create notes3.md with the line: hello. Then say done.
+⣯  Simple file creation....
+└ Tip: Use /settings to configure your environment.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+esc to cancel                                                                               Claude Sonnet 4.6 (Thinking)

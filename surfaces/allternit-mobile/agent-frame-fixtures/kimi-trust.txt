@@ -1,0 +1,18 @@
+kimi
+joe@joes-MacBook-Pro mockrepo % kimi
+Kimi Code updated to v2.5.2
+Changelog: https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Trust this folder?
+  ↑↓ navigate · Enter select · Esc exit
+
+  /private/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo
+
+  No project integrations or instructions to activate.
+
+  Trust is remembered for this folder, including future project config changes.
+  Tool approvals follow your permission settings.
+
+   ❯ Trust and continue
+     Exit
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

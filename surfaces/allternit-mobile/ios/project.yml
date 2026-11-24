@@ -482,6 +482,11 @@ targets:
       # StoreKitTest session products (Tests/StorePurchaseTests.swift).
       - path: Config/Allternit.storekit
         buildPhase: resources
+      # Captured coding-agent screens shared with the web and Android parsers
+      # (Tests/AgentFrameTests.swift), copied as one folder.
+      - path: ../agent-frame-fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: Allternit
       # SKTestSession for the In-App Purchase tests.
