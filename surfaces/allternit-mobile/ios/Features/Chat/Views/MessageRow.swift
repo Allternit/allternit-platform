@@ -37,6 +37,11 @@ struct MessageRow: View {
 
     @State private var isThinkingExpanded = false
     @State private var showsRunTree = false
+    /// media_generate calls whose dot reveal is playing. The bubble (which may
+    /// hold the same finished picture) waits until the reveal ends, so the
+    /// picture shows once, in the place it will live.
+    @State private var revealingCalls: Set<String> = []
+    private var holdsBubble: Bool { message.role == "assistant" && !revealingCalls.isEmpty }
     @State private var showsEditedVersions = false
     @ObservedObject private var asks = AgentAskStore.shared
     /// Settings → Capabilities → Artifacts gates the inline artifact cards;
@@ -97,7 +102,10 @@ struct MessageRow: View {
                             isNewestTurn: isLastAssistant,
                             replyIsLive: message.isStreaming,
                             onChooseModel: onChooseModel,
-                            onRetry: { onRetry(message.id) }
+                            onRetry: { onRetry(message.id) },
+                            onRevealing: { revealing in
+                                if revealing { revealingCalls.insert(call.id) } else { revealingCalls.remove(call.id) }
+                            }
                         )
                     }
                 }
@@ -208,12 +216,12 @@ struct MessageRow: View {
                 if let run = hostedRun, message.role == "assistant" {
                     VStack(alignment: .leading, spacing: 6) {
                         RunStatusPill(card: run)
-                        if !message.content.isEmpty || message.error == nil {
+                        if (!message.content.isEmpty || message.error == nil) && !holdsBubble {
                             bubble
                         }
                         RunThoughtStream(steps: run.steps, active: run.status.isActive)
                     }
-                } else if !message.content.isEmpty || message.error == nil {
+                } else if (!message.content.isEmpty || message.error == nil) && !holdsBubble {
                     bubble
                 }
 

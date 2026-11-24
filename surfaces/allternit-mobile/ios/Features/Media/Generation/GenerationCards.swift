@@ -103,6 +103,8 @@ struct MediaGenerateCard: View {
     let replyIsLive: Bool
     var onChooseModel: () -> Void = {}
     var onRetry: () -> Void = {}
+    /// True while the finish reveal plays; the chat holds the bubble's picture until it ends.
+    var onRevealing: (Bool) -> Void = { _ in }
 
     @ObservedObject private var store = GenerationProgressStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -176,9 +178,11 @@ struct MediaGenerateCard: View {
         let style: DotFieldView.RevealStyle = halftoneShown != nil ? .crossfade : .cells
         guard let image = final ?? halftoneShown else { return }
         reveal = Reveal(image: image, style: style)
+        onRevealing(true)
         try? await Task.sleep(nanoseconds: UInt64(Self.revealSeconds * 1_000_000_000))
         reveal = nil
         halftoneShown = nil
+        onRevealing(false)
     }
 
     /// The first inline picture or https picture link in a tool result.
