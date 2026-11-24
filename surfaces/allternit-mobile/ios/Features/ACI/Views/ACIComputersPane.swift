@@ -25,24 +25,30 @@ struct ACIComputersPane: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ACIViewHeader(title: "Computers")
-                ACIWideButton(systemName: "plus", title: "Add a computer") { isPairOpen = true }
-                ACIWideButton(systemName: "display", title: "View a computer's screen") { isScreenPickerOpen = true }
-                if consoleOn { ACIConsoleSection() }
-                machines
-                ACILinkedPhonesSection()
-                    .padding(.top, 24)
-                ACICloudBackupsSection()
-                ACIWorkflowsSection(runtime: workflowRuntime)
-                    .padding(.top, 24)
+        ACIDockReader { dock in
+            ACIDockingScroll(title: "Computers", dock: dock) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ACIViewHeader(title: "Computers", dock: dock)
+                    GlassPill(title: "Add a computer", systemImage: "plus") {
+                        withAnimation(PolishTokens.sheet) { isPairOpen = true }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 12)
+                    ACIWideButton(systemName: "display", title: "View a computer's screen") { isScreenPickerOpen = true }
+                    if consoleOn { ACIConsoleSection() }
+                    machines
+                    ACILinkedPhonesSection()
+                        .padding(.top, 24)
+                    ACICloudBackupsSection()
+                    ACIWorkflowsSection(runtime: workflowRuntime)
+                        .padding(.top, 24)
+                }
+                .padding(.horizontal, 2)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 32)
+            .refreshable { await relay.refresh() }
         }
-        .refreshable { await relay.refresh() }
         .task { await relay.refresh() }
         .task { consoleOn = (try? await AccountFlagsClient.shared.string("computers_console")) != nil }
         .overlay(alignment: .bottom) { ACIToast(message: $toast) }
@@ -67,25 +73,10 @@ struct ACIComputersPane: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 48)
         } else if relay.devices.isEmpty {
-            ACIDashedCard {
-                VStack(spacing: 0) {
-                    Image(systemName: "desktopcomputer")
-                        .font(.system(size: 40, weight: .light))
-                        .foregroundColor(Color("TextPrimary").opacity(0.4))
-                        .padding(.bottom, 12)
-                    Text("No computers paired")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                        .padding(.bottom, 4)
-                    Text("Open Allternit Desktop on a computer signed in to this account, and it shows up here.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color("TextTertiary"))
-                        .multilineTextAlignment(.center)
-                }
-                .padding(32)
-            }
+            EmptyBox(icon: "desktopcomputer", title: "No computers paired",
+                     line: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.")
         } else {
-            VStack(spacing: 0) {
+            VStack(spacing: 10) {
                 ForEach(relay.devices) { device in
                     computerRow(device)
                 }
@@ -123,10 +114,11 @@ struct ACIComputersPane: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.vertical, 16)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 16)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
         .accessibilityLabel(files.hasFiles(device.id) ? "Open \(device.displayName)" : "Open desktop for \(device.displayName)")
     }
 
@@ -282,7 +274,7 @@ struct ACIPairComputerSheet: View {
         .background(Color("BgPanel").ignoresSafeArea())
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(28)
+        .presentationCornerRadius(PolishTokens.sheetRadius)
     }
 
     private func step(_ number: Int, _ text: Text) -> some View {
