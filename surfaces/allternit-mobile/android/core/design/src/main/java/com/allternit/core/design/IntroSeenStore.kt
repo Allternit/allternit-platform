@@ -2,6 +2,7 @@ package com.allternit.core.design
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.runtime.staticCompositionLocalOf
 import java.time.Instant
 
 /** The `/me/flags` keys for first-visit intros (mobile polish contract). Bots reuses the existing key. */
@@ -63,3 +64,9 @@ class IntroSeenStore(
 
     private fun pending(key: String) = "pending.$key"
 }
+
+/**
+ * The signed-in app's one [IntroSeenStore], provided by the workspace shell. Null while signed out
+ * (or outside the shell), and then no first-visit intro shows.
+ */
+val LocalIntroSeenStore = staticCompositionLocalOf<IntroSeenStore?> { null }
