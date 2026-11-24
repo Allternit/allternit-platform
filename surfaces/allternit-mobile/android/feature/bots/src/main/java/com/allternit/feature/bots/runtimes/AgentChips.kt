@@ -144,7 +144,7 @@ fun AgentChipsRow(
     RuntimeBrainChip(
         runtimeKey = model.runtime?.let { it.tool ?: it.id } ?: model.runtimeId, runtimeName = model.runtimeName, brainName = model.brainName,
         background = if (chipBackground == Color.Unspecified) AllternitTheme.colors.bgPrimary else chipBackground,
-        modifier = modifier.testTag("composerAgentChips"), lockedVendor = if (model.locked) model.vendor else null, iconOnly = iconOnly,
+        modifier = modifier.testTag("composerAgentChips"), warning = model.misfit && !model.locked, lockedVendor = if (model.locked) model.vendor else null, iconOnly = iconOnly,
     ) { open = AgentLayer.Runtime }
     if (open != null) {
         RuntimeBrainSheet(

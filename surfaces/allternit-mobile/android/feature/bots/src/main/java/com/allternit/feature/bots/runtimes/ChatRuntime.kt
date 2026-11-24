@@ -138,7 +138,7 @@ fun ChatRuntimeChip(
     RuntimeBrainChip(
         runtimeKey = current.tool ?: current.id, runtimeName = current.name, brainName = model.brainName,
         background = if (chipBackground == Color.Unspecified) c.bgPrimary else chipBackground, modifier = modifier.testTag("composerRuntimeChip"),
-        dot = dot, iconOnly = iconOnly,
+        dot = dot, warning = model.misfit, iconOnly = iconOnly,
     ) { blocked = null; open = true }
 
     if (open) {

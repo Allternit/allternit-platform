@@ -51,6 +51,10 @@ enum class RuntimeDot(val label: String) { Ready("ready"), NeedsStep("needs a st
 /** Maps the existing availability check to the dot. */
 fun RuntimeCheck?.toDot(): RuntimeDot = if (this == null || this == RuntimeCheck.Ready) RuntimeDot.Ready else RuntimeDot.NeedsStep
 
+/** The warning triangle: the chosen brain's provider isn't one the runtime runs (the "Not with <Runtime>" rule), or the runtime reports a limited status. */
+val AgentLayersModel.misfit: Boolean
+    get() = brainProvider?.let { !fits(runtime, it) } == true || (runtime?.let { it.statusTone == "warn" && it.statusLabel != null } == true)
+
 private val DotGreen = Color(0xFF1F6F45)
 private val DotAmber = Color(0xFFB7791F)
 private val DotCoral = Color(0xFFD9694F)
