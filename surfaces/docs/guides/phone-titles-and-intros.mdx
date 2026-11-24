@@ -17,7 +17,7 @@ Every titled view opens with its name in the A:// block type and docks it into t
 | --- | --- |
 | Phone layout and PWA | The top bar (PhoneHeader). |
 | Desktop | A slim 44 px bar at the top of the view's own pane, centred. All views that use the shared ViewHeader get it. |
-| iPhone app | PhoneSettingsPage, ACIViewHeader and PhoneHeader. Lists stay lists. |
+| iPhone app | The navigation bar (Settings and its pages, the tabs, Teach), ACIViewHeader and the Artifacts header. Lists stay lists. When a Teach skill is open, the Teach header shows the title already docked. |
 | Android app | LibraryHeader, SPage, the ACI headers and the Code bar. |
 | Gizzi Code | The title is drawn in half-block type at the top of the view. It does not dock, because a terminal redraws whole rows. |
 
@@ -32,15 +32,17 @@ The four modes use these titles:
 - **ACI:** "ACI".
 - **Code:** "GIZZI CODE".
 
-The A:// mark appears only on Home. The mark's centre stays coral, even while the letters fly.
+The A:// mark appears only on Home. The mark's centre stays coral.
+
+On the iPhone and Android apps, the Home, Bots and Code landings show their wordmark centred in the top bar from the start, as the drawer does. These landings rarely scroll, so a big title there would never reach the bar. Their content starts right under the bar.
 
 ### Code computer name
 
-At the top of Code, the top bar shows the computer name. The computer picker works as before. When the first letter starts to land, the name fades out and GIZZI CODE takes the centre. Scroll back up and the name returns.
+On the iPhone and Android apps, the connected computer's name sits next to the computer icon in the row under the Code prompt. Tap either one to open the computer picker. The top bar shows only the GIZZI CODE wordmark, with **What's new** right under the sessions button.
 
 ## Docking rules
 
-- **Short screens keep the big title.** If the content fits the screen, the title does not dock. This holds on the Home and Code launch screens. Nothing moves when you scroll a little.
+- **Short screens keep the big title.** If the content fits the screen, the title does not dock. Nothing moves when you scroll a little. On the iPhone and Android apps, the Home, Bots and Code landings show their wordmark in the bar instead (see Mode titles).
 - **Chat logs never dock.** The Home thread and the group chat room keep their current headers. The dock goes on the group list instead.
 - **Sheets dock into their own header.** The Create bot sheet docks its title into the sheet's own top bar, next to Cancel and Save.
 - **No wrapping.** A title that is too wide for the screen shrinks to fit. It never wraps onto two lines.

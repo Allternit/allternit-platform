@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -146,6 +147,8 @@ fun CodeDeckRow(
     // iOS cloudStatus: "Connecting" until the cloud runtime answers.
     val connecting = cloud && active?.isOnline != true
     val envLabel = if (cloud) (active?.name?.ifEmpty { null } ?: "Cloud") else "This computer"
+    // The connected computer's name sits by its icon (it left the top bar, Eoj 2026-11-24).
+    val computerName = active?.let { it.name.ifEmpty { "Allternit runtime" } } ?: envLabel
     val branch = folder?.branch?.takeIf { it.isNotEmpty() }
 
     Row(
@@ -156,13 +159,25 @@ fun CodeDeckRow(
         Box {
             DeckIcon(
                 if (cloud) DesignR.drawable.ph_cloud else DesignR.drawable.ph_desktop,
-                "Environment: $envLabel${if (connecting) ", Connecting" else ""}",
+                "Environment: $computerName${if (connecting) ", Connecting" else ""}",
                 "codeEnvironment",
             ) { sheet = DeckSheet.Environment }
             if (connecting) {
                 Box(Modifier.align(Alignment.TopEnd).offset(x = (-8).dp, y = 10.dp).size(6.dp).clip(CircleShape).background(AllternitStatic.StatusWarning).testTag("codeEnvironmentDot"))
             }
         }
+        Text(
+            computerName,
+            color = c.textPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 96.dp).testTag("codeComputerName")
+                .clickable(role = Role.Button, onClickLabel = "Environment") { sheet = DeckSheet.Environment }
+                .semantics { contentDescription = "Environment: $computerName" },
+        )
         DeckIcon(DesignR.drawable.ph_folder, "Working folder: ${folder?.name ?: "Select folder"}", "codeFolder") { sheet = DeckSheet.Folder }
         if (branch != null) {
             Box(
