@@ -133,11 +133,15 @@ fun LibraryHeader(
     leading: (@Composable () -> Unit)? = null,
     /** iOS glass chrome: the menu in a round glass button, the trailing actions in one glass capsule. */
     glass: Boolean = false,
+    /** A mode's landing: its pixel wordmark sits centred in the bar instead of [title] (iOS PhoneHeader wordmark). */
+    titleContent: (@Composable () -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
 ) {
     // Docks only when a screen gave a scroll (ProvideDockScroll); with no provider this is the plain bar.
     val offset = LocalDockOffset.current
-    if (offset != null && title.isNotBlank()) {
+    if (titleContent != null) {
+        LibraryHeaderRow(title, null, onBack, backTag, leading, glass, trailing, titleContent = titleContent)
+    } else if (offset != null && title.isNotBlank()) {
         Box(Modifier.fillMaxWidth().zIndex(1f)) {
             DockTitleLayer(title, offset, label = if (subtitle.isNullOrEmpty()) null else "$title, $subtitle", description = subtitle)
             LibraryHeaderRow(title, null, onBack, backTag, leading, glass, trailing, showTitle = false)
@@ -158,6 +162,7 @@ private fun LibraryHeaderRow(
     glass: Boolean,
     trailing: @Composable () -> Unit,
     showTitle: Boolean = true,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -169,7 +174,8 @@ private fun LibraryHeaderRow(
             }
         }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (showTitle) Text(
+            if (titleContent != null) Box(Modifier.semantics(mergeDescendants = true) { heading() }) { titleContent() }
+            else if (showTitle) Text(
                 title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() },
             )

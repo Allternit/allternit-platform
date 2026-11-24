@@ -281,6 +281,8 @@ struct RunThoughtStream: View {
                 Rectangle().fill(Color("BorderSubtle")).frame(height: 0.5)
             }
             .animation(reduceMotion ? .linear(duration: 0.1) : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.18), value: steps)
+            // Consecutive map steps folding into the route row settle with a spring (no travel under Reduce Motion).
+            .animation(reduceMotion ? .linear(duration: 0.1) : .spring(response: 0.35, dampingFraction: 0.85), value: rows)
             .animation(reduceMotion ? .linear(duration: 0.1) : .easeOut(duration: 0.12), value: active)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Steps")
@@ -307,6 +309,7 @@ struct RunThoughtStream: View {
             }
         }
         .foregroundColor(current ? Color("TextPrimary") : Color("TextSecondary"))
+        .contentTransition(.numericText())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(current ? "Now" : "Done"): \(label), from the map, no model")
     }

@@ -1,54 +1,42 @@
 package com.allternit.feature.shell
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
-import com.allternit.core.design.AllternitTheme
 
-/** Drawer entry to Shelves, retaining the Bots unread badge. */
+/**
+ * The drawer's mode switcher (iOS HistorySidebarView header orb): the tap-only mode orb, whose pill of the
+ * four modes opens over the drawer's top line; a pick switches mode and the rail swaps in place. Shelves
+ * opens only from a hold on the composer (or ACI) orb. Keeps the Bots unread badge.
+ */
 @Composable
-internal fun ModeDialButton(mode: ShellMode, botsWaiting: Int, onOpenHub: () -> Unit) {
-    val c = AllternitTheme.colors
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .testTag("modeDial")
-            // The host closes the drawer and opens Shelves.
-            .clickable(role = Role.Button, onClickLabel = "Closes the menu and shows the modes", onClick = onOpenHub)
-            .semantics {
-                contentDescription = "${mode.label} mode. Switch mode${if (botsWaiting > 0) ", $botsWaiting waiting in Bots" else ""}"
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(34.dp).clip(CircleShape).background(c.textPrimary), contentAlignment = Alignment.Center) {
-            Icon(painter = painterResource(mode.icon), contentDescription = null, tint = c.bgPrimary, modifier = Modifier.size(17.dp))
-        }
-        if (botsWaiting > 0) ModeDialBadge(botsWaiting, Modifier.align(Alignment.TopEnd).offset(x = (-1).dp, y = 1.dp))
-    }
+internal fun DrawerModeOrb(mode: ShellMode, botsWaiting: Int, onPickMode: (ShellMode) -> Unit) {
+    var expanded by remember(mode) { mutableStateOf(false) }
+    ModeOrb(
+        mode = mode,
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        onPick = { expanded = false; onPickMode(it) },
+        onOpenHub = null,
+        botsWaiting = botsWaiting,
+    )
 }
 
 /** The red unread count on the dial, the Bots card and the shelf (`phone-mode-badge`): 16dp, "9+" past nine. */

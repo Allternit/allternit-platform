@@ -48,49 +48,17 @@ enum DockMath {
 }
 
 /// Big (wrapped) and docked (one row) cells of a title, paired by order.
-/// With a mark (T5) the A:// mark is letter 0 on both rows, a 1-column gap
-/// follows it, and the text starts at column 16. A mark title never wraps (T6).
 struct DockTitleLayout {
     struct Pair {
         let bigCol: Int, bigRow: Int, line: Int, letter: Int
         let smallCol: Int, smallRow: Int
-        var isMark = false
-        var isCore = false
     }
     let pairs: [Pair]
     let lines: Int
     let letters: Int
     let smallCols: Int
-    /// Column count of the (single) big row of a mark title.
-    let bigCols: Int
-    let hasMark: Bool
 
-    /// First text column after the mark (15 mark columns + 1 gap).
-    nonisolated static let markTextColumn = 16
-
-    init(text: String, mark: Bool = false) {
-        hasMark = mark
-        if mark {
-            // One line, big and small share the same cells; only the scale differs.
-            var out: [Pair] = []
-            for c in PixelWordmark.markCells {
-                out.append(Pair(bigCol: c.0, bigRow: c.1, line: 0, letter: 0,
-                                smallCol: c.0, smallRow: c.1, isMark: true,
-                                isCore: c.0 == PixelWordmark.coreCell.0 && c.1 == PixelWordmark.coreCell.1))
-            }
-            let r = BlockText.cells(for: text)
-            for c in r.cells {
-                let col = c.col + Self.markTextColumn
-                out.append(Pair(bigCol: col, bigRow: c.row, line: 0, letter: c.letter + 1,
-                                smallCol: col, smallRow: c.row))
-            }
-            pairs = out
-            lines = 1
-            letters = r.cells.isEmpty ? 1 : (r.cells.map(\.letter).max() ?? 0) + 2
-            smallCols = r.cols > 0 ? Self.markTextColumn + r.cols : 15
-            bigCols = smallCols
-            return
-        }
+    init(text: String) {
         let wrapped = BlockText.lines(for: text, height: PolishTokens.bigHeight, maxWidth: PolishTokens.titleMaxWidth)
         var big: [(col: Int, row: Int, line: Int, letter: Int)] = []
         var offset = 0
@@ -111,31 +79,26 @@ struct DockTitleLayout {
         self.lines = wrapped.count
         self.letters = offset
         self.smallCols = small.cols
-        self.bigCols = small.cols
     }
 
-    /// Big letter height for a view `width` wide (T6): a mark title that is
-    /// wider than width - 28 shrinks instead of wrapping. Other titles keep 22.
-    func bigHeight(width: CGFloat) -> CGFloat {
-        guard hasMark, bigCols > 0 else { return PolishTokens.bigHeight }
-        return min(PolishTokens.bigHeight, max(8, (width - 28) * 5 / CGFloat(bigCols)))
-    }
-
-    func titleHeight(width: CGFloat) -> CGFloat {
-        let bh = bigHeight(width: width)
+    var titleHeight: CGFloat {
+        let bh = PolishTokens.bigHeight
         return CGFloat(lines) * bh + CGFloat(max(0, lines - 1)) * (bh * 1.36 - bh)
     }
-
-    var titleHeight: CGFloat { titleHeight(width: .infinity) }
 }
 
 /// Where the docked title sits (T11).
 enum DockChrome: Equatable {
-    /// Today's behaviour: an inline navigation bar, the title docks into it.
+    /// An inline navigation bar directly above the page; the title docks into
+    /// its centre. The bar's own background is hidden and the page draws the
+    /// bar's fill under the docked title, because UIKit draws the bar above
+    /// SwiftUI content and its material would cover the title.
     case navigationBar
     /// No navigation bar. The docked title is drawn over a custom header
-    /// (PhoneHeader, ACIViewHeader). `barCenter` is the y of the bar's centre,
-    /// measured from the top of the screen.
+    /// (ACIViewHeader, LibrarySectionHeader, a sheet header) that the page is
+    /// drawn above. `barCenter` is the y of the bar's centre, measured from the
+    /// top of the page's safe-area-extended frame (the page's own top when it
+    /// does not reach a safe-area edge); negative when the bar sits above it.
     case overlay(barCenter: CGFloat)
 }
 
@@ -146,18 +109,14 @@ private struct DockOffsetKey: PreferenceKey {
 
 /// A scroll page with a big block title that docks into the nav bar's
 /// principal area. Put it inside a NavigationStack. With the default chrome the
-/// nav bar is forced inline; the docked title is drawn by this view over the bar.
+/// nav bar is forced inline; the docked title is drawn by this view in the bar.
 ///
-/// - `markLabel`: when set, the title starts with the A:// mark as one letter
-///   (core always coral, skipped by the docked flash) and this is its
-///   accessibility label. Home is the only user.
 /// - `chrome`: `.navigationBar` (default) or `.overlay(barCenter:)`.
 struct DockingTitleScrollView<Content: View>: View {
     let title: String
     var description: String?
     /// Freeweights uses a taller header: top 112, bar centre 75 in the mockup.
     var taller = false
-    var markLabel: String?
     var chrome: DockChrome = .navigationBar
     /// True when `content` is List rows (see `DockingTitleList`).
     fileprivate var isList = false
@@ -170,20 +129,19 @@ struct DockingTitleScrollView<Content: View>: View {
     @State private var layout: DockTitleLayout
 
     init(title: String, description: String? = nil, taller: Bool = false,
-         markLabel: String? = nil, chrome: DockChrome = .navigationBar,
+         chrome: DockChrome = .navigationBar,
          @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.description = description
         self.taller = taller
-        self.markLabel = markLabel
         self.chrome = chrome
         self.content = content
-        _layout = State(initialValue: DockTitleLayout(text: title, mark: markLabel != nil))
+        _layout = State(initialValue: DockTitleLayout(text: title))
     }
 
-    fileprivate init(listTitle title: String, description: String?, markLabel: String?, chrome: DockChrome,
+    fileprivate init(listTitle title: String, description: String?, chrome: DockChrome,
                      @ViewBuilder content: @escaping () -> Content) {
-        self.init(title: title, description: description, markLabel: markLabel, chrome: chrome, content: content)
+        self.init(title: title, description: description, chrome: chrome, content: content)
         self.isList = true
     }
 
@@ -197,7 +155,7 @@ struct DockingTitleScrollView<Content: View>: View {
         GeometryReader { geo in
             let safeTop = geo.safeAreaInsets.top
             let f = frame
-            let titleH = layout.titleHeight(width: geo.size.width)
+            let titleH = layout.titleHeight
             ZStack(alignment: .topLeading) {
                 scroller(safeTop: safeTop, titleH: titleH, f: f)
                     .scrollBounceBehavior(.basedOnSize)
@@ -230,7 +188,7 @@ struct DockingTitleScrollView<Content: View>: View {
                 if flashStart == start { flashStart = nil }
             }
         }
-        .onChange(of: title) { _, new in layout = DockTitleLayout(text: new, mark: markLabel != nil) }
+        .onChange(of: title) { _, new in layout = DockTitleLayout(text: new) }
     }
 
     /// Reads the offset on iOS 17: the first row's top relative to the screen.
@@ -289,16 +247,28 @@ struct DockingTitleScrollView<Content: View>: View {
 
     @ViewBuilder
     private func titleLayer(frame f: DockMath.Frame, width: CGFloat, safeTop: CGFloat) -> some View {
+        // The layer starts at the top of the safe-area-extended frame. The
+        // inline nav bar ends where the safe area does (safeTop), so its centre
+        // is 22 above that.
         let barCenter: CGFloat = {
             if case .overlay(let c) = chrome { return c }
-            return safeTop + 22
+            return safeTop - 22
         }()
-        let top = barCenter + 22 + 8
-        let hc = barCenter
+        // A bar above the page's frame (ACI and Library headers, a sheet bar)
+        // needs room above the layer for the docked letters and their hop, or
+        // the Canvas would clip them.
+        let lift = max(0, 38 - barCenter)
+        let hc = barCenter + lift
+        let top = hc + 22 + 8
         let hairline = f.docked
-        let titleH = layout.titleHeight(width: width)
-        let bigH = layout.bigHeight(width: width)
+        let titleH = layout.titleHeight
+        let bigH = PolishTokens.bigHeight
         ZStack(alignment: .topLeading) {
+            if usesNavBar {
+                // The bar's fill: content scrolling under the (transparent) bar
+                // stays hidden behind the docked title.
+                Color("BgPrimary").frame(width: width, height: hc + 22)
+            }
             // Band holds the waiting letters and collapses over t .82 to 1.
             let bandH = (titleH + PolishTokens.bandPad) * f.bandFactor
             LinearGradient(stops: [.init(color: Color("BgPrimary"), location: 0.8),
@@ -318,15 +288,16 @@ struct DockingTitleScrollView<Content: View>: View {
                 }
             }
             Rectangle().fill(PolishTokens.glassBorder).frame(width: width, height: 0.5)
-                .offset(y: barCenter + 22).opacity(hairline ? 1 : 0)
+                .offset(y: hc + 22).opacity(hairline ? 1 : 0)
         }
         .frame(width: width, alignment: .topLeading)
         .animation(.easeInOut(duration: 0.2), value: f.reducedDone)
         .animation(.easeInOut(duration: 0.2), value: hairline)
         .ignoresSafeArea()
+        .offset(y: -lift)
         .allowsHitTesting(false)
         .accessibilityElement()
-        .accessibilityLabel(markLabel ?? title)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(f.docked ? .isHeader : [])
     }
 
@@ -359,9 +330,7 @@ struct DockingTitleScrollView<Content: View>: View {
                 let cx = x0 + (x1 - x0) * k + sz / 2
                 let cy = y0 + (y1 - y0) * k + hop + sz / 2
                 var color = ink
-                if p.isCore {
-                    color = coral
-                } else if fixed == nil, !p.isMark {
+                if fixed == nil {
                     if pk > 0 && pk < 1 { color = coral }
                     else if let flash, f.docked {
                         let u = flash - Double(p.smallCol) * PolishTokens.flashDelayPerColumn
@@ -388,23 +357,25 @@ struct DockingTitleScrollView<Content: View>: View {
 struct DockingTitleList<Content: View>: View {
     let title: String
     var description: String?
-    var markLabel: String?
     var chrome: DockChrome = .navigationBar
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        DockingTitleScrollView(listTitle: title, description: description, markLabel: markLabel,
+        DockingTitleScrollView(listTitle: title, description: description,
                                chrome: chrome, content: content)
     }
 }
 
 /// Inline nav bar plus an empty principal item, only for `.navigationBar`.
+/// The bar's background is hidden: UIKit draws it above this page, so its
+/// material would cover the docked title. The page draws the bar's fill instead.
 private struct DockNavChrome: ViewModifier {
     let enabled: Bool
     func body(content: Content) -> some View {
         if enabled {
             content
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         Color.clear.frame(width: 1, height: 22).accessibilityHidden(true)

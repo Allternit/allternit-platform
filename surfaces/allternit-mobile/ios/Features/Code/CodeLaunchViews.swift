@@ -757,8 +757,7 @@ struct CodeStartScreen: View {
                         .padding(.bottom, 10)
                     }
                     .frame(maxWidth: .infinity,
-                           minHeight: proxy.size.height - DockTitleLayout(text: "GIZZI CODE")
-                            .titleHeight(width: proxy.size.width) - 20)
+                           minHeight: proxy.size.height - DockTitleLayout(text: "GIZZI CODE").titleHeight - 20)
                 }
                 .scrollDismissesKeyboard(.interactively)
 

@@ -2,10 +2,13 @@ import SwiftUI
 
 /// Glass surface. iOS 26+ with the 6.2 compiler: `glassEffect`; otherwise
 /// `.ultraThinMaterial` + hairline. Reduce Transparency: solid fill.
+/// `interactive`: on iOS 26 the glass answers touches (press bounce and
+/// shimmer), for glass that is itself a control.
 /// Guard pattern: `#if compiler(>=6.2)` + `#available(iOS 26.0, *)`
 /// (repo precedent: `#available(iOS 26.0, *)` in Core/Voice).
 private struct GlassSurfaceModifier: ViewModifier {
     let cornerRadius: CGFloat
+    let interactive: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var scheme
 
@@ -23,7 +26,7 @@ private struct GlassSurfaceModifier: ViewModifier {
     @ViewBuilder private func modern(_ content: Content) -> some View {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: shape)
+            content.glassEffect(interactive ? Glass.regular.interactive() : Glass.regular, in: shape)
         } else {
             fallback(content)
         }
@@ -39,8 +42,8 @@ private struct GlassSurfaceModifier: ViewModifier {
 }
 
 extension View {
-    func glassSurface(cornerRadius: CGFloat = 20) -> some View {
-        modifier(GlassSurfaceModifier(cornerRadius: cornerRadius))
+    func glassSurface(cornerRadius: CGFloat = 20, interactive: Bool = false) -> some View {
+        modifier(GlassSurfaceModifier(cornerRadius: cornerRadius, interactive: interactive))
     }
 }
 

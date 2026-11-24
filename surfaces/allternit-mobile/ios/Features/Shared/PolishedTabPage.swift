@@ -69,6 +69,9 @@ struct PolishedTabPage<Content: View, Hero: View>: View {
     let title: String
     var description: String?
     var taller = false
+    /// `.navigationBar` inside a NavigationStack; a page under its own header
+    /// (Artifacts' LibrarySectionHeader) passes `.overlay(barCenter:)`.
+    var chrome: DockChrome = .navigationBar
     var introKey: IntroKey?
     @ViewBuilder var hero: () -> Hero
     @ViewBuilder var content: () -> Content
@@ -85,7 +88,7 @@ struct PolishedTabPage<Content: View, Hero: View>: View {
     }
 
     private var page: some View {
-        DockingTitleScrollView(title: title, description: description, taller: taller) {
+        DockingTitleScrollView(title: title, description: description, taller: taller, chrome: chrome) {
             VStack(alignment: .leading, spacing: 16) {
                 content()
             }
