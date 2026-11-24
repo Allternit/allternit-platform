@@ -144,15 +144,13 @@ private struct BotFormSheet: View {
         }
         .sheet(isPresented: $vendorOpen) {
             NavigationStack {
-                VendorConnectView { firstBotId, mainBotId in
+                VendorConnectView(title: "Bring a vendor’s bot") { firstBotId, mainBotId in
                     vendorOpen = false
                     AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
                     let ids = firstBotId.map { [$0] } ?? []
                     onCreated?(BotSetupOutcome(botIds: ids, mainBotId: mainBotId, summary: "Connected bot added"))
                     dismiss()
                 }
-                .navigationTitle("Bring a vendor’s bot")
-                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         GlassCircleButton(systemImage: "xmark", label: "Close", size: 34) { vendorOpen = false }
