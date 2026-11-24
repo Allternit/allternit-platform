@@ -11,8 +11,8 @@ struct ShellWordmark: View {
                 // The pixel GIZZI CODE lockup the web drawer shows.
                 GizziCodeWordmark(height: 15)
             } else if let suffix = mode.wordmarkSuffix {
-                // Suffixed marks run smaller so they fit beside the menu and search.
-                PixelWordmark(height: 12, suffix: suffix)
+                // Bots and ACI show their word alone (no Allternit in front; Eoj 2026-11-24).
+                PixelWordmark(height: 16, suffix: suffix, wordOnly: true)
             } else {
                 PixelWordmark(height: 16)
             }

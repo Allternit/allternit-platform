@@ -7,6 +7,9 @@ import SwiftUI
 struct PixelWordmark: View {
     var height: CGFloat = 16
     var suffix: String = ""
+    /// Draw only `suffix`: no A:// mark, no TERNIT (Bots and ACI; Eoj 2026-11-24:
+    /// no "Allternit" in front of Bots or ACI).
+    var wordOnly: Bool = false
     /// Ink for the blocks (the A core stays coral).
     var ink: Color = Color("TextPrimary")
 
@@ -27,9 +30,9 @@ struct PixelWordmark: View {
 
     /// Every inked cell (letters placed at their origin columns) and the
     /// total column count, as the web's layout().
-    private static func layout(_ word: String) -> (cells: [(Int, Int)], cols: Int) {
+    private static func layout(_ word: String, start: Int = ternitStart) -> (cells: [(Int, Int)], cols: Int) {
         var cells: [(Int, Int)] = []
-        var col = ternitStart
+        var col = start
         for ch in word.uppercased() {
             if ch == " " { col += spaceCols; continue }
             if let glyph = BlockGlyphs.glyphs[ch] { cells += glyph.map { ($0.0 + col, $0.1) } }
@@ -39,7 +42,9 @@ struct PixelWordmark: View {
     }
 
     var body: some View {
-        let (letters, cols) = Self.layout("TERNIT \(suffix)".trimmingCharacters(in: .whitespaces))
+        let bare = wordOnly && !suffix.isEmpty
+        let (letters, cols) = bare ? Self.layout(suffix, start: 0)
+            : Self.layout("TERNIT \(suffix)".trimmingCharacters(in: .whitespaces))
         let width = height * CGFloat(cols) / Self.rows
         Canvas { context, size in
             let scale = size.height / (Self.rows * Self.cell)
@@ -51,13 +56,13 @@ struct PixelWordmark: View {
                      cornerRadius: 1.5 * scale)
             }
             var inked = Path()
-            for c in Self.markCells + letters { inked.addPath(rect(c)) }
+            for c in (bare ? [] : Self.markCells) + letters { inked.addPath(rect(c)) }
             context.fill(inked, with: .color(ink))
-            context.fill(rect(Self.coreCell), with: .color(Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)))
+            if !bare { context.fill(rect(Self.coreCell), with: .color(Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255))) }
         }
         .frame(width: width, height: height)
         .accessibilityElement()
-        .accessibilityLabel("Allternit \(suffix)".trimmingCharacters(in: .whitespaces))
+        .accessibilityLabel(bare ? suffix : "Allternit \(suffix)".trimmingCharacters(in: .whitespaces))
     }
 }
 

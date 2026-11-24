@@ -78,7 +78,7 @@ enum ShellMode: String, CaseIterable, Sendable {
         }
     }
 
-    /// The wordmark suffix beside A://TERNIT (PhoneDrawer WORDMARK_SUFFIX);
+    /// The mode's word, drawn alone in the pixel letters (PhoneDrawer WORDMARK_SUFFIX);
     /// Code shows the gizzi code mark instead.
     var wordmarkSuffix: String? {
         switch self {

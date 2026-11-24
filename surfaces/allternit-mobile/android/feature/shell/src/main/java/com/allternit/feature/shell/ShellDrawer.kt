@@ -202,14 +202,14 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
     ) {
         // The mode icon opens Shelves after closing the drawer.
         ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenHub = onModeDial)
-        // ShellWordmark: the pixel mark; suffixed marks run smaller to fit beside the buttons.
+        // ShellWordmark: A://TERNIT on Home; Bots and ACI show their word alone (Eoj 2026-11-24).
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),
             contentAlignment = Alignment.CenterStart,
         ) {
             when {
                 mode == ShellMode.Code -> GizziCodeWordmark(height = 15.dp)
-                mode.wordmarkSuffix.isNotEmpty() -> PixelWordmark(height = 12.dp, suffix = mode.wordmarkSuffix)
+                mode.wordmarkSuffix.isNotEmpty() -> PixelWordmark(height = 16.dp, suffix = mode.wordmarkSuffix, wordOnly = true)
                 else -> PixelWordmark(height = 16.dp)
             }
         }
