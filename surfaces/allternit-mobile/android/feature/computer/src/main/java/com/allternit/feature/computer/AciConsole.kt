@@ -69,7 +69,13 @@ internal data class ConsoleComputer(
     val lastBackupAt: String? = null,
     /** The runtime device behind this row (contract 2.3); the relay target for Terminal and Files. Null for rows without one. */
     val runtimeId: String? = null,
+    /** Every id of this machine (one row per machine since #2825); empty from an older server. */
+    val aliases: List<String> = emptyList(),
+    /** The paired-row id when this machine has one; paired-only actions use it. */
+    val pairedId: String? = null,
 ) {
+    /** True when [other] is this row's id or any alias (selection, deep links, push `computerId`). */
+    fun matches(other: String): Boolean = id == other || other in aliases
     /** What `allternit-relay://` and the Files drive use: `row.runtimeId ?: row.id`, never just row.id. */
     val relayId: String get() = runtimeId?.takeIf { it.isNotBlank() } ?: id
 
@@ -96,7 +102,9 @@ internal data class ConsoleComputer(
             val status = o.str("status") ?: return null
             val sample = ConsoleSnapshot.parse(o.child("lastSample"))
             return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"),
-                o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"), o.str("runtimeId"))
+                o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"), o.str("runtimeId"),
+                (o["aliases"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty(),
+                o.str("pairedId")?.takeIf { it.isNotBlank() })
         }
     }
 }
@@ -131,7 +139,7 @@ internal fun AciConsoleSection(restorePoints: (@Composable (onDone: () -> Unit) 
     LaunchedEffect(wanted, phase) {
         val ready = phase as? ConsolePhase.Ready ?: return@LaunchedEffect
         if (wanted == null) return@LaunchedEffect
-        val row = ready.rows.firstOrNull { it.id == wanted || it.runtimeId == wanted }
+        val row = ready.rows.firstOrNull { it.matches(wanted) || it.runtimeId == wanted }
         if (row != null) selected = row else missing = wanted
         AciNav.openComputerId = null
     }

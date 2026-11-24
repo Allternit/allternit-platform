@@ -217,6 +217,39 @@ final class ACIComputersClient: Sendable {
         let runtimeId: String?
 
         var relayId: String { runtimeId ?? id }
+        /// Every id of this machine (one row per machine since #2825); empty from an older server.
+        let aliases: [String]
+        /// The paired-row id, when this machine has one (paired-only actions use it).
+        let pairedId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, kind, group, name, provider, region, os, osFamily, address, reach, status
+            case lastSample, servicesCount, lastBackupAt, aliases, pairedId, runtimeId
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            kind = try c.decode(String.self, forKey: .kind)
+            group = try c.decode(String.self, forKey: .group)
+            name = try c.decode(String.self, forKey: .name)
+            provider = try c.decode(String.self, forKey: .provider)
+            region = try c.decodeIfPresent(String.self, forKey: .region)
+            os = try c.decode(String.self, forKey: .os)
+            osFamily = try c.decode(String.self, forKey: .osFamily)
+            address = try c.decodeIfPresent(String.self, forKey: .address)
+            reach = try c.decode(String.self, forKey: .reach)
+            status = try c.decode(String.self, forKey: .status)
+            lastSample = try c.decodeIfPresent(ConsoleSnapshot.self, forKey: .lastSample)
+            servicesCount = try c.decodeIfPresent(Int.self, forKey: .servicesCount)
+            lastBackupAt = try c.decodeIfPresent(String.self, forKey: .lastBackupAt)
+            aliases = (try? c.decodeIfPresent([String].self, forKey: .aliases)) ?? []
+            pairedId = try? c.decodeIfPresent(String.self, forKey: .pairedId)
+            runtimeId = try c.decodeIfPresent(String.self, forKey: .runtimeId)
+        }
+
+        /// True when `other` is this machine's `id` or any of its aliases.
+        func matches(_ other: String) -> Bool { id == other || aliases.contains(other) }
 
         var isOnline: Bool { !["offline", "asleep", "stopped"].contains(status.lowercased()) }
         var isAsleep: Bool { status.lowercased() == "asleep" }
@@ -527,11 +560,31 @@ final class ACIComputersClient: Sendable {
         _ = try await cloud(hostPath(id, "rebuild"), method: "POST", body: body)
     }
 
-    /// Paired computers: rename and remove (`DELETE /api/v1/computers/paired/:id` exists today).
+    /// Paired computers: rename. `removePaired` only drops the paired row; Remove in the UI uses `unpair`.
     func renamePaired(id: String, name: String) async throws {
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         _ = try await cloud("api/v1/computers/paired/\(enc)", method: "PATCH", body: jsonBody(["name": name]))
     }
+    /// Remove a machine: `POST /api/v1/computers/:id/unpair {confirm:true}` revokes every
+    /// alias of the machine (a bare `DELETE paired/:id` would leave its runtimes paired).
+    func unpair(id: String) async throws {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let body = try? JSONSerialization.data(withJSONObject: ["confirm": true])
+        _ = try await cloud("api/v1/computers/\(enc)/unpair", method: "POST", body: body)
+    }
+
+    /// Plain sentence for each unpair error code (400 confirm_required, 403 not_owner,
+    /// 404 not found, 409 cloud_computer).
+    static func unpairMessage(_ code: String) -> String {
+        switch code {
+        case "confirm_required": return "Confirm to remove this computer. Nothing was changed."
+        case "not_owner": return "Only the person who paired this computer can remove it."
+        case "cloud_computer": return "This is an Allternit cloud computer. It can't be unpaired. Remove it from your cloud settings."
+        case "not_found", "computer_not_found": return "This computer is already gone. Pull to refresh."
+        default: return "Couldn't remove this computer. Nothing was changed."
+        }
+    }
+
     func removePaired(id: String) async throws {
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         _ = try await cloud("api/v1/computers/paired/\(enc)", method: "DELETE")
@@ -572,6 +625,16 @@ final class ACIComputersClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             let path = http.url?.path ?? ""
+            if path.hasSuffix("/unpair") {
+                struct UnpairError: Decodable { let error: String?; let message: String? }
+                let body = try? JSONDecoder().decode(UnpairError.self, from: data)
+                if let code = body?.error,
+                   ["confirm_required", "not_owner", "cloud_computer", "not_found", "computer_not_found"].contains(code) {
+                    throw Failure.server(unpairMessage(code))
+                }
+                if [404, 405, 501].contains(http.statusCode) { throw Failure.notAvailable }
+                if let message = body?.message, !message.isEmpty { throw Failure.server(message) }
+            }
             let consolePath = path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics")
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")

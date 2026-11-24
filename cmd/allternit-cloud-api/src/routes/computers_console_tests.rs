@@ -348,6 +348,88 @@ fn different_machines_never_merge() {
 }
 
 #[test]
+fn code_pairing_never_overrides_a_conflicting_machine_id() {
+    for fallback in ["hostname", "name", "stored link"] {
+        let desk = on_machine(device("rt_desk", "Studio", "desktop", "darwin-arm64"), Some(MID), "studio");
+        let mut pc = paired("pc_other", "Studio");
+        pc.machine_id = Some("another-machine-id-1234".into());
+        if fallback == "hostname" {
+            pc.hostname = Some("studio".into());
+            pc.platform = Some("darwin-arm64".into());
+        }
+        if fallback == "stored link" {
+            pc.runtime_device_id = Some("rt_desk".into());
+        }
+        let rows = build_console(vec![], vec![pc], vec![desk], &HashSet::new(), Utc::now());
+        assert_eq!(rows.len(), 2, "{fallback} must not override distinct machine IDs: {rows:#?}");
+        assert!(rows.iter().all(|r| r.aliases.is_empty()));
+        let paired = rows.iter().find(|r| r.id == "pc_other").unwrap();
+        assert!(paired.runtime_id.is_none(), "a conflicting link must not route to the other machine");
+    }
+}
+
+#[test]
+fn legacy_runtime_keeps_the_stable_id_when_a_newer_runtime_has_a_machine_id() {
+    let old = on_machine(device("rt_old", "Studio", "desktop", "darwin-arm64"), None, "studio");
+    let new = on_machine(device("rt_new", "Studio", "desktop", "darwin-arm64"), Some(MID), "studio");
+    let rows = build_console(vec![], vec![], vec![old, new], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "rt_old", "the oldest runtime remains the stable id");
+    assert_eq!(rows[0].aliases, vec!["rt_new".to_string()]);
+    assert_eq!(rows[0].runtime_id.as_deref(), Some("rt_old"), "equal relay candidates prefer the oldest");
+}
+
+#[test]
+fn code_pairing_promotes_a_legacy_machine_id_before_another_pair_can_join() {
+    let old = on_machine(device("rt_old", "Studio", "desktop", "darwin-arm64"), None, "studio");
+    let mut first = paired("pc_first", "Studio");
+    first.machine_id = Some(MID.into());
+    first.hostname = Some("studio".into());
+    first.platform = Some("darwin-arm64".into());
+    let mut other = first.clone();
+    other.id = "pc_other".into();
+    other.machine_id = Some("another-machine-id-1234".into());
+    let rows = build_console(vec![], vec![first, other], vec![old], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 2, "{rows:#?}");
+    let first = rows.iter().find(|r| r.id == "pc_first").unwrap();
+    assert_eq!(first.machine_key, format!("mid:{MID}"));
+    assert_eq!(first.aliases, vec!["rt_old".to_string()]);
+    assert!(rows.iter().find(|r| r.id == "pc_other").unwrap().aliases.is_empty());
+}
+
+#[test]
+fn ambiguous_legacy_hostname_or_name_does_not_choose_another_machine() {
+    for fallback in ["device hostname", "paired hostname", "paired name"] {
+        let a = on_machine(device("rt_a", "Studio", "desktop", "darwin-arm64"), Some(MID), "studio");
+        let b = on_machine(device("rt_b", "Studio", "desktop", "darwin-arm64"), Some("another-machine-id-1234"), "studio");
+        let mut devices = vec![a, b];
+        let mut paired_rows = vec![];
+        if fallback == "device hostname" {
+            devices.push(on_machine(device("rt_old", "Studio", "desktop", "darwin-arm64"), None, "studio"));
+        } else {
+            let mut pc = paired("pc_old", "Studio");
+            if fallback == "paired hostname" {
+                pc.hostname = Some("studio".into());
+                pc.platform = Some("darwin-arm64".into());
+            }
+            paired_rows.push(pc);
+        }
+        let rows = build_console(vec![], paired_rows, devices, &HashSet::new(), Utc::now());
+        assert_eq!(rows.len(), 3, "ambiguous {fallback} must stay separate: {rows:#?}");
+        assert!(rows.iter().all(|r| r.aliases.is_empty()));
+    }
+}
+
+#[test]
+fn generic_legacy_pairing_names_do_not_join_unrelated_devices() {
+    let old = on_machine(device("rt_old", "ubuntu", "vps", "linux-x64"), None, "ubuntu");
+    let pc = paired("pc_old", "ubuntu");
+    let rows = build_console(vec![], vec![pc], vec![old], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r.aliases.is_empty()));
+}
+
+#[test]
 fn the_owners_name_wins_and_shared_rows_keep_theirs() {
     let desk = on_machine(device("rt_desk", "Studio Desktop", "desktop", "darwin-arm64"), Some(MID), "studio");
     let mut shared = paired("pc_team", "Team box");

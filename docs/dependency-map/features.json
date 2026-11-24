@@ -5484,7 +5484,7 @@
       "label": "Picture and motion generation with live progress",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "media_generate renders pictures and motion from code, or requests ChatGPT images in the same device’s ACI browser. Live progress carries real stages, thumbnails and download bytes to chat and the Motion editor.",
+      "description": "media_generate renders pictures and motion from code, or requests ChatGPT images in the same device\u2019s ACI browser. Live progress carries real stages, thumbnails and download bytes to chat and the Motion editor.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
@@ -5505,6 +5505,32 @@
         "allternit/cmd/gizzi-code/src/runtime/server/routes/pane-render.ts",
         "allternit-ai/src/components/ai-elements/GeneratedMediaCard.tsx",
         "allternit-ai/src/components/ai-elements/process/RenderingCard.tsx"
+      ]
+    },
+    {
+      "id": "feature:computers-console",
+      "label": "Computers console and unified machine pairing",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "One row per owned machine across Desktop, Gizzi, Factory and code pairing, with alias-aware selection, machine rename and confirmed machine unpair. Conflicting machine IDs and ambiguous legacy names stay separate. Prepared in platform PRs #2825/#2828 and ai #1233; not live.",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/computers_console.rs",
+        "allternit/surfaces/docs/dev/computer-pairing.mdx"
+      ],
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/computers_console.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/computer_machines.rs",
+        "allternit/cmd/cli/src/commands/computers.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/ACI/Services/ACIComputersClient.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/computer/src/main/java/com/allternit/feature/computer/AciData.kt",
+        "allternit-ai/src/components/computers",
+        "allternit/surfaces/docs/dev/computer-pairing.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-23",
+          "note": "Pairing review: explicit machine IDs override weak identity evidence; ambiguous or generic legacy names do not merge; unavailable unpair routes do not imply a successful removal. Builds and surface verification remain with the train."
+        }
       ]
     }
   ],

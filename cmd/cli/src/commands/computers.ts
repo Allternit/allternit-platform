@@ -167,6 +167,17 @@ function lifecycleCommand(
     });
 }
 
+/// Plain sentence for each `POST /computers/:id/unpair` error (400 confirm_required,
+/// 403 not_owner, 404, 409 cloud_computer). Unknown text is passed through.
+export function unpairMessage(raw: string): string {
+  const text = raw.toLowerCase();
+  if (text.includes('confirm_required')) return 'Confirm to remove this computer. Nothing was changed.';
+  if (text.includes('not_owner')) return 'Only the person who paired this computer can remove it.';
+  if (text.includes('cloud_computer')) return "This is an Allternit cloud computer. It can't be unpaired; delete it with `allternit computers delete <id>` instead.";
+  if (text.startsWith('404') || text.includes('not_found') || text.includes('not found')) return 'Couldn\'t find this computer or its unpair route. Run `allternit computers list` and try again.';
+  return raw;
+}
+
 export function createComputersCommand(): Command {
   const create = new Command('create')
     .description('Create a computer (cloud_desktop, local, or deferred kinds)')
@@ -246,6 +257,27 @@ export function createComputersCommand(): Command {
       if (options.includeRoles) params.set('include_roles', '1');
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return run(this, () => client(this).request('GET', `/api/v1/computers${query}`));
+    });
+
+  // Remove a paired machine. `:id` may be the row id or any alias; the server revokes
+  // every alias of the machine (a bare DELETE paired/:id would leave runtimes paired).
+  const unpair = new Command('unpair')
+    .description('Remove a paired computer from your account and every agent (the machine itself keeps running)')
+    .argument('<id>', 'computer id (any id of that machine works)')
+    .option('--yes', 'confirm the removal (required)')
+    .action(function (this: Command, id: string, options: { yes?: boolean }) {
+      if (!options.yes) {
+        process.stderr.write('allternit: This takes the computer off your account and away from every agent. Run again with --yes to confirm. Nothing was changed.\n');
+        process.exitCode = 1;
+        return;
+      }
+      return run(this, async () => {
+        try {
+          return await client(this).request('POST', `/api/v1/computers/${encodeURIComponent(id)}/unpair`, { confirm: true });
+        } catch (error) {
+          throw new Error(unpairMessage(error instanceof Error ? error.message : String(error)));
+        }
+      });
     });
 
   const resize = new Command('resize')
@@ -441,6 +473,7 @@ function createScreenshotCommand(name: string, description: string): Command {
     .addCommand(lifecycleCommand('stop', 'POST', '/stop', 'Stop a running computer'))
     .addCommand(lifecycleCommand('restart', 'POST', '/restart', 'Restart a computer'))
     .addCommand(lifecycleCommand('delete', 'POST', '/delete', 'Delete a computer (irreversible)'))
+    .addCommand(unpair)
     .addCommand(resize)
     .addCommand(clone)
     .addCommand(sshCommand)

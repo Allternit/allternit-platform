@@ -322,7 +322,7 @@ struct ACIConsoleDeepLinkSheet: View {
             .task {
                 state = await .run {
                     let all = try await ACIComputersClient.shared.listConsole()
-                    guard let found = all.first(where: { $0.id == computerId }) else {
+                    guard let found = all.first(where: { $0.matches(computerId) }) else {
                         throw ACIComputersClient.Failure.notAvailable
                     }
                     return found

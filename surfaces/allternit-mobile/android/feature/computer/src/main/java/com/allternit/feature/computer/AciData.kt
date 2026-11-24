@@ -322,6 +322,28 @@ object AciApi {
     internal suspend fun consolePairedWrite(method: String, id: String, body: JsonObject?): ConsoleWrite =
         write(ApiCall.request(method, config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/paired").addPathSegment(id).build(), writeBody(method, body)))
 
+    /**
+     * `POST api/v1/computers/:id/unpair {confirm:true}`: revokes every alias of the machine (a bare
+     * `DELETE paired/:id` would leave its runtimes paired). Plain text for 400 confirm_required,
+     * 403 not_owner, 404 and 409 cloud_computer.
+     */
+    internal suspend fun consoleUnpair(id: String): ConsoleWrite {
+        val request = ApiCall.request("POST", consoleUrl(id, "unpair", emptyMap()), "{\"confirm\":true}")
+        val (status, body) = rawCall(request) ?: return ConsoleWrite.Failed("You're offline. Nothing was changed.")
+        val json = runCatching { ApiJson.default.parseToJsonElement(body) }.getOrNull()
+        val error = ((json as? JsonObject)?.get("error") as? JsonPrimitive)?.content
+        return when {
+            status in 200..299 -> ConsoleWrite.Ok(json)
+            status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
+            status == 400 || error == "confirm_required" -> ConsoleWrite.Failed("Confirm to remove this computer. Nothing was changed.")
+            status == 403 || error == "not_owner" -> ConsoleWrite.Failed("Only the person who paired this computer can remove it.")
+            status == 404 && error in listOf("not_found", "computer_not_found") -> ConsoleWrite.Failed("This computer is already gone. Pull to refresh.")
+            status in listOf(404, 405, 501) -> ConsoleWrite.Failed("Removing this computer isn't available on this server yet. Nothing was changed.")
+            status == 409 || error == "cloud_computer" -> ConsoleWrite.Failed("This is an Allternit cloud computer. It can't be unpaired. Remove it from your cloud settings.")
+            else -> ConsoleWrite.Failed("Couldn't remove this computer. Nothing was changed.")
+        }
+    }
+
     private fun writeBody(method: String, body: JsonObject?): String? = body?.toString() ?: if (method == "DELETE" || method == "GET") null else "{}"
 
     private suspend fun write(request: okhttp3.Request): ConsoleWrite {
