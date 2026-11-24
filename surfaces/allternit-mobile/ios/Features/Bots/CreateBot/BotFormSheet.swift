@@ -53,6 +53,18 @@ struct EditBotSheet: View {
     }
 }
 
+/// Press scale on the primary button, with the polish press spring.
+private struct BotFormPressStyle: ButtonStyle {
+    let scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
+    }
+}
+
 private struct BotFormSheet: View {
     @ObservedObject var model: BotFormModel
     var onBrowseTemplates: (() -> Void)? = nil
@@ -89,31 +101,35 @@ private struct BotFormSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if !auth.isSignedIn {
-                        Text(model.isEditing ? "Sign in to edit this bot." : "Sign in to make a bot.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextSecondary"))
+            ZStack(alignment: .top) {
+                // The title docks into the header's centre as the form scrolls (T9).
+                DockingTitleScrollView(title: model.isEditing ? "Edit bot" : "Create bot",
+                                       chrome: .overlay(barCenter: Self.barCenter)) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if !auth.isSignedIn {
+                            Text(model.isEditing ? "Sign in to edit this bot." : "Sign in to make a bot.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                        if let bannerError { errorBanner(bannerError) }
+                        if model.loading {
+                            ProgressView().frame(maxWidth: .infinity, minHeight: 200)
+                        } else if let loadError = model.loadError {
+                            FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load this bot",
+                                              message: loadError, actionTitle: "Retry", action: { Task { await model.loadBot() } })
+                        } else {
+                            nameField
+                            BotLookEditor(model: look)
+                            if model.isEditing { editFields } else { moreOptions }
+                        }
                     }
-                    if let bannerError { errorBanner(bannerError) }
-                    if model.loading {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 200)
-                    } else if let loadError = model.loadError {
-                        FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load this bot",
-                                          message: loadError, actionTitle: "Retry", action: { Task { await model.loadBot() } })
-                    } else {
-                        nameField
-                        BotLookEditor(model: look)
-                        if model.isEditing { editFields } else { moreOptions }
-                    }
+                    .padding(.horizontal, 2)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 16)
+                .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: Self.barCenter + 30) }
+                .scrollDismissesKeyboard(.interactively)
+                header
             }
-            .scrollDismissesKeyboard(.interactively)
             footer
         }
         .background(Color("BgPrimary").ignoresSafeArea())
@@ -138,7 +154,9 @@ private struct BotFormSheet: View {
                 .navigationTitle("Bring a vendor’s bot")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Close") { vendorOpen = false } }
+                    ToolbarItem(placement: .cancellationAction) {
+                        GlassCircleButton(systemImage: "xmark", label: "Close", size: 34) { vendorOpen = false }
+                    }
                 }
             }
         }
@@ -147,25 +165,15 @@ private struct BotFormSheet: View {
 
     // MARK: Chrome
 
+    /// The header bar: 12 pt top padding + a 44 pt row, so its centre is 34 pt down.
+    private static let barCenter: CGFloat = 34
+
+    /// Close only. The title is drawn by the dock, centred on the bar.
     private var header: some View {
         HStack(spacing: 10) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color("BgPanel")))
-                    .overlay(Circle().stroke(Color("BorderSubtle")))
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(busy)
-            .accessibilityLabel("Close")
-            Text(model.isEditing ? "Edit bot" : "Create bot")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(Color("TextPrimary"))
-                .lineLimit(1)
+            GlassCircleButton(systemImage: "xmark", label: "Close") { dismiss() }
+                .frame(minWidth: 44, minHeight: 44)
+                .disabled(busy)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
@@ -175,6 +183,7 @@ private struct BotFormSheet: View {
 
     private var footer: some View {
         Button {
+            Haptics.medium()
             Task {
                 if model.isEditing {
                     if await model.saveEdit() {
@@ -194,7 +203,7 @@ private struct BotFormSheet: View {
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("TextPrimary")))
                 .opacity(primaryEnabled ? 1 : 0.4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BotFormPressStyle(scale: PolishTokens.pressContinue))
         .disabled(!primaryEnabled)
         .padding(.horizontal, 16)
         .padding(.top, 12)
