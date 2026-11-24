@@ -31,6 +31,9 @@ struct CodeModeView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @StateObject private var terminalStore = CodeTerminalStore()
+    /// Lives for the whole Code screen so a Move started in the sessions sheet
+    /// finishes and opens its terminal even after the sheet is closed.
+    @State private var terminalSessions = TerminalSessionsStore()
     @StateObject private var instanceStore = InstanceStore.shared
 
     @State private var sessions: [AgentSession] = []
@@ -467,7 +470,18 @@ struct CodeModeView: View {
                 shellOpen = false
                 startFromSessionsView(prompt)
             },
-            onRefresh: { await loadSessions() }
+            onRefresh: { await loadSessions() },
+            onOpenTerminal: { sessionId, title in
+                // Open that exact terminal (attach by session id; nothing new
+                // starts on the computer) in the Code shell.
+                Task { @MainActor in
+                    if await terminalStore.attach(sessionId: sessionId, title: title) {
+                        closeSessionsView()
+                        shellOpen = true
+                    }
+                }
+            },
+            terminalSessions: terminalSessions
         )
     }
 

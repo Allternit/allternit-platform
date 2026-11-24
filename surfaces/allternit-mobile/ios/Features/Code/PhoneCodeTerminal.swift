@@ -64,6 +64,40 @@ final class CodeTerminalStore: ObservableObject {
         selectedId = tile.id
     }
 
+    /// Shows a terminal that already runs on the computer (a row in the Code
+    /// sessions view, or the terminal a Move / copy / new just started): the
+    /// tile already attached to it, else a new tile attached by its session
+    /// id. Nothing new starts on the computer. False when no computer is
+    /// reached over the relay (only the terminal service lists sessions).
+    @discardableResult
+    func attach(sessionId: String, title: String) async -> Bool {
+        if let tile = tiles.first(where: { $0.session.ptyId == sessionId }) {
+            selectedId = tile.id
+            return true
+        }
+        await InstanceStore.shared.refreshIfNeeded()
+        guard let resolved = await InstanceConnection.resolve(from: InstanceStore.shared), resolved.isRelay else {
+            return false
+        }
+        isOffline = false
+        if tiles.count >= Self.maxTiles, let oldest = tiles.first {
+            // Full: let go of the oldest tab without ending its shell (it is
+            // still listed in the sessions view and can be reopened).
+            tiles.removeFirst()
+            agentNames[oldest.id] = nil
+            oldest.session.stop()
+        }
+        let session = PtySession(service: TerminalServiceClient(baseURL: resolved.baseURL),
+                                 attachedInstanceName: resolved.instanceName,
+                                 sessionId: sessionId)
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tile = Tile(name: name.isEmpty ? "Terminal \(nextNumber)" : name, session: session)
+        if name.isEmpty { nextNumber += 1 }
+        tiles.append(tile)
+        selectedId = tile.id
+        return true
+    }
+
     /// Closes a shell: detach and kill its pty server-side.
     func closeTile(_ id: UUID) {
         guard let index = tiles.firstIndex(where: { $0.id == id }) else { return }
