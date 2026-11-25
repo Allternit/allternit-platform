@@ -861,18 +861,10 @@ struct CodeScheduledScreen: View {
                 .refreshable { await store.refresh() }
             } else if loaded {
                 Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 22))
-                        .foregroundColor(Color("TextTertiary"))
-                    Text("No scheduled tasks")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text("Scheduled tasks on your computer show here.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .accessibilityElement(children: .combine)
+EmptyBox(icon: "clock", title: "No scheduled tasks",
+                         line: "Scheduled tasks on your computer show here.",
+                         art: .bell)
+                    .padding(.horizontal, 16)
                 Spacer()
             } else {
                 Spacer()

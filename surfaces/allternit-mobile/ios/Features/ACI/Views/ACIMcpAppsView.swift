@@ -211,7 +211,8 @@ struct ACIMcpAppsView: View {
                     VStack(spacing: 12) {
                         EmptyBox(icon: "square.grid.2x2",
                                  title: q.isEmpty ? "No apps connected yet" : "No matches",
-                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.")
+                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.",
+                                 art: q.isEmpty ? .sheets : nil)
                         if q.isEmpty {
                             GlassPill(title: "Browse apps") { go(.discover) }
                         }
