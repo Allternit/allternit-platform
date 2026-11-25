@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -20,6 +21,10 @@ import {
  *   GET    /share-host/links           -> {links: [{id, url, port, state, connections}]}
  *   POST   /share-host/links/:id/pause {paused?}
  *   DELETE /share-host/links/:id       (also POST .../stop)
+ *
+ * `startShare` is the relay-forwarded host command `POST /host/shares/start` (index.ts routes it here; it is not an
+ * allternit-api route). Two vocabularies meet here: cloud-api share-links say subject port|artifact and auth_mode
+ * public|signed_in; the local allternit-api gate (packages/share-tunnel) says subject app|mcp and auth_mode token|public.
  */
 export type ShareHostOptions = {
   cloudApi: string;
@@ -27,6 +32,8 @@ export type ShareHostOptions = {
   gatewayUrl: string;
   /** Reads the current device token (it rotates). */
   getAuthToken: () => Promise<string>;
+  /** This computer's runtime device id (cloud-api `runtime_device_id` on live links). */
+  getRuntimeDeviceId?: () => string | undefined;
   dataDir: string;
   controlPort: number;
   log?: (message: string) => void;
@@ -38,7 +45,12 @@ type SavedLink = { id: string; subdomain: string; port: number; authMode: AuthMo
 const DROP_REASONS: ReadonlySet<StopReason> = new Set(['killed', 'revoked', 'not_found', 'stopped', 'paused']);
 const RETRY_MS = 60_000;
 
-export function startShareHost(options: ShareHostOptions): { stop(): Promise<void> } {
+export type StartShareResult = { status: number; body: Record<string, unknown> };
+
+export function startShareHost(options: ShareHostOptions): {
+  stop(): Promise<void>;
+  startShare(input: { port?: unknown; label?: unknown; artifact_id?: unknown }): Promise<StartShareResult>;
+} {
   const log = options.log ?? ((m: string) => console.log(`[ShareHost] ${m}`));
   const file = join(options.dataDir, 'active-links.json');
   const saved = new Map<string, SavedLink>();
@@ -55,11 +67,22 @@ export function startShareHost(options: ShareHostOptions): { stop(): Promise<voi
     if (saved.delete(id)) void persist().catch(() => undefined);
   };
 
+  // The last answer the local gate gave to a failed call, so startShare can answer 403/409/429 like the gate did.
+  let gateFailure: { status: number; error?: string; message?: string } | undefined;
+  const gateFetch: typeof fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (!response.ok) {
+      const body = (await response.clone().json().catch(() => ({}))) as { error?: string; message?: string };
+      gateFailure = { status: response.status, error: body.error, message: body.message };
+    }
+    return response;
+  };
+
   const tunnel: ShareTunnel = createShareTunnel({
     relayApi: options.relayApi,
     cloudApi: options.cloudApi,
     getAuthToken: options.getAuthToken,
-    gate: httpShareGate({ baseUrl: options.gatewayUrl, auth: { bearer: options.getAuthToken } }),
+    gate: httpShareGate({ baseUrl: options.gatewayUrl, auth: { bearer: options.getAuthToken }, fetch: gateFetch }),
     dataDir: join(options.dataDir, 'tunnel'),
     onEvent: (event) => {
       if (event.type !== 'stopped') return;
@@ -120,6 +143,64 @@ export function startShareHost(options: ShareHostOptions): { stop(): Promise<voi
       }
     }
     if (again && !shuttingDown) retry = setTimeout(() => void restore(), RETRY_MS);
+  };
+
+  const cloud = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${options.cloudApi}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${await options.getAuthToken()}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const json = (await response.json().catch(() => ({}))) as any;
+    return { ok: response.ok, status: response.status, json };
+  };
+
+  const startShare = async (input: { port?: unknown; label?: unknown; artifact_id?: unknown }): Promise<StartShareResult> => {
+    const port = input.port;
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65_535) {
+      return { status: 400, body: { error: 'invalid_port', message: 'port must be an integer from 1 to 65535.' } };
+    }
+    const deviceId = options.getRuntimeDeviceId?.();
+    if (!deviceId) return { status: 502, body: { error: 'not_paired', message: 'This computer is not paired yet.' } };
+    const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 80) : `localhost:${port}`;
+    const artifactId = typeof input.artifact_id === 'string' && input.artifact_id ? input.artifact_id : undefined;
+    // The gate checks the port (denied ports, caps) when the tunnel opens it; a refusal there revokes this link.
+    const subdomain = `l${randomBytes(5).toString('hex')}`;
+    const made = await cloud('POST', '/api/v1/share-links', {
+      kind: 'live',
+      subject: artifactId ? 'artifact' : 'port',
+      ...(artifactId ? { artifact_id: artifactId } : {}),
+      runtime_device_id: deviceId,
+      target_port: port,
+      auth_mode: 'signed_in',
+      subdomain,
+      label,
+    });
+    const link = made.json?.link;
+    if (!made.ok || !link?.id) {
+      const status = [403, 409, 429].includes(made.status) ? made.status : 502;
+      return { status, body: { error: made.json?.error ?? 'cloud_refused', message: made.json?.message ?? `cloud-api answered ${made.status}` } };
+    }
+    gateFailure = undefined;
+    try {
+      const live = await serve(
+        { id: String(link.id), subdomain: String(link.subdomain ?? subdomain), port, authMode: 'token' },
+        typeof made.json.relay_credential === 'string' ? made.json.relay_credential : undefined,
+      );
+      return { status: 200, body: { share: { ...view(live), token: live.token }, share_link_id: link.id, url: live.url } };
+    } catch (error) {
+      await cloud('DELETE', `/api/v1/share-links/${encodeURIComponent(String(link.id))}`).catch(() => undefined);
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof ShareTunnelError && error.code === 'port_denied') return { status: 403, body: { error: 'port_refused', message } };
+      const g = gateFailure as { status: number; error?: string; message?: string } | undefined;
+      if (g && [403, 409, 429].includes(g.status)) {
+        return { status: g.status, body: { error: g.error ?? 'gate_refused', message: g.message ?? message } };
+      }
+      return { status: 502, body: { error: 'tunnel_failed', message } };
+    }
   };
 
   const readBody = async (req: IncomingMessage): Promise<any> => {
@@ -188,5 +269,6 @@ export function startShareHost(options: ShareHostOptions): { stop(): Promise<voi
       server.close();
       await tunnel.stopAll('stopped');
     },
+    startShare,
   };
 }
