@@ -36,6 +36,7 @@ use tracing::{debug, trace, warn};
 use crate::error::{McpError, Result, TransportError};
 use crate::protocol::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
 use mcp_protocol::client as dual;
+use crate::server_requests::{self, DeclineAll, ServerRequestHandler};
 use crate::transport::{McpTransport, TransportType};
 
 /// Header carrying the server-assigned session id (legacy era)
@@ -96,6 +97,8 @@ pub struct StreamableHttpTransport {
     protocol_version: RwLock<Option<String>>,
     request_counter: AtomicU64,
     closed: AtomicBool,
+    /// Answers server-to-client requests on response streams (legacy era)
+    server_requests: std::sync::RwLock<Arc<dyn ServerRequestHandler>>,
 }
 
 impl std::fmt::Debug for StreamableHttpTransport {
@@ -133,6 +136,7 @@ impl StreamableHttpTransport {
             protocol_version: RwLock::new(None),
             request_counter: AtomicU64::new(1),
             closed: AtomicBool::new(false),
+            server_requests: std::sync::RwLock::new(Arc::new(DeclineAll) as Arc<dyn ServerRequestHandler>),
         }))
     }
 
@@ -256,6 +260,33 @@ impl StreamableHttpTransport {
         .into())
     }
 
+    /// POST our answer to a server-to-client request (legacy session era;
+    /// the stateless era has no server-initiated requests on streams).
+    async fn post_reply(&self, reply: &Value) -> Result<()> {
+        let headers = self.build_headers(None).await?;
+        let response = self
+            .client
+            .post(&self.url)
+            .headers(headers)
+            .json(reply)
+            .send()
+            .await
+            .map_err(|e| McpError::Transport(TransportError::ConnectionFailed(e.without_url().to_string())))?;
+        if !response.status().is_success() {
+            return Err(TransportError::Http { status: response.status().as_u16(), message: "server refused our reply".into() }.into());
+        }
+        Ok(())
+    }
+
+    /// Answer one server request seen on a response stream.
+    async fn answer(&self, message: &Value) {
+        let handler = self.server_requests.read().map(|h| h.clone()).unwrap_or_else(|_| Arc::new(DeclineAll) as Arc<dyn ServerRequestHandler>);
+        let reply = server_requests::answer_server_request(handler.as_ref(), message).await;
+        if let Err(e) = self.post_reply(&reply).await {
+            warn!("failed to answer server request: {e}");
+        }
+    }
+
     fn next_id(&self) -> u64 {
         self.request_counter.fetch_add(1, Ordering::SeqCst)
     }
@@ -289,7 +320,7 @@ impl McpTransport for StreamableHttpTransport {
             .to_ascii_lowercase();
 
         let message = if content_type.starts_with("text/event-stream") {
-            read_sse_response(response, id).await?
+            read_sse_response(response, id, self).await?
         } else {
             let bytes = response.bytes().await.map_err(|e| {
                 McpError::Transport(TransportError::ConnectionFailed(e.without_url().to_string()))
@@ -379,6 +410,12 @@ impl McpTransport for StreamableHttpTransport {
         let url = reqwest::Url::parse(&self.url).ok()?;
         Some(url.origin().ascii_serialization())
     }
+
+    fn set_server_request_handler(&self, handler: Arc<dyn ServerRequestHandler>) {
+        if let Ok(mut slot) = self.server_requests.write() {
+            *slot = handler;
+        }
+    }
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -417,7 +454,7 @@ fn into_result(message: JsonRpcResponse) -> Result<Value> {
         .ok_or_else(|| McpError::Protocol("JSON-RPC response has neither result nor error".into()))
 }
 
-async fn read_sse_response(response: reqwest::Response, id: u64) -> Result<JsonRpcResponse> {
+async fn read_sse_response(response: reqwest::Response, id: u64, transport: &StreamableHttpTransport) -> Result<JsonRpcResponse> {
     let mut parser = SseParser::default();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -425,6 +462,12 @@ async fn read_sse_response(response: reqwest::Response, id: u64) -> Result<JsonR
             McpError::Transport(TransportError::Sse(e.without_url().to_string()))
         })?;
         for event in parser.push(&String::from_utf8_lossy(&chunk)) {
+            // A server request on the stream (e.g. `elicitation/create`
+            // mid-tool-call) blocks the response until we answer it.
+            if let Some(request) = event_server_request(&event) {
+                transport.answer(&request).await;
+                continue;
+            }
             if let Some(found) = event_response(&event, id) {
                 return Ok(found);
             }
@@ -438,6 +481,13 @@ async fn read_sse_response(response: reqwest::Response, id: u64) -> Result<JsonR
     Err(McpError::Protocol(format!(
         "event stream ended without a response for request {id}"
     )))
+}
+
+fn event_server_request(event: &SseEvent) -> Option<Value> {
+    if event.data.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(&event.data).ok().filter(server_requests::is_server_request)
 }
 
 fn event_response(event: &SseEvent, id: u64) -> Option<JsonRpcResponse> {

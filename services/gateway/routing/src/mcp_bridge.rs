@@ -305,6 +305,9 @@ impl McpToolBridge {
             client
                 .call_tool(&original_tool_name, request.input.clone())
                 .await
+                // This client never declares MCP Tasks, so a task here is a
+                // server bug; `into_complete` reports it as a typed error.
+                .and_then(mcp_client::ToolOutcome::into_complete)
                 .map_err(|e| McpBridgeError::ExecutionFailed(e.to_string()))?
         };
 
