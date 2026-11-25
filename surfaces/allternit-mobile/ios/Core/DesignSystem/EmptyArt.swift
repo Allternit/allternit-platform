@@ -29,17 +29,17 @@ enum EmptyArtKind: CaseIterable {
     case memory
     /// Models, providers, on-device models (Gizzi scene).
     case model
-    /// Charts, usage graphs, analytics (S-ios-2).
+    /// Charts, usage graphs, analytics.
     case chart
-    /// People, contacts, teams (S-ios-2).
+    /// People, contacts, teams.
     case people
-    /// Archive, trash, history kept (S-ios-2).
+    /// Archive, trash, history kept.
     case archive
-    /// Flows, workflows, iterations (S-ios-2).
+    /// Flows, workflows, iterations.
     case flow
-    /// Network, connections, devices (S-ios-2).
+    /// Network, connections, devices.
     case network
-    /// Calendar, schedules, events (S-ios-2).
+    /// Calendar, schedules, events.
     case calendar
     /// The real Gizzi mascot walking (agent and terminal screens).
     case gizzi
@@ -244,14 +244,12 @@ private struct EmptyArtPainter {
         case .apps: apps(c)
         case .memory: memory(c)
         case .model: model(c)
-        // S-ios-2: port kinds 12-17 from spec.json (chart, people, archive,
-        // flow, network, calendar). Until then each draws a stand-in.
-        case .chart: coins(c) // S-ios-2
-        case .people: envelope(c) // S-ios-2
-        case .archive: sheets(c) // S-ios-2
-        case .flow: log(c) // S-ios-2
-        case .network: apps(c) // S-ios-2
-        case .calendar: bell(c) // S-ios-2
+        case .chart: chart(c)
+        case .people: people(c)
+        case .archive: archive(c)
+        case .flow: flow(c)
+        case .network: network(c)
+        case .calendar: calendar(c)
         // Not line drawings: EmptyArt renders these as views.
         case .gizzi, .connectScene: break
         }
@@ -262,10 +260,22 @@ private struct EmptyArtPainter {
 
     // MARK: Drawing helpers
 
-    private func stroke(_ c: GraphicsContext, _ path: Path, dash: [CGFloat] = []) {
+    /// `trim` shows the first part of the path (an SVG pathLength-1 line whose
+    /// stroke-dashoffset animates 1 -> 0).
+    private func stroke(_ c: GraphicsContext, _ path: Path, dash: [CGFloat] = [], trim: Double = 1) {
         var s = style
         s.dash = dash
-        c.stroke(path, with: .color(ink), style: s)
+        if trim >= 1 {
+            c.stroke(path, with: .color(ink), style: s)
+        } else if trim > 0.001 {
+            c.stroke(path.trimmedPath(from: 0, to: trim), with: .color(ink), style: s)
+        }
+    }
+
+    /// Ink fill at `alpha`, then stroke (fill: currentColor; fill-opacity: alpha).
+    private func tint(_ c: GraphicsContext, _ path: Path, _ alpha: Double) {
+        c.fill(path, with: .color(ink.opacity(alpha)))
+        stroke(c, path)
     }
 
     /// Paper fill, then stroke (an SVG element with class ea-paper).
@@ -833,6 +843,296 @@ private struct EmptyArtPainter {
         layer(c, ty: arrowY, opacity: arrowO) { c in
             stroke(c, svg("M48 8 V20 M43.5 15.5 L48 20 L52.5 15.5"))
         }
+    }
+
+    // MARK: 12. Chart
+
+    /// charts, benchmarks, metrics, values, rows to plot
+    /// Loop: bars grow into the dashed outlines 0.4-1.1, a trend line shows, bars drop back 2.6-3.1.
+    /// Still frame: .ech-b1 transform:scaleY(0); .ech-b2 transform:scaleY(0); .ech-b3 transform:scaleY(0); .ech-line opacity:0.
+    func chart(_ c: GraphicsContext) {
+        let o = Ease.out, i = Ease.in, d = Ease.std
+        // .ech-b.ech-b1  (ech-b 3.4s)
+        let b1SY = v([(0, 0, o), (11.8, 0, o), (32.4, 1, i), (76.5, 1, i), (91.2, 0, d), (100, 0, d)], still: 0)
+        // .ech-b.ech-b2  (ech-b 3.4s, delay 0.12s)
+        let b2SY = v([(0, 0, o), (11.8, 0, o), (32.4, 1, i), (76.5, 1, i), (91.2, 0, d), (100, 0, d)], still: 0, delay: 0.12)
+        // .ech-b.ech-b3  (ech-b 3.4s, delay 0.24s)
+        let b3SY = v([(0, 0, o), (11.8, 0, o), (32.4, 1, i), (76.5, 1, i), (91.2, 0, d), (100, 0, d)], still: 0, delay: 0.24)
+        // .ech-line  (ech-line 3.4s)
+        let lineO = v([(0, 0, d), (32.4, 0, d), (41.2, 1, d), (73.5, 1, d), (82.4, 0, d), (100, 0, d)], still: 0)
+
+        stroke(c, svg("M24 18 V70 H78"))
+        stroke(c, rect(32, 40, 9, 30, rx: 1.5), dash: [3, 3])
+        stroke(c, rect(46, 52, 9, 18, rx: 1.5), dash: [3, 3])
+        stroke(c, rect(60, 32, 9, 38, rx: 1.5), dash: [3, 3])
+        layer(c, sy: b1SY, origin: pt(36.5, 70)) { c in
+            tint(c, rect(32, 40, 9, 30, rx: 1.5), 0.12)
+        }
+        layer(c, sy: b2SY, origin: pt(50.5, 70)) { c in
+            tint(c, rect(46, 52, 9, 18, rx: 1.5), 0.12)
+        }
+        layer(c, sy: b3SY, origin: pt(64.5, 70)) { c in
+            tint(c, rect(60, 32, 9, 38, rx: 1.5), 0.12)
+        }
+        layer(c, opacity: lineO) { c in
+            stroke(c, svg("M36.5 36 L50.5 24 L64.5 44"), dash: [2, 3])
+        }
+    }
+
+
+    // MARK: 13. People
+
+    /// contacts, calls, teams, members, test users
+    /// Loop: the empty (dashed) seat breathes, the front person nods, a + badge pops 1.0-2.6.
+    /// Still frame: .epp-ghost opacity:0.6.
+    func people(_ c: GraphicsContext) {
+        let o = Ease.out, i = Ease.in, io = Ease.io, d = Ease.std
+        // .epp-ghost  (epp-ghost 3.4s)
+        let ghostO = v([(0, 0.35, io), (50, 0.9, io), (100, 0.35, io)], still: 0.6)
+        // .epp-front  (epp-front 3.4s)
+        let frontY = v([(0, 0, io), (26.5, 0, io), (32.4, -2, io), (39.7, 0, io), (100, 0, io)], still: 0)
+        // .epp-plus  (epp-plus 3.4s)
+        let plusSX = v([(0, 0.6, o), (29.4, 0.6, o), (38.2, 1, i), (76.5, 1, i), (88.2, 0.6, d), (100, 0.6, d)], still: 1)
+        let plusSY = v([(0, 0.6, o), (29.4, 0.6, o), (38.2, 1, i), (76.5, 1, i), (88.2, 0.6, d), (100, 0.6, d)], still: 1)
+        let plusO = v([(0, 0, o), (29.4, 0, o), (38.2, 1, i), (76.5, 1, i), (88.2, 0, d), (100, 0, d)], still: 1)
+
+        solid(c, oval(50, 70, 28, 5))
+        layer(c, opacity: ghostO) { c in
+            stroke(c, circle(61, 45, 7), dash: [3, 3])
+            stroke(c, svg("M49 66 a12 12 0 0 1 24 0"), dash: [3, 3])
+        }
+        layer(c, ty: frontY) { c in
+            solid(c, svg("M26 68 a14 14 0 0 1 28 0 Z"))
+            solid(c, circle(40, 43, 8.5))
+        }
+        layer(c, sx: plusSX, sy: plusSY, origin: pt(76, 28), opacity: plusO) { c in
+            solid(c, circle(76, 28, 7))
+            stroke(c, svg("M76 24.5 v7 M72.5 28 h7"))
+        }
+    }
+
+
+    // MARK: 14. Archive
+
+    /// trash, archived, clean up, tidy
+    /// Loop: lid lifts and tilts 0.4-1.0, an empty puff rises 0.9-1.8, lid drops 2.2-2.6 with impact lines.
+    /// Still frame: .ear-puff opacity:0; .ear-impact opacity:0; .ear-lid transform:translate(0,0).
+    func archive(_ c: GraphicsContext) {
+        let o = Ease.out, i = Ease.in, d = Ease.std
+        // .ear-puff  (ear-puff 3.4s)
+        let puffY = v([(0, 4, o), (26.5, 4, o), (41.2, -4, d), (55.9, -10, d), (100, -10, d)], still: 0)
+        let puffSX = v([(0, 0.7, o), (26.5, 0.7, o), (41.2, 1, d), (55.9, 1.1, d), (100, 1.1, d)], still: 1)
+        let puffSY = v([(0, 0.7, o), (26.5, 0.7, o), (41.2, 1, d), (55.9, 1.1, d), (100, 1.1, d)], still: 1)
+        let puffO = v([(0, 0, o), (26.5, 0, o), (41.2, 1, d), (55.9, 0, d), (100, 0, d)], still: 0)
+        // .ear-impact  (ear-impact 3.4s)
+        let impactSX = v([(0, 1, d), (75, 1, d), (79.4, 1.12, o), (88.2, 1.12, d), (100, 1.12, d)], still: 1)
+        let impactSY = v([(0, 1, d), (75, 1, d), (79.4, 1.12, o), (88.2, 1.12, d), (100, 1.12, d)], still: 1)
+        let impactO = v([(0, 0, d), (75, 0, d), (79.4, 1, o), (88.2, 0, d), (100, 0, d)], still: 0)
+        // .ear-lid  (ear-lid 3.4s)
+        let lidX = v([(0, 0, o), (11.8, 0, o), (29.4, -14, i), (64.7, -14, i), (75, 0, d), (80.9, 0, d), (100, 0, d)], still: 0)
+        let lidY = v([(0, 0, o), (11.8, 0, o), (29.4, -14, i), (64.7, -14, i), (75, 1, d), (80.9, 0, d), (100, 0, d)], still: 0)
+        let lidR = v([(0, 0, o), (11.8, 0, o), (29.4, -10, i), (64.7, -10, i), (75, 0, d), (80.9, 0, d), (100, 0, d)], still: 0)
+
+        solid(c, oval(48, 78, 28, 5))
+        solid(c, svg("M24 52 L48 42 L72 52 L48 62 Z"))
+        solid(c, svg("M24 52 V68 L48 78 V62 M72 52 V68 L48 78"))
+        layer(c, opacity: 0.6) { c in
+            stroke(c, svg("M40 66 l8 3.4 l8 -3.4"))
+        }
+        layer(c, ty: puffY, sx: puffSX, sy: puffSY, origin: pt(52.3, 40.1), opacity: puffO) { c in
+            solid(c, circle(46, 44, 2))
+            solid(c, circle(53, 37, 2.8))
+            solid(c, circle(59, 44, 1.6))
+        }
+        layer(c, sx: impactSX, sy: impactSY, origin: pt(48, 52), opacity: impactO) { c in
+            stroke(c, svg("M18 50 l-5 -2 M18 56 l-6 0 M78 50 l5 -2 M78 56 l6 0"))
+        }
+        layer(c, tx: lidX, ty: lidY, rot: lidR, origin: pt(48, 49.5)) { c in
+            solid(c, svg("M48 37 L72 47 L48 57 L24 47 Z"))
+            stroke(c, svg("M24 47 V52 L48 62 V57"))
+            stroke(c, svg("M72 47 V52 L48 62"))
+        }
+    }
+
+
+    // MARK: 15. Flow
+
+    /// DAGs, flows, plans, maps, recipes, iterations
+    /// Loop: first links draw 0.3-0.8, middle nodes pop, second links draw 1.0-1.5, the empty end node pulses; all fade back 2.6-3.1.
+    /// Still frame: .efl-l1 opacity:0.55; .efl-l2 opacity:0.55; .efl-end opacity:0.8.
+    func flow(_ c: GraphicsContext) {
+        let o = Ease.out, d = Ease.std
+        // .efl-l.efl-l1  (efl-l1 3.4s)
+        let l1O = v([(0, 1, o), (8.8, 1, o), (23.5, 1, d), (76.5, 1, d), (91.2, 0, d), (100, 0, d)], still: 0.55)
+        let l1Draw = v([(0, 0, o), (8.8, 0, o), (23.5, 1, d), (76.5, 1, d), (91.2, 1, d), (100, 1, d)], still: 1)
+        // .efl-l.efl-l1  (efl-l1 3.4s)
+        let l1N3O = v([(0, 1, o), (8.8, 1, o), (23.5, 1, d), (76.5, 1, d), (91.2, 0, d), (100, 0, d)], still: 0.55)
+        let l1N3Draw = v([(0, 0, o), (8.8, 0, o), (23.5, 1, d), (76.5, 1, d), (91.2, 1, d), (100, 1, d)], still: 1)
+        // .efl-l.efl-l2  (efl-l2 3.4s)
+        let l2O = v([(0, 1, o), (29.4, 1, o), (44.1, 1, d), (76.5, 1, d), (91.2, 0, d), (100, 0, d)], still: 0.55)
+        let l2Draw = v([(0, 0, o), (29.4, 0, o), (44.1, 1, d), (76.5, 1, d), (91.2, 1, d), (100, 1, d)], still: 1)
+        // .efl-l.efl-l2  (efl-l2 3.4s)
+        let l2N5O = v([(0, 1, o), (29.4, 1, o), (44.1, 1, d), (76.5, 1, d), (91.2, 0, d), (100, 0, d)], still: 0.55)
+        let l2N5Draw = v([(0, 0, o), (29.4, 0, o), (44.1, 1, d), (76.5, 1, d), (91.2, 1, d), (100, 1, d)], still: 1)
+        // .efl-n2  (efl-n 3.4s)
+        let n2SX = v([(0, 1, o), (23.5, 1, o), (27.9, 1.15, d), (33.8, 1, d), (100, 1, d)], still: 1)
+        let n2SY = v([(0, 1, o), (23.5, 1, o), (27.9, 1.15, d), (33.8, 1, d), (100, 1, d)], still: 1)
+        // .efl-n2  (efl-n 3.4s)
+        let n2N10SX = v([(0, 1, o), (23.5, 1, o), (27.9, 1.15, d), (33.8, 1, d), (100, 1, d)], still: 1)
+        let n2N10SY = v([(0, 1, o), (23.5, 1, o), (27.9, 1.15, d), (33.8, 1, d), (100, 1, d)], still: 1)
+        // .efl-end  (efl-end 3.4s)
+        let endSX = v([(0, 1, o), (44.1, 1, o), (50, 1.12, d), (58.8, 1, d), (76.5, 1, d), (100, 1, d)], still: 1)
+        let endSY = v([(0, 1, o), (44.1, 1, o), (50, 1.12, d), (58.8, 1, d), (76.5, 1, d), (100, 1, d)], still: 1)
+        let endO = v([(0, 0.5, o), (44.1, 0.5, o), (50, 1, d), (58.8, 1, d), (76.5, 1, d), (100, 0.5, d)], still: 0.8)
+
+        layer(c, opacity: l1O) { c in
+            stroke(c, svg("M32 46 C 36 46 36 30 40 30"), trim: l1Draw)
+        }
+        layer(c, opacity: l1N3O) { c in
+            stroke(c, svg("M32 46 C 36 46 36 62 40 62"), trim: l1N3Draw)
+        }
+        layer(c, opacity: l2O) { c in
+            stroke(c, svg("M58 30 C 62 30 62 46 66 46"), trim: l2Draw)
+        }
+        layer(c, opacity: l2N5O) { c in
+            stroke(c, svg("M58 62 C 62 62 62 46 66 46"), trim: l2N5Draw)
+        }
+        solid(c, rect(14, 40, 18, 12, rx: 3))
+        layer(c, sx: n2SX, sy: n2SY, origin: pt(49, 30)) { c in
+            solid(c, rect(40, 24, 18, 12, rx: 3))
+        }
+        layer(c, sx: n2N10SX, sy: n2N10SY, origin: pt(49, 62)) { c in
+            solid(c, rect(40, 56, 18, 12, rx: 3))
+        }
+        layer(c, sx: endSX, sy: endSY, origin: pt(75, 46), opacity: endO) { c in
+            stroke(c, rect(66, 40, 18, 12, rx: 3), dash: [3, 3])
+            stroke(c, svg("M75 43 v6 M72 46 h6"))
+        }
+    }
+
+
+    // MARK: 16. Network
+
+    /// nodes, channels, endpoints, instances, connections
+    /// Loop: a ring goes out from the hub 0.3-1.3; each dashed link and empty node lights in turn, then dims (nobody joined).
+    /// Still frame: .enw-l1 opacity:0.5; .enw-l2 opacity:0.5; .enw-l3 opacity:0.5; .enw-l4 opacity:0.5; .enw-s1 opacity:0.7; .enw-s2 opacity:0.7; .enw-s3 opacity:0.7; .enw-s4 opacity:0.7; .enw-ring opacity:0.
+    func network(_ c: GraphicsContext) {
+        let o = Ease.out, io = Ease.io, d = Ease.std
+        // .enw-l.enw-l1  (enw-l 3.4s)
+        let l1O = v([(0, 0.3, d), (17.6, 0.3, d), (25, 1, io), (44.1, 0.3, d), (100, 0.3, d)], still: 0.5)
+        // .enw-l.enw-l2  (enw-l 3.4s, delay 0.15s)
+        let l2O = v([(0, 0.3, d), (17.6, 0.3, d), (25, 1, io), (44.1, 0.3, d), (100, 0.3, d)], still: 0.5, delay: 0.15)
+        // .enw-l.enw-l3  (enw-l 3.4s, delay 0.3s)
+        let l3O = v([(0, 0.3, d), (17.6, 0.3, d), (25, 1, io), (44.1, 0.3, d), (100, 0.3, d)], still: 0.5, delay: 0.3)
+        // .enw-l.enw-l4  (enw-l 3.4s, delay 0.45s)
+        let l4O = v([(0, 0.3, d), (17.6, 0.3, d), (25, 1, io), (44.1, 0.3, d), (100, 0.3, d)], still: 0.5, delay: 0.45)
+        // .enw-s.enw-s1  (enw-s 3.4s)
+        let s1O = v([(0, 0.45, d), (23.5, 0.45, d), (29.4, 1, io), (47.1, 0.45, d), (100, 0.45, d)], still: 0.7)
+        // .enw-s.enw-s2  (enw-s 3.4s, delay 0.15s)
+        let s2O = v([(0, 0.45, d), (23.5, 0.45, d), (29.4, 1, io), (47.1, 0.45, d), (100, 0.45, d)], still: 0.7, delay: 0.15)
+        // .enw-s.enw-s3  (enw-s 3.4s, delay 0.3s)
+        let s3O = v([(0, 0.45, d), (23.5, 0.45, d), (29.4, 1, io), (47.1, 0.45, d), (100, 0.45, d)], still: 0.7, delay: 0.3)
+        // .enw-s.enw-s4  (enw-s 3.4s, delay 0.45s)
+        let s4O = v([(0, 0.45, d), (23.5, 0.45, d), (29.4, 1, io), (47.1, 0.45, d), (100, 0.45, d)], still: 0.7, delay: 0.45)
+        // .enw-ring  (enw-ring 3.4s)
+        let ringSX = v([(0, 1, o), (8.8, 1, o), (38.2, 2.4, d), (100, 2.4, d)], still: 1)
+        let ringSY = v([(0, 1, o), (8.8, 1, o), (38.2, 2.4, d), (100, 2.4, d)], still: 1)
+        let ringO = v([(0, 0.6, o), (8.8, 0.6, o), (38.2, 0, d), (100, 0, d)], still: 0)
+
+        layer(c, opacity: l1O) { c in
+            stroke(c, svg("M48 48 L18 24"), dash: [2, 3])
+        }
+        layer(c, opacity: l2O) { c in
+            stroke(c, svg("M48 48 L78 24"), dash: [2, 3])
+        }
+        layer(c, opacity: l3O) { c in
+            stroke(c, svg("M48 48 L18 72"), dash: [2, 3])
+        }
+        layer(c, opacity: l4O) { c in
+            stroke(c, svg("M48 48 L78 72"), dash: [2, 3])
+        }
+        layer(c, opacity: s1O) { c in
+            solid(c, circle(18, 24, 5.5), dash: [3, 2.4])
+        }
+        layer(c, opacity: s2O) { c in
+            solid(c, circle(78, 24, 5.5), dash: [3, 2.4])
+        }
+        layer(c, opacity: s3O) { c in
+            solid(c, circle(18, 72, 5.5), dash: [3, 2.4])
+        }
+        layer(c, opacity: s4O) { c in
+            solid(c, circle(78, 72, 5.5), dash: [3, 2.4])
+        }
+        layer(c, sx: ringSX, sy: ringSY, origin: pt(48, 48), opacity: ringO) { c in
+            stroke(c, circle(48, 48, 10))
+        }
+        solid(c, circle(48, 48, 10))
+        layer(c, ty: dotY(delay: 0)) { c in
+            dot(c, circle(48, 48, 3))
+        }
+    }
+
+
+    // MARK: 17. Calendar
+
+    /// deadlines, next two weeks, schedules, runs today
+    /// Loop: the top band flips up 0.4-0.9 and back, a day ring pops 1.1-1.4, holds, fades 2.6-3.0.
+    /// Still frame: .ecal-mark opacity:1.
+    func calendar(_ c: GraphicsContext) {
+        let o = Ease.out, i = Ease.in, io = Ease.io, d = Ease.std
+        // .ecal-mark  (ecal-mark 3.4s)
+        let ecalMarkSX = v([(0, 0.5, o), (32.4, 0.5, o), (41.2, 1, i), (76.5, 1, i), (88.2, 0.8, d), (100, 0.8, d)], still: 1)
+        let ecalMarkSY = v([(0, 0.5, o), (32.4, 0.5, o), (41.2, 1, i), (76.5, 1, i), (88.2, 0.8, d), (100, 0.8, d)], still: 1)
+        let ecalMarkO = v([(0, 0, o), (32.4, 0, o), (41.2, 1, i), (76.5, 1, i), (88.2, 0, d), (100, 0, d)], still: 1)
+        // .ecal-sheet  (ecal-sheet 3.4s)
+        let ecalSheetSY = v([(0, 1, io), (11.8, 1, io), (19.1, -0.6, d), (26.5, 1, d), (100, 1, d)], still: 1)
+
+        solid(c, oval(48, 78, 28, 4.5))
+        solid(c, rect(24, 24, 48, 50, rx: 4))
+        stroke(c, svg("M24 35 H72"))
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(30, 42, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(40, 42, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(50, 42, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(60, 42, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(30, 52, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(40, 52, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(50, 52, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(60, 52, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(30, 62, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(40, 62, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(50, 62, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, opacity: 0.7) { c in
+            stroke(c, rect(60, 62, 6, 6, rx: 1.2), dash: [2, 2])
+        }
+        layer(c, sx: ecalMarkSX, sy: ecalMarkSY, origin: pt(53, 55), opacity: ecalMarkO) { c in
+            stroke(c, circle(53, 55, 6.5))
+        }
+        layer(c, sy: ecalSheetSY, origin: pt(48, 24)) { c in
+            solid(c, rect(24, 24, 48, 11, rx: 4))
+        }
+        stroke(c, svg("M35 19 v9 M61 19 v9"))
     }
 }
 
