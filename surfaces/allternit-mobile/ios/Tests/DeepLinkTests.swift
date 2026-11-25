@@ -25,4 +25,18 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(DeepLink.parse(path: "/computers"), .computers)
         XCTAssertEqual(DeepLink.parse(path: "/computers/inst_7"), .computerConsole("inst_7"))
     }
+
+    /// "Do with Allternit" hands over to the in-app bar with this link; the
+    /// app id keeps its colon and every value arrives as typed.
+    func testBarLinkFromDoIntent() {
+        let app = BarAppInfo(kind: "connector", ref: "mcp_stripe", name: "Stripe", level: "app", toolCount: 3)
+        let link = DoWording.barLink(app: app, tool: "refund_payment",
+                                     values: ["order_id": .text("1042 & 1043"), "amount": .number(320)],
+                                     botId: "refunds")
+        XCTAssertEqual(DeepLink.parse(url: link), .bar(BarLinkRequest(
+            app: "connector:mcp_stripe", tool: "refund_payment", bot: "refunds",
+            values: ["order_id": "1042 & 1043", "amount": "320"])))
+        XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://bar")!),
+                       .bar(BarLinkRequest(app: nil, tool: nil, values: [:])))
+    }
 }
