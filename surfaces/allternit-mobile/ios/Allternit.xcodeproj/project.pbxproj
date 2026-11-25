@@ -560,6 +560,8 @@
 		937A45ADCE190EA57C4BBA1C /* ModeIntros.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */; };
 		9385E59F21D8DFAB0594C4BD /* SignInStageMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A9822297D81E2FB62B5186 /* SignInStageMotion.swift */; };
 		D3C4B0A100000000000000F4 /* ArtifactNewModeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C4B0A100000000000000F3 /* ArtifactNewModeSheet.swift */; };
+		D3C4B0A100000000000000F6 /* ArtifactsShowChips.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C4B0A100000000000000F5 /* ArtifactsShowChips.swift */; };
+		D3C4B0A100000000000000F8 /* ArtifactAppsRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C4B0A100000000000000F7 /* ArtifactAppsRow.swift */; };
 		93BBEF8FB0B6058E47480A86 /* ArtifactsLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */; };
 		93C6789B18079E7BA58BA1E9 /* ThreadShareClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */; };
 		9408177BE0C2FA76E88F424B /* SharedAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A9B142E1D8FA2463A37DB2 /* SharedAccess.swift */; };
@@ -1304,6 +1306,8 @@
 		3805BD78B0431F98B8FC1399 /* BotStageLive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotStageLive.swift; sourceTree = "<group>"; };
 		38088029D8E26A5E11A29881 /* SelfHostedClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfHostedClientTests.swift; sourceTree = "<group>"; };
 		D3C4B0A100000000000000F3 /* ArtifactNewModeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactNewModeSheet.swift; sourceTree = "<group>"; };
+		D3C4B0A100000000000000F5 /* ArtifactsShowChips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsShowChips.swift; sourceTree = "<group>"; };
+		D3C4B0A100000000000000F7 /* ArtifactAppsRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactAppsRow.swift; sourceTree = "<group>"; };
 		384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsLibraryView.swift; sourceTree = "<group>"; };
 		39168AAAA2A1729A6320147C /* SharedPhoneRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedPhoneRun.swift; sourceTree = "<group>"; };
 		3924CEA01BDCC8043A376D4E /* AgentChatEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatEvent.swift; sourceTree = "<group>"; };
@@ -3908,6 +3912,8 @@
 				D63FEA2F5A4F240A19DFEA95 /* ArtifactPageWebView.swift */,
 				384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */,
 				D3C4B0A100000000000000F3 /* ArtifactNewModeSheet.swift */,
+				D3C4B0A100000000000000F5 /* ArtifactsShowChips.swift */,
+				D3C4B0A100000000000000F7 /* ArtifactAppsRow.swift */,
 				708964A04AD9EA1B5D2AEFE0 /* ArtifactStudioView.swift */,
 				97BDAE8A738E43DF48BE1B26 /* PDFTemplateSheet.swift */,
 				9D306A988D6817A4226CE448 /* SandboxedArtifactWebView.swift */,
@@ -4643,6 +4649,8 @@
 				45C726779D0976CBED691AF1 /* ArtifactTileFilter.swift in Sources */,
 				93BBEF8FB0B6058E47480A86 /* ArtifactsLibraryView.swift in Sources */,
 				D3C4B0A100000000000000F4 /* ArtifactNewModeSheet.swift in Sources */,
+				D3C4B0A100000000000000F6 /* ArtifactsShowChips.swift in Sources */,
+				D3C4B0A100000000000000F8 /* ArtifactAppsRow.swift in Sources */,
 				F345B2FB5086CE638D8EED40 /* ArtifactsV2Client.swift in Sources */,
 				777E9364C938736B3BD0AF14 /* AsciiEngine.swift in Sources */,
 				6F5FA231FD7A51D1DC9A25C9 /* AsciiScenes.swift in Sources */,

@@ -38,6 +38,8 @@ import SwiftUI
 struct V2ArtifactView: View {
     let artifactId: String
     var initialTitle: String? = nil
+    /// Open the Share panel as soon as the record loads (the library card's Share).
+    var startOnShare = false
     /// Called after an archive or delete so the caller can drop the row.
     var onRemoved: (() -> Void)? = nil
 
@@ -155,6 +157,7 @@ struct V2ArtifactView: View {
         .task {
             await load()
             await loadOpenThreads()
+            if startOnShare, artifact != nil { shareTab = .share; showingShare = true }
             #if DEBUG
             // `-calm-artifact-comments` / `-calm-artifact-share` (DEBUG only).
             if artifact != nil, CalmArtifactLaunch.on(LaunchArgument.calmArtifactComments) { showingComments = true }

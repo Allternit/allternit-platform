@@ -401,10 +401,20 @@ final class ArtifactStudioLauncher: ObservableObject {
         try? await APIClient.shared.patch(
             path: "agent-sessions/\(Self.escape(session.id))",
             body: SessionBindingPatch(metadata: .init(artifactSession: .init(
-                kind: recordKind ?? kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId
+                kind: recordKind ?? kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId,
+                can: Self.binding(can: can, entry: kind.modeEntry)
             )))
         )
         return started
+    }
+
+    /// Only the toggles the kind can honour and the person ticked; nil when none.
+    private static func binding(can: ItCanChoices?, entry: AgentModeEntry?) -> SessionBinding.Can? {
+        guard let can, let entry else { return nil }
+        let storage = entry.storage != .none && can.storage
+        let ai = entry.ai != .none && can.ai
+        guard storage || ai else { return nil }
+        return SessionBinding.Can(connectors: nil, storage: storage ? true : nil, ai: ai ? true : nil)
     }
 
     private func persist() {
@@ -424,6 +434,16 @@ final class ArtifactStudioLauncher: ObservableObject {
         let title: String?
         let artifactId: String?
         let designProjectId: String?
+        /// The "It can" choices under the web binding's `can` keys
+        /// (artifact-session.ts ArtifactSessionCan). iOS has no connector names
+        /// to list, so `connectors` is left out; `storage` and `ai` are the toggles.
+        var can: Can? = nil
+
+        struct Can: Codable {
+            var connectors: [String]?
+            var storage: Bool?
+            var ai: Bool?
+        }
     }
 
     private struct SessionBindingPatch: Encodable {
