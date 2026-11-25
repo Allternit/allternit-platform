@@ -18,3 +18,5 @@ f63d120981d97e9595189a2a97f21efc3cec98c0:platform/host-probe/src/http.rs:generic
 acfbb0728dc25fdfa933440e59c206c377fe6158:cmd/allternit-cloud-api/src/routes/computers_host_tests.rs:generic-api-key:486
 # 2026-11-23: truncated fake PEM headers in the SSH key rejection test
 149078a9c95625a13a91811f11655a8ea5752214:cmd/allternit-cloud-api/src/services/provision_ssh_keys.rs:private-key:619
+# 2026-11-25: fake relay admission secret in the share-link usage test fixture (train 20261125-0050)
+06d58e8934c10a869ce2ce208d2a503421f68da6:cmd/allternit-cloud-api/src/routes/share_link_usage_tests.rs:generic-api-key:24
