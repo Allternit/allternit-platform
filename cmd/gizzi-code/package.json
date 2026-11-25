@@ -113,6 +113,7 @@
     "@allternit/pdf-templates": "workspace:*",
     "@allternit/os-contracts": "workspace:*",
     "@allternit/plugin": "workspace:*",
+    "@allternit/share-tunnel": "workspace:*",
     "@allternit/request-scorer": "workspace:*",
     "@allternit/script": "workspace:*",
     "@allternit/sdk": "workspace:*",

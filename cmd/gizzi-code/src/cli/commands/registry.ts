@@ -68,6 +68,8 @@ import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
 import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
 import { BoardCommand, SwarmCommand } from "@/cli/commands/factory/swarm"
 import { MissionCommand } from "@/cli/commands/mission"
+import { AppCommand } from "@/cli/commands/app"
+import { ShareCommand } from "@/cli/commands/share"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -103,6 +105,9 @@ export const COMMANDS: RegisteredCommand[] = [
   BoardCommand,
   // Missions: a long goal planned into milestones, each run as a swarm, validated and landed.
   MissionCommand,
+  // Apps from artifacts and share links (Apps + MCP 2026).
+  AppCommand,
+  ShareCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
