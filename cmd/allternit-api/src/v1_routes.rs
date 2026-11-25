@@ -2375,8 +2375,13 @@ async fn agent_chat_bridge(
         // user and session. Connector credentials never leave allternit-api.
         // Top-level, not `metadata`: gizzi stores metadata on the user message,
         // and this token must stay in memory.
+        // The token names who acts (its `isb`/`bot` claims): the bot this turn
+        // runs as (`bot_marker`, decided above from the server's agents table
+        // and gizzi's `bot` field), so the team rule gate never has to trust
+        // session metadata or a client-sent agent id later.
+        let acting_bot = bot_marker.as_ref().and_then(|marker| marker["id"].as_str());
         if let Some(proxy) =
-            crate::mcp_user_proxy::proxy_registration(&state, &user_id_for_record, &session_id).await
+            crate::mcp_user_proxy::proxy_registration(&state, &user_id_for_record, &session_id, acting_bot).await
         {
             gizzi_payload["mcpProxy"] = proxy;
         }

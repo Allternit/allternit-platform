@@ -21,11 +21,17 @@
 //!    a routed `cowork_approvals` row they approved, named by
 //!    `_meta["allternit/approvalId"]`, for the same app, tool and arguments
 //!    hash, within 24 hours (D20), used once.
+//! 4. **Spend.** A passing call *claims* its approvals (`claimedAt`), which
+//!    keeps them single-use while the connector runs. The caller then settles
+//!    them with [`settle_claims`]: spent (`usedAt`) when the connector call
+//!    succeeded, released when it failed, so a failed call does not use up the
+//!    approver's yes. A claim never settled (the process died) frees itself
+//!    after [`CLAIM_TTL_MINUTES`].
 //!
 //! The arguments hash, the arguments and the rule sentence live in the row's
-//! `content` JSON (`kind: "team_rule"`, `argsHash`, `usedAt` once spent), so no
-//! column is added; `rule_id`, `bot_id`, `job_id` and `approver_user_id` use
-//! the V294 columns.
+//! `content` JSON (`kind: "team_rule"`, `argsHash`, `claimedAt` while a call
+//! holds it, `usedAt` once spent), so no column is added; `rule_id`, `bot_id`,
+//! `job_id` and `approver_user_id` use the V294 columns.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -48,6 +54,9 @@ pub const ROUTED_SOURCE: &str = "team-rule";
 pub const CONTENT_KIND: &str = "team_rule";
 /// D20: an ask (and the approval it carries) lasts 24 hours.
 pub const ASK_TTL_HOURS: i64 = 24;
+/// A claimed approval whose call never settled it is free again after this.
+/// Longer than any proxied call (25 s, or an elicitation the person answers).
+pub const CLAIM_TTL_MINUTES: i64 = 15;
 
 /// One proxied tool call, as the gate sees it.
 #[derive(Debug, Clone)]
@@ -81,6 +90,9 @@ pub struct GateCall<'a> {
 pub enum Decision {
     /// Run (the install mode's own confirmation still applies after this).
     Allow,
+    /// Run, on these routed approvals, now claimed for this call. The caller
+    /// must [`settle_claims`] them once the connector call ends.
+    AllowClaimed(Vec<String>),
     /// A rule needs someone else's approval; the ask is open as `approval_id`.
     NeedsOwner {
         rule: ApprovalRule,
@@ -318,7 +330,9 @@ fn find_approved(
                        AND user_id = ?4 AND bot_id IS ?5 AND decision = 'approved'
                        AND json_extract(content, '$.argsHash') = ?6
                        AND json_extract(content, '$.usedAt') IS NULL
-                       AND created_at >= datetime('now', '-{ASK_TTL_HOURS} hours')"
+                       AND {}
+                       AND created_at >= datetime('now', '-{ASK_TTL_HOURS} hours')",
+                    unclaimed()
                 ),
                 params![id, rule_id, approver, call.user_id, call.bot_id, hash],
                 |r| r.get::<_, String>(0),
@@ -394,15 +408,42 @@ fn open_ask(
     Ok(id)
 }
 
-/// Spend an approval: one approval, one call. `false` when another call spent
-/// it first.
-fn spend(conn: &Connection, approval_id: &str) -> rusqlite::Result<bool> {
+/// SQL: the row is not held by a live claim (none, or one older than [`CLAIM_TTL_MINUTES`]).
+fn unclaimed() -> String {
+    format!(
+        "(json_extract(content, '$.claimedAt') IS NULL
+          OR json_extract(content, '$.claimedAt') < datetime('now', '-{CLAIM_TTL_MINUTES} minutes'))"
+    )
+}
+
+/// Claim an approval for one call: one approval, one call. `false` when
+/// another call spent or holds it first.
+fn claim(conn: &Connection, approval_id: &str) -> rusqlite::Result<bool> {
     let n = conn.execute(
-        "UPDATE cowork_approvals SET content = json_set(content, '$.usedAt', datetime('now'))
-         WHERE id = ?1 AND json_extract(content, '$.usedAt') IS NULL",
+        &format!(
+            "UPDATE cowork_approvals SET content = json_set(content, '$.claimedAt', datetime('now'))
+             WHERE id = ?1 AND json_extract(content, '$.usedAt') IS NULL AND {}",
+            unclaimed()
+        ),
         params![approval_id],
     )?;
     Ok(n > 0)
+}
+
+/// Settle the approvals a call claimed ([`Decision::AllowClaimed`]): spent
+/// when the connector call succeeded, released for another try when it failed.
+pub fn settle_claims(conn: &Connection, approval_ids: &[String], succeeded: bool) -> rusqlite::Result<()> {
+    let sql = if succeeded {
+        "UPDATE cowork_approvals SET content = json_set(content, '$.usedAt', datetime('now'))
+         WHERE id = ?1 AND json_extract(content, '$.usedAt') IS NULL"
+    } else {
+        "UPDATE cowork_approvals SET content = json_remove(content, '$.claimedAt')
+         WHERE id = ?1 AND json_extract(content, '$.usedAt') IS NULL"
+    };
+    for id in approval_ids {
+        conn.execute(sql, params![id])?;
+    }
+    Ok(())
 }
 
 fn user_name(conn: &Connection, user_id: &str) -> rusqlite::Result<Option<String>> {
@@ -492,11 +533,12 @@ pub fn gate_call(conn: &Connection, call: &GateCall<'_>) -> rusqlite::Result<Dec
         return Ok(Decision::Allow);
     }
 
-    // Spend every approval together, or none.
+    // Claim every approval together, or none. The caller spends them once the
+    // connector call succeeds (`settle_claims`).
     conn.execute_batch("SAVEPOINT team_rule_spend")?;
     let mut lost: Option<usize> = None;
     for (i, id) in approvals.iter().enumerate() {
-        match spend(conn, id) {
+        match claim(conn, id) {
             Ok(true) => {}
             Ok(false) => {
                 lost = Some(i);
@@ -511,7 +553,7 @@ pub fn gate_call(conn: &Connection, call: &GateCall<'_>) -> rusqlite::Result<Dec
     match lost {
         None => {
             conn.execute_batch("RELEASE team_rule_spend")?;
-            Ok(Decision::Allow)
+            Ok(Decision::AllowClaimed(approvals))
         }
         Some(i) => {
             conn.execute_batch("ROLLBACK TO team_rule_spend; RELEASE team_rule_spend")?;
@@ -774,9 +816,43 @@ mod tests {
         // Changed arguments: the approval does not cover them.
         let changed = json!({ "amount": 900 });
         assert!(matches!(gate_call(&conn, &call("ann", None, &changed, &ids)).unwrap(), Decision::NeedsOwner { .. }));
-        // Same arguments: runs, once.
-        assert_eq!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::Allow);
+        // Same arguments: runs, once. While the call holds the claim, a second call is held.
+        assert_eq!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::AllowClaimed(ids.clone()));
         assert!(matches!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::NeedsOwner { .. }));
+        // The connector call failed: the approval is released, not spent.
+        settle_claims(&conn, &ids, false).unwrap();
+        assert_eq!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::AllowClaimed(ids.clone()));
+        // It succeeded: spent for good.
+        settle_claims(&conn, &ids, true).unwrap();
+        assert!(matches!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::NeedsOwner { .. }));
+        // Releasing a spent approval does not bring it back.
+        settle_claims(&conn, &ids, false).unwrap();
+        assert!(matches!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::NeedsOwner { .. }));
+    }
+
+    #[test]
+    fn a_claim_never_settled_frees_itself_after_the_claim_ttl() {
+        let conn = db();
+        seed(&conn);
+        add_rule(&conn, ApproverKind::Manager, Some("amount"), RuleOp::Gt, Some(json!(100)));
+        let big = json!({ "amount": 500 });
+        let Decision::NeedsOwner { approval_id, .. } = gate_call(&conn, &call("ann", None, &big, &[])).unwrap() else {
+            panic!("expected an ask")
+        };
+        conn.execute("UPDATE cowork_approvals SET dismissed = 1, decision = 'approved' WHERE id = ?1", params![approval_id])
+            .unwrap();
+        let ids = vec![approval_id.clone()];
+        assert_eq!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::AllowClaimed(ids.clone()));
+        // The process died mid-call: the claim is older than the TTL.
+        conn.execute(
+            &format!(
+                "UPDATE cowork_approvals SET content = json_set(content, '$.claimedAt', datetime('now', '-{} minutes')) WHERE id = ?1",
+                CLAIM_TTL_MINUTES + 1
+            ),
+            params![approval_id],
+        )
+        .unwrap();
+        assert_eq!(gate_call(&conn, &call("ann", None, &big, &ids)).unwrap(), Decision::AllowClaimed(ids.clone()));
     }
 
     #[test]

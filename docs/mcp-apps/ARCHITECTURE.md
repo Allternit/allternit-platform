@@ -50,7 +50,10 @@ one MCP server entry: this proxy.
   user has no enabled connector. `agent_chat_bridge` sends it as top-level `mcpProxy` on the gizzi message payload, not in
   `metadata`, so it is not persisted. gizzi (`tools/mcp/user-proxy.ts`) keeps it in memory keyed by session and drops it at
   the end of the turn. `ALLTERNIT_MCP_PROXY_URL` overrides the URL gizzi uses.
-- **Token binding.** `v1.<payload>.<hmac-sha256>`, claims `{uid, sid, exp}`, valid 15 minutes (`TOKEN_TTL_SECS`). Every request must
+- **Token binding.** `v1.<payload>.<hmac-sha256>`, claims `{uid, sid, exp, isb, bot?}`, valid 15 minutes (`TOKEN_TTL_SECS`).
+  `isb` (is the caller a bot) and `bot` (the acting bot's `agents.id`) are set at registration from the bot the turn runs as,
+  and only when that bot is one of `uid`'s own agents. The team rule gate reads them before session metadata; a token without
+  `isb` (minted before the claim) falls back to the session's `isBot` tag. gizzi treats the token as opaque. Every request must
   also send `X-Allternit-Session` equal to `sid`. Bad signature, expiry, malformed token or wrong session all give 401. The
   route is public in `main.rs` because the handler does this check. The signing secret is `ALLTERNIT_MCP_PROXY_SECRET`, or random per process.
 - **Methods.** `initialize`, `ping`, `tools/list`, `tools/call`, `resources/read`. Notifications get 202. Others get `-32601`.
