@@ -18,6 +18,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::error::{McpError, Result, TransportError};
 use crate::protocol::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
+use crate::server_requests::{self, DeclineAll, ServerRequestHandler};
 use crate::transport::{McpTransport, TransportType};
 
 /// Stdio transport for MCP communication
@@ -40,6 +41,8 @@ pub struct StdioTransport {
     pending_requests: Arc<StdMutex<HashMap<u64, oneshot::Sender<Result<Value>>>>>,
     /// Whether the transport is closed
     closed: AtomicBool,
+    /// Answers server-to-client requests (`elicitation/create`, …)
+    server_requests: StdMutex<Arc<dyn ServerRequestHandler>>,
     /// Server configuration
     config: StdioConfig,
 }
@@ -139,6 +142,7 @@ impl StdioTransport {
             response_tx,
             pending_requests: pending_requests.clone(),
             closed: AtomicBool::new(false),
+            server_requests: StdMutex::new(Arc::new(DeclineAll) as Arc<dyn ServerRequestHandler>),
             config: config.clone(),
         });
 
@@ -183,6 +187,25 @@ impl StdioTransport {
                 warn!("Failed to parse JSON-RPC message from server stdout");
                 continue;
             };
+            // A server-to-client request (legacy era: `elicitation/create`,
+            // `ping`, …) is answered by the installed hook on stdin, so the
+            // server never waits on us forever.
+            if server_requests::is_server_request(&value) {
+                let handler = self.server_requests.lock().map(|h| h.clone()).unwrap_or_else(|_| Arc::new(DeclineAll) as Arc<dyn ServerRequestHandler>);
+                let writer = self.stdin_writer.clone();
+                let message = value.clone();
+                tokio::spawn(async move {
+                    let reply = server_requests::answer_server_request(handler.as_ref(), &message).await;
+                    let Ok(json) = serde_json::to_string(&reply) else { return };
+                    let mut writer = writer.lock().await;
+                    if writer.write_all(json.as_bytes()).await.is_err()
+                        || writer.write_all(b"\n").await.is_err()
+                        || writer.flush().await.is_err()
+                    {
+                        warn!("failed to answer a server request on stdin");
+                    }
+                });
+            }
             // Answers to `request()` go to their waiter.
             if value.get("method").is_none() {
                 if let Ok(response) = serde_json::from_value::<JsonRpcResponse>(value.clone()) {
@@ -385,6 +408,12 @@ impl McpTransport for StdioTransport {
 
     fn transport_type(&self) -> TransportType {
         TransportType::Stdio
+    }
+
+    fn set_server_request_handler(&self, handler: Arc<dyn ServerRequestHandler>) {
+        if let Ok(mut slot) = self.server_requests.lock() {
+            *slot = handler;
+        }
     }
 }
 

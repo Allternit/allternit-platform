@@ -21,6 +21,7 @@ pub mod client;
 pub mod events;
 pub mod ordering;
 pub mod servers;
+pub mod tasks;
 pub mod webhooks;
 
 /// Newest revision we speak. Modern clients get this unless they ask for

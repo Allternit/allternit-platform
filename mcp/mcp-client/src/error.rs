@@ -57,6 +57,12 @@ pub enum McpError {
     /// Storage/database error
     #[error("storage error: {0}")]
     Storage(String),
+
+    /// The server answered with a task handle (`resultType: "task"`,
+    /// SEP-2663) where the caller only takes a complete result. Use
+    /// `McpClient::call_tool` / `call_tool_raw` to receive tasks.
+    #[error("server started task {} instead of returning a result; this caller does not follow MCP tasks", .0.task.task_id)]
+    TaskCreated(Box<mcp_protocol::tasks::CreateTaskResult>),
 }
 
 /// Transport-specific errors

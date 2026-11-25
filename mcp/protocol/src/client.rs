@@ -14,7 +14,9 @@
 //!   classified by [`classify_probe_failure`]: a recognized modern JSON-RPC
 //!   error means "modern server, retry or surface", anything else in the
 //!   fallback set means "legacy server, send `initialize`";
-//! * a result without `resultType` is complete ([`check_result_type`]).
+//! * a result without `resultType` is complete ([`check_result_type`]); a
+//!   `tools/call` that declared the tasks extension may also get `task`
+//!   ([`check_result_type_for`]).
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Map, Value};
@@ -222,12 +224,41 @@ pub fn classify_probe_failure(http_status: Option<u16>, rpc_error: Option<&Value
 }
 
 /// `resultType` semantics: missing means `complete` (legacy servers and
-/// modern ones that omit it). Anything else (`input_required`, …) is a
-/// multi-round-trip result this client does not continue; the error names
-/// the type.
+/// modern ones that omit it). Anything else (`input_required`, `task`, …)
+/// is rejected; the error names the type. Requests that may legitimately
+/// answer with a task use [`check_result_type_for`].
 pub fn check_result_type(result: &Value) -> Result<(), String> {
     match result.get("resultType").and_then(Value::as_str) {
         None | Some("complete") => Ok(()),
+        Some(other) => Err(format!("server returned resultType {other:?}, which this client does not support")),
+    }
+}
+
+/// Which result shape a request got back (see [`check_result_type_for`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultKind {
+    /// The request's standard result (`resultType` missing or `complete`).
+    Complete,
+    /// A `CreateTaskResult` (`resultType: "task"`, SEP-2663).
+    Task,
+}
+
+/// [`check_result_type`] for one request. `task` is accepted only when the
+/// request declared the tasks extension (`tasks_declared`) AND the method
+/// is one tasks may answer (`tools/call`); a task anywhere else is an
+/// invalid response (SEP-2663 "Capability Negotiation").
+pub fn check_result_type_for(method: &str, result: &Value, tasks_declared: bool) -> Result<ResultKind, String> {
+    match result.get("resultType").and_then(Value::as_str) {
+        None | Some("complete") => Ok(ResultKind::Complete),
+        Some(crate::tasks::RESULT_TYPE_TASK) if tasks_declared && crate::tasks::method_supports_tasks(method) => {
+            Ok(ResultKind::Task)
+        }
+        Some(crate::tasks::RESULT_TYPE_TASK) if tasks_declared => {
+            Err(format!("server returned a task for {method:?}, which tasks do not support"))
+        }
+        Some(crate::tasks::RESULT_TYPE_TASK) => {
+            Err("server returned a task, but this request did not declare the io.modelcontextprotocol/tasks extension".into())
+        }
         Some(other) => Err(format!("server returned resultType {other:?}, which this client does not support")),
     }
 }
@@ -321,5 +352,17 @@ mod tests {
         assert!(check_result_type(&json!({ "tools": [] })).is_ok());
         assert!(check_result_type(&json!({ "resultType": "complete" })).is_ok());
         assert!(check_result_type(&json!({ "resultType": "input_required" })).unwrap_err().contains("input_required"));
+        assert!(check_result_type(&json!({ "resultType": "task" })).is_err());
+    }
+
+    #[test]
+    fn a_task_result_is_accepted_only_when_declared_on_tools_call() {
+        let task = json!({ "resultType": "task", "taskId": "t1", "status": "working" });
+        assert_eq!(check_result_type_for("tools/call", &task, true), Ok(ResultKind::Task));
+        assert!(check_result_type_for("tools/call", &task, false).unwrap_err().contains("did not declare"));
+        assert!(check_result_type_for("tools/list", &task, true).unwrap_err().contains("tools/list"));
+        assert_eq!(check_result_type_for("tools/call", &json!({ "content": [] }), true), Ok(ResultKind::Complete));
+        assert_eq!(check_result_type_for("tasks/get", &json!({ "resultType": "complete", "status": "working" }), true), Ok(ResultKind::Complete));
+        assert!(check_result_type_for("tools/call", &json!({ "resultType": "input_required" }), true).is_err());
     }
 }

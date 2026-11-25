@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::protocol::JsonRpcMessage;
+use crate::server_requests::ServerRequestHandler;
 
 pub mod sse;
 pub mod stdio;
@@ -94,6 +95,15 @@ pub trait McpTransport: Send + Sync + std::fmt::Debug {
     fn era_cache_key(&self) -> Option<String> {
         None
     }
+
+    /// Install the hook that answers server-to-client requests
+    /// (`elicitation/create`, …) arriving on this transport's streams.
+    /// Transports start with [`crate::server_requests::DeclineAll`]; the
+    /// default implementation ignores the call (the deprecated HTTP+SSE
+    /// transport).
+    fn set_server_request_handler(&self, handler: std::sync::Arc<dyn ServerRequestHandler>) {
+        let _ = handler;
+    }
 }
 
 // Any shared transport is a transport.
@@ -132,6 +142,10 @@ where
 
     fn era_cache_key(&self) -> Option<String> {
         (**self).era_cache_key()
+    }
+
+    fn set_server_request_handler(&self, handler: std::sync::Arc<dyn ServerRequestHandler>) {
+        (**self).set_server_request_handler(handler)
     }
 }
 
