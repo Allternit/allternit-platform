@@ -5605,6 +5605,11 @@
           "on": "2026-11-25",
           "note": "Bar window is a white card; the pill is a black capsule. Android opens a Compose bar screen from a widget because a widget cannot hold text input."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/island-bar.mdx",
+        "allternit/surfaces/docs/api/island-bar.mdx",
+        "allternit/surfaces/docs/cli/do.mdx"
       ]
     },
     {
@@ -5619,14 +5624,9 @@
         "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs",
         "allternit/cmd/gizzi-code/src/cli/commands/team.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/registry.ts",
-        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
-        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
-        "allternit/surfaces/allternit-mobile/ios/Core/BotLiveActivityManager.swift",
-        "allternit/surfaces/allternit-mobile/android/feature/push/src/main/java/com/allternit/feature/push/LiveRunNotification.kt",
         "allternit-ai/src/components/mcp",
-        "allternit/surfaces/docs/guides/island-bar.mdx",
-        "allternit/surfaces/docs/api/island-bar.mdx",
-        "allternit/surfaces/docs/cli/do.mdx"
+        "allternit/surfaces/docs/guides/team-map.mdx",
+        "allternit/surfaces/docs/cli/team.mdx"
       ],
       "decisions": [
         {
@@ -5641,6 +5641,11 @@
           "on": "2026-11-25",
           "note": "Ceiling checks fail closed (503 tier_check_unavailable). A bot on a vendor app needs both the app grant and the connector grant."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/team-map.mdx",
+        "allternit/surfaces/docs/cli/team.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs"
       ]
     }
   ],
@@ -6373,6 +6378,10 @@
           "at": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
           "says": "The call is retried with allternit/approvalId, runs once, and the job ends with a receipt."
         }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/island-bar.mdx",
+        "allternit/surfaces/docs/guides/team-map.mdx"
       ]
     }
   ]
