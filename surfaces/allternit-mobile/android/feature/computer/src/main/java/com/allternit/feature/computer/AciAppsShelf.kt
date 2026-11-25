@@ -268,13 +268,14 @@ internal fun AciAppsShelf() {
         }
     }
     stopping?.let { link ->
-        AlertDialog(
-            onDismissRequest = { stopping = null },
-            title = { Text("Stop this link?") },
-            text = { Text("Anyone with the link loses access. You can make a new one later.") },
-            confirmButton = { TextButton({ stopping = null; scope.launch { model.revoke(link) } }) { Text("Stop link") } },
-            dismissButton = { TextButton({ stopping = null }) { Text("Keep it") } },
-        )
+        // Ending a link is a hold, never a dialog (UI feedback 11-25).
+        ModalBottomSheet(onDismissRequest = { stopping = null }, containerColor = c.bgPrimary) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Stop this link?", color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("Anyone with the link loses access. You can make a new one later.", color = c.textSecondary, fontSize = 14.sp)
+                com.allternit.core.design.HoldButton("Hold to stop link", "aciAppsStopLink", danger = true) { stopping = null; scope.launch { model.revoke(link) } }
+            }
+        }
     }
     opened?.let { (url, name) ->
         Dialog(onDismissRequest = { opened = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
