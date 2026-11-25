@@ -25,13 +25,20 @@ You can cancel a job that has not finished.
 | --- | --- |
 | Desktop app | Global hotkey. The bar is a white card. While a job runs, a small black pill sits at the top of the screen. |
 | iPhone | The in-app bar grows out of the Dynamic Island. On an iPhone without an island it is a small capsule near the top. While a job runs it shows in a Live Activity. You can also start from the Shortcuts app or from iOS Search or Ask, which list your apps and bots. |
-| Android | A home screen widget opens the bar. A job in progress shows in an ongoing notification. |
+| Android | **Do with an app** in the composer's + sheet, the home screen widget, or the link `allternit://bar`. A job in progress shows in the **Bar jobs** notification. |
 | ai.allternit.com and m.allternit.com | The same sentence appears in the composer after you pick an app chip. On a phone it opens as a bottom sheet. |
 | Terminal | `gizzi do`. See [gizzi do](/cli/do). |
 
 On iPhone the island pill shows the job. The composer has **Do with an app**, which opens the same bar as a sheet. `allternit://bar` opens it from a link. The **Do with Allternit** Shortcut starts a run from the Shortcuts app. A finished job leaves a Live Activity receipt such as "Refunded €320". Your connections also appear in Spotlight.
 
 Android widgets cannot hold a text box, so the widget opens the bar screen rather than typing in place.
+
+### Android
+
+The Android bar takes the same steps as iPhone: app, tool, a sentence with blanks, review, run, live progress and a receipt. Open it from **Do with an app** in the composer's + sheet, or from a link such as `allternit://bar?app=<app>&tool=<tool>&v.<field>=<value>`. It stays off until the `bar.island` flag is turned on.
+
+- **Widget.** The home screen widget **Do with Allternit** opens the bar and shows the state of the live job.
+- **Notification.** A **Bar jobs** notification follows the job through its 4 steps. While a job waits on someone it reads `Waiting on <approver>`. When the job finishes it shows the receipt in the past tense, such as "Refunded €320", and clears after a few seconds. It needs the notification permission.
 
 ## The hotkey
 
