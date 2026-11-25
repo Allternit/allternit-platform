@@ -17,6 +17,8 @@ enum ConnectSceneState: Equatable {
 
 struct ConnectScene: View {
     var state: ConnectSceneState
+    /// Drawn width (default 240, the original size).
+    var width: CGFloat = 240
 
     @ReducedMotion private var reduced
     @State private var from = Vals.target(.asleep)
@@ -44,7 +46,7 @@ struct ConnectScene: View {
             }
         }
         .aspectRatio(1 / Self.aspect, contentMode: .fit)
-        .frame(maxWidth: 240)
+        .frame(maxWidth: width)
         .frame(maxWidth: .infinity)
         .accessibilityHidden(true)
         .onAppear { current = state; from = Vals.target(state); changedAt = .distantPast }
