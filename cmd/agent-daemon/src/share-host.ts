@@ -20,6 +20,7 @@ import {
  *   POST   /share-host/links           {linkId, subdomain, port, authMode?, admission?} -> {id, url, token, port}
  *   GET    /share-host/links           -> {links: [{id, url, port, state, connections}]}
  *   POST   /share-host/links/:id/pause {paused?}
+ * Relay host commands (index.ts): POST /host/shares/start and POST /host/shares/:id/{resume,pause,stop}.
  *   DELETE /share-host/links/:id       (also POST .../stop)
  *
  * `startShare` is the relay-forwarded host command `POST /host/shares/start` (index.ts routes it here; it is not an
@@ -42,7 +43,8 @@ export type ShareHostOptions = {
 type SavedLink = { id: string; subdomain: string; port: number; authMode: AuthMode };
 
 /** Heartbeat answers that mean cloud-api no longer wants this link (410 killed / revoked / unknown). */
-const DROP_REASONS: ReadonlySet<StopReason> = new Set(['killed', 'revoked', 'not_found', 'stopped', 'paused']);
+const DROP_REASONS: ReadonlySet<StopReason> = new Set(['killed', 'revoked', 'not_found', 'stopped']);
+// 'paused' is not dropped: the link stays saved so the host command /resume can re-open the tunnel.
 const RETRY_MS = 60_000;
 
 export type StartShareResult = { status: number; body: Record<string, unknown> };
@@ -50,6 +52,7 @@ export type StartShareResult = { status: number; body: Record<string, unknown> }
 export function startShareHost(options: ShareHostOptions): {
   stop(): Promise<void>;
   startShare(input: { port?: unknown; label?: unknown; artifact_id?: unknown }): Promise<StartShareResult>;
+  hostCommand(action: string, linkId: string): Promise<StartShareResult>;
 } {
   const log = options.log ?? ((m: string) => console.log(`[ShareHost] ${m}`));
   const file = join(options.dataDir, 'active-links.json');
@@ -203,6 +206,49 @@ export function startShareHost(options: ShareHostOptions): {
     }
   };
 
+  /**
+   * `POST /host/shares/:share_link_id/{resume,pause,stop}` (relay-forwarded; index.ts routes it here). The web only
+   * flips cloud state, and pausing makes cloud-api drop the relay tunnel, so Resume re-admits with a fresh relay
+   * credential and restarts the tunnel. 200 `{share_link_id, ...}`; errors `{error, message}`: 404 not_found,
+   * 410 killed|revoked, 502 cloud or tunnel failure.
+   */
+  const hostCommand = async (action: string, linkId: string): Promise<StartShareResult> => {
+    const link = saved.get(linkId);
+    if (!link) return { status: 404, body: { error: 'not_found', message: 'That live link is not running on this computer.' } };
+    const fail = (status: number, json: any): StartShareResult => ({
+      status: status === 410 ? 410 : status === 404 ? 404 : 502,
+      body: { error: json?.error ?? 'cloud_failed', message: json?.message ?? `cloud-api answered ${status}.` },
+    });
+    try {
+      const live = tunnel.get(linkId);
+      if (action === 'pause') {
+        const r = await cloud('POST', `/api/v1/share-links/${encodeURIComponent(linkId)}/pause`, { paused: true });
+        if (!r.ok) return fail(r.status, r.json);
+        await live?.pause(true);
+        return { status: 200, body: { share_link_id: linkId, paused: true } };
+      }
+      if (action === 'resume') {
+        const r = await cloud('POST', `/api/v1/share-links/${encodeURIComponent(linkId)}/pause`, { paused: false });
+        if (!r.ok) return fail(r.status, r.json);
+        // The old tunnel was deleted by cloud-api on pause: close the stale handle (drops its saved identity), then re-serve.
+        if (live) await live.stop('paused').catch(() => undefined);
+        const fresh = await serve(link);
+        return { status: 200, body: { share_link_id: linkId, paused: false, url: fresh.url, token: fresh.token } };
+      }
+      if (action === 'stop') {
+        const r = await cloud('DELETE', `/api/v1/share-links/${encodeURIComponent(linkId)}`);
+        if (!r.ok && r.status !== 404 && r.status !== 410) log(`revoke ${linkId} failed (${r.status})`);
+        await live?.stop('stopped').catch(() => undefined);
+        forget(linkId);
+        return { status: 200, body: { share_link_id: linkId, stopped: true } };
+      }
+      return { status: 404, body: { error: 'not_found', message: 'Unknown live link command.' } };
+    } catch (error) {
+      const refused = error instanceof ShareTunnelError && error.code === 'admission_refused';
+      return { status: refused ? 410 : 502, body: { error: refused ? 'killed' : 'tunnel_failed', message: error instanceof Error ? error.message : String(error) } };
+    }
+  };
+
   const readBody = async (req: IncomingMessage): Promise<any> => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -270,5 +316,6 @@ export function startShareHost(options: ShareHostOptions): {
       await tunnel.stopAll('stopped');
     },
     startShare,
+    hostCommand,
   };
 }

@@ -321,6 +321,18 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
     socket.send(JSON.stringify({ type: 'response_end', request_id: requestId }));
     return;
   }
+  // Host commands on one live link: resume re-opens the tunnel the cloud dropped on pause.
+  const shareCommand = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(requestPath.split('?')[0]);
+  if (shareCommand) {
+    let result: StartShareResult;
+    if (method !== 'POST') result = { status: 405, body: { error: 'method_not_allowed' } };
+    else if (!shareHostRef) result = { status: 502, body: { error: 'share_host_unavailable', message: 'Share host is not running yet.' } };
+    else result = await shareHostRef.hostCommand(shareCommand[2], shareCommand[1]);
+    socket.send(JSON.stringify({ type: 'response_start', request_id: requestId, status: result.status, headers: { 'content-type': 'application/json' } }));
+    socket.send(JSON.stringify({ type: 'response_chunk', request_id: requestId, body: Buffer.from(JSON.stringify(result.body)).toString('base64'), body_encoding: 'base64' }));
+    socket.send(JSON.stringify({ type: 'response_end', request_id: requestId }));
+    return;
+  }
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
     '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
