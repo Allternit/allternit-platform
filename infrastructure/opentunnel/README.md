@@ -18,9 +18,12 @@ Upstream `POST /api/tunnel` is open to anyone and has no operator delete. The pa
    TunnelNotFoundError` if there is no live tunnel with that ID. Treat 404 as already done.
 3. The `tunnel.created` analytics event gains `share_link_id`.
 
-Files touched upstream: new `src/admission.rs` (with unit tests), `http.rs` (strip the prefix, check on
-create, tunnel ID from the credential), `service.rs` (`kill` = `remove` without the tunnel token),
-`admin.rs` (the delete path), `lib.rs`.
+Files touched upstream (`crates/opentunnel-server/`): new `src/admission.rs` (with unit tests), `http.rs`
+(strip the prefix, check on create, tunnel ID from the credential; `/api/admin/*` answers 404 on the
+public listeners), `server.rs` (the separate `ADMIN_LISTEN` listener: admin + `/health` only),
+`config.rs` (`ADMIN_LISTEN`; unset = admin off), `service.rs` (`kill` = `remove` without the tunnel
+token), `admin.rs` (the delete path), `lib.rs`, and the upstream tests (`tests/clients.rs`,
+`tests/cluster.rs`, `tests/common/mod.rs`, `tests/migration.rs`).
 
 ### Admission credential (cloud-api mints it; relay only verifies, no network call)
 
