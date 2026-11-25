@@ -178,7 +178,11 @@ struct MeetingLiveView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if live.transcript.isEmpty {
-                        panelEmpty(live.status == .live ? "The transcript shows here as people talk." : "No transcript yet.")
+                        if live.status == .live {
+                            panelEmpty("The transcript shows here as people talk.")
+                        } else {
+                            FriendlyStateView(title: "No transcript yet.", art: .envelope, size: .panel)
+                        }
                     }
                     ForEach(live.transcript) { segment in
                         VStack(alignment: .leading, spacing: 2) {
