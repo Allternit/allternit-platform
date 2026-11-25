@@ -60,6 +60,7 @@ async fn setup() -> Arc<ApiState> {
     for sql in [
         include_str!("../../migrations_pg/085_artifacts_v2.sql"),
         include_str!("../../migrations_pg/161_apps_mcp_2026.sql"),
+        include_str!("../../migrations_pg/164_share_link_usage.sql"),
     ] {
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration");
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration twice");
@@ -330,9 +331,10 @@ async fn share_links_over_cap_answer_429_and_killed_subjects_cannot_be_shared_ag
 
     // 20 GB served this month stops new live links, deleted ones included.
     sqlx::query("UPDATE share_links SET status = 'revoked' WHERE user_id = $1").bind(DEV_USER).execute(&state.db).await.unwrap();
-    sqlx::query("UPDATE share_links SET bytes_month = $2 WHERE id = $1")
+    sqlx::query("INSERT INTO share_link_usage (link_id, period, bytes) VALUES ($1, $3, $2)")
         .bind(&ids[1])
         .bind(MAX_LIVE_BYTES_MONTH)
+        .bind(crate::routes::share_link_usage::current_period())
         .execute(&state.db)
         .await
         .unwrap();
