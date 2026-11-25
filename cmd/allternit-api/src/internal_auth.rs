@@ -42,13 +42,31 @@ pub fn require_internal_token(
     peer: Option<ConnectInfo<SocketAddr>>,
     state: &AppState,
 ) -> Result<(), StatusCode> {
-    match state.config.internal_service_token() {
+    check_internal_token(
+        headers,
+        peer,
+        state.config.internal_service_token().as_deref(),
+        state.config.local_dev_bypass(),
+    )
+}
+
+/// [`require_internal_token`] with the expected token and the local-dev
+/// bypass flag passed in instead of read from config / the process env, so
+/// tests can check a route deterministically while other tests change
+/// `ALLTERNIT_INTERNAL_SERVICE_TOKEN`.
+pub fn check_internal_token(
+    headers: &HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
+    expected: Option<&str>,
+    local_dev_bypass: bool,
+) -> Result<(), StatusCode> {
+    match expected {
         Some(expected) => {
             let provided = headers
                 .get(INTERNAL_TOKEN_HEADER)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if constant_time_eq(provided, &expected) {
+            if constant_time_eq(provided, expected) {
                 Ok(())
             } else {
                 Err(StatusCode::UNAUTHORIZED)
@@ -57,11 +75,7 @@ pub fn require_internal_token(
         // No token configured: only allow same-machine local dev, same
         // posture as auth_middleware's Clerk bypass -- never permissive
         // against a real (non-localhost) caller.
-        None if state.config.local_dev_bypass()
-            && is_local_request(headers, peer.map(|ConnectInfo(addr)| addr)) =>
-        {
-            Ok(())
-        }
+        None if local_dev_bypass && is_local_request(headers, peer.map(|ConnectInfo(addr)| addr)) => Ok(()),
         None => Err(StatusCode::UNAUTHORIZED),
     }
 }

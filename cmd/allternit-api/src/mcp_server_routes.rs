@@ -434,9 +434,25 @@ async fn handle_rpc(
     peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let gateway_token = state.config.internal_service_token();
+    let local_dev_bypass = state.config.local_dev_bypass();
+    handle_rpc_gated(&state, user, peer, headers, req, gateway_token.as_deref(), local_dev_bypass).await
+}
+
+/// [`handle_rpc`] with the gateway credential passed in (tests pass it
+/// directly instead of racing on the process-wide env var).
+async fn handle_rpc_gated(
+    state: &Arc<AppState>,
+    user: AuthUser,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
+    req: JsonRpcRequest,
+    gateway_token: Option<&str>,
+    local_dev_bypass: bool,
+) -> axum::response::Response {
     if carries_tunnel_headers(&headers)
-        && crate::internal_auth::require_internal_token(&headers, peer, &state).is_err()
+        && crate::internal_auth::check_internal_token(&headers, peer, gateway_token, local_dev_bypass).is_err()
     {
         tracing::warn!(user_id = %user.user_id, "mcp/server: tunnel headers without the gateway credential");
         return (
@@ -480,11 +496,11 @@ async fn handle_rpc(
             let org_id = user.organization_id.as_deref().or(user.tenant_id.as_deref());
             // OAuth access tokens (ChatGPT / Claude connectors) are verified
             // for audience + scope and limited to the read-only agent tools.
-            let agents_only = match crate::mcp_agents::authorize_bearer(&state, &headers).await {
+            let agents_only = match crate::mcp_agents::authorize_bearer(state, &headers).await {
                 Ok(v) => v,
                 Err(resp) => return resp,
             };
-            handle_rpc_inner(&state, &user.user_id, org_id, req, agents_only).await
+            handle_rpc_inner(state, &user.user_id, org_id, req, agents_only).await
         }
         Err(result) => (
             StatusCode::UNAUTHORIZED,
@@ -877,18 +893,13 @@ mod tests {
 
     const GATEWAY_TOKEN: &str = "test-gateway-token";
 
-    /// Internal token configured, and an outbound policy for `tunnel-1` that
-    /// pins the test client certificate.
+    /// An outbound policy for `tunnel-1` that pins the test client
+    /// certificate. The gateway token is passed to `handle_rpc_gated`
+    /// directly, never through `ALLTERNIT_INTERNAL_SERVICE_TOKEN`, which other
+    /// tests set and unset concurrently.
     async fn tunnel_state() -> Arc<AppState> {
         let dir = tempfile::tempdir().unwrap().keep();
-        let config = crate::config::AppConfig {
-            company: crate::config::CompanyConfig {
-                internal_service_token: Some(GATEWAY_TOKEN.to_string()),
-                ..Default::default()
-            },
-            user: crate::config::UserConfig::default(),
-        };
-        let state = crate::test_helpers::app_state_with_config(&dir, config).await;
+        let state = crate::test_helpers::app_state(&dir).await;
         state
             .db
             .connect()
@@ -923,9 +934,7 @@ mod tests {
             );
         }
         let req: JsonRpcRequest = serde_json::from_value(json!({ "id": 1, "method": "ping" })).unwrap();
-        let resp = handle_rpc(State(state.clone()), Extension(signed_in_user()), None, headers, Json(req))
-            .await
-            .into_response();
+        let resp = handle_rpc_gated(state, signed_in_user(), None, headers, req, Some(GATEWAY_TOKEN), false).await;
         let status = resp.status();
         let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
         (status, serde_json::from_slice(&body).unwrap())
@@ -966,8 +975,7 @@ mod tests {
     #[tokio::test]
     async fn tunnel_headers_with_gateway_credential_and_matching_policy_pass() {
         let state = tunnel_state().await;
-        // Whatever token this process resolves (env can override config in tests).
-        let token = state.config.internal_service_token().unwrap();
+        let token = GATEWAY_TOKEN.to_string();
         let (status, body) = call(
             &state,
             &[
