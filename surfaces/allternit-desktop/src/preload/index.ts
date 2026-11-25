@@ -1024,6 +1024,33 @@ const featureFlagsAPI = {
   },
 };
 
+// ─── Installed apps (plan v3 lane 38; behind feature flag apps.install) ──────
+
+type AppTier = 'browser' | 'app' | 'full';
+interface InstalledAppInfo {
+  slug: string;
+  name: string;
+  tier: AppTier;
+  menuBar: boolean;
+  kind: 'mac-dock' | 'windows-start-menu' | 'linux-desktop-entry';
+  launcherPath: string;
+  iconPath: string | null;
+  installedAt: string;
+}
+
+const appsAPI = {
+  /** Adds the app's own launcher: macOS Dock app, Windows Start menu, Linux app menu. */
+  install: (request: { slug: string; name: string; iconUrl?: string | null; tier: AppTier; menuBar?: boolean }): Promise<
+    | { ok: true; app: InstalledAppInfo }
+    | { ok: false; error: 'disabled' | 'bad_slug' | 'bad_name' | 'unsupported_platform' | 'helper_missing' | 'install_failed'; message: string }
+  > => ipcRenderer.invoke('apps:install', request),
+  uninstall: (slug: string): Promise<{ ok: boolean; removed: boolean }> => ipcRenderer.invoke('apps:uninstall', slug),
+  /** Opens the app in its own window (its own Dock helper on macOS). handoff = one-time session token (D15). */
+  open: (slug: string, options?: { handoff?: string | null }): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> =>
+    ipcRenderer.invoke('apps:open', slug, options),
+  status: (slug: string): Promise<{ enabled: boolean; installed: InstalledAppInfo | null }> => ipcRenderer.invoke('apps:status', slug),
+};
+
 // ─── Persisted State ──────────────────────────────────────────────────────────
 
 const stateAPI = {
@@ -1378,6 +1405,7 @@ const allternitDesktopAPI = {
   hyperframes: hyperframesAPI,
   motion: motionAPI,
   miniApps: miniAppsAPI,
+  apps: appsAPI,
   hermesRouting: hermesRoutingAPI,
   aciImage: {
     read: (id: string) => ipcRenderer.invoke('aci-image:read', id),

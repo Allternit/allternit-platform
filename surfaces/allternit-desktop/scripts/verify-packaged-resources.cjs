@@ -72,6 +72,16 @@ const required = [
     label: 'allternit-host-helper (Computers console: the one root helper the setup sheet installs after an OS admin prompt; the runtime finds it next to allternit-api)',
     buildStep: 'npm run prepare:host-helper',
   },
+  ...(process.platform === 'darwin' && process.env.ALLTERNIT_SKIP_APP_HELPER !== '1'
+    ? [
+        {
+          // app-launchers.ts copies it into each installed app's own .app (own Dock tile).
+          path: path.join(desktopDir, 'native', 'app-helper', 'build', 'AllternitAppHelper'),
+          label: 'AllternitAppHelper (installed apps: one native Dock app per app, plan v3 lane 38)',
+          buildStep: 'npm run prepare:app-helper',
+        },
+      ]
+    : []),
   ...(process.platform === 'win32'
     ? []
     : [

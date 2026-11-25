@@ -45,6 +45,9 @@ import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
+import { isAppLink, appSlugFromLink, appShellUrl } from './app-link.js';
+import { createAppLaunchers, isValidAppSlug, type AppInstallRequest } from './app-launchers.js';
+import { openAppWindow, closeAppWindow } from './app-window.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
@@ -2772,6 +2775,15 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     return;
   }
 
+  // An installed app's launcher (Windows Start menu, Linux .desktop):
+  // allternit://app/<slug>. Only the slug is used; see app-link.ts.
+  if (isAppLink(url)) {
+    const slug = appSlugFromLink(url);
+    if (slug) void openInstalledApp(slug);
+    else log.warn('[Main] rejected app link');
+    return;
+  }
+
   // `gizzi login` from a terminal on this Mac: allternit://pair?code=ABCD-1234
   // opens the pairing approval page in the signed-in app, so the terminal
   // uses the same account with one click instead of a second browser sign-in.
@@ -3664,6 +3676,108 @@ function openDesignStudio(prompt?: string | null): void {
   designWindow.on('closed', () => { designWindow = null; });
   void designWindow.loadURL(targetUrl);
 }
+
+// ============================================================================
+// Installed apps: own launcher, own window (plan v3 lane 38, E1 = B, D18)
+// ============================================================================
+
+const APP_HELPER_BINARY = app.isPackaged
+  ? join(process.resourcesPath, 'native', 'app-helper', 'AllternitAppHelper')
+  : join(__dirname, '..', '..', 'native', 'app-helper', 'build', 'AllternitAppHelper');
+// Linux AppImage launches go through the AppImage file, not the mounted binary.
+const APP_LAUNCH_EXEC = process.platform === 'linux' && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath;
+const APP_LAUNCH_ARGS = process.defaultApp && process.argv[1] ? [process.argv[1]] : [];
+
+const appLaunchers = createAppLaunchers({
+  platform: process.platform,
+  home: app.getPath('home'),
+  userData: app.getPath('userData'),
+  appData: app.getPath('appData'),
+  helperBinary: process.platform === 'darwin' ? APP_HELPER_BINARY : null,
+  execPath: APP_LAUNCH_EXEC,
+  execArgs: APP_LAUNCH_ARGS,
+  resizePng: (bytes, size) => {
+    const image = nativeImage.createFromBuffer(bytes);
+    if (image.isEmpty()) return null;
+    return image.resize({ width: size, height: size, quality: 'best' }).toPNG();
+  },
+  writeShortcut: (lnkPath, opts) => shell.writeShortcutLink(lnkPath, 'create', { ...opts, iconIndex: 0 }),
+  registerLinuxScheme: async () => {
+    const { registerProtocolHandler: registerLinux } = await import('./platform-linux.js');
+    await registerLinux();
+  },
+  log,
+});
+
+function appsInstallEnabled(): boolean {
+  return featureFlagManager.get<boolean>('apps.install') === true;
+}
+
+// The Mac helper is its own process, so it needs an origin that is up when
+// Desktop is not: never a loopback UI server outside dev.
+function appHelperBaseUrl(): string {
+  try {
+    const host = new URL(activePlatformUrl).hostname;
+    if (!isDev && (host === '127.0.0.1' || host === 'localhost')) return URLS.PLATFORM;
+  } catch {
+    return URLS.PLATFORM;
+  }
+  return activePlatformUrl;
+}
+
+/**
+ * Opens an installed app: its own helper on macOS (own Dock tile), else a
+ * Desktop window. `handoff` is the one-time token the app shell swaps for a
+ * session (D15); the helper loads <url>?handoff=<token>.
+ */
+async function openInstalledApp(slug: string, handoff?: string | null): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> {
+  if (!appsInstallEnabled()) {
+    log.info('[Main] apps.install is off; ignoring app open', slug);
+    return { ok: false, error: 'disabled' };
+  }
+  if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug' };
+  const installed = await appLaunchers.get(slug);
+  if (process.platform === 'darwin' && installed?.kind === 'mac-dock') {
+    if (await appLaunchers.launchMacHelper(slug, appShellUrl(appHelperBaseUrl(), slug), handoff)) {
+      return { ok: true, mode: 'helper' };
+    }
+  }
+  openAppWindow(
+    { slug, name: installed?.name ?? null, iconPath: installed?.kind === 'windows-start-menu' ? installed.iconPath : null },
+    {
+      preloadPath: join(__dirname, '../preload/index.js'),
+      platformUrl: () => activePlatformUrl,
+      installNavigationGuard: installWillNavigateGuard,
+      openExternal: (next) => { void openExternalAllowlisted(next); },
+      execPath: APP_LAUNCH_EXEC,
+      execArgs: APP_LAUNCH_ARGS,
+    },
+  );
+  return { ok: true, mode: 'window' };
+}
+
+handleGuarded('apps:install', async (_event, request: AppInstallRequest) => {
+  if (!appsInstallEnabled()) return { ok: false, error: 'disabled', message: 'Installing apps is off (apps.install).' };
+  const slug = request?.slug;
+  if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug', message: 'Bad app slug.' };
+  return appLaunchers.install(request, appShellUrl(appHelperBaseUrl(), slug));
+});
+
+handleGuarded('apps:uninstall', async (_event, slug: string) => {
+  if (!appsInstallEnabled()) return { ok: false, removed: false };
+  if (isValidAppSlug(slug)) closeAppWindow(slug);
+  return appLaunchers.uninstall(slug);
+});
+
+handleGuarded('apps:open', (_event, slug: string, options?: { handoff?: string | null }) =>
+  openInstalledApp(slug, options?.handoff ?? null),
+);
+
+handleGuarded('apps:status', async (_event, slug: string) => {
+  const enabled = appsInstallEnabled();
+  const installed = enabled ? await appLaunchers.get(slug) : null;
+  return { enabled, installed };
+});
 
 // Approves a terminal's `gizzi login` (see handleProtocolCallback): a native
 // confirmation, then the account's Clerk token approves it; the hosted page
