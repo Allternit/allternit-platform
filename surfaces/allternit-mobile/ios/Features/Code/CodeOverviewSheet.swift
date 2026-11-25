@@ -211,14 +211,11 @@ struct CodeSessionsOverview: View {
                 Section {
                     if items.isEmpty {
                         VStack(spacing: 12) {
-                            switch filter {
-                            case .needsInput, .readyForReview:
-                                EmptyBox(title: q.isEmpty ? filter.emptyText : "No code sessions match.", message: "", art: .bell, size: .panel)
-                            case .archived:
-                                EmptyBox(title: q.isEmpty ? filter.emptyText : "No code sessions match.", message: "", art: .archive, size: .panel)
-                            case .all, .working, .done:
-                                EmptyBox(title: q.isEmpty ? filter.emptyText : "No code sessions match.", message: "", art: .gizzi, size: .panel)
-                            }
+                            GizziWalk()
+                            Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color("TextSecondary"))
+                                .multilineTextAlignment(.center)
                             if q.isEmpty {
                                 Button {
                                     Haptics.light()
