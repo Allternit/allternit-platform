@@ -738,7 +738,11 @@ fun VoiceBarSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
 }
 
 /** Where the bar's orb sits on screen (root coordinates): the full view's orb travels to and from here. */
-internal object VoiceOrbAnchor { var bar: Rect? = null }
+internal object VoiceOrbAnchor {
+    var bar: Rect? = null
+    /** True while the full view (and its flying orb) is on screen or flying; the bar's own orb stays invisible then. */
+    var fullShown by mutableStateOf(false)
+}
 
 /** Reports this box as the bar's orb position. */
 internal fun Modifier.orbAnchor(): Modifier = onGloballyPositioned { VoiceOrbAnchor.bar = it.boundsInRoot() }
@@ -786,9 +790,15 @@ fun VoiceFullSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) 
         visible = visible,
         // The orb travels between the bar and here (4.6), so the screen fades around it instead of sliding.
         // Reduce motion (system or app): a plain crossfade, no travel.
+        // The fade-out starts late so the flying orb stays solid until it lands on the bar's orb.
         enter = fadeIn(tween(if (reduce) 150 else 220)),
-        exit = fadeOut(tween(if (reduce) 150 else 220)),
+        exit = if (reduce) fadeOut(tween(150)) else fadeOut(tween(120, delayMillis = 140)),
     ) {
+        // Hide the bar's own orb for the whole flight; it shows again in one frame when this content is removed.
+        if (!reduce) DisposableEffect(Unit) {
+            VoiceOrbAnchor.fullShown = true
+            onDispose { VoiceOrbAnchor.fullShown = false }
+        }
         val travel by transition.animateFloat(
             transitionSpec = { spring(dampingRatio = 0.82f, stiffness = 320f) }, label = "voiceOrbTravel",
         ) { if (it == EnterExitState.Visible) 0f else 1f }
@@ -863,7 +873,7 @@ fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.size(34.dp).orbAnchor().orbTravel { 0f }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(34.dp).orbAnchor().graphicsLayer { alpha = if (VoiceOrbAnchor.fullShown) 0f else 1f }.orbTravel { 0f }, contentAlignment = Alignment.Center) {
             if (bot != null) {
                 val (style, palette) = SpeakerLookStore.look(bot.id)
                 VoiceSpeakerView(
