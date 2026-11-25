@@ -206,6 +206,7 @@ final class AppsShelfClient: @unchecked Sendable {
 
     /// The URL to load on Open: the minted `open_url` for own/org/shared apps, else the plain link.
     /// Vendor apps have no handoff.
+    @MainActor
     func openLink(for row: AppsShelfRow) async -> String? {
         if row.kind.lowercased().contains("vendor") { return row.link }
         if let minted = await handoffURL(slug: row.slug), AppsShelfLinks.openURL(for: minted) != nil { return minted }

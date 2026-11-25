@@ -1,5 +1,6 @@
 package com.allternit.feature.phones
 
+import androidx.compose.animation.core.animateFloat
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
