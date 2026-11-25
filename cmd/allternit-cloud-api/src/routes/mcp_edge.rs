@@ -637,6 +637,20 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         }
     }
 
+    // Seams for later lanes (all answer `None` today, so nothing changes):
+    // tasks (44/45), apps (46) and skills (47).
+    let hooked = if rpc_method == "tools/call" {
+        super::mcp_edge_tasks::intercept_tool_call(rpc_method, &id, &request["params"])
+    } else if rpc_method == "resources/list" || rpc_method == "resources/read" {
+        super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"])
+            .or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
+    } else {
+        None
+    };
+    if let Some(reply) = hooked {
+        return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+    }
+
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
         Err(_) => Outcome::Unreachable,

@@ -73,6 +73,10 @@ pub mod me_usage;
 pub mod setup_checks;
 pub mod a2a_edge;
 pub mod mcp_edge;
+pub mod mcp_edge_apps;
+pub mod mcp_edge_cards;
+pub mod mcp_edge_skills;
+pub mod mcp_edge_tasks;
 /// Allternit as an ID-JAG issuer for managed connector auth (WP1).
 pub mod managed_auth;
 /// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
