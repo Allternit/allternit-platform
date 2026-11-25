@@ -123,11 +123,14 @@ struct AppsShelfView: View {
     }
 
     private func open(_ row: AppsShelfRow) {
-        guard let url = AppsShelfLinks.openURL(for: row.link) else {
-            model.notice = "\(row.name) has no link to open yet."
-            return
+        Task {
+            let link = await model.openLink(for: row)
+            guard let url = AppsShelfLinks.openURL(for: link) else {
+                model.notice = "\(row.name) has no link to open yet."
+                return
+            }
+            opened = OpenedApp(url: url, name: row.name)
         }
-        opened = OpenedApp(url: url, name: row.name)
     }
 }
 

@@ -203,6 +203,14 @@ final class AppsShelfClient: @unchecked Sendable {
         )
     }
 
+    /// The URL to load on Open: the minted `open_url` for own/org/shared apps, else the plain link.
+    /// Vendor apps have no handoff.
+    func openLink(for row: AppsShelfRow) async -> String? {
+        if row.kind.lowercased().contains("vendor") { return row.link }
+        if let minted = await api.handoffURL(slug: row.slug), AppsShelfLinks.openURL(for: minted) != nil { return minted }
+        return row.link
+    }
+
     func uninstall(_ row: AppsShelfRow) async throws {
         try await client.delete(path: "apps/\(Self.escape(row.kind))/\(Self.escape(row.slug))")
     }
@@ -212,6 +220,16 @@ final class AppsShelfClient: @unchecked Sendable {
             path: "apps/\(Self.escape(row.kind))/\(Self.escape(row.slug))/pin",
             body: PinBody(pinned: pinned)
         )
+    }
+
+    private struct EmptyBody: Encodable {}
+    private struct HandoffResponse: Decodable { let open_url: String? }
+
+    /// One-time sign-in handoff for a hosted app. Nil on any failure (caller falls back to the plain link).
+    func handoffURL(slug: String) async -> String? {
+        guard !slug.isEmpty else { return nil }
+        let response: HandoffResponse? = try? await client.post(path: "apps/\(Self.escape(slug))/handoff", body: EmptyBody())
+        return response?.open_url
     }
 
     func links() async throws -> [AppsShareLink] {
