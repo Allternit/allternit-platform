@@ -10,6 +10,8 @@ import { Provider } from "@/runtime/providers/provider"
 import { Instance } from "@/runtime/context/project/instance"
 import { Artifacts } from "@/runtime/integrations/artifacts"
 import { Todo } from "@/runtime/session/todo"
+import { Pairing } from "@/runtime/services/pairing/pairing"
+import { Log } from "@/shared/util/log"
 import EXIT_DESCRIPTION from "@/runtime/tools/builtins/plan-exit.txt"
 import ENTER_DESCRIPTION from "@/runtime/tools/builtins/plan-enter.txt"
 
@@ -67,6 +69,36 @@ function planTitle(markdown: string, fallback: string): string {
 
 function sameSteps(a: Question.PlanStep[], b: Question.PlanStep[]) {
   return a.length === b.length && a.every((s, i) => s.title === b[i].title && (s.detail ?? "") === (b[i].detail ?? ""))
+}
+
+const planLog = Log.create({ service: "plan-status" })
+
+/**
+ * Sets a plan artifact's status (`open | approved | done`) with PATCH on the
+ * artifact. Owner-only on the server. Logged on failure, never throws.
+ */
+async function setPlanStatus(sessionID: string, status: "open" | "approved" | "done") {
+  try {
+    if (["1", "true"].includes((process.env.GIZZI_ARTIFACTS_OFFLINE ?? "").toLowerCase())) return
+    const stored = await Pairing.load().catch(() => undefined)
+    const device = Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+    const tokens = [
+      ...new Set([process.env.ALLTERNIT_API_KEY?.trim(), process.env.ALLTERNIT_API_TOKEN?.trim(), device].filter((t): t is string => !!t)),
+    ]
+    for (const token of tokens) {
+      const res = await fetch(`${Artifacts.cloudBase()}/api/v2/artifacts/${encodeURIComponent(Artifacts.planId(sessionID))}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_status: status }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (res.status === 401 || res.status === 403) continue
+      if (!res.ok) planLog.warn("plan status not saved", { sessionID, status, http: res.status })
+      return
+    }
+  } catch (error) {
+    planLog.warn("plan status not saved", { sessionID, status, error: String(error) })
+  }
 }
 
 export const PlanExitTool = Tool.define("plan_exit", {
@@ -142,6 +174,13 @@ export const PlanExitTool = Tool.define("plan_exit", {
         sessionID: ctx.sessionID,
         todos: approved.map((s) => ({ content: s.title, status: "pending", priority: "medium" })),
       })
+    }
+
+    // Status follows the answer: Yes -> approved; done once every todo is completed. Offline skips it.
+    if (saved?.persisted) {
+      const sessionID = ctx.sessionID
+      void setPlanStatus(sessionID, "approved")
+      if (approved.length) Todo.watchCompletion(sessionID, () => void setPlanStatus(sessionID, "done"))
     }
 
     const model = await getLastModel(ctx.sessionID)

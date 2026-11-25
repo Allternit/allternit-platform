@@ -84,6 +84,18 @@ export namespace Todo {
     ),
   }
 
+  /** One-shot callbacks per session, fired when an update leaves every todo completed. */
+  const completionWatch = new Map<string, () => void>()
+
+  /** Run `fn` once, the next time every todo of this session is completed. Replaces an earlier watch. */
+  export function watchCompletion(sessionID: string, fn: () => void) {
+    completionWatch.set(sessionID, fn)
+  }
+
+  export function unwatchCompletion(sessionID: string) {
+    completionWatch.delete(sessionID)
+  }
+
   export function update(raw: { sessionID: string; todos: Info[] }) {
     const input = { sessionID: raw.sessionID, todos: normalize(raw.todos).todos }
     Database.transaction((db) => {
@@ -105,6 +117,17 @@ export namespace Todo {
         .run()
     })
     Bus.publish(Event.Updated, input)
+    if (input.todos.length > 0 && input.todos.every((t) => t.status === "completed")) {
+      const fn = completionWatch.get(input.sessionID)
+      if (fn) {
+        completionWatch.delete(input.sessionID)
+        try {
+          fn()
+        } catch {
+          // a watcher never blocks the todo write
+        }
+      }
+    }
   }
 
   export function get(sessionID: string) {
