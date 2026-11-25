@@ -34,8 +34,26 @@ final class DecisionsStore: ObservableObject {
 
     var waitingCount: Int { visibleQuestions.count + approvals.count }
 
+    /// Done / Later on the deck (this phone only; the agent keeps waiting and the
+    /// question stays in its chat). `snoozedUntil` is when a Later question returns.
+    @Published private(set) var handled: Set<String> = []
+    @Published private(set) var snoozedUntil: [String: Date] = [:]
+
     var visibleQuestions: [AgentQuestionRequest] {
-        questions.filter { !AgentAskStore.shared.isResolved($0.id) }
+        let now = Date()
+        return questions.filter {
+            !AgentAskStore.shared.isResolved($0.id)
+                && !handled.contains($0.id)
+                && (snoozedUntil[$0.id].map { $0 <= now } ?? true)
+        }
+    }
+
+    /// Done: the card leaves the deck. The question is not answered or rejected.
+    func markDone(_ id: String) { handled.insert(id) }
+
+    /// Later: the card returns after `minutes`.
+    func snooze(_ id: String, minutes: Int) {
+        snoozedUntil[id] = Date().addingTimeInterval(TimeInterval(minutes * 60))
     }
 
     func startWatching() {
@@ -76,6 +94,12 @@ final class DecisionsStore: ObservableObject {
             guard started == generation else { return }
             questions = fetched
             questionsError = nil
+            // Drop the Done / Later marks of questions that are gone, and expired snoozes
+            // (the assignment also wakes the deck so a returned card shows).
+            let ids = Set(fetched.map(\.id))
+            handled = handled.intersection(ids)
+            let now = Date()
+            snoozedUntil = snoozedUntil.filter { ids.contains($0.key) && $0.value > now }
             await resolveAgentNames()
         } catch {
             guard started == generation else { return }
@@ -127,6 +151,8 @@ final class DecisionsStore: ObservableObject {
         approvalsError = nil
         hasLoaded = false
         agentNames = [:]
+        handled = []
+        snoozedUntil = [:]
         resolvedApprovals = []
     }
 
@@ -151,6 +177,9 @@ struct DecisionsDeckView: View {
     @ObservedObject private var store = DecisionsStore.shared
     @ObservedObject private var asks = AgentAskStore.shared
     @State private var index = 0
+    @State private var collapsed = false
+    @State private var showsLater = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let items = store.visibleQuestions
@@ -210,7 +239,7 @@ struct DecisionsDeckView: View {
                     .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
                 Spacer(minLength: 0)
-                if items.count > 1 {
+                if items.count > 1, !collapsed {
                     HStack(spacing: 0) {
                         Text("\(at + 1) of \(items.count)")
                             .font(.footnote.monospacedDigit())
@@ -219,7 +248,28 @@ struct DecisionsDeckView: View {
                         pagerButton("chevron.right", label: "Next decision", disabled: at >= items.count - 1) { index = at + 1 }
                     }
                 }
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { collapsed.toggle() }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Color("TextSecondary"))
+                .accessibilityLabel(collapsed ? "Expand decisions" : "Collapse decisions")
             }
+            if !collapsed {
+                questionBody(current, at: at)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func questionBody(_ current: AgentQuestionRequest, at: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             QuestionCardView(request: current, agentName: store.agentNames[current.sessionID]) {
                 // Let "Sent" read before the next one slides in.
                 Task {
@@ -231,6 +281,42 @@ struct DecisionsDeckView: View {
             }
             .id(current.id)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
+            laterRow(current)
+        }
+    }
+
+    /// Done / Later under the card. Later opens a short row of lengths (minutes).
+    private func laterRow(_ current: AgentQuestionRequest) -> some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Later") {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showsLater.toggle() }
+                }
+                .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                .accessibilityLabel("Later: choose when this comes back")
+                Button("Done") { dismissCurrent(current) { store.markDone(current.id) } }
+                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    .accessibilityLabel("Done: hide this decision from the deck")
+            }
+            if showsLater {
+                HStack(spacing: 8) {
+                    ForEach([(15, "15 min"), (60, "1 hour"), (180, "3 hours")], id: \.0) { minutes, label in
+                        Button(label) { dismissCurrent(current) { store.snooze(current.id, minutes: minutes) } }
+                            .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func dismissCurrent(_ current: AgentQuestionRequest, _ apply: () -> Void) {
+        Haptics.success()
+        showsLater = false
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+            apply()
+            index = min(index, max(0, store.visibleQuestions.count - 1))
         }
     }
 

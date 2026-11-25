@@ -704,6 +704,7 @@
 		B8F7895F087B97F152AB1E27 /* SelfHostedClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38088029D8E26A5E11A29881 /* SelfHostedClientTests.swift */; };
 		B99F55F075E829142009CCE7 /* SystemStatusClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125C141DE758E382A2E0916A /* SystemStatusClient.swift */; };
 		B9DE7437F906BE7D16EB9399 /* FileCitationChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51EC92969ECBCD9234DAD98D /* FileCitationChip.swift */; };
+		A5F0110000000000000000B1 /* FollowUpChips.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F0110000000000000000A1 /* FollowUpChips.swift */; };
 		B9F1DCD514FBAAEA04F88068 /* BrainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BE9B2F87B3C05A37CF52AF /* BrainStore.swift */; };
 		BA47E1AFD54680EE8CD3B04A /* AuthManager+DeleteAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E1D84060FD81E44483971DA /* AuthManager+DeleteAccount.swift */; };
 		BA74158156A79E2C0B5B40C4 /* CreateLoopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DA83B808ADF24C16AA47C5 /* CreateLoopSheet.swift */; };
@@ -1375,6 +1376,7 @@
 		51694BF51F1632EE822FE577 /* ReturnShortcutResultIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReturnShortcutResultIntent.swift; sourceTree = "<group>"; };
 		51C046B0ECE7F5E01CB26059 /* AllternitScreen.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitScreen.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		51EC92969ECBCD9234DAD98D /* FileCitationChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCitationChip.swift; sourceTree = "<group>"; };
+		A5F0110000000000000000A1 /* FollowUpChips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowUpChips.swift; sourceTree = "<group>"; };
 		51ED218D5981C21CBFF76A8A /* ThinkingSliderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingSliderView.swift; sourceTree = "<group>"; };
 		52010EB8219766551769D25B /* FirstRunSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunSetupView.swift; sourceTree = "<group>"; };
 		52277CD4E2534578A9E785F8 /* ReplyEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyEvent.swift; sourceTree = "<group>"; };
@@ -3566,6 +3568,7 @@
 				57C6D606D336906BE9658471 /* ConnectSuggestCardView.swift */,
 				1995FF94FD09905D0F22DBE6 /* DictationOnboardingSheet.swift */,
 				51EC92969ECBCD9234DAD98D /* FileCitationChip.swift */,
+				A5F0110000000000000000A1 /* FollowUpChips.swift */,
 				F8DD653029C2B3BF8282DF08 /* FormSurfacesView.swift */,
 				9CDF8A124DC2D0D0E289FCBE /* MemoryRefsChip.swift */,
 				C391FEC5AE3DBB58A5866E03 /* MessageActionBar.swift */,
@@ -4799,6 +4802,7 @@
 				D250D773F3083F544D165089 /* FileBrowserDirectoryView.swift in Sources */,
 				4658EF75ED4ADFC214C4D3A4 /* FileBrowserView.swift in Sources */,
 				B9DE7437F906BE7D16EB9399 /* FileCitationChip.swift in Sources */,
+				A5F0110000000000000000B1 /* FollowUpChips.swift in Sources */,
 				DA8E5E3F97BF180FF12F4236 /* FileClient.swift in Sources */,
 				2D077F61DE244D2647368A2E /* FileDetailView.swift in Sources */,
 				06A33A75EA8BD0E00991B36B /* FileDiffDetailView.swift in Sources */,
