@@ -92,6 +92,9 @@ type TerminalQuestion = {
   question: string
   header?: string
   multiSelect?: boolean
+  risk?: 'low' | 'medium' | 'high'
+  context?: string
+  plan?: { steps: Array<{ title: string; detail?: string }>; title?: string; artifact?: { id: string; persisted: boolean } }
   options?: Array<{ label: string; description?: string; recommended?: boolean; then?: { question: string; options: Array<{ label: string; description?: string }> } }>
 }
 
@@ -109,6 +112,9 @@ export function toEngineQuestions(input: Record<string, unknown>) {
     question: q.question,
     header: (q.header ?? '').slice(0, 30),
     multiple: q.multiSelect || undefined,
+    ...(q.risk ? { risk: q.risk } : {}),
+    ...(q.context ? { context: q.context } : {}),
+    ...(q.plan ? { plan: q.plan } : {}),
     options: (q.options ?? []).map(o => ({
       label: o.label,
       description: o.description ?? '',
