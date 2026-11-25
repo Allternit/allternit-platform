@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.22.0 (2026-11-25)
+
+- **Apps and live links.** `gizzi app` lists, installs and opens your apps; `gizzi share <port>` starts a live link from this computer, and `/share links` shows your links. Live links need the relay; until it is set up on a deployment, starting one says so.
+- **MCP tasks and questions.** Long-running MCP tool calls run as tasks with progress, and a server can ask you a question mid-call; both stream into the session.
+- **Skills from MCP servers.** `skill://` resources from connected MCP servers become skill commands.
+- **Phone runs.** A step ticker follows a phone task as it runs.
+- **Pull requests.** `/pr` shows the merge state.
+- **Progress dots.** Media and audio generation show a braille dot progress line.
+
 ## 2.21.0 (2026-11-24)
 
 - **Block titles on more views.** Bots, Computers, MCP, Settings and the plugin marketplace title each block by its type.
