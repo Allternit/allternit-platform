@@ -506,6 +506,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::admin_share_links::routes())
         // App shelf, installs, vendor app records (Apps + MCP 2026 lane 9).
         .merge(routes::apps::routes())
+        // OpenTunnel analytics -> bytes meter (lane 29); shared-secret header, no session.
+        .merge(routes::share_link_usage::routes())
         .merge(routes::artifacts_comments::routes())
         // Agent suggestions (SPEC-agent-watch): pending edits the client accepts or rejects.
         .merge(routes::artifacts_suggestions::routes())

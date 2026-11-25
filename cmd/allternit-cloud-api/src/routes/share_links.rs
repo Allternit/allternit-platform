@@ -283,10 +283,14 @@ async fn enforce_caps(db: &PgPool, caller: &Caller, kind: &str) -> Result<(), Re
         return Ok(());
     }
     let (active, bytes): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*) FILTER (WHERE status = 'active')::BIGINT, COALESCE(SUM(bytes_month), 0)::BIGINT \
-         FROM share_links WHERE user_id = $1 AND kind = 'live'",
+        "SELECT COUNT(*) FILTER (WHERE l.status = 'active')::BIGINT, \
+                COALESCE(SUM(u.bytes), 0)::BIGINT \
+         FROM share_links l \
+         LEFT JOIN share_link_usage u ON u.link_id = l.id AND u.period = $2 \
+         WHERE l.user_id = $1 AND l.kind = 'live'",
     )
     .bind(&caller.user_id)
+    .bind(crate::routes::share_link_usage::current_period())
     .fetch_one(db)
     .await
     .map_err(db_fail)?;
