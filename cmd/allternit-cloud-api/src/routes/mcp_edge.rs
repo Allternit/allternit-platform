@@ -61,6 +61,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 
+use super::mcp_edge_tasks::{self as edge_tasks, Job, JobOutcome};
 use super::runtime_relay::{connected_runtime_ids, relay_signed_request_to_runtime_with, RelayRequest};
 use crate::ApiState;
 
@@ -240,6 +241,7 @@ fn refusal(resource: &str, status: StatusCode, body: Value, error: Option<(&str,
     resp
 }
 
+#[derive(Clone)]
 struct Caller {
     user_id: String,
     client: String,
@@ -358,6 +360,91 @@ pub trait EdgeBackend: Send + Sync {
     async fn model_tool(&self, _key: &crate::routes::platform_v1::PlatformCaller, _name: &str, _args: &Value) -> Result<Value, String> {
         Err("The decide and respond tools are not available.".into())
     }
+    /// MCP Tasks (`mcp_edge_tasks`): the task store plus an owned backend for
+    /// the background job. `None` = Tasks off; calls answer inline.
+    fn tasks(&self) -> Option<edge_tasks::TaskRuntime> {
+        None
+    }
+}
+
+/// Who may see a task: this caller, on this target.
+fn task_owner(caller: &Caller, target: &Target) -> String {
+    edge_tasks::owner_key(&caller.user_id, &caller.client, &target.approval_target())
+}
+
+/// A relayed `tools/call` run as a task's background job. The Tasks
+/// declaration is taken out first so the runtime answers it inline.
+fn relay_job(backend: Arc<dyn EdgeBackend>, target: Target, caller: Caller, request: Value) -> Job {
+    Box::pin(async move {
+        let body = serde_json::to_vec(&edge_tasks::without_tasks(&request)).unwrap_or_default();
+        match deliver(&*backend, &target, &caller, &body).await {
+            Outcome::Answer(status, reply) => edge_tasks::outcome_from_reply(status, &reply),
+            Outcome::Unreachable => edge_tasks::job_error(OFFLINE_MESSAGE),
+            Outcome::RuntimeTooOld => edge_tasks::job_error(RUNTIME_TOO_OLD_MESSAGE),
+            Outcome::NotFound => edge_tasks::job_error("Not found."),
+        }
+    })
+}
+
+/// `tasks/update` on a task held for the owner's approval: runs the held call
+/// once the approval (or org consent) is stored. Accepting the elicitation
+/// alone never approves anything.
+struct ApprovalResume<'a> {
+    backend: &'a dyn EdgeBackend,
+    tasks: edge_tasks::TaskRuntime,
+    target: Target,
+    caller: Caller,
+}
+
+#[async_trait::async_trait]
+impl edge_tasks::Resume for ApprovalResume<'_> {
+    async fn approved(&self, pending_call: &Value) -> Result<Option<Job>, String> {
+        let target = self.target.approval_target();
+        let ok = if self.caller.via_issuer {
+            self.backend.org_consent(&self.caller.user_id, &self.caller.client, &target).await?
+        } else {
+            self.backend.is_approved(&self.caller.user_id, &self.caller.client, &target).await?
+        };
+        Ok(ok.then(|| relay_job(self.tasks.backend.clone(), self.target.clone(), self.caller.clone(), pending_call.clone())))
+    }
+}
+
+/// An unapproved client that declared Tasks and URL elicitation gets its
+/// `tools/call` back as a task waiting (`input_required`) on the approve
+/// page, and may read and answer its own tasks. Anything else keeps the 403.
+async fn approval_task(backend: &dyn EdgeBackend, target: &Target, caller: &Caller, method: &Method, headers: &HeaderMap, body: &Bytes) -> Option<Response> {
+    if *method != Method::POST {
+        return None;
+    }
+    let request: Value = serde_json::from_slice(body).ok()?;
+    let rpc_method = request["method"].as_str().unwrap_or_default();
+    let params = &request["params"];
+    let hold = rpc_method == "tools/call" && edge_tasks::declares_tasks(params) && edge_tasks::supports_url_elicitation(params);
+    if !hold && !rpc_method.starts_with("tasks/") {
+        return None;
+    }
+    let rt = backend.tasks()?;
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let era = mcp_protocol::Era::of(rpc_method, params, headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok()));
+    let spec = edge_spec(target);
+    if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+        return Some(rpc_reply(&era, reply));
+    }
+    let owner = task_owner(caller, target);
+    let reply = if hold {
+        let message = format!("Approve {} for this Allternit connector, then continue. Nothing runs until the owner approves it in Allternit.", caller.client);
+        match edge_tasks::start_awaiting_approval(&rt.store, &owner, &request, &message, &approve_url(target, &caller.client)).await {
+            Ok(created) => mcp_protocol::rpc_ok(&id, created),
+            Err(error) => {
+                tracing::warn!("mcp edge: holding a call for approval failed: {error}");
+                return None;
+            }
+        }
+    } else {
+        let resume = ApprovalResume { backend, tasks: rt.clone(), target: target.clone(), caller: caller.clone() };
+        edge_tasks::handle(&rt.store, &owner, &id, rpc_method, params, &resume).await
+    };
+    Some(rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply)))
 }
 
 /// A project key with this scope also gets the phone tools on `/mcp`
@@ -554,7 +641,12 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         match approved {
             Ok(true) => {}
             Ok(false) if caller.via_issuer => return org_consent_required(&resource, &target, &caller.client),
-            Ok(false) => return approval_required(&resource, &target, &caller.client),
+            Ok(false) => {
+                if let Some(resp) = approval_task(backend, &target, &caller, method, headers, &body).await {
+                    return resp;
+                }
+                return approval_required(&resource, &target, &caller.client);
+            }
             Err(error) => {
                 tracing::warn!("mcp edge: approval lookup failed: {error}");
                 return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "unavailable" }))).into_response();
@@ -602,20 +694,52 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
+    // MCP Tasks: the edge owns task state (D28); nothing goes to the runtime.
+    if rpc_method.starts_with("tasks/") {
+        if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+            return rpc_reply(&era, reply);
+        }
+        let Some(rt) = backend.tasks() else {
+            return rpc_reply(&era, mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, "Tasks are not available"));
+        };
+        let resume = ApprovalResume { backend, tasks: rt.clone(), target: target.clone(), caller: caller.clone() };
+        let reply = edge_tasks::handle(&rt.store, &task_owner(&caller, &target), &id, rpc_method, &request["params"], &resume).await;
+        return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+    }
+    // Only a call that declared Tasks looks the task runtime up.
+    let tasks_rt = || (rpc_method == "tools/call" && edge_tasks::declares_tasks(&request["params"])).then(|| backend.tasks()).flatten();
+
     // Phone and mail tools are answered here for a project key, never relayed.
     let edge_key = phone_key.as_ref().or(mail_key.as_ref()).or(model_key.as_ref());
     if let Some(key) = edge_key {
         let tool = request["params"]["name"].as_str().unwrap_or_default();
         if rpc_method == "tools/call" {
+            // Edge-answered tools return before the relay hook, so each gets its own Tasks call site.
+            let (rt, owner, params, args) = (tasks_rt(), task_owner(&caller, &target), &request["params"], request["params"]["arguments"].clone());
             if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
+                let (k, t, a) = (pk.clone(), tool.to_string(), args.clone());
+                let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(b.phone_call(&k, &t, &a).await) }) };
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                    return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+                }
                 let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
                 return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
             }
             if let Some(dk) = model_key.as_ref().filter(|_| MODEL_TOOLS.contains(&tool)) {
+                let (k, t, a) = (dk.clone(), tool.to_string(), args.clone());
+                let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(mail_tool_result(model_tool_call(&*b, &k, &t, &a).await)) }) };
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                    return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+                }
                 let result = mail_tool_result(model_tool_call(backend, dk, tool, &request["params"]["arguments"]).await);
                 return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
             }
             if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
+                let (k, t, a) = (mk.clone(), tool.to_string(), args.clone());
+                let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(mail_tool_result(b.mail_tool(&k, &t, &a).await)) }) };
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                    return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+                }
                 let result = mail_tool_result(backend.mail_tool(mk, tool, &request["params"]["arguments"]).await);
                 return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
             }
@@ -637,10 +761,11 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         }
     }
 
-    // Seams for later lanes (all answer `None` today, so nothing changes):
-    // tasks (44/45), apps (46) and skills (47).
+    // Seams: tasks (44/45: a declared long-running call becomes a task),
+    // apps (46) and skills (47).
     let hooked = if rpc_method == "tools/call" {
-        super::mcp_edge_tasks::intercept_tool_call(rpc_method, &id, &request["params"])
+        let (t, c, r) = (target.clone(), caller.clone(), request.clone());
+        edge_tasks::intercept_tool_call(tasks_rt().as_ref(), &task_owner(&caller, &target), &id, &request["params"], move |b| relay_job(b, t, c, r)).await
     } else if rpc_method == "resources/list" || rpc_method == "resources/read" {
         super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"])
             .or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
@@ -661,6 +786,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
             let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "initialize" && status == 200 { advertise_tasks(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
@@ -682,12 +808,14 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
 
 /// The spec the edge answers `server/discover` (and `events/*` decoration) with.
 fn edge_spec(target: &Target) -> mcp_protocol::ServerSpec {
-    let spec = match target {
-        Target::Bot(_) => mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION")),
-        Target::Agents => mcp_protocol::servers::agents(env!("CARGO_PKG_VERSION")),
-        Target::Connectors => return connectors_spec(),
+    let mut spec = match target {
+        Target::Bot(_) => mcp_protocol::servers::with_events(mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION"))),
+        Target::Agents => mcp_protocol::servers::with_events(mcp_protocol::servers::agents(env!("CARGO_PKG_VERSION"))),
+        Target::Connectors => connectors_spec(),
     };
-    mcp_protocol::servers::with_events(spec)
+    // Every target: the approval hold works on all three (`approval_task`).
+    edge_tasks::advertise(&mut spec.capabilities);
+    spec
 }
 
 /// The connector gateway: tools only, no events.
@@ -721,6 +849,18 @@ fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
             serde_json::to_vec(&v).unwrap_or(reply)
         }
         None => reply,
+    }
+}
+
+/// A relayed `initialize` answer plus the Tasks extension the edge serves.
+fn advertise_tasks(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/capabilities") {
+        Some(caps) if caps.is_object() => {
+            edge_tasks::advertise(caps);
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        _ => reply,
     }
 }
 
@@ -980,6 +1120,10 @@ impl EdgeBackend for ProdBackend<'_> {
         Some(&self.events)
     }
 
+    fn tasks(&self) -> Option<edge_tasks::TaskRuntime> {
+        Some(edge_tasks::TaskRuntime { store: Arc::new(edge_tasks::PgTaskStore { db: self.state.db.clone() }), backend: Arc::new(OwnedProdBackend(self.state.clone())) })
+    }
+
     async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         crate::routes::vendor_bot_keys::verify_key(&self.state.db, token, vendor_bot_id).await.map_err(|e| e.to_string())
     }
@@ -1084,6 +1228,38 @@ impl EdgeBackend for ProdBackend<'_> {
     }
 }
 
+/// `ProdBackend` owning its state, for Tasks' background jobs (`tokio::spawn`
+/// needs `'static`). It runs calls only; it never creates tasks itself.
+struct OwnedProdBackend(Arc<ApiState>);
+
+#[async_trait::async_trait]
+impl EdgeBackend for OwnedProdBackend {
+    async fn verify(&self, token: &str) -> Result<Value, String> {
+        ProdBackend::new(&self.0).verify(token).await
+    }
+    async fn runtimes(&self, user_id: &str) -> Result<Vec<String>, String> {
+        ProdBackend::new(&self.0).runtimes(user_id).await
+    }
+    async fn forward(&self, user_id: &str, runtime_id: &str, path: &str, client: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Unreached> {
+        ProdBackend::new(&self.0).forward(user_id, runtime_id, path, client, body).await
+    }
+    async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+        ProdBackend::new(&self.0).is_approved(user_id, client, target).await
+    }
+    async fn org_consent(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
+        ProdBackend::new(&self.0).org_consent(user_id, client, target).await
+    }
+    async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
+        ProdBackend::new(&self.0).phone_call(key, name, args).await
+    }
+    async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        ProdBackend::new(&self.0).mail_tool(key, name, args).await
+    }
+    async fn model_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
+        ProdBackend::new(&self.0).model_tool(key, name, args).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1111,11 +1287,12 @@ mod tests {
         consents: Vec<(String, String, String)>,
         events: crate::routes::mcp_events::testing::MemStore,
         project_keys: HashMap<String, crate::routes::platform_v1::PlatformCaller>,
+        tasks: Option<edge_tasks::TaskRuntime>,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], consents: vec![], events: Default::default(), project_keys: HashMap::new() }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], consents: vec![], events: Default::default(), project_keys: HashMap::new(), tasks: None }
         }
         fn approved(mut self, user: &str, client: &str, target: &str) -> Self {
             self.approvals.push((user.into(), client.into(), target.into()));
@@ -1158,6 +1335,9 @@ mod tests {
     impl EdgeBackend for Fake {
         fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
             Some(&self.events)
+        }
+        fn tasks(&self) -> Option<edge_tasks::TaskRuntime> {
+            self.tasks.clone()
         }
         async fn verify(&self, token: &str) -> Result<Value, String> {
             self.verified.fetch_add(1, Ordering::SeqCst);
@@ -1424,6 +1604,138 @@ mod tests {
         assert!(f.paths().is_empty(), "discover never wakes a computer");
         // Still behind auth.
         assert_eq!(post(&f, Target::Agents, &HeaderMap::new(), discover).await.0, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── MCP Tasks (mcp_edge_tasks) ────────────────────────────────────────────
+
+    use super::edge_tasks::{APPROVAL_KEY, TASKS_EXTENSION_ID};
+    use mcp_protocol::META_CLIENT_CAPABILITIES;
+
+    /// A shared task store whose background jobs forward through `runner`.
+    fn task_runtime(runner: Fake) -> (edge_tasks::TaskRuntime, Arc<Fake>) {
+        let runner = Arc::new(runner);
+        let store: Arc<dyn edge_tasks::TaskStore> = Arc::new(edge_tasks::testing::MemTaskStore::default());
+        (edge_tasks::TaskRuntime { store, backend: runner.clone() }, runner)
+    }
+
+    fn task_call(tool: &str, url_elicitation: bool) -> String {
+        let mut caps = json!({ "extensions": { TASKS_EXTENSION_ID: {} } });
+        if url_elicitation {
+            caps["elicitation"] = json!({ "url": {} });
+        }
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": tool, "arguments": { "x": 1 }, "_meta": { META_CLIENT_CAPABILITIES: caps } } }).to_string()
+    }
+
+    fn tasks_rpc(method: &str, params: Value) -> String {
+        json!({ "jsonrpc": "2.0", "id": 2, "method": method, "params": params }).to_string()
+    }
+
+    async fn poll_task(f: &Fake, target: Target, token: &str, task: &str, status: &str) -> Value {
+        for _ in 0..200 {
+            let (_, _, b) = post(f, target.clone(), &bearer(token), &tasks_rpc("tasks/get", json!({ "taskId": task }))).await;
+            if b["result"]["status"] == status {
+                return b;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("task {task} never reached {status}");
+    }
+
+    const RAN: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ran"}],"isError":false}}"#;
+
+    #[tokio::test]
+    async fn tasks_relayed_long_running_call_create_poll_completed_and_another_owner_gets_not_found() {
+        let (rt, runner) = task_runtime(Fake::new(&["rt1"]).reply("rt1", Ok((200, RAN))));
+        let mut f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a")).token("other", claims(BASE, AGENTS_SCOPE, "user-b"));
+        f.tasks = Some(rt);
+        let (status, _, created) = post(&f, Target::Agents, &bearer("agents"), &task_call("shell.exec", false)).await;
+        assert_eq!((status, created["result"]["resultType"].as_str(), created["result"]["status"].as_str()), (StatusCode::OK, Some("task"), Some("working")), "{created}");
+        let task = created["result"]["taskId"].as_str().unwrap().to_string();
+        let done = poll_task(&f, Target::Agents, "agents", &task, "completed").await;
+        assert_eq!(done["result"]["result"]["content"][0]["text"], "ran");
+        // The runtime got the call without the Tasks declaration, so it answered inline.
+        let sent: Value = serde_json::from_slice(&runner.calls.lock().unwrap()[0].4).unwrap();
+        assert_eq!(sent["params"]["arguments"]["x"], 1);
+        assert!(!edge_tasks::declares_tasks(&sent["params"]));
+        assert!(f.paths().is_empty(), "the request itself relayed nothing");
+        // Another caller's task id is not found.
+        let (_, _, other) = post(&f, Target::Agents, &bearer("other"), &tasks_rpc("tasks/get", json!({ "taskId": task }))).await;
+        assert_eq!(other["error"]["message"], "Task not found");
+    }
+
+    #[tokio::test]
+    async fn tasks_are_only_for_declared_long_running_calls_and_initialize_advertises_them() {
+        let (rt, runner) = task_runtime(Fake::new(&["rt1"]));
+        let mut f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a")).reply("rt1", Ok((200, RAN)));
+        f.tasks = Some(rt);
+        let plain = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell.exec","arguments":{}}}"#;
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), plain).await;
+        assert_eq!(b["result"]["content"][0]["text"], "ran", "no declaration: inline, as before");
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), &task_call("agents_list", false)).await;
+        assert_ne!(b["result"]["resultType"], "task", "a quick tool stays inline");
+        assert!(runner.calls.lock().unwrap().is_empty());
+        let discover = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), discover).await;
+        assert_eq!(b["result"]["capabilities"]["extensions"][edge_tasks::TASKS_EXTENSION_ID], json!({}));
+        let f = f.reply("rt1", Ok((200, r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"x"}}}"#)));
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).await;
+        assert_eq!(b["result"]["capabilities"]["extensions"][edge_tasks::TASKS_EXTENSION_ID], json!({}));
+    }
+
+    #[tokio::test]
+    async fn tasks_edge_answered_phone_tool_becomes_a_task() {
+        let (rt, runner) = task_runtime(Fake::new(&[]));
+        let mut f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["phones"]);
+        f.tasks = Some(rt);
+        let (_, _, created) = post(&f, Target::Agents, &bearer(PKEY), &task_call("phone_tap", false)).await;
+        let task = created["result"]["taskId"].as_str().expect("a task").to_string();
+        let done = poll_task(&f, Target::Agents, PKEY, &task, "completed").await;
+        assert!(done["result"]["result"]["content"].is_array(), "{done}");
+        assert_eq!(runner.calls.lock().unwrap()[0].2, "phone:phone_tap", "the background job ran the phone tool");
+    }
+
+    #[tokio::test]
+    async fn tasks_input_required_update_completed_for_the_owner_approval_gate() {
+        let (rt, runner) = task_runtime(Fake::new(&["rt1"]).reply("rt1", Ok((200, RAN))));
+        let mut before = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("client-abc")));
+        before.tasks = Some(rt.clone());
+        // Without URL elicitation the gate stays a 403.
+        let (status, _, body) = post(&before, Target::Agents, &bearer("tok"), &task_call("agent_send", false)).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_required")));
+        let (status, _, created) = post(&before, Target::Agents, &bearer("tok"), &task_call("agent_send", true)).await;
+        assert_eq!((status, created["result"]["status"].as_str()), (StatusCode::OK, Some("input_required")), "{created}");
+        let task = created["result"]["taskId"].as_str().unwrap().to_string();
+        let waiting = poll_task(&before, Target::Agents, "tok", &task, "input_required").await;
+        let ask = &waiting["result"]["inputRequests"][edge_tasks::APPROVAL_KEY]["params"];
+        assert_eq!(ask["mode"], "url");
+        assert!(ask["url"].as_str().unwrap().contains("client=client-abc"), "{ask}");
+        let accept = tasks_rpc("tasks/update", json!({ "taskId": task, "inputResponses": { APPROVAL_KEY: { "action": "accept" } } }));
+        // Accepting before the owner approved runs nothing.
+        let (_, _, b) = post(&before, Target::Agents, &bearer("tok"), &accept).await;
+        assert_eq!(b["result"]["status"], "input_required");
+        assert!(runner.calls.lock().unwrap().is_empty());
+        // The owner approves in Allternit; the client continues.
+        let mut after = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("client-abc"))).approved("user_c", "client-abc", "agents");
+        after.tasks = Some(rt);
+        post(&after, Target::Agents, &bearer("tok"), &accept).await;
+        let done = poll_task(&after, Target::Agents, "tok", &task, "completed").await;
+        assert_eq!(done["result"]["result"]["content"][0]["text"], "ran");
+        assert_eq!(runner.calls.lock().unwrap()[0].3, "client-abc", "relayed as the approved client");
+    }
+
+    #[tokio::test]
+    async fn tasks_cancel_through_the_edge() {
+        let (rt, _runner) = task_runtime(Fake::new(&["rt1"]).reply("rt1", Err(Unreached::Warming)));
+        let mut f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a"));
+        f.tasks = Some(rt.clone());
+        // A call that never finishes on its own.
+        let owner = edge_tasks::owner_key("user-a", "claude-connector", "agents");
+        let created = edge_tasks::start(&rt.store, &owner, "phone_task", Box::pin(std::future::pending())).await.unwrap();
+        let task = created["taskId"].as_str().unwrap();
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), &tasks_rpc("tasks/cancel", json!({ "taskId": task }))).await;
+        assert_eq!(b["result"]["status"], "cancelled", "{b}");
+        let (_, _, b) = post(&f, Target::Agents, &bearer("agents"), &tasks_rpc("tasks/cancel", json!({ "taskId": task }))).await;
+        assert_eq!(b["error"]["code"], mcp_protocol::codes::INVALID_PARAMS);
     }
 
     // ── MCP Events ────────────────────────────────────────────────────────────
