@@ -63,12 +63,8 @@ pub trait SkillStore: Send + Sync {
     async fn org_skills(&self, user_id: &str) -> Result<HashMap<String, Vec<Skill>>, String>;
 }
 
-/// The production store today.
-///
-/// TODO(lane 47 follow-up): cloud-api has no user or org skill store yet (the
-/// only skill folders are local ones the runtime reads, `allternit-api`
-/// `ledger.rs`). When one lands, give `ApiBackend` a real store via
-/// `EdgeBackend::skills` and keep `org_skills` limited to the caller's orgs.
+/// The store for backends with no database (the default `EdgeBackend::skills`).
+/// Production uses `cloud_skills::PgSkillStore` (migration 163).
 pub struct NoCloudStore;
 
 #[async_trait::async_trait]
@@ -126,7 +122,7 @@ fn builtin() -> Vec<Skill> {
 }
 
 /// Agent Skills names: 1-64 of `a-z`, `0-9`, `-`, not starting or ending with `-`.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && !name.starts_with('-')
@@ -134,7 +130,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 /// A supporting-file path: relative, no empty, `.` or `..` segments.
-fn valid_file_path(path: &str) -> bool {
+pub(crate) fn valid_file_path(path: &str) -> bool {
     !path.is_empty() && !path.starts_with('/') && path.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
 }
 

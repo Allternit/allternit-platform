@@ -1123,16 +1123,21 @@ async fn well_known_at(Path(rest): Path<String>) -> Response {
 struct ProdBackend<'a> {
     state: &'a Arc<ApiState>,
     events: crate::routes::mcp_events::PgEventsStore<'a>,
+    skills: crate::routes::cloud_skills::PgSkillStore<'a>,
 }
 
 impl<'a> ProdBackend<'a> {
     fn new(state: &'a Arc<ApiState>) -> Self {
-        Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db } }
+        Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db }, skills: crate::routes::cloud_skills::PgSkillStore { db: &state.db } }
     }
 }
 
 #[async_trait::async_trait]
 impl EdgeBackend for ProdBackend<'_> {
+    fn skills(&self) -> &dyn super::mcp_edge_skills::SkillStore {
+        &self.skills
+    }
+
     fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
         Some(&self.events)
     }
