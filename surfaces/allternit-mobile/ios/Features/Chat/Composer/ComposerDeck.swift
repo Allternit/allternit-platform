@@ -373,10 +373,22 @@ struct DeckArtifactsSheet: View {
                     heading("Pinned")
                     // Pins are made with "Pin to deck" on an open artifact
                     // (web deck-pins); this app has none of its own yet.
-                    FriendlyStateView(title: "Nothing pinned yet. Open an artifact and choose Pin to deck.", art: .sheets, size: .panel)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
+                    VStack(spacing: 8) {
+                        EmptyArt(kind: .sheets, size: .panel)
+                        (Text("Nothing pinned yet. Open an artifact and choose ")
+                            + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
+                            + Text("."))
+                            .font(.system(size: 12.5))
+                            .foregroundColor(Color("TextSecondary"))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    )
 
                     heading("Recent")
                         .padding(.top, 16)
