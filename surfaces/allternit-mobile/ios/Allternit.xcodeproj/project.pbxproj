@@ -534,6 +534,7 @@
 		8CB3086625EE546687479195 /* BotDesktopClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBFFF88C78C5BA8F77511B1 /* BotDesktopClient.swift */; };
 		8CBEF9F3DC1435677DDB2A15 /* StageBackdropPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFDDFD12AE0870C838F3F6D /* StageBackdropPicker.swift */; };
 		8D7FFF85E9F797023E749760 /* QuestionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F4E6B5D0968F3BE9B8526CB /* QuestionCardView.swift */; };
+		D3C4B0A10000000000000F11 /* PlanSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C4B0A10000000000000F12 /* PlanSheetView.swift */; };
 		8E173FE114834B6175B00805 /* ShortcutBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD606A99436001372F41180D /* ShortcutBridgeTests.swift */; };
 		8E261AFA68E1A7CA2BA7FD99 /* DesignProjectCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 236F64053DDFA9AB97A4A78B /* DesignProjectCanvasView.swift */; };
 		8E48B3B47EA22E5D73234185 /* Fit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3702BE920CE05401F27357E4 /* Fit.swift */; };
@@ -1392,6 +1393,7 @@
 		4F1FD05BF40A89E1456E0339 /* TeachSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeachSheets.swift; sourceTree = "<group>"; };
 		4F3231708C0334B13ACA2FC5 /* PhoneActionsSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneActionsSettingsSection.swift; sourceTree = "<group>"; };
 		4F4E6B5D0968F3BE9B8526CB /* QuestionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestionCardView.swift; sourceTree = "<group>"; };
+		D3C4B0A10000000000000F12 /* PlanSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanSheetView.swift; sourceTree = "<group>"; };
 		4F77A924890E644DD3DA1E21 /* FocusFilterClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusFilterClient.swift; sourceTree = "<group>"; };
 		4FB9EF9B2AE369D01CF1D99F /* StatusControlIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusControlIntentsTests.swift; sourceTree = "<group>"; };
 		4FF5A433FAC2C691A9F790AD /* CodeWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeWorkspace.swift; sourceTree = "<group>"; };
@@ -2263,6 +2265,7 @@
 				F0A7117FE7BB64375E70C3D1 /* PermissionAskView.swift */,
 				DFA461B44C73898C82AC10FE /* PhoneHoldReviewView.swift */,
 				4F4E6B5D0968F3BE9B8526CB /* QuestionCardView.swift */,
+				D3C4B0A10000000000000F12 /* PlanSheetView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -5125,6 +5128,7 @@
 				0418D3A656086D854C346E2F /* PushNotificationManager.swift in Sources */,
 				846E1D7AFD7DD8DB41B8B8E6 /* PushTokenClient.swift in Sources */,
 				8D7FFF85E9F797023E749760 /* QuestionCardView.swift in Sources */,
+				D3C4B0A10000000000000F11 /* PlanSheetView.swift in Sources */,
 				03A5A7CF92806A08E7D27A54 /* QuickTaskSheet.swift in Sources */,
 				AD16986527C489CA19AE4BA4 /* RFBAuth.swift in Sources */,
 				1357823181DAF704756FCCF3 /* RFBClient.swift in Sources */,
