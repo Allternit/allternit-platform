@@ -203,8 +203,20 @@ struct ComputerConnectPanel: View {
 
     private var command: String { ComputerPairing.fabricPairCommand }
 
+    /// Real state only: connected once a computer really came online;
+    /// connecting while the panel is waiting for one (the same condition as the
+    /// "Waiting for your computer…" row, after the first list read); asleep
+    /// before that, or when the read failed, so a check is never unearned.
+    private var sceneState: ConnectSceneState {
+        if fresh != nil { return .connected }
+        if relay.lastError != nil || before == nil { return .asleep }
+        return .connecting
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            ConnectScene(state: sceneState)
+
             if let fresh {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")

@@ -143,6 +143,7 @@
 		22587EBF84FC873F64DD20B8 /* FormSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BF1E2601384E006590B918 /* FormSchema.swift */; };
 		22C24DCDF816EE4CF16B7CF8 /* VoiceKeySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FAB80CEB319BEEBF9730C6 /* VoiceKeySync.swift */; };
 		2315EB066AC8D48D2CA3855D /* StorePurchaseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455E1A4A7569BDBD36AB748E /* StorePurchaseViews.swift */; };
+		C5CE0000000000000000A001 /* ConnectScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CE0000000000000000A002 /* ConnectScene.swift */; };
 		238990DB0C02F7F81E9F86BA /* ComputerChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6281CD4D20CECB809EA057DF /* ComputerChip.swift */; };
 		239DD97E2CE53C524C621776 /* ACIAgentRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7AEC5CF2FBE0926C09D8DDF /* ACIAgentRunView.swift */; };
 		23CE1271CE8D9186281FC6C6 /* SampleConnections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95C3DC79ABF3A975A524B4F9 /* SampleConnections.swift */; };
@@ -1422,6 +1423,7 @@
 		62550D4C0982A7AFB282DE9D /* SignInStageScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInStageScenes.swift; sourceTree = "<group>"; };
 		625E147AE3464E852EE5E863 /* StageBackdropModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageBackdropModel.swift; sourceTree = "<group>"; };
 		62812584F5287A455C87B152 /* CoworkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSession.swift; sourceTree = "<group>"; };
+		C5CE0000000000000000A002 /* ConnectScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectScene.swift; sourceTree = "<group>"; };
 		6281CD4D20CECB809EA057DF /* ComputerChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerChip.swift; sourceTree = "<group>"; };
 		62925FBA474E5C451AE3596C /* StoreBillingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreBillingClient.swift; sourceTree = "<group>"; };
 		62A327B10C3C4DCBB221AC28 /* AllternitScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitScreen.entitlements; sourceTree = "<group>"; };
@@ -3812,6 +3814,7 @@
 				77AECD9F187CE85C55C5BED2 /* ComputeGateView.swift */,
 				6281CD4D20CECB809EA057DF /* ComputerChip.swift */,
 				324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */,
+				C5CE0000000000000000A002 /* ConnectScene.swift */,
 				49C7586613A1AF683C0AF1C1 /* DesktopArtwork.swift */,
 				A6354FE83459A7C8C1555749 /* ImpactMapView.swift */,
 				584FE7A24C0D1C56DE612516 /* PolishedTabPage.swift */,
@@ -4725,6 +4728,7 @@
 				CB75971075C518A40D5884CD /* ComputeGateView.swift in Sources */,
 				F640CECEE9AFB8C0E214D26A /* ComputeStatusStore.swift in Sources */,
 				238990DB0C02F7F81E9F86BA /* ComputerChip.swift in Sources */,
+				C5CE0000000000000000A001 /* ConnectScene.swift in Sources */,
 				7A1FBF2AE79890A4770B8B66 /* ComputerDriveViews.swift in Sources */,
 				9B9B6B7FEB6A399693D7624F /* ConnectAPI.swift in Sources */,
 				E739501E6E791B31021747A3 /* ConnectComputerView.swift in Sources */,
