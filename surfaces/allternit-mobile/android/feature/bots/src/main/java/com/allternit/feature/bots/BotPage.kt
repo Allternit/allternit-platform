@@ -326,7 +326,7 @@ internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator, backend: com.allte
             }
         }
         Gap(8.dp)
-        if (!ListState(loading, error, filtered.isEmpty() && memories.isEmpty(), "Couldn't load memory", "Nothing remembered yet.") { scope.launch { load() } }) {
+        if (!ListState(loading, error, filtered.isEmpty() && memories.isEmpty(), "Couldn't load memory", "Nothing remembered yet.", com.allternit.core.design.EmptyArtKind.Sheets) { scope.launch { load() } }) {
             if (filtered.isEmpty()) Text("No matches.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
             else RowGroup {
                 filtered.forEachIndexed { i, m ->
@@ -365,7 +365,7 @@ internal fun BotChannelsView(bot: BotRecord) {
     }
     LaunchedEffect(bot.id) { load() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp).testTag("botChannels")) {
-        if (!ListState(loading, error, channels.isEmpty(), "Couldn't load channels", "No messaging connections yet.") { scope.launch { load() } }) {
+        if (!ListState(loading, error, channels.isEmpty(), "Couldn't load channels", "No messaging connections yet.", com.allternit.core.design.EmptyArtKind.Envelope) { scope.launch { load() } }) {
             RowGroup {
                 channels.forEachIndexed { i, ch ->
                     ToggleRow(

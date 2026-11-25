@@ -342,7 +342,7 @@ internal fun TwinPage(back: () -> Unit) {
         SLabel("Memories")
         LoadView(memory, memoryReload, "load memories") { body ->
             val rows = body.listUnder("memory", "memories", "items")
-            if (rows.isEmpty()) SNote("Nothing remembered yet.") else SCard {
+            if (rows.isEmpty()) SNote("Nothing remembered yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, m ->
                     val id = m.str("id") ?: return@forEachIndexed
                     val proposed = m.str("status") == "proposed"

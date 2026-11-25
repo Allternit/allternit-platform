@@ -796,7 +796,7 @@ internal fun BotWebhooksSheet(onDismiss: () -> Unit) {
     LaunchedEffect(Unit) { load() }
     LibrarySheet(title = "Org Webhooks", testTag = "botWebhooksSheet", onDismiss = onDismiss, leading = LibrarySheetAction("Done", onClick = onDismiss)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
-            if (!ListState(loading, error, subs.isEmpty(), "Couldn't load webhooks", "No organization subscriptions yet. Webhooks are organization-wide. They let outside services push events into Allternit.") { scope.launch { load() } }) {
+            if (!ListState(loading, error, subs.isEmpty(), "Couldn't load webhooks", "No organization subscriptions yet. Webhooks are organization-wide. They let outside services push events into Allternit.", com.allternit.core.design.EmptyArtKind.Bell) { scope.launch { load() } }) {
                 RowGroup {
                     subs.forEachIndexed { i, s ->
                         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

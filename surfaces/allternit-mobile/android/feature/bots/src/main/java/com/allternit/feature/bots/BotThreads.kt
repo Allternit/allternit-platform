@@ -260,7 +260,7 @@ internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionI
         .sortedWith(compareByDescending<BotThread> { it.currentSessionId != null && it.currentSessionId == currentSessionId }.then(BotThread.order))
     LazyColumn(Modifier.fillMaxSize().testTag("botTasks"), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)) {
         if (rows.isEmpty()) item {
-            ListState(store.isLoadingThreads, store.threadsError, true, "Couldn't load tasks", "No tasks yet. When ${bot.displayName} plans work in a thread, its steps show here.") { scope.launch { store.refreshThreads() } }
+            ListState(store.isLoadingThreads, store.threadsError, true, "Couldn't load tasks", "No tasks yet. When ${bot.displayName} plans work in a thread, its steps show here.", com.allternit.core.design.EmptyArtKind.Bell) { scope.launch { store.refreshThreads() } }
         }
         items(rows, key = { it.id }) { t ->
             val done = t.todo.count { it.second == "done" }

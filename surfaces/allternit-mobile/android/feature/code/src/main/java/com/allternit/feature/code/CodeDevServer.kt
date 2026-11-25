@@ -59,7 +59,7 @@ internal fun DevServerPortsScreen(backend: ChatBackend, ptyId: String, onBack: (
             Column(Modifier.fillMaxSize()) {
                 mintError?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.padding(16.dp).testTag("codePortsError")) }
                 if (ports.isEmpty()) {
-                    EmptyState("No dev servers detected", "Start something like `npm run dev` in the terminal — it'll show up here.")
+                    EmptyState("No dev servers detected", "Start something like `npm run dev` in the terminal — it'll show up here.", gizzi = true)
                     CodePill("Refresh", testTag = "codePortsRefresh", onClick = reload)
                 } else {
                     LazyColumn(Modifier.fillMaxWidth().testTag("codePortsList")) {

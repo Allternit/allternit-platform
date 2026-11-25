@@ -90,7 +90,7 @@ internal fun SessionDiffScreen(backend: ChatBackend, sessionId: String, onBack: 
         CodeLoader(key = sessionId, failedTitle = "Couldn't load changes", load = { CodeApi.sessionDiff(backend, sessionId) }) { diffs, reload ->
             if (diffs.isEmpty()) {
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    EmptyState("No changes yet", "When this session edits files, they'll appear here.")
+                    EmptyState("No changes yet", "When this session edits files, they'll appear here.", gizzi = true)
                     CodePill("Refresh", testTag = "codeChangesRefresh", onClick = reload)
                 }
             } else {
