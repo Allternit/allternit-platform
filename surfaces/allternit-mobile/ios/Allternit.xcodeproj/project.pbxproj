@@ -965,6 +965,7 @@
 		FB3DD71568ADD2963E9E92E9 /* McpServersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA216B2B8DD04CAD20C743A /* McpServersSettingsView.swift */; };
 		FB4BF1C7CA40D4942BB1B4CE /* TasksBoardScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9194207A9D7D068C5496D057 /* TasksBoardScreen.swift */; };
 		FB5B9684998254071C795126 /* BlockPulseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2A3FE35BD4944EEF54DFC80 /* BlockPulseView.swift */; };
+		A17D07F1E1D0C0DE00000001 /* DotFieldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17D07F1E1D0C0DE00000002 /* DotFieldView.swift */; };
 		FB82DC8830EE15CA77EBC9AC /* AllternitFileProviderUI.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5779CCA0F91ED0119455B99D /* AllternitFileProviderUI.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FBDC1AB7F6D03856C14C83A0 /* InstanceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C994B34225EE58D6251F1E /* InstanceConnection.swift */; };
 		FBE77204AC0CC0270856FD04 /* IngestSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFAADED4CDE4E17B35B458C8 /* IngestSocket.swift */; };
@@ -1797,6 +1798,7 @@
 		D129CF0D5A7B51D59834876E /* ComputeBillingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputeBillingView.swift; sourceTree = "<group>"; };
 		D16FDC6861426CA87CFE1D12 /* VoiceRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRouter.swift; sourceTree = "<group>"; };
 		D2A3FE35BD4944EEF54DFC80 /* BlockPulseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockPulseView.swift; sourceTree = "<group>"; };
+		A17D07F1E1D0C0DE00000002 /* DotFieldView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotFieldView.swift; sourceTree = "<group>"; };
 		D3438C7C94D07CC1E6ADF7EA /* ConnectionsCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsCatalog.swift; sourceTree = "<group>"; };
 		D34D0D89245090938EB5056A /* AutomationSchedulerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationSchedulerView.swift; sourceTree = "<group>"; };
 		D4002E6788B643B667652C0F /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfile.swift; sourceTree = "<group>"; };
@@ -2204,6 +2206,7 @@
 			isa = PBXGroup;
 			children = (
 				D2A3FE35BD4944EEF54DFC80 /* BlockPulseView.swift */,
+				A17D07F1E1D0C0DE00000002 /* DotFieldView.swift */,
 				BBEC2672E535BB0BDBB9D7B0 /* ByteLoadingView.swift */,
 				7C845E9BE4C3BC82F9BCAAD0 /* GenerationCards.swift */,
 				FFAF2EB69C1281F58648C0BD /* GenerationProgressView.swift */,
@@ -4600,6 +4603,7 @@
 				B3C20297132A58130478F768 /* BenchmarkView.swift in Sources */,
 				99ABED8F525E1A2CA8610130 /* BlockGlyphs.swift in Sources */,
 				FB5B9684998254071C795126 /* BlockPulseView.swift in Sources */,
+				A17D07F1E1D0C0DE00000001 /* DotFieldView.swift in Sources */,
 				420F754D7698E7F033D9D62A /* BlockText.swift in Sources */,
 				FD8EDC6D571088159DE61BE9 /* BotActivityAttributes.swift in Sources */,
 				592220CC018F51F070A3D292 /* BotAvatarView.swift in Sources */,
