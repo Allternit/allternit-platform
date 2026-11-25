@@ -50,6 +50,8 @@ fun FriendlyState(
     onAction: (() -> Unit)? = null,
     art: EmptyArtKind? = null,
     gizzi: Boolean = false,
+    panel: Boolean = false,
+    paper: Color = Color.Unspecified,
     icon: @Composable () -> Unit,
 ) {
     val c = AllternitTheme.colors
@@ -60,7 +62,7 @@ fun FriendlyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        if (gizzi) GizziWalk() else if (art != null) EmptyArt(art) else Box(
+        if (gizzi) GizziWalk() else if (art != null) EmptyArt(art, size = if (panel) 64.dp else 96.dp, paper = paper) else Box(
             modifier = Modifier.size(64.dp)
                 .clip(RoundedCornerShape(AllternitRadii.LG))
                 .background(tint.copy(alpha = 0.12f))
