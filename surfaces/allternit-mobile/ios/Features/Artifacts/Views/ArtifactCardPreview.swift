@@ -63,7 +63,7 @@ struct ArtifactCardPreview: View {
     private var content: some View {
         switch preview {
         case nil:
-            DotFieldView(mode: .field(.band, amplitude: 0.45), pitch: 7)
+            DotLoadingPane(loading: true, label: "Preparing preview")
         case .image(let image)?:
             Color.clear.overlay(alignment: .top) {
                 Image(uiImage: image).resizable().scaledToFill()

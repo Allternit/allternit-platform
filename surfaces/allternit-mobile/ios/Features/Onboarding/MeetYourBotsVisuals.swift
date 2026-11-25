@@ -338,11 +338,29 @@ struct MeetMainStage: View {
     let field: Color
     let tile: AnyView
     let label: String
+    /// What the bot says, one bubble after the other (about 1.5 s each). Empty = no bubble.
+    var bubbles: [String] = []
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 0 = wash empty, 1 = washed, bot dropped in.
+    @State private var arrived = false
+    @State private var bubbleIndex = 0
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             field
-            tile.frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Intro wash: the field colour fills from the top (0.6 s ease-out), then rests.
+            GeometryReader { proxy in
+                MeetPalette.fill2
+                    .frame(height: arrived ? 0 : proxy.size.height, alignment: .top)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
+            }
+            tile
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: arrived ? 0 : -60)
+                .opacity(arrived ? 1 : 0)
+                .overlay(alignment: .top) { bubble }
             HStack(spacing: 6) {
                 Circle().fill(MeetPalette.coral).frame(width: 6, height: 6)
                 Text(label).font(MeetPalette.mono(11.5, .semibold)).foregroundStyle(.white)
@@ -354,6 +372,35 @@ struct MeetMainStage: View {
         }
         .clipped()
         .accessibilityHidden(true)
+        .task {
+            if reduceMotion {
+                arrived = true
+                bubbleIndex = max(bubbles.count - 1, 0)
+                return
+            }
+            withAnimation(.easeOut(duration: 0.6)) { arrived = true }
+            for index in bubbles.indices.dropFirst() {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                if Task.isCancelled { return }
+                withAnimation(.easeOut(duration: 0.2)) { bubbleIndex = index }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bubble: some View {
+        if arrived, bubbles.indices.contains(bubbleIndex) {
+            Text(bubbles[bubbleIndex])
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MeetPalette.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(MeetPalette.bg, in: Capsule())
+                .overlay(Capsule().stroke(MeetPalette.line))
+                .padding(.top, 10)
+                .id(bubbleIndex)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
+        }
     }
 }
 

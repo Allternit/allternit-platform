@@ -129,7 +129,7 @@ struct WritingDraftCard: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            actionButton(copied ? "Copied" : "Copy", symbol: copied ? "checkmark" : "doc.on.doc") {
+            actionButton(copied ? "Copied" : "Copy", symbol: copied ? "checkmark" : "doc.on.doc", main: !hasHandoff) {
                 UIPasteboard.general.string = subject.isEmpty || draft.variant != "email" ? body_ : "\(subject)\n\n\(body_)"
                 copied = true
                 Task {
@@ -140,12 +140,12 @@ struct WritingDraftCard: View {
             actionButton("Edit", symbol: "pencil") { isEditing = true }
             Spacer(minLength: 0)
             if draft.variant == "email" {
-                actionButton("Open in Mail", symbol: "envelope") {
+                actionButton("Open in Mail", symbol: "envelope", main: true) {
                     if let url = WritingDraftLinks.mailto(to: draft.to, subject: subject, body: body_) { openURL(url) }
                 }
                 .accessibilityHint("Opens Mail with this draft. You send it from there.")
             } else if draft.variant == "text_message" {
-                actionButton("Open in Messages", symbol: "message") {
+                actionButton("Open in Messages", symbol: "message", main: true) {
                     if let url = MessageComposer.smsURL(to: WritingDraftLinks.phoneNumber(draft.to) ?? "", text: body_) { openURL(url) }
                 }
                 .accessibilityHint("Opens Messages with this draft. You send it from there.")
@@ -153,14 +153,18 @@ struct WritingDraftCard: View {
         }
     }
 
-    private func actionButton(_ label: String, symbol: String, action: @escaping () -> Void) -> some View {
+    /// Mail and Messages hand-off drafts have one main button; others lead with Copy.
+    private var hasHandoff: Bool { draft.variant == "email" || draft.variant == "text_message" }
+
+    /// `main` is the card's one filled button; the rest stay quiet neutral pills.
+    private func actionButton(_ label: String, symbol: String, main: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(label, systemImage: symbol)
                 .font(.caption.weight(.semibold))
-                .foregroundColor(Color("TextPrimary"))
-                .padding(.horizontal, 10)
+                .foregroundColor(main ? Color("BgPrimary") : Color("TextPrimary"))
+                .padding(.horizontal, main ? 12 : 10)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(Color("FillNeutral")))
+                .background(Capsule().fill(main ? Color("TextPrimary") : Color("FillNeutral")))
         }
         .buttonStyle(.plain)
     }

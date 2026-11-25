@@ -563,7 +563,8 @@ struct MeetYourBotsView: View {
                 grid(label: n > 0 ? "\(n) bot\(n > 1 ? "s" : "") · drag to arrange" : "Drag bots here, or tap a card",
                      locked: model.existingTemplateIds)
             case .main:
-                MeetMainStage(field: leaderField, tile: AnyView(leaderTile(size: 150, live: true)), label: "\(model.leader) idle")
+                MeetMainStage(field: leaderField, tile: AnyView(leaderTile(size: 150, live: true)), label: "\(model.leader) idle",
+                              bubbles: ["Hey, I'm \(model.leader.capitalizedFirst)", "What can I take off your plate?"])
             case .routines:
                 MeetRoutineCalendar(
                     items: model.routines.map { r in
@@ -600,7 +601,10 @@ struct MeetYourBotsView: View {
             }
         }
         .id(model.step)
-        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 1.02)))
+        // Leaving the main-bot stage, the bot shrinks up toward the header.
+        .transition(reduceMotion ? .opacity : model.step == .main
+            ? .asymmetric(insertion: .opacity, removal: .opacity.combined(with: .scale(scale: 0.3, anchor: .top)))
+            : .opacity.combined(with: .scale(scale: 1.02)))
     }
 
     private func grid(label: String, locked: Set<String>) -> some View {
