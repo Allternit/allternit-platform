@@ -92,11 +92,32 @@ export namespace Todo {
     completionWatch.set(sessionID, fn)
   }
 
+  export function hasWatch(sessionID: string) {
+    return completionWatch.has(sessionID)
+  }
+
+  /** Called once per session per process on the first todo read or write (restart recovery). */
+  let restoreHook: ((sessionID: string) => void) | undefined
+  const restored = new Set<string>()
+  export function onFirstTouch(fn: (sessionID: string) => void) {
+    restoreHook = fn
+  }
+  function touch(sessionID: string) {
+    if (restored.has(sessionID)) return
+    restored.add(sessionID)
+    try {
+      restoreHook?.(sessionID)
+    } catch {
+      // never blocks the todo path
+    }
+  }
+
   export function unwatchCompletion(sessionID: string) {
     completionWatch.delete(sessionID)
   }
 
   export function update(raw: { sessionID: string; todos: Info[] }) {
+    touch(raw.sessionID)
     const input = { sessionID: raw.sessionID, todos: normalize(raw.todos).todos }
     Database.transaction((db) => {
       db.delete(TodoTable).where(eq(TodoTable.session_id, input.sessionID)).run()
@@ -131,6 +152,7 @@ export namespace Todo {
   }
 
   export function get(sessionID: string) {
+    touch(sessionID)
     const rows = Database.use((db) =>
       db.select().from(TodoTable).where(eq(TodoTable.session_id, sessionID)).orderBy(asc(TodoTable.position)).all(),
     )

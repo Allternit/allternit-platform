@@ -101,6 +101,42 @@ async function setPlanStatus(sessionID: string, status: "open" | "approved" | "d
   }
 }
 
+/**
+ * Restart recovery: the in-memory "done" watch is lost when Gizzi restarts. On the
+ * first todo read or write of a session, if its plan artifact is approved (not done),
+ * re-arm the watch, or PATCH done right away when every todo is already completed.
+ */
+Todo.onFirstTouch((sessionID) => {
+  if (Todo.hasWatch(sessionID)) return
+  void (async () => {
+    try {
+      if (["1", "true"].includes((process.env.GIZZI_ARTIFACTS_OFFLINE ?? "").toLowerCase())) return
+      const stored = await Pairing.load().catch(() => undefined)
+      const device = Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+      const tokens = [
+        ...new Set([process.env.ALLTERNIT_API_KEY?.trim(), process.env.ALLTERNIT_API_TOKEN?.trim(), device].filter((t): t is string => !!t)),
+      ]
+      for (const token of tokens) {
+        const res = await fetch(`${Artifacts.cloudBase()}/api/v2/artifacts/${encodeURIComponent(Artifacts.planId(sessionID))}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        })
+        if (res.status === 401 || res.status === 403) continue
+        if (!res.ok) return
+        const json: any = await res.json().catch(() => undefined)
+        if (json?.plan_status !== "approved") return
+        if (Todo.hasWatch(sessionID)) return
+        const todos = Todo.get(sessionID)
+        if (todos.length > 0 && todos.every((t) => t.status === "completed")) await setPlanStatus(sessionID, "done")
+        else Todo.watchCompletion(sessionID, () => void setPlanStatus(sessionID, "done"))
+        return
+      }
+    } catch (error) {
+      planLog.warn("plan status restore failed", { sessionID, error: String(error) })
+    }
+  })()
+})
+
 export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
   parameters: z.object({
