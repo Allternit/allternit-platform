@@ -34,9 +34,7 @@ struct TasksBoardScreen: View {
         if let cards {
             filters(cards)
             if cards.isEmpty {
-                Text("No tasks yet. Tasks you or your bots add in a chat show up here.")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No tasks yet. Tasks you or your bots add in a chat show up here.", art: .envelope)
                     .padding(.top, 14)
             }
             ForEach(TaskBoardColumn.allCases, id: \.self) { column in

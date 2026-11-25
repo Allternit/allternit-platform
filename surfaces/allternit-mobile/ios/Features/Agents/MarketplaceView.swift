@@ -27,9 +27,9 @@ struct MarketplaceView: View {
             } else if store.listings.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "square.grid.2x2",
                     title: "No published agents or bots yet",
-                    message: "Check back later or publish your own from the workspace."
+                    message: "Check back later or publish your own from the workspace.",
+                    art: .gizzi
                 )
                 .listRowSeparator(.hidden)
             } else {

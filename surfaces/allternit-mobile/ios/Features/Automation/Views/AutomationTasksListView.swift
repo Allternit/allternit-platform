@@ -216,9 +216,9 @@ struct AutomationTasksListView: View {
                     if visibleJobs.isEmpty {
                         FriendlyInlineStateView(
                             style: .empty,
-                            icon: "magnifyingglass",
                             title: "No matches",
-                            message: "No automation tasks match."
+                            message: "No automation tasks match.",
+                            art: .search
                         )
                         .padding(.top, 24)
                     }
@@ -280,14 +280,14 @@ struct AutomationTasksListView: View {
     private var emptyState: some View {
         FriendlyStateView(
             style: .empty,
-            icon: "clock.arrow.circlepath",
             title: "No automation tasks",
             message: "Schedule a prompt to run automatically — daily digests, recurring reminders, anything on a timer.",
             actionTitle: "Create automation task",
             action: {
                 Haptics.light()
                 isCreateSheetPresented = true
-            }
+            },
+            art: .bell
         )
     }
 
