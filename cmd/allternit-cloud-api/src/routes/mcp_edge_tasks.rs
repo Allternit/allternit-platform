@@ -35,7 +35,7 @@ pub const TASKS_EXTENSION_ID: &str = "io.modelcontextprotocol/tasks";
 
 /// Tools that can take longer than one HTTP request should wait (plan v3
 /// E8, Wave 0 lane 3). Only these become tasks; everything else answers
-/// inline as before. Lane 45 adds the bot-target tools.
+/// inline as before. Relayed bot and connector calls follow `is_task_capable`.
 pub const LONG_RUNNING_TOOLS: &[&str] = &[
     // Answered at the edge for a project key with `phones` (`platform_v1/phones.rs` `mcp_tools`).
     "phone_tap",
@@ -72,6 +72,31 @@ const INVALID_PARAMS: i64 = mcp_protocol::codes::INVALID_PARAMS;
 
 pub fn is_long_running(tool: &str) -> bool {
     LONG_RUNNING_TOOLS.contains(&tool)
+}
+
+/// Verbs that mark a tool as instant: a lookup that answers at once.
+const INSTANT_VERBS: &[&str] = &[
+    "list", "get", "read", "search", "find", "describe", "show", "status", "info", "whoami", "ping", "count", "lookup", "check",
+];
+
+/// A tool whose name says it is a quick lookup (`list_issues`, `github__get_user`,
+/// `agents_list`, `deploy_status`). Judged on the tool part of a
+/// `<connector>__<tool>` name, by its first or last word.
+pub fn is_instant(tool: &str) -> bool {
+    let name = tool.rsplit("__").next().unwrap_or(tool).to_ascii_lowercase();
+    let words: Vec<&str> = name.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    match (words.first(), words.last()) {
+        (Some(a), Some(b)) => INSTANT_VERBS.contains(a) || INSTANT_VERBS.contains(b),
+        _ => true,
+    }
+}
+
+/// THE rule for which `tools/call`s may become Tasks (plan v3 E8, full
+/// coverage). `relayed_to_service` is true when the call goes to a vendor bot
+/// or a connector: those wait on another service, so every one is task-capable
+/// unless its name says it is instant. Everything else uses the fixed list.
+pub fn is_task_capable(tool: &str, relayed_to_service: bool) -> bool {
+    is_long_running(tool) || (relayed_to_service && !tool.is_empty() && !is_instant(tool))
 }
 
 fn client_capabilities(params: &Value) -> Option<&Value> {
@@ -168,7 +193,22 @@ fn spawn_job(store: Arc<dyn TaskStore>, id: String, job: Job) {
     let mut map = running().lock().unwrap_or_else(|p| p.into_inner());
     let task_id = id.clone();
     let handle = tokio::spawn(async move {
-        let outcome = tokio::time::timeout(JOB_LIMIT, job).await.unwrap_or_else(|_| job_error("The tool did not finish in time."));
+        let started = std::time::Instant::now();
+        let limited = tokio::time::timeout(JOB_LIMIT, job);
+        tokio::pin!(limited);
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + PROGRESS_EVERY, PROGRESS_EVERY);
+        let outcome = loop {
+            tokio::select! {
+                done = &mut limited => break done.unwrap_or_else(|_| job_error("The tool did not finish in time.")),
+                _ = tick.tick() => {
+                    let progress = working_progress(started.elapsed());
+                    // No longer working (cancelled): the job is about to be aborted.
+                    if let Ok(false) = store.transition(&task_id, &["working"], "working", &json!({}), Some(&progress), None).await {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            }
+        };
         let (to, result, error) = match outcome {
             JobOutcome::Result(r) => ("completed", Some(r), None),
             JobOutcome::Error(e) => ("failed", None, Some(e.to_string())),
@@ -180,6 +220,16 @@ fn spawn_job(store: Arc<dyn TaskStore>, id: String, job: Job) {
         running().lock().unwrap_or_else(|p| p.into_inner()).remove(&task_id);
     });
     map.insert(id, handle.abort_handle());
+}
+
+/// How often a running task writes its progress.
+const PROGRESS_EVERY: Duration = Duration::from_secs(5);
+
+/// What a `working` task keeps in `result` (the table has no progress columns):
+/// `progress` and `statusMessage`. A finished task's `result` is the tool result.
+fn working_progress(elapsed: Duration) -> Value {
+    let secs = elapsed.as_secs();
+    json!({ "progress": { "elapsedMs": elapsed.as_millis() as u64 }, "statusMessage": format!("Still running ({secs}s).") })
 }
 
 fn abort_job(id: &str) {
@@ -338,9 +388,14 @@ fn stored_error(row: &TaskRow) -> Value {
     serde_json::from_str::<Value>(&text).ok().filter(Value::is_object).unwrap_or_else(|| json!({ "code": INTERNAL_ERROR, "message": text }))
 }
 
+/// A `working` row's stored progress, if the job reported any.
+fn working_field<'a>(row: &'a TaskRow, key: &str) -> Option<&'a Value> {
+    row.result.as_ref().filter(|_| row.status == "working").and_then(|r| r.get(key)).filter(|v| !v.is_null())
+}
+
 fn status_message(row: &TaskRow) -> String {
     match row.status.as_str() {
-        "working" => format!("Running {}.", row.tool),
+        "working" => working_field(row, "statusMessage").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("Running {}.", row.tool)),
         "input_required" if row.input_requests.get(APPROVAL_KEY).is_some() => "Waiting for the owner to approve this app in Allternit.".into(),
         "input_required" => "Waiting for your input.".into(),
         "completed" => "Done.".into(),
@@ -373,6 +428,11 @@ fn create_result(row: &TaskRow) -> Value {
 fn detailed(row: &TaskRow) -> Value {
     let mut t = task_json(row);
     match row.status.as_str() {
+        "working" => {
+            if let Some(p) = working_field(row, "progress") {
+                t["progress"] = p.clone();
+            }
+        }
         "input_required" => t["inputRequests"] = row.input_requests.clone(),
         "completed" => t["result"] = row.result.clone().unwrap_or_else(|| json!({ "content": [] })),
         "failed" => t["error"] = stored_error(row),
@@ -402,9 +462,9 @@ pub async fn start(store: &Arc<dyn TaskStore>, owner_id: &str, tool: &str, job: 
 /// the edge-answered tools. `Some(reply)` = the call is now a task (a
 /// JSON-RPC reply carrying `CreateTaskResult`); `None` = answer it inline as
 /// before (no declaration, not long-running, Tasks off, or the store failed).
-pub async fn intercept_tool_call(tasks: Option<&TaskRuntime>, owner_id: &str, id: &Value, params: &Value, job: impl FnOnce(Arc<dyn EdgeBackend>) -> Job) -> Option<Value> {
+pub async fn intercept_tool_call(tasks: Option<&TaskRuntime>, owner_id: &str, id: &Value, params: &Value, relayed_to_service: bool, job: impl FnOnce(Arc<dyn EdgeBackend>) -> Job) -> Option<Value> {
     let tool = params["name"].as_str().unwrap_or_default();
-    let rt = tasks.filter(|_| declares_tasks(params) && is_long_running(tool))?;
+    let rt = tasks.filter(|_| declares_tasks(params) && is_task_capable(tool, relayed_to_service))?;
     match start(&rt.store, owner_id, tool, job(rt.backend.clone())).await {
         Ok(created) => Some(mcp_protocol::rpc_ok(id, created)),
         Err(e) => {
@@ -730,9 +790,40 @@ mod tests {
         let rt = TaskRuntime { store: store(), backend: Arc::new(Nop) };
         let job = |_: Arc<dyn EdgeBackend>| -> Job { Box::pin(async { JobOutcome::Result(json!({})) }) };
         let declared = json!({ "name": "http.get", "_meta": tasks_meta() });
-        assert_eq!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &declared, job).await.unwrap()["result"]["resultType"], "task");
-        assert!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &json!({ "name": "http.get" }), job).await.is_none(), "no declaration: inline");
-        assert!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &json!({ "name": "phones_list", "_meta": tasks_meta() }), job).await.is_none(), "not long-running");
-        assert!(intercept_tool_call(None, OWNER, &json!(1), &declared, job).await.is_none(), "Tasks off");
+        assert_eq!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &declared, false, job).await.unwrap()["result"]["resultType"], "task");
+        assert!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &json!({ "name": "http.get" }), false, job).await.is_none(), "no declaration: inline");
+        assert!(intercept_tool_call(Some(&rt), OWNER, &json!(1), &json!({ "name": "phones_list", "_meta": tasks_meta() }), false, job).await.is_none(), "not long-running");
+        assert!(intercept_tool_call(None, OWNER, &json!(1), &declared, false, job).await.is_none(), "Tasks off");
+    }
+
+    #[test]
+    fn task_capable_rule_for_relayed_bot_and_connector_tools() {
+        // Relayed to a bot or connector: task-capable unless the name says instant.
+        for t in ["github__create_issue", "slack__send_message", "run_report", "bot_ask", "linear__sync_all"] {
+            assert!(is_task_capable(t, true), "{t} should be a task");
+            assert!(!is_task_capable(t, false), "{t} stays inline off the relay path");
+        }
+        for t in ["github__list_issues", "github__get_user", "drive__read_file", "x__search", "deploy_status", "agents_list", "files.list", ""] {
+            assert!(!is_task_capable(t, true), "{t} is instant");
+        }
+        // The fixed list still counts everywhere.
+        assert!(is_task_capable("shell.exec", false) && is_task_capable("phone_tap", true));
+    }
+
+    #[tokio::test]
+    async fn working_progress_is_returned_by_tasks_get_without_a_migration() {
+        let s = store();
+        let row = TaskRow::new(OWNER, "slack__send_message", "working", json!({}), Some(working_progress(Duration::from_secs(7))));
+        s.insert(&row).await.unwrap();
+        let t = get(&s, OWNER, &row.id).await;
+        assert_eq!(t["result"]["status"], "working");
+        assert_eq!(t["result"]["statusMessage"], "Still running (7s).");
+        assert_eq!(t["result"]["progress"]["elapsedMs"], 7000);
+        assert!(t["result"].get("result").is_none(), "progress never leaks as the tool result");
+        // Finished: the stored tool result wins, no progress shown.
+        s.transition(&row.id, &["working"], "completed", &json!({}), Some(&json!({ "content": [] })), None).await.unwrap();
+        let done = get(&s, OWNER, &row.id).await;
+        assert_eq!(done["result"]["statusMessage"], "Done.");
+        assert!(done["result"].get("progress").is_none());
     }
 }
