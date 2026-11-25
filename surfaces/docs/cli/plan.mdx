@@ -96,14 +96,15 @@ Plans stay out of the normal artifact list. To list them:
 gizzi artifact list --plans
 ```
 
-Each line shows the plan's title, status (`open`, `approved` or `done`) and version. Without `--plans`, `gizzi artifact list` doesn't show plans.
+Each plan prints like any other artifact: its id, version, type, title and last update. The plan's status (`open`, `approved` or `done`) shows in the app's Plans list. Without `--plans`, `gizzi artifact list` doesn't show plans.
 
 ### Open in Allternit
 
-When the plan is saved to your account, the approval prompt has **Open in Allternit**. It opens the plan in the app, where you can approve, revise or ask a question:
+When the plan is saved to your account, the approval prompt shows the plan's title and steps with the hint **Press o to open in Allternit**. Press `o` to open the plan in the app, where you can approve, revise or ask a question:
 
-- With Allternit Desktop installed, it opens `allternit://artifact/<id>` in the Desktop window.
-- Without Desktop, it prints `https://ai.allternit.com/?artifact=<id>` for you to open in a browser.
+- With Allternit Desktop installed, it opens `allternit://artifact/<id>` in the Desktop window, and the hint changes to "Opened in Allternit".
+- Without Desktop, it opens `https://ai.allternit.com/?artifact=<id>` in your browser ("Opened in your browser").
+- If neither works, the hint says "Could not open the plan".
 
 The prompt still works in the terminal. Whichever place answers first counts.
 
