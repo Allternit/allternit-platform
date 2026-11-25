@@ -720,7 +720,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             if let Some(pk) = phone_key.as_ref().filter(|_| crate::routes::platform_v1::phones::is_mcp_tool(tool)) {
                 let (k, t, a) = (pk.clone(), tool.to_string(), args.clone());
                 let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(b.phone_call(&k, &t, &a).await) }) };
-                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, false, job).await {
                     return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
                 }
                 let result = backend.phone_call(pk, tool, &request["params"]["arguments"]).await;
@@ -729,7 +729,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             if let Some(dk) = model_key.as_ref().filter(|_| MODEL_TOOLS.contains(&tool)) {
                 let (k, t, a) = (dk.clone(), tool.to_string(), args.clone());
                 let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(mail_tool_result(model_tool_call(&*b, &k, &t, &a).await)) }) };
-                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, false, job).await {
                     return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
                 }
                 let result = mail_tool_result(model_tool_call(backend, dk, tool, &request["params"]["arguments"]).await);
@@ -738,7 +738,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             if let Some(mk) = mail_key.as_ref().filter(|_| crate::routes::platform_v1::mailboxes::MCP_TOOLS.contains(&tool)) {
                 let (k, t, a) = (mk.clone(), tool.to_string(), args.clone());
                 let job = move |b: Arc<dyn EdgeBackend>| -> Job { Box::pin(async move { JobOutcome::Result(mail_tool_result(b.mail_tool(&k, &t, &a).await)) }) };
-                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, job).await {
+                if let Some(reply) = edge_tasks::intercept_tool_call(rt.as_ref(), &owner, &id, params, false, job).await {
                     return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
                 }
                 let result = mail_tool_result(backend.mail_tool(mk, tool, &request["params"]["arguments"]).await);
@@ -766,7 +766,8 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     // apps (46) and skills (47).
     let hooked = if rpc_method == "tools/call" {
         let (t, c, r) = (target.clone(), caller.clone(), request.clone());
-        edge_tasks::intercept_tool_call(tasks_rt().as_ref(), &task_owner(&caller, &target), &id, &request["params"], move |b| relay_job(b, t, c, r)).await
+        let relayed_to_service = matches!(target, Target::Bot(_) | Target::Connectors);
+        edge_tasks::intercept_tool_call(tasks_rt().as_ref(), &task_owner(&caller, &target), &id, &request["params"], relayed_to_service, move |b| relay_job(b, t, c, r)).await
     } else if rpc_method == "resources/list" || rpc_method == "resources/read" {
         super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"])
             .or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
