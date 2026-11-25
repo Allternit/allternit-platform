@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 
@@ -150,7 +151,7 @@ private fun BoxGizzi(alpha: Float) {
 }
 
 private fun DrawScope.translateStroke(path: Path, dx: Float, dy: Float, color: Color, style: Stroke) {
-    androidx.compose.ui.graphics.drawscope.translate(dx, dy) { drawPath(path, color, style = style) }
+    translate(dx, dy) { drawPath(path, color, style = style) }
 }
 
 /** Draws [spans] (fractions 0..1 of the path length) as round-capped dashes; zero-length spans draw a dot. */
