@@ -30,6 +30,8 @@ export const FLAG_DEFINITIONS: Record<string, FlagDefinition> = {
   'feature.hyperframes':   { type: 'boolean', default: false },
   'feature.view-modes':    { type: 'boolean', default: true  },
   'feature.workspace-dnd': { type: 'boolean', default: true  },
+  // Installed apps get their own launcher + window (plan v3 lane 38).
+  'apps.install':          { type: 'boolean', default: false },
 };
 
 type ChangeHandler = (key: string, value: FlagValue) => void;
