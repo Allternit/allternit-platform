@@ -6,6 +6,7 @@ pub mod agent_sessions;
 pub mod api_keys;
 pub mod artifacts_comments;
 pub mod artifacts_suggestions;
+pub mod apps;
 pub mod artifacts_v2;
 // Apps + MCP 2026 share-link registry (migration 161).
 pub mod share_links;
