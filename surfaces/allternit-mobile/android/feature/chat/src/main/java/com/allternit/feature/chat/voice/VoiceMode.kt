@@ -28,6 +28,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.EnterExitState
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -449,12 +455,12 @@ private fun rememberStateTint(state: TurnState): Pair<Color, Color> {
  * rectangles on Android 12+) and does nothing below API 31.
  */
 @Composable
-fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
+fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -> Unit, bot: VoiceBot? = null, orbTravel: () -> Float = { 0f }) {
     SpeakerLookStore.load(LocalContext.current)
     var settingsOpen by remember { mutableStateOf(false) }
     val tint = rememberStateTint(viewModel.state)
     val controls: @Composable () -> Unit = { ControlsRow(host, viewModel, onEnd, tint.first) { settingsOpen = true } }
-    if (bot != null) BotStage(host, viewModel, bot, controls) else PlainStage(host, viewModel, tint, controls)
+    if (bot != null) BotStage(host, viewModel, bot, controls, orbTravel) else PlainStage(host, viewModel, tint, controls, orbTravel)
     if (settingsOpen) VoiceSettingsSheet(host.speaker, bot, kokoro = host.repliesInKokoro) { settingsOpen = false }
 }
 
@@ -467,7 +473,7 @@ private fun interruptModifier(vm: VoiceModeViewModel): Modifier = Modifier.click
 
 /** iOS botStage. */
 @Composable
-private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceBot, controls: @Composable () -> Unit) {
+private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceBot, controls: @Composable () -> Unit, orbTravel: () -> Float) {
     val c = AllternitTheme.colors
     val (style, palette) = SpeakerLookStore.look(bot.id)
     val botColor = bot.color
@@ -492,7 +498,7 @@ private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceB
             VoiceSpeakerView(
                 phase = state.speakerPhase(viewModel.isConnecting), muted = viewModel.isMuted, style = style, palette = palette,
                 botColor = botColor, sizeDp = 148f, level = { host.listener.micLevel },
-                modifier = interrupt.testTag("voiceSpeaker"),
+                modifier = Modifier.orbTravel(orbTravel).then(interrupt).testTag("voiceSpeaker"),
             ) { bot.face(148f) }
             Text(
                 statusLabel.uppercase(), color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp,
@@ -519,7 +525,7 @@ private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceB
  * serif, your words in italics, the engine, the controls.
  */
 @Composable
-private fun PlainStage(host: VoiceHost, vm: VoiceModeViewModel, tint: Pair<Color, Color>, controls: @Composable () -> Unit) {
+private fun PlainStage(host: VoiceHost, vm: VoiceModeViewModel, tint: Pair<Color, Color>, controls: @Composable () -> Unit, orbTravel: () -> Float) {
     val c = AllternitTheme.colors
     val state = vm.state
     val (style, palette) = SpeakerLookStore.look(null)
@@ -533,7 +539,7 @@ private fun PlainStage(host: VoiceHost, vm: VoiceModeViewModel, tint: Pair<Color
                 VoiceSpeakerView(
                     phase = state.speakerPhase(vm.isConnecting), muted = vm.isMuted, style = style, palette = palette,
                     botColor = null, sizeDp = 148f, level = { host.listener.micLevel },
-                    modifier = interrupt.testTag("voiceSpeaker"),
+                    modifier = Modifier.orbTravel(orbTravel).then(interrupt).testTag("voiceSpeaker"),
                 ) { PlainVoiceFace(state, 148f) }
                 Spacer(Modifier.height(8.dp))
                 if (vm.replyText.isNotEmpty()) {
@@ -731,6 +737,39 @@ fun VoiceBarSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
     ) { last[0]?.let { VoiceQuickBar(host, it, onEnd, bot) } }
 }
 
+/** Where the bar's orb sits on screen (root coordinates): the full view's orb travels to and from here. */
+internal object VoiceOrbAnchor { var bar: Rect? = null }
+
+/** Reports this box as the bar's orb position. */
+internal fun Modifier.orbAnchor(): Modifier = onGloballyPositioned { VoiceOrbAnchor.bar = it.boundsInRoot() }
+
+/**
+ * Shared-bounds move for the voice orb (4.6): [travel] 0 = in place, 1 = at the bar's orb. The orb is moved and
+ * scaled as one layer, so its level breathing keeps running inside. With no bar position yet (voice opened straight
+ * to full) or on first appearance, a dot grows into the orb on a spring. Reduce motion: no move, no grow.
+ */
+@Composable
+internal fun Modifier.orbTravel(travel: () -> Float): Modifier {
+    val reduce = rememberReduceMotion()
+    var self by remember { mutableStateOf<Rect?>(null) }
+    val grow = remember { Animatable(if (reduce) 1f else 0.15f) }
+    LaunchedEffect(reduce) { if (reduce) grow.snapTo(1f) else grow.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 380f)) }
+    return this.onGloballyPositioned { self = it.boundsInRoot() }.graphicsLayer {
+        if (reduce) return@graphicsLayer
+        val t = travel()
+        val bar = VoiceOrbAnchor.bar
+        val me = self
+        if (t > 0f && bar != null && me != null && me.width > 0f) {
+            translationX = (bar.center.x - me.center.x) * t
+            translationY = (bar.center.y - me.center.y) * t
+            val k = androidx.compose.ui.util.lerp(1f, bar.width / me.width, t)
+            scaleX = k; scaleY = k
+        } else {
+            scaleX = grow.value; scaleY = grow.value
+        }
+    }
+}
+
 /**
  * iOS ChatView's fullScreenCover for voice mode: it slides up over the whole chat (a fade with reduce motion), and
  * Back returns to the bar, as iOS's dismiss does.
@@ -745,9 +784,16 @@ fun VoiceFullSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) 
     val reduce = rememberReduceMotion()
     AnimatedVisibility(
         visible = visible,
-        enter = if (reduce) fadeIn(tween(150)) else slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it },
-        exit = if (reduce) fadeOut(tween(150)) else slideOutVertically(tween(260, easing = FastOutSlowInEasing)) { it },
-    ) { last[0]?.let { VoiceModeView(host, it, onEnd, bot) } }
+        // The orb travels between the bar and here (4.6), so the screen fades around it instead of sliding.
+        // Reduce motion (system or app): a plain crossfade, no travel.
+        enter = fadeIn(tween(if (reduce) 150 else 220)),
+        exit = fadeOut(tween(if (reduce) 150 else 220)),
+    ) {
+        val travel by transition.animateFloat(
+            transitionSpec = { spring(dampingRatio = 0.82f, stiffness = 320f) }, label = "voiceOrbTravel",
+        ) { if (it == EnterExitState.Visible) 0f else 1f }
+        last[0]?.let { VoiceModeView(host, it, onEnd, bot, orbTravel = { if (reduce) 0f else travel }) }
+    }
 }
 
 /**
@@ -817,7 +863,7 @@ fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(34.dp).orbAnchor().orbTravel { 0f }, contentAlignment = Alignment.Center) {
             if (bot != null) {
                 val (style, palette) = SpeakerLookStore.look(bot.id)
                 VoiceSpeakerView(

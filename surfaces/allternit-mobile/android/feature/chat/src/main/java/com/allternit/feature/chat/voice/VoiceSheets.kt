@@ -8,7 +8,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.util.lerp
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -284,14 +296,18 @@ fun VoiceSettingsSheet(speaker: Speaker, bot: VoiceBot? = null, kokoro: Boolean 
                         color = c.textSecondary, fontSize = 12.sp,
                     )
                     val picked = KokoroVoices.resolve(null, VoicePrefs.kokoroVoice)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        KokoroVoices.all.forEach { id ->
-                            VoiceCard(
-                                name = id.substringAfterLast('_').replaceFirstChar { it.uppercase() },
-                                detail = "${if (id.startsWith("b")) "British" else "American"} · Kokoro",
-                                selected = picked == id, tag = "voiceKokoroCard-$id",
-                            ) { VoicePrefs.setKokoroVoice(context, id) }
-                        }
+                    // No sample here: Kokoro speaks through its own engine, which the sheet has no handle on.
+                    VoiceCardPager(
+                        count = KokoroVoices.all.size,
+                        selectedIndex = KokoroVoices.all.indexOf(picked).coerceAtLeast(0),
+                        onPick = { i -> VoicePrefs.setKokoroVoice(context, KokoroVoices.all[i]) },
+                    ) { i, selected ->
+                        val id = KokoroVoices.all[i]
+                        VoiceCard(
+                            name = id.substringAfterLast('_').replaceFirstChar { it.uppercase() },
+                            detail = "${if (id.startsWith("b")) "British" else "American"} · Kokoro",
+                            selected = selected, tag = "voiceKokoroCard-$id",
+                        )
                     }
                     Text("A new pick speaks from your next voice chat.", color = c.textSecondary, fontSize = 11.sp)
                 } else if (voices.isEmpty()) {
@@ -300,12 +316,16 @@ fun VoiceSettingsSheet(speaker: Speaker, bot: VoiceBot? = null, kokoro: Boolean 
                         Text("Loading voices…", color = c.textSecondary, fontSize = 13.sp)
                     }
                 } else {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        voices.forEachIndexed { i, v ->
-                            val selected = VoicePrefs.voiceIdentifier == v.id || (VoicePrefs.voiceIdentifier == null && i == 0)
-                            VoiceCard(v.name, v.detail, selected, "voiceCard-$i") { VoicePrefs.setVoice(context, v.id) }
-                        }
-                    }
+                    val current = voices.indexOfFirst { VoicePrefs.voiceIdentifier == it.id }.let { if (it < 0) 0 else it }
+                    VoiceCardPager(
+                        count = voices.size, selectedIndex = current,
+                        onPick = { i ->
+                            VoicePrefs.setVoice(context, voices[i].id)
+                            // Picking plays a sample in that voice.
+                            speaker.stop()
+                            speaker.speakChunk("Hi, this is ${voices[i].name}.")
+                        },
+                    ) { i, selected -> VoiceCard(voices[i].name, voices[i].detail, selected, "voiceCard-$i") }
                 }
             }
             ChoiceRow("Language", "Speech recognition and playback language",
@@ -319,16 +339,75 @@ fun VoiceSettingsSheet(speaker: Speaker, bot: VoiceBot? = null, kokoro: Boolean 
     }
 }
 
+/**
+ * Voice cards that snap one at a time (4.3): the centred card is large and lit, its neighbours small and dim, page
+ * dots below. Settling on a card picks it ([onPick]); tapping a neighbour moves to it. Reduce motion: no scale or
+ * glow change, and taps jump instead of gliding.
+ */
+@Composable
+private fun VoiceCardPager(count: Int, selectedIndex: Int, onPick: (Int) -> Unit, card: @Composable (Int, Boolean) -> Unit) {
+    val c = AllternitTheme.colors
+    val reduce = rememberReduceMotion()
+    val scope = rememberCoroutineScope()
+    val pager = rememberPagerState(initialPage = selectedIndex.coerceIn(0, (count - 1).coerceAtLeast(0))) { count }
+    val glowKick = remember { Animatable(0f) }
+    // The first settled page is the saved pick, not a new one.
+    var started by remember { mutableStateOf(false) }
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.settledPage }.collect { page ->
+            if (started) {
+                if (page != selectedIndex) onPick(page)
+                if (!reduce) { glowKick.snapTo(1f); glowKick.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 120f)) }
+            }
+            started = true
+        }
+    }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val cardW = 120.dp
+            val side = ((maxWidth - cardW) / 2).coerceAtLeast(0.dp)
+            HorizontalPager(
+                state = pager, contentPadding = PaddingValues(horizontal = side), pageSpacing = 14.dp,
+                modifier = Modifier.fillMaxWidth().height(170.dp).testTag("voiceCardPager"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) { page ->
+                val near = 1f - minOf(1f, abs(pager.currentPage - page + pager.currentPageOffsetFraction))
+                Box(
+                    Modifier.width(cardW).height(cardW).graphicsLayer {
+                        val k = if (reduce) 1f else lerp(0.84f, 1.12f, near)
+                        scaleX = k; scaleY = k
+                        alpha = lerp(0.55f, 1f, near)
+                    }.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+                        if (page != pager.currentPage) scope.launch { if (reduce) pager.scrollToPage(page) else pager.animateScrollToPage(page) }
+                    },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Soft glow under the lit card; it swells when a new one settles.
+                    Box(Modifier.matchParentSize().graphicsLayer {
+                        alpha = near * (0.5f + 0.4f * glowKick.value)
+                        translationY = 18.dp.toPx()
+                    }.background(Brush.radialGradient(listOf(c.accentPrimary.copy(alpha = 0.45f), Color.Transparent))))
+                    card(page, page == pager.currentPage)
+                }
+            }
+        }
+        if (count > 1) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Voice ${pager.currentPage + 1} of $count" }) {
+            repeat(count) { i ->
+                Box(Modifier.size(if (i == pager.currentPage) 7.dp else 5.dp).clip(CircleShape).background(if (i == pager.currentPage) c.accentPrimary else c.textPrimary.copy(alpha = 0.2f)))
+            }
+        }
+    }
+}
+
 /** iOS voiceCard: a 120 pt card, the waveform (accent when picked), the name in serif and a caption. */
 @Composable
-private fun VoiceCard(name: String, detail: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+private fun VoiceCard(name: String, detail: String, selected: Boolean, tag: String) {
     val c = AllternitTheme.colors
     val shape = RoundedCornerShape(AllternitRadii.MD)
     Column(
         Modifier.width(120.dp).height(120.dp).clip(shape).background(c.bgSecondary)
             // iOS: AccentPrimary at 2 when picked, else Theme.borderWarmDefault (TextPrimary at 11%).
             .border(if (selected) 2.dp else 1.dp, if (selected) c.accentPrimary else c.textPrimary.copy(alpha = 0.11f), shape)
-            .clickable(role = Role.Button, onClickLabel = name) { onClick() }
             .semantics { contentDescription = "$name, $detail"; this.selected = selected }
             .padding(12.dp).testTag(tag),
         verticalArrangement = Arrangement.spacedBy(8.dp),
