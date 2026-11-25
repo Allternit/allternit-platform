@@ -512,6 +512,10 @@ async fn app_install_rule_link_shared_capability_app_cannot_be_installed() {
     let router = setup().await;
     let owner = who("u_link_owner", Some("org_l"), None);
     let member = who("u_link_member", Some("org_l"), None);
+    // An org member shares by link only when the org allows outside sharing.
+    let admin = who("u_link_admin", Some("org_l"), Some("admin"));
+    let (status, _) = send(&router, "PUT", "/api/v2/org/artifact-settings", Some(&admin), Some(json!({"external_sharing": true}))).await;
+    assert_eq!(status, StatusCode::OK);
     let id = page(&router, &owner, json!({"storage": true})).await;
     share_with(&router, &owner, &id, "link", json!([])).await;
 

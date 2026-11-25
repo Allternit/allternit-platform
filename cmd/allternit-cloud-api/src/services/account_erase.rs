@@ -274,6 +274,15 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_runtime_quotas", USER),
     ("user_open_lane", USER),
     ("open_lane_blocks", USER),
+    // Apps + MCP 2026 (migrations 161, 162, 164). share_link_usage* cascade
+    // from share_links; vendor apps an org owns have no owner_user_id.
+    ("app_handoffs", USER),
+    ("app_sessions", USER),
+    ("app_installs", USER),
+    ("share_links", USER),
+    ("vendor_apps", OWNER_USER),
+    // mcp_tasks.owner_id is `user|client|target` (mcp_edge_tasks::owner_key).
+    ("mcp_tasks", "split_part(owner_id, '|', 1) = $1"),
 ];
 
 /// Clears the user from rows that stay: kept records, and work that belongs to

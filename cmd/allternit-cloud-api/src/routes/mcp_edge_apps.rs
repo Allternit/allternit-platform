@@ -713,7 +713,8 @@ impl AppsStore for PgAppsStore<'_> {
     async fn storage(&self, app: &ExportedApp, user_id: &str, op: StorageOp) -> Result<Value, MirrorError> {
         use crate::artifacts::runtime as rules;
         let db = &self.state.db;
-        let scope_of = |raw: &str| rules::Scope::parse(raw).ok_or_else(|| MirrorError::new("invalid_scope", "scope is user or shared"));
+        // The MCP tools call the per-user scope `user`; artifact storage names it `personal`.
+        let scope_of = |raw: &str| rules::Scope::parse(if raw == "user" { "personal" } else { raw }).ok_or_else(|| MirrorError::new("invalid_scope", "scope is user or shared"));
         let bad_key = || MirrorError::new("invalid_key", "key must be 1-200 printable characters");
         match op {
             StorageOp::Get { scope, key } => {
