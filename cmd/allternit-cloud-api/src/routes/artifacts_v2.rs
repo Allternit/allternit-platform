@@ -96,6 +96,10 @@ pub fn routes() -> Router<Arc<ApiState>> {
         )
         .route("/api/v2/artifacts/:id/library", axum::routing::put(set_library_archive))
         .route("/api/v2/public/artifacts/:id", get(public_artifact))
+        // Apps + MCP 2026 (migration 161): make an artifact an app, and the
+        // public app record by its slug (no auth).
+        .route("/api/v2/artifacts/:id/app", get(get_app).put(put_app))
+        .route("/api/v2/public/apps/:slug", get(public_app))
         .route(
             "/api/v2/org/artifact-settings",
             get(get_org_settings).put(put_org_settings),
@@ -1303,6 +1307,242 @@ async fn public_artifact(
         "updated_at": ts(row.updated_at),
         "runtime_version": row.runtime_version,
         "owner_name": owner_name,
+    });
+    let mut response = Json(body).into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    headers.insert("x-robots-tag", HeaderValue::from_static("noindex"));
+    Ok(response)
+}
+
+// ---------------------------------------------------------------------------
+// Apps (Apps + MCP 2026, plan v3 lane 7; columns from migration 161)
+//
+// * `GET /api/v2/artifacts/:id/app` (view) -> `{ app: AppPackage | null }`
+// * `PUT /api/v2/artifacts/:id/app` (owner) `{ name, icon?, tier: browser|app|full,
+//   install_scope?: private|people|org|link, tools?: [..], skill_ref?: "skill://..",
+//   pinned_version? }` -> `{ app: AppPackage }`. Makes the artifact an app (or
+//   re-publishes it): `app_slug` is minted once and never changes;
+//   `capability_snapshot` is the artifact's capabilities at this moment;
+//   `pinned_version` defaults to the shared version (or the latest).
+// * `GET /api/v2/public/apps/:slug` (no auth) -> `{ slug, name, icon, tier,
+//   pinned_version, capability_snapshot, install, made_by }`. 404 when the
+//   slug is unknown, the artifact is private, or its org turned artifacts off.
+//
+// Lane 8 owns the tier rules (full = own and org apps only), growth-only
+// consent and the install rule (D14); `install` here is `tier == browser`.
+// ---------------------------------------------------------------------------
+
+const MAX_APP_NAME_CHARS: usize = 80;
+const APP_SLUG_LEN: usize = 16;
+const APP_TIERS: [&str; 3] = ["browser", "app", "full"];
+const APP_INSTALL_SCOPES: [&str; 4] = ["private", "people", "org", "link"];
+
+#[derive(Debug, Clone, FromRow)]
+struct AppRow {
+    app_name: Option<String>,
+    app_icon: Option<String>,
+    app_slug: Option<String>,
+    app_pinned_version: Option<i32>,
+    app_capability_snapshot: Option<Value>,
+    app_permission_tier: Option<String>,
+    app_install_scope: Option<String>,
+    app_tools: Option<Value>,
+    app_skill_ref: Option<String>,
+}
+
+const APP_COLUMNS: &str = "app_name, app_icon, app_slug, app_pinned_version, \
+    app_capability_snapshot, app_permission_tier, app_install_scope, app_tools, app_skill_ref";
+
+impl AppRow {
+    /// `None` until the owner makes the artifact an app.
+    fn json(&self) -> Option<Value> {
+        let slug = self.app_slug.as_ref()?;
+        Some(json!({
+            "slug": slug,
+            "name": self.app_name,
+            "icon": self.app_icon,
+            "tier": self.app_permission_tier,
+            "install_scope": self.app_install_scope,
+            "pinned_version": self.app_pinned_version,
+            "capability_snapshot": self.app_capability_snapshot,
+            "tools": self.app_tools.clone().unwrap_or_else(|| json!([])),
+            "skill_ref": self.app_skill_ref,
+        }))
+    }
+}
+
+async fn fetch_app(db: &PgPool, id: &str) -> Result<AppRow> {
+    sqlx::query_as::<_, AppRow>(&format!("SELECT {APP_COLUMNS} FROM artifacts WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(ArtifactError::not_found)
+}
+
+async fn get_app(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let caller = caller(&state, &headers).await?;
+    let (row, _access) = load_with_access(&state.db, &id, &caller).await?;
+    let app = fetch_app(&state.db, &row.id).await?;
+    Ok(Json(json!({ "app": app.json() })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppRequest {
+    name: String,
+    icon: Option<String>,
+    tier: String,
+    install_scope: Option<String>,
+    tools: Option<Value>,
+    skill_ref: Option<String>,
+    pinned_version: Option<i64>,
+}
+
+fn check_app_name(name: &str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_APP_NAME_CHARS || name.chars().any(char::is_control) {
+        return Err(ArtifactError::unprocessable(
+            "invalid_app_name",
+            format!("An app needs a name of 1 to {MAX_APP_NAME_CHARS} characters"),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+async fn put_app(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<Value>> {
+    let caller = caller(&state, &headers).await?;
+    let req: AppRequest = parse_json(&body)?;
+    let (row, access) = load_with_access(&state.db, &id, &caller).await?;
+    require(access, Access::Owner, "Making an artifact an app")?;
+
+    let name = check_app_name(&req.name)?;
+    let icon = req.icon.as_deref().map(check_icon).transpose()?;
+    if !APP_TIERS.contains(&req.tier.as_str()) {
+        return Err(ArtifactError::unprocessable("invalid_tier", "tier is browser, app or full"));
+    }
+    let install_scope = req.install_scope.clone().unwrap_or_else(|| row.visibility.clone());
+    if !APP_INSTALL_SCOPES.contains(&install_scope.as_str()) {
+        return Err(ArtifactError::unprocessable(
+            "invalid_install_scope",
+            "install_scope is private, people, org or link",
+        ));
+    }
+    let tools = req.tools.clone().unwrap_or_else(|| json!([]));
+    if !tools.is_array() || tools.to_string().len() > MAX_JSON_FIELD_BYTES {
+        return Err(ArtifactError::unprocessable(
+            "invalid_tools",
+            format!("tools is a list of tool definitions, at most {} KiB", MAX_JSON_FIELD_BYTES / 1024),
+        ));
+    }
+    if let Some(skill) = req.skill_ref.as_deref() {
+        if !skill.starts_with("skill://") || skill.len() <= "skill://".len() || skill.len() > 512 {
+            return Err(ArtifactError::unprocessable("invalid_skill_ref", "skill_ref is a skill:// link"));
+        }
+    }
+    let pinned_version = match req.pinned_version {
+        None => row.shared_version.unwrap_or(row.current_version),
+        Some(v) if v >= 1 && v <= row.current_version as i64 => v as i32,
+        Some(_) => {
+            return Err(ArtifactError::unprocessable(
+                "invalid_pinned_version",
+                format!("pinned_version must be between 1 and {}", row.current_version),
+            ))
+        }
+    };
+
+    // The slug is minted once (COALESCE keeps an existing one). A clash on a
+    // fresh 16-character name is retried; it never changes an existing slug.
+    for _ in 0..3 {
+        let minted = crate::routes::share_links::mint_label(APP_SLUG_LEN);
+        let updated = sqlx::query_as::<_, AppRow>(&format!(
+            "UPDATE artifacts SET app_name = $2, app_icon = $3, app_slug = COALESCE(app_slug, $4), \
+                 app_pinned_version = $5, app_capability_snapshot = capabilities, \
+                 app_permission_tier = $6, app_install_scope = $7, app_tools = $8, \
+                 app_skill_ref = $9, updated_at = now() \
+             WHERE id = $1 RETURNING {APP_COLUMNS}"
+        ))
+        .bind(&row.id)
+        .bind(&name)
+        .bind(icon.as_deref())
+        .bind(&minted)
+        .bind(pinned_version)
+        .bind(&req.tier)
+        .bind(&install_scope)
+        .bind(&tools)
+        .bind(req.skill_ref.as_deref())
+        .fetch_optional(&state.db)
+        .await;
+        match updated {
+            Ok(Some(app)) => return Ok(Json(json!({ "app": app.json() }))),
+            Ok(None) => return Err(ArtifactError::not_found()),
+            Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(ArtifactError::coded(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "slug_unavailable",
+        "Couldn't name the app. Try again.",
+    ))
+}
+
+#[derive(Debug, FromRow)]
+struct PublicAppRow {
+    owner_id: String,
+    org_id: Option<String>,
+    visibility: String,
+    #[sqlx(flatten)]
+    app: AppRow,
+}
+
+async fn public_app(
+    State(state): State<Arc<ApiState>>,
+    Path(slug): Path<String>,
+) -> Result<Response> {
+    if slug.is_empty() || slug.len() > 63 || !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) {
+        return Err(ArtifactError::not_found());
+    }
+    let row = sqlx::query_as::<_, PublicAppRow>(&format!(
+        "SELECT owner_id, org_id, visibility, {APP_COLUMNS} FROM artifacts WHERE app_slug = $1"
+    ))
+    .bind(&slug)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(ArtifactError::not_found)?;
+    // A private artifact is the owner's alone; an org that turns artifacts off
+    // closes its apps at once (same re-check as the public link route).
+    if row.visibility == "private" {
+        return Err(ArtifactError::not_found());
+    }
+    let settings = settings_for(&state.db, row.org_id.as_deref()).await?;
+    if settings.as_ref().is_some_and(|s| !s.enabled) {
+        return Err(ArtifactError::not_found());
+    }
+    let tier = row.app.app_permission_tier.clone().ok_or_else(ArtifactError::not_found)?;
+    let made_by = profiles(&state.db, std::slice::from_ref(&row.owner_id))
+        .await
+        .remove(&row.owner_id)
+        .and_then(|(name, _)| name);
+    let body = json!({
+        "slug": slug,
+        "name": row.app.app_name,
+        "icon": row.app.app_icon,
+        "tier": tier,
+        "pinned_version": row.app.app_pinned_version,
+        "capability_snapshot": row.app.app_capability_snapshot,
+        // TODO(lane 8): the D14 install rule (link-shared installs for browser only, per tier and scope).
+        "install": tier == "browser",
+        "made_by": made_by,
     });
     let mut response = Json(body).into_response();
     let headers = response.headers_mut();

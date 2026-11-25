@@ -495,6 +495,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.
         .merge(routes::artifacts_v2::routes())
+        // Share-link registry (Apps + MCP 2026, migration 161): owner-scoped, every
+        // handler resolves the caller itself (Clerk session, token or device token).
+        .merge(routes::share_links::routes())
         .merge(routes::artifacts_comments::routes())
         // Agent suggestions (SPEC-agent-watch): pending edits the client accepts or rejects.
         .merge(routes::artifacts_suggestions::routes())
