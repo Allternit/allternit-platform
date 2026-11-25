@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -65,6 +66,13 @@ sealed interface DotFieldMode {
      * shows the image at once.
      */
     data class Reveal(val bitmap: Bitmap, val style: DotRevealStyle = DotRevealStyle.Cells, val fraction: Float? = null) : DotFieldMode
+
+    /**
+     * The real result (a player, a page) is ready: the moving [pattern] settles flat, then the dots fade out over 0.8 s
+     * and `onRevealed` is called once, so the caller can show the real content underneath. Reduced motion: the dots are
+     * gone at once.
+     */
+    data class Settle(val pattern: DotPattern = DotPattern.Sine) : DotFieldMode
 }
 
 /** System animator scale 0 = reduce motion (the same check ThinkingOrb uses). */
@@ -134,9 +142,10 @@ fun DotField(
     var size by remember { mutableStateOf(IntSize.Zero) }
     val reveal = remember { Animatable(0f) }
     val revealMode = mode as? DotFieldMode.Reveal
+    val settleMode = mode as? DotFieldMode.Settle
     val onDone by rememberUpdatedState(onRevealed)
 
-    val animating = !reduce && (mode is DotFieldMode.Field || mode is DotFieldMode.Reveal)
+    val animating = !reduce && (mode is DotFieldMode.Field || mode is DotFieldMode.Reveal || mode is DotFieldMode.Settle)
     if (animating) {
         LaunchedEffect(Unit) {
             var last = 0L
@@ -150,8 +159,8 @@ fun DotField(
             }
         }
     }
-    LaunchedEffect(revealMode?.bitmap, revealMode?.style) {
-        if (revealMode == null) { reveal.snapTo(0f); return@LaunchedEffect }
+    LaunchedEffect(revealMode?.bitmap, revealMode?.style, settleMode != null) {
+        if (revealMode == null && settleMode == null) { reveal.snapTo(0f); return@LaunchedEffect }
         if (reduce) reveal.snapTo(1f) else { reveal.snapTo(0f); reveal.animateTo(1f, tween(REVEAL_MS, easing = LinearEasing)) }
         onDone()
     }
@@ -169,6 +178,7 @@ fun DotField(
             is DotFieldMode.Field -> drawField(mode.pattern, mode.amplitude, base, ink, if (reduce) 3.2f else t, reduce)
             is DotFieldMode.Halftone -> drawHalftone(mode.bitmap, mode.fraction, base, ink, reduce)
             is DotFieldMode.Reveal -> drawReveal(mode, base, ink, if (reduce) 3.2f else t, reveal.value, reduce)
+            is DotFieldMode.Settle -> drawSettle(mode.pattern, base, ink, t, reveal.value, reduce)
         }
     }
 }
@@ -185,6 +195,25 @@ private fun DrawScope.drawField(p: DotPattern, amp: Float, pitch: Float, ink: Co
             x += pitch
         }
         y += pitch
+    }
+}
+
+/** First 45% of [q]: the pattern's amplitude eases to 0 (flat dots). The rest: the flat dots fade out. */
+private fun DrawScope.drawSettle(p: DotPattern, base: Float, ink: Color, t: Float, q: Float, still: Boolean) {
+    if (still || q >= 1f) return
+    val amp = (1f - q / 0.45f).coerceIn(0f, 1f)
+    val fade = (1f - (q - 0.45f) / 0.55f).coerceIn(0f, 1f)
+    val w = size.width
+    val h = size.height
+    var y = base / 2
+    while (y < h) {
+        var x = base / 2
+        while (x < w) {
+            val v = pattern(p, t, x / w, y / h) * amp + 0.15f * (1f - amp)
+            drawCircle(ink.copy(alpha = (0.18f + 0.6f * v) * fade), (base * 0.16f + base * 0.2f * v).coerceAtLeast(0.6f), Offset(x, y))
+            x += base
+        }
+        y += base
     }
 }
 
@@ -241,5 +270,23 @@ private fun DrawScope.drawReveal(m: DotFieldMode.Reveal, base: Float, ink: Color
             }
             if (q > 0.75f) drawSolid(m.bitmap, (q - 0.75f) * 4f)
         }
+    }
+}
+
+/**
+ * The band dot field over a box that is still loading (a WebView can't be snapshotted reliably, so there is no cells reveal).
+ * Shown while [loading]; when the real ready event flips it to false the field fades out over 0.3 s, then leaves composition.
+ * Reduced motion: still dots, and they vanish at once. Fills its parent; the caller's background sits behind it.
+ */
+@Composable
+fun DotLoadingOverlay(loading: Boolean, modifier: Modifier = Modifier) {
+    val reduce = rememberDotReducedMotion()
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (loading) 1f else 0f,
+        animationSpec = tween(if (reduce) 0 else 300, easing = LinearEasing),
+        label = "dotLoadingAlpha",
+    )
+    if (loading || alpha > 0f) {
+        DotField(DotFieldMode.Field(DotPattern.Band), modifier.graphicsLayer { this.alpha = alpha })
     }
 }
