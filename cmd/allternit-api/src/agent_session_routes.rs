@@ -1958,15 +1958,107 @@ async fn call_mcp_tool_direct(headers: HeaderMap, Json(body): Json<serde_json::V
         }
     }
     let client = gizzi_client(&headers);
-    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, "/v1/mcp/tool/call", Some(payload)).await {
+    match engine_tool_call(&client, &payload).await {
         Ok(value) => Json(value).into_response(),
-        Err(response) => response,
+        Err((status, body)) => (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            Json(json!({ "error": body })),
+        )
+            .into_response(),
     }
+}
+
+/// The engine's direct tool call (`POST /v1/mcp/tool/call`), shared by the relay
+/// route above and the Island bar's run (`bar_routes.rs`). Blocks until the
+/// tool finishes; dropping the future drops the request, which aborts the call
+/// in the engine. `Err((status, body))`: 502 when the engine cannot be reached,
+/// else the engine's status and body text (`unknown_tool` 404, `tool_call_failed` 400).
+pub(crate) async fn engine_tool_call(client: &Client, payload: &serde_json::Value) -> Result<serde_json::Value, (u16, String)> {
+    let response = client
+        .post(format!("{}/v1/mcp/tool/call", gizzi_base()))
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| (502, format!("Gizzi request failed: {e}")))?;
+    let status = response.status().as_u16();
+    if !response.status().is_success() {
+        return Err((status, response.text().await.unwrap_or_else(|_| "Upstream error".to_string())));
+    }
+    response.json::<serde_json::Value>().await.map_err(|e| (502, format!("Failed to decode Gizzi response: {e}")))
+}
+
+/// Cancel an MCP task in the engine (`POST /v1/mcp/task/:id/cancel`).
+pub(crate) async fn engine_cancel_task(client: &Client, task_id: &str) -> Result<serde_json::Value, Response> {
+    gizzi_json::<serde_json::Value>(client, reqwest::Method::POST, &mcp_task_cancel_path(task_id), Some(json!({}))).await
+}
+
+/// The Apps+MCP event shapes (#2952), unchanged for every client:
+/// `mcp.task` / `mcp.elicitation` → `{type: mcp_task|mcp_elicitation, session_id, part}`,
+/// `mcp.elicitation.resolved` → `{type: mcp_elicitation_resolved, session_id, request_id, action}`.
+pub(crate) fn mcp_bus_event(event_type: &str, props: &serde_json::Value) -> Option<serde_json::Value> {
+    match event_type {
+        "mcp.task" | "mcp.elicitation" => Some(json!({
+            "type": event_type.replace('.', "_"),
+            "session_id": props.get("sessionID"),
+            "part": props.get("part"),
+        })),
+        "mcp.elicitation.resolved" => Some(json!({
+            "type": "mcp_elicitation_resolved",
+            "session_id": props.get("sessionID"),
+            "request_id": props.get("requestID"),
+            "action": props.get("action"),
+        })),
+        _ => None,
+    }
+}
+
+/// The engine's MCP events (`mcp_bus_event` shapes) from its `/v1/event`
+/// stream, the same stream `/agent-sessions/sync` reads. Every session; the
+/// caller filters on `session_id`. Ends when the engine stream ends.
+pub(crate) async fn engine_mcp_events(
+    client: &Client,
+) -> Result<std::pin::Pin<Box<dyn Stream<Item = serde_json::Value> + Send>>, Response> {
+    let response = client
+        .get(format!("{}/v1/event", gizzi_base()))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("Failed to open Gizzi event stream: {}", error) })),
+            )
+                .into_response()
+        })?;
+    if !response.status().is_success() {
+        let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        return Err((status, Json(json!({ "error": "Gizzi event stream refused" }))).into_response());
+    }
+    Ok(Box::pin(async_stream::stream! {
+        let mut buffer = String::new();
+        let mut upstream = response.bytes_stream();
+        while let Some(chunk) = futures::StreamExt::next(&mut upstream).await {
+            let Ok(chunk) = chunk else { break };
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            let mut blocks = buffer.split("\n\n").map(str::to_string).collect::<Vec<_>>();
+            buffer = blocks.pop().unwrap_or_default();
+            for block in blocks {
+                let Some(parsed_block) = parse_sse_block(&block) else { continue };
+                let Ok(parsed) = serde_json::from_str::<GizziBusEvent>(&parsed_block.data) else { continue };
+                let (Some(event_type), props) = (parsed.event_type, parsed.properties.unwrap_or(serde_json::Value::Null)) else {
+                    continue;
+                };
+                if let Some(event) = mcp_bus_event(&event_type, &props) {
+                    yield event;
+                }
+            }
+        }
+    }))
 }
 
 async fn cancel_mcp_task(headers: HeaderMap, Path(task_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
-    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &mcp_task_cancel_path(&task_id), Some(json!({}))).await {
+    match engine_cancel_task(&client, &task_id).await {
         Ok(value) => Json(value).into_response(),
         Err(response) => response,
     }
@@ -2935,19 +3027,8 @@ async fn transform_bus_event(
             "request_id": props.get("requestID"),
             "session_id": props.get("sessionID"),
         })),
-        // MCP task cards + elicitation forms (gizzi PR #2925). Same shape the
-        // apps read: `{type, session_id, part}` / `{type, session_id, request_id, action}`.
-        "mcp.task" | "mcp.elicitation" => Some(json!({
-            "type": event_type.replace('.', "_"),
-            "session_id": props.get("sessionID"),
-            "part": props.get("part"),
-        })),
-        "mcp.elicitation.resolved" => Some(json!({
-            "type": "mcp_elicitation_resolved",
-            "session_id": props.get("sessionID"),
-            "request_id": props.get("requestID"),
-            "action": props.get("action"),
-        })),
+        // MCP task cards + elicitation forms (gizzi PR #2925).
+        "mcp.task" | "mcp.elicitation" | "mcp.elicitation.resolved" => mcp_bus_event(&event_type, &props),
         "pane_browser.requested" => Some(pane_browser_requested_event(&props)),
         // capture_screen_context: the app showing this session answers with
         // its front window (Desktop) or its own view (web, PWA, iOS) through

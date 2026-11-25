@@ -2443,6 +2443,13 @@ fn claim_open_approval(
     write_approval_decision(conn, approval_id, outcome, user_id, true)
 }
 
+/// Withdraw a still-open routed ask as its requester (the Island bar's cancel,
+/// `bar_routes.rs`): closed as dismissed, with `approval.resolved` recorded, the
+/// same write as a requester's own dismiss. `false` when it was already closed.
+pub(crate) fn withdraw_routed_ask(conn: &rusqlite::Connection, approval_id: &str, requester: &str) -> rusqlite::Result<bool> {
+    Ok(claim_open_approval(conn, approval_id, &ApprovalOutcome::Dismissed, requester)? > 0)
+}
+
 /// Owner ledger → the cloud event backbone (`approval.resolved`). A gateway
 /// approval also resolves on its bot ledger; both carry the approval id, so
 /// the forwarder sends them as one event.
@@ -2952,6 +2959,9 @@ async fn decide_approval(
         )
             .into_response(),
         Ok(Ok(DecideOutcome::Decided { relay, prepared })) => {
+            // An Island bar job waiting on this routed ask resumes (approved) or
+            // fails (rejected, withdrawn, too late). No-op for any other row.
+            crate::bar_routes::on_routed_decision(&state, &id_for_response);
             // Relay to the gizzi runtime when this decision answers one of
             // its permission asks. A 4xx means the ask is unanswerable
             // (unknown/expired request id) — surface that to the caller; a

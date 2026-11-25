@@ -25,25 +25,58 @@
 //!   asks for this tool, or a rule matched whose approver is the caller.
 //! - `GET /bar/jobs?state=active|all|<state>` → `{jobs}`; `GET /bar/jobs/:id` → `{job}`.
 //!
-//! Run, events and cancel are lane 17. A 0-bot account works: with no `bot_id`
-//! the person is the actor. Only `connector` apps are served for now; vendor and
-//! artifact apps answer 404 `app_kind_unsupported`.
+//! - `POST /bar/jobs/:id/run` → `{job}` (lane 17). Only the job's person, from
+//!   `review`. The team rule gate (`team_rules::gate_call`, the proxy's own
+//!   gate, nothing spent) decides: a rule routed to someone else opens (or
+//!   reuses) the routed ask, ledgers `approval.requested` for the approver (the
+//!   cloud push every approval uses), and the job waits in `waiting_approval`;
+//!   otherwise the job is `working` and the engine calls the tool in session
+//!   `bar:<job_id>` (`agent_session_routes::engine_tool_call`, lane 16) in the
+//!   background with `_meta {allternit/jobId, allternit/approved, allternit/approvalId?}`.
+//!   The answer is the receipt (`result_json = {structured, text}`), then
+//!   `completed` or `failed`. Recents are written on run. No engine → 409 `no_runtime`.
+//! - Approval: the approver decides the routed ask on its own route
+//!   (`cowork_routes::decide_approval`), which calls [`on_routed_decision`]:
+//!   approved → `working` and the call runs with `allternit/approvalId`;
+//!   rejected or withdrawn → `failed` "not approved"; past 24 h → `failed`
+//!   "not approved in time" (also found on read by [`expire_overdue`]).
+//! - `GET /bar/jobs/:id/events` (SSE, requester or approver): the job first as
+//!   `{type: bar_job, job}`, then the engine's MCP events for session
+//!   `bar:<job_id>` unchanged (`{type: mcp_task|mcp_elicitation, session_id, part}`,
+//!   `{type: mcp_elicitation_resolved, session_id, request_id, action}`) and
+//!   `{type: bar_job, job}` on every state change. Ends after a finished job.
+//! - `POST /bar/jobs/:id/cancel` → `{job}`: cancels the running MCP task (the
+//!   engine's cancel route, then the call is dropped), withdraws a pending routed
+//!   ask, and sets `cancelled`. 409 `job_finished` once finished.
+//! - A finished job (completed, failed, cancelled) keeps no secrets: the
+//!   arguments' secret fields (`bar_blanks::is_secret_field`: `format: password`,
+//!   `writeOnly`, secret names; from the pinned schema) are replaced by `••••`.
+//!   `job_json` masks secret-named fields while the job is still active.
+//!
+//! A 0-bot account works: with no `bot_id` the person is the actor. Only
+//! `connector` apps are served for now; vendor and artifact apps answer 404
+//! `app_kind_unsupported`.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use futures::stream::BoxStream;
+use futures::StreamExt;
+use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::bar_blanks::{self, BlankType, RecentValue};
+use crate::db::DbHandle;
 use crate::mcp_apps::{self, AppsError, Connector};
 use crate::team_rules::{self, Decision};
 use crate::team_store::{AppKind, ApprovalRule, GrantLevel};
@@ -66,6 +99,9 @@ pub fn bar_router() -> Router<Arc<AppState>> {
         .route("/bar/review", post(review_route))
         .route("/bar/jobs", get(jobs_route))
         .route("/bar/jobs/:id", get(job_route))
+        .route("/bar/jobs/:id/run", post(run_route))
+        .route("/bar/jobs/:id/events", get(events_route))
+        .route("/bar/jobs/:id/cancel", post(cancel_route))
 }
 
 fn err(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
@@ -88,7 +124,14 @@ async fn with_db<T: Send + 'static>(
     state: &Arc<AppState>,
     f: impl FnOnce(&Connection) -> Result<T, Response> + Send + 'static,
 ) -> Result<T, Response> {
-    let db = state.db.clone();
+    with_handle(&state.db, f).await
+}
+
+async fn with_handle<T: Send + 'static>(
+    db: &DbHandle,
+    f: impl FnOnce(&Connection) -> Result<T, Response> + Send + 'static,
+) -> Result<T, Response> {
+    let db = db.clone();
     match tokio::task::spawn_blocking(move || {
         let conn = db.connect().map_err(internal)?;
         f(&conn)
@@ -222,7 +265,8 @@ pub fn job_json(job: &BarJob) -> Value {
         "app": { "kind": job.app_kind.as_str(), "ref": job.app_ref, "name": job.app_name },
         "tool": job.tool,
         "title": crate::mcp_server_routes::tool_label(&job.tool),
-        "args": job.args,
+        // Secret-named fields never leave the runtime (a finished job's are already redacted).
+        "args": redact_secrets(&job.args, &Value::Null),
         "level": job.level.map(GrantLevel::as_str),
         "rule_id": job.rule_id,
         "approver_user_id": job.approver_user_id,
@@ -990,7 +1034,12 @@ async fn jobs_route(State(state): State<Arc<AppState>>, Extension(user): Extensi
         },
     };
     let uid = user.user_id.clone();
-    match with_db(&state, move |conn| list_jobs(conn, &uid, &states).map_err(internal)).await {
+    match with_db(&state, move |conn| {
+        expire_overdue(conn, &uid).map_err(internal)?;
+        list_jobs(conn, &uid, &states).map_err(internal)
+    })
+    .await
+    {
         Ok(jobs) => Json(json!({ "jobs": jobs.iter().map(job_json).collect::<Vec<_>>() })).into_response(),
         Err(r) => r,
     }
@@ -999,11 +1048,781 @@ async fn jobs_route(State(state): State<Arc<AppState>>, Extension(user): Extensi
 /// The requester sees their job; the approver it waits on sees it too.
 async fn job_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
     let uid = user.user_id.clone();
-    match with_db(&state, move |conn| get_job(conn, &id).map_err(internal)).await {
+    let reader = uid.clone();
+    match with_db(&state, move |conn| {
+        expire_overdue(conn, &reader).map_err(internal)?;
+        get_job(conn, &id).map_err(internal)
+    })
+    .await
+    {
         Ok(Some(job)) if job.user_id == uid || job.approver_user_id.as_deref() == Some(uid.as_str()) => {
             Json(json!({ "job": job_json(&job) })).into_response()
         }
         Ok(_) => err(StatusCode::NOT_FOUND, "job_not_found", "job not found"),
+        Err(r) => r,
+    }
+}
+
+// ── Run, events, cancel (lane 17) ────────────────────────────────────────────
+
+/// What a finished job's secret argument values become.
+pub const REDACTED: &str = "••••";
+const NOT_APPROVED: &str = "not approved";
+const NOT_APPROVED_IN_TIME: &str = "not approved in time";
+/// A cancel looks the tool up for its schema at most this long (names alone after).
+const CANCEL_LIST_BUDGET: Duration = Duration::from_secs(3);
+
+/// What the bar needs from the engine. [`GizziEngine`] in the product; tests fake it.
+#[async_trait::async_trait]
+pub trait BarEngine: Send + Sync {
+    /// An engine answers (`/v1/global/health`).
+    async fn reachable(&self) -> bool;
+    /// The engine's direct tool call (lane 16): `{sessionID, server, tool, args, meta, …}` →
+    /// `{sessionID, toolCallID, result}`. Blocks until the tool finishes. `Err((status, body))`.
+    async fn call_tool(&self, payload: Value) -> Result<Value, (u16, String)>;
+    /// The engine's MCP task cancel route. `true` when it took it.
+    async fn cancel_task(&self, task_id: &str) -> bool;
+    /// Every session's MCP events (`agent_session_routes::mcp_bus_event` shapes); `None` when
+    /// the engine stream cannot be opened.
+    async fn mcp_events(&self) -> Option<BoxStream<'static, Value>>;
+}
+
+/// The local gizzi engine, through `agent_session_routes`' shared helpers.
+pub struct GizziEngine {
+    state: Arc<AppState>,
+}
+
+impl GizziEngine {
+    pub fn shared(state: &Arc<AppState>) -> Arc<dyn BarEngine> {
+        Arc::new(GizziEngine { state: state.clone() })
+    }
+
+    fn client() -> reqwest::Client {
+        // No caller headers: every bar call and its event stream reach the same engine instance.
+        crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new())
+    }
+}
+
+#[async_trait::async_trait]
+impl BarEngine for GizziEngine {
+    async fn reachable(&self) -> bool {
+        crate::health::HealthState::gizzi_healthy(&self.state).await
+    }
+
+    async fn call_tool(&self, payload: Value) -> Result<Value, (u16, String)> {
+        crate::agent_session_routes::engine_tool_call(&Self::client(), &payload).await
+    }
+
+    async fn cancel_task(&self, task_id: &str) -> bool {
+        crate::agent_session_routes::engine_cancel_task(&Self::client(), task_id).await.is_ok()
+    }
+
+    async fn mcp_events(&self) -> Option<BoxStream<'static, Value>> {
+        crate::agent_session_routes::engine_mcp_events(&Self::client()).await.ok()
+    }
+}
+
+// ── Job events (`{type: bar_job, job}`) ──────────────────────────────────────
+
+fn job_events_tx() -> &'static tokio::sync::broadcast::Sender<Value> {
+    static TX: OnceLock<tokio::sync::broadcast::Sender<Value>> = OnceLock::new();
+    TX.get_or_init(|| tokio::sync::broadcast::channel(256).0)
+}
+
+/// Every job's state changes, as `{type: bar_job, job}`.
+pub fn subscribe_jobs() -> tokio::sync::broadcast::Receiver<Value> {
+    job_events_tx().subscribe()
+}
+
+fn bar_job_event(job: &BarJob) -> Value {
+    json!({ "type": "bar_job", "job": job_json(job) })
+}
+
+/// Tell watchers (call after the change is committed).
+fn announce(job: &BarJob) {
+    let _ = job_events_tx().send(bar_job_event(job));
+}
+
+/// The events one job's watcher gets: `first` (the job as read), then the
+/// engine's MCP events for `bar:<job_id>` and the job's `bar_job` changes, until
+/// a `bar_job` shows it finished. Engine events go first when both are ready.
+pub fn job_event_stream(
+    first: BarJob,
+    engine: Option<BoxStream<'static, Value>>,
+    mut jobs: tokio::sync::broadcast::Receiver<Value>,
+) -> impl futures::Stream<Item = Value> + Send {
+    async_stream::stream! {
+        let finished = first.state.is_terminal();
+        let (job_id, session) = (first.id.clone(), first.session_id.clone());
+        yield bar_job_event(&first);
+        if finished {
+            return;
+        }
+        let mut engine = engine;
+        loop {
+            let next_engine = async {
+                match engine.as_mut() {
+                    Some(s) => s.next().await,
+                    None => std::future::pending().await,
+                }
+            };
+            let step = tokio::select! {
+                biased;
+                ev = next_engine => Err(ev),
+                job = jobs.recv() => Ok(job),
+            };
+            match step {
+                Err(Some(ev)) => {
+                    if ev["session_id"].as_str() == Some(session.as_str()) {
+                        yield ev;
+                    }
+                }
+                Err(None) => engine = None,
+                Ok(Ok(ev)) => {
+                    if ev["job"]["id"].as_str() == Some(job_id.as_str()) {
+                        let done = ev["job"]["state"].as_str().and_then(JobState::parse).is_some_and(JobState::is_terminal);
+                        yield ev;
+                        if done {
+                            return;
+                        }
+                    }
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => return,
+            }
+        }
+    }
+}
+
+// ── Secrets ──────────────────────────────────────────────────────────────────
+
+/// `args` with every secret field's value replaced by [`REDACTED`], at any
+/// depth: marked secret by `schema` (`format: password`, `writeOnly`) or named
+/// like one (`bar_blanks::is_secret_field`, the rule recents use). With a null
+/// schema, names alone decide.
+pub fn redact_secrets(args: &Value, schema: &Value) -> Value {
+    match args {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| {
+                    let prop = &schema["properties"][k.as_str()];
+                    let out = if v.is_null() {
+                        Value::Null
+                    } else if bar_blanks::is_secret_field(k, prop) {
+                        json!(REDACTED)
+                    } else {
+                        redact_secrets(v, prop)
+                    };
+                    (k.clone(), out)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(|v| redact_secrets(v, &schema["items"])).collect()),
+        other => other.clone(),
+    }
+}
+
+// ── State moves ──────────────────────────────────────────────────────────────
+
+/// Move an active job on and read it back. `None` when it had already finished.
+fn move_job(conn: &Connection, id: &str, state: JobState, update: &JobUpdate) -> rusqlite::Result<Option<BarJob>> {
+    if !set_job_state(conn, id, state, update)? {
+        return Ok(None);
+    }
+    get_job(conn, id)
+}
+
+/// Finish a job (completed, failed or cancelled) and redact its secrets
+/// (`schema` = the pinned tool's `inputSchema`; null = names alone). `None`
+/// when it had already finished. The caller announces it after commit.
+pub fn finish_job(conn: &Connection, id: &str, state: JobState, update: &JobUpdate, schema: &Value) -> rusqlite::Result<Option<BarJob>> {
+    debug_assert!(state.is_terminal());
+    let Some(mut job) = move_job(conn, id, state, update)? else {
+        return Ok(None);
+    };
+    let redacted = redact_secrets(&job.args, schema);
+    if redacted != job.args {
+        conn.execute("UPDATE bar_jobs SET args_json = ?2 WHERE id = ?1", params![id, redacted.to_string()])?;
+        job.args = redacted;
+    }
+    Ok(Some(job))
+}
+
+/// Waiting jobs whose routed ask outlived its 24 hours (D20) fail "not
+/// approved in time". `user_id` = the requester or the approver reading.
+pub fn expire_overdue(conn: &Connection, user_id: &str) -> rusqlite::Result<Vec<BarJob>> {
+    let ids: Vec<String> = conn
+        .prepare(&format!(
+            "SELECT j.id FROM bar_jobs j JOIN cowork_approvals a ON a.id = j.approval_id
+             WHERE j.state = 'waiting_approval' AND (j.user_id = ?1 OR j.approver_user_id = ?1)
+               AND a.created_at < datetime('now', '-{} hours')",
+            team_rules::ASK_TTL_HOURS
+        ))?
+        .query_map(params![user_id], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut expired = Vec::new();
+    for id in ids {
+        let update = JobUpdate { error: Some(NOT_APPROVED_IN_TIME.into()), ..Default::default() };
+        if let Some(job) = finish_job(conn, &id, JobState::Failed, &update, &Value::Null)? {
+            announce(&job);
+            expired.push(job);
+        }
+    }
+    Ok(expired)
+}
+
+fn job_not_found() -> Response {
+    err(StatusCode::NOT_FOUND, "job_not_found", "job not found")
+}
+
+/// The caller's own job (only the person who made it runs or cancels it).
+fn own_job(conn: &Connection, user_id: &str, job_id: &str) -> Result<BarJob, Response> {
+    match get_job(conn, job_id).map_err(internal)? {
+        Some(job) if job.user_id == user_id => Ok(job),
+        _ => Err(job_not_found()),
+    }
+}
+
+fn not_in_review(job: &BarJob) -> Response {
+    err(StatusCode::CONFLICT, "job_not_in_review", format!("This job is {} and can't be run again.", job.state.as_str()))
+}
+
+/// Before anything is listed or opened: the caller's job, still in `review`,
+/// and an engine to run it. 409 `no_runtime` otherwise.
+pub async fn check_runnable(db: &DbHandle, engine: &dyn BarEngine, user_id: &str, job_id: &str) -> Result<BarJob, Response> {
+    let (uid, id) = (user_id.to_string(), job_id.to_string());
+    let job = with_handle(db, move |conn| own_job(conn, &uid, &id)).await?;
+    if job.state != JobState::Review {
+        return Err(not_in_review(&job));
+    }
+    if !engine.reachable().await {
+        return Err(no_runtime());
+    }
+    Ok(job)
+}
+
+// ── Run ──────────────────────────────────────────────────────────────────────
+
+/// The tool as the run sees it.
+pub struct RunInput<'a> {
+    pub user_id: &'a str,
+    pub job_id: &'a str,
+    pub app_name: &'a str,
+    pub tool_read_only: bool,
+    /// The pinned tool's `inputSchema` (recents and redaction).
+    pub input_schema: &'a Value,
+}
+
+#[derive(Debug)]
+pub enum RunStart {
+    /// A rule routed it to someone else: the ask is open as `job.approval_id`.
+    Waiting(BarJob),
+    /// `working`: the caller starts the engine call.
+    Call(BarJob),
+}
+
+/// The run's database step, in one transaction: the job is still `review`,
+/// the gate decides (nothing spent: the proxy's gate checks and spends on the
+/// real call), recents are kept, and the job moves on. Announced after commit.
+pub fn begin_run(conn: &Connection, input: &RunInput<'_>) -> Result<RunStart, Response> {
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(internal)?;
+    let job = own_job(&tx, input.user_id, input.job_id)?;
+    if job.state != JobState::Review {
+        return Err(not_in_review(&job));
+    }
+    let decision = team_rules::gate_call(
+        &tx,
+        &team_rules::GateCall {
+            user_id: &job.user_id,
+            bot_id: job.bot_id.as_deref(),
+            app_kind: job.app_kind,
+            app_ref: &job.app_ref,
+            app_name: input.app_name,
+            tool: &job.tool,
+            tool_read_only: input.tool_read_only,
+            args: &job.args,
+            approval_ids: &[],
+            job_id: Some(job.id.as_str()),
+            // Pressing Run on the review card is the person's own confirmation.
+            self_confirmed: true,
+            held_for_confirmation: true,
+        },
+    )
+    .map_err(internal)?;
+    record_recent_values(&tx, &job, input.input_schema).map_err(internal)?;
+    let started = match decision {
+        Decision::NeedsOwner { rule, approver_user_id, approval_id, .. } => {
+            tx.execute(
+                "UPDATE bar_jobs SET approver_user_id = ?2, rule_id = ?3 WHERE id = ?1",
+                params![job.id, approver_user_id, rule.id],
+            )
+            .map_err(internal)?;
+            // The approval push every ask uses: owner ledger → cloud `approval.requested`.
+            crate::runtime_events::record_user_event(
+                &tx,
+                &approver_user_id,
+                "approval.requested",
+                None,
+                &json!({ "approvalId": approval_id, "source": team_rules::ROUTED_SOURCE, "jobId": job.id }),
+                Some(&format!("approval:{approval_id}:requested")),
+            )
+            .map_err(internal)?;
+            let update = JobUpdate { approval_id: Some(approval_id), ..Default::default() };
+            let job = move_job(&tx, &job.id, JobState::WaitingApproval, &update).map_err(internal)?.ok_or_else(job_not_found)?;
+            RunStart::Waiting(job)
+        }
+        Decision::DenyNoGrant => {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "no_grant",
+                format!("This bot has no access to {}. Its owner can give it a level on the Team map.", input.app_name),
+            ))
+        }
+        Decision::DenyReadOnly => {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "level_read_only",
+                format!("This bot can only read from {} (Browser level), and '{}' makes changes.", input.app_name, job.tool),
+            ))
+        }
+        _ => RunStart::Call(move_job(&tx, &job.id, JobState::Working, &JobUpdate::default()).map_err(internal)?.ok_or_else(job_not_found)?),
+    };
+    tx.commit().map_err(internal)?;
+    match &started {
+        RunStart::Waiting(job) | RunStart::Call(job) => announce(job),
+    }
+    Ok(started)
+}
+
+/// The engine call for a connector tool: the per-user proxy server, the
+/// namespaced tool, and the proxy registration for `bar:<job_id>`.
+pub struct PreparedCall {
+    pub server: String,
+    pub tool: String,
+    pub app_name: String,
+    pub tool_read_only: bool,
+    pub input_schema: Value,
+    /// The `mcpProxy` entry a turn sends (`mcp_user_proxy::proxy_registration`).
+    pub proxy: Option<Value>,
+}
+
+/// One running engine call.
+pub struct RunCall {
+    pub job_id: String,
+    pub payload: Value,
+    pub input_schema: Value,
+}
+
+impl PreparedCall {
+    pub fn for_job(&self, job: &BarJob) -> RunCall {
+        RunCall { job_id: job.id.clone(), payload: call_payload(job, &self.server, &self.tool, self.proxy.clone()), input_schema: self.input_schema.clone() }
+    }
+}
+
+/// The engine's direct-call body for a job (`POST /v1/mcp/tool/call`).
+pub fn call_payload(job: &BarJob, server: &str, tool: &str, proxy: Option<Value>) -> Value {
+    let mut meta = serde_json::Map::new();
+    meta.insert(team_rules::JOB_ID_META_KEY.into(), json!(job.id));
+    // The person confirmed on the review card (the install mode's ask).
+    meta.insert(crate::mcp_user_proxy::APPROVED_META_KEY.into(), json!(true));
+    if let Some(a) = &job.approval_id {
+        meta.insert(team_rules::APPROVAL_ID_META_KEY.into(), json!(a));
+    }
+    let mut payload = json!({
+        "sessionID": job.session_id,
+        "server": server,
+        "tool": tool,
+        "args": job.args,
+        "meta": meta,
+        "toolCallID": format!("bar_{}", job.id),
+    });
+    if let Some(proxy) = proxy {
+        payload["mcpProxy"] = proxy;
+    }
+    payload
+}
+
+/// List the job's tool and build its engine call (connector apps).
+async fn prepare_call(state: &Arc<AppState>, job: &BarJob) -> Result<PreparedCall, Response> {
+    if job.app_kind != AppKind::Connector {
+        return Err(unsupported_kind(job.app_kind.as_str()));
+    }
+    let connector = load_connector(state, &job.user_id, &job.app_ref).await?;
+    let tool = pinned_tool(state, &job.user_id, &connector, &job.tool).await?;
+    let connectors = mcp_apps::load_user_connectors(state, &job.user_id, mcp_apps::allow_private_hosts()).await;
+    let prefixes = crate::mcp_user_proxy::connector_prefixes(&connectors);
+    let prefix = connectors
+        .iter()
+        .position(|c| c.id == connector.id)
+        .and_then(|i| prefixes.get(i).cloned())
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "connector_not_found", "connector not found"))?;
+    Ok(PreparedCall {
+        server: crate::mcp_user_proxy::PROXY_SERVER_NAME.to_string(),
+        tool: crate::mcp_user_proxy::namespaced(&prefix, &job.tool),
+        app_name: connector.name.clone(),
+        tool_read_only: tool["annotations"]["readOnlyHint"] == true,
+        input_schema: tool["inputSchema"].clone(),
+        proxy: crate::mcp_user_proxy::proxy_registration(state, &job.user_id, &job.session_id, job.bot_id.as_deref()).await,
+    })
+}
+
+/// The receipt: `structuredContent` first, the text parts second.
+pub fn receipt(result: &Value) -> Value {
+    let text: Vec<&str> = result["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["type"] == "text")
+        .filter_map(|c| c["text"].as_str())
+        .collect();
+    json!({
+        "structured": result.get("structuredContent").cloned().unwrap_or(Value::Null),
+        "text": if text.is_empty() { Value::Null } else { json!(text.join("\n")) },
+    })
+}
+
+fn engine_error_text(status: u16, body: &str) -> String {
+    if status == 502 {
+        return "No Allternit computer is reachable to run this.".into();
+    }
+    let parsed: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    parsed["message"]
+        .as_str()
+        .or(parsed["error"].as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| body.chars().take(500).collect())
+}
+
+/// Store the engine's answer on the job (receipt, task id, error) and finish it.
+pub fn settle(conn: &Connection, job_id: &str, outcome: Result<Value, (u16, String)>, schema: &Value) -> rusqlite::Result<Option<BarJob>> {
+    let (state, update) = match outcome {
+        Ok(answer) => {
+            let result = answer.get("result").cloned().unwrap_or(Value::Null);
+            let failed = result["isError"] == true;
+            let receipt = receipt(&result);
+            let error = failed.then(|| receipt["text"].as_str().unwrap_or("The tool reported an error.").to_string());
+            let update = JobUpdate {
+                task_id: answer["toolCallID"].as_str().map(|t| format!("direct:{t}")),
+                result: Some(receipt),
+                error,
+                ..Default::default()
+            };
+            (if failed { JobState::Failed } else { JobState::Completed }, update)
+        }
+        Err((status, body)) => (JobState::Failed, JobUpdate { error: Some(engine_error_text(status, &body)), ..Default::default() }),
+    };
+    finish_job(conn, job_id, state, &update, schema)
+}
+
+/// An engine event for the job's session while its call runs: the task id
+/// (for cancel) and `input_required` while an elicitation form is open.
+fn note_engine_event(conn: &Connection, job_id: &str, ev: &Value) -> rusqlite::Result<Option<BarJob>> {
+    match ev["type"].as_str() {
+        Some("mcp_task") => {
+            if let Some(task) = ev["part"]["taskId"].as_str() {
+                conn.execute(
+                    "UPDATE bar_jobs SET task_id = ?2 WHERE id = ?1 AND task_id IS NULL AND state IN ('working', 'input_required')",
+                    params![job_id, task],
+                )?;
+            }
+            Ok(None)
+        }
+        Some(kind @ ("mcp_elicitation" | "mcp_elicitation_resolved")) => {
+            let (from, to) = if kind == "mcp_elicitation" {
+                (JobState::Working, JobState::InputRequired)
+            } else {
+                (JobState::InputRequired, JobState::Working)
+            };
+            match get_job(conn, job_id)? {
+                Some(job) if job.state == from => move_job(conn, job_id, to, &JobUpdate::default()),
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+type Running = HashMap<String, (futures::future::AbortHandle, Value)>;
+
+fn running() -> &'static Mutex<Running> {
+    static RUNNING: OnceLock<Mutex<Running>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn blocking<T: Send + 'static>(db: &DbHandle, f: impl FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static) -> Option<T> {
+    let db = db.clone();
+    match tokio::task::spawn_blocking(move || db.connect().and_then(|conn| f(&conn))).await {
+        Ok(Ok(v)) => Some(v),
+        Ok(Err(e)) => {
+            warn!(error = %e, "bar job: database write failed");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "bar job: database task failed");
+            None
+        }
+    }
+}
+
+/// Run the engine call in the background (D10: the engine makes it; the run
+/// route does not wait). Cancel drops it through its abort handle.
+pub fn spawn_call(db: DbHandle, engine: Arc<dyn BarEngine>, call: RunCall) -> tokio::task::JoinHandle<()> {
+    let (abort, registration) = futures::future::AbortHandle::new_pair();
+    let job_id = call.job_id.clone();
+    running().lock().unwrap_or_else(|p| p.into_inner()).insert(job_id.clone(), (abort, call.input_schema.clone()));
+    tokio::spawn(async move {
+        let _ = futures::future::Abortable::new(drive_call(db, engine, call), registration).await;
+        running().lock().unwrap_or_else(|p| p.into_inner()).remove(&job_id);
+    })
+}
+
+async fn drive_call(db: DbHandle, engine: Arc<dyn BarEngine>, call: RunCall) {
+    let session = call.payload["sessionID"].as_str().unwrap_or_default().to_string();
+    // Opened before the call so its first task part is seen.
+    let mut events = engine.mcp_events().await;
+    let reply = engine.call_tool(call.payload.clone());
+    tokio::pin!(reply);
+    let outcome = loop {
+        let step = {
+            let next_event = async {
+                match events.as_mut() {
+                    Some(s) => s.next().await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                out = &mut reply => Ok(out),
+                ev = next_event => Err(ev),
+            }
+        };
+        match step {
+            Ok(out) => break out,
+            Err(None) => events = None,
+            Err(Some(ev)) if ev["session_id"].as_str() == Some(session.as_str()) => {
+                let id = call.job_id.clone();
+                if let Some(Some(job)) = blocking(&db, move |conn| note_engine_event(conn, &id, &ev)).await {
+                    announce(&job);
+                }
+            }
+            Err(Some(_)) => {}
+        }
+    };
+    let (id, schema) = (call.job_id.clone(), call.input_schema.clone());
+    if let Some(Some(job)) = blocking(&db, move |conn| settle(conn, &id, outcome, &schema)).await {
+        announce(&job);
+    }
+}
+
+pub async fn run_job(state: &Arc<AppState>, engine: Arc<dyn BarEngine>, user_id: &str, job_id: &str) -> Response {
+    let job = match check_runnable(&state.db, engine.as_ref(), user_id, job_id).await {
+        Ok(j) => j,
+        Err(r) => return r,
+    };
+    let prepared = match prepare_call(state, &job).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let (uid, id, app_name, schema, read_only) =
+        (user_id.to_string(), job_id.to_string(), prepared.app_name.clone(), prepared.input_schema.clone(), prepared.tool_read_only);
+    let started = with_db(state, move |conn| {
+        begin_run(conn, &RunInput { user_id: &uid, job_id: &id, app_name: &app_name, tool_read_only: read_only, input_schema: &schema })
+    })
+    .await;
+    match started {
+        Ok(RunStart::Waiting(job)) => Json(json!({ "job": job_json(&job) })).into_response(),
+        Ok(RunStart::Call(job)) => {
+            spawn_call(state.db.clone(), engine, prepared.for_job(&job));
+            Json(json!({ "job": job_json(&job) })).into_response()
+        }
+        Err(r) => r,
+    }
+}
+
+async fn run_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
+    let engine = GizziEngine::shared(&state);
+    run_job(&state, engine, &user.user_id, &id).await
+}
+
+// ── Approval decided ─────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub enum Resume {
+    /// Not a waiting bar job's ask, or the ask is still open.
+    Nothing,
+    /// Declined, withdrawn or too late: the job failed.
+    Finished(BarJob),
+    /// Approved: the job is `working` with the approval id; run it.
+    Run(BarJob),
+}
+
+/// The waiting bar job a routed ask belongs to.
+fn waiting_job_for(conn: &Connection, approval_id: &str) -> rusqlite::Result<Option<BarJob>> {
+    let job_id: Option<String> = conn
+        .query_row(
+            "SELECT job_id FROM cowork_approvals WHERE id = ?1 AND source = ?2",
+            params![approval_id, team_rules::ROUTED_SOURCE],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(job_id) = job_id else { return Ok(None) };
+    Ok(get_job(conn, &job_id)?
+        .filter(|j| j.state == JobState::WaitingApproval && j.approval_id.as_deref() == Some(approval_id)))
+}
+
+/// After the routed ask was decided: approved (within 24 h) → `working`;
+/// rejected or withdrawn → `failed` "not approved"; approved too late →
+/// `failed` "not approved in time". `schema` redacts a failed job's secrets.
+pub fn resume_decision(conn: &Connection, approval_id: &str, schema: &Value) -> rusqlite::Result<Resume> {
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let Some(job) = waiting_job_for(&tx, approval_id)? else { return Ok(Resume::Nothing) };
+    let (dismissed, decision, late): (i64, Option<String>, bool) = tx.query_row(
+        &format!(
+            "SELECT dismissed, decision, created_at < datetime('now', '-{} hours') FROM cowork_approvals WHERE id = ?1",
+            team_rules::ASK_TTL_HOURS
+        ),
+        params![approval_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    if dismissed == 0 {
+        return Ok(Resume::Nothing);
+    }
+    let resumed = match (decision.as_deref(), late) {
+        (Some("approved"), false) => move_job(&tx, &job.id, JobState::Working, &JobUpdate::default())?.map(Resume::Run),
+        (Some("approved"), true) => {
+            let update = JobUpdate { error: Some(NOT_APPROVED_IN_TIME.into()), ..Default::default() };
+            finish_job(&tx, &job.id, JobState::Failed, &update, schema)?.map(Resume::Finished)
+        }
+        _ => {
+            let update = JobUpdate { error: Some(NOT_APPROVED.into()), ..Default::default() };
+            finish_job(&tx, &job.id, JobState::Failed, &update, schema)?.map(Resume::Finished)
+        }
+    };
+    tx.commit()?;
+    let resumed = resumed.unwrap_or(Resume::Nothing);
+    if let Resume::Run(job) | Resume::Finished(job) = &resumed {
+        announce(job);
+    }
+    Ok(resumed)
+}
+
+/// Hook for `cowork_routes::decide_approval`: a decided routed ask resumes or
+/// fails the bar job waiting on it (in the background; a no-op otherwise).
+pub fn on_routed_decision(state: &Arc<AppState>, approval_id: &str) {
+    let (state, approval_id) = (state.clone(), approval_id.to_string());
+    tokio::spawn(async move {
+        let aid = approval_id.clone();
+        let Some(Some(job)) = blocking(&state.db, move |conn| waiting_job_for(conn, &aid)).await else { return };
+        // The tool as listed now: its schema (redaction) and its engine call.
+        let prepared = prepare_call(&state, &job).await;
+        let schema = prepared.as_ref().map(|p| p.input_schema.clone()).unwrap_or(Value::Null);
+        let aid = approval_id.clone();
+        let Some(Resume::Run(job)) = blocking(&state.db, move |conn| resume_decision(conn, &aid, &schema)).await else { return };
+        match prepared {
+            Ok(p) => {
+                spawn_call(state.db.clone(), GizziEngine::shared(&state), p.for_job(&job));
+            }
+            Err(_) => {
+                let id = job.id.clone();
+                let update = JobUpdate { error: Some(format!("The app could not be reached to run '{}'.", job.tool)), ..Default::default() };
+                if let Some(Some(job)) = blocking(&state.db, move |conn| finish_job(conn, &id, JobState::Failed, &update, &Value::Null)).await {
+                    announce(&job);
+                }
+            }
+        }
+    });
+}
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+async fn events_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
+    // Subscribe before reading the job, so no change falls between the two.
+    let jobs = subscribe_jobs();
+    let uid = user.user_id.clone();
+    let reader = uid.clone();
+    let job = match with_db(&state, move |conn| {
+        expire_overdue(conn, &reader).map_err(internal)?;
+        get_job(conn, &id).map_err(internal)
+    })
+    .await
+    {
+        Ok(Some(job)) if job.user_id == uid || job.approver_user_id.as_deref() == Some(uid.as_str()) => job,
+        Ok(_) => return job_not_found(),
+        Err(r) => return r,
+    };
+    let engine = if job.state.is_terminal() { None } else { GizziEngine::shared(&state).mcp_events().await };
+    let stream = job_event_stream(job, engine, jobs).map(|v| Ok::<_, std::convert::Infallible>(Event::default().data(v.to_string())));
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+// ── Cancel ───────────────────────────────────────────────────────────────────
+
+/// Cancel a job: finish it `cancelled` first (so the call's own finish cannot
+/// overwrite it), withdraw a pending routed ask, then cancel the MCP task
+/// through the engine's cancel route and drop the call. `schema` redacts
+/// secrets when the job is not running here (a running job carries its own).
+pub async fn cancel_job(db: &DbHandle, engine: &dyn BarEngine, user_id: &str, job_id: &str, schema: Value) -> Result<BarJob, Response> {
+    let run = running().lock().unwrap_or_else(|p| p.into_inner()).remove(job_id);
+    let schema = run.as_ref().map(|(_, s)| s.clone()).unwrap_or(schema);
+    let (uid, id) = (user_id.to_string(), job_id.to_string());
+    let cancelled = with_handle(db, move |conn| {
+        let job = own_job(conn, &uid, &id)?;
+        if job.state.is_terminal() {
+            return Err(err(StatusCode::CONFLICT, "job_finished", format!("This job is already {}.", job.state.as_str())));
+        }
+        let done = finish_job(conn, &id, JobState::Cancelled, &JobUpdate::default(), &schema)
+            .map_err(internal)?
+            .ok_or_else(|| err(StatusCode::CONFLICT, "job_finished", "This job has already finished."))?;
+        if job.state == JobState::WaitingApproval {
+            if let Some(ask) = &job.approval_id {
+                crate::cowork_routes::withdraw_routed_ask(conn, ask, &job.user_id).map_err(internal)?;
+            }
+        }
+        Ok(done)
+    })
+    .await;
+    let job = match cancelled {
+        Ok(job) => job,
+        Err(r) => {
+            // Not cancelled here: a running call keeps its handle.
+            if let Some(entry) = run {
+                running().lock().unwrap_or_else(|p| p.into_inner()).insert(job_id.to_string(), entry);
+            }
+            return Err(r);
+        }
+    };
+    announce(&job);
+    if let Some(task) = job.task_id.as_deref() {
+        if !engine.cancel_task(task).await {
+            warn!(job_id, "bar cancel: the engine did not take the task cancel; dropping the call");
+        }
+    }
+    if let Some((abort, _)) = run {
+        abort.abort();
+    }
+    Ok(job)
+}
+
+async fn cancel_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
+    let (uid, jid) = (user.user_id.clone(), id.clone());
+    let job = match with_db(&state, move |conn| own_job(conn, &uid, &jid)).await {
+        Ok(j) => j,
+        Err(r) => return r,
+    };
+    // A job that is not running here is redacted from a fresh listing (names alone if it is slow).
+    let running_here = running().lock().unwrap_or_else(|p| p.into_inner()).contains_key(&id);
+    let schema = if running_here || job.state.is_terminal() || job.app_kind != AppKind::Connector {
+        Value::Null
+    } else {
+        let lookup = async {
+            let connector = load_connector(&state, &job.user_id, &job.app_ref).await.ok()?;
+            pinned_tool(&state, &job.user_id, &connector, &job.tool).await.ok().map(|t| t["inputSchema"].clone())
+        };
+        tokio::time::timeout(CANCEL_LIST_BUDGET, lookup).await.ok().flatten().unwrap_or(Value::Null)
+    };
+    let engine = GizziEngine::shared(&state);
+    match cancel_job(&state.db, engine.as_ref(), &user.user_id, &id, schema).await {
+        Ok(job) => Json(json!({ "job": job_json(&job) })).into_response(),
         Err(r) => r,
     }
 }
@@ -1223,5 +2042,285 @@ mod tests {
         assert_eq!(decode_intent(&id), Some((AppKind::Connector, "conn-1".to_string(), "pay".to_string())));
         assert_eq!(decode_intent("bin_zz"), None);
         assert_eq!(decode_intent("conn-1"), None);
+    }
+
+    // ── Lane 17: run, approval, events, cancel, redaction ───────────────────
+
+    /// The engine edge (lane 16's relay + gizzi's event stream), faked.
+    struct FakeEngine {
+        up: bool,
+        events: Vec<Value>,
+        /// `None`: the call never returns (a long task).
+        reply: Mutex<Option<Result<Value, (u16, String)>>>,
+        calls: Mutex<Vec<Value>>,
+        cancels: Mutex<Vec<String>>,
+    }
+
+    impl FakeEngine {
+        fn new(up: bool, events: Vec<Value>, reply: Option<Result<Value, (u16, String)>>) -> Arc<FakeEngine> {
+            Arc::new(FakeEngine { up, events, reply: Mutex::new(reply), calls: Mutex::default(), cancels: Mutex::default() })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BarEngine for FakeEngine {
+        async fn reachable(&self) -> bool {
+            self.up
+        }
+        async fn call_tool(&self, payload: Value) -> Result<Value, (u16, String)> {
+            self.calls.lock().unwrap().push(payload);
+            let reply = self.reply.lock().unwrap().take();
+            match reply {
+                Some(r) => {
+                    // Long enough for the session's events to be read first.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    r
+                }
+                None => std::future::pending().await,
+            }
+        }
+        async fn cancel_task(&self, task_id: &str) -> bool {
+            self.cancels.lock().unwrap().push(task_id.to_string());
+            true
+        }
+        async fn mcp_events(&self) -> Option<BoxStream<'static, Value>> {
+            Some(futures::stream::iter(self.events.clone()).chain(futures::stream::pending()).boxed())
+        }
+    }
+
+    fn pay_schema() -> Value {
+        pay_tool()["inputSchema"].clone()
+    }
+
+    fn run_input<'a>(user: &'a str, job_id: &'a str, schema: &'a Value) -> RunInput<'a> {
+        RunInput { user_id: user, job_id, app_name: "Stripe", tool_read_only: false, input_schema: schema }
+    }
+
+    fn stripe_call() -> PreparedCall {
+        PreparedCall {
+            server: crate::mcp_user_proxy::PROXY_SERVER_NAME.into(),
+            tool: "stripe__pay".into(),
+            app_name: "Stripe".into(),
+            tool_read_only: false,
+            input_schema: pay_schema(),
+            proxy: None,
+        }
+    }
+
+    fn task_event(session: &str, task: &str, status: &str) -> Value {
+        json!({ "type": "mcp_task", "session_id": session, "part": { "type": "mcp-task", "taskId": task, "status": status } })
+    }
+
+    #[tokio::test]
+    async fn run_with_a_rule_waits_then_approval_runs_it_to_completed_with_bar_session_events() {
+        let db = DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        seed(&conn);
+        pay_rule(&conn, ApproverKind::Manager);
+        let reviewed = review(&conn, "ann", json!({ "amount": 250, "to": "acme", "pin": "1234" })).unwrap();
+        let id = reviewed["job_id"].as_str().unwrap().to_string();
+        let session = format!("bar:{id}");
+        let engine = FakeEngine::new(
+            true,
+            vec![
+                task_event("bar:bjb_someone_else", "direct:x", "working"),
+                task_event(&session, "direct:bar_1", "working"),
+                task_event(&session, "direct:bar_1", "completed"),
+            ],
+            Some(Ok(json!({
+                "sessionID": session,
+                "toolCallID": "bar_1",
+                "result": { "content": [{ "type": "text", "text": "Paid 250 to acme" }], "structuredContent": { "payment": "pi_1" } },
+            }))),
+        );
+        let jobs = subscribe_jobs();
+        let first = check_runnable(&db, engine.as_ref(), "ann", &id).await.unwrap();
+        let schema = pay_schema();
+
+        // Run: the manager's rule routes it; the ask opens for mgr and the job waits.
+        let RunStart::Waiting(waiting) = begin_run(&conn, &run_input("ann", &id, &schema)).unwrap() else {
+            panic!("expected waiting_approval")
+        };
+        assert_eq!(waiting.state, JobState::WaitingApproval);
+        let ask = waiting.approval_id.clone().expect("ask id");
+        let (approver, job_ref): (String, String) = conn
+            .query_row("SELECT approver_user_id, job_id FROM cowork_approvals WHERE id = ?1", params![ask], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((approver.as_str(), job_ref.as_str()), ("mgr", id.as_str()));
+        // The approver's push: `approval.requested` on their ledger.
+        let pushed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM runtime_user_events WHERE user_id = 'mgr' AND event_type = 'approval.requested'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pushed, 1);
+        // Recents are kept on run, never the secret pin; the job's JSON masks the pin while it waits.
+        let kept = recents_for_tool(&conn, "ann", AppKind::Connector, "conn-1", "pay").unwrap();
+        assert!(kept.iter().any(|(f, v)| f == "to" && v.value == json!("acme")));
+        assert!(!kept.iter().any(|(f, _)| f == "pin"));
+        assert_eq!(job_json(&waiting)["args"]["pin"], json!(REDACTED));
+        // A second press is refused.
+        let again = begin_run(&conn, &run_input("ann", &id, &schema)).unwrap_err();
+        assert_eq!(again.status(), StatusCode::CONFLICT);
+
+        // The manager approves (the decide route's write); the job resumes with the approval id.
+        conn.execute(
+            "UPDATE cowork_approvals SET dismissed = 1, decision = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            params![ask],
+        )
+        .unwrap();
+        let Resume::Run(working) = resume_decision(&conn, &ask, &schema).unwrap() else { panic!("expected the job to resume") };
+        assert_eq!((working.state, working.approval_id.as_deref()), (JobState::Working, Some(ask.as_str())));
+        let call = stripe_call().for_job(&working);
+        assert_eq!(call.payload["sessionID"], json!(session));
+        assert_eq!(call.payload["meta"]["allternit/approvalId"], json!(ask));
+        assert_eq!(call.payload["meta"]["allternit/jobId"], json!(id));
+        assert_eq!(call.payload["args"]["pin"], json!("1234"), "the call carries the real value");
+        spawn_call(db.clone(), engine.clone(), call).await.unwrap();
+
+        let done = get_job(&conn, &id).unwrap().unwrap();
+        assert_eq!(done.state, JobState::Completed);
+        assert_eq!(done.result, Some(json!({ "structured": { "payment": "pi_1" }, "text": "Paid 250 to acme" })));
+        assert_eq!(done.task_id.as_deref(), Some("direct:bar_1"));
+        assert_eq!((done.args["pin"].clone(), done.args["to"].clone()), (json!(REDACTED), json!("acme")));
+        assert_eq!(engine.calls.lock().unwrap().len(), 1);
+
+        // The job's event stream: the job first, only its own session's MCP events, every state change, then it ends.
+        let events: Vec<Value> = job_event_stream(first, engine.mcp_events().await, jobs).collect().await;
+        let sessions: Vec<&Value> = events.iter().filter(|e| e["type"] == "mcp_task").map(|e| &e["session_id"]).collect();
+        assert_eq!(sessions, vec![&json!(session), &json!(session)]);
+        let states: Vec<&str> =
+            events.iter().filter(|e| e["type"] == "bar_job").map(|e| e["job"]["state"].as_str().unwrap()).collect();
+        assert_eq!(states, vec!["review", "waiting_approval", "working", "completed"]);
+    }
+
+    #[tokio::test]
+    async fn a_declined_ask_fails_the_job_not_approved() {
+        let db = DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        seed(&conn);
+        pay_rule(&conn, ApproverKind::Manager);
+        let id = review(&conn, "ann", json!({ "amount": 250, "to": "acme", "pin": "1234" })).unwrap()["job_id"].as_str().unwrap().to_string();
+        let schema = pay_schema();
+        let RunStart::Waiting(waiting) = begin_run(&conn, &run_input("ann", &id, &schema)).unwrap() else { panic!("expected waiting") };
+        let ask = waiting.approval_id.unwrap();
+        // Still open: nothing happens.
+        assert!(matches!(resume_decision(&conn, &ask, &schema).unwrap(), Resume::Nothing));
+        conn.execute("UPDATE cowork_approvals SET dismissed = 1, decision = 'rejected' WHERE id = ?1", params![ask]).unwrap();
+        let Resume::Finished(failed) = resume_decision(&conn, &ask, &schema).unwrap() else { panic!("expected failed") };
+        assert_eq!((failed.state, failed.error.as_deref()), (JobState::Failed, Some("not approved")));
+        assert_eq!(failed.args["pin"], json!(REDACTED));
+    }
+
+    #[tokio::test]
+    async fn cancel_moves_running_and_waiting_jobs_to_cancelled() {
+        let db = DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        seed(&conn);
+        pay_rule(&conn, ApproverKind::Manager);
+        let schema = pay_schema();
+
+        // A running call (under the rule's threshold, so it runs at once) that never returns.
+        let id = review(&conn, "ann", json!({ "amount": 50, "to": "acme", "pin": "1234" })).unwrap()["job_id"].as_str().unwrap().to_string();
+        let engine = FakeEngine::new(true, vec![task_event(&format!("bar:{id}"), "conn-1:t9", "working")], None);
+        let RunStart::Call(working) = begin_run(&conn, &run_input("ann", &id, &schema)).unwrap() else { panic!("expected working") };
+        let handle = spawn_call(db.clone(), engine.clone(), stripe_call().for_job(&working));
+        for _ in 0..100 {
+            if get_job(&conn, &id).unwrap().unwrap().task_id.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Only the job's person may cancel it.
+        assert_eq!(cancel_job(&db, engine.as_ref(), "mgr", &id, Value::Null).await.unwrap_err().status(), StatusCode::NOT_FOUND);
+        let cancelled = cancel_job(&db, engine.as_ref(), "ann", &id, Value::Null).await.unwrap();
+        assert_eq!(cancelled.state, JobState::Cancelled);
+        assert_eq!(cancelled.args["pin"], json!(REDACTED));
+        assert_eq!(*engine.cancels.lock().unwrap(), vec!["conn-1:t9".to_string()]);
+        tokio::time::timeout(Duration::from_secs(2), handle).await.expect("the call was dropped").unwrap();
+        assert_eq!(get_job(&conn, &id).unwrap().unwrap().state, JobState::Cancelled);
+        let twice = cancel_job(&db, engine.as_ref(), "ann", &id, Value::Null).await.unwrap_err();
+        assert_eq!(twice.status(), StatusCode::CONFLICT);
+
+        // A job waiting on the manager: cancel withdraws the ask.
+        let id = review(&conn, "ann", json!({ "amount": 250, "to": "acme" })).unwrap()["job_id"].as_str().unwrap().to_string();
+        let RunStart::Waiting(waiting) = begin_run(&conn, &run_input("ann", &id, &schema)).unwrap() else { panic!("expected waiting") };
+        let ask = waiting.approval_id.unwrap();
+        let cancelled = cancel_job(&db, engine.as_ref(), "ann", &id, Value::Null).await.unwrap();
+        assert_eq!(cancelled.state, JobState::Cancelled);
+        let (dismissed, decision): (i64, Option<String>) = conn
+            .query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = ?1", params![ask], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((dismissed, decision), (1, None));
+        assert!(matches!(resume_decision(&conn, &ask, &schema).unwrap(), Resume::Nothing));
+    }
+
+    #[test]
+    fn secrets_are_redacted_when_a_job_finishes() {
+        let conn = db();
+        let schema = json!({ "type": "object", "properties": {
+            "to": { "type": "string" },
+            "code": { "type": "string", "format": "password" },
+            "hidden": { "type": "string", "writeOnly": true },
+            "api_key": { "type": "string" },
+            "card": { "type": "object", "properties": { "number": { "type": "string", "writeOnly": true }, "holder": { "type": "string" } } },
+            "notes": { "type": "string" }
+        }});
+        let args = json!({
+            "to": "acme", "code": "c0de", "hidden": "h", "api_key": "sk_live", "notes": null,
+            "card": { "number": "4242", "holder": "Ann", "cvv": "123" }
+        });
+        let id = insert_job(
+            &conn,
+            &NewJob {
+                user_id: "ann",
+                bot_id: None,
+                app_kind: AppKind::Connector,
+                app_ref: "conn-1",
+                tool: "send",
+                args: &args,
+                level: None,
+                rule_id: None,
+                approver_user_id: None,
+            },
+        )
+        .unwrap();
+        assert!(set_job_state(&conn, &id, JobState::Working, &JobUpdate::default()).unwrap());
+        // Still running: the stored arguments are intact (the call needs them).
+        assert_eq!(get_job(&conn, &id).unwrap().unwrap().args, args);
+
+        let failed = settle(&conn, &id, Err((400, r#"{"error":"tool_call_failed","message":"card declined"}"#.into())), &schema)
+            .unwrap()
+            .unwrap();
+        assert_eq!((failed.state, failed.error.as_deref()), (JobState::Failed, Some("card declined")));
+        let stored = get_job(&conn, &id).unwrap().unwrap().args;
+        assert_eq!(
+            stored,
+            json!({
+                "to": "acme", "code": REDACTED, "hidden": REDACTED, "api_key": REDACTED, "notes": null,
+                "card": { "number": REDACTED, "holder": "Ann", "cvv": REDACTED }
+            })
+        );
+        // A finished job stays as it is.
+        assert!(settle(&conn, &id, Ok(json!({ "result": {} })), &schema).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn no_runtime_answers_409_and_leaves_the_job_in_review() {
+        let db = DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        seed(&conn);
+        let id = review(&conn, "ann", json!({ "amount": 5, "to": "acme" })).unwrap()["job_id"].as_str().unwrap().to_string();
+        let engine = FakeEngine::new(false, Vec::new(), None);
+        let refused = check_runnable(&db, engine.as_ref(), "ann", &id).await.unwrap_err();
+        assert_eq!(refused.status(), StatusCode::CONFLICT);
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(refused.into_body(), 1 << 16).await.unwrap()).unwrap();
+        assert_eq!(body["code"], json!(NO_RUNTIME));
+        assert_eq!(get_job(&conn, &id).unwrap().unwrap().state, JobState::Review);
+        assert!(engine.calls.lock().unwrap().is_empty());
+        // Someone else's job is not found, whatever the engine.
+        assert_eq!(check_runnable(&db, engine.as_ref(), "mgr", &id).await.unwrap_err().status(), StatusCode::NOT_FOUND);
     }
 }
