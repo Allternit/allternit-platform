@@ -8,9 +8,25 @@ import SwiftUI
 struct FabricApprovalsView: View {
     @StateObject private var store = FabricApprovalsStore()
     @State private var selectedRun: String? = nil
+    /// Team map asks the viewer decides, with Rule · Approver · Asked by · Level (flag `team.map`).
+    @StateObject private var team = TeamMapStore()
+    /// The Team map sheet; `focus` is the node it opens on (the approver), nil for the whole map.
+    @State private var teamMapTarget: TeamMapTarget?
 
     var body: some View {
         List {
+            if TeamMapFlag.isOn, let map = team.map, !map.asks.isEmpty {
+                Section("Team approvals") {
+                    ForEach(map.asks) { ask in
+                        TeamAskRow(ask: ask, map: map,
+                                   onDecide: { await team.decide(ask, approve: $0) },
+                                   onWhoApproves: { teamMapTarget = TeamMapTarget(focus: ask.approverUserId.map { "p:\($0)" }) })
+                    }
+                    if let note = TeamPartial.note(map.partial) {
+                        Text(note).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
             Section("Pending approvals") {
                 if store.pending.isEmpty {
                     Text(store.loadError ?? "No approvals waiting.")
@@ -18,7 +34,8 @@ struct FabricApprovalsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(store.pending) { approval in
-                        ApprovalRow(approval: approval) { grant in
+                        ApprovalRow(approval: approval,
+                                    onWhoApproves: TeamMapFlag.isOn ? { teamMapTarget = TeamMapTarget(focus: nil) } : nil) { grant in
                             Task { await store.decide(approval, grant: grant) }
                         }
                     }
@@ -64,13 +81,34 @@ struct FabricApprovalsView: View {
             }
         }
         .navigationTitle("Fabric Transport")
-        .refreshable { await store.refresh() }
-        .task { await store.refresh() }
+        .refreshable {
+            await store.refresh()
+            if TeamMapFlag.isOn { await team.load() }
+        }
+        .task {
+            await store.refresh()
+            if TeamMapFlag.isOn { await team.load() }
+        }
+        .sheet(item: $teamMapTarget, onDismiss: {
+            Task { await team.load() }
+        }) { target in
+            TeamMapSheet(focus: target.focus)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
+}
+
+/// Which node the Team map sheet opens on.
+struct TeamMapTarget: Identifiable, Equatable {
+    let id = UUID()
+    let focus: String?
 }
 
 private struct ApprovalRow: View {
     let approval: FabricTransportClient.Approval
+    /// "Who approves this": opens the Team map (flag `team.map`).
+    var onWhoApproves: (() -> Void)? = nil
     let onDecide: (Bool) -> Void
 
     var body: some View {
@@ -93,6 +131,13 @@ private struct ApprovalRow: View {
                 Text("decided by \(decidedBy)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+            if let onWhoApproves {
+                Button("Who approves this", action: onWhoApproves)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
+                    .accessibilityHint("Opens the team map")
             }
             if approval.status == "pending" {
                 HStack(spacing: 12) {

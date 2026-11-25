@@ -58,6 +58,10 @@ struct OfficeFloorView: View {
     @State private var dockHeight: CGFloat = 0
     @State private var isAutopilotPresented = false
     @State private var isMainSetupPresented = false
+    /// The Team map sheet (flag `team.map`), from the floor's one menu.
+    @State private var isTeamMapPresented = false
+    /// The map's 0-bot "Add a bot": the main-bot setup opens once the map has closed.
+    @State private var addBotAfterTeamMap = false
     @ReducedMotion private var reduceMotion
 
     var body: some View {
@@ -148,19 +152,36 @@ struct OfficeFloorView: View {
                 .presentationBackground(Color("BgPanel"))
             }
         }
+        .sheet(isPresented: $isTeamMapPresented, onDismiss: {
+            if addBotAfterTeamMap {
+                addBotAfterTeamMap = false
+                isMainSetupPresented = true
+            }
+        }) {
+            TeamMapSheet(onAddBot: { addBotAfterTeamMap = true })
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .navigationTitle("Office")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(mode == .workspace ? "Open the full facility" : "Back to Workspace") {
-                    // A new frame loads; its ready message sets the version again.
-                    ready = false
-                    failed = false
-                    frameVersion = 1
-                    mode = mode == .workspace ? .facility : .workspace
-                    attempt += 1
+                if TeamMapFlag.isOn {
+                    // The floor's one menu (mockup B-team-map-phones): Team map, Autopilot, the facility.
+                    Menu {
+                        Button { isTeamMapPresented = true } label: { Label("Team map", systemImage: "person.3") }
+                        Button { isAutopilotPresented = true } label: { Label("Autopilot", systemImage: "bolt") }
+                        Button(action: toggleFacility) {
+                            Label(mode == .workspace ? "Open the full facility" : "Back to Workspace", systemImage: "building.2")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Office menu")
+                } else {
+                    Button(mode == .workspace ? "Open the full facility" : "Back to Workspace", action: toggleFacility)
+                        .font(.footnote)
                 }
-                .font(.footnote)
             }
         }
         .task(id: attempt) {
@@ -227,6 +248,15 @@ struct OfficeFloorView: View {
         default:
             break
         }
+    }
+
+    /// Workspace floor ⇄ full facility. A new frame loads; its ready message sets the version again.
+    private func toggleFacility() {
+        ready = false
+        failed = false
+        frameVersion = 1
+        mode = mode == .workspace ? .facility : .workspace
+        attempt += 1
     }
 
     // MARK: - Chief dock, Autopilot, digest
