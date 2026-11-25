@@ -8,6 +8,9 @@ import SwiftUI
 /// toggle's starting value.
 struct ItCanChoices: Equatable, Sendable {
     var connectors = false
+    /// Names of the connected tools ticked under "Use my tools" (the web
+    /// binding's `can.connectors`).
+    var connectorNames: [String] = []
     var storage = false
     var ai = false
 
@@ -20,7 +23,7 @@ struct ItCanChoices: Equatable, Sendable {
     /// One line the session prompt carries, so the agent builds what was ticked.
     func promptLine(for entry: AgentModeEntry) -> String? {
         var can: [String] = []
-        if entry.connectors != .none && connectors { can.append("use the person's connected tools") }
+        if entry.connectors != .none && connectors { can.append(connectorNames.isEmpty ? "use the person's connected tools" : "use the person's connected tools (\(connectorNames.joined(separator: ", ")))") }
         if entry.storage != .none && storage { can.append("keep its own data") }
         if entry.ai != .none && ai { can.append("ask AI while it is open") }
         guard !can.isEmpty else { return nil }
@@ -74,10 +77,57 @@ enum DeckLaunch {
 struct ItCanRow: View {
     let entry: AgentModeEntry
     @ObservedObject private var store = ItCanStore.shared
+    @StateObject private var tools = ItCanToolsModel()
 
     private var choices: ItCanChoices { store.choices(for: entry) }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            togglesRow
+            if entry.connectors != .none && choices.connectors { toolPicker }
+        }
+        .task { await tools.loadIfNeeded() }
+    }
+
+    /// The user's connected tools as brand logos to tick (web ItCan logo picker).
+    @ViewBuilder private var toolPicker: some View {
+        if tools.phase == .loading {
+            ProgressView().controlSize(.small).padding(.horizontal, 8)
+        } else if tools.tools.isEmpty {
+            Text(tools.phase == .failed ? "Couldn't load your tools." : "No connected tools yet. Connect some in Settings.")
+                .font(.system(size: 12)).foregroundColor(Color("TextTertiary")).padding(.horizontal, 8)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(tools.tools) { tool in
+                        let on = choices.connectorNames.contains(tool.name)
+                        Button {
+                            Haptics.light()
+                            var next = choices
+                            if on { next.connectorNames.removeAll { $0 == tool.name } } else { next.connectorNames.append(tool.name) }
+                            store.set(next, for: entry)
+                        } label: {
+                            AppLogoView(id: tool.id, name: tool.name, url: tool.baseURL, size: 32)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color("TextPrimary"), lineWidth: on ? 2 : 0)
+                                )
+                                .opacity(on ? 1 : 0.55)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tool.name)
+                        .accessibilityValue(on ? "On" : "Off")
+                        .accessibilityAddTraits(.isButton)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+        }
+    }
+
+    private var togglesRow: some View {
         HStack(spacing: 14) {
             Text("IT CAN")
                 .font(.system(size: 10, weight: .bold))
@@ -85,7 +135,10 @@ struct ItCanRow: View {
                 .foregroundColor(Color("TextTertiary"))
                 .accessibilityHidden(true)
             if entry.connectors != .none {
-                toggle("Use my tools", on: choices.connectors) { $0.connectors.toggle() }
+                toggle("Use my tools", on: choices.connectors) {
+                    $0.connectors.toggle()
+                    if !$0.connectors { $0.connectorNames = [] }
+                }
             }
             if entry.storage != .none {
                 toggle("Keep its own data", on: choices.storage) { $0.storage.toggle() }
@@ -124,5 +177,26 @@ struct ItCanRow: View {
         .accessibilityLabel(label)
         .accessibilityValue(on ? "On" : "Off")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The connected tools the logo picker lists (real brand logos only: a tool
+/// with no bundled logo and no site to fetch one from is left out).
+@MainActor
+final class ItCanToolsModel: ObservableObject {
+    enum Phase { case idle, loading, loaded, failed }
+    @Published private(set) var tools: [Connector] = []
+    @Published private(set) var phase: Phase = .idle
+
+    func loadIfNeeded() async {
+        guard phase == .idle || phase == .failed else { return }
+        phase = .loading
+        do {
+            let all = try await ConnectorsClient().listConnectors()
+            tools = all.filter { $0.isConnected && (AppLogoCatalog.image(id: $0.id, name: $0.name, url: $0.baseURL) != nil || $0.baseURL != nil) }
+            phase = .loaded
+        } catch {
+            phase = .failed
+        }
     }
 }

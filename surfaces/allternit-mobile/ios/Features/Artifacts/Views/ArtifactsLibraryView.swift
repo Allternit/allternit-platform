@@ -543,20 +543,18 @@ struct ArtifactsLibraryView: View {
                                 onMakeApp: makeApp, onOpen: openApp)
                     .padding(.vertical, 4)
             }
-            sectionLabel(show == .apps ? "Apps" : show == .shared ? "Shared with you" : "Your artifacts").padding(.bottom, -4)
-            if let tile = selectedTile { newRow(tile) }
-            if !store.archived && !filtered {
+            if show != .plans { sectionLabel(show == .apps ? "Apps" : show == .shared ? "Shared with you" : "Your artifacts").padding(.bottom, -4) }
+            if show != .plans, let tile = selectedTile { newRow(tile) }
+            if show != .plans && !store.archived && !filtered {
                 ForEach(launcher.editorSessions) { session in
                     editorSessionRow(session)
                 }
             }
             if show == .plans {
-                // Plans list lands with step 5.6.
-                Text("Plans you and Gizzi make show up here.")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
+                PlansListView { summary in
+                    openOnShare = false
+                    openArtifact = summary
+                }
             } else if !(items.isEmpty && store.phase == .loaded && !filtered && !store.archived && !launcher.editorSessions.isEmpty) {
                 libraryBody
             }

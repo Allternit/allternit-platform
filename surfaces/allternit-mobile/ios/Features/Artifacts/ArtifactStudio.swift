@@ -413,8 +413,9 @@ final class ArtifactStudioLauncher: ObservableObject {
         guard let can, let entry else { return nil }
         let storage = entry.storage != .none && can.storage
         let ai = entry.ai != .none && can.ai
-        guard storage || ai else { return nil }
-        return SessionBinding.Can(connectors: nil, storage: storage ? true : nil, ai: ai ? true : nil)
+        let names = entry.connectors != .none && can.connectors ? can.connectorNames : []
+        guard storage || ai || !names.isEmpty else { return nil }
+        return SessionBinding.Can(connectors: names.isEmpty ? nil : names, storage: storage ? true : nil, ai: ai ? true : nil)
     }
 
     private func persist() {
@@ -435,8 +436,8 @@ final class ArtifactStudioLauncher: ObservableObject {
         let artifactId: String?
         let designProjectId: String?
         /// The "It can" choices under the web binding's `can` keys
-        /// (artifact-session.ts ArtifactSessionCan). iOS has no connector names
-        /// to list, so `connectors` is left out; `storage` and `ai` are the toggles.
+        /// (artifact-session.ts ArtifactSessionCan). `connectors` holds the
+        /// names ticked in the logo picker; `storage` and `ai` are the toggles.
         var can: Can? = nil
 
         struct Can: Codable {

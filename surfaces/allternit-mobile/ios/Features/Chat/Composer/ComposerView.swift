@@ -86,6 +86,7 @@ struct ComposerView: View {
     /// the + sheet leaves them out (ChatView's Home chat).
     var chatMenuHoldsExtras: Bool = false
     var armedPhoneName: String? = nil
+    @ObservedObject private var attachedStore = AttachedArtifactStore.shared
     var onClearPhone: (() -> Void)? = nil
     /// The computer chip above the card (contract C4). On in every chat,
     /// Bots and bot thread composer.
@@ -191,6 +192,15 @@ struct ComposerView: View {
                 // The "It can" row: only the toggles this kind can honour.
                 ComposerTopDeckTray { ItCanRow(entry: launchMode.entry) }
                     .zIndex(0)
+            }
+
+            if let attachedArtifact = attachedStore.attached {
+                HStack {
+                    AttachedArtifactChip(artifact: attachedArtifact) { attachedStore.detach() }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
 
             if let armedPhoneName {
@@ -723,6 +733,7 @@ struct ComposerView: View {
         suppressUndoPill = dictation.isRecording
         showsUndoDictation = false
         dictation.stop()
+        inputText = attachedStore.consume(typed: inputText)
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
     }

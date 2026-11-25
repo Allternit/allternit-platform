@@ -331,12 +331,10 @@ struct ComposerDeckBand: View {
         .buttonStyle(.plain)
     }
 
-    /// Attach on a Recent artifact: it rides in the message as an @-mention,
-    /// like a plugin (the web deck's Attach).
+    /// Attach on a Recent artifact: a removable chip in the composer, and on
+    /// Send one `[Attached artifact: ...]` line (the web deck's Attach).
     private func attach(_ artifact: ArtifactV2Summary) {
-        let tag = "@\(artifact.title) "
-        guard !inputText.contains(tag) else { return }
-        inputText = tag + inputText
+        AttachedArtifactStore.shared.attach(AttachedArtifact(summary: artifact))
     }
 
     private func mention(_ plugin: DeckPlugin) {
