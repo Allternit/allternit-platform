@@ -668,7 +668,8 @@ struct ArtifactsLibraryView: View {
             } else if items.isEmpty, !filtered, !store.archived {
                 EmptyBox(
                     title: "No artifacts yet",
-                    line: "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new."
+                    line: "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
+                    art: .sheets
                 )
             } else if items.isEmpty {
                 stateMessage(

@@ -74,7 +74,8 @@ struct ACIComputersPane: View {
                 .padding(.vertical, 48)
         } else if relay.devices.isEmpty {
             EmptyBox(icon: "desktopcomputer", title: "No computers paired",
-                     line: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.")
+                     line: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.",
+                     art: .sheets)
         } else {
             VStack(spacing: 10) {
                 ForEach(relay.devices) { device in
@@ -312,7 +313,8 @@ struct ACIComputerScreenSheet: View {
                                       message: error, actionTitle: "Retry", action: { Task { await load() } })
                 } else if computers.isEmpty {
                     FriendlyStateView(style: .empty, icon: "desktopcomputer", title: "No computers yet",
-                                      message: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.")
+                                      message: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.",
+                                      art: .sheets)
                 } else {
                     ForEach(computers) { computer in
                         NavigationLink(value: computer) {
