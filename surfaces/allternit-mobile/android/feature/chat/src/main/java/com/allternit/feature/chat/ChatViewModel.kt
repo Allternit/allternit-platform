@@ -685,6 +685,15 @@ class ChatViewModel(
                 update(id) { m -> if (m.questions.any { it.id == ask.id }) m else m.copy(questions = m.questions + ask) }
             }
             is ChatStreamEvent.QuestionClosed -> closeQuestion(event.requestId)
+            is ChatStreamEvent.McpTask -> McpTaskPart.from(event.part)?.let { part ->
+                McpTasksStore.apply(part)
+                update(id) { m -> if (part.taskId in m.mcpTaskIds) m else m.copy(mcpTaskIds = m.mcpTaskIds + part.taskId) }
+            }
+            is ChatStreamEvent.McpElicitation -> McpElicitationPart.from(event.part)?.let { part ->
+                McpTasksStore.apply(part)
+                update(id) { m -> if (part.id in m.mcpFormIds) m else m.copy(mcpFormIds = m.mcpFormIds + part.id) }
+            }
+            is ChatStreamEvent.McpElicitationResolved -> McpTasksStore.markResolved(event.requestId, event.action ?: "resolved")
             is ChatStreamEvent.MessageStart, ChatStreamEvent.Done, is ChatStreamEvent.Failed -> Unit
         }
         return false
@@ -937,7 +946,7 @@ class ChatViewModel(
     private fun isPristine(id: String): Boolean {
         if (pendingText.isNotEmpty() || pendingReasoning.isNotEmpty()) return false
         val m = messages.firstOrNull { it.id == id } ?: return false
-        return m.content.isEmpty() && m.toolStatus == null && m.artifacts.isEmpty() && m.toolCalls.isEmpty() && m.questions.isEmpty()
+        return m.content.isEmpty() && m.toolStatus == null && m.artifacts.isEmpty() && m.toolCalls.isEmpty() && m.questions.isEmpty() && m.mcpTaskIds.isEmpty() && m.mcpFormIds.isEmpty()
     }
 
     private fun update(id: String, mutate: (MessageRecord) -> MessageRecord) {

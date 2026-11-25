@@ -213,6 +213,9 @@ internal fun MessageRow(
                     message.permissions.forEach { p ->
                         PermissionAskCard(p) { reply, err -> actions.onReplyPermission(p, reply, err) }
                     }
+                    if (com.allternit.core.api.FeatureFlags.isOn(context, com.allternit.core.api.FeatureFlags.MCP_TASKS)) {
+                        McpTasksSection(message.mcpTaskIds, message.mcpFormIds, backend)
+                    }
                 }
                 message.error?.let {
                     ChatErrorCard(it, actions.onChooseModel, { actions.onRetry(message.id) }, actions.availableErrorActions, { a -> actions.onErrorAction(message.id, a) }, { chatgpt -> if (chatgpt) actions.onConnect("chatgpt") else actions.onOpenConnections() })

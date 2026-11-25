@@ -369,3 +369,12 @@ For production deployments, prefer remote MCP servers with tunnel-based authenti
 - [Server Tools](/tools/server-tools)
 - [Build a Custom Tool](/tools/build-a-tool)
 - [Cloud Sandboxes](/tools/sandbox)
+
+## Long-running tasks and server questions on Android
+
+Behind the local flag `mcp.tasks` (off by default), the Android app draws the same two cards as iOS and the web app, inline under the assistant reply:
+
+- **Task card.** The thinking orb, the task title, a status line ("Running · 0:42", "Needs your input", "Done", "Failed", "Stopped") and a beam that fills with progress, or sweeps while the length is unknown. **Stop** cancels the task on its server. A failed task shows the server's error text.
+- **Question form.** When an MCP server asks something, the card shows the server's name, the question and the requested fields (text, number, yes or no, choice). **Send** answers, **Decline** refuses. A server that asks for a URL gets **Open page** (https or http only), then **Done**. A form that asks for a password, key or token is never filled in the app: the card points to the server's own sign-in page and offers only Decline.
+
+Turn the flag on for a sideloaded debug build by setting the boolean `mcp.tasks` in `shared_prefs/allternit_flags.xml`.

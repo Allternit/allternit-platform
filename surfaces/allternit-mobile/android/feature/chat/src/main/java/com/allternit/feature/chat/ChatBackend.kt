@@ -56,6 +56,12 @@ class ChatBackend(
     /** The bearer-carrying client, for `GET uploads/:id` (run_code files). */
     internal val authedHttp: OkHttpClient get() = okHttp
 
+    internal val mcpJson get() = json
+
+    /** `{api}/mcp/<segments>`; each id is percent-encoded (it carries ':'). */
+    internal fun mcpUrl(vararg segments: String): HttpUrl =
+        config.apiBaseUrl.newBuilder().addPathSegment("mcp").apply { segments.forEachIndexed { i, s -> if (i == 1) addEncodedPathSegment(escapeMcpId(s)) else addPathSegment(s) } }.build()
+
     private fun v1(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().apply { segments.forEach { addPathSegment(it) } }.build()
 

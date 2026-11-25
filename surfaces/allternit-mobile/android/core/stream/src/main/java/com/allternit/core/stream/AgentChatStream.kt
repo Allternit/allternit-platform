@@ -82,6 +82,15 @@ sealed interface ChatStreamEvent {
     /** `question.replied` / `question.rejected` */
     data class QuestionClosed(val requestId: String) : ChatStreamEvent
 
+    /** `mcp.task` / `mcp_task`: a long-running MCP task changed ([part] = the task part; behind the `mcp.tasks` flag). */
+    data class McpTask(val sessionId: String?, val part: JsonObject) : ChatStreamEvent
+
+    /** `mcp.elicitation` / `mcp_elicitation`: an MCP server asked a question ([part] = the elicitation part). */
+    data class McpElicitation(val sessionId: String?, val part: JsonObject) : ChatStreamEvent
+
+    /** `mcp.elicitation.resolved`: the question was answered (here or on another surface). */
+    data class McpElicitationResolved(val requestId: String, val action: String?) : ChatStreamEvent
+
     /**
      * The stream could not start or broke. [status] is the HTTP status when there was one
      * (409 + [code] `no_brain`: the computer has no model signed in); null for network errors.
@@ -173,8 +182,22 @@ object AgentChatFrames {
                 val id = (frame["properties"] as? JsonObject)?.str("requestID") ?: frame.str("requestID")
                 id?.let { ChatStreamEvent.QuestionClosed(it) }
             }
+            "mcp.task", "mcp_task" -> mcpEnvelope(frame)?.let { (session, part) -> ChatStreamEvent.McpTask(session, part) }
+            "mcp.elicitation", "mcp_elicitation" -> mcpEnvelope(frame)?.let { (session, part) -> ChatStreamEvent.McpElicitation(session, part) }
+            "mcp.elicitation.resolved", "mcp_elicitation_resolved" -> {
+                val inner = frame["properties"] as? JsonObject ?: frame
+                val id = inner.str("requestID") ?: inner.str("request_id") ?: inner.str("requestId")
+                id?.let { ChatStreamEvent.McpElicitationResolved(it, inner.str("action")) }
+            }
             else -> null
         }
+    }
+
+    /** `{type, properties:{sessionID, part}}` or the same fields flat (iOS McpBusEnvelope). */
+    private fun mcpEnvelope(frame: JsonObject): Pair<String?, JsonObject>? {
+        val inner = frame["properties"] as? JsonObject ?: frame
+        val part = inner["part"] as? JsonObject ?: return null
+        return (inner.str("sessionID") ?: inner.str("session_id") ?: inner.str("sessionId")) to part
     }
 
     /** BackendChatChunk `{ chunk, chunk_type, session_id }` (web `tryParseChunkPayload`). */
