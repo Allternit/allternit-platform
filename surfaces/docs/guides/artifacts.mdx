@@ -16,6 +16,17 @@ version; nothing you saved is overwritten.
 
 Artifacts are **private** until you share them.
 
+## The Artifacts page
+
+The page opens on your library, not on a gallery of kinds.
+
+- **+ New** (top right) opens the same Agent mode list the composer deck uses. Pick a kind and you land in an artifact session. An empty library shows the kinds instead of blank space.
+- **Show** chips filter the library: Everything, Apps, Plans and Shared. Archive is under the filter menu.
+- **Your apps** is a row of app cards above **Your artifacts**, with **See all in Apps** on the right. Its first card, **Make an app**, starts an App session. An app opens inside Allternit, never in a new browser tab.
+- An artifact that is also an app wears a small **App** badge.
+- Each card has a **⋯** menu (click, not hover): **Open**, **Share**, **Make it an app** (or **Install app** and **Copy app link** when it already is one), **Pin to deck** and **Archive**.
+- The old row of type tiles, the "N types" count, the **Start from an example** drop-down and the **Connect your tools** box are gone. Tools are picked with **It can** in the mode.
+
 ## Organize saved work
 
 The Artifacts view shows **Saved work** by default. Choose **Archive** under **Show** in the filter menu to see archived work; a **Showing Archive** line with **Clear** appears above the cards while it is on. Search and kind filters apply to the selected library.
@@ -30,26 +41,27 @@ Archive requires the updated Cloud API. An older server shows an update message 
 
 ## Starting an artifact
 
-There are five ways in:
+There are four ways in:
 
 1. **Ask in any chat.** "Write a launch brief", "make a deck from these
    notes", "draw the signup flow". Allternit makes an artifact on its own when
    the result is long (about 15 lines or more), stands on its own, or is
    something you'll edit or reuse. Short answers stay in the chat. You can
    always say "make this an artifact".
-2. **Pick an Output in the message box.** Click **Output** under the message
-   box and choose **Artifact** (Allternit picks the format), **Docs**,
-   **Slides**, **Sheets**, **Design**, **Dashboards** or **Motion**. The choice
-   applies to your next message, then clears. Click the × on the chip to
-   clear it yourself.
+2. **Pick a mode in Agent mode.** Open **Agent mode** in the composer deck and
+   choose Docs, Sheets, Slides, PDF, Page, Dashboard, Ops sheet, Design, Image,
+   Video, Motion, App, Build or Deep Research. Describe it, adjust the **It can**
+   row, and send. See [Artifact modes](/guides/artifact-modes).
 3. **Type a slash command.** `/docs`, `/slides`, `/sheets`, `/design`,
-   `/dashboard` and `/motion` pick that Output. You can type the request
+   `/dashboard` and `/motion` pick that mode. You can type the request
    straight after it: `/slides a 6-slide pitch for the Q4 launch`.
-4. **Make something new** on the Artifacts tab (see below).
-5. **The + next to Artifacts** in the sidebar lists every kind you can make,
-   grouped as Office (Docs, Sheets, Slides), Create (Dashboards, Motion,
-   Design, Page, Build) and Generate (Deep Research, Image, Video). Kinds your
-   org admin turned off don't appear.
+4. **+ New** on the Artifacts page, or the **+** next to Artifacts in the
+   sidebar. Both open the same mode list. Kinds your org admin turned off
+   don't appear.
+
+The deck's **Artifacts** menu is for work that already exists: **Pinned** and
+**Recent**, each with **Attach** and **Open**. See
+[Pinned artifacts](/guides/pinned-artifacts).
 
 Each kind has its own Allternit icon (a cream tile with its block letter and
 a coloured page), used the same way in the deck modes, the sidebar, the
@@ -68,7 +80,7 @@ See [Dashboards](/guides/dashboards).
 Interactive cards (the live answers with sliders, tables and buttons) stay in
 the chat. To keep a valid template card, hover it and choose **Open as artifact**. Its current inputs are copied into the saved data. Owner/editor changes then save as artifact versions. See [Interactive answers](/guides/interactive-answers).
 
-**Start from an example**, under Make something new, launches any of the twelve registered starters directly. These are labelled examples, with no model call. Replace sample data before use.
+Starters (Launch brief, Budget 2027, Investor deck, Sales dashboard) are labelled examples with no model call. Replace sample data before use.
 
 ### Answer pages
 
@@ -231,34 +243,31 @@ everything you own and everything shared with you, newest first.
 
 ### Make something new
 
-The row of animated tiles above your artifacts is the template gallery. Hover
-a tile to see what it makes and replay how it's built.
+**+ New** opens the Agent mode list, the same list as the composer deck.
+Picking a kind opens a session for it.
 
 - **Docs, Sheets, Slides, Design**: opens a new blank artifact in its editor,
   with Allternit's chat beside it. Type in the editor or ask Allternit to
   draft.
 - **PDF**: choose a PDF from your device and it opens in the
   [PDF editor](/guides/pdf-editor) to edit, fill in and sign. A PDF is brought
-  in, not generated, so this tile opens a file picker instead of a session.
-- **Dashboards, Motion, Page, Research, Build, Image, Video**: opens a
-  session for that type, with its studio pane beside the chat. Describe what
-  you want and send; the pane shows the result as it's made (see
+  in, not generated, so this entry opens a file picker instead of a session.
+- **Dashboard, Ops sheet, Motion, Page, App, Deep Research, Build, Image, Video**:
+  opens a session for that kind, with its studio pane beside the chat. Describe
+  what you want and send; the pane shows the result as it's made (see
   [Studio panes](/guides/artifact-modes#studio-panes)).
 
-The rail's Artifacts **+** menu lists the same tiles. A click opens one
-session: the tile (or menu item) shows a small orb while the session opens,
+The rail's Artifacts **+** menu lists the same modes. A click opens one
+session: the item shows a small orb while the session opens,
 which can take a few seconds for Docs, Sheets and Slides because the new file
 is saved first. Clicking again meanwhile doesn't open a second session.
 
-A tile for a template your plan doesn't include shows a lock and the plan
-that unlocks it. Templates your organization turned off aren't shown. The
-**+** next to Artifacts in the sidebar starts each kind the same way.
+A mode your plan doesn't include shows a lock and the plan that unlocks it.
+Modes your organization turned off aren't shown.
 
-On a phone (ai.allternit.com and the m.allternit.com app) the same tiles sit
-at the top of the Artifacts section and slide sideways; tap one to start it.
-Each tile shows its one-line description, the row's cut edge fades out, and
-one tile at a time plays how it's built (off when your phone asks for reduced
-motion).
+On a phone (ai.allternit.com and the m.allternit.com app) the page has the
+same shape: **+ New** opens the mode list as a bottom sheet, **Your apps** is a
+sideways shelf, and the **Show** chips sit above the cards.
 The **+** button at the bottom lists every kind too, plus PDF, image and video
 uploads, Allternit Design and Office. In the two-column phone grid, cards show
 the kind and time only; the Chat / Code / Bot / Legacy label shows in List
