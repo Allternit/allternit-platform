@@ -100,7 +100,7 @@ export function formatTeamMap(m: TeamMap): string[] {
   return out
 }
 
-export type AskRow = { id: string; title: string; summary?: string; actor: string | null; risk?: string; rule_id?: string | null; resolve: { method: string; path: string; body: unknown } | null }
+export type AskRow = { id: string; store?: string; title: string; summary?: string; actor: string | null; risk?: string; rule_id?: string | null; resolve: { method: string; path: string; body: unknown } | null }
 
 export function formatAsks(asks: AskRow[], partial: string[] = []): string[] {
   if (!asks.length) return ["No asks waiting on you."]

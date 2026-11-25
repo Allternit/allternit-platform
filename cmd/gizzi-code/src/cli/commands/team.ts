@@ -137,9 +137,20 @@ const TeamAsksCommand = cmd({
     }
     const ask = r.asks.find((a) => a.id === id)
     if (!ask) throw new Error(`No pending ask "${id}". Run \`gizzi team asks\` to list them.`)
-    if (!ask.resolve) throw new Error("This ask cannot be decided here. Open it in Allternit.")
-    const body = { ...(ask.resolve.body as Record<string, unknown>), decision: args.approve ? "approve" : "deny" }
-    await call(ask.resolve.method as "POST", ask.resolve.path, body)
+    const decision = args.approve ? "approve" : "reject"
+    const store = ask.store ?? "cowork"
+    if (store === "platform") throw new Error("This ask cannot be decided here (read only). Open it in Allternit.")
+    const base = (ask.resolve?.body ?? {}) as Record<string, unknown>
+    if (store === "meeting") {
+      // Meeting approvals live on cloud-api.
+      if (!ask.resolve) throw new Error("This ask cannot be decided here. Open it in Allternit.")
+      await call(ask.resolve.method as "POST", ask.resolve.path, { ...base, decision })
+    } else if (store === "factory") {
+      await rt("POST", ask.resolve?.path ?? `/api/factory/approvals/${encodeURIComponent(ask.id)}/resolve`, { ...base, decision })
+    } else {
+      // cowork (and any other runtime store): POST /api/v1/cowork/approvals {actionId, decision}
+      await rt("POST", "/api/v1/cowork/approvals", { actionId: ask.id, ...base, decision })
+    }
     UI.println(`${args.approve ? "Approved" : "Declined"}: ${ask.title}`)
   },
 })
