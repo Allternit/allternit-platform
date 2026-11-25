@@ -289,6 +289,11 @@ pub(crate) fn max_tier(
 /// `{ storage?, ai?, connectors?: [{connector, tools}], tasks?, events?, skill? }`.
 pub(crate) fn capability_set(snapshot: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
+    // An install grant stores the names themselves (an array); a snapshot is the object shape.
+    if let Some(names) = snapshot.as_array() {
+        out.extend(names.iter().filter_map(Value::as_str).map(str::to_string));
+        return out;
+    }
     for key in ["storage", "ai", "tasks", "events", "skill"] {
         if snapshot.get(key).and_then(Value::as_bool).unwrap_or(false) {
             out.insert(key.to_string());

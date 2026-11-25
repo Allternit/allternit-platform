@@ -657,3 +657,29 @@ async fn only_the_owner_makes_an_app_and_fields_are_checked() {
     let (status, _) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "X", "tier": "app", "owner": "me"}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "unknown fields are refused");
 }
+
+#[tokio::test]
+async fn put_app_accepts_export_mcp_and_keeps_it_when_omitted() {
+    let (router, db) = setup().await;
+    let owner = who("u_app_export_mcp", None, None);
+    let id = create(&router, &owner, "page", "Exports").await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+    sqlx::query("UPDATE artifacts SET capabilities = '{\"storage\": true}' WHERE id = $1")
+        .bind(&id).execute(&db).await.unwrap();
+
+    let (status, made) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "export_mcp": true}))).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    assert_eq!(made["app"]["capability_snapshot"], json!({"storage": true, "export_mcp": true}));
+
+    let (_, kept) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "Exports", "tier": "app"}))).await;
+    assert_eq!(kept["app"]["capability_snapshot"]["export_mcp"], json!(true), "omitted keeps it");
+
+    let (_, off) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "export_mcp": false}))).await;
+    assert_eq!(off["app"]["capability_snapshot"]["export_mcp"], json!(false));
+
+    let (status, _) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "snapshot": {"export_mcp": true}}))).await;
+    assert!(status.is_client_error(), "unknown fields stay refused");
+}

@@ -1321,7 +1321,8 @@ async fn public_artifact(
 // * `GET /api/v2/artifacts/:id/app` (view) -> `{ app: AppPackage | null }`
 // * `PUT /api/v2/artifacts/:id/app` (owner) `{ name, icon?, tier: browser|app|full,
 //   install_scope?: private|people|org|link, tools?: [..], skill_ref?: "skill://..",
-//   pinned_version? }` -> `{ app: AppPackage }`. Makes the artifact an app (or
+//   pinned_version?, export_mcp? }` -> `{ app: AppPackage }`. `export_mcp` lands in
+//   `capability_snapshot.export_mcp` (omitted keeps the stored value). Makes the artifact an app (or
 //   re-publishes it): `app_slug` is minted once and never changes;
 //   `capability_snapshot` is the artifact's capabilities at this moment;
 //   `pinned_version` defaults to the shared version (or the latest).
@@ -1408,6 +1409,9 @@ struct AppRequest {
     tools: Option<Value>,
     skill_ref: Option<String>,
     pinned_version: Option<i64>,
+    /// Whether the app is offered over MCP (`app_capability_snapshot.export_mcp`).
+    /// Omitted keeps the stored value.
+    export_mcp: Option<bool>,
 }
 
 fn check_app_name(name: &str) -> Result<String> {
@@ -1487,7 +1491,12 @@ async fn put_app(
         let minted = crate::routes::share_links::mint_label(APP_SLUG_LEN);
         let updated = sqlx::query_as::<_, AppRow>(&format!(
             "UPDATE artifacts SET app_name = $2, app_icon = $3, app_slug = COALESCE(app_slug, $4), \
-                 app_pinned_version = $5, app_capability_snapshot = capabilities, \
+                 app_pinned_version = $5, \
+                 app_capability_snapshot = CASE \
+                     WHEN COALESCE($10::boolean, (app_capability_snapshot->>'export_mcp')::boolean) IS NULL \
+                     THEN capabilities \
+                     ELSE capabilities || jsonb_build_object('export_mcp', \
+                          COALESCE($10::boolean, (app_capability_snapshot->>'export_mcp')::boolean)) END, \
                  app_permission_tier = $6, app_install_scope = $7, app_tools = $8, \
                  app_skill_ref = $9, updated_at = now() \
              WHERE id = $1 RETURNING {APP_COLUMNS}"
@@ -1501,6 +1510,7 @@ async fn put_app(
         .bind(&install_scope)
         .bind(&tools)
         .bind(req.skill_ref.as_deref())
+        .bind(req.export_mcp)
         .fetch_optional(&state.db)
         .await;
         match updated {

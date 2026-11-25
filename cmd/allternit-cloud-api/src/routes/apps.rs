@@ -4,7 +4,7 @@
 //! `{ error, message }`.
 //!
 //! * `GET /api/v1/apps` -> `{ yours: [row], servers: [row] }`. A row is
-//!   `{ kind: artifact|vendor, ref, name, icon, provenance: you|org|server, tier,
+//!   `{ kind: artifact|vendor, ref, name, icon, provenance: you|org|shared|server, slug, tier,
 //!   installed, pinned, link }`. `yours` = artifacts with an `app_slug` that the
 //!   caller or their org owns, plus any app the caller installed. `servers` =
 //!   `vendor_apps` the caller or their org owns. There is no cheap server-side
@@ -75,17 +75,10 @@ fn tier_rank(t: &str) -> usize {
     TIERS.iter().position(|x| *x == t).unwrap_or(0)
 }
 
-/// Capability names in a snapshot: object keys whose value is not false/null.
+/// Capability names in a snapshot or a grant: the lane 13 object shape or an array of names
+/// (storage, ai, tasks, events, skill, connector:<c>/<t>).
 fn capability_names(snapshot: &Value) -> Vec<String> {
-    match snapshot {
-        Value::Object(m) => m
-            .iter()
-            .filter(|(_, v)| !matches!(v, Value::Null | Value::Bool(false)))
-            .map(|(k, _)| k.clone())
-            .collect(),
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
-        _ => vec![],
-    }
+    crate::routes::artifacts_v2::artifact_runtime::capability_set(snapshot).into_iter().collect()
 }
 
 fn added_capabilities(snapshot: &Value, granted: &Value) -> Vec<String> {
@@ -179,6 +172,7 @@ fn artifact_link(slug: &str) -> String {
 struct ShelfArtifact {
     id: String,
     owner_id: String,
+    org_id: Option<String>,
     title: Option<String>,
     app_name: Option<String>,
     app_icon: Option<String>,
@@ -203,7 +197,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
     let org = caller.organization_id.as_deref();
 
     let artifacts: Vec<ShelfArtifact> = sqlx::query_as(
-        "SELECT a.id, a.owner_id, a.title, a.app_name, a.app_icon, a.app_slug, a.app_permission_tier, \
+        "SELECT a.id, a.owner_id, a.org_id, a.title, a.app_name, a.app_icon, a.app_slug, a.app_permission_tier, \
                 (i.id IS NOT NULL) AS installed, COALESCE(i.pinned, false) AS pinned \
            FROM artifacts a \
            LEFT JOIN app_installs i ON i.user_id = $1 AND i.app_kind = 'artifact' AND i.app_ref = a.id \
@@ -220,10 +214,18 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
     let yours: Vec<Value> = artifacts
         .iter()
         .map(|a| {
-            let provenance = if a.owner_id == caller.user_id { "you" } else { "org" };
+            let provenance = if a.owner_id == caller.user_id {
+                "you"
+            } else if a.org_id.is_some() && a.org_id.as_deref() == org {
+                "org"
+            } else {
+                // Installed from someone else's link.
+                "shared"
+            };
             json!({
                 "kind": "artifact",
                 "ref": a.id,
+                "slug": a.app_slug,
                 "name": a.app_name.clone().or_else(|| a.title.clone()).unwrap_or_else(|| "App".into()),
                 "icon": a.app_icon,
                 "provenance": provenance,
@@ -252,6 +254,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
             json!({
                 "kind": "vendor",
                 "ref": v.id,
+                "slug": v.id,
                 "name": v.name,
                 "icon": v.icon,
                 "provenance": "server",
@@ -426,7 +429,7 @@ async fn install(
     .bind(&app_ref)
     .bind(target.pinned_version)
     .bind(&req.granted_tier)
-    .bind(&target.snapshot)
+    .bind(json!(capability_names(&target.snapshot)))
     .bind(req.pinned)
     .fetch_one(&state.db)
     .await?;
