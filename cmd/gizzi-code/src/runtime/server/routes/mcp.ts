@@ -39,6 +39,39 @@ export const McpRoutes = lazy(() =>
       },
     )
     .post(
+      "/tool/call",
+      describeRoute({
+        summary: "Call one MCP tool directly (no model turn)",
+        description:
+          "Runs one MCP tool in the given session id (any string, e.g. `bar:<job_id>`; no session needs to exist). The `mcp.task` part goes working -> completed on the bus, even for a tool that returns at once; elicitation uses the elicitation reply route. `meta` is passed to the call's `_meta` (e.g. `allternit/approvalId`).",
+        operationId: "mcp.tool.call",
+        responses: {
+          200: { description: "Tool result", content: { "application/json": { schema: resolver(z.any()) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          sessionID: z.string().min(1),
+          server: z.string().min(1),
+          tool: z.string().min(1),
+          args: z.record(z.string(), z.any()).optional(),
+          meta: z.record(z.string(), z.any()).optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        try {
+          const out = await MCP.callDirect({ ...body, signal: c.req.raw.signal })
+          if (!out) return c.json({ error: "unknown_tool", message: "No connected MCP tool with that server and name" }, 404)
+          return c.json({ sessionID: body.sessionID, toolCallID: out.toolCallID, result: out.result })
+        } catch (e) {
+          return c.json({ error: "tool_call_failed", message: String((e as Error)?.message ?? e) }, 400)
+        }
+      },
+    )
+    .post(
       "/task/:taskId/cancel",
       describeRoute({
         summary: "Cancel an MCP task",

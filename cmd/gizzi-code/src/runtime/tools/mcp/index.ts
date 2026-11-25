@@ -42,9 +42,9 @@ import {
   mcpAppResourceUri,
 } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
-import { getStreamContext } from "@/runtime/session/stream-context"
+import { getStreamContext, runWithStreamContext } from "@/runtime/session/stream-context"
 import { McpEra } from "@/runtime/tools/mcp/era"
-import { callToolAsTask, shouldCallAsTask, taskProtocol } from "@/shared/util/mcp-tasks"
+import { callToolAsTask, shouldCallAsTask, taskProtocol, type McpTaskUpdate } from "@/shared/util/mcp-tasks"
 import { McpTaskStream } from "./task-stream"
 
 export namespace MCP {
@@ -180,12 +180,23 @@ export namespace MCP {
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
-      execute: async (args: unknown, options?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
+      execute: async (
+        args: unknown,
+        options?: {
+          toolCallId?: string
+          abortSignal?: AbortSignal
+          /** Extra `_meta` for this call (direct bar calls: `allternit/approvalId`). */
+          meta?: Record<string, unknown>
+          /** A direct call (no model turn): a plain result still publishes one working -> completed task part. */
+          direct?: boolean
+        },
+      ) => {
         // Proxy tools marked "requires confirmation" run only with the user's approval, recorded by
         // the permission ask that precedes this call; the proxy checks the flag.
         const approved = McpUserProxy.requiresConfirmation(mcpTool) && McpUserProxy.consumeApproval(options?.toolCallId)
         const sessionID = sendSession ? getStreamContext()?.sessionID : undefined
         const meta = {
+          ...(options?.meta ?? {}),
           ...(approved ? { [MCP_APPROVED_META]: true } : {}),
           ...(sessionID ? { [SESSION_META]: sessionID } : {}),
         }
@@ -222,17 +233,45 @@ export namespace MCP {
             parent?.removeEventListener("abort", relay)
           }
         }
-        return client.callTool(
-          {
-            name: mcpTool.name,
-            arguments: (args || {}) as Record<string, unknown>,
-            ...(Object.keys(meta).length ? { _meta: meta } : {}),
-          },
-          {
-            resetTimeoutOnProgress: true,
-            timeout,
-          },
-        )
+        const plain = () =>
+          client.callTool(
+            {
+              name: mcpTool.name,
+              arguments: (args || {}) as Record<string, unknown>,
+              ...(Object.keys(meta).length ? { _meta: meta } : {}),
+            },
+            {
+              resetTimeoutOnProgress: true,
+              timeout,
+            },
+          )
+        if (!options?.direct) return plain()
+        // Direct call: an instant tool still gets one task part so every surface draws the same pill.
+        const info = { source: serverName, toolName: mcpTool.name, toolCallID: options.toolCallId, startedAt: Date.now() }
+        const taskId = `direct:${options.toolCallId ?? info.startedAt}`
+        McpTaskStream.publishTask({ taskId, status: "working", elapsedMs: 0, protocol: "final" } as McpTaskUpdate, info)
+        try {
+          const result = await plain()
+          const failed = (result as { isError?: boolean }).isError === true
+          McpTaskStream.publishTask(
+            {
+              taskId,
+              status: failed ? "failed" : "completed",
+              elapsedMs: Date.now() - info.startedAt,
+              protocol: "final",
+              result,
+              ...(failed ? { error: "tool_error" } : {}),
+            } as McpTaskUpdate,
+            info,
+          )
+          return result
+        } catch (e) {
+          McpTaskStream.publishTask(
+            { taskId, status: "failed", elapsedMs: Date.now() - info.startedAt, protocol: "final", error: String((e as Error)?.message ?? e) } as McpTaskUpdate,
+            info,
+          )
+          throw e
+        }
       },
     })
   }
@@ -849,6 +888,37 @@ export namespace MCP {
 
   export async function tools() {
     return (await toolCatalog()).tools
+  }
+
+  /**
+   * Call one MCP tool with no model turn, in an explicit session (the Island bar's
+   * `bar:<job_id>`). Runs inside that session's stream context, so `mcp.task` and
+   * `mcp.elicitation` events carry the id; the existing reply/cancel routes answer them.
+   * `meta` is passed to the call's `_meta` (lane 11: `allternit/approvalId`).
+   */
+  export async function callDirect(input: {
+    sessionID: string
+    server: string
+    tool: string
+    args?: Record<string, unknown>
+    meta?: Record<string, unknown>
+    toolCallID?: string
+    signal?: AbortSignal
+    /** Tool map to use instead of the live catalog (tests). */
+    catalog?: Record<string, Tool>
+  }) {
+    const found = (input.catalog ?? (await tools()))[qualifiedToolName(input.server, input.tool)]
+    if (!found?.execute) return undefined
+    const toolCallId = input.toolCallID ?? `bar_${Date.now().toString(36)}`
+    const result = await runWithStreamContext({ sessionID: input.sessionID }, () =>
+      (found.execute as (a: unknown, o: unknown) => Promise<unknown>)(input.args ?? {}, {
+        toolCallId,
+        abortSignal: input.signal,
+        meta: input.meta,
+        direct: true,
+      }),
+    )
+    return { toolCallID: toolCallId, result }
   }
 
   function boundedToolName(name: string, identity: string) {
