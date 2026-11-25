@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { formatApiError } from "@/lib/api-client";
 import { QUIET_BUTTON_CLASS, DESTRUCTIVE_BUTTON_CLASS } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import {
   deletePrompt,
   listPrompts,
@@ -86,7 +87,7 @@ export function PromptsPanel({ projectId, getBody, onLoad }: PromptsPanelProps):
       {notice && <p className="m-0 break-all text-[12px] text-[var(--text-secondary)]">{notice}</p>}
       {loading && items.length === 0 && <p className="m-0 text-[12px] text-[var(--text-tertiary)]">Loading…</p>}
       {!loading && items.length === 0 && !error && (
-        <p className="m-0 text-[12px] text-[var(--text-tertiary)]">No saved prompts in this project yet.</p>
+        <EmptyInline art="sheets">No saved prompts in this project yet.</EmptyInline>
       )}
       <ul className="m-0 list-none space-y-2 p-0">
         {items.map((p) => (
