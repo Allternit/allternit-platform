@@ -70,6 +70,7 @@ import { BoardCommand, SwarmCommand } from "@/cli/commands/factory/swarm"
 import { MissionCommand } from "@/cli/commands/mission"
 import { AppCommand } from "@/cli/commands/app"
 import { ShareCommand } from "@/cli/commands/share"
+import { DoCommand } from "@/cli/commands/do"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -108,6 +109,8 @@ export const COMMANDS: RegisteredCommand[] = [
   // Apps from artifacts and share links (Apps + MCP 2026).
   AppCommand,
   ShareCommand,
+  // Island bar: run one tool from an app with review and owner approval.
+  DoCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
