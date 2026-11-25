@@ -62,14 +62,15 @@ export const ShareCommand = cmd({
   builder: (y: Argv) =>
     y
       .positional("target", { type: "string", describe: "app slug, or a local port for a live link" })
+      .option("public", { type: "boolean", default: false, describe: "live link: anyone with the link can open it (default: signed-in visitors only)" })
       .command(ListCmd)
       .command(StopCmd)
       .command(PauseCmd),
-  handler: async (args: { target?: string }) => {
+  handler: async (args: { target?: string; public?: boolean }) => {
     if (!args.target) return fail(new Error("Say what to share: gizzi share <app-slug>, or see `gizzi share list`."))
     const t = classifyTarget(args.target)
     if (t.kind === "port") {
-      return shareLive(t.port)
+      return shareLive(t.port, { public: args.public })
     }
     if (t.kind === "invalid") return fail(new Error(`"${args.target}" is neither an app slug nor a port.`))
     try {

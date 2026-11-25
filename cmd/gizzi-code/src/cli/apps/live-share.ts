@@ -12,7 +12,10 @@ import { cloud, fail, AppsError, type ShareLink } from "@/cli/apps/client"
 const RELAY_API = (process.env.ALLTERNIT_SHARE_RELAY_API || "https://api.live.allternitusercontent.com").trim()
 const LOCAL_API = (process.env.ALLTERNIT_LOCAL_API_URL || "http://127.0.0.1:8013").trim()
 
-export async function shareLive(port: number): Promise<void> {
+export async function shareLive(port: number, opts: { public?: boolean } = {}): Promise<void> {
+  // cloud-api vocabulary: public | signed_in. The local share gate says public | token.
+  const cloudAuth = opts.public ? "public" : "signed_in"
+  const gateAuth = opts.public ? "public" : "token"
   try {
     const token = async () => {
       const t = await cloudInferenceToken().catch(() => undefined)
@@ -22,9 +25,9 @@ export async function shareLive(port: number): Promise<void> {
     await token()
     const made = await cloud<{ link: ShareLink; relay_credential?: string }>("POST", "/api/v1/share-links", {
       kind: "live",
-      subject: "app",
+      subject: "port",
       target_port: port,
-      auth_mode: "token",
+      auth_mode: cloudAuth,
       subdomain: `l${randomBytes(5).toString("hex")}`,
       label: `localhost:${port}`,
     })
@@ -39,7 +42,7 @@ export async function shareLive(port: number): Promise<void> {
       live = await tunnel.start({
         link: { id: made.link.id, subdomain: made.link.subdomain },
         port,
-        authMode: "token",
+        authMode: gateAuth,
         admission: made.relay_credential,
       })
     } catch (e) {
@@ -49,7 +52,7 @@ export async function shareLive(port: number): Promise<void> {
         throw new Error(`${e.message} Is allternit-api running at ${LOCAL_API}?`)
       throw e
     }
-    process.stdout.write(`${live.url}\nToken: ${live.token}\n(visitors send it as X-Allternit-Share-Token)\nSharing localhost:${port}. Ctrl-C to stop.\n`)
+    process.stdout.write(`${live.url}\n${opts.public ? "Public link: anyone with it can open it.\n" : `Token: ${live.token}\n(visitors send it as X-Allternit-Share-Token)\n`}Sharing localhost:${port}. Ctrl-C to stop.\n`)
     const stop = () => void live.stop("stopped")
     process.once("SIGINT", stop)
     process.once("SIGTERM", stop)
