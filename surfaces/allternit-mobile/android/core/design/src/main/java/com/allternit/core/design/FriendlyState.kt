@@ -36,21 +36,23 @@ private fun FriendlyStyle.tint(c: AllternitColorScheme): Color = when (this) {
 }
 
 /**
- * A calm empty / error / offline state (iOS `FriendlyStateView`). [icon] is a slot so the
- * caller supplies a `ph_*` vector. Pass friendly copy only; run raw errors through
+ * A calm empty / error / offline state (iOS `FriendlyStateView`). [icon] is an optional slot (the
+ * fallback tile when no [art] is set; null leaves the tile empty). Pass friendly copy only; run raw errors through
  * [FriendlyErrorMessage] first so a code never reaches the screen.
  */
 @Composable
 fun FriendlyState(
-    style: FriendlyStyle,
+    style: FriendlyStyle = FriendlyStyle.Empty,
     title: String,
-    message: String,
+    message: String = "",
     modifier: Modifier = Modifier,
     actionTitle: String? = null,
     onAction: (() -> Unit)? = null,
     art: EmptyArtKind? = null,
     gizzi: Boolean = false,
-    icon: @Composable () -> Unit,
+    panel: Boolean = false,
+    paper: Color = Color.Unspecified,
+    icon: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val tint = style.tint(c)
@@ -60,18 +62,18 @@ fun FriendlyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        if (gizzi) GizziWalk() else if (art != null) EmptyArt(art) else Box(
+        if (gizzi) GizziWalk() else if (art != null) EmptyArt(art, size = if (panel) 64.dp else 96.dp, paper = paper) else Box(
             modifier = Modifier.size(64.dp)
                 .clip(RoundedCornerShape(AllternitRadii.LG))
                 .background(tint.copy(alpha = 0.12f))
                 .border(1.dp, tint.copy(alpha = 0.25f), RoundedCornerShape(AllternitRadii.LG)),
             contentAlignment = Alignment.Center,
-        ) { icon() }
+        ) { icon?.invoke() }
         Text(
             title, color = c.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Medium,
             fontFamily = AllternitSerif, textAlign = TextAlign.Center,
         )
-        Text(
+        if (message.isNotEmpty()) Text(
             message, color = c.textSecondary, fontSize = 15.sp, textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 40.dp),
         )

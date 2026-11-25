@@ -47,6 +47,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.allternit.core.design.ConnectScene
+import com.allternit.core.design.ConnectSceneState
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
@@ -129,6 +131,9 @@ private fun KeysSheet(only: String?, store: ConnectionsStore, onConnected: (Stri
                 ConnState.On in rows -> ConnectSceneState.Connected
                 else -> ConnectSceneState.Asleep
             },
+            ink = setupColors.ink,
+            paper = setupColors.bg,
+            check = setupColors.ok,
         )
     }
     SheetNote("Open the key page, copy a key, then come back and paste it. We check it with the vendor before it's saved, and it works on any device.")
@@ -369,7 +374,9 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
         phase is LoginPhase.Vendor && (opened || submitting) -> ConnectSceneState.Connecting
         else -> ConnectSceneState.Asleep
     }
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ConnectScene(sceneState) }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        ConnectScene(sceneState, ink = setupColors.ink, paper = setupColors.bg, check = setupColors.ok)
+    }
     when (val p = phase) {
         LoginPhase.Starting -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = c.sub)

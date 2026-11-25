@@ -318,7 +318,7 @@ internal fun Pill(title: String, testTag: String, primary: Boolean = false, enab
 
 /** The standard loading / error / empty block for a list (iOS ProgressView + FriendlyStateView). */
 @Composable
-internal fun ListState(loading: Boolean, error: String?, empty: Boolean, errorTitle: String, emptyText: String, art: com.allternit.core.design.EmptyArtKind? = null, onRetry: () -> Unit): Boolean {
+internal fun ListState(loading: Boolean, error: String?, empty: Boolean, errorTitle: String, emptyText: String, art: com.allternit.core.design.EmptyArtKind? = null, panel: Boolean = false, paper: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, onRetry: () -> Unit): Boolean {
     val c = AllternitTheme.colors
     when {
         loading && empty -> Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
@@ -328,7 +328,7 @@ internal fun ListState(loading: Boolean, error: String?, empty: Boolean, errorTi
             Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
         }
         empty -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (art != null) com.allternit.core.design.EmptyArt(art)
+            if (art != null) com.allternit.core.design.EmptyArt(art, size = if (panel) 64.dp else 96.dp, paper = paper)
             Text(emptyText, color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp))
         }
         else -> return false

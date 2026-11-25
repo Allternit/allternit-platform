@@ -93,10 +93,10 @@ internal fun ErrorState(title: String, message: String, onRetry: (() -> Unit)?, 
 }
 
 @Composable
-internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier, actionTitle: String? = null, onAction: (() -> Unit)? = null, art: com.allternit.core.design.EmptyArtKind? = null) {
+internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier, actionTitle: String? = null, onAction: (() -> Unit)? = null, art: com.allternit.core.design.EmptyArtKind? = null, panel: Boolean = false, paper: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified) {
     val c = AllternitTheme.colors
     FriendlyState(
-        style = FriendlyStyle.Empty, title = title, message = message, modifier = modifier, actionTitle = actionTitle, onAction = onAction, art = art,
+        style = FriendlyStyle.Empty, title = title, message = message, modifier = modifier, actionTitle = actionTitle, onAction = onAction, art = art, panel = panel, paper = paper,
         icon = { Icon(painterResource(DesignR.drawable.ph_calendar_blank), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) },
     )
 }
