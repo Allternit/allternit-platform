@@ -124,6 +124,19 @@
                 android:resource="@xml/status_widget_info" />
         </receiver>
 
+        <!-- Island bar widget "Do with Allternit" (lane 37), Glance. -->
+        <receiver
+            android:name="com.allternit.feature.system.BarWidgetReceiver"
+            android:exported="true"
+            android:label="Do with Allternit">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/bar_widget_info" />
+        </receiver>
+
         <!-- Quick Settings tiles, one per iOS control (AllternitControls). -->
         <service android:name="com.allternit.feature.system.CallMainBotTile" android:exported="true" android:icon="@drawable/ic_shortcut_call" android:label="Call main bot" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
