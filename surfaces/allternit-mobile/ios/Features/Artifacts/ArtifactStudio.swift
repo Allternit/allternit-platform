@@ -15,27 +15,17 @@ import Foundation
 enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
     case docs, sheets, slides, dashboard, ops, motion, design, page, research, build, image, video
 
-    /// The web's gallery order (GALLERY_TILES).
-    static let galleryOrder: [ArtifactStudioKind] = allCases
+    /// The registry's order (AgentModes.gen.swift), artifact kinds only.
+    static let galleryOrder: [ArtifactStudioKind] =
+        AgentModes.all.filter(\.artifact).compactMap { ArtifactStudioKind(rawValue: $0.id) }
+
+    /// This kind's generated registry entry (same id).
+    var modeEntry: AgentModeEntry? { AgentModes.mode(id: rawValue) }
 
     var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .docs: return "Docs"
-        case .sheets: return "Sheets"
-        case .slides: return "Slides"
-        case .design: return "Design"
-        case .ops: return "Ops sheets"
-        case .dashboard: return "Dashboards"
-        case .motion: return "Motion"
-        case .page: return "Page"
-        case .build: return "Build"
-        case .image: return "Image"
-        case .video: return "Video"
-        case .research: return "Deep Research"
-        }
-    }
+    /// The registry's label (generated; one source for every surface).
+    var label: String { modeEntry?.label ?? rawValue.capitalized }
 
     var description: String {
         switch self {

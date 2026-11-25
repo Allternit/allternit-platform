@@ -2,42 +2,71 @@ import SwiftUI
 
 // MARK: - Deck modes
 
-/// The modes the chat deck's Agent mode ▾ offers (web ModeDock MODE_TABS,
-/// chat surface) with the web's labels, colors and icons, mapped onto the
-/// app's AgentModeTile (which stamps `metadata.agentModeId`).
+/// The modes the chat deck's Agent mode ▾ offers: the generated registry
+/// (Core/AgentModes/AgentModes.gen.swift, from contracts/agent-modes) filtered
+/// to this surface, in the registry's order with its labels and badges. Each
+/// entry maps onto the app's AgentModeTile (which stamps
+/// `metadata.agentModeId`) through its wire id; kinds with no wire id
+/// (Dashboard, Ops sheet, Motion, PDF) ride on the Artifact tile, since the
+/// agent still makes the file.
 struct ChatDeckMode: Identifiable, Equatable {
-    let tile: AgentModeTile
-    let label: String
-    let color: Color
+    let entry: AgentModeEntry
 
-    var id: String { tile.rawValue }
+    var id: String { entry.id }
+    var label: String { entry.label }
+    var tile: AgentModeTile { entry.agentMode.flatMap { AgentModeTile(rawValue: $0) } ?? .artifact }
+    var color: Color {
+        switch tile {
+        case .website, .image, .artifact: return Color("TextPrimary")
+        default: return tile.color
+        }
+    }
     /// The Allternit icon family tile (deck-<kind> in Assets.xcassets).
-    var icon: String { tile.deckIcon ?? "deck-auto" }
+    var icon: String {
+        switch entry.icon {
+        case "app": return "deck-build"
+        default: return "deck-\(entry.icon)"
+        }
+    }
+    /// Placeholder the composer shows once this mode is picked (step 5.2 reads it).
+    var placeholder: String { entry.placeholder }
 
-    static let chat: [ChatDeckMode] = [
-        ChatDeckMode(tile: .swarms, label: "Agent Swarm", color: Color(hex: "#14B8A6")),
-        ChatDeckMode(tile: .research, label: "Deep Research", color: Theme.statusInfo),
-        ChatDeckMode(tile: .website, label: "Build", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .docs, label: "Docs", color: Color(hex: "#3B82F6")),
-        ChatDeckMode(tile: .data, label: "Sheets", color: Theme.statusSuccess),
-        ChatDeckMode(tile: .slides, label: "Slides", color: Theme.statusWarning),
-        ChatDeckMode(tile: .image, label: "Image", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .video, label: "Video", color: Color(hex: "#EC4899")),
-        // Last, as on the web: the agent picks the format.
-        ChatDeckMode(tile: .artifact, label: "Artifact", color: Color("TextPrimary")),
-    ]
-
-    /// A bot's chat (ModeDock `bot`): no Docs/Sheets/Slides, since bot
-    /// threads have no editor pane.
-    static let bot: [ChatDeckMode] = chat.filter {
-        [.swarms, .research, .website, .image, .video, .artifact].contains($0.tile)
+    /// The menu's second line: the Agent row's hint, else the Beta / New badge.
+    var detail: String? {
+        if entry.id == "agent" { return "Let Allternit pick the format" }
+        if entry.beta { return "Beta" }
+        if entry.isNew { return "New" }
+        return nil
     }
 
-    /// The menu's second line (DeckSelectors: only Artifact has one).
-    var detail: String? { tile == .artifact ? "Let Allternit pick the format" : nil }
+    static func == (a: ChatDeckMode, b: ChatDeckMode) -> Bool { a.id == b.id }
 
+    private static func modes(_ surface: String) -> [ChatDeckMode] {
+        AgentModes.modes(for: surface).map(ChatDeckMode.init(entry:))
+    }
+
+    /// The chat's modes (registry surface `chat`).
+    static var chat: [ChatDeckMode] { modes("chat") }
+    /// A bot's chat (registry surface `bot`): no Docs/Sheets/Slides, since bot
+    /// threads have no editor pane.
+    static var bot: [ChatDeckMode] { modes("bot") }
+
+    /// The mode a stored tile stands for (Sites is "Build", not "Page").
     static func forTile(_ tile: AgentModeTile) -> ChatDeckMode? {
-        chat.first { $0.tile == tile }
+        let all = chat
+        let wire = tile.rawValue
+        let preferred = tile == .website ? "build" : tile == .artifact ? "agent" : wire
+        return all.first { $0.id == preferred && $0.entry.agentMode == wire }
+            ?? all.first { $0.entry.agentMode == wire }
+    }
+
+    /// The mode the deck shows as picked: the remembered registry id when it
+    /// still matches the stored tile (several kinds share the `website` tile),
+    /// else the tile's own mode.
+    static func picked(tile: AgentModeTile, surface: AppMode, in list: [ChatDeckMode]) -> ChatDeckMode? {
+        if let id = DeckModePick.id(for: surface),
+           let m = list.first(where: { $0.id == id }), m.tile == tile { return m }
+        return list.first { $0.tile == tile && $0.entry.agentMode != nil } ?? forTile(tile)
     }
 }
 
@@ -94,7 +123,8 @@ struct ComposerDeckBand: View {
     /// mode is on.
     private var current: ChatDeckMode? {
         guard agentModeStore.isAgentEnabled(for: surface) else { return nil }
-        return ChatDeckMode.forTile(agentModeStore.selectedTile(for: surface))
+        return ChatDeckMode.picked(tile: agentModeStore.selectedTile(for: surface), surface: surface,
+                                   in: chatBot == nil ? ChatDeckMode.chat : ChatDeckMode.bot)
     }
 
     var body: some View {
@@ -242,6 +272,7 @@ struct ComposerDeckBand: View {
 
     private func select(_ mode: ChatDeckMode) {
         Haptics.light()
+        DeckModePick.set(mode.id, for: surface)
         agentModeStore.selectTile(mode.tile, for: surface)
         // Picking a mode in the chat's deck turns that mode on for the next send.
         if !agentModeStore.isAgentEnabled(for: surface) {
@@ -250,6 +281,7 @@ struct ComposerDeckBand: View {
     }
 
     private func clearMode() {
+        DeckModePick.set(nil, for: surface)
         agentModeStore.setAgentEnabled(false, for: surface)
     }
 

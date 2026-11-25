@@ -857,6 +857,7 @@
 		DCD6906AD1F04688967808A0 /* BotThreadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A793554DC89DC569DC63D16 /* BotThreadsView.swift */; };
 		DD3D033C5BF27C0603A374DA /* WorkspaceShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 281FE115C268C778621CA8D5 /* WorkspaceShell.swift */; };
 		DD82593B849AD44AD31CFED9 /* AgentModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C262FDAD23A0BA84CEA2CBD8 /* AgentModeStore.swift */; };
+		A17E0D0E5B1F4C2A9D3E6F01 /* AgentModes.gen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17E0D0E5B1F4C2A9D3E6F02 /* AgentModes.gen.swift */; };
 		DE0B7B978D25095CDE0A806B /* SandboxedArtifactWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D306A988D6817A4226CE448 /* SandboxedArtifactWebView.swift */; };
 		DE0CED7365BEC06AFD91F875 /* InstanceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125D14A1DF2FFFA988BAEC71 /* InstanceStore.swift */; };
 		DEEBF003BDBEA68DA66D030A /* LocalVoiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C426D6E835FD06E4486CFFA7 /* LocalVoiceEngine.swift */; };
@@ -1766,6 +1767,7 @@
 		C13C828400B2FC0BFC3353F3 /* BYOCModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOCModels.swift; sourceTree = "<group>"; };
 		C18781A62E0D3AB436D7538A /* MessagesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesViewController.swift; sourceTree = "<group>"; };
 		C262FDAD23A0BA84CEA2CBD8 /* AgentModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModeStore.swift; sourceTree = "<group>"; };
+		A17E0D0E5B1F4C2A9D3E6F02 /* AgentModes.gen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModes.gen.swift; sourceTree = "<group>"; };
 		C26C64305447B60ED4EBF6B1 /* BotEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotEvent.swift; sourceTree = "<group>"; };
 		C280E603BD4FF49299D97648 /* ConnectedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectedView.swift; sourceTree = "<group>"; };
 		C293AF27384130A66F8AFE77 /* MiniApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniApp.swift; sourceTree = "<group>"; };
@@ -2082,6 +2084,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A17E0D0E5B1F4C2A9D3E6F03 /* AgentModes */ = {
+			isa = PBXGroup;
+			children = (
+				A17E0D0E5B1F4C2A9D3E6F02 /* AgentModes.gen.swift */,
+			);
+			path = AgentModes;
+			sourceTree = "<group>";
+		};
 		043FE374BFF2397B563A1CFB /* AgentActivity */ = {
 			isa = PBXGroup;
 			children = (
@@ -3041,6 +3051,7 @@
 				80BE6F99828A33512D8BBF70 /* AgentActivityStore.swift */,
 				54A65D23DCABF32B76CA2982 /* AgentHubStore.swift */,
 				C262FDAD23A0BA84CEA2CBD8 /* AgentModeStore.swift */,
+				A17E0D0E5B1F4C2A9D3E6F03 /* AgentModes */,
 				6D086E0C0BC3296625734880 /* AppConfig.swift */,
 				62A63A32019B982AEB95024D /* AppMode.swift */,
 				BC9F04D2211EB6420A5F5C1D /* BackgroundRefreshManager.swift */,
@@ -4573,6 +4584,7 @@
 				4AACE2FD1808211A434428CB /* AgentMarketplace.swift in Sources */,
 				A74CE5B5DD554E6AA4C5F40A /* AgentMarketplaceClient.swift in Sources */,
 				DD82593B849AD44AD31CFED9 /* AgentModeStore.swift in Sources */,
+				A17E0D0E5B1F4C2A9D3E6F01 /* AgentModes.gen.swift in Sources */,
 				D9DFCEE891267CBBCCBF712A /* AgentRecord.swift in Sources */,
 				FAB6FA1A18F686D6F6999EA1 /* AgentRunTreeSheet.swift in Sources */,
 				63A30DE289C261059B1FCFD0 /* AgentRuntimeModels.swift in Sources */,

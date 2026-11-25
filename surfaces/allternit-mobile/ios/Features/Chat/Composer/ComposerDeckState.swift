@@ -24,3 +24,18 @@ func nextSwipedOpen(current: Bool, startY: CGFloat, endY: CGFloat) -> Bool {
     if dy <= -deckSwipeDistance { return false }
     return current
 }
+
+/// Which registry mode the deck's Agent mode ▾ last picked, per surface.
+/// Several registry kinds (Page, Design, App, Build) share one wire tile, so
+/// the tile alone cannot say which row to check.
+enum DeckModePick {
+    private static func key(_ surface: AppMode) -> String { "allternit.composer.deckModeId.\(surface.rawValue)" }
+
+    static func id(for surface: AppMode) -> String? {
+        UserDefaults.standard.string(forKey: key(surface))
+    }
+
+    static func set(_ id: String?, for surface: AppMode) {
+        UserDefaults.standard.set(id, forKey: key(surface))
+    }
+}
