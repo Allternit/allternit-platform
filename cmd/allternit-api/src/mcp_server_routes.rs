@@ -403,14 +403,64 @@ const TUNNEL_ID_HEADER: &str = "x-allternit-tunnel-id";
 const TUNNEL_CERT_THUMBPRINT_HEADER: &str = "x-allternit-client-cert-thumbprint";
 const TUNNEL_OAUTH_ISSUER_HEADER: &str = "x-allternit-oauth-issuer";
 const TUNNEL_OAUTH_AUDIENCE_HEADER: &str = "x-allternit-oauth-audience";
+const TUNNEL_HEADERS_GATEWAY_ONLY: &str = "tunnel headers are set by the gateway only";
 
+/// True when the request carries any header that only the gateway (the mTLS
+/// terminator in front of `/mcp/server`) may assert: `x-allternit-tunnel-*`,
+/// the client-certificate thumbprint, or the OAuth issuer / audience. Presence
+/// counts, even with an empty value.
+fn carries_tunnel_headers(headers: &axum::http::HeaderMap) -> bool {
+    headers.keys().any(|name| {
+        let name = name.as_str();
+        name.starts_with("x-allternit-tunnel-")
+            || name == TUNNEL_CERT_THUMBPRINT_HEADER
+            || name == TUNNEL_OAUTH_ISSUER_HEADER
+            || name == TUNNEL_OAUTH_AUDIENCE_HEADER
+    })
+}
+
+/// `/mcp/server` sits behind the Clerk `auth_middleware`, so any signed-in
+/// user can reach it and set any header. Tunnel headers are therefore only
+/// believed when the request also proves it came through the gateway with
+/// the internal service token (`internal_auth::require_internal_token`, same
+/// shared secret and same localhost-only no-token dev bypass). Without that
+/// credential a request carrying them is refused (401, JSON-RPC -32001), so a
+/// forged thumbprint or issuer can never satisfy a tunnel policy. A request
+/// with no tunnel headers takes the ordinary signed-in path unchanged.
 #[tracing::instrument(skip_all, name = "mcp_server.handle_rpc", fields(method = %req.method))]
 async fn handle_rpc(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let gateway_token = state.config.internal_service_token();
+    let local_dev_bypass = state.config.local_dev_bypass();
+    handle_rpc_gated(&state, user, peer, headers, req, gateway_token.as_deref(), local_dev_bypass).await
+}
+
+/// [`handle_rpc`] with the gateway credential passed in (tests pass it
+/// directly instead of racing on the process-wide env var).
+async fn handle_rpc_gated(
+    state: &Arc<AppState>,
+    user: AuthUser,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
+    req: JsonRpcRequest,
+    gateway_token: Option<&str>,
+    local_dev_bypass: bool,
+) -> axum::response::Response {
+    if carries_tunnel_headers(&headers)
+        && crate::internal_auth::check_internal_token(&headers, peer, gateway_token, local_dev_bypass).is_err()
+    {
+        tracing::warn!(user_id = %user.user_id, "mcp/server: tunnel headers without the gateway credential");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(rpc_error(Value::Null, -32001, TUNNEL_HEADERS_GATEWAY_ONLY.to_string())),
+        )
+            .into_response();
+    }
     if let Some(resp) = header_mismatch(&headers, &req) {
         return resp;
     }
@@ -446,11 +496,11 @@ async fn handle_rpc(
             let org_id = user.organization_id.as_deref().or(user.tenant_id.as_deref());
             // OAuth access tokens (ChatGPT / Claude connectors) are verified
             // for audience + scope and limited to the read-only agent tools.
-            let agents_only = match crate::mcp_agents::authorize_bearer(&state, &headers).await {
+            let agents_only = match crate::mcp_agents::authorize_bearer(state, &headers).await {
                 Ok(v) => v,
                 Err(resp) => return resp,
             };
-            handle_rpc_inner(&state, &user.user_id, org_id, req, agents_only).await
+            handle_rpc_inner(state, &user.user_id, org_id, req, agents_only).await
         }
         Err(result) => (
             StatusCode::UNAUTHORIZED,
@@ -837,6 +887,128 @@ mod tests {
         assert!(!TUNNEL_OAUTH_ISSUER_HEADER.is_empty());
         assert!(!TUNNEL_OAUTH_AUDIENCE_HEADER.is_empty());
         assert!(TUNNEL_ID_HEADER.starts_with("x-allternit-"));
+    }
+
+    // ─── tunnel headers are trusted only from the gateway ──────────────────
+
+    const GATEWAY_TOKEN: &str = "test-gateway-token";
+
+    /// An outbound policy for `tunnel-1` that pins the test client
+    /// certificate. The gateway token is passed to `handle_rpc_gated`
+    /// directly, never through `ALLTERNIT_INTERNAL_SERVICE_TOKEN`, which other
+    /// tests set and unset concurrently.
+    async fn tunnel_state() -> Arc<AppState> {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let state = crate::test_helpers::app_state(&dir).await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO mcp_tunnel_auth (tunnel_id, client_cert_pem) VALUES ('tunnel-1', ?1)",
+                [crate::mcp_tunnel_auth::tests::TEST_CERT_PEM],
+            )
+            .unwrap();
+        state
+    }
+
+    fn signed_in_user() -> AuthUser {
+        AuthUser {
+            user_id: "user-a".into(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: None,
+            organization_id: None,
+            organization_role: None,
+            organization_slug: None,
+        }
+    }
+
+    async fn call(state: &Arc<AppState>, pairs: &[(&str, String)]) -> (StatusCode, Value) {
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                axum::http::HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        let req: JsonRpcRequest = serde_json::from_value(json!({ "id": 1, "method": "ping" })).unwrap();
+        let resp = handle_rpc_gated(state, signed_in_user(), None, headers, req, Some(GATEWAY_TOKEN), false).await;
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    fn thumbprint() -> String {
+        crate::mcp_tunnel_auth::client_cert_thumbprint(crate::mcp_tunnel_auth::tests::TEST_CERT_PEM).unwrap()
+    }
+
+    #[tokio::test]
+    async fn forged_tunnel_thumbprint_without_gateway_credential_is_401() {
+        let state = tunnel_state().await;
+        // The right thumbprint, asserted by a signed-in caller instead of the gateway.
+        let (status, body) = call(
+            &state,
+            &[(TUNNEL_ID_HEADER, "tunnel-1".into()), (TUNNEL_CERT_THUMBPRINT_HEADER, thumbprint())],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], -32001);
+        assert_eq!(body["error"]["message"], TUNNEL_HEADERS_GATEWAY_ONLY);
+
+        // Dropping the tunnel id does not help: any gateway-only header is refused.
+        for header in [TUNNEL_CERT_THUMBPRINT_HEADER, TUNNEL_OAUTH_ISSUER_HEADER, TUNNEL_OAUTH_AUDIENCE_HEADER] {
+            let (status, body) = call(&state, &[(header, "x".into())]).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{header}");
+            assert_eq!(body["error"]["message"], TUNNEL_HEADERS_GATEWAY_ONLY);
+        }
+        // A wrong internal token is no better than none.
+        let (status, _) = call(
+            &state,
+            &[(TUNNEL_ID_HEADER, "tunnel-1".into()), ("x-allternit-internal-token", "wrong".into())],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn tunnel_headers_with_gateway_credential_and_matching_policy_pass() {
+        let state = tunnel_state().await;
+        let token = GATEWAY_TOKEN.to_string();
+        let (status, body) = call(
+            &state,
+            &[
+                ("x-allternit-internal-token", token.clone()),
+                (TUNNEL_ID_HEADER, "tunnel-1".into()),
+                (TUNNEL_CERT_THUMBPRINT_HEADER, thumbprint()),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.get("error").is_none(), "{body}");
+
+        // Through the gateway, the policy still decides: a wrong certificate fails.
+        let (status, body) = call(
+            &state,
+            &[
+                ("x-allternit-internal-token", token),
+                (TUNNEL_ID_HEADER, "tunnel-1".into()),
+                (TUNNEL_CERT_THUMBPRINT_HEADER, "BAD".into()),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["message"], "MCP tunnel auth failed: client certificate thumbprint mismatch");
+    }
+
+    #[tokio::test]
+    async fn no_tunnel_headers_keeps_the_signed_in_path() {
+        let state = tunnel_state().await;
+        let (status, body) = call(&state, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], 1);
+        assert!(body.get("error").is_none(), "{body}");
     }
 
     fn pin_conn() -> Connection {

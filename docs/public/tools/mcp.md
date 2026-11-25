@@ -119,6 +119,8 @@ Headers consumed by `mcp_server_routes.rs`:
 | `x-allternit-oauth-issuer` | `iss` claim from the OAuth bearer token |
 | `x-allternit-oauth-audience` | `aud` claim from the OAuth bearer token |
 
+Only the gateway (the mTLS terminator) may set these headers. They are believed only when the same request carries the internal service token in `x-allternit-internal-token`; a request that carries any of them (or any `x-allternit-tunnel-*` header) without it gets HTTP `401`, JSON-RPC `-32001`, `tunnel headers are set by the gateway only`. Requests with no tunnel headers run as the signed-in user, unchanged. A policy that pins a certificate or issuer can only be satisfied through the gateway.
+
 The thumbprint is computed as the uppercase, colon-free SHA-256 fingerprint of the first certificate in the PEM bundle, matching `openssl x509 -sha256 -fingerprint`.
 
 ```json
