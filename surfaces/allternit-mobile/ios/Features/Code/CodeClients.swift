@@ -23,6 +23,11 @@ struct CodeSessionsClient: Sendable {
         try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: UpdateBody(active: false))
     }
 
+    /// `DELETE /api/v1/agent-sessions/:id` (hold-to-delete, never an alert).
+    func delete(sessionId: String) async throws {
+        try await client.delete(path: "agent-sessions/\(Self.escape(sessionId))")
+    }
+
     /// The user opened the session: clears the server-owned `readyForReview`
     /// flag (`PATCH {markReviewed: true}`, code_session_status.rs).
     func markReviewed(sessionId: String) async throws {

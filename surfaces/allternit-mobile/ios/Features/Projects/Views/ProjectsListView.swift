@@ -19,6 +19,7 @@ struct ProjectsListView: View {
     var onOpenSidebar: (() -> Void)? = nil
 
     @StateObject private var projectStore = ProjectStore.shared
+    @State private var barHidden = false
     @StateObject private var library = ProjectsLibraryStore.shared
     @StateObject private var navigator = BotNavigator()
     @Environment(\.dismiss) private var dismiss
@@ -134,8 +135,10 @@ struct ProjectsListView: View {
                     pageContent
                 }
                 .refreshable { await reload() }
+                .tracksScrollForHide($barHidden)
                 GlassPill(title: "New project", systemImage: "plus") { newProjectTapped() }
                     .padding(.bottom, 14)
+                    .hidesOnScroll(barHidden)
                 if showExplainer {
                     ProjectsExplainerCard(
                         onOK: {

@@ -31,7 +31,9 @@ struct MemorySettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        // Dot docking title like every other page (A4/A6).
+        DockingTitleScrollView(title: "Memory", chrome: .navigationBar) {
+          VStack(spacing: 0) {
             // The account memory map (every bot plus your own memory).
             ImpactMapView(botId: nil)
                 .padding(.horizontal, 20)
@@ -48,6 +50,7 @@ struct MemorySettingsView: View {
                 Divider().background(Color("BorderSubtle"))
             }
             content
+          }
         }
         .refreshable {
             refreshToken += 1

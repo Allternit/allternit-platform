@@ -172,6 +172,7 @@ struct DockingTitleScrollView<Content: View>: View {
                 titleLayer(frame: f, width: geo.size.width, safeTop: safeTop)
             }
             .background(Color("BgPrimary").ignoresSafeArea())
+            .preference(key: ScrollOffsetKey.self, value: max(0, offset))
         }
         .modifier(DockNavChrome(enabled: usesNavBar))
         .onChange(of: frame.landed) { old, new in
