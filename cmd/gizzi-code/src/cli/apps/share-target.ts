@@ -1,5 +1,3 @@
-export const LIVE_NOT_READY = "Live links from this computer arrive with the relay (plan lane 39)"
-
 export type Target = { kind: "port"; port: number } | { kind: "app"; slug: string } | { kind: "invalid" }
 
 /** `3000` is a port; a lowercase slug (letter first, up to 16) is an app. */

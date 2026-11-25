@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { appLink, consentLines, formatApps, formatLinks, slugOf, validSlug } from "./client"
-import { classifyTarget, LIVE_NOT_READY } from "./share-target"
+import { classifyTarget } from "./share-target"
 
 describe("app helpers", () => {
   test("slugOf reads the shelf link; vendor apps have none", () => {
@@ -39,7 +39,6 @@ describe("share helpers", () => {
     expect(classifyTarget("70000")).toEqual({ kind: "invalid" })
     expect(classifyTarget("notes7")).toEqual({ kind: "app", slug: "notes7" })
     expect(classifyTarget("Not Ok")).toEqual({ kind: "invalid" })
-    expect(LIVE_NOT_READY).toContain("lane 39")
   })
   test("formatLinks table", () => {
     const out = formatLinks([

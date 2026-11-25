@@ -32,7 +32,7 @@ gizzi share stop shl_123
 - `gizzi share list` shows your links (`--all` adds stopped ones).
 - `gizzi share <app-slug>` makes a hosted link for an app and prints its address.
 - `gizzi share stop <id>` revokes a link. `gizzi share pause <id>` pauses it, and `--resume` turns it back on.
-- `gizzi share <port>` is for live links from this computer to a local port. Those are not live yet: it prints "Live links from this computer arrive with the relay (plan lane 39)" and exits with code 2. Nothing is shared.
+- `gizzi share <port>` shares a local port as a live link. It prints the URL and a token (visitors send the token as the `X-Allternit-Share-Token` header), keeps running, and Ctrl-C stops and revokes the link. It needs allternit-api running on this computer. `gizzi share list`, `stop` and `pause` cover live links too: a running live link stops serving on its next heartbeat after `stop` or `pause`.
 
 ## In the terminal UI
 
