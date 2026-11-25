@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -139,3 +141,51 @@ fun ArtifactAppsRow(
 
 /** Kinds that can become an app (they run as a page; web `canBecomeApp`). Docs, sheets and slides cannot. */
 fun canBecomeApp(kind: String): Boolean = kind in setOf("page", "dashboard", "ops", "app", "build", "code", "html")
+
+/** What an installed app may do (mirrors feature/computer `AppsTier`, which is internal to that module). */
+enum class InstallTier(val wire: String, val label: String, val detail: String) {
+    Browser("browser", "Browser", "Runs in a sandbox. Can show pages and nothing else."),
+    App("app", "App", "Can save its own data and use the tools you list for it."),
+    Full("full", "Full", "Can use your connected apps and run tasks for you.");
+
+    companion object {
+        /** Unknown tiers read as the strictest one. */
+        fun from(raw: String?): InstallTier = entries.firstOrNull { it.wire.equals(raw, ignoreCase = true) } ?: Browser
+    }
+}
+
+/** An install waiting on the person's yes: first install, or [raised] when the tier grew and the server asked again. */
+data class InstallRequest(val artifact: ArtifactSummary, val tier: InstallTier, val added: List<String> = emptyList(), val raised: Boolean = false)
+
+/** Same consent as web `InstallConsent` and the ACI Apps shelf: pick Browser / App / Full, then Install. */
+@Composable
+fun InstallConsent(request: InstallRequest, onTier: (InstallTier) -> Unit, onCancel: () -> Unit, onInstall: () -> Unit) {
+    val c = AllternitTheme.colors
+    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).testTag("artifactInstallConsentBody"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (request.raised) Text("${request.artifact.title} wants more access", color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InstallTier.entries.forEach { t ->
+                    val on = t == request.tier
+                    Text(t.label, color = if (on) c.onAccent else c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.heightIn(min = 44.dp).clip(CircleShape).background(if (on) c.accentPrimary else c.fillNeutral)
+                            .testTag("artifactInstallTier${t.label}").clickable(onClickLabel = "Allow ${t.label}") { onTier(t) }
+                            .padding(horizontal = 14.dp, vertical = 12.dp))
+                }
+            }
+            Text(request.tier.detail, color = c.textSecondary, fontSize = 14.sp)
+        }
+        if (request.added.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("New access", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            request.added.forEach { Text("• $it", color = c.textPrimary, fontSize = 14.sp) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(CircleShape).background(c.fillNeutral).clickable(onClick = onCancel), contentAlignment = Alignment.Center) {
+                Text("Cancel", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+            Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(CircleShape).background(c.accentPrimary).testTag("artifactInstallConfirm").clickable(onClick = onInstall), contentAlignment = Alignment.Center) {
+                Text(if (request.raised) "Allow" else "Install", color = c.onAccent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}

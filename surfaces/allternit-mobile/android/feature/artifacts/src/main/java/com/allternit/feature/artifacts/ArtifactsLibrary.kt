@@ -257,7 +257,6 @@ fun ArtifactsLibraryScreen(
     var openId by remember { mutableStateOf(initialArtifactId) }
     var officeOpen by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<ArtifactSummary?>(null) }
-    var confirmDelete by remember { mutableStateOf<ArtifactSummary?>(null) }
     var studio by remember { mutableStateOf(initialStudio) }
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
@@ -265,7 +264,7 @@ fun ArtifactsLibraryScreen(
     var chip by remember { mutableStateOf(ShowChip.Everything) }
     var appRows by remember { mutableStateOf<List<AppShelfRow>>(emptyList()) }
     var appsReload by remember { mutableStateOf(0) }
-    var installFor by remember { mutableStateOf<ArtifactSummary?>(null) }
+    var installFor by remember { mutableStateOf<InstallRequest?>(null) }
     val appIds = remember(appRows) { appRows.mapNotNull { it.artifactId }.toSet() }
     val pins = DeckPins.pins
 
@@ -427,9 +426,7 @@ fun ArtifactsLibraryScreen(
                     }
                 }
                 chip == ShowChip.Plans -> item(key = "plans", span = full) {
-                    FriendlyState(FriendlyStyle.Empty, "Plans are coming here", "Your plans will list here, grouped by project.") {
-                        Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
-                    }
+                    PlansList(onOpen = { openId = it }, reloadKey = store.items.size)
                 }
                 chip == ShowChip.Apps && store.loaded && shown.isEmpty() -> item(key = "noapps", span = full) {
                     FriendlyState(FriendlyStyle.Empty, "No apps yet", "Make an artifact into an app from its menu, or start one with Make an app.", actionTitle = "Make an app", onAction = ::makeApp) {
@@ -547,7 +544,7 @@ fun ArtifactsLibraryScreen(
                 }
                 if (appRowsShown) {
                     if (isApp) {
-                        LibraryRowButton("Install app", DesignR.drawable.ph_download_simple, "artifactActionInstallApp") { actionsFor = null; installFor = a }
+                        LibraryRowButton("Install app", DesignR.drawable.ph_download_simple, "artifactActionInstallApp") { actionsFor = null; installFor = InstallRequest(a, InstallTier.App) }
                         LibraryRowButton("Copy app link", DesignR.drawable.ph_link_simple, "artifactActionCopyAppLink") {
                             actionsFor = null
                             val link = appRows.firstOrNull { it.artifactId == a.id }?.link ?: ArtifactWeb.shareLink(a.id)
@@ -559,7 +556,7 @@ fun ArtifactsLibraryScreen(
                         LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "artifactActionMakeApp") { actionsFor = null; openId = a.id }
                     }
                 }
-                LibraryRowButton(if (pinned) "Unpin" else "Pin", if (pinned) DesignR.drawable.ph_push_pin_slash else DesignR.drawable.ph_plus, "artifactActionPin") {
+                LibraryRowButton(if (pinned) "Unpin" else "Pin", if (pinned) DesignR.drawable.ph_push_pin_slash else DesignR.drawable.ph_push_pin, "artifactActionPin") {
                     actionsFor = null
                     scope.launch {
                         DeckPins.toggle(context, DeckPin(a.id, a.kind, a.title)).onFailure { store.notice = it.message }
@@ -569,44 +566,41 @@ fun ArtifactsLibraryScreen(
                     actionsFor = null
                     scope.launch { store.setArchived(a, !archive) }
                 }
-                if (a.isMine) LibraryRowButton("Delete", DesignR.drawable.ph_trash, "artifactActionDelete", destructive = true) { actionsFor = null; confirmDelete = a }
+                if (a.isMine) com.allternit.core.design.HoldButton("Hold to delete", "artifactActionDelete", danger = true) {
+                    actionsFor = null
+                    scope.launch { store.delete(a) }
+                }
             }
         }
     }
 
-    installFor?.let { a ->
-        AlertDialog(
-            onDismissRequest = { installFor = null },
-            title = { Text("Install ${a.title}?") },
-            text = { Text("It can save its own data and use the tools you list for it. You can remove it from Apps.") },
-            confirmButton = {
-                TextButton(onClick = {
+    installFor?.let { req ->
+        LibrarySheet("Install ${req.artifact.title}?", "artifactInstallConsent", onDismiss = { installFor = null }) {
+            InstallConsent(
+                request = req,
+                onTier = { installFor = req.copy(tier = it) },
+                onCancel = { installFor = null },
+                onInstall = {
                     installFor = null
                     scope.launch {
                         val body = kotlinx.serialization.json.buildJsonObject {
-                            put("granted_tier", kotlinx.serialization.json.JsonPrimitive("app")); put("consent", kotlinx.serialization.json.JsonPrimitive(true))
+                            put("granted_tier", kotlinx.serialization.json.JsonPrimitive(req.tier.wire)); put("consent", kotlinx.serialization.json.JsonPrimitive(true))
                         }
-                        val res = LibraryNet.send("POST", "apps/artifact/${LibraryNet.escape(a.id)}/install", body)
-                        store.notice = if (res is ApiResult.Ok) { appsReload++; "${a.title} installed." } else res.friendly("install this app")
+                        // The slug of an artifact app is the artifact id (same id web `useInstallApp` sends).
+                        val res = LibraryNet.send("POST", "apps/artifact/${LibraryNet.escape(req.artifact.id)}/install", body)
+                        if (res is ApiResult.Ok) {
+                            val o = res.value.obj
+                            if (o.bool("needs_consent") == true) {
+                                // The tier grew since the last yes: ask again with what is new.
+                                val added = o.list("added").mapNotNull { it.str("label") ?: it.str("name") } +
+                                    ((o.get("added") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty())
+                                installFor = InstallRequest(req.artifact, InstallTier.from(o.str("requested_tier") ?: req.tier.wire), added, true)
+                            } else { appsReload++; store.notice = "${req.artifact.title} installed." }
+                        } else store.notice = res.friendly("install this app")
                     }
-                }, modifier = Modifier.testTag("artifactInstallConfirm")) { Text("Install") }
-            },
-            dismissButton = { TextButton(onClick = { installFor = null }) { Text("Cancel") } },
-        )
-    }
-
-    confirmDelete?.let { a ->
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("Delete permanently?") },
-            text = { Text("This can’t be undone.") },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = null; scope.launch { store.delete(a) } }, modifier = Modifier.testTag("artifactDeleteConfirm")) {
-                    Text("Delete permanently", color = AllternitStatic.StatusError)
-                }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
-        )
+                },
+            )
+        }
     }
 }
 
