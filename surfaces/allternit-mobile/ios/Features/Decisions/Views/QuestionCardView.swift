@@ -169,9 +169,16 @@ struct QuestionCardView: View {
                 withAnimation(.easeOut(duration: 0.2)) {
                     switch action {
                     case .approve: sentLabel = agentName.map { "Approved. \($0) is running the plan" } ?? "Approved. Running the plan"
-                    case .revise: sentLabel = "Sent back for changes. Type your note in the message box"
-                    case .ask: sentLabel = "Plan kept open. Type your question in the message box"
+                    case .revise: sentLabel = "Sent back for changes"
+                    case .ask: sentLabel = "Plan kept open"
                     }
+                }
+                // Revise / Ask: focus the composer with the web's prompt
+                // (ChatComposer PLAN_NOTE), after the plan sheet has closed.
+                if action != .approve {
+                    let note = action == .revise ? "What should change in the plan?" : "Ask about the plan…"
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    NotificationCenter.default.post(name: .composerFocusRequest, object: nil, userInfo: ["placeholder": note])
                 }
                 Haptics.success()
                 isSending = false

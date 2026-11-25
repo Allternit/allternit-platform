@@ -107,6 +107,9 @@ struct ComposerView: View {
     @State private var isFocused = false
     @State private var keyboardFocused = false
     @State private var placeholderIndex = 0
+    /// Plan Revise / Ask a question: the prompt the composer shows after it
+    /// takes focus (web ChatComposer PLAN_NOTE). Cleared when focus leaves.
+    @State private var planNotePlaceholder: String? = nil
     // Purchase pages go to the browser via the Open links in rule (step 30).
     @Environment(\.openURL) private var openURL
     /// The In-App Purchase sheet, where the App Store sells plans.
@@ -173,6 +176,7 @@ struct ComposerView: View {
     private var placeholder: String {
         if isTerminal { return "describe the task…" }
         if let placeholderOverride { return placeholderOverride }
+        if let planNotePlaceholder { return planNotePlaceholder }
         if !isExpanded { return "Type or hold to talk" }
         // A picked artifact mode says what it will make ("Describe the slides…").
         if let launchMode { return launchMode.placeholder }
@@ -311,6 +315,9 @@ struct ComposerView: View {
         .sheet(isPresented: $isStoreSheetPresented) {
             StorePurchaseSheet(focus: .plan)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .composerFocusRequest)) { note in
+            planNotePlaceholder = note.userInfo?["placeholder"] as? String
+        }
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usageStore.fetchUsageIfNeeded()
@@ -406,7 +413,7 @@ struct ComposerView: View {
                     placeholder: placeholder,
                     isEnabled: !isUsageLocked,
                     terminal: isTerminal,
-                    onFocusChange: { isFocused = $0; if !$0 { keyboardFocused = false } },
+                    onFocusChange: { isFocused = $0; if !$0 { keyboardFocused = false; planNotePlaceholder = nil } },
                     onKeyboardFocusChange: { keyboardFocused = $0 },
                     singleLineRest: !isExpanded
                 )
@@ -933,6 +940,13 @@ struct ComposerTextView: UIViewRepresentable {
             context.coordinator.parent.onKeyboardFocusChange?(focused)
         }
         textView.delegate = context.coordinator
+        // Plan Revise / Ask a question (QuestionCardView) focus the composer.
+        context.coordinator.focusObserver = NotificationCenter.default.addObserver(
+            forName: .composerFocusRequest, object: nil, queue: .main
+        ) { [weak textView] _ in
+            guard let textView, textView.window != nil, textView.isEditable else { return }
+            textView.becomeFirstResponder()
+        }
         textView.font = uiFont
         textView.textColor = uiTextColor
         textView.typingAttributes = [.font: uiFont, .foregroundColor: uiTextColor, .paragraphStyle: paragraph]
@@ -1012,8 +1026,13 @@ struct ComposerTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         let placeholderLabel = UILabel()
+        var focusObserver: NSObjectProtocol?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
+
+        deinit {
+            if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
+        }
 
         func updatePlaceholder(_ textView: UITextView) {
             placeholderLabel.isHidden = !textView.text.isEmpty
@@ -1123,4 +1142,10 @@ final class ComposerEditorView: UITextView {
             onKeyboardFocusChange?(false)
         }
     }
+}
+
+extension Notification.Name {
+    /// Focus the chat composer. userInfo["placeholder"]: optional prompt to show
+    /// while it is empty (plan Revise / Ask a question).
+    static let composerFocusRequest = Notification.Name("com.allternit.composerFocusRequest")
 }
