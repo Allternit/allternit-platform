@@ -294,6 +294,59 @@ struct TeamMap: Decodable, Equatable, Sendable {
     }
 }
 
+/// A rule as `GET /team/rules` returns it: every field the editor needs.
+struct TeamFullRule: Decodable, Identifiable, Equatable, Sendable {
+    let id: String
+    let scope: TeamRule.Scope
+    let app: TeamAppRef?
+    /// `*` = any tool.
+    let tool: String
+    let field: String?
+    let op: String
+    let value: JSONValue?
+    let unitLabel: String?
+    let approver: TeamRule.Approver
+    let enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, scope, app, tool, field, op, value, approver, enabled
+        case unitLabel = "unit_label"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        scope = (try c.decodeIfPresent(TeamRule.Scope.self, forKey: .scope)) ?? TeamRule.Scope(kind: "org", ref: nil)
+        app = try c.decodeIfPresent(TeamAppRef.self, forKey: .app)
+        tool = (try c.decodeIfPresent(String.self, forKey: .tool)) ?? "*"
+        field = try c.decodeIfPresent(String.self, forKey: .field)
+        op = (try c.decodeIfPresent(String.self, forKey: .op)) ?? "always"
+        value = try c.decodeIfPresent(JSONValue.self, forKey: .value)
+        unitLabel = try c.decodeIfPresent(String.self, forKey: .unitLabel)
+        approver = (try c.decodeIfPresent(TeamRule.Approver.self, forKey: .approver)) ?? TeamRule.Approver(kind: "owner", userId: nil)
+        enabled = (try c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
+    }
+}
+
+/// `GET /team/apps/:kind/:ref/access`: people and bots that can use one app.
+struct TeamAppAccess: Decodable, Equatable, Sendable {
+    struct Person: Decodable, Equatable, Sendable, Identifiable {
+        let user: String
+        let level: String
+        var id: String { user }
+    }
+
+    struct Bot: Decodable, Equatable, Sendable, Identifiable {
+        let bot: String
+        let owner: String?
+        let level: String
+        var id: String { bot }
+    }
+
+    let people: [Person]
+    let bots: [Bot]
+}
+
 extension TeamAppRef {
     var displayName: String { (name?.isEmpty == false ? name : nil) ?? ref }
 }

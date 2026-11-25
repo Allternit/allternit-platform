@@ -8,16 +8,24 @@ struct TeamRuleEditorView: View {
     @ObservedObject var store: TeamMapStore
     /// "org" or the node id the editor was opened from.
     let scope: String
+    /// Set to edit an existing rule: the full rule is fetched and the sentence prefilled.
+    let ruleId: String?
 
     @State private var draft: Draft
     @State private var saving = false
     @State private var error: String?
+    @State private var loading: Bool
+    @State private var loadError: String?
+    /// The edited rule's app, kept as a choice even when no bot has a grant for it.
+    @State private var ruleApp: TeamAppRef?
     @Environment(\.dismiss) private var dismiss
 
-    init(store: TeamMapStore, scope: String) {
+    init(store: TeamMapStore, scope: String, ruleId: String? = nil) {
         self.store = store
         self.scope = scope
+        self.ruleId = ruleId
         _draft = State(initialValue: Draft(scope: scope))
+        _loading = State(initialValue: ruleId != nil)
     }
 
     struct Draft: Equatable {
@@ -46,14 +54,79 @@ struct TeamRuleEditorView: View {
 
     var body: some View {
         Group {
-            if let map = store.map {
+            if let loadError {
+                VStack(spacing: 12) {
+                    Text(loadError)
+                        .font(.subheadline)
+                        .foregroundStyle(Color("TextSecondary"))
+                        .multilineTextAlignment(.center)
+                    Button("Try again") { Task { await loadRule() } }
+                        .frame(minHeight: 44)
+                }
+                .padding(24)
+            } else if loading {
+                ProgressView("Loading the rule…")
+            } else if let map = store.map {
                 form(map)
             } else {
                 ProgressView()
             }
         }
-        .navigationTitle("New rule")
+        .navigationTitle(ruleId == nil ? "New rule" : "Edit rule")
         .navigationBarTitleDisplayMode(.inline)
+        .task { if ruleId != nil, loading { await loadRule() } }
+    }
+
+    /// The map lists a rule's sentence only; the editor needs op, tool and value.
+    private func loadRule() async {
+        guard let ruleId else { return }
+        loading = true
+        loadError = nil
+        do {
+            let rule = try await store.fullRule(id: ruleId)
+            ruleApp = rule.app
+            draft = Self.draft(from: rule)
+            loading = false
+        } catch is CancellationError {
+            return
+        } catch {
+            loadError = TeamMapError.text(error)
+            loading = false
+        }
+    }
+
+    private static func draft(from rule: TeamFullRule) -> Draft {
+        var d = Draft(scope: "org")
+        switch rule.scope.kind {
+        case "person": d.scope = rule.scope.ref.map { "p:\($0)" } ?? "org"
+        case "bot": d.scope = rule.scope.ref ?? "org"
+        default: d.scope = "org"
+        }
+        d.app = rule.app.map { "\($0.kind):\($0.ref)" } ?? "*"
+        d.tool = rule.tool == "*" ? "" : rule.tool
+        d.field = rule.field ?? ""
+        d.op = rule.op
+        d.value = valueText(rule.value)
+        d.unit = rule.unitLabel ?? ""
+        d.approver = rule.approver.kind == "user" ? "u:\(rule.approver.userId ?? "")" : rule.approver.kind
+        return d
+    }
+
+    private static func valueText(_ value: JSONValue?) -> String {
+        switch value {
+        case .string(let s)?: return s
+        case .number(let n)?: return n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
+        case .bool(let b)?: return String(b)
+        case .array(let items)?: return items.map { valueText($0) }.joined(separator: ", ")
+        default: return ""
+        }
+    }
+
+    /// Apps a bot has, plus the edited rule's own app.
+    private func appChoices(_ map: TeamMap) -> [TeamAppRef] {
+        var apps = map.apps
+        if let ruleApp, !apps.contains(where: { $0.kind == ruleApp.kind && $0.ref == ruleApp.ref }) { apps.append(ruleApp) }
+        return apps
     }
 
     private func form(_ map: TeamMap) -> some View {
@@ -65,7 +138,14 @@ struct TeamRuleEditorView: View {
                         .font(.footnote)
                         .foregroundStyle(Color("TextSecondary"))
                 }
-                ForEach(current) { TeamRuleRow(rule: $0) }
+                ForEach(current) { rule in
+                    HStack {
+                        TeamRuleRow(rule: rule)
+                        if rule.id == ruleId {
+                            Text("Editing").font(.caption).foregroundStyle(Color("TextSecondary"))
+                        }
+                    }
+                }
             } header: {
                 Text("\(scopeName(map)) · \(TeamPlural.count(current.count, "rule")) today")
             }
@@ -85,7 +165,7 @@ struct TeamRuleEditorView: View {
                     Text(error).font(.footnote).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                 }
             } header: {
-                Text("New rule")
+                Text(ruleId == nil ? "New rule" : "This rule")
             } footer: {
                 Text("Rules win over the level.")
             }
@@ -96,7 +176,7 @@ struct TeamRuleEditorView: View {
                     HStack {
                         Spacer()
                         if saving { ProgressView().padding(.trailing, 6) }
-                        Text(saving ? "Saving…" : "Save rule").bold()
+                        Text(saving ? "Saving…" : (ruleId == nil ? "Save rule" : "Save changes")).bold()
                         Spacer()
                     }
                     .frame(minHeight: 44)
@@ -125,7 +205,7 @@ struct TeamRuleEditorView: View {
             word("uses")
             pick("App", text: appName(map), selection: $draft.app) {
                 Text("Any app").tag("*")
-                ForEach(map.apps, id: \.self) { app in
+                ForEach(appChoices(map), id: \.self) { app in
                     Text(app.displayName).tag("\(app.kind):\(app.ref)")
                 }
             }
@@ -223,7 +303,7 @@ struct TeamRuleEditorView: View {
 
     private func appName(_ map: TeamMap) -> String {
         guard draft.app != "*" else { return "any app" }
-        return map.apps.first { "\($0.kind):\($0.ref)" == draft.app }?.displayName ?? draft.app
+        return appChoices(map).first { "\($0.kind):\($0.ref)" == draft.app }?.displayName ?? draft.app
     }
 
     private var opLabel: String { Self.ops.first { $0.op == draft.op }?.label ?? "over" }
@@ -320,7 +400,12 @@ struct TeamRuleEditorView: View {
         saving = true
         error = nil
         Task {
-            let failure = await store.createRule(input)
+            let failure: String?
+            if let ruleId {
+                failure = await store.updateRule(id: ruleId, input: input)
+            } else {
+                failure = await store.createRule(input)
+            }
             saving = false
             if let failure {
                 error = failure

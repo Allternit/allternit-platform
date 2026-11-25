@@ -12,6 +12,7 @@ struct TeamNodeDetailView: View {
     @State private var reportsError: String?
     @State private var savingReports = false
     @State private var ruleError: String?
+    @State private var whoApp: TeamAppRef?
 
     var body: some View {
         Group {
@@ -35,6 +36,9 @@ struct TeamNodeDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $whoApp) { app in
+            TeamWhoCanUseSheet(app: app, store: store)
+        }
     }
 
     // MARK: Sections
@@ -81,7 +85,8 @@ struct TeamNodeDetailView: View {
                     .foregroundStyle(Color("TextSecondary"))
             }
             ForEach(grants) { grant in
-                TeamLevelPicker(store: store, grant: grant, canEdit: map.canEditLevels(of: node.id))
+                TeamLevelPicker(store: store, grant: grant, canEdit: map.canEditLevels(of: node.id),
+                                onWhoCanUse: { whoApp = grant.app })
             }
         } header: {
             Text("Apps and levels")
@@ -148,7 +153,10 @@ struct TeamNodeDetailView: View {
                     .foregroundStyle(Color("TextSecondary"))
             }
             ForEach(list) { rule in
-                TeamRuleRow(rule: rule, onDelete: map.viewerIsAdmin ? { deleteRule(rule) } : nil)
+                TeamRuleRow(rule: rule,
+                            onDelete: map.viewerIsAdmin ? { deleteRule(rule) } : nil,
+                            onEdit: map.viewerIsAdmin ? { path.append(.editRule(id: rule.id, scope: rule.scopeKey)) } : nil,
+                            onToggle: map.viewerIsAdmin ? { toggleRule(rule, $0) } : nil)
             }
             if let ruleError {
                 Text(ruleError).font(.footnote).foregroundStyle(.red)
@@ -183,6 +191,11 @@ struct TeamNodeDetailView: View {
         }
     }
 
+    private func toggleRule(_ rule: TeamRule, _ enabled: Bool) {
+        ruleError = nil
+        Task { ruleError = await store.setRuleEnabled(id: rule.id, enabled: enabled) }
+    }
+
     private func deleteRule(_ rule: TeamRule) {
         ruleError = nil
         Task { ruleError = await store.deleteRule(id: rule.id) }
@@ -195,9 +208,12 @@ struct TeamLevelPicker: View {
     @ObservedObject var store: TeamMapStore
     let grant: TeamGrant
     let canEdit: Bool
+    /// Opens "Who can use this" for this grant's app.
+    var onWhoCanUse: (() -> Void)?
 
     @State private var saving: String?
     @State private var error: String?
+    @State private var confirmRemove = false
 
     private struct Level: Identifiable {
         let id: String
@@ -251,8 +267,37 @@ struct TeamLevelPicker: View {
             if let error {
                 Text(error).font(.footnote).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
+            HStack(spacing: 16) {
+                if let onWhoCanUse {
+                    Button("Who can use this", action: onWhoCanUse)
+                        .font(.footnote.weight(.medium))
+                        .frame(minHeight: 44)
+                }
+                if canEdit {
+                    Button("Remove access", role: .destructive) { confirmRemove = true }
+                        .font(.footnote.weight(.medium))
+                        .frame(minHeight: 44)
+                        .disabled(saving != nil)
+                }
+            }
+            .buttonStyle(.borderless)
         }
         .padding(.vertical, 4)
+        .confirmationDialog("Remove \(grant.app.displayName) from this bot?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove access", role: .destructive) { remove() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The bot can't use \(grant.app.displayName) until someone gives it back.")
+        }
+    }
+
+    private func remove() {
+        saving = "remove"
+        error = nil
+        Task {
+            error = await store.revokeGrant(grant)
+            saving = nil
+        }
     }
 
     private func allowed(_ level: String) -> Bool {

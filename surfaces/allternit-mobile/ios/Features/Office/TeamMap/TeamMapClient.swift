@@ -21,6 +21,17 @@ struct TeamMapClient {
         try await call("team/map")
     }
 
+    /// `GET /api/v1/team/rules`: every rule with all its fields (the map's short form lacks them).
+    func rules() async throws -> [TeamFullRule] {
+        let reply: RulesReply = try await call("team/rules")
+        return reply.rules
+    }
+
+    /// `GET /api/v1/team/apps/:kind/:ref/access`: who can use one app.
+    func appAccess(kind: String, ref: String) async throws -> TeamAppAccess {
+        try await call("team/apps/\(Self.enc(kind))/\(Self.enc(ref))/access")
+    }
+
     // MARK: Writes
 
     /// `PUT /api/v1/team/grants` (bot owner, org owner, admin).
@@ -40,6 +51,26 @@ struct TeamMapClient {
     /// `POST /api/v1/team/rules` (org owner/admin).
     func createRule(_ input: TeamRuleInput) async throws {
         let _: RuleReply = try await call("team/rules", method: "POST", body: input)
+    }
+
+    /// `PATCH /api/v1/team/rules/:id` (org owner/admin): merged into the stored rule.
+    func updateRule(id: String, input: TeamRuleInput) async throws {
+        var patch = input
+        patch.clearsMissing = true
+        let _: RuleReply = try await call("team/rules/\(Self.enc(id))", method: "PATCH", body: patch)
+    }
+
+    /// `PATCH /api/v1/team/rules/:id` with only `enabled` (the row's On/Off).
+    func setRuleEnabled(id: String, enabled: Bool) async throws {
+        let _: RuleReply = try await call("team/rules/\(Self.enc(id))", method: "PATCH", body: EnabledInput(enabled: enabled))
+    }
+
+    /// `DELETE /api/v1/team/grants?bot_kind&bot_id&app_kind&app_ref` (bot owner, org owner, admin).
+    func revokeGrant(_ grant: TeamGrant) async throws {
+        let query = [("bot_kind", grant.botKind), ("bot_id", grant.botId),
+                     ("app_kind", grant.app.kind), ("app_ref", grant.app.ref)]
+            .map { "\($0.0)=\(Self.encQuery($0.1))" }.joined(separator: "&")
+        let _: RevokedReply = try await call("team/grants?\(query)", method: "DELETE")
     }
 
     /// `DELETE /api/v1/team/rules/:id` (org owner/admin).
@@ -127,6 +158,10 @@ struct TeamMapClient {
         return components.url ?? base.appendingPathComponent(pathOnly)
     }
 
+    private static func encQuery(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? value
+    }
+
     private static func enc(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? value
     }
@@ -167,8 +202,13 @@ private struct ReportsToInput: Encodable {
 private struct ReportsToReply: Decodable {}
 private struct RuleReply: Decodable {}
 private struct DeletedReply: Decodable {}
+private struct RevokedReply: Decodable {}
+private struct RulesReply: Decodable { let rules: [TeamFullRule] }
+private struct EnabledInput: Encodable { let enabled: Bool }
 
-/// Rule input (contract §2, POST /team/rules). Nil fields are left out.
+/// Rule input (contract §2, POST/PATCH /team/rules). On create, nil fields are
+/// left out; on PATCH (`clearsMissing`) they are sent as null so a cleared
+/// blank (back to "any app", no field, no unit) clears the stored value.
 struct TeamRuleInput: Encodable, Equatable {
     var scopeKind: String
     var scopeRef: String?
@@ -181,6 +221,7 @@ struct TeamRuleInput: Encodable, Equatable {
     var unitLabel: String?
     var approverKind: String
     var approverUserId: String?
+    var clearsMissing = false
 
     enum CodingKeys: String, CodingKey {
         case tool, field, op, value
@@ -191,6 +232,25 @@ struct TeamRuleInput: Encodable, Equatable {
         case unitLabel = "unit_label"
         case approverKind = "approver_kind"
         case approverUserId = "approver_user_id"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(scopeKind, forKey: .scopeKind)
+        try c.encode(tool, forKey: .tool)
+        try c.encode(op, forKey: .op)
+        try c.encode(approverKind, forKey: .approverKind)
+        try put(&c, scopeRef, .scopeRef)
+        try put(&c, appKind, .appKind)
+        try put(&c, appRef, .appRef)
+        try put(&c, field, .field)
+        try put(&c, value, .value)
+        try put(&c, unitLabel, .unitLabel)
+        try put(&c, approverUserId, .approverUserId)
+    }
+
+    private func put<V: Encodable>(_ c: inout KeyedEncodingContainer<CodingKeys>, _ v: V?, _ key: CodingKeys) throws {
+        if let v { try c.encode(v, forKey: key) } else if clearsMissing { try c.encodeNil(forKey: key) }
     }
 }
 

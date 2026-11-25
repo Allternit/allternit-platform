@@ -6,6 +6,8 @@ enum TeamMapRoute: Hashable {
     case node(String)
     /// The one-sentence rule editor, scoped to "org" or a node id.
     case newRule(scope: String)
+    /// The same editor on an existing rule, prefilled.
+    case editRule(id: String, scope: String)
 }
 
 /// The Team map (PLAN §2, mockup B-team-map-phones): people and bots as a
@@ -49,6 +51,8 @@ struct TeamMapSheet: View {
                         TeamNodeDetailView(store: store, nodeId: id, path: $path)
                     case .newRule(let scope):
                         TeamRuleEditorView(store: store, scope: scope)
+                    case .editRule(let id, let scope):
+                        TeamRuleEditorView(store: store, scope: scope, ruleId: id)
                     }
                 }
         }
@@ -188,13 +192,21 @@ struct TeamMapSheet: View {
                     .foregroundStyle(Color("TextTertiary"))
             }
             ForEach(map.rules) { rule in
-                TeamRuleRow(rule: rule, onDelete: map.viewerIsAdmin ? { deleteRule(rule) } : nil)
+                TeamRuleRow(rule: rule,
+                            onDelete: map.viewerIsAdmin ? { deleteRule(rule) } : nil,
+                            onEdit: map.viewerIsAdmin ? { path.append(.editRule(id: rule.id, scope: rule.scopeKey)) } : nil,
+                            onToggle: map.viewerIsAdmin ? { toggleRule(rule, $0) } : nil)
             }
             if let ruleError {
                 Text(ruleError).font(.footnote).foregroundStyle(.red)
             }
         }
         .padding(.horizontal, 16)
+    }
+
+    private func toggleRule(_ rule: TeamRule, _ enabled: Bool) {
+        ruleError = nil
+        Task { ruleError = await store.setRuleEnabled(id: rule.id, enabled: enabled) }
     }
 
     private func deleteRule(_ rule: TeamRule) {

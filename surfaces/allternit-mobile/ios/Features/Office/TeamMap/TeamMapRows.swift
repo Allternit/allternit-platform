@@ -55,9 +55,14 @@ struct TeamNodeAvatar: View {
 }
 
 /// One rule line: lock + "Always on" for a built-in rule, else On/Off.
+/// With `onEdit` the sentence opens the editor; with `onToggle` On/Off is a
+/// switch (owner/admin only; locked rules never get either).
 struct TeamRuleRow: View {
     let rule: TeamRule
     var onDelete: (() -> Void)?
+    var onEdit: (() -> Void)?
+    /// Called with the new value of `enabled`.
+    var onToggle: ((Bool) -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -65,14 +70,19 @@ struct TeamRuleRow: View {
                 .font(.footnote)
                 .foregroundStyle(Color("TextSecondary"))
                 .accessibilityHidden(true)
-            Text(rule.text)
-                .font(.subheadline)
-                .foregroundStyle(Color("TextPrimary"))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(Color("TextSecondary"))
+            sentence
+            if let onToggle, !rule.locked {
+                Toggle(isOn: Binding(get: { rule.enabled }, set: { onToggle($0) })) {
+                    Text(statusText)
+                }
+                .labelsHidden()
+                .accessibilityLabel("Rule \(statusText)")
+                .accessibilityHint("Turns this rule on or off")
+            } else {
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(Color("TextSecondary"))
+            }
             if let onDelete, !rule.locked {
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
@@ -85,8 +95,26 @@ struct TeamRuleRow: View {
                 .accessibilityLabel("Delete rule")
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(rule.text). \(statusText)")
+    }
+
+    @ViewBuilder
+    private var sentence: some View {
+        let text = Text(rule.text)
+            .font(.subheadline)
+            .foregroundStyle(Color("TextPrimary"))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if let onEdit, !rule.locked {
+            Button(action: onEdit) {
+                text.frame(minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(rule.text). \(statusText)")
+            .accessibilityHint("Edit this rule")
+        } else {
+            text
+                .accessibilityLabel("\(rule.text). \(statusText)")
+        }
     }
 
     private var statusText: String {

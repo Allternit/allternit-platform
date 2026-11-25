@@ -57,6 +57,31 @@ final class TeamMapStore: ObservableObject {
         await write { try await self.client.deleteRule(id: id) }
     }
 
+    func updateRule(id: String, input: TeamRuleInput) async -> String? {
+        await write { try await self.client.updateRule(id: id, input: input) }
+    }
+
+    func setRuleEnabled(id: String, enabled: Bool) async -> String? {
+        await write { try await self.client.setRuleEnabled(id: id, enabled: enabled) }
+    }
+
+    func revokeGrant(_ grant: TeamGrant) async -> String? {
+        await write { try await self.client.revokeGrant(grant) }
+    }
+
+    /// The full rule (every field) for the editor; throws a `TeamMapError` sentence on failure.
+    func fullRule(id: String) async throws -> TeamFullRule {
+        let all = try await client.rules()
+        guard let rule = all.first(where: { $0.id == id }) else {
+            throw TeamMapError.refused("This rule no longer exists. Reload the map.")
+        }
+        return rule
+    }
+
+    func appAccess(kind: String, ref: String) async throws -> TeamAppAccess {
+        try await client.appAccess(kind: kind, ref: ref)
+    }
+
     func decide(_ ask: TeamAsk, approve: Bool) async -> String? {
         await write { try await self.client.resolve(ask, approve: approve) }
     }
