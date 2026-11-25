@@ -63,6 +63,8 @@ import com.allternit.core.api.ApiJson
 import com.allternit.core.api.ApiResult
 import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArt
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.feature.chat.RuntimeCall
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -175,9 +177,12 @@ internal fun AciTopBar(title: String, backTitle: String, onBack: () -> Unit, tra
 
 /** Loading, empty and error states (iOS FriendlyStateView). */
 @Composable
-internal fun AciStateCard(title: String, message: String, actionTitle: String? = null, onAction: (() -> Unit)? = null, tag: String = "aciState") {
+internal fun AciStateCard(title: String, message: String, actionTitle: String? = null, onAction: (() -> Unit)? = null, tag: String = "aciState", art: EmptyArtKind? = null) {
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 40.dp).testTag(tag), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (art != null) {
+            Box(Modifier.padding(bottom = 12.dp).clearAndSetSemantics {}) { EmptyArt(art, size = 96.dp) }
+        }
         Text(title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         Spacer(Modifier.size(6.dp))
         Text(message, color = c.textSecondary, fontSize = 13.sp, textAlign = TextAlign.Center)

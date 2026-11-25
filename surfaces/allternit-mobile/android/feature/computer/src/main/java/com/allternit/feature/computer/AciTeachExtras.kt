@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.listUnder
@@ -148,7 +150,7 @@ internal fun TeachProfileSheet(client: TeachClient, onDismiss: () -> Unit) {
             Text("Business profile", color = c.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             Text("Set things like your ERP address or reports folder once. A skill uses them as {{profile.key}}, so it doesn’t need an input for them each run.", color = c.textSecondary, fontSize = 13.sp)
             if (loading) Text("Loading…", color = c.textTertiary, fontSize = 13.sp)
-            else if (rows.isEmpty()) Text("Nothing here yet. Add the first value.", color = c.textTertiary, fontSize = 13.sp)
+            else if (rows.isEmpty()) InlineEmpty("Nothing here yet. Add the first value.", art = EmptyArtKind.Sheets)
             rows.forEachIndexed { i, row ->
                 AciCard(Modifier.testTag("aciTeachProfileRow-$i")) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

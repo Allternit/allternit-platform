@@ -59,6 +59,7 @@ import com.allternit.core.design.ProvideDockScroll
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.rfb.ComputerDriveScreen
 import com.allternit.core.rfb.ComputerRecord
 import com.allternit.core.rfb.ComputersApi
@@ -123,7 +124,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))
                 devices.isEmpty() -> EmptyBox(
                     "No computers paired", "Open Allternit Desktop on a computer signed in to this account, and it shows up here.",
-                    icon = { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textPrimary, modifier = Modifier.size(18.dp)) },
+                    art = EmptyArtKind.ConnectScene,
                 )
                 else -> AciRoundedCard {
                     devices.forEach { d ->
@@ -237,9 +238,8 @@ internal fun AciComputerScreenSheet(onDismiss: () -> Unit) {
                         error != null -> FriendlyState(FriendlyStyle.Error, "Couldn't load computers", error.orEmpty(), Modifier.padding(24.dp),
                             actionTitle = "Retry", onAction = { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusError) }
                         computers.isEmpty() -> FriendlyState(FriendlyStyle.Empty, "No computers yet",
-                            "Open Allternit Desktop on a computer signed in to this account, and it shows up here.", Modifier.padding(24.dp)) {
-                            Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary)
-                        }
+                            "Open Allternit Desktop on a computer signed in to this account, and it shows up here.", Modifier.padding(24.dp),
+                            art = EmptyArtKind.ConnectScene) { }
                         else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
                             Column(Modifier.clip(RoundedCornerShape(12.dp)).background(c.fillNeutral)) {
                                 computers.forEachIndexed { i, comp ->

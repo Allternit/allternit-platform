@@ -60,6 +60,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.str
 import java.time.Duration
@@ -358,7 +360,7 @@ internal fun AccessTab(computer: ConsoleComputer) {
         }
         HostNotReady(keys, "SSH keys aren't available on your account yet.", "Asleep, not woken. Keys show when it is awake.")
         (keys.state as? HostRead.Ok)?.value?.let { list ->
-            if (list.isEmpty()) CNote("No keys yet. Add one to sign in over SSH.") else list.forEach { key ->
+            if (list.isEmpty()) InlineEmpty("No keys yet. Add one to sign in over SSH.", art = EmptyArtKind.Key) else list.forEach { key ->
                 Row(Modifier.fillMaxWidth().testTag("aciConsoleKey"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(key.label, color = c.textPrimary, fontSize = 14.sp)
@@ -445,7 +447,7 @@ internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (
             HostNotReady(backups, "Backups aren't available for this computer yet.", "Asleep, not woken. Backups show when it is awake.")
             (backups.state as? HostRead.Ok)?.value?.let { loaded ->
                 val list = loaded.backups
-                if (list.isEmpty()) CNote("No backups yet. The first one is made within a day.")
+                if (list.isEmpty()) InlineEmpty("No backups yet. The first one is made within a day.", art = EmptyArtKind.Log)
                 else if (!loaded.canRestore) CNote("Restoring from a backup isn't available for this computer right now.")
                 list.forEach { b ->
                     Row(Modifier.fillMaxWidth().testTag("aciConsoleBackup"), verticalAlignment = Alignment.CenterVertically) {

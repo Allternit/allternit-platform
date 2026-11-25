@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.list
@@ -186,7 +188,7 @@ internal fun AciConsoleSection(restorePoints: (@Composable (onDone: () -> Unit) 
                 Note(p.message)
                 AciPillButton("Try again", "aciConsoleRetry") { attempt++ }
             }
-            is ConsolePhase.Ready -> if (p.rows.isEmpty()) Note("No computers yet. Add one above and it shows its health here.") else {
+            is ConsolePhase.Ready -> if (p.rows.isEmpty()) InlineEmpty("No computers yet. Add one above and it shows its health here.", art = EmptyArtKind.ConnectScene) else {
                 Text("${p.rows.size} computers · ${p.rows.count { it.isOnline }} online", color = c.textSecondary, fontSize = 13.sp)
                 val flagged = p.rows.filter { it.attention.isNotEmpty() }
                 if (flagged.isNotEmpty()) {
@@ -229,7 +231,7 @@ private fun ConsoleCard(cp: ConsoleComputer, onOpen: () -> Unit) {
             Meter("Memory", s.memoryPercent)
             Meter("Disk", s.diskPercent)
             if (cp.isAsleep) Text("Last sample while awake. We never wake it to read it.", color = c.textTertiary, fontSize = 12.sp)
-        } else Text("No health sample yet", color = c.textTertiary, fontSize = 13.sp)
+        } else InlineEmpty("No health sample yet", art = EmptyArtKind.Chart)
         cp.servicesCount?.let { Text("$it services", color = c.textSecondary, fontSize = 13.sp) }
     }
 }

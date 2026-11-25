@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
@@ -120,7 +121,7 @@ fun AciMiniAppsStore(onClose: () -> Unit) {
                 when {
                     failed && list == null -> AciStateCard("Couldn't load catalog", "Check your connection and try again.", "Retry", { scope.launch { load() } })
                     list == null -> AciStateCard("Loading…", "Reading the catalog.")
-                    filtered.isEmpty() -> AciStateCard("No mini apps found", if (q.isEmpty()) "Browse connectors, runtimes, and tools." else "No mini apps match your search.")
+                    filtered.isEmpty() -> AciStateCard("No mini apps found", if (q.isEmpty()) "Browse connectors, runtimes, and tools." else "No mini apps match your search.", art = EmptyArtKind.Search)
                     else -> filtered.forEach { app ->
                         AciCard(Modifier.testTag("aciMiniCard-${app.id}")) {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
