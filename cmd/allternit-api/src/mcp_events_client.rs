@@ -161,6 +161,9 @@ pub fn connector_events_router_with(ctx: Ctx) -> Router<Arc<AppState>> {
         .merge(crate::mcp_event_automations::router())
         .route("/connectors/:id/events", get(list_h).post(subscribe_h))
         .route("/connectors/:id/events/subscriptions/:sid", delete(unsubscribe_h))
+        .route("/skills", get(skills_h))
+        .route("/watches", get(watches_list_h).post(watch_start_h))
+        .route("/watches/:id", delete(watch_stop_h))
         .layer(Extension(ctx))
 }
 
@@ -1174,6 +1177,380 @@ async fn delivery_h(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Re
             warn!("mcp events: delivery failed: {e}");
             err(StatusCode::SERVICE_UNAVAILABLE, "unavailable", "try again")
         }
+    }
+}
+
+
+// ---------------------------------------------------------------- skills from connected servers (SEP-2640)
+
+const SKILLS_PER_SERVER_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// `GET /api/v1/mcp/skills` → `[{server, uri, name, description}]`: the
+/// `skill://` resources of every enabled connector. A connector that is down,
+/// needs sign-in or has no skills is left out (the list is a convenience).
+async fn skills_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ctx>, Extension(user): Extension<AuthUser>) -> Response {
+    let uid = user.user_id.clone();
+    let ids = blocking(&state, move |c| {
+        let mut stmt = c.prepare("SELECT id FROM mcp_connectors WHERE user_id = ?1 AND enabled <> 0 ORDER BY created_at, id")?;
+        let rows = stmt.query_map(params![uid], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    })
+    .await
+    .unwrap_or_default();
+    let mut out: Vec<Value> = Vec::new();
+    for id in ids {
+        let listed = tokio::time::timeout(SKILLS_PER_SERVER_TIMEOUT, async {
+            let (connector, client) = session(&state, &ctx, &user.user_id, &id).await.ok()?;
+            let skills = client.list_skills().await.ok();
+            mcp_apps::close_session(client).await;
+            skills.map(|s| (connector.name.clone(), s))
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some((name, skills)) = listed {
+            out.extend(skills.into_iter().map(|s| json!({ "server": name, "connectorId": id, "uri": s.uri, "name": s.name, "description": s.description })));
+        }
+    }
+    Json(Value::Array(out)).into_response()
+}
+
+// ---------------------------------------------------------------- poll watches (SEP-3415 `events/poll`)
+//
+// A watch is held by one live session (lane 37's "Watching" chip). While it
+// exists a task polls the connector; delete it (or let its lease lapse) and
+// the task ends. Nothing is persisted and nothing runs on a schedule: with no
+// watch, events keep arriving the old way, by webhook, and wake the bot.
+// Events a watch fetches go through [`ingest`] against the active
+// subscription for the same event (same dedupe key as the webhook copy), so
+// a bot is woken once however the event arrived.
+
+use mcp_client::PollBatch;
+use tokio_util::sync::CancellationToken;
+
+const WATCH_LEASE: Duration = Duration::from_secs(2 * 60 * 60);
+const MAX_WATCHES_PER_USER: usize = 20;
+const MAX_FAIL_BACKOFF_MS: u64 = 5 * 60_000;
+
+#[async_trait]
+trait EventPoller: Send {
+    async fn poll(&mut self, cursor: Option<&str>) -> Result<PollBatch, String>;
+    async fn close(&mut self) {}
+}
+
+type Sink = Arc<dyn Fn(Value) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
+
+struct WatchEntry {
+    id: String,
+    user_id: String,
+    server: String,
+    event: String,
+    arguments: Value,
+    session_id: String,
+    started_at: String,
+    token: CancellationToken,
+    lease_until: Arc<Mutex<Instant>>,
+    event_count: Arc<std::sync::atomic::AtomicU64>,
+    last_event_at: Arc<Mutex<Option<String>>>,
+}
+
+impl WatchEntry {
+    fn view(&self) -> Value {
+        json!({
+            "watchId": self.id,
+            "server": self.server,
+            "event": self.event,
+            "arguments": self.arguments,
+            "sessionId": self.session_id,
+            "startedAt": self.started_at,
+            "eventCount": self.event_count.load(std::sync::atomic::Ordering::Relaxed),
+            "lastEventAt": self.last_event_at.lock().ok().and_then(|g| g.clone()),
+        })
+    }
+}
+
+fn watches() -> &'static Mutex<HashMap<String, WatchEntry>> {
+    static W: OnceLock<Mutex<HashMap<String, WatchEntry>>> = OnceLock::new();
+    W.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The poll loop: runs until `token` is cancelled or the lease lapses.
+async fn poll_loop<P: EventPoller>(mut poller: P, token: CancellationToken, lease_until: Arc<Mutex<Instant>>, sink: Sink) {
+    let mut cursor: Option<String> = None;
+    let mut delay = Duration::ZERO;
+    let mut fails = 0u32;
+    loop {
+        tokio::select! {
+            _ = token.cancelled() => break,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        if lease_until.lock().map(|l| Instant::now() >= *l).unwrap_or(true) {
+            break;
+        }
+        let polled = tokio::select! {
+            _ = token.cancelled() => break,
+            r = poller.poll(cursor.as_deref()) => r,
+        };
+        match polled {
+            Ok(batch) => {
+                fails = 0;
+                for e in batch.events {
+                    sink(e).await;
+                }
+                cursor = batch.cursor;
+                delay = Duration::from_millis(batch.next_poll_ms);
+            }
+            Err(e) => {
+                fails = (fails + 1).min(10);
+                debug!("mcp events: poll failed ({fails}): {e}");
+                delay = Duration::from_millis((mcp_client::events_poll::DEFAULT_POLL_MS << fails.min(5)).min(MAX_FAIL_BACKOFF_MS));
+            }
+        }
+    }
+    poller.close().await;
+}
+
+/// Register a watch and start its task. Returns the watch id.
+#[allow(clippy::too_many_arguments)]
+fn spawn_watch<P: EventPoller + 'static>(user_id: &str, server: &str, event: &str, arguments: Value, session_id: &str, poller: P, sink: Sink) -> String {
+    let id = format!("wch_{}", uuid::Uuid::new_v4().simple());
+    let token = CancellationToken::new();
+    let lease_until = Arc::new(Mutex::new(Instant::now() + WATCH_LEASE));
+    let count = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let last = Arc::new(Mutex::new(None));
+    let counted: Sink = {
+        let (count, last, sink) = (count.clone(), last.clone(), sink);
+        Arc::new(move |e: Value| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut l) = last.lock() {
+                *l = Some(now());
+            }
+            sink(e)
+        })
+    };
+    let entry = WatchEntry {
+        id: id.clone(),
+        user_id: user_id.to_string(),
+        server: server.to_string(),
+        event: event.to_string(),
+        arguments,
+        session_id: session_id.to_string(),
+        started_at: now(),
+        token: token.clone(),
+        lease_until: lease_until.clone(),
+        event_count: count,
+        last_event_at: last,
+    };
+    if let Ok(mut w) = watches().lock() {
+        w.insert(id.clone(), entry);
+    }
+    let reg_id = id.clone();
+    tokio::spawn(async move {
+        poll_loop(poller, token, lease_until, counted).await;
+        if let Ok(mut w) = watches().lock() {
+            w.remove(&reg_id);
+        }
+    });
+    id
+}
+
+/// Stop a watch the user owns. `true` when it existed.
+fn stop_watch(user_id: &str, id: &str) -> bool {
+    let Ok(mut w) = watches().lock() else { return false };
+    if w.get(id).is_some_and(|e| e.user_id == user_id) {
+        if let Some(e) = w.remove(id) {
+            e.token.cancel();
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// The real poller: one session to the connector, reopened after a failure.
+struct ConnectorPoller {
+    state: Arc<AppState>,
+    ctx: Ctx,
+    user: String,
+    connector_id: String,
+    event: String,
+    arguments: Value,
+    client: Option<McpClient>,
+}
+
+#[async_trait]
+impl EventPoller for ConnectorPoller {
+    async fn poll(&mut self, cursor: Option<&str>) -> Result<PollBatch, String> {
+        if self.client.is_none() {
+            let (_c, client) = session(&self.state, &self.ctx, &self.user, &self.connector_id).await.map_err(|f| f.message)?;
+            self.client = Some(client);
+        }
+        let r = self.client.as_ref().expect("opened above").poll_events(&self.event, &self.arguments, cursor).await;
+        match r {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                if let Some(c) = self.client.take() {
+                    mcp_apps::close_session(c).await;
+                }
+                Err(e.to_string())
+            }
+        }
+    }
+    async fn close(&mut self) {
+        if let Some(c) = self.client.take() {
+            mcp_apps::close_session(c).await;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct WatchRequest {
+    server: String,
+    event: String,
+    session_id: String,
+    #[serde(default = "empty_object")]
+    arguments: Value,
+}
+
+/// `POST /api/v1/mcp/watches {server, event, session_id}` → `{watch_id}`.
+/// Posting the same (server, event, arguments, session) again returns the
+/// same id and renews its lease.
+async fn watch_start_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ctx>, Extension(user): Extension<AuthUser>, Json(req): Json<WatchRequest>) -> Response {
+    if req.server.is_empty() || req.event.is_empty() || req.session_id.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "bad_request", "server, event and session_id are required");
+    }
+    if !req.arguments.is_object() {
+        return err(StatusCode::BAD_REQUEST, "bad_request", "arguments must be an object");
+    }
+    {
+        let w = watches().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(e) = w.values().find(|e| {
+            e.user_id == user.user_id && e.server == req.server && e.event == req.event && e.session_id == req.session_id && ev::canonical_json(&e.arguments) == ev::canonical_json(&req.arguments)
+        }) {
+            if let Ok(mut l) = e.lease_until.lock() {
+                *l = Instant::now() + WATCH_LEASE;
+            }
+            return Json(json!({ "watch_id": e.id })).into_response();
+        }
+        if w.values().filter(|e| e.user_id == user.user_id).count() >= MAX_WATCHES_PER_USER {
+            return err(StatusCode::TOO_MANY_REQUESTS, "too_many_watches", "stop a watch before starting another");
+        }
+    }
+    match connector_events(&state, &ctx, &user.user_id, &req.server).await {
+        Ok((true, events)) => {
+            let def = events.iter().find(|e| e.get("name").and_then(Value::as_str) == Some(req.event.as_str()));
+            let Some(def) = def else { return err(StatusCode::NOT_FOUND, "event_not_found", "the server has no such event") };
+            let poll_ok = def.get("delivery").and_then(Value::as_array).map_or(true, |d| d.iter().any(|m| m.as_str() == Some("poll")));
+            if !poll_ok {
+                return err(StatusCode::UNPROCESSABLE_ENTITY, "poll_unsupported", "this event is only offered by webhook");
+            }
+        }
+        Ok((false, _)) => return err(StatusCode::UNPROCESSABLE_ENTITY, "unsupported", "the server has no events"),
+        Err(f) if f.reason == "connector_not_found" => return err(StatusCode::NOT_FOUND, "connector_not_found", "connector not found"),
+        Err(f) => return err(StatusCode::BAD_GATEWAY, &f.reason, &f.message),
+    }
+    let poller = ConnectorPoller {
+        state: state.clone(),
+        ctx: ctx.clone(),
+        user: user.user_id.clone(),
+        connector_id: req.server.clone(),
+        event: req.event.clone(),
+        arguments: req.arguments.clone(),
+        client: None,
+    };
+    let sink: Sink = {
+        let (state, owner, connector, event) = (state.clone(), user.user_id.clone(), req.server.clone(), req.event.clone());
+        Arc::new(move |e: Value| {
+            let (state, owner, connector, event) = (state.clone(), owner.clone(), connector.clone(), event.clone());
+            Box::pin(async move { wake_from_poll(&state, &owner, &connector, &event, e).await })
+        })
+    };
+    let id = spawn_watch(&user.user_id, &req.server, &req.event, req.arguments, &req.session_id, poller, sink);
+    Json(json!({ "watch_id": id })).into_response()
+}
+
+/// Hand a polled event to the bot the user chose for this event (the same
+/// path a webhook delivery takes). No active subscription = nobody to wake;
+/// the watch still counts the event.
+async fn wake_from_poll(state: &Arc<AppState>, owner: &str, connector_id: &str, event_name: &str, mut event: Value) {
+    let rows = rows_where(state, "user_id = ?1 AND connector_id = ?2 AND name = ?3 AND status = 'active'", vec![owner.to_string(), connector_id.to_string(), event_name.to_string()])
+        .await
+        .unwrap_or_default();
+    let Some(row) = rows.first() else { return };
+    if event.get("name").is_none() {
+        event["name"] = json!(event_name);
+    }
+    let body = json!({ "subscriptionKey": row.id, "event": event });
+    if let Err(e) = ingest(state, owner, &body).await {
+        warn!("mcp events: polled event not delivered: {e}");
+    }
+}
+
+/// `DELETE /api/v1/mcp/watches/:id` → 204 (404 when not the caller's).
+async fn watch_stop_h(Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
+    if stop_watch(&user.user_id, &id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        err(StatusCode::NOT_FOUND, "watch_not_found", "watch not found")
+    }
+}
+
+#[derive(Deserialize)]
+struct WatchQuery {
+    session_id: Option<String>,
+}
+
+/// `GET /api/v1/mcp/watches?session_id=` → `{watches: [...]}`.
+async fn watches_list_h(Extension(user): Extension<AuthUser>, axum::extract::Query(q): axum::extract::Query<WatchQuery>) -> Response {
+    let w = watches().lock().unwrap_or_else(|p| p.into_inner());
+    let mut list: Vec<&WatchEntry> = w.values().filter(|e| e.user_id == user.user_id && q.session_id.as_deref().map_or(true, |s| e.session_id == s)).collect();
+    list.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
+    Json(json!({ "watches": list.iter().map(|e| e.view()).collect::<Vec<_>>() })).into_response()
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Fake(Arc<AtomicUsize>, Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl EventPoller for Fake {
+        async fn poll(&mut self, _cursor: Option<&str>) -> Result<PollBatch, String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(PollBatch { events: vec![json!({ "eventId": "e" })], cursor: Some("c".into()), next_poll_ms: 5 })
+        }
+        async fn close(&mut self) {
+            self.1.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_stops_when_the_watch_is_deleted() {
+        let (polls, closed, seen) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let sink: Sink = {
+            let seen = seen.clone();
+            Arc::new(move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {})
+            })
+        };
+        let id = spawn_watch("poll-user", "conn", "email.received", json!({}), "sess-1", Fake(polls.clone(), closed.clone()), sink);
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(polls.load(Ordering::SeqCst) >= 2, "poll loop should be running");
+        assert!(seen.load(Ordering::SeqCst) >= 2);
+        assert!(watches().lock().unwrap().get(&id).is_some_and(|e| e.event_count.load(Ordering::Relaxed) >= 2));
+
+        assert!(!stop_watch("someone-else", &id), "another user cannot stop it");
+        assert!(stop_watch("poll-user", &id));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let after = polls.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(polls.load(Ordering::SeqCst), after, "no polls after delete");
+        assert_eq!(closed.load(Ordering::SeqCst), 1, "the session is closed");
+        assert!(!watches().lock().unwrap().contains_key(&id));
+        assert!(!stop_watch("poll-user", &id));
     }
 }
 

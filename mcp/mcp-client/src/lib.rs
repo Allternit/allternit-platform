@@ -57,11 +57,13 @@
 
 pub mod bridge;
 pub mod error;
+pub mod events_poll;
 pub mod health;
 pub mod oauth;
 pub mod protocol;
 pub mod registry;
 pub mod server_requests;
+pub mod skills;
 pub mod transport;
 
 #[cfg(test)]
@@ -85,6 +87,8 @@ pub use mcp_protocol::tasks::{
     CreateTaskResult, DetailedTask, ElicitAction, ElicitRequest, ElicitResult, InputRequest, InputRequests,
     InputResponse, InputResponses, Task, TaskStatus, TASKS_EXTENSION_ID,
 };
+pub use events_poll::PollBatch;
+pub use skills::SkillInfo;
 pub use server_requests::{DeclineAll, ElicitContext, HandlerError, ServerRequestHandler};
 
 /// What `tools/call` produced: the tool's result, or (only when the client
