@@ -1,0 +1,130 @@
+---
+title: Make it an app
+description: Turn a page into an app with its own name, icon and permission level, install it on Desktop, the web or your phone, and share it by link.
+---
+
+A page that acts like an app (see [Pages that act like apps](/guides/artifact-apps)) can become a real **app**. It gets a name and an icon, it opens in its own window, and you can share it with a link.
+
+<Note>
+This is in beta. The pieces below sit behind feature flags that are off by default: `apps.install` (Make it an app, Install), `apps.shelf` (the Apps shelf and share-link list), `mcp.tasks` (task card and form in chat) and `mcp.skills` (server skills). Where a section needs one, it says so.
+</Note>
+
+## Make it an app
+
+Open the page, choose **Share**, then **Make it an app**. Docs, Slides and Sheets pages cannot be made into apps; the entry does not show for them. You set four things.
+
+| Setting | What it is |
+| --- | --- |
+| **Name** | What the app is called on the shelf, in its window and on the Dock, Start menu or home screen. |
+| **Icon** | A small picture for the same places. |
+| **Where it runs** | **Hosted**: it runs from an Allternit address and works while your computer is off. **My computer**: it runs from your own computer and only works while that computer is on. |
+| **What it can use** | The permission level, below. |
+
+The name and the app address are set once. The address is random, so it cannot be guessed.
+
+### What it can use
+
+The permission level decides what the app is allowed to touch.
+
+| Level | The app can | Who can use it |
+| --- | --- | --- |
+| **Browser** | Show its page and open links or download files you approve. It cannot read or save anything about the person using it. | Anyone with the link, signed in or not. |
+| **App** | Everything in Browser, plus save its own data, ask AI (billed to the person using it, not to you) and call the app's own tools. | Signed-in people. |
+| **Full** | Everything in App, plus use the viewer's connected apps, run long tasks, wake on events and install its skill. | Your own apps and apps shared inside your organization only. Never by public link. |
+
+An app that uses a connected server from another company can reach the **App** level at most. We cannot vouch for that company's code, so it never gets **Full**.
+
+### When it asks again
+
+When you or someone else installs the app, a sheet shows its level and what it uses. You approve once. The app asks again only when it **grows**: when its level goes up, or when a new version adds something it could not do before. A new version that does the same things does not ask.
+
+## Install an app
+
+Once a page is an app, **Install** appears on it. Each app opens in its own window.
+
+| Where | What you get |
+| --- | --- |
+| **Desktop on Mac** | Its own tile in the Dock, with its own name and icon, kept in `Applications/Allternit Apps` in your home folder. Quitting the window leaves it in the menu bar when you chose keep running. |
+| **Desktop on Windows** | A Start menu entry that pins to the taskbar as its own app. |
+| **Desktop on Linux** | A `.desktop` launcher in your app menu. Open windows still group under Allternit in some desktops. |
+| **On the web (Chrome)** | Chrome's **Install** button on the app's own address. Safari shows how to use Add to Home Screen instead. |
+| **iPhone** | The app appears on the shelf in the Allternit app. There is no separate icon on the home screen. |
+| **Android** | The shelf, and **Add to Home Screen** for its own icon. |
+
+Installing an app someone shared by link works only for **Browser** level apps. Apps at a higher level ask you to sign in first.
+
+## The Apps shelf
+
+<Note>Behind `apps.shelf`.</Note>
+
+The shelf lists your apps in two sections.
+
+- **Made by you / your org**: pages you or your organization turned into apps.
+- **From a connected server**: apps that a connected MCP server ships with its own screen. They show a small **From server** label.
+
+Each row shows its level, whether it is installed and whether it is pinned. Pin an app to keep it on the version you approved. Open one to run it, or share it from its row.
+
+## Share by link
+
+Share an app from **Share** on the page or from its shelf row. There are two kinds of link.
+
+| Link | Address | What it does |
+| --- | --- | --- |
+| **Hosted** | `https://<name>.allternitusercontent.com` | The app runs from Allternit. It works while your computer is off. |
+| **Live** | `https://<name>.live.allternitusercontent.com` | The app runs on your computer and the link reaches it while your computer is on. |
+
+Your links are listed under **Share links**. For each you can:
+
+- **Pause** a link, then resume it. A paused link does not open the app until you resume it.
+- **Stop** a link. It stops for good; you make a new one to share again.
+
+Live links have limits per account: **3 live links at a time and 20 GB of traffic a month**. At the limit you can stop a link to free a slot, and the count resets with the month. Allternit can also stop a link that breaks the [terms](/legal/acceptable-use-policy), and the link then stays stopped.
+
+A link to an app from a connected server opens the Allternit shell and asks the person to connect that server. We do not pass your own sign-in with that server to them.
+
+## Tasks and forms in chat
+
+<Note>Behind `mcp.tasks`.</Note>
+
+When a tool takes a while, chat shows one **task card** instead of waiting. It shows the status, any progress, and a **Stop** button. You can keep chatting while it runs.
+
+When a server or an app needs more from you, such as a choice or a missing detail, chat shows one **form** with the fields it asks for. **Accept** sends your answers, **Decline** says no, and closing it cancels. A form that opens a web page for sign-in shows a link instead of fields. If nobody answers within two minutes it counts as cancelled.
+
+The same card and form appear in apps, in chat and from connected servers, on Desktop, ai.allternit.com, the phone layout and the m.allternit.com app. See [MCP tools in Gizzi](/cli/mcp#long-running-tools-mcp-tasks) for the terminal.
+
+## The Watching strip
+
+When a chat is watching for an event from a connected server (a new row, a finished build), a **Watching** strip lists it under the composer. It clears when the session ends. Watches last two hours and each person can have 20 at once. See [MCP events](/guides/mcp-events) for how events work.
+
+## Server skills
+
+<Note>Behind `mcp.skills`.</Note>
+
+A connected server can ship skills. They appear in the skill list with a **From server** label so you can tell them from your own. A skill is read when you use it; the server's text is treated as data, not as instructions that change your settings.
+
+## Server Cards
+
+A server that publishes a Server Card at `/.well-known/mcp` can be added in one step. In the connect screen, **Add** on a card connects that server. Allternit publishes its own card too, so other AI apps can find mcp.allternit.com.
+
+## From the terminal
+
+```bash
+gizzi app list                 # your apps and their level
+gizzi app open <slug>          # open one in the browser
+gizzi app install <slug>       # install
+gizzi app export <slug> --mcp  # let other AI apps open it
+
+gizzi share list               # your links
+gizzi share <slug>             # make a hosted link
+gizzi share pause <link>       # pause; add --resume to resume
+gizzi share stop <link>        # stop for good
+```
+
+`gizzi share <port>` for a live link is not available yet. Inside the Gizzi TUI, `/share` does the same list, pause, resume and stop.
+
+## Related
+
+- [Pages that act like apps](/guides/artifact-apps)
+- [Apps and MCP developer reference](/api/apps-mcp-2026)
+- [MCP Apps integration status](/guides/mcp-apps-status)
+- [MCP events](/guides/mcp-events)
