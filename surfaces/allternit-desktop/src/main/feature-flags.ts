@@ -30,6 +30,8 @@ export const FLAG_DEFINITIONS: Record<string, FlagDefinition> = {
   'feature.hyperframes':   { type: 'boolean', default: false },
   'feature.view-modes':    { type: 'boolean', default: true  },
   'feature.workspace-dnd': { type: 'boolean', default: true  },
+  // Live links hosted by this computer (share-manager.ts, D5). Off until the relay is live.
+  'share.live':            { type: 'boolean', default: false },
 };
 
 type ChangeHandler = (key: string, value: FlagValue) => void;

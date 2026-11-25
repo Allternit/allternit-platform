@@ -99,6 +99,12 @@ const AUTH_FILE_MIME_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
 };
 
+export type RelayHostHandler = (
+  method: string,
+  path: string,
+  body: string | undefined,
+) => Promise<{ status: number; payload: unknown } | null>;
+
 export interface DesktopAuthSession {
   accessToken: string;
   refreshToken: string;
@@ -242,6 +248,8 @@ export class DesktopAuthManager {
   private relayWatchdogTimer: NodeJS.Timeout | null = null;
   private relayLastMessageAt = 0;
   private relayLocalSockets = new Map<string, WebSocket>();
+  /** Relayed `/host/...` commands the Desktop host itself answers (today: `POST /host/shares/start`, lane 40). */
+  private relayHostHandler: RelayHostHandler | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private readonly identityPath = path.join(app.getPath('userData'), 'auth', 'runtime-identity.json');
   private readonly platformKeyPath = path.join(app.getPath('userData'), 'auth', 'platform-encryption-key.bin');
@@ -1600,6 +1608,11 @@ export class DesktopAuthManager {
     }
   }
 
+  /** unified-main registers the share manager here; `null` for an unhandled path answers 404. */
+  setRelayHostHandler(handler: RelayHostHandler | null): void {
+    this.relayHostHandler = handler;
+  }
+
   private async handleRelayRequest(socket: any, message: any): Promise<void> {
     const requestId = typeof message.request_id === 'string' ? message.request_id : '';
     const method = typeof message.method === 'string' ? message.method.toUpperCase() : 'GET';
@@ -1612,7 +1625,19 @@ export class DesktopAuthManager {
       '/ws', '/panes',
       '/v1/',
     ];
-    if (!allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
+    // The one host command (lane 40): exact path only, never the whole /host prefix (matches cloud-api's allow-list).
+    if (requestPath === '/host/shares/start') {
+      const result = method === 'POST' && this.relayHostHandler
+        ? await this.relayHostHandler(method, requestPath, typeof message.body === 'string'
+          ? (message.body_encoding === 'base64' ? Buffer.from(message.body, 'base64').toString('utf8') : message.body)
+          : undefined).catch((error: unknown) => ({ status: 502, payload: { error: 'host_failed', message: error instanceof Error ? error.message : String(error) } }))
+        : null;
+      this.sendRelayJson(socket, requestId, result?.status ?? 404, result?.payload ?? { error: 'not_found', message: 'This computer cannot start live links.' });
+      return;
+    }
+    // Live-link gates on allternit-api: /shares and /shares/:id/* (cloud-api allows them since platform #2971).
+    const isShareGatePath = /^\/shares(?:[/?]|$)/.test(requestPath);
+    if (!isShareGatePath && !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
 
     try {
       const headers = new Headers(message.headers || {});

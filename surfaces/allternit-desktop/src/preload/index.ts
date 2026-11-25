@@ -1339,6 +1339,35 @@ const screenContextAPI = {
   captureWindow: (): Promise<unknown> => ipcRenderer.invoke('screen-context:capture-window'),
 };
 
+// Live links this computer hosts (main/share-manager.ts). Results are {ok:true,...} | {ok:false,error,message}.
+type ShareView = {
+  id: string; subdomain: string; url: string; shareUrl: string; token: string | null; port: number;
+  subject: 'app' | 'mcp'; authMode: 'token' | 'public'; label: string | null;
+  state: 'connected' | 'reconnecting' | 'paused' | 'stopped'; connections: number;
+  lastHeartbeatAt: number | null; lastError: string | null; stopReason: string | null;
+};
+type ShareFailure = { ok: false; error: string; message: string; details?: unknown };
+type ShareEvent = { type: 'share'; share: ShareView } | { type: 'removed'; id: string };
+
+const sharesAPI = {
+  /** Flag `share.live` (default off). */
+  status: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke('shares:status'),
+  start: (request: {
+    port?: number; appSlug?: string; subject?: 'app' | 'mcp'; authMode?: 'token' | 'public'; label?: string; artifactId?: string;
+  }): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:start', request),
+  list: (): Promise<ShareView[]> => ipcRenderer.invoke('shares:list'),
+  pause: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:pause', id),
+  resume: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:resume', id),
+  stop: (id: string): Promise<{ ok: true; stopped: true } | ShareFailure> => ipcRenderer.invoke('shares:stop', id),
+  rotate: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:rotate', id),
+  /** Status changes (connected, reconnecting, paused, stopped, token rotated) and removals. */
+  onEvent: (callback: (event: ShareEvent) => void): (() => void) => {
+    const handler = (_: IpcRendererEvent, event: ShareEvent) => callback(event);
+    ipcRenderer.on('shares:event', handler);
+    return () => ipcRenderer.off('shares:event', handler);
+  },
+};
+
 const allternitDesktopAPI = {
   /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
   promptsBeforeUnload: true,
@@ -1397,6 +1426,7 @@ const allternitDesktopAPI = {
   voiceKeys: voiceKeysAPI,
   meetings: meetingsAPI,
   screenContext: screenContextAPI,
+  shares: sharesAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);
