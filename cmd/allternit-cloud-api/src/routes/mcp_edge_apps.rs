@@ -41,10 +41,25 @@
 //! `APP_DOMAIN` is set; never the first-party `ai.allternit.com` (session
 //! cookies). Without either, the app is not exported.
 //!
+//! **App binding.** The edge keeps no MCP session state, so a mirror call
+//! names its app. To stop a host session from driving any other app of the
+//! caller, opening an app (`open_<slug>` result `structuredContent.binding`,
+//! and a `<meta name="allternit-app-binding">` in an HTML app's `ui://` body)
+//! hands out a signed binding: `apb.<base64url claims>.<base64url HMAC>`,
+//! claims `{u: user tag, a: artifact id, s: slug, t: granted tier, e: exp}`,
+//! one hour. Every mirror call sends it back as `args.binding`; a missing,
+//! forged, expired, other-user or other-app binding, or a method above the
+//! bound tier, is refused with `{code: "app_binding_invalid", reason}`. The
+//! key is derived from `ALLTERNIT_OAUTH_SUB_SECRET` (the edge OAuth server's
+//! secret, 32+ chars); unset = no binding = mirror calls refused.
+//!
 //! Import (an outside MCP App opening here) is client-side (AppScreen), not
 //! in this file.
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 pub const APP_URI_PREFIX: &str = "ui://allternit/apps/";
 pub const MCP_APP_MIME: &str = "text/html;profile=mcp-app";
@@ -154,6 +169,114 @@ pub trait AppsStore: Send + Sync {
     fn app_domain(&self) -> Option<String> {
         std::env::var("APP_DOMAIN").ok().map(|d| d.trim().trim_matches('.').to_string()).filter(|d| !d.is_empty())
     }
+}
+
+// ─── app binding ─────────────────────────────────────────────────────────────
+
+pub const BINDING_PREFIX: &str = "apb";
+/// How long a binding from one open lasts.
+pub const BINDING_TTL_SECS: i64 = 3600;
+/// The `<meta name>` an HTML app's body carries the binding in.
+pub const BINDING_META: &str = "allternit-app-binding";
+
+/// The binding key: a domain-separated hash of the edge OAuth server's
+/// secret (`oauth_server::SUB_SECRET_ENV`, same 32-char minimum). `None`
+/// while it is unset.
+fn binding_key() -> Option<Vec<u8>> {
+    #[cfg(test)]
+    let secret = Some("test-app-binding-secret-0123456789abcdef".to_string());
+    #[cfg(not(test))]
+    let secret = std::env::var(super::oauth_server::SUB_SECRET_ENV).ok().map(|v| v.trim().to_string()).filter(|v| v.len() >= 32);
+    secret.map(|s| Sha256::digest(format!("allternit-mcp-app-binding\0{s}").as_bytes()).to_vec())
+}
+
+/// First 16 hex of sha256(user id): binds the token to the caller without
+/// showing the host the account id.
+fn user_tag(user_id: &str) -> String {
+    hex::encode(&Sha256::digest(user_id.as_bytes())[..8])
+}
+
+fn binding_mac(key: &[u8], payload: &str) -> Hmac<Sha256> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
+    mac.update(BINDING_PREFIX.as_bytes());
+    mac.update(b"\0");
+    mac.update(payload.as_bytes());
+    mac
+}
+
+/// Mint a binding for `app`, opened by `user_id` at `tier`.
+pub(crate) fn mint_binding(key: &[u8], user_id: &str, app: &ExportedApp, tier: Tier, now: i64) -> String {
+    let claims = json!({ "u": user_tag(user_id), "a": app.artifact_id, "s": app.slug, "t": tier.as_str(), "e": now + BINDING_TTL_SECS });
+    let payload = URL_SAFE_NO_PAD.encode(claims.to_string());
+    let sig = URL_SAFE_NO_PAD.encode(binding_mac(key, &payload).finalize().into_bytes());
+    format!("{BINDING_PREFIX}.{payload}.{sig}")
+}
+
+/// What a valid binding names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppBinding {
+    pub artifact_id: String,
+    pub slug: String,
+    pub tier: Tier,
+}
+
+fn binding_invalid(reason: &str) -> MirrorError {
+    MirrorError::new("app_binding_invalid", "Open the app again from its tool in this chat").with("reason", json!(reason))
+}
+
+/// Check a binding's signature, expiry and user. Slug, artifact and tier
+/// are checked by the caller against the app being called.
+pub(crate) fn verify_binding(key: &[u8], token: &str, user_id: &str, now: i64) -> Result<AppBinding, MirrorError> {
+    let parts: Vec<&str> = token.split('.').collect();
+    let [prefix, payload, sig] = parts.as_slice() else { return Err(binding_invalid("format")) };
+    if *prefix != BINDING_PREFIX {
+        return Err(binding_invalid("format"));
+    }
+    let sig = URL_SAFE_NO_PAD.decode(sig).map_err(|_| binding_invalid("format"))?;
+    binding_mac(key, payload).verify_slice(&sig).map_err(|_| binding_invalid("signature"))?;
+    let claims: Value = URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .ok_or_else(|| binding_invalid("format"))?;
+    let (Some(exp), Some(user), Some(artifact_id), Some(slug), Some(tier)) =
+        (claims["e"].as_i64(), claims["u"].as_str(), claims["a"].as_str(), claims["s"].as_str(), claims["t"].as_str().and_then(Tier::parse))
+    else {
+        return Err(binding_invalid("format"));
+    };
+    if exp < now {
+        return Err(binding_invalid("expired"));
+    }
+    if user != user_tag(user_id) {
+        return Err(binding_invalid("user"));
+    }
+    Ok(AppBinding { artifact_id: artifact_id.to_string(), slug: slug.to_string(), tier })
+}
+
+fn now_secs() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// A fresh binding for `user_id` opening `app`, or `None` (logged) while the
+/// key is unset.
+fn binding_for(user_id: &str, app: &ExportedApp) -> Option<String> {
+    let Some(key) = binding_key() else {
+        tracing::warn!("mcp edge apps: {} unset; exported apps get no binding, mirror calls are refused", super::oauth_server::SUB_SECRET_ENV);
+        return None;
+    };
+    Some(mint_binding(&key, user_id, app, effective_tier(app), now_secs()))
+}
+
+/// Put `<meta name="allternit-app-binding">` in an HTML app's head (after
+/// `<head …>`, else `<html …>`, else the doctype, else at the start).
+fn with_binding_meta(html: String, token: &str) -> String {
+    let meta = format!("<meta name=\"{BINDING_META}\" content=\"{}\">", esc_attr(token));
+    let lower = html.to_ascii_lowercase();
+    let after_tag = |tag: &str| lower.find(tag).and_then(|at| lower[at..].find('>').map(|end| at + end + 1));
+    let at = after_tag("<head").or_else(|| after_tag("<html")).or_else(|| after_tag("<!doctype")).unwrap_or(0);
+    let mut out = html;
+    out.insert_str(at, &meta);
+    out
 }
 
 /// Apps are exported only on the agents server, to OAuth callers (not
@@ -274,6 +397,7 @@ fn mirror_tools() -> Vec<Value> {
     let app = json!({ "type": "string", "description": "The app's slug" });
     let scope = json!({ "type": "string", "enum": ["user", "shared"], "default": "user" });
     let key = json!({ "type": "string" });
+    let binding = json!({ "type": "string", "description": "The binding from opening the app (open_<slug> result)" });
     let tool = |name: &str, description: &str, properties: Value, required: Vec<&str>| {
         json!({
             "name": name,
@@ -283,11 +407,11 @@ fn mirror_tools() -> Vec<Value> {
         })
     };
     vec![
-        tool(STORAGE_GET, "Read one stored value of an Allternit app.", json!({ "app": app, "scope": scope, "key": key }), vec!["app", "key"]),
-        tool(STORAGE_SET, "Store one value for an Allternit app.", json!({ "app": app, "scope": scope, "key": key, "value": { "type": "string" } }), vec!["app", "key", "value"]),
-        tool(STORAGE_DELETE, "Delete one stored value of an Allternit app.", json!({ "app": app, "scope": scope, "key": key }), vec!["app", "key"]),
-        tool(STORAGE_LIST, "List stored keys of an Allternit app.", json!({ "app": app, "scope": scope, "prefix": { "type": "string" } }), vec!["app"]),
-        tool(AI_COMPLETE, "One AI completion for an Allternit app, billed to you.", json!({ "app": app, "prompt": { "type": "string" }, "system": { "type": "string" }, "messages": { "type": "array" }, "max_tokens": { "type": "integer" }, "temperature": { "type": "number" } }), vec!["app"]),
+        tool(STORAGE_GET, "Read one stored value of an Allternit app.", json!({ "app": app, "binding": binding, "scope": scope, "key": key }), vec!["app", "binding", "key"]),
+        tool(STORAGE_SET, "Store one value for an Allternit app.", json!({ "app": app, "binding": binding, "scope": scope, "key": key, "value": { "type": "string" } }), vec!["app", "binding", "key", "value"]),
+        tool(STORAGE_DELETE, "Delete one stored value of an Allternit app.", json!({ "app": app, "binding": binding, "scope": scope, "key": key }), vec!["app", "binding", "key"]),
+        tool(STORAGE_LIST, "List stored keys of an Allternit app.", json!({ "app": app, "binding": binding, "scope": scope, "prefix": { "type": "string" } }), vec!["app", "binding"]),
+        tool(AI_COMPLETE, "One AI completion for an Allternit app, billed to you.", json!({ "app": app, "binding": binding, "prompt": { "type": "string" }, "system": { "type": "string" }, "messages": { "type": "array" }, "max_tokens": { "type": "integer" }, "temperature": { "type": "number" } }), vec!["app", "binding"]),
     ]
 }
 
@@ -376,7 +500,13 @@ async fn read_app(store: &dyn AppsStore, user_id: &str, id: &Value, uri: &str) -
     let Some(app) = visible_apps(store, user_id).await.into_iter().find(|a| a.slug == slug) else { return not_found() };
     let (text, frame_domains) = if is_html(&app.body_format) {
         match store.app_body(&app).await {
-            Ok(Some(html)) => (html, Vec::<String>::new()),
+            Ok(Some(html)) => {
+                let html = match binding_for(user_id, &app) {
+                    Some(token) => with_binding_meta(html, &token),
+                    None => html,
+                };
+                (html, Vec::<String>::new())
+            }
             Ok(None) => return not_found(),
             Err(error) => {
                 tracing::warn!("mcp edge apps: body read failed: {error}");
@@ -442,15 +572,30 @@ fn storage_op(tool: &str, args: &Value) -> Result<StorageOp, MirrorError> {
 }
 
 async fn call_mirror(store: &dyn AppsStore, user_id: &str, tool: &str, args: &Value) -> Result<Value, MirrorError> {
-    let slug = args["app"].as_str().ok_or_else(|| MirrorError::new("app_required", "app (the app's slug) is required"))?;
+    // The call must carry the binding from opening this app (module docs).
+    let key = binding_key().ok_or_else(|| binding_invalid("unconfigured"))?;
+    let token = args["binding"].as_str().ok_or_else(|| binding_invalid("missing"))?;
+    let bound = verify_binding(&key, token, user_id, now_secs())?;
+    let slug = args["app"].as_str().unwrap_or(&bound.slug);
+    if slug != bound.slug {
+        return Err(binding_invalid("app"));
+    }
     let app = visible_apps(store, user_id).await.into_iter().find(|a| a.slug == slug).ok_or_else(|| MirrorError::new("not_found", "No such app"))?;
+    if app.artifact_id != bound.artifact_id {
+        return Err(binding_invalid("app"));
+    }
+    let capability = if tool == AI_COMPLETE { "ai" } else { "storage" };
+    // Live gate first (revocations, consent), then the tier granted at open:
+    // a tier raised since then needs the host to open the app again.
+    mirror_gate(&app, capability)?;
+    if capability_tier(capability) > bound.tier {
+        return Err(binding_invalid("tier"));
+    }
     if tool == AI_COMPLETE {
-        mirror_gate(&app, "ai")?;
         return store.ai_complete(&app, user_id, args).await;
     }
     // Shared writes need no separate consent: the install grant is the
     // consent (#2928), and `mirror_gate` checked it.
-    mirror_gate(&app, "storage")?;
     let op = storage_op(tool, args)?;
     store.storage(&app, user_id, op).await
 }
@@ -472,7 +617,11 @@ pub async fn intercept_tool_call(store: &dyn AppsStore, user_id: &str, rpc_metho
     }
     let slug = tool.strip_prefix(OPEN_TOOL_PREFIX)?;
     let app = visible_apps(store, user_id).await.into_iter().find(|a| a.slug == slug)?;
-    let mut result = tool_ok(json!({ "app": { "slug": app.slug, "name": app.name, "tier": effective_tier(&app).as_str() } }), format!("Opened {}.", app.name));
+    let mut opened = json!({ "app": { "slug": app.slug, "name": app.name, "tier": effective_tier(&app).as_str() } });
+    if let Some(token) = binding_for(user_id, &app) {
+        opened["binding"] = json!(token);
+    }
+    let mut result = tool_ok(opened, format!("Opened {}.", app.name));
     result["_meta"] = json!({ "ui": { "resourceUri": resource_uri(&app.slug) } });
     Some(mcp_protocol::rpc_ok(id, result))
 }

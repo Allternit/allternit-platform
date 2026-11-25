@@ -80,6 +80,12 @@ async fn call(store: &PgAppsStore<'_>, user: &str, tool: &str, args: Value) -> V
     reply["result"].clone()
 }
 
+/// Open `slug` as `user` (the `open_<slug>` tool) and return its binding.
+async fn open(store: &PgAppsStore<'_>, user: &str, slug: &str) -> String {
+    let opened = call(store, user, &format!("open_{slug}"), json!({})).await;
+    opened["structuredContent"]["binding"].as_str().expect("open returns a binding").to_string()
+}
+
 #[tokio::test]
 async fn exported_app_is_listed_and_read_for_its_owner_only() {
     let (state, router) = setup().await;
@@ -104,7 +110,9 @@ async fn exported_app_is_listed_and_read_for_its_owner_only() {
     let read = intercept_resources(&store, "owner", "resources/read", &json!(2), &json!({ "uri": "ui://allternit/apps/notesapp1" })).await.unwrap();
     let content = &read["result"]["contents"][0];
     assert_eq!(content["mimeType"], MCP_APP_MIME);
-    assert_eq!(content["text"], "<h1>hi</h1>", "HTML apps are served inline");
+    let text = content["text"].as_str().unwrap();
+    assert!(text.ends_with("<h1>hi</h1>"), "HTML apps are served inline: {text}");
+    assert!(text.starts_with("<meta name=\"allternit-app-binding\" content=\"apb."), "the body carries a binding: {text}");
     assert_eq!(content["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
 
     // Someone else: nothing listed, the read is refused, open_ isn't answered.
@@ -121,7 +129,8 @@ async fn mirror_tool_is_refused_below_app_tier() {
     let store = PgAppsStore { state: &state };
     // Owner's browser-tier app declares storage, but browser < app.
     app(&state, &router, "owner", "viewonly1", "browser", "private", json!({ "storage": true, "export_mcp": true })).await;
-    let refused = call(&store, "owner", STORAGE_SET, json!({ "app": "viewonly1", "key": "k", "value": "v" })).await;
+    let binding = open(&store, "owner", "viewonly1").await;
+    let refused = call(&store, "owner", STORAGE_SET, json!({ "app": "viewonly1", "binding": binding, "key": "k", "value": "v" })).await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(refused["structuredContent"]["code"], "tier_too_low");
     assert_eq!(refused["structuredContent"]["required_tier"], "app");
@@ -136,16 +145,82 @@ async fn mirror_tool_is_refused_below_app_tier() {
     let guest_tools = listed(&store, "guest", "tools/list", "tools").await;
     let names: Vec<&str> = guest_tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert_eq!(names, vec!["open_linkapp1"], "listed, but no mirror tools: {names:?}");
-    let guest = call(&store, "guest", STORAGE_GET, json!({ "app": "linkapp1", "key": "k" })).await;
+    let binding = open(&store, "guest", "linkapp1").await;
+    let guest = call(&store, "guest", STORAGE_GET, json!({ "app": "linkapp1", "binding": binding, "key": "k" })).await;
     assert_eq!(guest["structuredContent"]["code"], "tier_too_low");
 
     // At app tier the owner's call goes through: set, then get returns it.
     app(&state, &router, "owner", "fullapp1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
-    let set = call(&store, "owner", STORAGE_SET, json!({ "app": "fullapp1", "key": "k", "value": "v" })).await;
+    let binding = open(&store, "owner", "fullapp1").await;
+    let set = call(&store, "owner", STORAGE_SET, json!({ "app": "fullapp1", "binding": binding, "key": "k", "value": "v" })).await;
     assert!(set.get("isError").is_none(), "{set}");
-    let got = call(&store, "owner", STORAGE_GET, json!({ "app": "fullapp1", "key": "k" })).await;
+    let got = call(&store, "owner", STORAGE_GET, json!({ "app": "fullapp1", "binding": binding, "key": "k" })).await;
     assert_eq!(got["structuredContent"]["value"], "v");
     // AI isn't declared in the snapshot.
-    let ai = call(&store, "owner", AI_COMPLETE, json!({ "app": "fullapp1", "prompt": "hi" })).await;
+    let ai = call(&store, "owner", AI_COMPLETE, json!({ "app": "fullapp1", "binding": binding, "prompt": "hi" })).await;
     assert_eq!(ai["structuredContent"]["code"], "capability_not_declared");
+}
+
+// ─── app binding (lane 46c) ──────────────────────────────────────────────────
+
+fn binding_reason(result: &Value) -> (&str, &str) {
+    assert_eq!(result["isError"], true, "{result}");
+    (result["structuredContent"]["code"].as_str().unwrap_or(""), result["structuredContent"]["reason"].as_str().unwrap_or(""))
+}
+
+#[tokio::test]
+async fn app_binding_valid_passes_and_missing_is_refused() {
+    let (state, router) = setup().await;
+    let store = PgAppsStore { state: &state };
+    app(&state, &router, "owner", "bindok1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
+    let binding = open(&store, "owner", "bindok1").await;
+    let set = call(&store, "owner", STORAGE_SET, json!({ "app": "bindok1", "binding": binding, "key": "k", "value": "v" })).await;
+    assert!(set.get("isError").is_none(), "{set}");
+    // No `app`: the bound app is used.
+    let got = call(&store, "owner", STORAGE_GET, json!({ "binding": binding, "key": "k" })).await;
+    assert_eq!(got["structuredContent"]["value"], "v", "{got}");
+    // No binding (an old client): refused.
+    let old = call(&store, "owner", STORAGE_GET, json!({ "app": "bindok1", "key": "k" })).await;
+    assert_eq!(binding_reason(&old), ("app_binding_invalid", "missing"));
+    // A tampered binding: refused.
+    let forged = format!("{}x", &binding[..binding.len() - 1]);
+    let bad = call(&store, "owner", STORAGE_GET, json!({ "app": "bindok1", "binding": forged, "key": "k" })).await;
+    assert_eq!(binding_reason(&bad).0, "app_binding_invalid");
+}
+
+#[tokio::test]
+async fn app_binding_for_app_a_is_refused_on_app_b() {
+    let (state, router) = setup().await;
+    let store = PgAppsStore { state: &state };
+    app(&state, &router, "owner", "binda1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
+    app(&state, &router, "owner", "bindb1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
+    let a = open(&store, "owner", "binda1").await;
+    let on_b = call(&store, "owner", STORAGE_SET, json!({ "app": "bindb1", "binding": a, "key": "k", "value": "v" })).await;
+    assert_eq!(binding_reason(&on_b), ("app_binding_invalid", "app"));
+    // Another user replaying the owner's binding: refused.
+    let other = call(&store, "stranger", STORAGE_GET, json!({ "app": "binda1", "binding": a, "key": "k" })).await;
+    assert_eq!(binding_reason(&other), ("app_binding_invalid", "user"));
+}
+
+#[tokio::test]
+async fn app_binding_expired_is_refused() {
+    let (state, router) = setup().await;
+    let store = PgAppsStore { state: &state };
+    app(&state, &router, "owner", "bindexp1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
+    let exported = visible_apps(&store, "owner").await.into_iter().find(|a| a.slug == "bindexp1").unwrap();
+    let stale = mint_binding(&binding_key().unwrap(), "owner", &exported, Tier::App, chrono::Utc::now().timestamp() - 2 * BINDING_TTL_SECS);
+    let refused = call(&store, "owner", STORAGE_GET, json!({ "app": "bindexp1", "binding": stale, "key": "k" })).await;
+    assert_eq!(binding_reason(&refused), ("app_binding_invalid", "expired"));
+}
+
+#[tokio::test]
+async fn app_binding_tier_above_bound_is_refused() {
+    let (state, router) = setup().await;
+    let store = PgAppsStore { state: &state };
+    app(&state, &router, "owner", "bindtier1", "app", "private", json!({ "storage": true, "export_mcp": true })).await;
+    // Opened while the app was browser tier; storage needs app.
+    let exported = visible_apps(&store, "owner").await.into_iter().find(|a| a.slug == "bindtier1").unwrap();
+    let low = mint_binding(&binding_key().unwrap(), "owner", &exported, Tier::Browser, chrono::Utc::now().timestamp());
+    let refused = call(&store, "owner", STORAGE_SET, json!({ "app": "bindtier1", "binding": low, "key": "k", "value": "v" })).await;
+    assert_eq!(binding_reason(&refused), ("app_binding_invalid", "tier"));
 }
