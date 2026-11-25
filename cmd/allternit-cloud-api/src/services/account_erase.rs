@@ -186,6 +186,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("computer_machine_names", USER),
     // Whole-disk file roots setting (migration 160).
     ("computer_whole_disk", USER),
+    // Skills the user owns personally (migration 162); org-owned skills stay with the org.
+    ("cloud_skills", "owner_user_id = $1"),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),

@@ -681,6 +681,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computers_host::routes())
         // Computers console snippets: CRUD + run on many computers, approval required (step 2.9).
         .merge(routes::computer_snippets::routes())
+        // Cloud store for user and org Agent Skills, served over MCP as skill:// (lane 47b).
+        .merge(routes::cloud_skills::routes())
         // One computer, one row: unpair a whole machine by any of its ids (step 2.10).
         .merge(routes::computer_machines::routes())
         // Whole-disk file roots on servers, setting-gated, default off (step 2.11).

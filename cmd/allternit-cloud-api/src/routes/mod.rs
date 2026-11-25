@@ -123,6 +123,7 @@ pub mod computer_alerts;
 pub mod computer_metrics;
 pub mod computers_host;
 pub mod computer_snippets;
+pub mod cloud_skills;
 pub mod computer_machines;
 pub mod computer_file_roots;
 pub mod computers_cloud;
