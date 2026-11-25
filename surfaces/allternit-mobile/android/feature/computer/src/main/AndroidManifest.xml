@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- An installed Allternit app opened from its home-screen shortcut (AppShortcutActivity). Not exported: only our own pinned shortcuts start it. -->
+        <activity
+            android:name="com.allternit.feature.computer.AppShortcutActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.apps"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

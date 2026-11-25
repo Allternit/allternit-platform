@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.allternit.core.api.ApiResult
+import com.allternit.core.api.FeatureFlags
 import com.allternit.core.design.AppLogo
 import androidx.compose.ui.Alignment
 import com.allternit.core.design.AllternitStatic
@@ -215,7 +216,7 @@ internal class McpAppsModel(private val backend: ChatBackend) {
     }
 }
 
-private enum class McpTab(val label: String) { Installed("Installed"), Discover("Discover"), Build("Build") }
+private enum class McpTab(val label: String) { Installed("Installed"), Discover("Discover"), Build("Build"), Shelf("Apps") }
 
 /** ACI › MCP Apps (iOS ACIMcpAppsView): Installed, Discover and Build tabs, Add by URL, and the installed app's sheet. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -226,6 +227,8 @@ internal fun AciMcpAppsView(host: AciHost) {
     val scope = rememberCoroutineScope()
     val model = remember(host.backend) { McpAppsModel(host.backend) }
     var tab by remember { mutableStateOf(McpTab.Installed) }
+    // The Apps tab (shelf + share list) only exists behind the local flag `apps.shelf` (iOS AppsShelfFlag).
+    val tabs = remember(context) { if (FeatureFlags.isOn(context, FeatureFlags.APPS_SHELF)) McpTab.entries else McpTab.entries.filter { it != McpTab.Shelf } }
     var query by remember { mutableStateOf("") }
     var addOpen by remember { mutableStateOf(false) }
     var miniOpen by remember { mutableStateOf(false) }
@@ -242,11 +245,11 @@ internal fun AciMcpAppsView(host: AciHost) {
     Column(Modifier.fillMaxSize().testTag("aciMcpApps")) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
             AciViewHeader("MCP Apps", "Connect apps and services the agent can use.", bottom = 16.dp)
-            AciSearchField(query, "Search apps", { query = it; limit = 48; if (it.isNotEmpty() && tab == McpTab.Build) tab = McpTab.Discover }, "aciMcpSearch")
+            AciSearchField(query, "Search apps", { query = it; limit = 48; if (it.isNotEmpty() && (tab == McpTab.Build || tab == McpTab.Shelf)) tab = McpTab.Discover }, "aciMcpSearch")
             FilterPills(
-                options = McpTab.entries.map { it.label }, selectedIndex = tab.ordinal,
-                onSelect = { i -> tab = McpTab.entries[i]; category = null; collection = null; limit = 48 },
-                modifier = Modifier.padding(vertical = 4.dp), itemTag = { i -> "aciMcpTab-${McpTab.entries[i].name}" },
+                options = tabs.map { it.label }, selectedIndex = tabs.indexOf(tab).coerceAtLeast(0),
+                onSelect = { i -> tab = tabs[i]; category = null; collection = null; limit = 48 },
+                modifier = Modifier.padding(vertical = 4.dp), itemTag = { i -> "aciMcpTab-${tabs[i].name}" },
             )
             Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AciGlassAction("＋ Add by URL", "aciMcpAdd") { addOpen = true }
@@ -309,6 +312,7 @@ internal fun AciMcpAppsView(host: AciHost) {
                     }
                     if (list.size > limit) AciGlassAction("Show more", "aciMcpMore") { limit += 48 }
                 }
+                tab == McpTab.Shelf -> AciAppsShelf()
                 else -> AciMcpBuildTab(model)
             }
             }
