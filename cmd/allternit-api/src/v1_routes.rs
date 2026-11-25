@@ -456,6 +456,7 @@ pub fn v1_router() -> Router<Arc<AppState>> {
         .route("/cli-tools/installed", get(list_cli_tools_stub))
         // Island bar (`/api/v1/bar/*`, lane 15): apps, tools, intent, recents, review, job reads.
         .merge(crate::bar_routes::bar_router())
+        .merge(crate::team_routes::team_router())
 }
 
 async fn health() -> impl IntoResponse {
