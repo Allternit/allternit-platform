@@ -68,6 +68,8 @@ struct CodeSessionsOverview: View {
     let onClose: () -> Void
     let onOpenSession: (AgentSession) -> Void
     let onArchive: (AgentSession) -> Void
+    /// Hold-to-delete on archived sessions; nil hides it.
+    var onDelete: ((AgentSession) -> Void)? = nil
     let onStart: (String) -> Void
     let onRefresh: () async -> Void
     /// Opens a terminal on the computer by its session id (and title) in
@@ -565,7 +567,18 @@ struct CodeSessionsOverview: View {
 
     // MARK: Sessions
 
+    @ViewBuilder
     private func sessionRow(_ session: AgentSession) -> some View {
+        sessionRowBody(session)
+        if status(session) == .archived, let onDelete {
+            ACIHoldButton(title: "Hold to delete", danger: true) { onDelete(session) }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .plainCodeRow()
+        }
+    }
+
+    private func sessionRowBody(_ session: AgentSession) -> some View {
         let s = status(session)
         let unread = shellSessions.isUnread(session) && s != .working
         return Button(action: { onOpenSession(session) }) {
