@@ -474,9 +474,7 @@ struct ModelPickerSheet: View {
                 action: { modelStore.fetchModelsIfNeeded(force: true) }
             )
         } else if groups.isEmpty {
-            Text(scope == .favorites ? "Star a model to keep it here." : "No models match")
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
+            FriendlyStateView(title: scope == .favorites ? "Star a model to keep it here." : "No models match", art: .search, size: .panel)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
         } else {

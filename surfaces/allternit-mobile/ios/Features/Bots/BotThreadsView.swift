@@ -101,11 +101,16 @@ struct BotThreadsOverview: View {
                     FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",
                                       message: error, actionTitle: "Retry", action: { Task { await store.refreshThreads() } })
                 } else {
-                Text(store.isLoadingThreads ? "Loading threads…" : "No open threads. Start one from the composer.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextTertiary"))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
+                if store.isLoadingThreads {
+                    Text("Loading threads…")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextTertiary"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else {
+                    FriendlyStateView(title: "No open threads. Start one from the composer.", art: .envelope, size: .panel)
+                        .padding(.vertical, 24)
+                }
                 }
             } else {
                 let accent = colors.hex(for: botId.flatMap { store.bot($0) }).map { Color(hex: $0) } ?? Theme.accentChat
@@ -180,9 +185,7 @@ struct BotThreadsPanel: View {
                     FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",
                                       message: error, actionTitle: "Retry", action: { Task { await store.refreshThreads() } })
                 } else {
-                    Text("No threads yet. Start one from the composer.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextTertiary"))
+                    FriendlyStateView(title: "No threads yet. Start one from the composer.", art: .envelope, size: .panel)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 24)
                 }
@@ -380,10 +383,7 @@ struct BotThreadTasksView: View {
                         FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load tasks",
                                           message: error, actionTitle: "Retry", action: { Task { await store.refreshThreads() } })
                     } else {
-                        Text("No tasks yet. When \(bot.botDisplayName) plans work in a thread, its steps show here.")
-                            .font(.footnote)
-                            .foregroundColor(Color("TextSecondary"))
-                            .multilineTextAlignment(.center)
+                        FriendlyStateView(title: "No tasks yet. When \(bot.botDisplayName) plans work in a thread, its steps show here.", art: .log, size: .panel)
                             .frame(maxWidth: .infinity)
                             .padding(.horizontal, 32)
                             .padding(.vertical, 24)

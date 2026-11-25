@@ -145,7 +145,7 @@ struct ProjectTeamCard: View {
             }
         } content: {
             if team.isEmpty {
-                ProjectCardNote("No bots yet. Al picks bots for each thread, or @ a bot in the composer.")
+                FriendlyInlineStateView(title: "No bots yet. Al picks bots for each thread, or @ a bot in the composer.", art: .envelope)
             } else if graphMode && graphReady {
                 ForEach(agents) { agent in agentRow(agent) }
                 Button { onOpenPane(.team) } label: {
@@ -449,7 +449,7 @@ struct ProjectStatusCard: View {
             } else if let status {
                 ProjectStateChip(state: status.state, closed: status.lifecycle == "closed")
                 if status.nextAction.isEmpty {
-                    ProjectCardNote("No status yet. Bots fill it on their first task.")
+                    FriendlyInlineStateView(title: "No status yet. Bots fill it on their first task.", art: .bell)
                 } else {
                     Text(status.nextAction)
                         .font(.system(size: 12.5))
