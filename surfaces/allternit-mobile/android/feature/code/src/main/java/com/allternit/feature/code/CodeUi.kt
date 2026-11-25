@@ -103,7 +103,7 @@ internal fun ErrorState(title: String, message: String, onRetry: (() -> Unit)?, 
 }
 
 @Composable
-internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier, art: com.allternit.core.design.EmptyArtKind? = null, gizzi: Boolean = false) {
+internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier, art: com.allternit.core.design.EmptyArtKind? = null, gizzi: Boolean = false, panel: Boolean = false, paper: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified) {
     val c = AllternitTheme.colors
     FriendlyState(
         style = FriendlyStyle.Empty,
@@ -112,6 +112,8 @@ internal fun EmptyState(title: String, message: String, modifier: Modifier = Mod
         modifier = modifier,
         art = art,
         gizzi = gizzi,
+        panel = panel,
+        paper = paper,
         icon = { Icon(painterResource(DesignR.drawable.ph_terminal), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) },
     )
 }

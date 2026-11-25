@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -300,6 +302,8 @@ fun EmptyBox(
     art: EmptyArtKind? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    panel: Boolean = false,
+    paper: Color = Color.Unspecified,
     icon: @Composable () -> Unit = { Text("+", color = AllternitTheme.colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium) },
 ) {
     val colors = AllternitTheme.colors
@@ -314,7 +318,7 @@ fun EmptyBox(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (art != null) {
-            EmptyArt(art)
+            EmptyArt(art, size = if (panel) 64.dp else 96.dp, paper = if (paper.isSpecified) paper else PolishGlass.track())
         } else Box(
             Modifier.size(34.dp).clip(CircleShape).background(if (PolishGlass.isDark()) Color(0xFF3A3A3C) else Color.White)
                 .border(1.dp, PolishGlass.border(), CircleShape),
@@ -326,6 +330,22 @@ fun EmptyBox(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp),
         )
         if (actionLabel != null && onAction != null) EmptyPill(actionLabel, Modifier.padding(top = 14.dp), onAction)
+    }
+}
+
+/** One-line empty: [art] at 36 dp beside muted [text] (for a single line inside a list, card or dropdown). */
+@Composable
+fun InlineEmpty(
+    text: String,
+    modifier: Modifier = Modifier,
+    art: EmptyArtKind? = null,
+    paper: Color = Color.Unspecified,
+) {
+    Row(modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (art != null) {
+            Box(Modifier.padding(end = 10.dp).clearAndSetSemantics {}) { EmptyArt(art, size = 36.dp, paper = paper) }
+        }
+        Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp)
     }
 }
 
