@@ -32,7 +32,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -40,10 +44,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.DotField
+import com.allternit.core.design.DotFieldMode
+import com.allternit.core.design.DotPattern
+import com.allternit.core.design.DotRevealStyle
 import com.allternit.core.design.R as DesignR
 import java.io.File
 import kotlin.coroutines.resume
@@ -296,9 +306,11 @@ internal fun ArtifactCardPreview(summary: ArtifactSummary, modifier: Modifier) {
         val full = CardCache.fetch.withPermit { (ArtifactsV2Client.get(summary.id) as? ApiResult.Ok)?.value }
         CardCache.content[key] = full?.let { decodeCard(context, it) } ?: CardContent.Art
     }
+    // True only when this card showed the loading field first: a cached thumbnail appears at once, with no bloom.
+    var loadedHere by remember(key) { mutableStateOf(CardCache.content[key] == null) }
     Box(modifier.clipToBounds()) {
         when (val content = CardCache.content[key]) {
-            is CardContent.Picture -> Image(content.image, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+            is CardContent.Picture -> PictureThumb(content.image, key, sawLoading = loadedHere)
             is CardContent.Lines -> Paper(Color.White) {
                 Column(Modifier.padding(horizontal = 32.dp).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     content.lines.forEachIndexed { i, l ->
@@ -343,10 +355,42 @@ internal fun ArtifactCardPreview(summary: ArtifactSummary, modifier: Modifier) {
                     }
                 }
             }
-            CardContent.Art, null -> Box(Modifier.fillMaxSize().background(c.bgPrimary), contentAlignment = Alignment.Center) {
+            null -> DotField(DotFieldMode.Field(DotPattern.Band), Modifier.fillMaxSize().background(c.bgPrimary).testTag("cardPreviewDots"))
+            CardContent.Art -> Box(Modifier.fillMaxSize().background(c.bgPrimary), contentAlignment = Alignment.Center) {
                 Icon(painterResource(ArtifactKinds.icon(summary.kind)), null, tint = c.textTertiary, modifier = Modifier.size(32.dp))
             }
         }
+    }
+}
+
+/**
+ * A picture thumbnail. Straight after the band field, the cells bloom into the real picture (no byte progress is
+ * reported for card thumbnails, so there is no halftone step); then the plain cropped image takes over.
+ */
+@Composable
+private fun PictureThumb(image: ImageBitmap, key: String, sawLoading: Boolean) {
+    var revealed by remember(key) { mutableStateOf(!sawLoading) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val ratio = maxWidth.value / maxHeight.value.coerceAtLeast(1f)
+        val cropped = remember(image, ratio) { if (revealed) null else cropTop(image.asAndroidBitmap(), ratio) }
+        if (!revealed && cropped != null) {
+            DotField(DotFieldMode.Reveal(cropped, DotRevealStyle.Cells), Modifier.fillMaxSize().testTag("cardPreviewReveal"), onRevealed = { revealed = true })
+        } else {
+            Image(image, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+        }
+    }
+}
+
+/** The top part of [bmp] that has aspect [ratio] (width / height), matching Crop + TopCenter. */
+private fun cropTop(bmp: Bitmap, ratio: Float): Bitmap {
+    if (ratio <= 0f || bmp.width == 0 || bmp.height == 0) return bmp
+    val srcRatio = bmp.width.toFloat() / bmp.height
+    return if (srcRatio > ratio) {
+        val w = (bmp.height * ratio).toInt().coerceIn(1, bmp.width)
+        Bitmap.createBitmap(bmp, (bmp.width - w) / 2, 0, w, bmp.height)
+    } else {
+        val h = (bmp.width / ratio).toInt().coerceIn(1, bmp.height)
+        Bitmap.createBitmap(bmp, 0, 0, bmp.width, h)
     }
 }
 

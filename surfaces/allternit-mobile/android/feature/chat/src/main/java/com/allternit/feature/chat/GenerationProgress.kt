@@ -145,6 +145,20 @@ class GenerationProgressStore {
 
     fun entry(id: String): Entry? = entries[id]
 
+    /**
+     * How a running picture card ended up looking, so the finished image can replace it the right way: true = a halftone
+     * preview was shown (crossfade), false = only the dot field (cells bloom). Not state: read once at completion.
+     */
+    private val revealStyles = object : LinkedHashMap<String, Boolean>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > MAX_ENTRIES
+    }
+
+    /** A picture card drew [halftone] (or just the field) for [id]; a halftone, once shown, stays true. */
+    fun noteShown(id: String, halftone: Boolean) { synchronized(revealStyles) { revealStyles[id] = (revealStyles[id] == true) || halftone } }
+
+    /** Returns and forgets how [id]'s card looked: null if it was never drawn running (a finished chat reloading), so no reveal replays. */
+    fun takeRevealStyle(id: String): Boolean? = synchronized(revealStyles) { revealStyles.remove(id) }
+
     fun set(id: String, detail: GenerationProgressDetail, nowMs: Long = System.currentTimeMillis()) {
         val prev = entries[id]
         var thumbs = prev?.thumbs.orEmpty()

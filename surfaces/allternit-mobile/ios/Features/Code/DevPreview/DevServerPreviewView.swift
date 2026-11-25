@@ -54,6 +54,8 @@ struct DevServerPreviewView: View {
             ZStack(alignment: .top) {
                 DevServerPreviewWebView(controller: controller)
                     .ignoresSafeArea(edges: .bottom)
+                // Band dot field over the page until the real didFinish, then it fades out.
+                DotLoadingPane(loading: controller.isLoading)
                 if controller.isLoading {
                     ProgressView(value: controller.progress)
                         .progressViewStyle(.linear)

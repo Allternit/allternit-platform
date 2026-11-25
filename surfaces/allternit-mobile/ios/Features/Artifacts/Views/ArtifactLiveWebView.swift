@@ -241,10 +241,9 @@ struct ArtifactLiveWebView: View {
             }
 
             switch phase {
-            case .loading:
-                ProgressView("Opening \(noun)…")
-            case .ready:
-                EmptyView()
+            case .loading, .ready:
+                // Band dot field until the page's real ready event, then it fades out.
+                DotLoadingPane(loading: phase == .loading, label: "Opening \(noun)…")
             case .failed(let message):
                 FriendlyStateView(
                     style: .offline,

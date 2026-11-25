@@ -2,9 +2,6 @@ package com.allternit.feature.artifacts
 
 import android.graphics.BitmapFactory
 import android.provider.Settings
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,9 +19,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -33,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.DotField
+import com.allternit.core.design.DotFieldMode
+import com.allternit.core.design.DotPattern
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -174,22 +171,27 @@ private fun download(client: okhttp3.OkHttpClient, url: String, onProgress: ((By
     }
 
 /**
- * Download option B, "sharpens as it loads": the poster goes from blurred to sharp by the real fraction of bytes in;
- * an unknown size holds the blur at 16 and shows a small spinner. The status line gives bytes, percent and ETA ("— ETA"
- * when there is none). Reduced motion: the blur steps with the bytes and nothing animates or spins.
+ * Download "sharpens as it loads": the poster is a dot halftone that gets finer by the real fraction of bytes in;
+ * an unknown size holds the coarse pitch and shows a small spinner. The status line gives bytes, percent and ETA ("— ETA"
+ * when there is none). Reduced motion: the halftone is a fixed medium pitch and nothing animates or spins.
  */
 @Composable
-internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifier: Modifier = Modifier, verb: String = "Loading") {
+internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifier: Modifier = Modifier, verb: String = "Loading", onPoster: (android.graphics.Bitmap?) -> Unit = {}) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val reduce = remember(context) { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
     val line = ByteProgressText.status(verb, progress ?: ByteProgress(0))
-    val poster by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, posterUrl) {
-        value = posterUrl?.let { u -> withContext(Dispatchers.IO) { fetchBytesWithProgress(u, null)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() } } }
+    val poster by produceState<android.graphics.Bitmap?>(null, posterUrl) {
+        value = posterUrl?.let { u -> withContext(Dispatchers.IO) { fetchBytesWithProgress(u, null)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size) } } }
     }
-    val blur by animateFloatAsState(ByteProgressText.blur(progress).toFloat(), if (reduce) tween(0) else tween(250), label = "posterBlur")
+    androidx.compose.runtime.LaunchedEffect(poster) { onPoster(poster) }
     Box(modifier.fillMaxSize().background(c.fillNeutral).semantics { contentDescription = line }, contentAlignment = Alignment.BottomCenter) {
-        poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(blur.dp)) }
+        // Dots, not blur: the poster as halftone, finer with the real byte fraction (unknown total holds coarse); no poster yet = the band field.
+        val shown = poster
+        DotField(
+            if (shown != null) DotFieldMode.Halftone(shown, progress?.fraction?.toFloat()?.coerceIn(0f, 1f)) else DotFieldMode.Field(DotPattern.Band),
+            Modifier.fillMaxSize(),
+        )
         Row(
             Modifier.padding(bottom = 14.dp).background(c.bgPanel, CircleShape).border(1.dp, c.borderSubtle, CircleShape).padding(horizontal = 12.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,

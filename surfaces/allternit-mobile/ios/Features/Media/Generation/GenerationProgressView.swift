@@ -30,10 +30,10 @@ enum GenerationPreviewCache {
 ///
 /// It opens on the block pulse at the final aspect, with the stage and the
 /// elapsed seconds along the foot, and changes only when the app reports
-/// something real: a picture's preview blurs up in the same box, then
+/// something real: a picture's preview turns to halftone dots that get finer, then
 /// "Saving"; a motion clip's pulse gives way to the latest frame, "Frame N of
 /// M", a bar from the fraction and the stage chips Render, Encode, Save.
-/// Reduced motion: the pulse's still frame and no blur transition.
+/// Reduced motion: still dots and a fixed medium halftone.
 struct GenerationProgressView: View {
     /// The `media_generate` tool call id (the store's key).
     let callId: String
@@ -109,20 +109,29 @@ struct GenerationProgressView: View {
     private func art(detail: GenerationProgressDetail?, thumb: String?) -> some View {
         let source = thumb ?? ((detail?.hasPreview ?? false) ? detail?.preview : nil)
         if let source, let image = GenerationPreviewCache.image(source) {
-            let blur = (lane == .picture && thumb == nil) ? (detail?.previewBlur ?? 0) : 0
-            GeometryReader { proxy in
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .blur(radius: blur)
-                    .scaleEffect(blur > 0 ? 1.06 : 1)
-                    .clipped()
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: blur)
+            if lane == .picture && thumb == nil {
+                // Option B: the preview as halftone dots, finer by the real fraction.
+                DotFieldView(mode: .halftone(image, fraction: Self.halftoneFraction(detail)))
+            } else {
+                GeometryReader { proxy in
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                }
             }
         } else {
-            BlockPulseView()
+            // Option C: a light band sweeps the dots; half amplitude while queued.
+            let queued = detail == nil || detail?.stage == .queued
+            DotFieldView(mode: .field(.band, amplitude: queued ? 0.45 : 1))
         }
+    }
+
+    /// Real fraction of a picture preview: solid once saving, held coarse when unknown.
+    static func halftoneFraction(_ detail: GenerationProgressDetail?) -> Double? {
+        if detail?.stage == .saving || detail?.stage == .downloading { return 1 }
+        return detail?.fraction
     }
 
     // MARK: - History cards
@@ -178,7 +187,7 @@ struct GenerationProgressView: View {
             if thumbs.isEmpty {
                 Color("FillNeutral")
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .overlay { BlockPulseView() }
+                    .overlay { DotFieldView(mode: .field(.band, amplitude: 1)) }
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
                 HStack(spacing: 6) {

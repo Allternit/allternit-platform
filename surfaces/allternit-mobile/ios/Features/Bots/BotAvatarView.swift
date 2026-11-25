@@ -488,3 +488,294 @@ struct PortraitAvatar: View {
         }
     }
 }
+
+// MARK: - Bot presence (Allo motion kit)
+
+/// What the bot is doing on the phone. Wave 2 only passes this.
+enum BotPresence: Equatable {
+    case idle        // bob
+    case suitUp      // call went live: the bot puts the headset on
+    case talking     // bot speaking: head tilt + mic pulse
+    case listening   // on a call, other side speaking: bob, headset on, mic still
+    case suitDown    // call ended: the bot takes the headset off
+
+    var headsetOn: Bool { self == .suitUp || self == .talking || self == .listening }
+}
+
+/// Headset v2 colors (HEADSET-V2.md): graphite with a top highlight, a lighter
+/// graphite in dark mode, and a darker-tan cushion where the cup sits on the head.
+private enum HeadsetInk {
+    static func body(_ dark: Bool) -> Color { dark ? Color(hex: "#5C626D") : Color(hex: "#2B2E35") }
+    static func highlight(_ dark: Bool) -> Color { dark ? Color(hex: "#9AA1AD") : Color(hex: "#4A4F59") }
+    static let cushion = Color(hex: "#B8946E")
+    static let beacon = Color(hex: "#D97757")
+}
+
+/// Gizzi wearing the headset. GizziMascot.png is 264 px for the web's 96-unit
+/// art box (2.75 px per unit, zero offset: beacon at px 121-142 x 22-35 = units
+/// 44-52 x 8-13), so the web coordinates apply 1:1 over the image once it is
+/// drawn `art` pt wide. Cups sit under the image (they show at the head's
+/// sides), the band and cushions over it, the mic boom last. All of it lives in
+/// the one container that bobs, tilts and squashes, so nothing floats on top.
+private struct GizziHeadsetArt: View {
+    var art: CGFloat
+    var wear: Bool
+    var boomDown: Bool
+    var landing: Bool
+    var talking: Bool
+    var micScale: CGFloat
+    var dark: Bool
+    var bodyY: CGFloat
+    var tilt: Double
+
+    private func rect(_ k: CGFloat, _ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ r: CGFloat, _ c: Color) -> some View {
+        RoundedRectangle(cornerRadius: r * k, style: .continuous).fill(c)
+            .frame(width: w * k, height: h * k)
+            .position(x: (x + w / 2) * k, y: (y + h / 2) * k)
+    }
+
+    var body: some View {
+        let k = art / 96
+        let hs = HeadsetInk.body(dark), hi = HeadsetInk.highlight(dark)
+        let drop: CGFloat = wear ? 0 : -20 * k
+        ZStack {
+            // Cups (under the head, so only the sides show).
+            ZStack {
+                rect(k, 11, 26, 10, 16, 3, hs)
+                rect(k, 75, 26, 10, 16, 3, hs)
+            }
+            .scaleEffect(x: wear ? 1 : 1.22, y: 1)
+            .offset(y: drop).opacity(wear ? 1 : 0)
+
+            Image("GizziMascot").resizable().interpolation(.high)
+
+            // Cushions: the cup edge touching the head.
+            ZStack {
+                rect(k, 19, 27, 3, 14, 1, HeadsetInk.cushion)
+                rect(k, 74, 27, 3, 14, 1, HeadsetInk.cushion)
+            }
+            .scaleEffect(x: wear ? 1 : 1.22, y: 1)
+            .offset(y: drop).opacity(wear ? 1 : 0)
+
+            // Band over the antennae, with the beacon redrawn on top.
+            ZStack {
+                rect(k, 28, 9, 40, 5, 2, hs)
+                rect(k, 30, 9, 36, 1.4, 0.7, hi)
+                rect(k, 20, 12, 10, 5, 2, hs)
+                rect(k, 66, 12, 10, 5, 2, hs)
+                rect(k, 14, 16, 7, 11, 2, hs)
+                rect(k, 75, 16, 7, 11, 2, hs)
+                rect(k, 44, 8, 8, 5, 2, HeadsetInk.beacon)
+            }
+            .offset(y: drop).opacity(wear ? 1 : 0)
+
+            // Mic boom, hinged just under the left cup's top; swings down to the mouth.
+            ZStack {
+                rect(k, 17, 40, 4, 14, 1.5, hs)
+                rect(k, 18, 52, 17, 3.5, 1.5, hs)
+                rect(k, 33, 50.5, 7, 6.5, 2.5, talking ? Theme.statusSuccess : hs)
+                    .scaleEffect(micScale)
+            }
+            .rotationEffect(.degrees(boomDown ? 0 : -95), anchor: UnitPoint(x: 19.0 / 96, y: 41.0 / 96))
+            .offset(y: drop).opacity(wear ? 1 : 0)
+        }
+        .frame(width: art, height: art)
+        .scaleEffect(x: landing ? 1.03 : 1, y: landing ? 0.95 : 1, anchor: .bottom)
+        .offset(y: bodyY * k)
+        .rotationEffect(.degrees(tilt), anchor: .bottom)
+    }
+}
+
+/// The corner badge other bots get instead of art over their face (38% of the
+/// avatar, bottom-right, ring in the surface color). Its dot pulses while talking.
+private struct HeadsetBadge: View {
+    var box: CGFloat
+    var talking: Bool
+    var pulse: CGFloat
+    var dark: Bool
+
+    var body: some View {
+        let d = box * 0.38
+        ZStack {
+            Circle().fill(HeadsetInk.body(dark))
+            Canvas { ctx, sz in
+                let s = sz.width / 24
+                var arc = Path()
+                arc.move(to: CGPoint(x: 4 * s, y: 14 * s))
+                arc.addLine(to: CGPoint(x: 4 * s, y: 12 * s))
+                arc.addArc(center: CGPoint(x: 12 * s, y: 12 * s), radius: 8 * s,
+                           startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+                arc.addLine(to: CGPoint(x: 20 * s, y: 14 * s))
+                ctx.stroke(arc, with: .color(.white), style: StrokeStyle(lineWidth: 2.4 * s, lineCap: .round))
+                for x in [3.0, 17.0] {
+                    ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 13 * s, width: 4 * s, height: 7 * s), cornerRadius: 1.5 * s), with: .color(.white))
+                }
+                let dotR = 2 * s * pulse
+                ctx.fill(Path(ellipseIn: CGRect(x: 12 * s - dotR, y: 21 * s - dotR, width: dotR * 2, height: dotR * 2)),
+                         with: .color(talking ? Theme.statusSuccess : Color(hex: "#9AA0AA")))
+            }
+            .frame(width: d * 0.62, height: d * 0.62)
+        }
+        .frame(width: d, height: d)
+        .overlay(Circle().stroke(Color("BgPanel"), lineWidth: 2))
+        .offset(x: 2, y: 2)
+        .accessibilityHidden(true)
+    }
+}
+
+private extension View {
+    @ViewBuilder func presenceMatched(_ ns: Namespace.ID?, id: String) -> some View {
+        if let ns { matchedGeometryEffect(id: id, in: ns) } else { self }
+    }
+}
+
+/// One wrapper around a bot's avatar for the bot phone: bob and talk tilt on the
+/// container, a glance toward a new message (Gizzi only), and shrink-to-chip
+/// when a caller passes a namespace. Gizzi WEARS the headset (drawn in the same
+/// transformed container as the art); every other look gets a corner badge.
+/// Gizzi is a raster asset on iOS, so its eyes and mouth can't move: the
+/// glance-up and `://` squash from the web are left out. Static under Reduce Motion.
+struct BotPresenceView: View {
+    let bot: AgentRecord
+    var size: CGFloat = 40
+    var presence: BotPresence = .idle
+    /// A new message arrived on this side (-1 left ... 1 right). Gizzi turns toward it for 1.2 s.
+    var lookAt: CGFloat? = nil
+    /// Pass a namespace to make the avatar a shared element (big face to chip).
+    var namespace: Namespace.ID? = nil
+    var matchedId: String = "botPresenceFace"
+
+    @ReducedMotion private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
+    @State private var glance: CGFloat = 0
+    @State private var wear: Bool
+    @State private var boomDown: Bool
+    @State private var landing = false
+    @State private var sequence = 0
+
+    init(bot: AgentRecord, size: CGFloat = 40, presence: BotPresence = .idle, lookAt: CGFloat? = nil,
+         namespace: Namespace.ID? = nil, matchedId: String = "botPresenceFace") {
+        self.bot = bot; self.size = size; self.presence = presence; self.lookAt = lookAt
+        self.namespace = namespace; self.matchedId = matchedId
+        // A bot already mid-call has the headset on; only .suitUp plays the put-on.
+        let on = presence.headsetOn && presence != .suitUp
+        _wear = State(initialValue: on)
+        _boomDown = State(initialValue: on)
+    }
+
+    // Springs from the web (stiffness/damping, mass 1): 520/30, 300/16, 520/26.
+    private static let drop = Animation.spring(response: 0.275, dampingFraction: 0.66)
+    private static let swing = Animation.spring(response: 0.363, dampingFraction: 0.46)
+    private static let badgeIn = Animation.spring(response: 0.275, dampingFraction: 0.57)
+
+    var body: some View {
+        let box = size < 36 ? max(size, 34) : size
+        Group {
+            if reduceMotion {
+                content(box: box, t: 0)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+                    content(box: box, t: tl.date.timeIntervalSinceReferenceDate)
+                }
+            }
+        }
+        .frame(width: box, height: box)
+        .presenceMatched(namespace, id: matchedId)
+        .onAppear { if presence == .suitUp { putOn() } }
+        .onChange(of: presence.headsetOn) { _, on in on ? putOn() : takeOff() }
+        .onChange(of: lookAt) { _, new in
+            guard let new, !reduceMotion, BotAvatarSource.resolve(bot) == .gizzi else { return }
+            withAnimation(.easeOut(duration: 0.25)) { glance = new }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                withAnimation(.easeOut(duration: 0.25)) { glance = 0 }
+            }
+        }
+    }
+
+    private func apply(_ animation: Animation?, _ change: @escaping () -> Void) {
+        if reduceMotion {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx, change)
+        } else {
+            withAnimation(animation, change)
+        }
+    }
+
+    /// Put on (no spin): band and cups drop with a spring, a small squash on landing,
+    /// then the mic boom swings down.
+    private func putOn() {
+        sequence += 1
+        let mine = sequence
+        apply(Self.drop) { wear = true }
+        apply(Self.swing.delay(0.3)) { boomDown = true }
+        guard !reduceMotion else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 260_000_000)
+            guard mine == sequence else { return }
+            withAnimation(.linear(duration: 0.09)) { landing = true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard mine == sequence else { return }
+            withAnimation(.easeOut(duration: 0.12)) { landing = false }
+        }
+    }
+
+    /// Take off (no spin): the mic flips up first, then band and cups rise and fade.
+    private func takeOff() {
+        sequence += 1
+        landing = false
+        apply(.easeIn(duration: 0.16)) { boomDown = false }
+        apply(Animation.easeIn(duration: 0.28).delay(0.12)) { wear = false }
+    }
+
+    private func content(box: CGFloat, t: Double) -> some View {
+        let talking = presence == .talking
+        let isGizzi = BotAvatarSource.resolve(bot) == .gizzi
+        let dark = scheme == .dark
+        var y = 0.0, tilt = 0.0, micScale = 1.0, pulse = 1.0
+        if !reduceMotion {
+            if talking {
+                // Gizzi: y 0, -1.2, 0 and rotate 0, -1.5, 1, 0 over 0.8 s. Others keep the 0.9 s tilt.
+                let period = isGizzi ? 0.8 : 0.9
+                let p = (t / period).truncatingRemainder(dividingBy: 1)
+                if isGizzi {
+                    tilt = p < 1.0 / 3 ? -1.5 * (p * 3) : p < 2.0 / 3 ? -1.5 + 2.5 * (p * 3 - 1) : 1 - (p * 3 - 2)
+                    y = -1.2 * sin(.pi * p)
+                } else {
+                    tilt = p < 1.0 / 3 ? -9 * p : p < 2.0 / 3 ? -3 + 15 * (p - 1.0 / 3) : 2 - 6 * (p - 2.0 / 3)
+                    y = -1.5 * sin(.pi * p)
+                }
+                let m = sin(.pi * (t / 0.6).truncatingRemainder(dividingBy: 1))   // 0.6 s mic / dot loop
+                micScale = 1 + 0.25 * m
+                pulse = 1 + 0.4 * m
+            } else {
+                y = (isGizzi ? -1.6 : -2) * (1 - cos(2 * .pi * t / 2.4)) / 2     // 2.4 s bob
+            }
+        }
+        let k = box / 96
+        return Group {
+            if isGizzi {
+                // The raster art is drawn at 86% of the box, centred (SetupGizzi's fit).
+                GizziHeadsetArt(art: box * 0.86, wear: wear, boomDown: boomDown, landing: landing,
+                                talking: talking, micScale: micScale, dark: dark,
+                                bodyY: y * 0.86, tilt: tilt)
+                    .frame(width: box, height: box)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(wear ? "\(bot.botDisplayName) avatar, wearing a headset" : "\(bot.botDisplayName) avatar")
+            } else {
+                ZStack(alignment: .bottomTrailing) {
+                    BotAvatarView(bot: bot, size: box, live: presence != .idle)
+                        .offset(y: y * k)
+                        .rotationEffect(.degrees(tilt))
+                    if presence.headsetOn {
+                        HeadsetBadge(box: box, talking: talking, pulse: pulse, dark: dark)
+                            .transition(reduceMotion ? .identity : .scale(scale: 0.4).combined(with: .opacity))
+                    }
+                }
+                .frame(width: box, height: box)
+                .animation(reduceMotion ? nil : Self.badgeIn, value: presence.headsetOn)
+            }
+        }
+        .offset(x: glance * 3 * k)
+    }
+}

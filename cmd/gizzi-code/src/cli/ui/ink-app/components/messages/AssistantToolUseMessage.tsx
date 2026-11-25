@@ -18,6 +18,8 @@ import { SentryErrorBoundary } from '../SentryErrorBoundary';
 import { ToolUseLoader } from '../ToolUseLoader';
 import { HookProgressMessage } from './HookProgressMessage';
 import { ToolUseCard } from './ToolUseCard';
+import { DotProgressLine } from '../DotProgressLine';
+import { progressDetailOf } from '@/shared/util/dot-progress';
 type Props = {
   param: ToolUseBlockParam;
   addMargin: boolean;
@@ -186,6 +188,9 @@ function renderToolUseProgressMessage(tool: Tool, tools: Tools, lookups: ReturnT
   rows: number;
 }): React.ReactNode {
   const toolProgressMessages = progressMessagesForMessage.filter((msg): msg is ProgressMessage<ToolProgressData> => msg.data.type !== 'hook_progress');
+  // A generation tool (media, audio) reports progress_detail; draw the braille line while it runs.
+  const dotSource = [...toolProgressMessages].reverse().find(m => (m.data as Record<string, unknown>)?.progress_detail)?.data as Record<string, unknown> | undefined;
+  const dotDetail = dotSource && progressDetailOf(dotSource);
   try {
     const toolMessages = tool.renderToolUseProgressMessage?.(toolProgressMessages, {
       tools,
@@ -199,6 +204,7 @@ function renderToolUseProgressMessage(tool: Tool, tools: Tools, lookups: ReturnT
           <HookProgressMessage hookEvent="PreToolUse" lookups={lookups} toolUseID={toolUseID} verbose={verbose} isTranscriptMode={isTranscriptMode} />
         </SentryErrorBoundary>
         {toolMessages}
+        {dotDetail && <MessageResponse height={1}><DotProgressLine detail={dotDetail} /></MessageResponse>}
       </>;
   } catch (error) {
     logError(new Error(`Error rendering tool use progress message for ${tool.name}: ${error}`));

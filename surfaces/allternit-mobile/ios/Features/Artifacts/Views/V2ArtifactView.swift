@@ -357,7 +357,7 @@ struct V2ArtifactView: View {
     @ViewBuilder
     private var content: some View {
         if isLoading {
-            ProgressView("Loading artifact…")
+            DotLoadingPane(loading: true, label: "Loading artifact…")
         } else if error != nil, needsSignIn {
             FriendlyStateView(
                 style: .empty,
@@ -810,12 +810,14 @@ private struct ArtifactImageView: View {
     var fit: ArtifactFit = .fit
     var poster: String? = nil
     @State private var image: UIImage?
+    @State private var revealing: UIImage?
     @State private var failed = false
     @State private var progress: ByteProgress?
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         Group {
-            if let image {
+            if let image, revealing == nil {
                 if fit == .fill {
                     // Fill: cover the viewer edge to edge, cropping the overflow.
                     GeometryReader { proxy in
@@ -837,13 +839,21 @@ private struct ArtifactImageView: View {
             } else if failed {
                 FriendlyStateView(style: .error, icon: "photo", title: "Couldn't load the image", message: "Check your connection and try again.")
             } else {
-                ByteLoadingView(posterURL: poster, progress: progress, verb: "Loading")
+                ByteLoadingView(posterURL: poster, progress: progress, verb: "Loading", finished: revealing)
             }
         }
         .task {
             do {
                 let data = try await ArtifactMediaLoader.data(for: urlString) { p in Task { @MainActor in progress = p } }
-                if let decoded = UIImage(data: data) { image = decoded } else { failed = true }
+                if let decoded = UIImage(data: data) {
+                    // The halftone poster crossfades into the real picture (instant with Reduce Motion).
+                    if !reduceMotion, progress != nil {
+                        revealing = decoded
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                    }
+                    image = decoded
+                    revealing = nil
+                } else { failed = true }
             } catch {
                 failed = true
             }

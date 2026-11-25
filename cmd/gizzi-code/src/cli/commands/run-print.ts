@@ -15,6 +15,8 @@ import chalk from "@/shared/util/chalk"
 import { Highlight } from "@/shared/util/highlight"
 import { TurnSummary } from "@/shared/util/turn-summary"
 import { ColorDiff } from "@/vendor/color-diff-napi"
+import { DOT_FPS, dotBandFrame, dotProgressText, progressDetailOf, shouldAnimateDots, type ProgressDetailLite } from "@/shared/util/dot-progress"
+export { DOT_FPS, dotBandFrame, dotProgressText, progressDetailOf, shouldAnimateDots, type ProgressDetailLite }
 import { countHunks, hunksFromStrings, hunksFromUnified, patchFiles, unwrapShell, type Hunk } from "@/shared/util/cli-tools"
 
 export type PrintToolPart = {
@@ -255,7 +257,10 @@ function renderDiff(hunks: Hunk[], filePath: string, write: Write) {
 // The printer
 // ---------------------------------------------------------------------------
 
-type Tracked = { header: Header; printed: boolean; liveChars: number; liveLines: number; liveHidden: number }
+type Tracked = { header: Header; printed: boolean; liveChars: number; liveLines: number; liveHidden: number; startedAt: number; lastLabel?: string }
+
+/** Where the animated line is drawn; defaults to stdout. */
+export type DotSink = { write(text: string): unknown }
 
 export class ToolPrinter {
   private parts = new Map<string, Tracked>()
@@ -264,7 +269,13 @@ export class ToolPrinter {
   private toolCount = 0
   private changes: TurnSummary.FileChange[] = []
 
-  constructor(private readonly write: Write) {}
+  private dots?: { id: string; timer?: ReturnType<typeof setInterval>; drawn: boolean }
+  private detail?: ProgressDetailLite
+
+  constructor(
+    private readonly write: Write,
+    private readonly opts: { animate?: boolean; sink?: DotSink; now?: () => number } = {},
+  ) {}
 
   get tools() {
     return this.toolCount
@@ -277,7 +288,7 @@ export class ToolPrinter {
   private track(part: PrintToolPart, t: NormalTool): Tracked {
     let tracked = this.parts.get(part.id)
     if (!tracked) {
-      tracked = { header: headerFor(t, part), printed: false, liveChars: 0, liveLines: 0, liveHidden: 0 }
+      tracked = { header: headerFor(t, part), printed: false, liveChars: 0, liveLines: 0, liveHidden: 0, startedAt: this.now() }
       this.parts.set(part.id, tracked)
       this.toolCount++
     }
@@ -302,12 +313,63 @@ export class ToolPrinter {
 
   /** Called before other output (assistant text) so the next header gets a gap. */
   separate() {
+    this.stopDots()
     this.bodyAbove = true
     this.last = ""
   }
 
+  private now(): number {
+    return (this.opts.now ?? Date.now)()
+  }
+
+  private get animate(): boolean {
+    return this.opts.animate ?? shouldAnimateDots()
+  }
+
+  /** Draw the one braille line in place; static runs print a plain line when the stage changes. */
+  private progress(part: PrintToolPart, tracked: Tracked) {
+    const detail = progressDetailOf(part.state.metadata)
+    if (!detail) return
+    this.detail = detail
+    if (!this.animate) {
+      if (tracked.lastLabel === (detail.label ?? "")) return
+      tracked.lastLabel = detail.label ?? ""
+      this.body(`  ${dim("\u2837")} ${detail.label || detail.stage || "Working"}`)
+      return
+    }
+    if (!this.dots || this.dots.id !== part.id) {
+      this.stopDots()
+      this.detail = detail
+      this.dots = { id: part.id, drawn: false }
+      this.dots.timer = setInterval(() => this.drawDots(tracked), Math.round(1000 / DOT_FPS))
+      this.dots.timer.unref?.()
+    }
+    this.drawDots(tracked)
+  }
+
+  private drawDots(tracked: Tracked) {
+    if (!this.dots || !this.detail) return
+    const elapsed = (this.now() - tracked.startedAt) / 1000
+    const text = dotProgressText(this.detail, elapsed)
+    const room = columns() - 4 - text.length - 1
+    const width = Math.max(8, Math.min(24, room))
+    const line = `  ${coral(dotBandFrame(width, elapsed, this.detail.fraction))} ${dim(text)}`
+    ;(this.opts.sink ?? process.stdout).write(`\r\u001b[2K${line}`)
+    this.dots.drawn = true
+  }
+
+  /** Stop the animation and erase its line so the next output starts clean. */
+  private stopDots() {
+    if (!this.dots) return
+    if (this.dots.timer) clearInterval(this.dots.timer)
+    if (this.dots.drawn) (this.opts.sink ?? process.stdout).write("\r\u001b[2K")
+    this.dots = undefined
+    this.detail = undefined
+  }
+
   /** A part update from the event stream. */
   update(part: PrintToolPart) {
+    if (part.state.status !== "running") this.stopDots()
     const t = normalizeTool(part.tool, part.state.input)
     const status = part.state.status
     if (status === "pending") return
@@ -317,6 +379,7 @@ export class ToolPrinter {
       // Edits print their header with counts once the change is known.
       if (t.name !== "edit" && t.name !== "write" && t.name !== "patch") this.ensureHeader(part, tracked)
       if (t.name === "bash") this.live(part, tracked)
+      else if (part.state.metadata && (t.name === "media_generate" || part.state.metadata.progress_detail)) this.progress(part, tracked)
       return
     }
 

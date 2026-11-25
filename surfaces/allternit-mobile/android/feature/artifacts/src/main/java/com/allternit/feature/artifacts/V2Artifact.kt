@@ -521,20 +521,38 @@ private fun ByteLoadedImage(a: ArtifactV2) {
             val bytes = fetchBytesWithProgress(url) { p -> progress = p }
             // Over 12 MB, or unreadable: let the page fetch it itself rather than hold it in memory twice.
             if (bytes == null || bytes.size > 12 * 1024 * 1024) LoadedImage.Direct
-            else LoadedImage.Data("data:${sniffImageMime(bytes)};base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+            else LoadedImage.Data("data:${sniffImageMime(bytes)};base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
         }
     }
+    // The halftone poster the download showed: the finished image crossfades from it; with no poster the cells bloom in.
+    var poster by remember(url) { androidx.compose.runtime.mutableStateOf<android.graphics.Bitmap?>(null) }
+    var revealed by remember(url) { androidx.compose.runtime.mutableStateOf(false) }
     when (val l = loaded) {
-        LoadedImage.Loading -> ByteLoadingView(ByteLoading.poster(a.meta), progress, Modifier.fillMaxSize().testTag("v2ImageLoading"))
+        is LoadedImage.Data -> if (l.bitmap != null && !revealed) {
+            com.allternit.core.design.DotField(
+                com.allternit.core.design.DotFieldMode.Reveal(
+                    l.bitmap,
+                    if (poster != null) com.allternit.core.design.DotRevealStyle.Crossfade else com.allternit.core.design.DotRevealStyle.Cells,
+                    progress?.fraction?.toFloat()?.coerceIn(0f, 0.8f) ?: 0.8f,
+                ),
+                Modifier.fillMaxSize().testTag("v2ImageReveal"),
+                onRevealed = { revealed = true },
+            )
+        } else ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
+        else -> Unit
+    }
+    when (val l = loaded) {
+        LoadedImage.Loading -> ByteLoadingView(ByteLoading.poster(a.meta), progress, Modifier.fillMaxSize().testTag("v2ImageLoading"), onPoster = { poster = it })
         LoadedImage.Direct -> ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(url)), Modifier.fillMaxSize())
-        is LoadedImage.Data -> ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
+        is LoadedImage.Data -> Unit
     }
 }
 
 private sealed interface LoadedImage {
     data object Loading : LoadedImage
     data object Direct : LoadedImage
-    data class Data(val url: String) : LoadedImage
+    data class Data(val url: String, val bitmap: android.graphics.Bitmap? = null) : LoadedImage
 }
 
 internal fun sniffImageMime(b: ByteArray): String = when {
