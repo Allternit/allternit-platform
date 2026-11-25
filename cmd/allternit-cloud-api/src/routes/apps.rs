@@ -5,7 +5,7 @@
 //!
 //! * `GET /api/v1/apps` -> `{ yours: [row], servers: [row] }`. A row is
 //!   `{ kind: artifact|vendor, ref, name, icon, provenance: you|org|shared|server, slug, tier,
-//!   installed, pinned, link }`. `yours` = artifacts with an `app_slug` that the
+//!   installed, granted_tier (browser|app|full, null when not installed), pinned, link }`. `yours` = artifacts with an `app_slug` that the
 //!   caller or their org owns, plus any app the caller installed. `servers` =
 //!   `vendor_apps` the caller or their org owns. There is no cheap server-side
 //!   lookup of a connected MCP server's `ui://` resources (connectors live in the
@@ -180,6 +180,7 @@ struct ShelfArtifact {
     app_permission_tier: Option<String>,
     installed: bool,
     pinned: bool,
+    granted_tier: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -190,6 +191,7 @@ struct ShelfVendor {
     tier: String,
     installed: bool,
     pinned: bool,
+    granted_tier: Option<String>,
 }
 
 async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -198,7 +200,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
 
     let artifacts: Vec<ShelfArtifact> = sqlx::query_as(
         "SELECT a.id, a.owner_id, a.org_id, a.title, a.app_name, a.app_icon, a.app_slug, a.app_permission_tier, \
-                (i.id IS NOT NULL) AS installed, COALESCE(i.pinned, false) AS pinned \
+                (i.id IS NOT NULL) AS installed, COALESCE(i.pinned, false) AS pinned, i.granted_tier \
            FROM artifacts a \
            LEFT JOIN app_installs i ON i.user_id = $1 AND i.app_kind = 'artifact' AND i.app_ref = a.id \
           WHERE a.app_slug IS NOT NULL \
@@ -231,6 +233,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
                 "provenance": provenance,
                 "tier": a.app_permission_tier.clone().unwrap_or_else(|| "browser".into()),
                 "installed": a.installed,
+                "granted_tier": a.granted_tier,
                 "pinned": a.pinned,
                 "link": artifact_link(&a.app_slug),
             })
@@ -238,7 +241,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
         .collect();
 
     let vendors: Vec<ShelfVendor> = sqlx::query_as(
-        "SELECT v.id, v.name, v.icon, v.tier, (i.id IS NOT NULL) AS installed, COALESCE(i.pinned, false) AS pinned \
+        "SELECT v.id, v.name, v.icon, v.tier, (i.id IS NOT NULL) AS installed, COALESCE(i.pinned, false) AS pinned, i.granted_tier \
            FROM vendor_apps v \
            LEFT JOIN app_installs i ON i.user_id = $1 AND i.app_kind = 'vendor' AND i.app_ref = v.id \
           WHERE v.owner_user_id = $1 OR (v.owner_org_id IS NOT NULL AND v.owner_org_id = $2) \
@@ -260,6 +263,7 @@ async fn shelf(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result
                 "provenance": "server",
                 "tier": v.tier,
                 "installed": v.installed,
+                "granted_tier": v.granted_tier,
                 "pinned": v.pinned,
                 "link": vendor_link(&v.id),
             })
