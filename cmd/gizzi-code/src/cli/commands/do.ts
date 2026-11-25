@@ -28,8 +28,9 @@ import {
 
 const BarError = RuntimeError
 const friendly = errorMessage
-const call = <T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, bot?: string) =>
-  runtimeJson<T>(method, `/api/v1${path}`, body, friendly, bot ? { "X-Allternit-Bot": bot } : undefined)
+const call = <T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, _bot?: string) =>
+  runtimeJson<T>(method, `/api/v1${path}`, body, friendly)
+const botQuery = (bot?: string) => (bot ? `?bot_id=${encodeURIComponent(bot)}` : "")
 const sse = (path: string, signal: AbortSignal) => runtimeSse(`/api/v1${path}`, signal, friendly)
 
 const ok = <T>(v: T | symbol): T => {
@@ -160,7 +161,7 @@ export const DoCommand = cmd({
       .positional("app", { type: "string", describe: "app name or ref (asked if left out)" })
       .positional("tool", { type: "string", describe: "tool name (asked if left out)" })
       .option("arg", { type: "string", array: true, default: [] as string[], describe: "blank value, key=value (repeatable)" })
-      .option("bot", { type: "string", describe: "run as this bot id" })
+      .option("bot", { type: "string", describe: "run as this bot (bot_id); without it you are the actor" })
       .option("computer", { type: "string", describe: "which online computer to use when more than one is connected" })
       .option("yes", { alias: "y", type: "boolean", describe: "skip the confirm; never skips an owner approval" })
       .option("json", { type: "boolean", describe: "print machine-readable events (JSON lines), no prompts"  }),
@@ -171,14 +172,14 @@ export const DoCommand = cmd({
     const say = (s: string) => (json ? undefined : UI.println(s))
     try {
       const given = parseArgs((args.arg as string[]) ?? [])
-      const { apps } = await call<{ apps: any[] }>("GET", "/bar/apps", undefined, bot)
+      const { apps } = await call<{ apps: any[] }>("GET", `/bar/apps${botQuery(bot)}`)
       if (json && (!args.app || !args.tool)) throw new Error("--json needs both app and tool.")
       const app = await pickApp(apps, args.app as string | undefined)
       if (app.app.kind === "artifact") throw new BarError(422, "app_not_runnable", errorMessage(422, "app_not_runnable"))
-      const { tools } = await call<{ tools: any[] }>("GET", `/bar/apps/${app.app.kind}/${encodeURIComponent(app.app.ref)}/tools`, undefined, bot)
+      const { tools } = await call<{ tools: any[] }>("GET", `/bar/apps/${app.app.kind}/${encodeURIComponent(app.app.ref)}/tools${botQuery(bot)}`)
       const tool = await pickTool(tools, args.tool as string | undefined)
 
-      const intent = await call<any>("POST", "/bar/intent", { app_kind: app.app.kind, app_ref: app.app.ref, tool: tool.name, ...given }, bot)
+      const intent = await call<any>("POST", "/bar/intent", { app: { kind: app.app.kind, ref: app.app.ref }, tool: tool.name, ...(bot ? { bot_id: bot } : {}) })
       const sentence = (intent.sentence ?? []).map((p: any) => (p.type === "text" ? p.text : `[${p.key}]`)).join("")
       say(`${sentence}`)
 
@@ -190,7 +191,7 @@ export const DoCommand = cmd({
         } else values[b.key] = await askBlank(b)
       }
 
-      const review = await call<Review>("POST", "/bar/review", { intent_id: intent.intent_id, values }, bot)
+      const review = await call<Review>("POST", "/bar/review", { intent_id: intent.intent_id, args: values, ...(bot ? { bot_id: bot } : {}) })
       if (json) console.log(JSON.stringify({ type: "review", review }))
       else {
         UI.println("")
