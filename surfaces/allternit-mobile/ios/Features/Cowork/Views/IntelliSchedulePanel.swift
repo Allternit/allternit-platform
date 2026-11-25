@@ -71,7 +71,8 @@ struct IntelliSchedulePanel: View {
                 style: .empty,
                 icon: "checkmark.circle",
                 title: "No runnable tasks",
-                message: "All tasks are blocked or already scheduled."
+                message: "All tasks are blocked or already scheduled.",
+                art: .bell
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let output = store.output {
@@ -81,7 +82,8 @@ struct IntelliSchedulePanel: View {
                 style: .empty,
                 icon: "calendar.badge.clock",
                 title: "No schedule yet",
-                message: "Add Cowork tasks and run the optimizer to see a plan."
+                message: "Add Cowork tasks and run the optimizer to see a plan.",
+                art: .calendar
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

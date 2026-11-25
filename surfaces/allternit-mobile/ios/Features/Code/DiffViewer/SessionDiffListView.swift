@@ -54,7 +54,8 @@ struct SessionDiffListView: View {
                     style: .empty,
                     icon: "plus.forwardslash.minus",
                     title: "No changes yet",
-                    message: "When this session edits files, they'll appear here."
+                    message: "When this session edits files, they'll appear here.",
+                    art: .sheets
                 )
                 .frame(maxWidth: .infinity)
             }

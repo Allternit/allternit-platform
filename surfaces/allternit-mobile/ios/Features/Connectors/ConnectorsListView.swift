@@ -154,16 +154,25 @@ struct ConnectorsListView: View {
             )
             .frame(maxWidth: .infinity)
         } else if filtered.isEmpty {
-            FriendlyStateView(
-                style: .empty,
-                icon: searchText.isEmpty ? "puzzlepiece.extension" : "magnifyingglass",
-                title: searchText.isEmpty ? "No connectors available" : "No matches",
-                message: searchText.isEmpty
-                    ? "Add a connector to link external accounts and services."
-                    : "No connectors match your search.",
-                art: searchText.isEmpty ? .sheets : nil
-            )
-            .frame(maxWidth: .infinity)
+            if searchText.isEmpty {
+                FriendlyStateView(
+                    style: .empty,
+                    icon: "puzzlepiece.extension",
+                    title: "No connectors available",
+                    message: "Add a connector to link external accounts and services.",
+                    art: .apps
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                FriendlyStateView(
+                    style: .empty,
+                    icon: "magnifyingglass",
+                    title: "No matches",
+                    message: "No connectors match your search.",
+                    art: .search
+                )
+                .frame(maxWidth: .infinity)
+            }
         } else {
             LazyVStack(spacing: 0) {
                 ForEach(filtered) { connector in
