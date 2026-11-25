@@ -276,9 +276,9 @@ internal fun LaunchGreeting(showMark: Boolean = true) {
             wash.animateTo(0f, androidx.compose.animation.core.tween(700))
         }
     }
-    // Night line from 22:00 to 04:59 (iOS pool's "Up late" slot).
+    // Night line from 23:00 to 04:59 (matches web launchGreeting.ts) (iOS pool's "Up late" slot).
     val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
-    val line = if (hour >= 22 || hour < 5) "Hello, night owl" else "What are we working on?"
+    val line = if (hour >= 23 || hour < 5) "Hello, night owl" else "What are we working on?"
     // The greeting recenters when the keyboard resizes the feed: chase the jump with a spring
     // so it glides (about 0.4 s) instead of snapping.
     val glide = remember { androidx.compose.animation.core.Animatable(0f) }
