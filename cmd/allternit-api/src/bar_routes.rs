@@ -244,6 +244,8 @@ fn job_from_row(r: &Row<'_>) -> rusqlite::Result<BarJob> {
     let state: String = r.get(13)?;
     let args: String = r.get(6)?;
     let result: Option<String> = r.get(14)?;
+    let (args_val, stored_name) = split_args_name(serde_json::from_str(&args).unwrap_or_else(|_| json!({})));
+    let joined_name: Option<String> = r.get(20)?;
     Ok(BarJob {
         id: r.get(0)?,
         user_id: r.get(1)?,
@@ -251,7 +253,7 @@ fn job_from_row(r: &Row<'_>) -> rusqlite::Result<BarJob> {
         app_kind: AppKind::parse(&kind).ok_or_else(|| bad_col(3, &kind))?,
         app_ref: r.get(4)?,
         tool: r.get(5)?,
-        args: serde_json::from_str(&args).unwrap_or_else(|_| json!({})),
+        args: args_val,
         level: level.as_deref().and_then(GrantLevel::parse),
         rule_id: r.get(8)?,
         approver_user_id: r.get(9)?,
@@ -265,7 +267,7 @@ fn job_from_row(r: &Row<'_>) -> rusqlite::Result<BarJob> {
         updated_at: r.get(17)?,
         started_at: r.get(18)?,
         finished_at: r.get(19)?,
-        app_name: r.get(20)?,
+        app_name: joined_name.or(stored_name),
     })
 }
 
@@ -306,6 +308,28 @@ pub struct NewJob<'a> {
     pub level: Option<GrantLevel>,
     pub rule_id: Option<&'a str>,
     pub approver_user_id: Option<&'a str>,
+    /// Shelf name for vendor/artifact jobs (no table to join); kept in `args_json` under `APP_NAME_KEY`.
+    pub app_name: Option<&'a str>,
+}
+
+/// Reserved `args_json` key holding the app's display name; stripped on read, never reaches a tool.
+const APP_NAME_KEY: &str = "__bar_app_name";
+
+fn args_with_name(args: &Value, name: Option<&str>) -> Value {
+    match (args, name) {
+        (Value::Object(m), Some(n)) => {
+            let mut m = m.clone();
+            m.insert(APP_NAME_KEY.into(), json!(n));
+            Value::Object(m)
+        }
+        _ => args.clone(),
+    }
+}
+
+/// Split the reserved name key back out of a stored args blob.
+fn split_args_name(mut args: Value) -> (Value, Option<String>) {
+    let name = args.as_object_mut().and_then(|m| m.remove(APP_NAME_KEY)).and_then(|v| v.as_str().map(str::to_string));
+    (args, name)
 }
 
 /// Insert a job in state `review`. Returns its id (`bjb_…`); its session is `bar:<id>`.
@@ -322,7 +346,7 @@ pub fn insert_job(conn: &Connection, job: &NewJob<'_>) -> rusqlite::Result<Strin
             job.app_kind.as_str(),
             job.app_ref,
             job.tool,
-            job.args.to_string(),
+            args_with_name(job.args, job.app_name).to_string(),
             job.level.map(GrantLevel::as_str),
             job.rule_id,
             job.approver_user_id,
@@ -1247,6 +1271,7 @@ pub fn review_job(conn: &Connection, input: &ReviewInput<'_>) -> Result<Value, R
             level,
             rule_id: chosen.map(|(r, _)| r.id.as_str()),
             approver_user_id: chosen.map(|(_, a)| a.as_str()),
+            app_name: (input.app_kind != AppKind::Connector).then_some(input.app_name),
         },
     )
     .map_err(internal)?;
@@ -1550,7 +1575,8 @@ pub fn finish_job(conn: &Connection, id: &str, state: JobState, update: &JobUpda
     };
     let redacted = redact_secrets(&job.args, schema);
     if redacted != job.args {
-        conn.execute("UPDATE bar_jobs SET args_json = ?2 WHERE id = ?1", params![id, redacted.to_string()])?;
+        let stored = args_with_name(&redacted, job.app_name.as_deref());
+        conn.execute("UPDATE bar_jobs SET args_json = ?2 WHERE id = ?1", params![id, stored.to_string()])?;
         job.args = redacted;
     }
     Ok(Some(job))
@@ -2183,6 +2209,7 @@ mod tests {
                 unit_label: Some("USD".into()),
                 approver_kind: approver,
                 approver_user_id: None,
+                app_name: None,
                 enabled: true,
             },
             "boss",
@@ -2399,6 +2426,7 @@ mod tests {
                     level: None,
                     rule_id: None,
                     approver_user_id: None,
+                    app_name: None,
                 },
             )
             .unwrap();
@@ -2423,6 +2451,36 @@ mod tests {
     }
 
     #[test]
+    fn vendor_job_keeps_the_shelf_app_name_and_hides_it_from_args() {
+        let conn = db();
+        let args = json!({ "to": "acme", "pin": "1234" });
+        let id = insert_job(
+            &conn,
+            &NewJob {
+                user_id: "ann",
+                bot_id: None,
+                app_kind: AppKind::Vendor,
+                app_ref: "vap1",
+                tool: "send",
+                args: &args,
+                level: None,
+                rule_id: None,
+                approver_user_id: None,
+                app_name: Some("Linear"),
+            },
+        )
+        .unwrap();
+        let job = get_job(&conn, &id).unwrap().unwrap();
+        assert_eq!(job_json(&job)["app"]["name"], json!("Linear"));
+        assert_eq!(job.args, args, "the reserved key never reaches a tool");
+        assert!(set_job_state(&conn, &id, JobState::Working, &JobUpdate::default()).unwrap());
+        let schema = json!({ "properties": { "pin": { "format": "password" } } });
+        let done = finish_job(&conn, &id, JobState::Completed, &JobUpdate::default(), &schema).unwrap().unwrap();
+        assert_eq!(job_json(&done)["app"]["name"], json!("Linear"));
+        assert_eq!(job_json(&get_job(&conn, &id).unwrap().unwrap())["app"]["name"], json!("Linear"), "survives the redaction rewrite");
+    }
+
+    #[test]
     fn job_state_moves_and_finished_jobs_stay_finished() {
         let conn = db();
         let id = insert_job(
@@ -2437,6 +2495,7 @@ mod tests {
                 level: Some(GrantLevel::Full),
                 rule_id: None,
                 approver_user_id: None,
+                app_name: None,
             },
         )
         .unwrap();
@@ -2700,6 +2759,7 @@ mod tests {
                 level: None,
                 rule_id: None,
                 approver_user_id: None,
+                app_name: None,
             },
         )
         .unwrap();
