@@ -50,6 +50,8 @@ dependencies {
     implementation(project(":core:auth"))
     // rememberLauncherForActivityResult (save a run_code file where the person picks).
     implementation(libs.activity.compose)
+    // In-app Custom Tab for URL-mode MCP questions.
+    implementation(libs.androidx.browser)
     // Wave H1: Cloud credits and the store sheet (Google Play Billing) for the credits and compute gates.
     implementation(project(":feature:billing"))
     // Gap run GS-D: chat turns on the phone (ondevice/<id>#<quant> brains).

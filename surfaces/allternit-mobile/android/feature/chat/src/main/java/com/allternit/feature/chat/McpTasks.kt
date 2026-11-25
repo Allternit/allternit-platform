@@ -270,8 +270,6 @@ object McpTasksStore {
     fun markResolved(id: String, action: String) { resolved[id] = action }
     fun isResolved(id: String) = resolved.containsKey(id)
 
-    /** True when this task changed from not finished to finished (a haptic is due). */
-    fun finishedNow(part: McpTaskPart): Boolean = part.isFinished && tasks[part.taskId]?.isFinished != true
 }
 
 // MARK: - Client
@@ -315,6 +313,12 @@ internal fun McpTaskCard(taskId: String, backend: ChatBackend) {
     var stopping by remember(taskId) { mutableStateOf(false) }
     var stopError by remember(taskId) { mutableStateOf<String?>(null) }
     val reduced = rememberReduceMotion()
+    // iOS: success haptic when a task finishes done, warning when it fails or is stopped. Only for a task seen running.
+    var wasFinished by remember(taskId) { mutableStateOf(task.isFinished) }
+    LaunchedEffect(task.isFinished) {
+        if (task.isFinished && !wasFinished) Haptics.perform(view, if (task.isDone) Haptics.Kind.Success else Haptics.Kind.Warning)
+        wasFinished = task.isFinished
+    }
 
     Column(
         Modifier
@@ -518,7 +522,8 @@ internal fun McpElicitationForm(request: McpElicitationPart, backend: ChatBacken
                     Text(Uri.parse(url).host.orEmpty(), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     CapsuleButton("Open page", primary = true, enabled = busy == null) {
                         Haptics.perform(view, Haptics.Kind.Tap)
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        runCatching { androidx.browser.customtabs.CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url)) }
+                            .onFailure { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
                     }
                     CapsuleButton("Done", enabled = busy == null) { send("accept") }
                 }
