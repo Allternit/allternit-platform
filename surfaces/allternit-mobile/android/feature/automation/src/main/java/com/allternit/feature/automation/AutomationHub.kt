@@ -273,21 +273,21 @@ fun AutomationRoot(host: AutomationHost) {
 @Composable
 private fun NoTasksBox(type: TaskType?, query: String?, onNew: (() -> Unit)?) {
     val c = AllternitTheme.colors
-    val title = when {
-        query != null -> "No matches"
-        type == null || type == TaskType.Heartbeat -> "No automation tasks yet"
-        else -> "No ${type.plural.lowercase()} yet"
+    if (query != null) {
+        EmptyBox(
+            "No matches", "Nothing matches that search.", Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
+            onClick = null,
+            art = com.allternit.core.design.EmptyArtKind.Search,
+        )
+    } else {
+        EmptyBox(
+            if (type == null || type == TaskType.Heartbeat) "No automation tasks yet" else "No ${type.plural.lowercase()} yet",
+            if (type == null || type == TaskType.Heartbeat) "Tap New task to set up your first Goal, Routine or Loop." else "Tap New task to set up your first ${type.label}.",
+            Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
+            onClick = onNew,
+            art = com.allternit.core.design.EmptyArtKind.Bell,
+        )
     }
-    val line = when {
-        query != null -> "Nothing matches that search."
-        type == null || type == TaskType.Heartbeat -> "Tap New task to set up your first Goal, Routine or Loop."
-        else -> "Tap New task to set up your first ${type.label}."
-    }
-    EmptyBox(
-        title, line, Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
-        onClick = if (query == null) onNew else null,
-        icon = { Icon(painterResource(DesignR.drawable.ph_clock), null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) },
-    )
 }
 
 @Composable

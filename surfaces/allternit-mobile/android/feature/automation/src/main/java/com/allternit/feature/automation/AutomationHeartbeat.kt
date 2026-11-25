@@ -183,7 +183,7 @@ private fun HeartbeatAgentPicker(store: AutomationStore, onPick: (BotLite) -> Un
             "Configure periodic tasks that agents execute automatically. Heartbeat tasks are stored in each agent's workspace and synced with the scheduler.",
             color = c.textSecondary, fontSize = 13.sp,
         )
-        if (store.bots.isEmpty()) Text("No agents yet.", color = c.textTertiary, fontSize = 13.sp)
+        if (store.bots.isEmpty()) com.allternit.core.design.InlineEmpty("No agents yet.", art = com.allternit.core.design.EmptyArtKind.Gizzi)
         val orphans = store.tasks.filter { it.type == TaskType.Heartbeat && it.agentId.isNullOrEmpty() }
         if (orphans.isNotEmpty()) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(14.dp).testTag("heartbeatOrphans"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Not run by any agent", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -279,7 +279,7 @@ private fun HeartbeatScheduler(store: AutomationStore, agent: BotLite, onClose: 
         val list = rows()
         when {
             loading && list.isEmpty() -> Text("Loading…", color = c.textTertiary, fontSize = 13.sp)
-            list.isEmpty() -> Text("No heartbeat tasks yet. Add one and this agent runs it on schedule.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("heartbeatEmpty"))
+            list.isEmpty() -> com.allternit.core.design.InlineEmpty("No heartbeat tasks yet. Add one and this agent runs it on schedule.", Modifier.testTag("heartbeatEmpty"), art = com.allternit.core.design.EmptyArtKind.Bell)
         }
         list.forEach { row ->
             val on = row.job?.isActive == true

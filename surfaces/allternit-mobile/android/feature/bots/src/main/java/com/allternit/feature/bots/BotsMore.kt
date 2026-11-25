@@ -237,7 +237,7 @@ internal fun AgentActivityDetailScreen(thread: AgentActivityThread, backend: Cha
                 when {
                     loading && messages.isEmpty() -> LibrarySpinner("Loading messages")
                     error != null -> ListState(false, error, true, "Couldn't load messages", "") { scope.launch { load() } }
-                    messages.isEmpty() -> Text("No messages yet. Messages from this thread will appear here.", color = c.textSecondary, fontSize = 14.sp)
+                    messages.isEmpty() -> ListState(false, null, true, "", "No messages yet. Messages from this thread will appear here.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
                     else -> messages.forEach { m ->
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row { Text(m.str("from_agent") ?: "Agent", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); Text(botTimeRelative(m.str("timestamp")), color = c.textTertiary, fontSize = 11.5.sp) }
@@ -492,7 +492,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
             when {
                 loading -> LibrarySpinner("Loading the project")
                 error != null && messages.isEmpty() && threads.isEmpty() -> ListState(false, error, true, "Couldn't load the project", "") { scope.launch { load() } }
-                messages.isEmpty() -> Text("No messages yet. Tell the coordinator what you need below.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp))
+                messages.isEmpty() -> ListState(false, null, true, "", "No messages yet. Tell the coordinator what you need below.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
                 else -> messages.takeLast(12).forEach { m ->
                     val mine = (m.str("role") ?: m.str("from")) == "user"
                     Text(

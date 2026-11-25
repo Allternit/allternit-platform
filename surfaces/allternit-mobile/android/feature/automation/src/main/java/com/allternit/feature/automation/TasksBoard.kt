@@ -68,7 +68,7 @@ internal fun TasksBoardScreen(host: AutomationHost, onScheduled: () -> Unit) {
                         }
                         Text("Scheduled ↗", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.heightIn(min = 44.dp).testTag("tasksBoardScheduled").clickable(role = Role.Button, onClick = onScheduled).padding(horizontal = 8.dp, vertical = 12.dp))
                     }
-                    if (cards.isEmpty()) Text("No tasks yet. Tasks you or your bots add in a chat show up here.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp).testTag("tasksBoardEmpty"))
+                    if (cards.isEmpty()) com.allternit.core.design.InlineEmpty("No tasks yet. Tasks you or your bots add in a chat show up here.", Modifier.padding(top = 14.dp).testTag("tasksBoardEmpty"), art = com.allternit.core.design.EmptyArtKind.Envelope)
                     BoardColumn.entries.forEach { col ->
                         val inCol = cards.filter { it.column == col }
                         if ((filter == null || filter == col) && inCol.isNotEmpty()) {

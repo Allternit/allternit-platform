@@ -331,7 +331,7 @@ private fun EnvironmentSheet(
             SheetSection("Runs on")
             when {
                 devices == null -> SheetRow(DesignR.drawable.ph_arrow_clockwise, "Loading runtimes…", null, false, "codeEnvLoading", null)
-                devices.isEmpty() -> SheetRow(DesignR.drawable.ph_desktop, "No computer connected", "Connect a computer or an Allternit cloud computer to run Code.", false, "codeEnvNone", null)
+                devices.isEmpty() -> com.allternit.core.design.EmptyBox("No computer connected", "Connect a computer or an Allternit cloud computer to run Code.", Modifier.testTag("codeEnvNone"), art = com.allternit.core.design.EmptyArtKind.ConnectScene, panel = true)
                 else -> devices.forEach { d ->
                     SheetRow(
                         icon = if (d.isCloud()) DesignR.drawable.ph_cloud else DesignR.drawable.ph_desktop,
