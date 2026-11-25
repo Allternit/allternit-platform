@@ -26,6 +26,17 @@ OpenCode is a vendor like the others. Its sign-in runs `opencode auth login`, wh
 - **Links go only to the vendor's own sign-in page**, the one the CLI prints.
 - A bot never pastes a sign-in link or a code into chat and never asks you for a code or a key there. If one does, don't use it.
 
+## The connect scene
+
+While you connect an app, a small scene shows where things stand.
+
+- **Waiting:** Gizzi is asleep, dim, with a few z marks and dotted stubs where the cables will go.
+- **Connecting:** Gizzi wakes and small pulses travel along the cables. Opening the vendor's sign-in page or checking a code counts as connecting.
+- **Connected:** the cables turn solid and a check badge pops in.
+- **Failed:** the scene goes back to asleep.
+
+On web the scene shows in the connect sheet. On Android it shows in the keys and login sheets. With reduced motion every state is a still picture.
+
 ## For developers
 
 This page used to live at `/guides/connect-vendor-from-chat`; the old link redirects here. The tool and route keep the wire name `vendor` (`vendor_connect`, `/bot-routing/vendor/connect`).

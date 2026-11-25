@@ -28,3 +28,9 @@ Everything starts on. Turning one off changes this bot only. Things you install 
 For developers: the lists are the agent's `allowed_skills`, `config.connectorBindings` (by `provider`), `mcp_connector_ids` (set with `PUT /agents/:id/toolset`) and `allowed_tools`. allternit-api puts them on the bot marker as `allowedSkills`, `allowedConnectors` and `allowedMcp` (`bot_turn_marker`), and gizzi enforces them in `SessionPrompt` with `BotTurn.connectorOnForBot` and `BotTurn.mcpOnForBot`. Page: allternit-ai `src/views/bots/hub/BotCapabilitiesPage.tsx`.
 
 The existing rows under the tiles are unchanged. On iOS the Usage page has no purchase button.
+
+## Header and roster
+
+- **Profile pop-over:** in a bot's chat, tap the profile icon in the header. It shows the avatar, when the bot was last active, **Call**, recent activity and its outputs. It is a bottom sheet on a phone. There is no Email or Slack row.
+- **Now card:** on the bot's home, a card shows the thread it is working on, the step and when it last updated, with **Open**. It only shows while a thread is working. On Android the page header shows Now, Last active, Call and Recent activity.
+- **Roster:** a working bot shows its current task in one line under its status. If a run fails, the run list names the failing job. It gives no reason, because the run record has none.

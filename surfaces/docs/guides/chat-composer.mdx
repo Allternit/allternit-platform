@@ -104,6 +104,26 @@ Source: `allternit-ai/src/`:
 | `components/bot-chat/BotTranscript.tsx`, `SettledBubble.tsx`, `views/bots/BotChatSessionView.tsx` | Bot threads: the action row on the latest reply, versions over transcript rows, retry through `prepareRetry` and `handleSend` with a `modelId`. |
 | `preview-message-actions.html`, `dev/MessageActionsPreview.tsx` | Dev preview (`?theme=dark`, `?phone=1`). |
 
+## Plus menu, effort level and greeting
+
+- **The plus button** turns into an x while its menu is open. On web the menu grows from the button. The rows do not change.
+- **The effort slider** in the model picker marks the default level with a **Default** pill. The top level shows a small animated picture. It stays still with reduced motion. A cost line shows under the slider **only when the model's prices are known** from the server. When there is no price, there is no line.
+- **The greeting** reads "Hello, night owl" between 11 pm and 5 am, by your device clock. A soft neutral wash rises behind the empty chat. On a phone the greeting moves to the middle again when the keyboard opens.
+
+## Dictation
+
+Tap the mic in the text box. A panel opens above the box with a thin live line that follows your voice and a glow around the edge. It has three buttons:
+
+- **Cancel** throws the dictation away and puts your draft back as it was.
+- **Stop** puts the words in the box.
+- **Keep mine** stops and keeps the words exactly as heard, with no undo.
+
+After **Stop**, an **Undo dictation** pill shows for a few seconds. Tap it to restore the draft you had before. It goes away on send. The live line asks for no new permission: if the mic is not already allowed, the line stays flat and calm. Dictation does not rewrite your words.
+
+## Follow-up pills
+
+When a reply ends with a next step, one to three pills sit under the newest reply, on the right. Tap one and it floats up and sends. The pills are hidden while the reply is still coming in and on older replies. **They show only when the reply includes follow-ups.** On iPhone they come from a closing "Next step:" line, and Android does not show them. A pill that fails to send comes back with a short message.
+
 ## Answering an agent question
 
 When an agent asks you something, the thread shows **Asking a question** and the question card sits just above the text box. It works the same in Chat, Code, project threads, bot threads and on phones:
