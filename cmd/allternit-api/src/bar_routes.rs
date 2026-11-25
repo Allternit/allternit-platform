@@ -3,7 +3,7 @@
 //! model call), fills the blanks, sees a review card, then runs it. A
 //! `bar_jobs` row (V295) is the unit from the review card on (D9).
 //!
-//! - `GET /bar/apps?q=&bot_id=` → `{apps: [{app: {kind, ref, name, icon}, level, tool_count}]}`:
+//! - `GET /bar/apps?q=&bot_id=` → `{apps: [{app: {kind, ref, name, icon}, level, tool_count, runnable, not_runnable_reason}], partial}`:
 //!   the caller's connections (`mcp_connectors`) that list tools. `level` is the
 //!   actor's: `full` for the person on their own connection; a bot's live grant
 //!   (`app` when its owner never set levels; `null` when it has no grant).
@@ -53,9 +53,20 @@
 //!   `writeOnly`, secret names; from the pinned schema) are replaced by `••••`.
 //!   `job_json` masks secret-named fields while the job is still active.
 //!
-//! A 0-bot account works: with no `bot_id` the person is the actor. Only
-//! `connector` apps are served for now; vendor and artifact apps answer 404
-//! `app_kind_unsupported`.
+//! A 0-bot account works: with no `bot_id` the person is the actor.
+//!
+//! App kinds (lane 15b): `connector` (the caller's connections), `vendor`
+//! (cloud `vendor_apps`: its tools are its connection's pinned tools named in
+//! its allow-list or opening its `ui://` resource; level ≤ the install's
+//! `granted_tier`, never above `app`; runs through its connection's proxy entry,
+//! as the Apps+MCP vendor app UI does) and `artifact` (tools = the Apps+MCP
+//! mirror tools; listed with `runnable: false` because they need the open app's
+//! signed binding). Vendor and artifact apps come from the owner's cloud shelf
+//! (`GET /api/v1/apps` + `GET /api/v1/vendor-apps`, signed); `/bar/apps` rows
+//! carry `runnable` and `not_runnable_reason`, and `partial: ["app_shelf"]`
+//! when the shelf could not be read. Intent, review and run answer 409
+//! `app_not_runnable` for an app that cannot run here; 503
+//! `app_shelf_unavailable` when the shelf cannot be read.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -74,10 +85,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::account_sync::{AccountCloud, SignedAccountCloud};
 use crate::auth::AuthUser;
 use crate::bar_blanks::{self, BlankType, RecentValue};
 use crate::db::DbHandle;
 use crate::mcp_apps::{self, AppsError, Connector};
+use crate::team_routes;
 use crate::team_rules::{self, Decision};
 use crate::team_store::{AppKind, ApprovalRule, GrantLevel};
 use crate::AppState;
@@ -567,6 +580,233 @@ fn unsupported_kind(kind: &str) -> Response {
     err(StatusCode::NOT_FOUND, "app_kind_unsupported", format!("the bar does not serve '{kind}' apps yet"))
 }
 
+// ── Vendor and artifact apps (the owner's cloud shelf) ──────────────────────
+
+/// The owner's vendor app records (`{apps: [{id, connector_id, ui_resource,
+/// tool_allowlist, …}]}`, cloud-api `routes/apps.rs`). Signed like the shelf.
+pub const CLOUD_VENDOR_APPS_PATH: &str = "/api/v1/vendor-apps";
+/// `partial[]` entry on `/bar/apps` when the cloud shelf could not be read.
+pub const PARTIAL_APP_SHELF: &str = "app_shelf";
+/// Why an artifact app's tools are listed but not run. Its tools (the Apps+MCP
+/// mirror tools `app_storage_*` / `app_ai_complete`) run on the MCP edge and
+/// only with the signed app binding the open app hands out
+/// (`mcp_edge_apps.rs`); the runtime has no route that mints one.
+pub const ARTIFACT_NOT_RUNNABLE: &str =
+    "An artifact app's tools run inside the open app, which signs each call; this computer cannot make that call yet. Open the app to use them.";
+
+/// A vendor or artifact app from the owner's cloud shelf (`GET /api/v1/apps`),
+/// joined with its vendor record (`GET /api/v1/vendor-apps`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloudApp {
+    pub kind: AppKind,
+    pub app_ref: String,
+    pub name: String,
+    pub icon: Option<String>,
+    /// The most the person may do with it: the install's `granted_tier`, a
+    /// vendor app never above `app` (`team_routes::install_ceiling`). `None` = not installed.
+    pub ceiling: Option<GrantLevel>,
+    /// Vendor apps: the connection the app's tools run through.
+    pub connector_id: Option<String>,
+    /// Vendor apps: the app's own `ui://` resource.
+    pub ui_resource: Option<String>,
+    /// Vendor apps: tool names the app may call.
+    pub tool_allowlist: Vec<String>,
+}
+
+/// Read the shelf for `user_id`. The signed cloud client answers for this
+/// computer's paired owner only, so anyone else gets `Err` (fail closed).
+pub async fn read_cloud_apps(cloud: &dyn AccountCloud, paired_owner: Option<&str>, user_id: &str) -> Result<Vec<CloudApp>, String> {
+    if paired_owner != Some(user_id) {
+        return Err("this computer reads apps for its own owner only".into());
+    }
+    let shelf = team_routes::fetch_shelf(cloud).await?;
+    let records: Vec<Value> = if shelf.iter().any(|a| a.kind == AppKind::Vendor) {
+        let (status, body) = cloud.send("GET", CLOUD_VENDOR_APPS_PATH, Vec::new()).await?;
+        if !(200..300).contains(&status) {
+            return Err(format!("cloud answered {status}"));
+        }
+        let v: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        v["apps"].as_array().cloned().ok_or("cloud answer has no apps[]")?
+    } else {
+        Vec::new()
+    };
+    Ok(shelf
+        .iter()
+        .map(|a| {
+            let rec = records.iter().find(|r| a.kind == AppKind::Vendor && r["id"].as_str() == Some(a.app_ref.as_str()));
+            let text = |key: &str| rec.and_then(|r| r[key].as_str()).map(str::to_string);
+            CloudApp {
+                kind: a.kind,
+                app_ref: a.app_ref.clone(),
+                name: a.name.clone().unwrap_or_else(|| a.app_ref.clone()),
+                icon: a.icon.clone(),
+                ceiling: team_routes::install_ceiling(a),
+                connector_id: text("connector_id"),
+                ui_resource: text("ui_resource"),
+                tool_allowlist: rec
+                    .and_then(|r| r["tool_allowlist"].as_array())
+                    .map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect())
+}
+
+/// A vendor app's tools are its connection's tools that it may call: named in
+/// its allow-list, or opening its own `ui://` resource.
+pub fn vendor_tool_allowed(app: &CloudApp, tool: &Value) -> bool {
+    let name = tool["name"].as_str().unwrap_or_default();
+    app.tool_allowlist.iter().any(|t| t == name)
+        || app.ui_resource.as_deref().is_some_and(|u| mcp_apps::ui_resource_uri(tool).as_deref() == Some(u))
+}
+
+/// An artifact app's tools: the Apps+MCP mirror tools, without the `app` and
+/// `binding` fields the open app fills in itself.
+pub fn artifact_tools() -> Vec<Value> {
+    let scope = json!({ "type": "string", "enum": ["user", "shared"], "default": "user" });
+    let key = json!({ "type": "string" });
+    let tool = |name: &str, title: &str, read_only: bool, properties: Value, required: Vec<&str>| {
+        json!({
+            "name": name,
+            "title": title,
+            "annotations": { "readOnlyHint": read_only },
+            "inputSchema": { "type": "object", "properties": properties, "required": required },
+        })
+    };
+    vec![
+        tool("app_storage_get", "Read a stored value", true, json!({ "scope": scope, "key": key }), vec!["key"]),
+        tool("app_storage_set", "Store a value", false, json!({ "scope": scope, "key": key, "value": { "type": "string" } }), vec!["key", "value"]),
+        tool("app_storage_delete", "Delete a stored value", false, json!({ "scope": scope, "key": key }), vec!["key"]),
+        tool("app_storage_list", "List stored keys", true, json!({ "scope": scope, "prefix": { "type": "string" } }), vec![]),
+        tool(
+            "app_ai_complete",
+            "Ask the app's AI",
+            false,
+            json!({ "prompt": { "type": "string" }, "system": { "type": "string" }, "max_tokens": { "type": "integer" } }),
+            vec!["prompt"],
+        ),
+    ]
+}
+
+/// Why a shelf app cannot run from the bar (`None` = it can). Vendor apps need
+/// an install and their connection on this computer (`connector_here`).
+pub fn cloud_app_not_runnable(app: &CloudApp, connector_here: bool) -> Option<String> {
+    match app.kind {
+        AppKind::Artifact => Some(ARTIFACT_NOT_RUNNABLE.to_string()),
+        AppKind::Vendor if app.ceiling.is_none() => Some(format!("Install {} first.", app.name)),
+        AppKind::Vendor if app.connector_id.is_none() => Some(format!("{} has no connection recorded.", app.name)),
+        AppKind::Vendor if !connector_here => Some(format!("{}'s connection is not on this computer.", app.name)),
+        _ => None,
+    }
+}
+
+/// An app the bar serves, resolved for one caller.
+#[derive(Clone)]
+pub struct BarApp {
+    pub kind: AppKind,
+    pub app_ref: String,
+    pub name: String,
+    pub icon: Option<String>,
+    /// The connection the tools run through (connector and runnable vendor apps).
+    pub connector: Option<Connector>,
+    /// Vendor and artifact apps: the shelf row.
+    pub cloud: Option<CloudApp>,
+    /// Why it cannot run here; `None` = runnable.
+    pub not_runnable: Option<String>,
+}
+
+impl BarApp {
+    pub fn app_json(&self) -> Value {
+        json!({ "kind": self.kind.as_str(), "ref": self.app_ref, "name": self.name, "icon": self.icon })
+    }
+
+    /// The install's cap on the caller's level (`None` = no cap: a connection).
+    pub fn ceiling(&self) -> Option<GrantLevel> {
+        self.cloud.as_ref().and_then(|c| c.ceiling)
+    }
+}
+
+fn paired_owner() -> Option<String> {
+    crate::relay_auth::process_secret().paired_owner()
+}
+
+fn app_not_found() -> Response {
+    err(StatusCode::NOT_FOUND, "app_not_found", "app not found")
+}
+
+fn app_not_runnable(why: &str) -> Response {
+    err(StatusCode::CONFLICT, "app_not_runnable", why)
+}
+
+/// Resolve `(kind, ref)` for the caller: a connection from the registry; a
+/// vendor or artifact app from the cloud shelf (503 `app_shelf_unavailable`
+/// when it cannot be read).
+async fn resolve_app(state: &Arc<AppState>, user_id: &str, kind: AppKind, app_ref: &str) -> Result<BarApp, Response> {
+    if kind == AppKind::Connector {
+        let c = load_connector(state, user_id, app_ref).await?;
+        return Ok(BarApp {
+            kind,
+            app_ref: c.id.clone(),
+            name: c.name.clone(),
+            icon: None,
+            connector: Some(c),
+            cloud: None,
+            not_runnable: None,
+        });
+    }
+    let apps = read_cloud_apps(&SignedAccountCloud, paired_owner().as_deref(), user_id)
+        .await
+        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "app_shelf_unavailable", format!("Could not read your apps: {e}")))?;
+    let app = apps.into_iter().find(|a| a.kind == kind && a.app_ref == app_ref).ok_or_else(app_not_found)?;
+    let connector = match (kind, app.connector_id.as_deref()) {
+        (AppKind::Vendor, Some(cid)) => {
+            mcp_apps::load_connector(state, user_id, cid, mcp_apps::allow_private_hosts()).await.map_err(IntoResponse::into_response)?
+        }
+        _ => None,
+    };
+    Ok(BarApp {
+        kind,
+        app_ref: app.app_ref.clone(),
+        name: app.name.clone(),
+        icon: app.icon.clone(),
+        not_runnable: cloud_app_not_runnable(&app, connector.is_some()),
+        connector,
+        cloud: Some(app),
+    })
+}
+
+/// The app's tools the caller may use.
+async fn app_tools(state: &Arc<AppState>, user_id: &str, app: &BarApp) -> Result<Vec<Value>, Response> {
+    if app.kind == AppKind::Artifact {
+        return Ok(artifact_tools());
+    }
+    let Some(connector) = &app.connector else {
+        return Ok(Vec::new());
+    };
+    let tools = pinned_tools(state, user_id, connector).await.map_err(IntoResponse::into_response)?;
+    Ok(match &app.cloud {
+        Some(vendor) => tools.into_iter().filter(|t| vendor_tool_allowed(vendor, t)).collect(),
+        None => tools,
+    })
+}
+
+/// One of the app's tools by name. 404 `tool_not_found` otherwise.
+async fn app_tool(state: &Arc<AppState>, user_id: &str, app: &BarApp, tool: &str) -> Result<Value, Response> {
+    app_tools(state, user_id, app)
+        .await?
+        .into_iter()
+        .find(|t| t["name"].as_str() == Some(tool))
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "tool_not_found", format!("{} has no tool '{tool}' you can use", app.name)))
+}
+
+/// The caller's level on an app: the actor's level, capped by the install.
+fn capped_level(level: Option<GrantLevel>, ceiling: Option<GrantLevel>) -> Option<GrantLevel> {
+    match (level, ceiling) {
+        (Some(l), Some(c)) => Some(l.min(c)),
+        (l, _) => l,
+    }
+}
+
 async fn load_connector(state: &Arc<AppState>, user_id: &str, connector_id: &str) -> Result<Connector, Response> {
     match mcp_apps::load_connector(state, user_id, connector_id, mcp_apps::allow_private_hosts()).await {
         Ok(Some(c)) => Ok(c),
@@ -611,15 +851,6 @@ pub(crate) async fn pinned_tools(state: &Arc<AppState>, user_id: &str, connector
     })
     .await
     .map_err(|e| AppsError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?
-}
-
-/// One pinned tool by name. 404 `tool_not_found` when it is not listed or is held.
-pub(crate) async fn pinned_tool(state: &Arc<AppState>, user_id: &str, connector: &Connector, tool: &str) -> Result<Value, Response> {
-    let tools = pinned_tools(state, user_id, connector).await.map_err(IntoResponse::into_response)?;
-    tools
-        .into_iter()
-        .find(|t| t["name"].as_str() == Some(tool))
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "tool_not_found", format!("{} has no tool '{tool}' you can use", connector.name)))
 }
 
 fn tool_card(tool: &Value) -> Value {
@@ -686,7 +917,7 @@ async fn apps_route(State(state): State<Arc<AppState>>, Extension(user): Extensi
     }))
     .await;
 
-    let apps: Vec<Value> = connectors
+    let mut apps: Vec<Value> = connectors
         .iter()
         .zip(known)
         .zip(counts)
@@ -696,10 +927,68 @@ async fn apps_route(State(state): State<Arc<AppState>>, Extension(user): Extensi
                 "app": { "kind": "connector", "ref": c.id, "name": c.name, "icon": Value::Null },
                 "level": level.map(GrantLevel::as_str),
                 "tool_count": n,
+                "runnable": true,
+                "not_runnable_reason": Value::Null,
             })
         })
         .collect();
-    Json(json!({ "apps": apps })).into_response()
+
+    // Vendor and artifact apps from the owner's cloud shelf.
+    let mut partial: Vec<&str> = vec![];
+    match read_cloud_apps(&SignedAccountCloud, paired_owner().as_deref(), &user.user_id).await {
+        Ok(shelf) => {
+            let shelf: Vec<CloudApp> = shelf.into_iter().filter(|a| matches_q(&query, &[a.name.as_str(), a.app_ref.as_str()])).collect();
+            let rows = futures::future::join_all(shelf.iter().map(|a| cloud_app_row(&state, &user.user_id, bot.as_deref(), a))).await;
+            apps.extend(rows.into_iter().flatten());
+        }
+        Err(e) => {
+            warn!(error = %e, "bar apps: cloud shelf not read");
+            partial.push(PARTIAL_APP_SHELF);
+        }
+    }
+    Json(json!({ "apps": apps, "partial": partial })).into_response()
+}
+
+/// One `/bar/apps` row for a shelf app. A vendor app's tools are listed live
+/// (its connection's pinned tools in its allow-list); an artifact app lists the
+/// mirror tools but is not runnable. Not-runnable apps stay listed with the reason.
+async fn cloud_app_row(state: &Arc<AppState>, user_id: &str, bot: Option<&str>, a: &CloudApp) -> Option<Value> {
+    let connector = match (a.kind, a.connector_id.as_deref()) {
+        (AppKind::Vendor, Some(cid)) => mcp_apps::load_connector(state, user_id, cid, mcp_apps::allow_private_hosts()).await.ok().flatten(),
+        _ => None,
+    };
+    let bar_app = BarApp {
+        kind: a.kind,
+        app_ref: a.app_ref.clone(),
+        name: a.name.clone(),
+        icon: a.icon.clone(),
+        not_runnable: cloud_app_not_runnable(a, connector.is_some()),
+        connector,
+        cloud: Some(a.clone()),
+    };
+    let tool_count = match a.kind {
+        AppKind::Artifact => artifact_tools().len(),
+        _ if bar_app.not_runnable.is_some() => 0,
+        _ => app_tools(state, user_id, &bar_app).await.map(|t| t.len()).unwrap_or(0),
+    };
+    // A runnable vendor app the caller can use none of the tools of is not a chip.
+    if bar_app.not_runnable.is_none() && tool_count == 0 {
+        return None;
+    }
+    let (uid, b, kind, app_ref) = (user_id.to_string(), bot.map(str::to_string), a.kind, a.app_ref.clone());
+    let level = with_db(state, move |conn| {
+        let preview = team_rules::preview_call(conn, &uid, b.as_deref(), kind, &app_ref, "", true, &Value::Null).map_err(internal)?;
+        Ok(actor_level(b.as_deref(), &preview))
+    })
+    .await
+    .ok()?;
+    Some(json!({
+        "app": bar_app.app_json(),
+        "level": a.ceiling.and(capped_level(level, a.ceiling)).map(GrantLevel::as_str),
+        "tool_count": tool_count,
+        "runnable": bar_app.not_runnable.is_none(),
+        "not_runnable_reason": bar_app.not_runnable,
+    }))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -713,16 +1002,16 @@ async fn tools_route(
     Path((kind, app_ref)): Path<(String, String)>,
     Query(q): Query<ToolsQuery>,
 ) -> Response {
-    if AppKind::parse(&kind) != Some(AppKind::Connector) {
+    let Some(kind) = AppKind::parse(&kind) else {
         return unsupported_kind(&kind);
-    }
-    let connector = match load_connector(&state, &user.user_id, &app_ref).await {
-        Ok(c) => c,
+    };
+    let app = match resolve_app(&state, &user.user_id, kind, &app_ref).await {
+        Ok(a) => a,
         Err(r) => return r,
     };
-    let tools = match pinned_tools(&state, &user.user_id, &connector).await {
+    let tools = match app_tools(&state, &user.user_id, &app).await {
         Ok(t) => t,
-        Err(e) => return e.into_response(),
+        Err(r) => return r,
     };
     let query = q.q.unwrap_or_default();
     let cards: Vec<Value> = tools
@@ -731,7 +1020,9 @@ async fn tools_route(
         .map(tool_card)
         .collect();
     Json(json!({
-        "app": { "kind": "connector", "ref": connector.id, "name": connector.name },
+        "app": app.app_json(),
+        "runnable": app.not_runnable.is_none(),
+        "not_runnable_reason": app.not_runnable,
         "tools": cards,
     }))
     .into_response()
@@ -767,21 +1058,24 @@ async fn intent_route(State(state): State<Arc<AppState>>, Extension(user): Exten
     if let Err(r) = check_bot(&state, &user.user_id, body.bot_id.as_deref()).await {
         return r;
     }
-    if AppKind::parse(&body.app.kind) != Some(AppKind::Connector) {
+    let Some(kind) = AppKind::parse(&body.app.kind) else {
         return unsupported_kind(&body.app.kind);
-    }
-    let connector = match load_connector(&state, &user.user_id, &body.app.app_ref).await {
-        Ok(c) => c,
+    };
+    let app = match resolve_app(&state, &user.user_id, kind, &body.app.app_ref).await {
+        Ok(a) => a,
         Err(r) => return r,
     };
-    let tool = match pinned_tool(&state, &user.user_id, &connector, &body.tool).await {
+    if let Some(why) = &app.not_runnable {
+        return app_not_runnable(why);
+    }
+    let tool = match app_tool(&state, &user.user_id, &app, &body.tool).await {
         Ok(t) => t,
         Err(r) => return r,
     };
     let mut built = bar_blanks::blanks_for_tool(&tool);
-    let (uid, cid, tname) = (user.user_id.clone(), connector.id.clone(), body.tool.clone());
+    let (uid, aref, tname) = (user.user_id.clone(), app.app_ref.clone(), body.tool.clone());
     let recents = match with_db(&state, move |conn| {
-        recents_for_tool(conn, &uid, AppKind::Connector, &cid, &tname).map_err(internal)
+        recents_for_tool(conn, &uid, kind, &aref, &tname).map_err(internal)
     })
     .await
     {
@@ -797,8 +1091,8 @@ async fn intent_route(State(state): State<Arc<AppState>>, Extension(user): Exten
             .collect();
     }
     Json(json!({
-        "intent_id": encode_intent(AppKind::Connector, &connector.id, &body.tool),
-        "app": { "kind": "connector", "ref": connector.id, "name": connector.name },
+        "intent_id": encode_intent(kind, &app.app_ref, &body.tool),
+        "app": app.app_json(),
         "tool": { "name": body.tool, "title": bar_blanks::tool_title(&tool) },
         "sentence": built.sentence,
         "blanks": built.blanks,
@@ -816,6 +1110,8 @@ pub struct ReviewInput<'a> {
     pub app_kind: AppKind,
     pub app_ref: &'a str,
     pub app_name: &'a str,
+    /// The install's cap on the caller's level (vendor/artifact apps; `None` = no cap).
+    pub ceiling: Option<GrantLevel>,
     /// The pinned tool as the connector lists it.
     pub tool: &'a Value,
     pub args: &'a Value,
@@ -925,7 +1221,14 @@ pub fn review_job(conn: &Connection, input: &ReviewInput<'_>) -> Result<Value, R
         }
         _ => {}
     }
-    let level = actor_level(input.bot_id, &preview);
+    let level = capped_level(actor_level(input.bot_id, &preview), input.ceiling);
+    if level == Some(GrantLevel::Browser) && !read_only {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "level_read_only",
+            format!("{} is at Browser level here, so it can only read, and '{tool_name}' makes changes.", input.app_name),
+        ));
+    }
     // The ask the run will open first: someone else's rule; else the caller's own.
     let chosen: Option<&(ApprovalRule, String)> =
         preview.matches.iter().find(|(_, a)| a != input.user_id).or_else(|| preview.matches.first());
@@ -948,12 +1251,16 @@ pub fn review_job(conn: &Connection, input: &ReviewInput<'_>) -> Result<Value, R
     )
     .map_err(internal)?;
     let name = display_name(conn, approver).map_err(internal)?;
+    let rule = match chosen {
+        Some((r, a)) => json!({ "id": r.id, "text": team_rules::rule_text(conn, r, input.app_name, Some(a.as_str())).map_err(internal)? }),
+        None => Value::Null,
+    };
     Ok(json!({
         "job_id": job_id,
         "state": JobState::Review.as_str(),
         "level": level.map(GrantLevel::as_str),
         "needs_confirmation": needs_confirmation,
-        "rule": chosen.map(|(r, _)| json!({ "id": r.id, "text": team_rules::rule_text(r, input.app_name) })),
+        "rule": rule,
         "approver": { "user_id": approver, "name": name, "is_you": is_you },
         "lines": review_lines(input.tool, input.args),
     }))
@@ -980,14 +1287,14 @@ async fn review_route(State(state): State<Arc<AppState>>, Extension(user): Exten
         Ok(b) => b,
         Err(r) => return r,
     };
-    if kind != AppKind::Connector {
-        return unsupported_kind(kind.as_str());
-    }
-    let connector = match load_connector(&state, &user.user_id, &app_ref).await {
-        Ok(c) => c,
+    let app = match resolve_app(&state, &user.user_id, kind, &app_ref).await {
+        Ok(a) => a,
         Err(r) => return r,
     };
-    let tool = match pinned_tool(&state, &user.user_id, &connector, &tool_name).await {
+    let Some(connector) = app.connector.clone().filter(|_| app.not_runnable.is_none()) else {
+        return app_not_runnable(app.not_runnable.as_deref().unwrap_or("This app cannot run from the bar."));
+    };
+    let tool = match app_tool(&state, &user.user_id, &app, &tool_name).await {
         Ok(t) => t,
         Err(r) => return r,
     };
@@ -1001,9 +1308,10 @@ async fn review_route(State(state): State<Arc<AppState>>, Extension(user): Exten
             &ReviewInput {
                 user_id: &uid,
                 bot_id: bot.as_deref(),
-                app_kind: AppKind::Connector,
-                app_ref: &connector.id,
-                app_name: &connector.name,
+                app_kind: kind,
+                app_ref: &app.app_ref,
+                app_name: &app.name,
+                ceiling: app.ceiling(),
                 tool: &tool,
                 args: &args,
                 install_confirms,
@@ -1442,13 +1750,15 @@ pub fn call_payload(job: &BarJob, server: &str, tool: &str, proxy: Option<Value>
     payload
 }
 
-/// List the job's tool and build its engine call (connector apps).
+/// List the job's tool and build its engine call (connector and vendor apps:
+/// a vendor app's call goes through its connection's proxy entry).
 async fn prepare_call(state: &Arc<AppState>, job: &BarJob) -> Result<PreparedCall, Response> {
-    if job.app_kind != AppKind::Connector {
-        return Err(unsupported_kind(job.app_kind.as_str()));
-    }
-    let connector = load_connector(state, &job.user_id, &job.app_ref).await?;
-    let tool = pinned_tool(state, &job.user_id, &connector, &job.tool).await?;
+    let app = resolve_app(state, &job.user_id, job.app_kind, &job.app_ref).await?;
+    let Some(connector) = app.connector.clone().filter(|_| app.not_runnable.is_none()) else {
+        return Err(app_not_runnable(app.not_runnable.as_deref().unwrap_or("This app cannot run from the bar.")));
+    };
+    // A vendor app's tool runs through its own connection, inside its allow-list.
+    let tool = app_tool(state, &job.user_id, &app, &job.tool).await?;
     let connectors = mcp_apps::load_user_connectors(state, &job.user_id, mcp_apps::allow_private_hosts()).await;
     let prefixes = crate::mcp_user_proxy::connector_prefixes(&connectors);
     let prefix = connectors
@@ -1459,7 +1769,7 @@ async fn prepare_call(state: &Arc<AppState>, job: &BarJob) -> Result<PreparedCal
     Ok(PreparedCall {
         server: crate::mcp_user_proxy::PROXY_SERVER_NAME.to_string(),
         tool: crate::mcp_user_proxy::namespaced(&prefix, &job.tool),
-        app_name: connector.name.clone(),
+        app_name: app.name.clone(),
         tool_read_only: tool["annotations"]["readOnlyHint"] == true,
         input_schema: tool["inputSchema"].clone(),
         proxy: crate::mcp_user_proxy::proxy_registration(state, &job.user_id, &job.session_id, job.bot_id.as_deref()).await,
@@ -1811,12 +2121,12 @@ async fn cancel_route(State(state): State<Arc<AppState>>, Extension(user): Exten
     };
     // A job that is not running here is redacted from a fresh listing (names alone if it is slow).
     let running_here = running().lock().unwrap_or_else(|p| p.into_inner()).contains_key(&id);
-    let schema = if running_here || job.state.is_terminal() || job.app_kind != AppKind::Connector {
+    let schema = if running_here || job.state.is_terminal() || job.app_kind == AppKind::Artifact {
         Value::Null
     } else {
         let lookup = async {
-            let connector = load_connector(&state, &job.user_id, &job.app_ref).await.ok()?;
-            pinned_tool(&state, &job.user_id, &connector, &job.tool).await.ok().map(|t| t["inputSchema"].clone())
+            let app = resolve_app(&state, &job.user_id, job.app_kind, &job.app_ref).await.ok()?;
+            app_tool(&state, &job.user_id, &app, &job.tool).await.ok().map(|t| t["inputSchema"].clone())
         };
         tokio::time::timeout(CANCEL_LIST_BUDGET, lookup).await.ok().flatten().unwrap_or(Value::Null)
     };
@@ -1898,6 +2208,7 @@ mod tests {
                 app_kind: AppKind::Connector,
                 app_ref: "conn-1",
                 app_name: "Stripe",
+                ceiling: None,
                 tool: &pay_tool(),
                 args: &args,
                 install_confirms: false,
@@ -1941,6 +2252,111 @@ mod tests {
         assert_eq!(out["approver"], json!({ "user_id": "boss", "name": "boss", "is_you": true }));
         assert!(out["rule"]["id"].is_string());
         assert_eq!(out["needs_confirmation"], json!(true));
+    }
+
+    struct ShelfCloud {
+        shelf: Value,
+        vendors: Value,
+    }
+    #[async_trait::async_trait]
+    impl AccountCloud for ShelfCloud {
+        async fn send(&self, m: &str, p: &str, _b: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
+            assert_eq!(m, "GET");
+            let body = match p {
+                team_routes::CLOUD_APPS_PATH => &self.shelf,
+                CLOUD_VENDOR_APPS_PATH => &self.vendors,
+                other => panic!("unexpected path {other}"),
+            };
+            Ok((200, body.to_string().into_bytes()))
+        }
+    }
+
+    fn shelf_cloud() -> ShelfCloud {
+        ShelfCloud {
+            shelf: json!({
+                "yours": [{ "kind": "artifact", "ref": "art1", "name": "Quote builder", "icon": "🧮", "provenance": "you",
+                            "tier": "full", "granted_tier": "app", "installed": true, "pinned": false }],
+                "servers": [{ "kind": "vendor", "ref": "vap1", "name": "Linear", "icon": "https://x/linear.png", "provenance": "server",
+                              "tier": "app", "granted_tier": "app", "installed": true, "pinned": false }],
+            }),
+            vendors: json!({ "apps": [{ "id": "vap1", "connector_id": "conn-lin", "server_url": "https://mcp.linear.app",
+                                        "ui_resource": "ui://linear/board", "name": "Linear", "icon": null,
+                                        "tool_allowlist": ["create_issue"], "tier": "app" }] }),
+        }
+    }
+
+    #[tokio::test]
+    async fn vendor_and_artifact_apps_come_from_the_owners_shelf() {
+        let apps = read_cloud_apps(&shelf_cloud(), Some("ann"), "ann").await.unwrap();
+        let vendor = apps.iter().find(|a| a.kind == AppKind::Vendor).unwrap();
+        assert_eq!(
+            (vendor.connector_id.as_deref(), vendor.ui_resource.as_deref(), vendor.tool_allowlist.clone()),
+            (Some("conn-lin"), Some("ui://linear/board"), vec!["create_issue".to_string()])
+        );
+        assert_eq!((vendor.name.as_str(), vendor.icon.as_deref(), vendor.ceiling), ("Linear", Some("https://x/linear.png"), Some(GrantLevel::App)));
+        let artifact = apps.iter().find(|a| a.kind == AppKind::Artifact).unwrap();
+        assert_eq!((artifact.icon.as_deref(), artifact.ceiling), (Some("🧮"), Some(GrantLevel::App)));
+
+        // A vendor app runs when installed and its connection is here; an artifact app never does (yet).
+        assert_eq!(cloud_app_not_runnable(vendor, true), None);
+        assert_eq!(cloud_app_not_runnable(vendor, false).as_deref(), Some("Linear's connection is not on this computer."));
+        let uninstalled = CloudApp { ceiling: None, ..vendor.clone() };
+        assert_eq!(cloud_app_not_runnable(&uninstalled, true).as_deref(), Some("Install Linear first."));
+        assert_eq!(cloud_app_not_runnable(artifact, true).as_deref(), Some(ARTIFACT_NOT_RUNNABLE));
+
+        // The signed client answers for the paired owner only: anyone else fails closed.
+        assert!(read_cloud_apps(&shelf_cloud(), Some("boss"), "ann").await.is_err());
+        assert!(read_cloud_apps(&shelf_cloud(), None, "ann").await.is_err());
+    }
+
+    #[test]
+    fn a_vendor_apps_tools_are_its_allow_list_and_its_own_ui_tools() {
+        let app = CloudApp {
+            kind: AppKind::Vendor,
+            app_ref: "vap1".into(),
+            name: "Linear".into(),
+            icon: None,
+            ceiling: Some(GrantLevel::App),
+            connector_id: Some("conn-lin".into()),
+            ui_resource: Some("ui://linear/board".into()),
+            tool_allowlist: vec!["create_issue".into()],
+        };
+        assert!(vendor_tool_allowed(&app, &json!({ "name": "create_issue" })));
+        assert!(vendor_tool_allowed(&app, &json!({ "name": "show_board", "_meta": { "ui": { "resourceUri": "ui://linear/board" } } })));
+        assert!(!vendor_tool_allowed(&app, &json!({ "name": "delete_project" })));
+        assert!(!vendor_tool_allowed(&app, &json!({ "name": "other_view", "_meta": { "ui": { "resourceUri": "ui://linear/other" } } })));
+
+        // An artifact app's tools are the mirror tools, without the app/binding fields.
+        let tools = artifact_tools();
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(names, ["app_storage_get", "app_storage_set", "app_storage_delete", "app_storage_list", "app_ai_complete"]);
+        let set = bar_blanks::blanks_for_tool(&tools[1]);
+        let keys: Vec<&str> = set.blanks.iter().map(|b| b.key.as_str()).collect();
+        assert!(keys.contains(&"key") && keys.contains(&"value") && !keys.contains(&"binding"), "{keys:?}");
+    }
+
+    #[test]
+    fn review_caps_a_vendor_app_at_its_install_level() {
+        let conn = db();
+        seed(&conn);
+        let (tool, args) = (pay_tool(), json!({ "amount": 5, "to": "acme" }));
+        let input = |ceiling| ReviewInput {
+            user_id: "ann",
+            bot_id: None,
+            app_kind: AppKind::Vendor,
+            app_ref: "vap1",
+            app_name: "Linear",
+            ceiling,
+            tool: &tool,
+            args: &args,
+            install_confirms: false,
+        };
+        let refused = review_job(&conn, &input(Some(GrantLevel::Browser))).unwrap_err();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let ok = review_job(&conn, &input(Some(GrantLevel::App))).unwrap();
+        assert_eq!(ok["level"], json!("app"));
+        let job = get_job(&conn, ok["job_id"].as_str().unwrap()).unwrap().unwrap();
+        assert_eq!((job.app_kind, job.app_ref.as_str()), (AppKind::Vendor, "vap1"));
     }
 
     #[test]

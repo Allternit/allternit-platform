@@ -35,6 +35,7 @@ use serde_json::{json, Value};
 
 use crate::account_sync::{AccountCloud, SignedAccountCloud};
 use crate::auth::AuthUser;
+use crate::bar_routes::{self, JobState};
 use crate::team_store::{
     self, AppKind, ApprovalRule, ApproverKind, BotAppGrant, BotKind, GrantLevel, ReportsToOutcome, RuleInput, RuleOp, ScopeKind,
 };
@@ -141,6 +142,20 @@ fn str_field<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter().find_map(|k| v[*k].as_str()).map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// `Ask.app` from a routed ask's own `app` (`{kind, ref, name}`, written by
+/// `team_rules::open_ask`); `null` when the ask names no app.
+fn ask_app(app: &Value) -> Value {
+    match (app["kind"].as_str().and_then(AppKind::parse), app["ref"].as_str()) {
+        (Some(kind), Some(app_ref)) => json!({
+            "kind": kind.as_str(),
+            "ref": app_ref,
+            "name": app["name"].as_str().unwrap_or(app_ref),
+            "icon": app["icon"].as_str(),
+        }),
+        _ => Value::Null,
+    }
+}
+
 fn cowork_asks(conn: &Connection, scope: &[String]) -> rusqlite::Result<Vec<AskRec>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, content, source, created_at, approver_user_id, rule_id, bot_id, job_id
@@ -184,7 +199,7 @@ fn cowork_asks(conn: &Connection, scope: &[String]) -> rusqlite::Result<Vec<AskR
                 "actor": node_actor(bot_id.as_deref(), user_id.as_deref()),
                 "approver_user_id": effective_approver,
                 "rule_id": rule_id,
-                "app": Value::Null,
+                "app": ask_app(&body["app"]),
                 "tool": tool,
                 "risk": if source == "gizzi-permission" { "normal" } else { "normal" },
                 "state": "pending",
@@ -249,7 +264,7 @@ pub async fn fetch_cloud_asks(cloud: &dyn AccountCloud, me: &str) -> Result<Vec<
             let ask = json!({
                 "id": d["id"], "store": d["store"], "title": d["title"], "summary": d["summary"],
                 "actor": actor, "approver_user_id": approver, "rule_id": d["rule_id"],
-                "app": Value::Null, "tool": d["tool"], "risk": "normal",
+                "app": ask_app(&d["app"]), "tool": d["tool"], "risk": "normal",
                 "state": d["state"], "created_at": d["created_at"], "expires_at": d["expires_at"],
                 "job_id": Value::Null, "resolve": d["resolve"],
             });
@@ -308,47 +323,27 @@ fn app_name_key(kind: AppKind, app_ref: &str) -> String {
     format!("app:{}:{app_ref}", kind.as_str())
 }
 
-/// Sentence for a rule, rendered from the row.
+/// Sentence for a rule: `team_rules::render_rule` (the one renderer the bar
+/// review card and the ask card use too), with the names in `names` (node ids
+/// `p:<user>` / `b:<id>` / `v:<id>`, and `app_name_key` for apps).
 pub fn rule_text(rule: &ApprovalRule, names: &HashMap<String, String>) -> String {
-    let who = match rule.scope_kind {
-        ScopeKind::Org => "anyone".to_string(),
-        ScopeKind::Person => rule.scope_ref.as_ref().map(|r| names.get(&format!("p:{r}")).cloned().unwrap_or_else(|| r.clone())).unwrap_or_else(|| "a person".into()),
-        ScopeKind::Bot => rule.scope_ref.as_ref().map(|r| names.get(r).cloned().unwrap_or_else(|| r.clone())).unwrap_or_else(|| "a bot".into()),
+    let scope = match rule.scope_kind {
+        ScopeKind::Org => None,
+        ScopeKind::Person => rule.scope_ref.as_ref().and_then(|r| names.get(&format!("p:{r}"))),
+        ScopeKind::Bot => rule.scope_ref.as_ref().and_then(|r| names.get(r)),
+    };
+    let app = match (rule.app_kind, rule.app_ref.as_deref()) {
+        (Some(k), Some(r)) => names.get(&app_name_key(k, r)),
+        _ => None,
     };
     let approver = match rule.approver_kind {
-        ApproverKind::Owner => "the owner".to_string(),
-        ApproverKind::Manager => "the manager".to_string(),
-        ApproverKind::User => rule
-            .approver_user_id
-            .as_ref()
-            .map(|u| names.get(&format!("p:{u}")).cloned().unwrap_or_else(|| u.clone()))
-            .unwrap_or_else(|| "a named person".into()),
+        ApproverKind::User => rule.approver_user_id.as_ref().and_then(|u| names.get(&format!("p:{u}"))),
+        ApproverKind::Owner | ApproverKind::Manager => None,
     };
-    let tool = if rule.tool == "*" { "any tool".to_string() } else { rule.tool.clone() };
-    let app = rule
-        .app_ref
-        .as_ref()
-        .map(|r| {
-            let shown = rule.app_kind.and_then(|k| names.get(&app_name_key(k, r))).cloned().unwrap_or_else(|| r.clone());
-            format!(" in {shown}")
-        })
-        .unwrap_or_default();
-    let shown = |v: &Option<Value>| match v {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Array(a)) => a.iter().map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())).collect::<Vec<_>>().join(", "),
-        Some(other) => other.to_string(),
-        None => String::new(),
-    };
-    let unit = rule.unit_label.as_ref().map(|u| format!(" {u}")).unwrap_or_default();
-    let field = rule.field.clone().unwrap_or_else(|| "the value".into());
-    let cond = match rule.op {
-        RuleOp::Always => String::new(),
-        RuleOp::Gt => format!(" when {field} is over {}{unit}", shown(&rule.value)),
-        RuleOp::Gte => format!(" when {field} is {}{unit} or more", shown(&rule.value)),
-        RuleOp::Eq => format!(" when {field} is {}{unit}", shown(&rule.value)),
-        RuleOp::In => format!(" when {field} is one of {}", shown(&rule.value)),
-    };
-    format!("{who} needs {approver} to approve {tool}{app}{cond}.")
+    crate::team_rules::render_rule(
+        rule,
+        &crate::team_rules::RuleNames { scope: scope.map(String::as_str), app: app.map(String::as_str), approver: approver.map(String::as_str) },
+    )
 }
 
 /// Build the `/team/map` body from rows in hand. `cloud` is the cloud routed
@@ -488,6 +483,51 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
     }
     let asks: Vec<Value> = all.iter().filter(|a| a.visible_to(v)).map(|a| a.ask.clone()).collect();
 
+    // Bar jobs (V295): every member's active jobs. Counts on the actor's node and,
+    // while waiting, the approver's; details only where an ask's would be visible.
+    let mut jobs: Vec<Value> = vec![];
+    let mut job_count: HashMap<String, i64> = HashMap::new();
+    let mut job_state: HashMap<String, &'static str> = HashMap::new();
+    for member in &member_ids {
+        for j in bar_routes::list_jobs(conn, member, &JobState::ACTIVE)? {
+            let actor = match j.bot_id.as_deref() {
+                Some(b) if vendor_ids.iter().any(|x| x == b) => format!("v:{b}"),
+                Some(b) => format!("b:{b}"),
+                None => format!("p:{}", j.user_id),
+            };
+            let waiting_on = if j.state == JobState::WaitingApproval { j.approver_user_id.as_ref().map(|u| format!("p:{u}")) } else { None };
+            *job_count.entry(actor.clone()).or_default() += 1;
+            if let Some(w) = waiting_on.as_ref().filter(|w| **w != actor) {
+                *job_count.entry(w.clone()).or_default() += 1;
+            }
+            job_state.entry(actor.clone()).or_insert(match j.state {
+                JobState::WaitingApproval => "waiting_approval",
+                JobState::InputRequired => "needs_input",
+                _ => "working",
+            });
+            let visible = v.is_admin || j.user_id == v.user_id || j.approver_user_id.as_deref() == Some(v.user_id.as_str());
+            if visible {
+                jobs.push(json!({
+                    "job_id": j.id,
+                    "actor": actor,
+                    "waiting_on": waiting_on,
+                    "app": app_info(conn, j.app_kind, &j.app_ref, tiers),
+                    "tool": j.tool,
+                    "title": crate::mcp_server_routes::tool_label(&j.tool),
+                    "state": j.state.as_str(),
+                }));
+            }
+        }
+    }
+    for n in nodes.iter_mut() {
+        let id = n["id"].as_str().unwrap_or("").to_string();
+        n["counts"]["jobs"] = json!(job_count.get(&id).copied().unwrap_or(0));
+        // A running bar job shows on an otherwise idle node.
+        if let (Some(st), Some("idle")) = (job_state.get(&id), n["state"].as_str()) {
+            n["state"] = json!(st);
+        }
+    }
+
     // Grants, with the real ceiling where the owner's install tier was read.
     let mut grants: Vec<Value> = vec![];
     let mut tiers_unknown = tiers.shelf.is_err();
@@ -531,9 +571,7 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
         "grants": grants,
         "rules": rules,
         "asks": asks,
-        // TODO(lane 15): read `bar_jobs` (V295) here; shape
-        // {job_id, actor, waiting_on, app, tool, title, state}. Empty until then.
-        "jobs": Vec::<Value>::new(),
+        "jobs": jobs,
         "partial": partial,
     }))
 }
@@ -754,7 +792,7 @@ fn kind_cap(kind: AppKind) -> GrantLevel {
 
 /// The owner's install level for a shelf row. `full` only for an app the
 /// owner or their org made.
-fn install_ceiling(a: &ShelfApp) -> Option<GrantLevel> {
+pub(crate) fn install_ceiling(a: &ShelfApp) -> Option<GrantLevel> {
     if !a.installed {
         return None;
     }
@@ -1503,6 +1541,69 @@ mod tests {
         assert_eq!(bot2["counts"]["asks"], 1);
     }
 
+    #[test]
+    fn team_map_jobs_show_the_waiting_bar_job_on_the_approvers_node() {
+        let (conn, admin) = seeded();
+        conn.execute("INSERT INTO mcp_connectors (id, user_id, name, name_id, url) VALUES ('conn1', 'emp1', 'Stripe', 'stripe', 'https://x')", []).unwrap();
+        let no_args = json!({});
+        let new_job = |bot: Option<&'static str>| bar_routes::NewJob {
+            user_id: "emp1",
+            bot_id: bot,
+            app_kind: AppKind::Connector,
+            app_ref: "conn1",
+            tool: "refund_payment",
+            args: &no_args,
+            level: None,
+            rule_id: None,
+            approver_user_id: Some("owner1"),
+        };
+        let waiting = bar_routes::insert_job(&conn, &new_job(Some("bot1"))).unwrap();
+        bar_routes::set_job_state(&conn, &waiting, JobState::WaitingApproval, &Default::default()).unwrap();
+        let mine = bar_routes::insert_job(&conn, &new_job(None)).unwrap();
+        bar_routes::set_job_state(&conn, &mine, JobState::Working, &Default::default()).unwrap();
+        // Still in review: not active, not on the map.
+        bar_routes::insert_job(&conn, &new_job(None)).unwrap();
+
+        let map = map_json(&conn, &admin, &Ok(vec![]), &TierRead::skipped()).unwrap();
+        let jobs = map["jobs"].as_array().unwrap();
+        assert_eq!(jobs.len(), 2);
+        let w = jobs.iter().find(|j| j["job_id"] == waiting.as_str()).unwrap();
+        assert_eq!(
+            (w["actor"].as_str(), w["waiting_on"].as_str(), w["state"].as_str(), w["title"].as_str()),
+            (Some("b:bot1"), Some("p:owner1"), Some("waiting_approval"), Some("refund payment"))
+        );
+        assert_eq!(w["app"]["name"], "Stripe");
+        let m = jobs.iter().find(|j| j["job_id"] == mine.as_str()).unwrap();
+        assert_eq!((m["actor"].as_str(), m["waiting_on"].clone()), (Some("p:emp1"), Value::Null));
+        let node = |id: &str| map["nodes"].as_array().unwrap().iter().find(|n| n["id"] == id).unwrap().clone();
+        assert_eq!(node("b:bot1")["counts"]["jobs"], 1);
+        assert_eq!(node("p:owner1")["counts"]["jobs"], 1, "the waiting job shows on the approver's node");
+        assert_eq!(node("p:emp1")["counts"]["jobs"], 1);
+        assert_eq!(node("b:bot2")["counts"]["jobs"], 0);
+
+        // A member who is neither the requester nor the approver sees counts, not the jobs.
+        let other = Viewer { user_id: "emp2".into(), is_admin: false, ..admin.clone() };
+        let m2 = map_json(&conn, &other, &Ok(vec![]), &TierRead::skipped()).unwrap();
+        assert!(m2["jobs"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn team_asks_carry_the_routed_asks_app() {
+        let (conn, admin) = seeded();
+        conn.execute(
+            "INSERT INTO cowork_approvals (id, user_id, content, source, dismissed, approver_user_id, bot_id)
+             VALUES ('ap2', 'emp1', '{\"tool\":\"refund_payment\",\"app\":{\"kind\":\"vendor\",\"ref\":\"vap1\",\"name\":\"Linear\"}}', 'team-rule', 0, 'owner1', 'bot1')",
+            [],
+        )
+        .unwrap();
+        let map = map_json(&conn, &admin, &Ok(vec![]), &TierRead::skipped()).unwrap();
+        let asks = map["asks"].as_array().unwrap();
+        let routed = asks.iter().find(|a| a["id"] == "cowork:ap2").unwrap();
+        assert_eq!(routed["app"], json!({ "kind": "vendor", "ref": "vap1", "name": "Linear", "icon": null }));
+        // An ask with no app keeps `app: null`.
+        assert_eq!(asks.iter().find(|a| a["id"] == "cowork:ap1").unwrap()["app"], Value::Null);
+    }
+
     #[tokio::test]
     async fn team_map_partial_is_set_when_the_cloud_is_off() {
         let (conn, v) = seeded();
@@ -1561,7 +1662,7 @@ mod tests {
         // The owner can; the member still cannot change or delete it.
         let made = create_rule(&conn, &admin, &body).unwrap();
         let id = made["rule"]["id"].as_str().unwrap().to_string();
-        assert_eq!(made["rule"]["text"], "anyone needs the owner to approve send_payment when amount is over 50000 cents.");
+        assert_eq!(made["rule"]["text"], "Anyone · send payment · amount over 50000 cents needs the owner");
         assert_eq!(patch_rule(&conn, &emp, &id, &json!({ "enabled": false })).unwrap_err().status, StatusCode::FORBIDDEN);
         assert_eq!(delete_rule(&conn, &emp, &id).unwrap_err().status, StatusCode::FORBIDDEN);
         assert!(team_store::get_rule(&conn, &id).unwrap().unwrap().enabled);
@@ -1575,7 +1676,7 @@ mod tests {
         let patched = patch_rule(&conn, &admin, &id, &json!({ "app_kind": "connector", "app_ref": "conn1", "value": 1000 })).unwrap();
         assert_eq!(patched["rule"]["value"], 1000);
         assert_eq!(patched["rule"]["field"], "amount");
-        assert_eq!(patched["rule"]["text"], "anyone needs the owner to approve send_payment in Stripe when amount is over 1000 cents.");
+        assert_eq!(patched["rule"]["text"], "Anyone · Stripe send payment · amount over 1000 cents needs the owner");
         assert_eq!(delete_rule(&conn, &admin, &id).unwrap()["deleted"], true);
     }
 

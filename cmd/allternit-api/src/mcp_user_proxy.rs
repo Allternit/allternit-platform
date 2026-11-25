@@ -2199,7 +2199,7 @@ mod e2e {
         let data = &held["error"]["data"];
         assert_eq!(data["code"], "owner_approval_required", "{held}");
         assert_eq!(data["approver"]["user_id"], "boss");
-        assert!(data["rule_text"].as_str().unwrap().contains("show_dashboard"), "{data}");
+        assert!(data["rule_text"].as_str().unwrap().contains("show dashboard"), "{data}");
         assert!(data["rule_id"].as_str().unwrap().starts_with("arl_"));
         let approval_id = data["approval_id"].as_str().unwrap().to_string();
         {
