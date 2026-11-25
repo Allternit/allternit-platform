@@ -61,7 +61,7 @@ const camel = (s) => { const p = pascal(s); return p[0].toLowerCase() + p.slice(
 const snake = (s) => s.replace(/([a-z])([A-Z])/g, '$1_$2').replace(/-/g, '_').toUpperCase();
 const jsonLit = (v) => JSON.stringify(v);
 const kt = (v) => JSON.stringify(v).replace(/\$/g, '\\$');
-const sw = (v) => Array.isArray(v) ? JSON.stringify(v) : '[' + Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${JSON.stringify(x)}`).join(', ') + ']';
+const sw = (v) => (typeof v === 'string' || Array.isArray(v)) ? JSON.stringify(v) : '[' + Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${JSON.stringify(x)}`).join(', ') + ']';
 const nul = (v, f, none = 'null') => (v === null || v === undefined ? none : f(v));
 const canOf = (m, k) => (m.can[k] ? (m.can[k].default ? 'on' : 'off') : 'none');
 
