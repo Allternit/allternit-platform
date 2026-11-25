@@ -3,10 +3,14 @@
 //! Each tunnel policy has a `direction` (plan D3, Apps + MCP 2026):
 //!
 //! - `outbound`: an admin MCP tunnel to an externally hosted MCP server. The
-//!   mTLS terminator in front of `/mcp/server` asserts the client-certificate
-//!   thumbprint and the OAuth issuer/audience in headers, and
-//!   [`require_tunnel_auth`] compares them with the policy offline. A missing
-//!   policy row stays fail-open for existing attachments.
+//!   gateway (mTLS terminator) in front of `/mcp/server` asserts the
+//!   client-certificate thumbprint and the OAuth issuer/audience in headers,
+//!   and [`require_tunnel_auth`] compares them with the policy offline. Those
+//!   headers are only believed when the request also carries the internal
+//!   service token (`mcp_server_routes::handle_rpc` rejects them otherwise),
+//!   so a policy that pins a certificate or issuer can only be satisfied
+//!   through the gateway. A missing policy row stays fail-open for existing
+//!   attachments.
 //! - `inbound_share`: a share link that lets someone outside reach a local
 //!   port or MCP server through the share gate. Nothing in the request is
 //!   trusted as asserted: [`require_inbound_share_auth`] verifies the bearer
@@ -457,7 +461,7 @@ pub async fn require_inbound_share_auth(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::db::DbHandle;
     use std::path::PathBuf;
@@ -478,7 +482,7 @@ mod tests {
     //     -days 1 -nodes -subj "/CN=test-client"
     // SHA-256 fingerprint (colon-free uppercase):
     //   A4A616FD19584FE679C1C4E5AFC8363F1552ED0002864FAB14795A33AA5BB9A6
-    const TEST_CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
+    pub(crate) const TEST_CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
 MIICqDCCAZACCQCPLNNrnTDMTDANBgkqhkiG9w0BAQsFADAWMRQwEgYDVQQDDAt0
 ZXN0LWNsaWVudDAeFw0yNjA4MDkwODQ5NDZaFw0yNjA4MTAwODQ5NDZaMBYxFDAS
 BgNVBAMMC3Rlc3QtY2xpZW50MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC

@@ -196,8 +196,16 @@ Each policy row in `mcp_tunnel_auth` has a `direction`:
 
 | Direction | Used for | How the issuer and audience are checked | No policy row |
 |-----------|----------|------------------------------------------|---------------|
-| `outbound` (default) | Admin tunnels to externally hosted MCP servers (this page) | The mTLS terminator in front of `/mcp/server` sends the certificate thumbprint and the token's issuer and audience in the `x-allternit-client-cert-thumbprint`, `x-allternit-oauth-issuer` and `x-allternit-oauth-audience` headers, and the API compares them with the policy. | Allowed (existing attachments keep working) |
+| `outbound` (default) | Admin tunnels to externally hosted MCP servers (this page) | The Allternit gateway (the mTLS terminator in front of `/mcp/server`) sends the certificate thumbprint and the token's issuer and audience in the `x-allternit-client-cert-thumbprint`, `x-allternit-oauth-issuer` and `x-allternit-oauth-audience` headers, together with the internal service token, and the API compares them with the policy. | Allowed (existing attachments keep working) |
 | `inbound_share` | Share links that let someone outside reach a local port or MCP server through the share gate | The bearer token's RS256 signature is verified against the issuer's JWKS, then `iss`, `aud`, `exp` and `nbf` are read from the verified token. Headers are never trusted for this direction. | Refused (MCP shares always require auth) |
+
+### Outbound headers come from the gateway only
+
+`/mcp/server` is reachable by any signed-in user, so the API only believes the tunnel headers (`x-allternit-tunnel-*`, `x-allternit-client-cert-thumbprint`, `x-allternit-oauth-issuer`, `x-allternit-oauth-audience`) when the same request carries the internal service token in `x-allternit-internal-token`. The gateway holds that token (`ALLTERNIT_INTERNAL_SERVICE_TOKEN`); users and MCP clients never do.
+
+- A request with any tunnel header and no valid internal token is refused: HTTP `401`, JSON-RPC error `-32001`, `tunnel headers are set by the gateway only`. Leaving out `x-allternit-tunnel-id` does not get around this.
+- A request with no tunnel headers runs as the signed-in user exactly as before.
+- A policy that pins `client_cert_pem` or `oauth_issuer` can therefore only be satisfied through the gateway. Clients cannot assert a certificate thumbprint or an issuer themselves.
 
 For `inbound_share`, the JWKS comes from the policy's `jwks_url`, or, when `jwks_url` is empty, from the issuer URL followed by `/.well-known/jwks.json`. Only `https` URLs are accepted (plain `http` only to `localhost` or `127.0.0.1`). Keys are cached for an hour. A token signed with a key the cache does not know (key rotation) triggers a fresh fetch, at most once every 30 seconds.
 

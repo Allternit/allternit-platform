@@ -47,15 +47,21 @@ Native tools and server-side tools have no namespace prefix. When the MCP server
 ## Authentication
 
 - Connector and attached-server REST routes use the standard Allternit session.
-- The `/mcp/server` JSON-RPC route also accepts optional tunnel-auth headers for mTLS/OAuth-gated deployments:
-  - `x-allternit-tunnel-id`
+- The `/mcp/server` JSON-RPC route also reads tunnel-auth headers for mTLS/OAuth-gated deployments. Only the Allternit gateway (the mTLS terminator in front of `/mcp/server`) may set them:
+  - `x-allternit-tunnel-id` (and any other `x-allternit-tunnel-*` header)
   - `x-allternit-client-cert-thumbprint`
   - `x-allternit-oauth-issuer`
   - `x-allternit-oauth-audience`
 
 ## Tunnel authentication
 
-When a request to `/mcp/server` includes `x-allternit-tunnel-id`, the gateway loads the tunnel's auth policy and enforces any configured checks. The policy is fail-closed: if a check is configured but not satisfied, the request is rejected with JSON-RPC error `-32001`.
+`/mcp/server` is open to any signed-in user, so the API does not believe tunnel headers on their own. They count only when the same request also carries the internal service token in `x-allternit-internal-token` (the shared secret `ALLTERNIT_INTERNAL_SERVICE_TOKEN`, which only the gateway holds).
+
+- **Tunnel headers without the internal token**: the request is refused with HTTP `401` and JSON-RPC error `-32001`, message `tunnel headers are set by the gateway only`. This applies even when the forged values would match the policy, and even when `x-allternit-tunnel-id` is left out.
+- **Tunnel headers with the internal token**: the API loads the policy for `x-allternit-tunnel-id` and enforces every configured check. If a check is configured but not satisfied, the request is refused with `401` and `-32001` (`MCP tunnel auth failed: <reason>`).
+- **No tunnel headers**: nothing changes. The request runs as the signed-in user, with the usual OAuth connector scoping, so existing attachments keep working.
+
+A policy that pins a client certificate or an issuer can therefore only be satisfied through the gateway. A request that carries the internal token is authenticated as the internal service, not as an end user.
 
 | Check | Header / claim | Failure |
 |-------|----------------|---------|
