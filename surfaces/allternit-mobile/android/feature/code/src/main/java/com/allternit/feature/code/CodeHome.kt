@@ -2,6 +2,7 @@ package com.allternit.feature.code
 
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.verticalScroll
