@@ -362,6 +362,20 @@ export const AgentCompatRoutes = () =>
               // ask_user_later: the turn did not wait; the answer starts a new turn.
               ...(props.async ? { async: true, assumption: props.assumption ?? null } : {}),
             }
+          case "mcp.task":
+          case "mcp.elicitation":
+            return {
+              type: type === "mcp.task" ? "mcp_task" : "mcp_elicitation",
+              session_id: props.sessionID ?? null,
+              part: props.part ?? null,
+            }
+          case "mcp.elicitation.resolved":
+            return {
+              type: "mcp_elicitation_resolved",
+              session_id: props.sessionID ?? null,
+              request_id: props.requestID ?? null,
+              action: props.action ?? null,
+            }
           case "screen.context.request":
             // capture_screen_context: the app answers POST /screen-context/:id/reply.
             return {
