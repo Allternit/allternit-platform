@@ -339,6 +339,10 @@ pub trait EdgeBackend: Send + Sync {
     fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
         None
     }
+    /// Exported artifact apps (MCP Apps, lane 46); `None` = no apps here.
+    fn apps_store(&self) -> Option<&dyn super::mcp_edge_apps::AppsStore> {
+        None
+    }
     /// A live Platform API project key (`alt_live_…` / `alt_test_…`) on a project
     /// the Platform API is switched on for; `None` = invalid, revoked or switched off.
     async fn verify_project_key(&self, _token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
@@ -637,13 +641,21 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         }
     }
 
-    // Seams for later lanes (all answer `None` today, so nothing changes):
-    // tasks (44/45), apps (46) and skills (47).
+    // Seams: apps (46), then tasks (44/45) and skills (47).
+    // Apps: OAuth callers on the agents server only (`mcp_edge_apps::serves`).
+    let apps = backend.apps_store().filter(|_| super::mcp_edge_apps::serves(target == Target::Agents, &caller.client));
     let hooked = if rpc_method == "tools/call" {
-        super::mcp_edge_tasks::intercept_tool_call(rpc_method, &id, &request["params"])
+        let app_reply = match apps {
+            Some(store) => super::mcp_edge_apps::intercept_tool_call(store, &caller.user_id, rpc_method, &id, &request["params"]).await,
+            None => None,
+        };
+        app_reply.or_else(|| super::mcp_edge_tasks::intercept_tool_call(rpc_method, &id, &request["params"]))
     } else if rpc_method == "resources/list" || rpc_method == "resources/read" {
-        super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"])
-            .or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
+        let app_reply = match apps {
+            Some(store) => super::mcp_edge_apps::intercept_resources(store, &caller.user_id, rpc_method, &id, &request["params"]).await,
+            None => None,
+        };
+        app_reply.or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
     } else {
         None
     };
@@ -665,6 +677,11 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
                 Some(k) => with_model_tools(reply, k),
+                None => reply,
+            };
+            let reply = match apps.filter(|_| status == 200) {
+                Some(_) if rpc_method == "initialize" => super::mcp_edge_apps::advertise_resources(reply),
+                Some(store) => super::mcp_edge_apps::with_app_entries(store, &caller.user_id, rpc_method, reply).await,
                 None => reply,
             };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -966,11 +983,12 @@ async fn well_known_at(Path(rest): Path<String>) -> Response {
 struct ProdBackend<'a> {
     state: &'a Arc<ApiState>,
     events: crate::routes::mcp_events::PgEventsStore<'a>,
+    apps: super::mcp_edge_apps::PgAppsStore<'a>,
 }
 
 impl<'a> ProdBackend<'a> {
     fn new(state: &'a Arc<ApiState>) -> Self {
-        Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db } }
+        Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db }, apps: super::mcp_edge_apps::PgAppsStore { state } }
     }
 }
 
@@ -978,6 +996,10 @@ impl<'a> ProdBackend<'a> {
 impl EdgeBackend for ProdBackend<'_> {
     fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
         Some(&self.events)
+    }
+
+    fn apps_store(&self) -> Option<&dyn super::mcp_edge_apps::AppsStore> {
+        Some(&self.apps)
     }
 
     async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
