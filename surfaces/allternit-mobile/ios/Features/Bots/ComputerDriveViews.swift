@@ -25,7 +25,8 @@ struct ComputersListView: View {
                                   message: error, actionTitle: "Retry", action: { Task { await load() } })
             } else if computers.isEmpty {
                 FriendlyStateView(style: .empty, icon: "desktopcomputer", title: "No computers yet",
-                                  message: "Pair a Mac with Allternit Desktop or add a cloud computer in Settings → Computers.")
+                                  message: "Pair a Mac with Allternit Desktop or add a cloud computer in Settings → Computers.",
+                                  art: .sheets)
             } else {
                 ForEach(computers) { computer in
                     NavigationLink(value: BotRoute.computer(computer)) {

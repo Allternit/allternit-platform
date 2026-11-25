@@ -75,7 +75,7 @@ struct ACIComputersPane: View {
         } else if relay.devices.isEmpty {
             EmptyBox(icon: "desktopcomputer", title: "No computers paired",
                      line: "Open Allternit Desktop on a computer signed in to this account, and it shows up here.",
-                     art: .sheets)
+                     art: .sheets, scene: .asleep)
         } else {
             VStack(spacing: 10) {
                 ForEach(relay.devices) { device in

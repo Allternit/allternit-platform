@@ -37,13 +37,18 @@ struct EmptyBox: View {
     let line: String
     /// Line art above the title (replaces the icon circle). Nil keeps today's look.
     var art: EmptyArtKind? = nil
+    /// Connect scene in place of the art (no-computer empties). Nil keeps the art/icon.
+    var scene: ConnectSceneState? = nil
     /// Optional pill under the line.
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
-            if let art {
+            if let scene {
+                ConnectScene(state: scene)
+                    .padding(.bottom, 2)
+            } else if let art {
                 EmptyArt(kind: art, paper: Color("BgPrimary"))
                     .padding(.bottom, 2)
             } else {
