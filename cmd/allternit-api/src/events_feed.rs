@@ -86,6 +86,9 @@ pub enum Kind {
     /// An agent sent its user a message and asked for a push
     /// (`send_user_message`, `agent_user_tools`).
     AgentMessageSent,
+    /// An Island bar job changed state (`bar_routes::record_job_changed`).
+    /// cloud-api turns it into a Live Activity push, not a stored event.
+    BarJobChanged,
 }
 
 impl Kind {
@@ -127,6 +130,7 @@ impl Kind {
             Kind::FilesTaskResult => Some("files.task.result"),
             Kind::FilesConflict => Some("files.conflict"),
             Kind::AgentMessageSent => Some("agent.message.sent"),
+            Kind::BarJobChanged => Some("bar_job.changed"),
         }
     }
 }
@@ -170,6 +174,7 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "files.task.result" => Some(Kind::FilesTaskResult),
         "files.conflict" => Some(Kind::FilesConflict),
         "agent.message.sent" => Some(Kind::AgentMessageSent),
+        "bar_job.changed" => Some(Kind::BarJobChanged),
         _ => None,
     }
 }

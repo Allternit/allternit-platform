@@ -1143,6 +1143,130 @@ fn announce(job: &BarJob) {
     let _ = job_events_tx().send(bar_job_event(job));
 }
 
+// ── bar_job.changed (Live Activity push) ─────────────────────────────────────
+
+/// Short money text for the compact Live Activity slot ("€320"), from the
+/// job's `amount` + `currency` args. `None` when the job has no amount.
+fn short_amount(args: &Value) -> Option<String> {
+    let n = match &args["amount"] {
+        Value::Number(n) => n.to_string(),
+        Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return None,
+    };
+    let code = args["currency"].as_str().unwrap_or("").to_uppercase();
+    Some(match code.as_str() {
+        "EUR" => format!("\u{20ac}{n}"),
+        "USD" => format!("${n}"),
+        "GBP" => format!("\u{a3}{n}"),
+        "" => n,
+        c => format!("{n} {c}"),
+    })
+}
+
+/// The `bar_job.changed` payload one user's phone gets for `job` (the shape
+/// cloud-api's `live_activity::on_bar_job` reads). `for_user` is the
+/// requester or the approver; cloud-api sets `isOwner` from `approverUserId`.
+/// The question and inbox keys ride only for the approver while the job waits.
+pub fn job_changed_payload(conn: &Connection, job: &BarJob, for_user: &str) -> Value {
+    let title = crate::mcp_server_routes::tool_label(&job.tool);
+    let amount = short_amount(&job.args);
+    let mut p = json!({
+        "jobId": job.id,
+        "title": title,
+        "appName": job.app_name.clone().unwrap_or_else(|| job.app_ref.clone()),
+        "state": job.state.as_str(),
+        "requesterUserId": job.user_id,
+        "approverUserId": job.approver_user_id,
+        "amount": amount,
+    });
+    let m = p.as_object_mut().expect("object");
+    if let Some(bot) = job.bot_id.as_deref() {
+        let name: Option<String> = conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot], |r| r.get(0)).ok();
+        if let Some(n) = name {
+            m.insert("botName".into(), json!(n));
+        }
+    }
+    if let Some(a) = job.approver_user_id.as_deref() {
+        if let Ok(Some(n)) = display_name(conn, a) {
+            m.insert("approverName".into(), json!(n));
+        }
+    }
+    match job.state {
+        JobState::Completed => {
+            let receipt = match &amount {
+                Some(a) => format!("{title} {a}"),
+                None => format!("{title} done"),
+            };
+            m.insert("receipt".into(), json!(receipt));
+        }
+        JobState::Failed => {
+            if let Some(e) = job.error.as_deref() {
+                m.insert("error".into(), json!(e));
+            }
+        }
+        JobState::WaitingApproval if job.approver_user_id.as_deref() == Some(for_user) => {
+            if let (Some(approval), Ok(items)) = (job.approval_id.as_deref(), crate::inbox_needs::collect(conn, for_user, crate::inbox_needs::DEFAULT_UNANSWERED_MINUTES)) {
+                if let Some(it) = crate::inbox_needs::item_for_approval(&items, &json!({ "approvalId": approval })) {
+                    m.extend(crate::inbox_needs::notify_keys(it));
+                    if it["approveInline"] == true {
+                        if let Some(t) = it["full"]["text"].as_str() {
+                            m.insert("question".into(), json!(t));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    p
+}
+
+/// Ledger `bar_job.changed` for the requester and, when there is one, the
+/// approver (a different user): each ledger is forwarded by the runtime
+/// paired as that user, and cloud-api pushes to that user's phone. One row
+/// per user per state change (idempotent on job, state and update time).
+pub fn record_job_changed(conn: &Connection, job: &BarJob) -> rusqlite::Result<()> {
+    let mut users = vec![job.user_id.as_str()];
+    if let Some(a) = job.approver_user_id.as_deref().filter(|a| *a != job.user_id) {
+        users.push(a);
+    }
+    for user in users {
+        let key = format!("bar_job:{}:{}:{}", job.id, job.state.as_str(), job.updated_at);
+        record_user_event_wrapper(conn, user, job, &key)?;
+    }
+    Ok(())
+}
+
+fn record_user_event_wrapper(conn: &Connection, user: &str, job: &BarJob, key: &str) -> rusqlite::Result<()> {
+    let payload = job_changed_payload(conn, job, user);
+    crate::runtime_events::record_user_event(conn, user, "bar_job.changed", None, &payload, Some(key))?;
+    Ok(())
+}
+
+/// Follow every job state change (the same broadcast the SSE stream reads)
+/// and ledger it. Runs for the life of the server.
+pub async fn run_job_ledger(db: DbHandle) {
+    let mut rx = subscribe_jobs();
+    loop {
+        match rx.recv().await {
+            Ok(ev) => {
+                let Some(job) = ev.get("job").cloned() else { continue };
+                let Some(id) = job["id"].as_str().map(str::to_string) else { continue };
+                // Read the row back: the broadcast job is redacted for the wire, the ledger wants the row.
+                blocking(&db, move |conn| {
+                    if let Some(job) = get_job(conn, &id)? {
+                        record_job_changed(conn, &job)?;
+                    }
+                    Ok(())
+                })
+                .await;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => return,
+        }
+    }
+}
+
 /// The events one job's watcher gets: `first` (the job as read), then the
 /// engine's MCP events for `bar:<job_id>` and the job's `bar_job` changes, until
 /// a `bar_job` shows it finished. Engine events go first when both are ready.
@@ -2004,6 +2128,35 @@ mod tests {
         assert!(!kept.iter().any(|(_, v)| v.value == json!("v0") || v.value == json!("v1")));
         // No schema, no recents.
         assert_eq!(record_recent_values(&conn, &last.unwrap(), &Value::Null).unwrap(), 0);
+    }
+
+    /// Every state change is ledgered for the requester and the approver; the approver's
+    /// waiting row has no inbox item here, so no question keys.
+    #[test]
+    fn a_job_change_is_ledgered_for_requester_and_approver() {
+        let conn = db();
+        seed(&conn);
+        let args = json!({ "amount": 320, "currency": "eur" });
+        let id = insert_job(
+            &conn,
+            &NewJob { user_id: "ann", bot_id: None, app_kind: AppKind::Connector, app_ref: "conn-1", tool: "pay", args: &args, level: None, rule_id: None, approver_user_id: Some("mgr") },
+        )
+        .unwrap();
+        move_job(&conn, &id, JobState::WaitingApproval, &JobUpdate { approval_id: Some("ap1".into()), ..Default::default() }).unwrap();
+        let job = get_job(&conn, &id).unwrap().unwrap();
+        record_job_changed(&conn, &job).unwrap();
+        record_job_changed(&conn, &job).unwrap(); // idempotent
+        let rows: Vec<(String, String)> = conn
+            .prepare("SELECT user_id, payload FROM runtime_user_events WHERE event_type = 'bar_job.changed' ORDER BY user_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["ann", "mgr"]);
+        let p: Value = serde_json::from_str(&rows[0].1).unwrap();
+        assert_eq!((p["jobId"].as_str(), p["state"].as_str(), p["amount"].as_str()), (Some(id.as_str()), Some("waiting_approval"), Some("\u{20ac}320")));
+        assert_eq!((p["requesterUserId"].as_str(), p["approverUserId"].as_str(), p["approverName"].as_str()), (Some("ann"), Some("mgr"), Some("mgr")));
     }
 
     #[test]
