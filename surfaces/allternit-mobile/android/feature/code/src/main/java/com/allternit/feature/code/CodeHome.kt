@@ -142,7 +142,10 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onN
     val greeting = remember { CodeGreetings.random() }
     LaunchedEffect(Unit) { host.reloadSessions() }
     LaunchedEffect(Unit) { folder = CodeApi.folder(host.backend) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("codeHome")) {
+    val homeScroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(homeScroll).testTag("codeHome")) {
+        Spacer(Modifier.height(96.dp))
         if (folder == CodeResult.NoComputer) {
             // iOS ConnectComputerView over the launchpad.
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp).testTag("codeHomeNoComputer"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -186,6 +189,9 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onN
                 Text("Show usage", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+    // The block title docks into the bar as the page scrolls (UI feedback 11-25 A4).
+    com.allternit.core.design.DockingBlockTitle("Code", homeScroll, modifier = Modifier.fillMaxSize())
     }
 }
 

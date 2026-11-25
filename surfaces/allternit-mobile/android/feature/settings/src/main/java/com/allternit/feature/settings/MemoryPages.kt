@@ -14,12 +14,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.allternit.core.api.ApiResult
 import com.allternit.feature.artifacts.LibraryNet
+import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.listUnder
 import com.allternit.feature.artifacts.num
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -36,6 +38,7 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
     val (stats, reloadStats) = rememberLoad("stats") { Net.get("memory/stats").toLoad("load memory") }
     val (facts, reloadFacts) = rememberLoad("facts") { Net.get("memory/v2/facts").toLoad("load your memories") }
     val (docs, reloadDocs) = rememberLoad("docs") { Net.get("memory/documents").toLoad("load your documents") }
+    val (sleep, reloadSleep) = rememberLoad("sleep") { Net.get("memory/sleep/status").toLoad("load Sleep") }
     var forget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     SPage("Memory", tag = "settingsMemory", onBack = back) {
@@ -81,6 +84,26 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
                     SRow(d.str("title") ?: d.str("name") ?: d.str("id") ?: "Document", "memory_doc_$i", detail = listOfNotNull(d.str("source_type") ?: d.str("sourceType"), chunks?.let { "${it.toLong()} chunk${if (it.toLong() == 1L) "" else "s"}" }).joinToString(" · ").ifBlank { null }, chevron = false)
                 }
             }
+        }
+        // Sleep: GET memory/sleep/status, PUT memory/sleep/settings (the web SleepSection's "Sleep when idle" switch).
+        SLabel("Sleep")
+        LoadView(sleep, reloadSleep, "load Sleep") { body ->
+            val o = body.obj
+            val on = o.bool("enabled") == true && ((o?.get("stages") as? JsonObject).bool("orchestrator") == true)
+            val open = o.num("open_disputes")?.toLong() ?: 0L
+            SCard {
+                SToggleRow("Sleep when idle", "memory_sleep_toggle", on, detail = if (on) "Tidies and links your memories while you are away." else "Off. Memories are kept as they are.",
+                    onChange = { v ->
+                        scope.launch {
+                            val r = Net.send("PUT", "memory/sleep/settings", buildJsonObject {
+                                put("enabled", v)
+                                if (v) put("stages", buildJsonObject { put("orchestrator", true) })
+                            })
+                            if (r is ApiResult.Ok) { error = null; reloadSleep() } else error = r.friendly("change Sleep")
+                        }
+                    })
+            }
+            if (open > 0) SNote("$open ${if (open == 1L) "conflict" else "conflicts"} waiting for you.")
         }
         SLabel("Memory drive")
         SCard {
