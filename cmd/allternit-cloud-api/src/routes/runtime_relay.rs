@@ -2096,6 +2096,13 @@ mod files_wake_tests;
 #[cfg(test)]
 mod tests {
     #[test]
+    fn mcp_task_and_elicitation_replies_pass_the_relay_allow_list() {
+        assert!(super::is_allowed_runtime_path("/api/v1/mcp/elicitation/t1%3Ak/reply"));
+        assert!(super::is_allowed_runtime_path("/api/v1/mcp/task/c%3Aup1/cancel"));
+        assert_eq!(super::required_capability("/api/v1/mcp/task/c%3Aup1/cancel", "POST"), "runtime:execute");
+    }
+
+    #[test]
     fn agents_paths_skip_the_old_desktop_gizzi_mapping() {
         use super::desktop_relay_compat_path as p;
         assert_eq!(p("/api/v1/agents".into()), "/api/v1/./agents");
