@@ -37,16 +37,18 @@ pub fn parse_poll(result: &Value, previous_cursor: Option<&str>) -> PollBatch {
         .find_map(|k| result.get(*k).and_then(Value::as_u64))
         .or_else(|| result.get("nextPollSeconds").and_then(Value::as_u64).map(|s| s.saturating_mul(1000)))
         .unwrap_or(DEFAULT_POLL_MS);
-    PollBatch { events, cursor, next_poll_ms: hint.clamp(MIN_POLL_MS, MAX_POLL_MS) }
+    // Spec: when `hasMore` is true, poll again at once and ignore `nextPollMs`
+    // (we keep the 1 s floor so a bad server cannot cause a tight loop).
+    let has_more = result.get("hasMore").and_then(Value::as_bool).unwrap_or(false);
+    let wait = if has_more { MIN_POLL_MS } else { hint.clamp(MIN_POLL_MS, MAX_POLL_MS) };
+    PollBatch { events, cursor, next_poll_ms: wait }
 }
 
 impl McpClient {
     /// One `events/poll` for `(name, arguments)` after `cursor`.
     pub async fn poll_events(&self, name: &str, arguments: &Value, cursor: Option<&str>) -> Result<PollBatch> {
-        let mut params = json!({ "name": name, "arguments": arguments });
-        if let Some(c) = cursor {
-            params["cursor"] = json!(c);
-        }
+        // SEP-3415: `cursor` is always sent; `null` means "start from now".
+        let params = json!({ "name": name, "arguments": arguments, "cursor": cursor });
         let result = self.request("events/poll", Some(params)).await?;
         Ok(parse_poll(&result, cursor))
     }
@@ -62,6 +64,12 @@ mod tests {
         assert_eq!(b.events.len(), 1);
         assert_eq!(b.cursor.as_deref(), Some("c2"));
         assert_eq!(b.next_poll_ms, 30_000);
+    }
+
+    #[test]
+    fn has_more_polls_again_at_the_floor() {
+        let b = parse_poll(&json!({ "cursor": "c3", "hasMore": true, "nextPollMs": 120000 }), None);
+        assert_eq!(b.next_poll_ms, MIN_POLL_MS);
     }
 
     #[test]
