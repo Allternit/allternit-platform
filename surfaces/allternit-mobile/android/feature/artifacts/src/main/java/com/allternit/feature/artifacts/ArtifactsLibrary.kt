@@ -262,6 +262,12 @@ fun ArtifactsLibraryScreen(
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var newOpen by remember { mutableStateOf(false) }
+    var chip by remember { mutableStateOf(ShowChip.Everything) }
+    var appRows by remember { mutableStateOf<List<AppShelfRow>>(emptyList()) }
+    var appsReload by remember { mutableStateOf(0) }
+    var installFor by remember { mutableStateOf<ArtifactSummary?>(null) }
+    val appIds = remember(appRows) { appRows.mapNotNull { it.artifactId }.toSet() }
+    val pins = DeckPins.pins
 
     fun reload() { scope.launch { store.load() } }
     val pdfPicker = rememberPdfPicker(
@@ -269,8 +275,16 @@ fun ArtifactsLibraryScreen(
         onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
     )
 
+    fun clearAll() { store.clearFilters(); chip = ShowChip.Everything; reload() }
+    fun pickChip(next: ShowChip) {
+        chip = next
+        val owner = if (next == ShowChip.Shared) ArtifactLibraryStore.Owner.Shared else ArtifactLibraryStore.Owner.All
+        if (owner != store.owner) { store.owner = owner; reload() }
+    }
+
     LaunchedEffect(signedIn) {
         if (signedIn) {
+            DeckPins.load(context)
             store.load()
             store.loadOrgSettings()
         }
@@ -299,6 +313,8 @@ fun ArtifactsLibraryScreen(
         }
     }
 
+    fun makeApp() { StudioKind.forMode("app")?.let { startSession(it, sessionKind = "app") } }
+
     // One list for "+ New" and the empty library: the deck's modes. PDF picks a file; the rest start a session.
     fun launchMode(e: com.allternit.core.api.gen.AgentModeEntry) {
         if (e.launchType == com.allternit.core.api.gen.AgentModeLaunchType.PICK) { pdfPicker(); return }
@@ -322,6 +338,7 @@ fun ArtifactsLibraryScreen(
             }
         }
         val modes = newArtifactModes(store.allows)
+        val shown = if (chip == ShowChip.Apps) store.items.filter { it.id in appIds } else store.items
         val columns = if (layout == LibraryLayout.Grid) 2 else 1
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -353,6 +370,18 @@ fun ArtifactsLibraryScreen(
             }
             item(key = "yours", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (signedIn) {
+                        ArtifactsShowChips(chip, ::pickChip, Modifier.padding(top = 4.dp))
+                        if (chip == ShowChip.Everything || chip == ShowChip.Apps) {
+                            ArtifactAppsRow(
+                                artifacts = store.items, onMakeApp = ::makeApp, onRows = { appRows = it }, reloadKey = appsReload,
+                                onOpen = { app ->
+                                    val id = app.artifactId
+                                    if (id != null) openId = id else app.link?.let { openExternal(context, it) }
+                                },
+                            )
+                        }
+                    }
                     Text("Your artifacts", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     store.notice?.let { n ->
                         Row(
@@ -366,7 +395,7 @@ fun ArtifactsLibraryScreen(
                     if (store.filtered) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Showing " + filterSummary(store), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Clear", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(CircleShape).testTag("artifactsClearFilters").clickable { store.clearFilters(); reload() }.padding(8.dp))
+                            Text("Clear", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(CircleShape).testTag("artifactsClearFilters").clickable { clearAll() }.padding(8.dp))
                         }
                     }
                 }
@@ -397,11 +426,21 @@ fun ArtifactsLibraryScreen(
                         }
                     }
                 }
+                chip == ShowChip.Plans -> item(key = "plans", span = full) {
+                    FriendlyState(FriendlyStyle.Empty, "Plans are coming here", "Your plans will list here, grouped by project.") {
+                        Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
+                    }
+                }
+                chip == ShowChip.Apps && store.loaded && shown.isEmpty() -> item(key = "noapps", span = full) {
+                    FriendlyState(FriendlyStyle.Empty, "No apps yet", "Make an artifact into an app from its menu, or start one with Make an app.", actionTitle = "Make an app", onAction = ::makeApp) {
+                        Icon(painterResource(DesignR.drawable.deck_page), null, tint = c.textSecondary)
+                    }
+                }
                 store.loaded && store.items.isEmpty() -> item(key = "empty", span = full) {
                     val k = store.kind
                     when {
                         k != null && store.query.isBlank() && store.owner == ArtifactLibraryStore.Owner.All && store.show == ArtifactLibraryStore.Show.Saved ->
-                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap + New to make one.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
+                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap + New to make one.", actionTitle = "Clear filters", onAction = { clearAll() }) {
                                 Icon(painterResource(ArtifactKinds.icon(k)), null, tint = c.textSecondary)
                             }
                         store.show == ArtifactLibraryStore.Show.Archive && !store.filteredBeyondArchive() ->
@@ -409,7 +448,7 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
                             }
                         store.filtered ->
-                            FriendlyState(FriendlyStyle.Empty, "Nothing matches", "Try another filter or search.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
+                            FriendlyState(FriendlyStyle.Empty, "Nothing matches", "Try another filter or search.", actionTitle = "Clear filters", onAction = { clearAll() }) {
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
                         else -> Column(Modifier.testTag("artifactsEmpty"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -426,8 +465,8 @@ fun ArtifactsLibraryScreen(
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        items(store.items, key = { it.id }) { a ->
-                            ArtifactCard(a, LibraryLayout.Deck, Modifier.width(280.dp), onOpen = { openId = a.id }, onMore = { actionsFor = a })
+                        items(shown, key = { it.id }) { a ->
+                            ArtifactCard(a, LibraryLayout.Deck, Modifier.width(280.dp), isApp = a.id in appIds, onOpen = { openId = a.id }, onMore = { actionsFor = a })
                         }
                     }
                 }
@@ -439,8 +478,8 @@ fun ArtifactsLibraryScreen(
                             }
                         }
                     }
-                    items(store.items, key = { it.id }) { a ->
-                        ArtifactCard(a, layout, Modifier, onOpen = { openId = a.id }, onMore = { actionsFor = a })
+                    items(shown, key = { it.id }) { a ->
+                        ArtifactCard(a, layout, Modifier, isApp = a.id in appIds, onOpen = { openId = a.id }, onMore = { actionsFor = a })
                     }
                     if (store.hasMore) item(key = "more", span = full) {
                         LaunchedEffect(store.items.size) { store.loadMore() }
@@ -485,8 +524,6 @@ fun ArtifactsLibraryScreen(
                 LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
                 FilterLabel("Show")
                 PillRow(ArtifactLibraryStore.Show.entries, store.show, { if (it == ArtifactLibraryStore.Show.Saved) "Saved work" else "Archive" }, { "artifactsShow${it.name}" }) { store.show = it }
-                FilterLabel("Owner")
-                PillRow(ArtifactLibraryStore.Owner.entries, store.owner, { it.label }, { "artifactsOwner${it.scope}" }) { store.owner = it }
                 FilterLabel("Kind")
                 PillRow(listOf<String?>(null) + ArtifactKinds.filterKinds, store.kind, { it?.let(ArtifactKinds::label) ?: "All kinds" }, { "artifactsKind${it ?: "all"}" }) { store.kind = it }
             }
@@ -494,17 +531,68 @@ fun ArtifactsLibraryScreen(
     }
 
     actionsFor?.let { a ->
+        val isApp = a.id in appIds
+        val pinned = DeckPins.isPinned(a.id)
+        val archive = store.show == ArtifactLibraryStore.Show.Archive
+        // Docs, sheets and slides cannot become apps (web canBecomeApp); only the owner shares or makes apps.
+        val appRowsShown = a.isMine && (isApp || canBecomeApp(a.kind))
         LibrarySheet(a.title, "artifactActions", onDismiss = { actionsFor = null }) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LibraryRowButton("Open", DesignR.drawable.ph_arrow_square_out, "artifactActionOpen") { actionsFor = null; openId = a.id }
-                val archive = store.show == ArtifactLibraryStore.Show.Archive
-                LibraryRowButton(if (archive) "Restore to saved work" else "Archive", DesignR.drawable.ph_floppy_disk, "artifactActionArchive") {
+                if (a.isMine) LibraryRowButton("Share", DesignR.drawable.ph_upload_simple, "artifactActionShare") {
+                    actionsFor = null
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, ArtifactWeb.shareLink(a.id))
+                    context.startActivity(android.content.Intent.createChooser(send, "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                if (appRowsShown) {
+                    if (isApp) {
+                        LibraryRowButton("Install app", DesignR.drawable.ph_download_simple, "artifactActionInstallApp") { actionsFor = null; installFor = a }
+                        LibraryRowButton("Copy app link", DesignR.drawable.ph_link_simple, "artifactActionCopyAppLink") {
+                            actionsFor = null
+                            val link = appRows.firstOrNull { it.artifactId == a.id }?.link ?: ArtifactWeb.shareLink(a.id)
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("App link", link))
+                            store.notice = "App link copied."
+                        }
+                    } else {
+                        LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "artifactActionMakeApp") { actionsFor = null; openId = a.id }
+                    }
+                }
+                LibraryRowButton(if (pinned) "Unpin" else "Pin", if (pinned) DesignR.drawable.ph_push_pin_slash else DesignR.drawable.ph_plus, "artifactActionPin") {
+                    actionsFor = null
+                    scope.launch {
+                        DeckPins.toggle(context, DeckPin(a.id, a.kind, a.title)).onFailure { store.notice = it.message }
+                    }
+                }
+                LibraryRowButton(if (archive) "Restore to saved work" else "Archive", DesignR.drawable.ph_archive, "artifactActionArchive") {
                     actionsFor = null
                     scope.launch { store.setArchived(a, !archive) }
                 }
                 if (a.isMine) LibraryRowButton("Delete", DesignR.drawable.ph_trash, "artifactActionDelete", destructive = true) { actionsFor = null; confirmDelete = a }
             }
         }
+    }
+
+    installFor?.let { a ->
+        AlertDialog(
+            onDismissRequest = { installFor = null },
+            title = { Text("Install ${a.title}?") },
+            text = { Text("It can save its own data and use the tools you list for it. You can remove it from Apps.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    installFor = null
+                    scope.launch {
+                        val body = kotlinx.serialization.json.buildJsonObject {
+                            put("granted_tier", kotlinx.serialization.json.JsonPrimitive("app")); put("consent", kotlinx.serialization.json.JsonPrimitive(true))
+                        }
+                        val res = LibraryNet.send("POST", "apps/artifact/${LibraryNet.escape(a.id)}/install", body)
+                        store.notice = if (res is ApiResult.Ok) { appsReload++; "${a.title} installed." } else res.friendly("install this app")
+                    }
+                }, modifier = Modifier.testTag("artifactInstallConfirm")) { Text("Install") }
+            },
+            dismissButton = { TextButton(onClick = { installFor = null }) { Text("Cancel") } },
+        )
     }
 
     confirmDelete?.let { a ->
@@ -573,7 +661,7 @@ private fun Modifier.bleed(by: Dp): Modifier = layout { measurable, constraints 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Modifier, onOpen: () -> Unit, onMore: () -> Unit) {
+private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Modifier, isApp: Boolean = false, onOpen: () -> Unit, onMore: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val thumbH = when (layout) { LibraryLayout.List -> 58; LibraryLayout.Grid -> 110; LibraryLayout.Deck -> 180 }
@@ -610,7 +698,7 @@ private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Mo
             Box {
                 body(Modifier.fillMaxWidth().height(thumbH.dp))
                 Text(
-                    ArtifactKinds.noun(a.kind), color = c.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Medium,
+                    if (isApp) "App" else ArtifactKinds.noun(a.kind), color = c.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(6.dp).clip(CircleShape).background(c.bgPanel).padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }

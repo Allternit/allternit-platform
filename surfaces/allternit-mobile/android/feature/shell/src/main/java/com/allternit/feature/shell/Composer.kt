@@ -106,7 +106,14 @@ internal data class ComposerAttachment(
     val kind: String,
     val bytes: ByteArray? = null,
     val mediaType: String? = null,
+    /** Kind "artifact" only: the artifact's id and kind. The chat sends it as a text line, not an upload (web attachedArtifactLine). */
+    val artifactId: String? = null,
+    val artifactKind: String? = null,
 )
+
+/** The line that carries an attached artifact in the message text (web `attachedArtifactLine`, same text so the agent can tell two same-titled artifacts apart). */
+internal fun attachedArtifactLine(id: String, title: String, kind: String?): String =
+    "[Attached artifact: $title \u2192 artifact $id${if (kind.isNullOrBlank()) "" else " ($kind)"}.]"
 
 /** What a send hands to the chat (step 8 sends it; the stub shows it). */
 internal data class ComposerDraft(
@@ -370,9 +377,12 @@ internal fun Composer(
             return
         }
         Haptics.perform(view, Haptics.Kind.Tap)
+        // Attached artifacts ride as one text line each (web); every other attachment still uploads.
+        val artifactLines = attachments.filter { it.kind == "artifact" && it.artifactId != null }
+            .joinToString("\n") { attachedArtifactLine(it.artifactId.orEmpty(), it.name, it.artifactKind) }
         val draft = ComposerDraft(
-            text = text.trim(),
-            attachments = attachments.toList(),
+            text = if (artifactLines.isEmpty()) text.trim() else text.trim() + "\n\n" + artifactLines,
+            attachments = attachments.filter { it.kind != "artifact" },
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
             effort = models.selected?.let { models.level(it) },
@@ -575,8 +585,12 @@ internal fun Composer(
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
-                // Attach rides as an @-mention, like a plugin (iOS ComposerDeck.attach, web mention chip).
-                onAttachArtifact = { _, title -> "@$title ".let { tag -> if (!text.contains(tag)) text = tag + text } },
+                // Attach stages a removable chip; Send appends the "[Attached artifact: ...]" line (web artifact-launch.store).
+                onAttachArtifact = { id, title, kind ->
+                    if (attachments.none { it.kind == "artifact" && it.artifactId == id }) {
+                        attachments += ComposerAttachment(title, null, "artifact", artifactId = id, artifactKind = kind)
+                    }
+                },
                 onOpenArtifact = { id -> onOpenArtifactId?.invoke(id) ?: onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
@@ -745,6 +759,7 @@ internal fun AttachmentChip(a: ComposerAttachment, onRemove: (() -> Unit)?) {
         val icon = when (a.kind) {
             "photo", "camera" -> com.allternit.core.design.R.drawable.ph_image
             "github" -> com.allternit.core.design.R.drawable.ph_link
+            "artifact" -> com.allternit.feature.artifacts.ArtifactKinds.icon(a.artifactKind.orEmpty())
             else -> com.allternit.core.design.R.drawable.ph_file_text
         }
         Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
@@ -783,7 +798,7 @@ private fun DeckBand(
     onAt: () -> Unit,
     onPlugins: () -> Unit,
     onArtifacts: () -> Unit,
-    onAttachArtifact: (id: String, title: String) -> Unit,
+    onAttachArtifact: (id: String, title: String, kind: String) -> Unit,
     onOpenArtifact: (id: String) -> Unit,
     /** PDF opens a file picker; hidden when the host cannot provide one. */
     showPdf: Boolean,
@@ -883,7 +898,7 @@ private data class DeckRow(val id: String, val kind: String, val title: String)
 private fun DeckArtifactsMenu(
     open: Boolean,
     onDismiss: () -> Unit,
-    onAttach: (String, String) -> Unit,
+    onAttach: (String, String, String) -> Unit,
     onOpen: (String) -> Unit,
     onOpenAll: () -> Unit,
 ) {
@@ -917,7 +932,7 @@ private fun DeckArtifactsMenu(
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(painterResource(com.allternit.feature.artifacts.ArtifactKinds.icon(a.kind)), contentDescription = null, modifier = Modifier.padding(start = 12.dp).size(20.dp), tint = androidx.compose.ui.graphics.Color.Unspecified)
                         Text(a.title.ifBlank { "Untitled" }, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
-                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Attach").clickable(role = Role.Button, onClickLabel = "Attach ${a.title}") { onDismiss(); onAttach(a.id, a.title.ifBlank { "Untitled" }) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Attach").clickable(role = Role.Button, onClickLabel = "Attach ${a.title}") { onDismiss(); onAttach(a.id, a.title.ifBlank { "Untitled" }, a.kind) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
                             Text("Attach", color = c.textPrimary, fontSize = 13.sp)
                         }
                         Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Open").clickable(role = Role.Button, onClickLabel = "Open ${a.title}") { onDismiss(); onOpen(a.id) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
