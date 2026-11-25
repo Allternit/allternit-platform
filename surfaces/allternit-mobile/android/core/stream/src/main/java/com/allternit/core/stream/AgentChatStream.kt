@@ -51,7 +51,7 @@ sealed interface ChatStreamEvent {
     data class ToolError(val toolCallId: String, val toolName: String?, val error: String) : ChatStreamEvent
 
     /** `artifact` / `artifact.created` / `artifact-created` (needs a kind and a non-empty title). */
-    data class Artifact(val artifactId: String, val kind: String, val title: String, val url: String?, val content: String?) :
+    data class Artifact(val artifactId: String, val kind: String, val title: String, val url: String?, val content: String?, val sourceUri: String? = null, val mimeType: String? = null) :
         ChatStreamEvent
 
     /** `finish`: the turn ended. [usage] is v1_routes.rs `usage_from_message_info`, when reported. */
@@ -174,7 +174,7 @@ object AgentChatFrames {
                 if (kind.isNullOrEmpty() || title.isNullOrEmpty() || id.isNullOrEmpty()) {
                     null
                 } else {
-                    ChatStreamEvent.Artifact(id, kind, title, frame.str("url"), frame.str("content"))
+                    ChatStreamEvent.Artifact(id, kind, title, frame.str("url"), frame.str("content"), frame.str("sourceUri"), frame.str("mimeType"))
                 }
             }
             "question.asked" -> ChatStreamEvent.Question(frame["properties"] as? JsonObject ?: frame)

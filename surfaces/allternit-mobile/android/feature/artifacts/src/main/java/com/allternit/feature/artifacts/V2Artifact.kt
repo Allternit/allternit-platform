@@ -539,6 +539,11 @@ private fun ByteLoadedImage(a: ArtifactV2) {
                 Modifier.fillMaxSize().testTag("v2ImageReveal"),
                 onRevealed = { revealed = true },
             )
+        } else if (l.url.startsWith("data:image/gif;base64,")) {
+            // GIF: play it with ImageDecoder + AnimatedImageDrawable (first frame below API 28).
+            val gifBytes = remember(l.url) { runCatching { android.util.Base64.decode(l.url.substringAfter(','), android.util.Base64.DEFAULT) }.getOrNull() }
+            if (gifBytes != null) com.allternit.core.design.AnimatedGif(gifBytes, Modifier.fillMaxSize(), "Animated image")
+            else ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
         } else ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
         else -> Unit
     }

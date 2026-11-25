@@ -1,42 +1,46 @@
 ---
-title: Make an image
-description: Choose ChatGPT ACI or Codex CLI for images
+title: Make an image or GIF
+description: Describe a picture or an animated GIF in Image mode
 ---
 
 <Note>This device-local image flow is in development. Its app changes must pass the build train and real device checks before release.</Note>
 
-Ask for an image in chat, or use the image action beside the composer when your selected chat model does not have tools. Review the exact prompt before sending it. The app runs ChatGPT in that device’s own ACI browser: Desktop on Desktop, iPhone on iPhone, Android on Android. This feature does not require a Sessions computer, cloud computer or another connected Desktop.
+## Ask for it
 
-## Sign in on this device
+Choose Image mode and describe the picture. Your send is the request. There is no second confirm step.
 
-ChatGPT OAuth enables chat models. The browser image flow uses a ChatGPT web session on the same device. If that session is missing, open ACI and sign in there. The app does not copy your Safari login or put OAuth tokens into the page. A provider verification prompt needs your attention; generation pauses until you handle it.
+The app picks how to make it, in this order:
 
-Desktop and iPhone keep this private browser session in memory in this implementation. After restarting the app, you may need to sign in to ChatGPT again. Saved image files and local image history remain on the device.
+1. Your computer's image tool, if one is set up.
+2. The ChatGPT browser on this Desktop or phone.
+3. A drawing in code. The app tells you when a picture is drawn in code.
 
-The normal website must work in the device’s ACI browser. If ChatGPT rejects that browser or the app cannot obtain the image, the card shows the reason. It does not silently switch devices or spend an API key.
+If you ask for a change afterwards, the app uses your earlier briefs from the same chat as context, so you can say what to change instead of starting over.
 
-## Watch and return to chat
+## Sign in to ChatGPT
 
-The generation card starts with Allternit’s BlockPulse and the real stage. When an image preview is available it appears in the same frame. During saving and downloading, the preview sharpens as actual bytes arrive. If a total size or completion estimate is unknown, the app leaves it out.
+If the result shows **Sign in to ChatGPT**, the computer's image tool or the device's ChatGPT browser has no ChatGPT session. Sign in there, then send the request again. The app does not copy your Safari login or use an API key. A verification prompt from ChatGPT needs your attention; generation waits until you handle it.
 
-You can open ACI to see the provider, then return to chat. The generation job owns its browser session, so hiding the ACI view is different from stopping the job. Use Stop to cancel. The finished image appears on the original turn and in Outputs, with Download, Open and Copy prompt actions. The running chip, peek and older-turn card show the same generation.
+Desktop and iPhone keep the private browser session in memory. After restarting the app you may need to sign in again. Saved images and local image history stay on the device.
 
-## When the phone is interrupted
+## Make a GIF
 
-The operating system may suspend the app after you lock the phone or leave it. The app does not promise continued background browser execution. On return it checks the existing provider conversation before continuing. A lost connection does not automatically send the prompt again. If the app cannot tell whether ChatGPT accepted the request, it asks you to check the existing generation rather than risking a duplicate.
+Ask for a GIF in Image mode. GIFs are animated in code, so they work with any model and cost nothing extra. A GIF can also animate an earlier picture from the chat: pan, zoom or add an overlay. GIFs play in chat and in Outputs.
 
-Web and PWA browsers cannot assume they can control ChatGPT across origins. When no same-device browser integration is available, the image action explains that limitation. It never redirects the request to another computer.
+Limits: 640 px on a side, 15 frames per second, 8 seconds, 120 frames in all and 8 MB. The default is 480 px, 12 fps and 3 seconds. The loop is built to close, so the last frame leads back to the first.
 
-Android stores a new phone-only image conversation locally. Its image actions and Outputs need no computer. The existing computer-backed text-model route still needs a separate runtime chat; the image flow does not change that model transport.
+## If a request may have been sent
 
-For the request, progress and result contract, see [Device-local ACI image jobs](/dev/aci-image-jobs).
+A request that may already have been sent is never retried automatically. If a result says it is uncertain, check the earlier result or your ChatGPT conversation before you try again. One picture request runs for each message you send.
 
-## Codex CLI option and backup
+When the phone is locked or the app is suspended, the app does not promise to keep working. On return it checks the existing conversation before it continues.
 
-Choose **Create image with Codex CLI** beside the composer on Desktop, web, PWA or iPhone. On Android, select **Image · Codex CLI** in the composer modes. Enter the image brief and confirm the request when asked. A chat brain and a selected runtime are required.
+## Gizzi terminal
 
-This option runs the installed Codex CLI on your selected runtime, using that runtime's ChatGPT sign-in. Install a current Codex CLI and run `codex login` there first. It is separate from the same-device ChatGPT ACI browser. Web and phone clients can receive its image through their runtime chat. This option does not use an OpenAI API key.
+Type `/image <brief>` in Gizzi. It saves a PNG in the current folder. GIFs are not available in the terminal.
 
-If ChatGPT ACI fails, you can choose Codex CLI as a backup with the same brief. Check an interrupted ChatGPT conversation before creating another image. The app does not automatically resend an ambiguous browser request. Each Codex request asks for confirmation.
+## Where it is not available
 
-The result must contain actual image bytes. A text reply from Codex is not a generated image. Missing sign-in, unsupported CLI versions, unavailable image tools, limits and cancellation appear as failures. Use Stop in the running chat to cancel. Image edits with reference attachments are not supported by this option.
+A plain web page or PWA with no connected computer shows "Image mode needs a connected computer or the Desktop or phone app." It never sends the request to another computer on its own.
+
+For the request, progress and result contract, see [Image mode engine resolver](/dev/aci-image-jobs).

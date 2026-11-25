@@ -241,6 +241,46 @@ describe("answer_cards hint", () => {
   })
 })
 
+describe("person turn + image_prompt hints", () => {
+  test("a person send keeps turn \"person\" and its image_prompt beside the other hints", () => {
+    expect(promptHints({ turn: "person" })).toEqual({ turn: "person" })
+    expect(promptHints({ turn: "person", image_prompt: "a red fox in snow", time_zone: "America/Chicago" })).toEqual({
+      time_zone: "America/Chicago",
+      turn: "person",
+      image_prompt: "a red fox in snow",
+    })
+  })
+
+  test("any other turn value is dropped, and its image_prompt with it", () => {
+    expect(promptHints({ turn: "bot", image_prompt: "a red fox" })).toBeUndefined()
+    expect(promptHints({ turn: "Person", image_prompt: "a red fox" })).toBeUndefined()
+    expect(promptHints({ turn: ["person"], image_prompt: "a red fox" })).toBeUndefined()
+    expect(promptHints({ turn: "routine", time_zone: "America/Chicago" })).toEqual({ time_zone: "America/Chicago" })
+  })
+
+  test("an empty, oversize or non-string image_prompt is dropped; 16000 UTF-16 units passes", () => {
+    expect(promptHints({ turn: "person", image_prompt: "" })).toEqual({ turn: "person" })
+    expect(promptHints({ turn: "person", image_prompt: "x".repeat(16_001) })).toEqual({ turn: "person" })
+    // 8001 emoji = 16002 UTF-16 units, over the limit even though it is 8001 characters.
+    expect(promptHints({ turn: "person", image_prompt: "🦊".repeat(8_001) })).toEqual({ turn: "person" })
+    expect(promptHints({ turn: "person", image_prompt: { text: "fox" } })).toEqual({ turn: "person" })
+    const max = "x".repeat(16_000)
+    expect(promptHints({ turn: "person", image_prompt: max })).toEqual({ turn: "person", image_prompt: max })
+  })
+
+  test("image_prompt without a person turn is dropped", () => {
+    expect(promptHints({ image_prompt: "a red fox" })).toBeUndefined()
+    expect(promptHints({ image_prompt: "a red fox", form_factor: "phone" })).toEqual({ form_factor: "phone" })
+  })
+
+  test("a send that starts no turn (person: false) drops both", () => {
+    expect(promptHints({ turn: "person", image_prompt: "a red fox" }, { person: false })).toBeUndefined()
+    expect(promptHints({ turn: "person", image_prompt: "a red fox", time_zone: "America/Chicago" }, { person: false })).toEqual({
+      time_zone: "America/Chicago",
+    })
+  })
+})
+
 describe("lookup cards survive CLI-brain turns", () => {
   test("vendor names for the bridged lookup map back to \"lookup\"", () => {
     for (const name of ["mcp__allternit__lookup", "allternit__lookup", "allternit_lookup", "allternit.lookup", "lookup (allternit MCP Server)", "lookup"]) {

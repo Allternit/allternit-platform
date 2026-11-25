@@ -17,28 +17,16 @@ import kotlinx.coroutines.launch
 @Composable
 fun BrowserImageHost(viewModel: ChatViewModel) {
     val owner = viewModel.browserImages ?: return
-    val request = owner.request ?: return
-    if (!owner.confirmed && viewModel.imageChatVisible && viewModel.currentSessionId == request.session) {
-        AlertDialog(
-            onDismissRequest = { owner.cancel() },
-            title = { Text("Make this image in ChatGPT?") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("This phone uses a separate ChatGPT website sign-in. Confirm the exact prompt:")
-                Spacer(Modifier.height(12.dp)); Text(request.prompt)
-            } },
-            confirmButton = { TextButton(onClick = { viewModel.confirmBrowserImage() }) { Text("Confirm prompt") } },
-            dismissButton = { TextButton(onClick = { owner.cancel() }) { Text("Cancel") } },
-        )
-    }
-    if (owner.visible && owner.confirmed) {
-        Dialog(onDismissRequest = { owner.visible = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    if (owner.signingIn && owner.request == null) { /* sign-in screen only */ } else if (owner.request == null) return
+    if (owner.visible && (owner.confirmed || owner.signingIn)) {
+        Dialog(onDismissRequest = { owner.visible = false; owner.endSignIn() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize()) {
                 Column {
                     Text(owner.label, Modifier.padding(12.dp))
                     Row {
-                        TextButton(onClick = { owner.visible = false }) { Text("Return to chat") }
+                        TextButton(onClick = { owner.visible = false; owner.endSignIn() }) { Text("Return to chat") }
                         TextButton(onClick = { owner.resume() }) { Text("Resume") }
-                        TextButton(onClick = { owner.cancel() }) { Text("Stop") }
+                        TextButton(onClick = { if (owner.signingIn) owner.endSignIn() else owner.cancel() }) { Text(if (owner.signingIn) "Done" else "Stop") }
                     }
                     owner.webView?.let { web ->
                         AndroidView(factory = {
@@ -59,7 +47,7 @@ internal fun BrowserImageControls(viewModel: ChatViewModel) {
     val request = owner.request ?: return
     if (!owner.confirmed || viewModel.currentSessionId != request.session) return
     Row {
-        TextButton(onClick = { owner.visible = true }) { Text("Open image browser") }
+        TextButton(onClick = { owner.visible = true }) { Text("Show progress") }
         TextButton(onClick = { owner.cancel() }) { Text("Stop image") }
     }
 }
@@ -68,13 +56,15 @@ internal fun BrowserImageControls(viewModel: ChatViewModel) {
 @Composable
 internal fun BrowserImageResult(call: ToolCallRecord) {
     val payload = call.browserImageResult ?: call.output
-    val result = remember(payload) { runCatching { org.json.JSONObject(payload.orEmpty()) }.getOrNull() } ?: return
+    val attached = call.attachedImageUrl
+    val result = remember(payload) { runCatching { org.json.JSONObject(payload.orEmpty()) }.getOrNull() }
     val context = androidx.compose.ui.platform.LocalContext.current
-    if (!result.optBoolean("ok")) return
-    val source = result.optString("localImage").ifBlank { result.optString("image") }
+    // The attached engine picture wins; otherwise the browser-image result.
+    if (attached == null && (result == null || !result.optBoolean("ok"))) return
+    val source = attached ?: result!!.let { it.optString("localImage").ifBlank { it.optString("image") } }
     if (source.length > 12 * 1024 * 1024) return
     val bytes = remember(source) { runCatching {
-        if (source.startsWith("data:image/png;base64,")) android.util.Base64.decode(source.substringAfter(','), android.util.Base64.DEFAULT)
+        if (source.startsWith("data:image/png;base64,") || source.startsWith("data:image/gif;base64,")) android.util.Base64.decode(source.substringAfter(','), android.util.Base64.DEFAULT)
         else {
             LocalImageStore.readImage(source)
         }
@@ -89,9 +79,10 @@ internal fun BrowserImageResult(call: ToolCallRecord) {
             else null
         }
     }
+    val gif = remember(bytes) { com.allternit.core.design.isGif(bytes) }
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
-    val save = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("image/png")) { uri ->
+    val save = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument(if (gif) "image/gif" else "image/png")) { uri ->
         if (uri != null) scope.launch {
             val saved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching { checkNotNull(context.contentResolver.openOutputStream(uri)).use { it.write(bytes) } }.isSuccess
@@ -103,13 +94,19 @@ internal fun BrowserImageResult(call: ToolCallRecord) {
     if (opened) Dialog(onDismissRequest = { opened = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) { Column(Modifier.verticalScroll(rememberScrollState())) {
             TextButton(onClick = { opened = false }) { Text("Close image") }
-            bitmap?.let { androidx.compose.foundation.Image(it, "Generated image", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height)) }
+            bitmap?.let {
+                if (gif) com.allternit.core.design.AnimatedGif(bytes, Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height), "Generated image")
+                else androidx.compose.foundation.Image(it, "Generated image", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height))
+            }
         } }
     }
     Column {
-        bitmap?.let { androidx.compose.foundation.Image(it, "Generated image", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height)) }
+        bitmap?.let {
+            if (gif) com.allternit.core.design.AnimatedGif(bytes, Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height), "Generated image")
+            else androidx.compose.foundation.Image(it, "Generated image", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height))
+        }
         Row {
-            TextButton(onClick = { save.launch("Generated image.png") }) { Text("Download") }
+            TextButton(onClick = { save.launch(if (gif) "Generated image.gif" else "Generated image.png") }) { Text("Download") }
             TextButton(onClick = { opened = true }) { Text("Open") }
             TextButton(onClick = {
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager

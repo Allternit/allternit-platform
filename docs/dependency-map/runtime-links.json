@@ -2059,7 +2059,7 @@
     {
       "source": "allternit/cmd/gizzi-code/src/runtime/tools",
       "target": "external:codex-cli-images",
-      "kind": "spawns installed Codex CLI app-server over stdio for confirmed image jobs on selected runtime; bounded imageGeneration results",
+      "kind": "spawns installed Codex CLI app-server over stdio as the first engine of the Image mode resolver (Codex, then device ChatGPT browser, then code); bounded imageGeneration results, ChatGPT sign-in only",
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"

@@ -145,7 +145,7 @@ internal object ComposerPlaceholders {
         "docs" -> listOf("Describe the document you need", "Write a one-page proposal from these notes")
         "data" -> listOf("Paste data or describe the sheet you need", "Chart monthly revenue from this CSV")
         "swarms" -> listOf("Describe the outcome. A team of agents will split it up")
-        "image", "image-codex" -> listOf("Describe the image. Subject, style, format")
+        "image" -> listOf("Describe the image. Subject, style, format")
         "video" -> listOf("Describe the clip. Length, shots, mood")
         else -> agentNoMode
     }
@@ -162,7 +162,6 @@ internal val DeckModes = listOf(
     DeckMode("data", "Sheets", DesignR.drawable.deck_sheets, Color(0xFF4ADE80)),
     DeckMode("slides", "Slides", DesignR.drawable.deck_slides, Color(0xFFFBBF24)),
     DeckMode("image", "Image", DesignR.drawable.deck_image, null),
-    DeckMode("image-codex", "Image · Codex CLI", DesignR.drawable.deck_image, null),
     DeckMode("video", "Video", DesignR.drawable.deck_video, Color(0xFFEC4899)),
     DeckMode("artifact", "Artifact", DesignR.drawable.deck_artifact, null),
 )

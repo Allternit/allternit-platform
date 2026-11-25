@@ -1,10 +1,11 @@
 Make an image or a video for the user. The result is saved to the session's Outputs and opens beside the chat.
 
-Lanes:
-- native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model.
-- aci (images only): the image site the user signed in to in this device's own ACI browser makes the image. This is the default for image prompts without code. It requires a person-sent chat and confirmation of the exact prompt in the app. Leave provider unset or use the one value the provider field lists. The browser session must be signed in; OAuth chat sign-in alone does not enable hosted image tools. No Sessions, cloud computer, connected Desktop, or API-key fallback. On web/PWA without a local browser executor, show unavailable. subscription is a legacy spelling of this same local lane.
-- codex (images only): choose provider codex. The installed Codex CLI on the selected runtime uses its own ChatGPT sign-in and built-in image generation. Ask permission for each exact prompt. Return only a completed imageGeneration result with validated PNG bytes. It is a separate option and an explicit backup when ChatGPT ACI fails; never start it automatically after an ambiguous submission. No API key fallback. If Codex is missing, signed out, rate limited or lacks the image tool, report that reason.
-- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products) and the local ACI image lane is not available, say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+Make an image, a GIF or a video for the user. The result is saved to the session's Outputs and opens beside the chat.
+
+Ways to make it:
+- Picture from the person's Image-mode request (kind "image", no code): the brief the person typed goes to a picture engine automatically. Call once. Never write or rewrite the engine prompt, and do not set lane or provider. It only runs from a message the person sent themselves. If it says no picture engine is available, draw it with lane "native" in code and tell the user it is drawn in code. If it says a sign-in is needed or the result is uncertain, say that in one line and do not call again.
+- native: you write the image, GIF or video as code; the user's Allternit app renders it in a sandbox (a PNG, a GIF, or an MP4 with optional sound) and the render comes back to you to check. Costs nothing and works with any model. Use it for diagrams, charts, UI, code art and anything that should be exact.
+- Never name the picture engine to the user.
 
 Briefs and follow-ups
 - Write a full visual brief: subject, setting, style, framing, light, mood, palette and size. Stay true to the request and add no false facts.
@@ -26,7 +27,7 @@ Rules that keep renders clean
 - Stay on the brief: subject, style, palette, aspect ratio and any exact words the user gave.
 
 Check and fix
-The rendered PNG is attached to the result. Look at it: clipping, overlaps, unreadable or misspelled text, wrong aspect, empty areas, off-brief colors. If anything is wrong, call again with the same title and fixed code (the same title replaces the previous version). At most two fix rounds; then say what's left.
+The rendered PNG or GIF is attached to the result. Look at it: clipping, overlaps, unreadable or misspelled text, wrong aspect, empty areas, off-brief colors. If anything is wrong, call again with the same title and fixed code (the same title replaces the previous version). At most two fix rounds; then say what's left.
 
 Sizes: width and height in pixels, 64–4096 (default 1024 × 1024). Common: 1080×1080 post, 1080×1920 story, 1200×630 link card, 1920×1080 slide, 1024×1024 square.
 
@@ -39,4 +40,10 @@ Native video (kind "video"): motion graphics, title cards, logo stings, kinetic 
 - The result attaches a contact sheet: six timestamped stills across the video. Check pacing, framing, text and that the motion reads. Fix with the same title (it replaces the previous version); at most two fix rounds.
 label: optional, 3-8 words saying what this call does.
 
-ACI images: return only actual downloaded image bytes, never a screenshot. On sign-in, provider challenge, cancellation or unavailable browser, state the exact reason. Do not auto-retry an ambiguous submission. Progress is in the generation card; do not narrate it. Do not claim success until a valid image returns.
+Pictures: return only actual picture bytes, never a screenshot. Do not auto-retry an uncertain result. Progress is in the generation card; do not narrate it. Do not claim success until a valid picture returns.
+
+Native GIF (kind "gif"): short silent loops, animated icons, charts, loading marks, and animating an earlier picture
+- code is the body of draw(ctx, t, width, height, source), as for video, plus a 5th argument source: a pure function of t (seconds), no state, no timers. Make t periodic so the loop closes: use Math.sin/cos of 2*Math.PI*t/duration, or wrap progress with t/duration so frame at t=duration equals frame at t=0.
+- Defaults 480 px, 12 fps, 3 s. Limits: 640 px on a side, 15 fps, 8 s, 120 frames in all, 8 MiB. Keep palettes small and flat; GIF has 256 colours.
+- source (optional param): the title of an earlier picture in this chat. The 5th argument of draw is then that picture as an image you can pass to ctx.drawImage, to pan, zoom or overlay on it. It is undefined when no source was given, so guard for that and otherwise draw everything in code.
+- Fix with the same title, at most two fix rounds.

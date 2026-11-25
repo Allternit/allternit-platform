@@ -227,6 +227,8 @@ enum AgentChatEvent: Decodable, Sendable {
         let title: String
         let url: String?
         let content: String?
+        /// `tool-call://<callID>` when this picture belongs to a media_generate call's card.
+        var sourceUri: String? = nil
     }
 
     /// Frames that end the stream (`finish` / `done`). `[DONE]` is terminal
@@ -271,7 +273,7 @@ enum AgentChatEvent: Decodable, Sendable {
         // finish
         case status, metadata
         // artifact
-        case artifactId, id, kind, title, url, content
+        case artifactId, id, kind, title, url, content, sourceUri
         // tool_result: the tool's output text (v1_routes.rs `result`)
         case result
         // connector_suggest / settings tool results
@@ -598,7 +600,8 @@ enum AgentChatEvent: Decodable, Sendable {
             kind: kind,
             title: title,
             url: url,
-            content: finalContent
+            content: finalContent,
+            sourceUri: (try? container.decodeIfPresent(String.self, forKey: .sourceUri)) ?? nil
         )
     }
 

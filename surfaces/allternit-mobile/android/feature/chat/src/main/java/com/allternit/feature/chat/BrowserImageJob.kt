@@ -68,23 +68,51 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
     private var submitted = false
     private val seen = mutableSetOf<String>()
 
+    init { active = this }
+
     fun offer(r: Request, onProgress: (JSONObject) -> Unit, onComplete: (JSONObject) -> Unit): Boolean {
         if (request != null || r.id in seen) return false
         if (prefs.contains(r.id)) {
             seen += r.id
-            onComplete(error("ambiguous_submission", "This image request was already handled or interrupted on this phone. Check ChatGPT before starting a new request; it will not be sent again."))
+            onComplete(error("ambiguous_submission", "This image request was already handled or interrupted on this phone. Check the browser before starting a new request; it will not be sent again."))
             return true
         }
         request = r; confirmed = false; submitted = false; needsUser = false
         progress = onProgress; complete = onComplete
-        label = "Confirm the prompt to open ChatGPT on this phone"
+        label = "Making the picture"
         return true
     }
+
+    /** True while the sign-in screen (no image job) is open. */
+    var signingIn by mutableStateOf(false); private set
+
+    /** The "Sign in to ChatGPT" action on a failed image result: opens the sign-in page, with no image request. */
+    @SuppressLint("SetJavaScriptEnabled")
+    fun signIn() {
+        if (request != null || browser != null) return
+        signingIn = true; visible = true; label = "Sign in, then return to chat"
+        browser = WebView(context).apply {
+            settings.javaScriptEnabled = true; settings.domStorageEnabled = true
+            settings.allowFileAccess = false; settings.allowContentAccess = false
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val u = request.url
+                    return u.scheme != "https" || u.host !in setOf("chatgpt.com", "auth.openai.com", "auth0.openai.com", "accounts.google.com", "login.live.com", "appleid.apple.com")
+                }
+            }
+            loadUrl("https://chatgpt.com/")
+        }
+    }
+
+    /** Closes the sign-in screen and drops its page. */
+    fun endSignIn() { if (signingIn) { signingIn = false; visible = false; destroyBrowser() } }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun confirm() {
         val r = request ?: return
         if (confirmed || !foreground) return
+        endSignIn()
         // Durable before any provider send. Replayed IDs cannot submit, even after process death.
         if (!prefs.edit().putString(r.id, "confirmed:${r.session}").commit()) {
             finish(error("storage", "Could not save the job identity. Try again after freeing storage.")); return
@@ -109,7 +137,7 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
                     if (!foreground) { report("queued", "Paused — return to Allternit to reconnect"); delay(1500); continue }
                     if (needsUser) { delay(1500); continue }
                     if (browser?.url?.let { Uri.parse(it).host } != "chatgpt.com") {
-                        report("queued", "Needs you — finish ChatGPT sign-in in this browser"); delay(1500); continue
+                        report("queued", "Needs you — finish sign-in in this browser"); delay(1500); continue
                     }
                     val state = JSONObject(evaluate(probe(r.prompt)))
                     when (state.optString("state")) {
@@ -117,9 +145,9 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
                         "mode" -> {
                             val mode = JSONObject(evaluate(selectImageMode()))
                             if (mode.optString("state") == "unsupported") {
-                                finish(error("unsupported", "ChatGPT Create image mode is unavailable. Open a regular empty chat with Create image selected, then request an image again.")); return@launch
+                                finish(error("unsupported", "Picture mode is unavailable in the browser. Open a regular empty chat with Create image selected, then request an image again.")); return@launch
                             }
-                            report("queued", "Opening Create image mode"); delay(1000)
+                            report("queued", "Opening picture mode"); delay(1000)
                         }
                         "ready" -> {
                             if (!submitted) {
@@ -137,36 +165,36 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
                                     }
                                 }
                                 if (!clicked) {
-                                    finish(error("unsupported", "ChatGPT's composer is unsupported. Check the browser before starting a new image request.")); return@launch
+                                    finish(error("unsupported", "The browser page is unsupported. Check the browser before starting a new image request.")); return@launch
                                 }
                             }
-                            report("drawing", "Waiting for ChatGPT's image"); delay(1500)
+                            report("drawing", "Making the picture"); delay(1500)
                         }
                         "waiting" -> {
                             val preview = state.optString("preview").takeIf { validPreview(it) }
-                            report(if (preview != null) "rendering" else "drawing", if (preview != null) "Image preview" else "Waiting for ChatGPT's image", preview = preview)
+                            report(if (preview != null) "rendering" else "drawing", if (preview != null) "Image preview" else "Making the picture", preview = preview)
                             delay(1500)
                         }
                         "image" -> {
-                            report("downloading", "Downloading the generated image")
+                            report("downloading", "Downloading the picture")
                             evaluate(startDownload(state.getString("url")))
                             val bytes = readDownload(r)
-                            report("saving", "Saving the image", bytes.size.toLong(), bytes.size.toLong())
+                            report("saving", "Saving the picture", bytes.size.toLong(), bytes.size.toLong())
                             val result = withContext(Dispatchers.Default) { normalize(bytes) }
                             finish(result); return@launch
                         }
-                        "unsupported" -> { finish(error("unsupported", "ChatGPT's page changed or returned no image. Open the browser and check this request.")); return@launch }
+                        "unsupported" -> { finish(error("unsupported", "The page changed or returned no picture. Open the browser and check this request.")); return@launch }
                         else -> delay(1000)
                     }
                 }
-                if (request == r) finish(error("timeout", "The image request expired. Check ChatGPT before starting another request; it will not be sent again."))
+                if (request == r) finish(error("timeout", "The image request expired. Check the browser before starting another request; it will not be sent again."))
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (request == r) finish(error("image_failed", e.message ?: "The image could not be downloaded. Check the browser before starting again.")) }
         }
     }
 
     fun resume() { if (confirmed) { needsUser = false; visible = true; label = "Reconnecting — observing the existing request" } }
-    fun cancel() { if (request != null) finish(error("cancelled", "Image generation stopped on this phone. ChatGPT may still finish a submitted request.")) }
+    fun cancel() { if (request != null) finish(error("cancelled", "Image generation stopped on this phone. The browser may still finish a submitted request.")) }
     private fun report(stage: String, text: String, bytes: Long? = null, total: Long? = null, preview: String? = null) {
         label = text
         progress?.invoke(JSONObject().put("lane", "picture").put("stage", stage).put("label", text).apply {
@@ -198,6 +226,7 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
         browser?.let { (it.parent as? android.view.ViewGroup)?.removeView(it); it.stopLoading(); it.loadUrl("about:blank"); it.destroy() }; browser = null
     }
     fun dispose() {
+        if (active === this) active = null
         complete = null; progress = null
         cancel(); destroyBrowser(); scope.cancel()
         application.unregisterActivityLifecycleCallbacks(lifecycle)
@@ -305,7 +334,7 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
             if (!foreground) { report("queued", "Paused — return to Allternit to finish downloading"); delay(1000); continue }
             val d = JSONObject(evaluate("JSON.stringify((window['aci_$nonce']||{}).download||{})"))
             check(!d.has("error")) { d.optString("error") }
-            report("downloading", "Downloading the generated image", d.optLong("bytes"), d.optLong("total").takeIf { it > 0 })
+            report("downloading", "Downloading the picture", d.optLong("bytes"), d.optLong("total").takeIf { it > 0 })
             if (d.optBoolean("done")) {
                 val out = ByteArrayOutputStream()
                 val count = JSONObject(evaluate("JSON.stringify({count:window['aci_$nonce'].download.chunks.length})")).getInt("count")
@@ -319,7 +348,7 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
             }
             delay(500)
         }
-        throw IllegalStateException("Image download timed out. Check ChatGPT before requesting another image.")
+        throw IllegalStateException("Image download timed out. Check the browser before requesting another image.")
     }
     private fun normalize(bytes: ByteArray): JSONObject {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -337,6 +366,8 @@ internal class BrowserImageJob(private val context: Context, accountId: String) 
         } finally { bitmap.recycle() }
     }
     companion object {
+        /** The shell-owned job, so a failed result card can offer the sign-in action. */
+        @Volatile var active: BrowserImageJob? = null
         fun error(code: String, text: String) = JSONObject().put("ok", false).put("error", text).put("code", code)
     }
 }

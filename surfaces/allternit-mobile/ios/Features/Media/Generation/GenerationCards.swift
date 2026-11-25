@@ -103,6 +103,7 @@ struct MediaGenerateCard: View {
     let replyIsLive: Bool
     var onChooseModel: () -> Void = {}
     var onRetry: () -> Void = {}
+    var onSignInToChatGPT: () -> Void = {}
     /// True while the finish reveal plays; the chat holds the bubble's picture until it ends.
     var onRevealing: (Bool) -> Void = { _ in }
 
@@ -155,14 +156,24 @@ struct MediaGenerateCard: View {
                 lane: Self.lane(of: call, reported: nil),
                 aspect: Self.aspect(of: call),
                 onChooseModel: onChooseModel,
-                onRetry: onRetry
+                onRetry: onRetry,
+                onSignIn: Self.needsSignIn(call) ? onSignInToChatGPT : nil
             )
+        case .done where call.attachedImageURL != nil:
+            AttachedPictureView(urlString: call.attachedImageURL ?? "", aspect: Self.aspect(of: call))
         default:
             EmptyView()
         }
     }
 
     static let revealSeconds = 0.8
+
+    /// A failed picture whose result code is sign_in_needed (or legacy signed_out).
+    static func needsSignIn(_ call: ToolCallRecord) -> Bool {
+        guard call.state == .failed, call.input["kind"]?.lowercased() != "video" else { return false }
+        let text = (call.error ?? "") + " " + (call.output ?? "")
+        return text.contains("sign_in_needed") || text.contains("signed_out")
+    }
 
     /// Remember the preview while it is drawn as halftone (picture lane only).
     private func noteHalftone() {
@@ -178,7 +189,7 @@ struct MediaGenerateCard: View {
     private func playReveal() async {
         guard !reduceMotion, Self.lane(of: call, reported: nil) == .picture else { return }
         var final: UIImage?
-        if let url = Self.imageURL(in: call.output), let data = try? await ArtifactMediaLoader.data(for: url) { final = UIImage(data: data) }
+        if let url = call.attachedImageURL ?? Self.imageURL(in: call.output), let data = try? await ArtifactMediaLoader.data(for: url) { final = UIImage(data: data) }
         let style: DotFieldView.RevealStyle = halftoneShown != nil ? .crossfade : .cells
         guard let image = final ?? halftoneShown else { return }
         reveal = Reveal(image: image, style: style)
@@ -195,7 +206,7 @@ struct MediaGenerateCard: View {
     /// The first inline picture or https picture link in a tool result.
     static func imageURL(in output: String?) -> String? {
         guard let output else { return nil }
-        let pattern = #"(data:image/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=]+|https://[^\s"')\]]+\.(?:png|jpe?g|webp)(?:\?[^\s"')\]]*)?)"#
+        let pattern = #"(data:image/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=]+|https://[^\s"')\]]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s"')\]]*)?)"#
         guard let re = try? NSRegularExpression(pattern: pattern),
               let m = re.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
               let r = Range(m.range, in: output) else { return nil }
@@ -247,6 +258,8 @@ struct GenerationFailureView: View {
     var aspect: CGFloat? = nil
     var onChooseModel: () -> Void = {}
     var onRetry: () -> Void = {}
+    /// The one place the engine is named: shown on a failed picture that needs a sign-in.
+    var onSignIn: (() -> Void)? = nil
 
     @ObservedObject private var connections = ConnectionsStore.shared
     @State private var sheet: ConnSheet?
@@ -274,6 +287,20 @@ struct GenerationFailureView: View {
                     perform()
                 } label: {
                     Text(label)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(Capsule().fill(Color("AccentPrimary")))
+                }
+                .buttonStyle(.plain)
+            }
+            if let onSignIn {
+                Button {
+                    Haptics.light()
+                    onSignIn()
+                } label: {
+                    Text("Sign in to ChatGPT")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.black)
                         .padding(.horizontal, 14)
@@ -374,5 +401,81 @@ struct RunningGenerationsStrip: View {
         .accessibilityValue(line)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Opens the full view")
+    }
+}
+
+/// The engine picture or GIF folded onto a finished media_generate call: drawn in the card, a GIF plays,
+/// a tap opens it full screen. Share sends the original bytes (a GIF stays a GIF).
+struct AttachedPictureView: View {
+    let urlString: String
+    var aspect: CGFloat? = nil
+    @State private var data: Data?
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var showsFull = false
+    @State private var shared: SharedArtifactFile?
+
+    var body: some View {
+        Group {
+            if let image {
+                Button { showsFull = true } label: {
+                    Group {
+                        if image.isAnimatedPicture { AnimatedImageView(image: image) }
+                        else { Image(uiImage: image).resizable().scaledToFit() }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Generated picture, tap to enlarge")
+            } else if failed {
+                EmptyView()
+            } else {
+                Color("FillNeutral")
+                    .aspectRatio(aspect ?? 1, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        }
+        .task(id: urlString) {
+            guard image == nil else { return }
+            if let bytes = try? await ArtifactMediaLoader.data(for: urlString), bytes.count <= 8 * 1024 * 1024,
+               let decoded = AnimatedImageView.decode(bytes) {
+                data = bytes
+                image = decoded
+            } else { failed = true }
+        }
+        .fullScreenCover(isPresented: $showsFull) {
+            if let image {
+                NavigationStack {
+                    ScrollView([.horizontal, .vertical]) {
+                        Group {
+                            if image.isAnimatedPicture { AnimatedImageView(image: image) }
+                            else { Image(uiImage: image).resizable().scaledToFit() }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .navigationTitle("Picture")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Done") { showsFull = false } }
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                // The original bytes, with their own type: never a PNG re-encode of a GIF.
+                                if let data {
+                                    let isGif = data.starts(with: Array("GIF8".utf8))
+                                    if let url = try? ArtifactFileShare.write(data, suggestedName: isGif ? "Picture.gif" : "Picture.png", mimeType: isGif ? "image/gif" : "image/png") {
+                                        shared = SharedArtifactFile(url: url)
+                                    }
+                                }
+                            } label: { Image(systemName: "square.and.arrow.up") }
+                            .accessibilityLabel("Share")
+                        }
+                    }
+                    .sheet(item: $shared) { item in ArtifactShareSheet(items: [item.url]) }
+                }
+            }
+        }
     }
 }

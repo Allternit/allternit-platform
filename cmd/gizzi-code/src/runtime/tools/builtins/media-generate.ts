@@ -4,7 +4,9 @@ import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
-import { generateCodexImage } from "./codex-image"
+import { codexEngine } from "./codex-image"
+import { claimImageJob, resolveImageJob, type EngineResult, type ImageEngine } from "./image-engine"
+import { GIF_MAX_DIMENSION, GIF_MAX_FRAMES, gifResult } from "@/runtime/integrations/pane-render/gif-result"
 
 interface Meta {
   ok: boolean
@@ -18,6 +20,9 @@ interface Meta {
   video?: PaneRender.Video
   code?: string
   poster?: string
+  engine?: "codex" | "chatgpt_browser" | "native"
+  /** The attached picture is also published as a generated file (session/generated-file.ts toolOutputFilePart). */
+  outputFile?: boolean
 }
 const meta = (m: Meta): Meta => m
 
@@ -130,7 +135,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   return {
     title: `Video: ${title}`,
     output: `Rendered "${title}" (${width}×${height}, ${duration}s at ${fps}fps${sound}). Video: ${result.video.url}. It's in the session's Outputs. The contact sheet (six stills across the video, timestamped) is attached: check motion, framing and text against the request, and if anything is off, call again with the same title and fixed code.`,
-    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video, ...(poster && poster.length <= 400_000 ? { poster } : {}) }),
+    metadata: meta({ ok: true, lane: "native", engine: "native", format: "canvas", width, height, video: result.video, ...(poster && poster.length <= 400_000 ? { poster } : {}) }),
     ...(result.image
       ? { attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title} contact sheet.png` }] }
       : {}),
@@ -173,10 +178,10 @@ export function browserImageResult(result: PaneRender.Result): { image: string; 
 async function aciImage(prompt: string, title: string, provider: string | undefined, ctx: Tool.Context) {
   const latestUser = [...ctx.messages].reverse().find((m) => m.info.role === "user")?.info
   if (!latestUser || latestUser.role !== "user" || latestUser.bot || !isPersonTurn(latestUser.metadata)) {
-    return { title: `Image: ${title} — needs your request`, output: "Local ACI images only run from a message you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "person_required" }) }
+    return { title: `Image: ${title} — needs your request`, output: "Pictures only run from a message you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "person_required" }) }
   }
   if ((provider && provider !== "chatgpt") || !prompt.trim() || prompt.length > 16_000) {
-    return { title: `Image: ${title} — request unavailable`, output: "Local ACI images need provider chatgpt and a prompt of 1–16000 characters. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "invalid_request" }) }
+    return { title: `Image: ${title} — request unavailable`, output: "Pictures need a prompt of 1–16000 characters. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "invalid_request" }) }
   }
   // The app presents the exact prompt before a provider send. A replayed
   // sync request never grants that confirmation by itself.
@@ -194,75 +199,208 @@ async function aciImage(prompt: string, title: string, provider: string | undefi
   const image = browserImageResult(result)
   if (!image) return {
     title: `Image: ${title} — not finished`,
-    output: result.ok ? "The ACI browser returned an invalid or oversized image. No image was attached." : (result.error || "The local ACI browser did not return an image."),
+    output: result.ok ? "The picture engine returned an invalid or oversized image. No image was attached." : (result.error || "No picture came back."),
     metadata: meta({ ok: false, lane: "aci", provider: "chatgpt", code: result.code ?? (result.ok ? "invalid_image" : "unavailable") }),
   }
   return {
-    title: `Image: ${title}`, output: `Made "${title}" in this device's ACI browser. The image is attached and available in Outputs.`,
+    title: `Image: ${title}`, output: `Made "${title}". The picture is attached and in Outputs.`,
     metadata: meta({ ok: true, lane: "aci", provider: "chatgpt", width: image.width, height: image.height }),
     attachments: [{ type: "file" as const, mime: "image/png", url: image.image, filename: `${title}.png` }],
   }
 }
 
-async function codexImage(prompt: string, title: string, ctx: Tool.Context) {
-  const user = [...ctx.messages].reverse().find((m) => m.info.role === "user")?.info
-  if (!user || user.role !== "user" || user.bot || !isPersonTurn(user.metadata)) {
-    return { title: `Image: ${title}`, output: "Codex images need a request you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "codex", provider: "codex", code: "person_required" }) }
+const CLAIM_WAIT_MS = 15_000
+const ENGINE_LANE = { codex: "codex", chatgpt_browser: "aci" } as const
+
+/** The device's own browser picture engine, built from the browser-image PaneRender job. */
+function chatgptBrowserEngine(title: string, ctx: Tool.Context, state: { signInNeeded: boolean }): ImageEngine {
+  return {
+    id: "chatgpt_browser",
+    async run(input): Promise<EngineResult> {
+      const result = await PaneRender.request({
+        sessionID: ctx.sessionID, kind: "browser-image", engine: "chatgpt-aci", prompt: input.prompt,
+        format: "html", code: "", width: 1024, height: 1024, title,
+        toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+      }, {
+        abort: ctx.abort, timeoutMs: 600_000, claimTimeoutMs: CLAIM_WAIT_MS,
+        onProgress: (detail) => {
+          input.progress?.(detail.stage === "saving" ? "Saving the picture" : "Making the picture")
+        },
+      })
+      if (!result.ok) {
+        if (result.code === "not_started") return { status: "not_started", reason: "no_host" }
+        if (result.code === "signed_out" || result.code === "sign_in_needed") {
+          state.signInNeeded = true
+          return { status: "not_started", reason: "sign_in_needed" }
+        }
+        // A claimed job that timed out, was stopped or failed: unknown whether the picture was made.
+        return { status: "ambiguous" }
+      }
+      const image = browserImageResult(result)
+      if (!image) return { status: "definite", code: "invalid_image", error: "The picture came back in a form that could not be used." }
+      return { status: "ok", ...image }
+    },
   }
-  // Always-ask permission works on native clients and the TUI as well as web.
-  // This is a local CLI job, not a remote Subscription Fabric task.
-  await ctx.ask({ permission: "subscription", patterns: ["codex:image.generate"], always: [], metadata: {
-    toolName: "media_generate", provider: "codex", prompt,
-    summary: `Create this image with Codex CLI on the selected runtime, using its ChatGPT sign-in. This is a separate request from ChatGPT ACI.\n\n${prompt}`,
-  } })
-  const result = await generateCodexImage(prompt, ctx.abort, reportProgress(ctx, `Image: ${title}`, { lane: "codex", provider: "codex" }))
-  const image = browserImageResult(result)
-  if (!image) return { title: `Image: ${title} — not finished`, output: result.error ?? "Codex returned an invalid or oversized PNG. No image was attached.", metadata: meta({ ok: false, lane: "codex", provider: "codex", code: result.code ?? "invalid_image" }) }
-  return { title: `Image: ${title}`, output: `Made "${title}" with Codex CLI. The image is attached and available in Outputs.`,
-    metadata: meta({ ok: true, lane: "codex", provider: "codex", width: image.width, height: image.height }),
-    attachments: [{ type: "file" as const, mime: "image/png", url: image.image, filename: `${title}.png` }] }
+}
+
+/** True when an assistant tool part after this user message already ran an engine job. */
+function engineUsedAfter(ctx: Tool.Context, userMessageId: string): boolean {
+  const index = ctx.messages.findIndex((m) => m.info.id === userMessageId)
+  if (index < 0) return false
+  return ctx.messages.slice(index + 1).some((m) =>
+    m.parts.some((p: any) => p.type === "tool" && p.tool === "media_generate" && ["codex", "chatgpt_browser"].includes(p.state?.metadata?.engine)),
+  )
+}
+
+const NO_ENGINE_OUTPUT =
+  'No picture engine is available right now. Draw it in code instead: call media_generate again with lane "native", a format (svg, html or canvas) and code, and tell the user it is drawn in code.'
+
+async function pictureJob(title: string, ctx: Tool.Context) {
+  const latest = [...ctx.messages].reverse().find((m) => m.info.role === "user")
+  const user = latest?.info
+  if (!user || user.role !== "user" || user.bot || !isPersonTurn(user.metadata)) {
+    return { title: `Image: ${title} — needs your request`, output: "Pictures only come from a message you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "person_required" }) }
+  }
+  const raw = (user.metadata as Record<string, unknown> | undefined)?.image_prompt
+  const brief = typeof raw === "string" ? raw : ""
+  if (!brief.trim() || brief.length > 16_000) {
+    return { title: `Image: ${title} — request unavailable`, output: "The picture request needs 1–16000 characters. Nothing was sent.", metadata: meta({ ok: false, lane: null, code: "invalid_request" }) }
+  }
+  if (!claimImageJob(user.id) || engineUsedAfter(ctx, user.id)) {
+    return { title: `Image: ${title} — already made`, output: "One picture job runs per message. Check the earlier result before asking again; nothing was sent.", metadata: meta({ ok: false, lane: null, code: "already_used" }) }
+  }
+  const earlierBriefs: string[] = []
+  for (const m of ctx.messages) {
+    if (m.info.id === user.id) break
+    if (m.info.role !== "user" || m.info.bot || !isPersonTurn(m.info.metadata)) continue
+    const earlier = (m.info.metadata as Record<string, unknown> | undefined)?.image_prompt
+    if (typeof earlier === "string" && earlier.trim()) earlierBriefs.push(earlier)
+  }
+  const state = { signInNeeded: false }
+  const forward = reportProgress(ctx, `Image: ${title}`, {})
+  const outcome = await resolveImageJob({
+    engines: [codexEngine, chatgptBrowserEngine(title, ctx, state)],
+    prompt: brief, earlierBriefs, signal: ctx.abort, now: Date.now,
+    progress: (label) => forward({ lane: "picture", stage: label.startsWith("Saving") ? "saving" : "drawing", label }),
+  })
+  switch (outcome.kind) {
+    case "image":
+      return {
+        title: `Image: ${title}`, output: `Made "${title}". The picture is attached and in Outputs.`,
+        metadata: meta({ ok: true, lane: ENGINE_LANE[outcome.engine], engine: outcome.engine, width: outcome.width, height: outcome.height, outputFile: true }),
+        attachments: [{ type: "file" as const, mime: "image/png", url: outcome.image, filename: `${title}.png` }],
+      }
+    case "no_engine":
+      return {
+        title: `Image: ${title} — no picture engine`, output: NO_ENGINE_OUTPUT,
+        metadata: meta({ ok: false, lane: null, code: state.signInNeeded ? "sign_in_needed" : "unavailable" }),
+      }
+    case "ambiguous":
+      return { title: `Image: ${title} — check first`, output: outcome.message, metadata: meta({ ok: false, lane: ENGINE_LANE[outcome.engine], engine: outcome.engine, code: "ambiguous" }) }
+    case "error":
+      return {
+        title: `Image: ${title} — not finished`, output: outcome.message,
+        metadata: meta({ ok: false, lane: outcome.engine ? ENGINE_LANE[outcome.engine] : null, ...(outcome.engine ? { engine: outcome.engine } : {}), code: outcome.code }),
+      }
+  }
+}
+
+/** Data URL of an earlier image output whose title matches, or undefined. */
+function earlierImage(ctx: Tool.Context, source: string): string | undefined {
+  const wanted = source.trim().toLowerCase()
+  for (const m of [...ctx.messages].reverse()) {
+    for (const p of [...m.parts].reverse() as any[]) {
+      if (p.type !== "tool" || p.state?.status !== "completed") continue
+      const name = String(p.state.input?.title ?? p.state.title ?? "").replace(/^Image:\s*/, "").trim().toLowerCase()
+      if (name !== wanted) continue
+      const file = (p.state.attachments ?? []).find((a: any) => typeof a.mime === "string" && a.mime.startsWith("image/") && typeof a.url === "string" && a.url.startsWith("data:image/"))
+      if (file) return file.url
+    }
+  }
+}
+
+async function renderGif(params: { code?: string; width?: number; height?: number; duration?: number; fps?: number; source?: string }, title: string, ctx: Tool.Context) {
+  const side = (n: number | undefined) => Math.min(GIF_MAX_DIMENSION, Math.max(MIN_SIDE, Math.round(n ?? 480)))
+  const width = side(params.width)
+  const height = side(params.height)
+  const fps = Math.min(15, Math.max(1, Math.round(params.fps ?? 12)))
+  const duration = Math.min(8, GIF_MAX_FRAMES / fps, Math.max(0.5, params.duration ?? 3))
+  const frames = Math.max(1, Math.round(duration * fps))
+  let source: string | undefined
+  if (params.source?.trim()) {
+    source = earlierImage(ctx, params.source)
+    if (!source) {
+      return { title: `GIF: ${title} — picture not found`, output: `No earlier picture titled "${params.source}" is in this chat. Check the title, or draw the animation without source.`, metadata: meta({ ok: false, lane: "native", engine: "native", code: "invalid_request" }) }
+    }
+  }
+  const result = await PaneRender.request(
+    {
+      sessionID: ctx.sessionID, kind: "gif", format: "canvas", code: params.code!, width, height, duration, fps,
+      ...(source ? { source } : {}), title,
+      toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+    },
+    { abort: ctx.abort, timeoutMs: Math.min(5 * 60_000, 60_000 + frames * 500), onProgress: reportProgress(ctx, `GIF: ${title}`, { lane: "native", engine: "native" }) },
+  )
+  const gif = result.ok ? gifResult(result) : undefined
+  if (!gif) {
+    return {
+      title: `GIF: ${title} — render failed`,
+      output: `The GIF render failed: ${result.ok ? "the GIF that came back could not be used" : (result.error ?? "no GIF came back")}. Fix the code and call again with the same title.`,
+      metadata: meta({ ok: false, lane: "native", engine: "native", format: "canvas", width, height, code: result.ok ? "invalid_image" : result.code }),
+    }
+  }
+  return {
+    title: `GIF: ${title}`,
+    output: `Made "${title}" (${gif.width}×${gif.height}, ${gif.frames} frames, loops). The GIF is attached and in Outputs.`,
+    metadata: meta({ ok: true, lane: "native", engine: "native", format: "canvas", width: gif.width, height: gif.height, outputFile: true }),
+    attachments: [{ type: "file" as const, mime: "image/gif", url: gif.image, filename: `${title}.gif` }],
+  }
 }
 
 export const MediaGenerateTool = Tool.define("media_generate", {
   description: DESCRIPTION,
   parameters: z.object({
     ...LabelField,
-    kind: z.enum(["image", "video"]).describe("What to make"),
+    kind: z.enum(["image", "gif", "video"]).describe("What to make"),
     prompt: z.string().describe("What the user asked for, in their words"),
     title: z.string().optional().describe("Short name for the output; reuse it to replace a previous version"),
     lane: z
       .enum(["native", "aci", "codex", "cloud", "subscription", "own_key"])
       .optional()
-      .describe("How to make it; aci = ChatGPT image in this device’s ACI browser after prompt confirmation; native = code rendering. subscription is a legacy alias of aci, never a remote route."),
-    provider: z
-      .string()
-      .optional()
-      .describe("Image provider: chatgpt (device-local ACI) or codex (Codex CLI on the selected runtime, with confirmation). Codex is also an explicit backup after an ACI failure. Never automatically retry an ambiguous browser submission."),
-    format: PaneRender.Format.optional().describe("Native lane: svg, html or canvas (video: canvas)"),
+      .describe("native = you draw it in code. Leave unset for a picture from the person's Image-mode request: a picture engine is chosen automatically. aci, codex and subscription are old values and are treated as unset."),
+    provider: z.string().optional().describe("Ignored."),
+    format: PaneRender.Format.optional().describe("Native lane: svg, html or canvas (video and gif: canvas)"),
     code: z
       .string()
       .optional()
       .describe("Native lane: the SVG, HTML document, or canvas function body; for video, the body of draw(ctx, t, width, height)"),
     width: z.number().int().optional().describe("Pixels (image 64–4096, default 1024; video default 1920)"),
     height: z.number().int().optional().describe("Pixels (image 64–4096, default 1024; video default 1080)"),
-    duration: z.number().optional().describe("Video: seconds, 1–60 (default 6)"),
-    fps: z.number().int().optional().describe("Video: 24, 25, 30 or 60 (default 30)"),
+    duration: z.number().optional().describe("Video: seconds, 1–60 (default 6). GIF: seconds, up to 8 (default 3)"),
+    fps: z.number().int().optional().describe("Video: 24, 25, 30 or 60 (default 30). GIF: 1–15 (default 12)"),
     motionBlur: z.number().int().optional().describe("Video: sub-frame samples per frame for motion blur, 1–8 (default 4; 1 = off)"),
+    source: z.string().optional().describe("GIF: title of an earlier picture in this chat to animate (pan, zoom, overlay)"),
     audio: z
       .string()
       .optional()
       .describe("Video: optional soundtrack, the body of score(ctx, duration) on an OfflineAudioContext"),
   }),
   async execute(params, ctx) {
-    const noun = params.kind === "video" ? "Video" : "Image"
+    const noun = params.kind === "video" ? "Video" : params.kind === "gif" ? "GIF" : "Image"
     const title = (params.title ?? params.prompt).trim().slice(0, 80) || noun
-    const lane = params.lane ?? (params.code ? "native" : params.kind === "image" ? "aci" : undefined)
-    if (params.kind === "image" && (lane === "codex" || (["aci", "subscription"].includes(lane ?? "") && ["codex", "codex-cli"].includes(params.provider ?? "")))) {
-      return codexImage(params.prompt, title, ctx)
+    const oldLane = ["aci", "codex", "subscription"].includes(params.lane ?? "")
+    const lane = params.lane && !oldLane ? params.lane : params.code ? "native" : undefined
+    if (params.kind === "image" && !params.code?.trim() && (lane === undefined || lane === "native")) {
+      const user = [...ctx.messages].reverse().find((m) => m.info.role === "user")?.info
+      const hasBrief = user?.role === "user" && isPersonTurn(user.metadata) && typeof (user.metadata as Record<string, unknown> | undefined)?.image_prompt === "string"
+      // Old clients send no image_prompt: keep the device-browser path for them.
+      if (user?.role === "user" && isPersonTurn(user.metadata) && !user.bot && !hasBrief && lane === undefined) return aciImage(params.prompt, title, undefined, ctx)
+      if (lane === undefined) return pictureJob(title, ctx)
     }
-    if ((lane === "aci" || lane === "subscription") && params.kind === "image") {
-      // The old name remains accepted but never routes back to Sessions.
-      return aciImage(params.prompt, title, params.provider, ctx)
+    if (params.kind === "gif") {
+      if (!params.code?.trim()) throw new Error("A GIF is drawn in code: give the body of draw(ctx, t, width, height) as code")
+      if (params.code.length > MAX_CODE) throw new Error(`The code is ${params.code.length} characters; keep it under ${MAX_CODE}`)
+      return renderGif(params, title, ctx)
     }
     if (lane !== "native") {
       return {
@@ -315,7 +453,7 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     return {
       title: `Image: ${title}`,
       output: `Rendered "${title}" (${width}×${height}, ${params.format}). It's in the session's Outputs. The PNG is attached: check it against the request, and if anything is off, call again with the same title and fixed code.`,
-      metadata: meta({ ok: true, lane: "native", format: params.format, width, height }),
+      metadata: meta({ ok: true, lane: "native", engine: "native", format: params.format, width, height }),
       attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title}.png` }],
     }
   },

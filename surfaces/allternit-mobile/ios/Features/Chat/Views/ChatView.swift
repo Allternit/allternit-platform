@@ -335,6 +335,15 @@ struct ChatContentView: View {
     /// wins; a selected agent defers to the SERVER (the bridge applies the
     /// agent's own model when runtimeModelId is absent); otherwise the
     /// persisted/auto-selected model goes out as before.
+    /// Image or Artifact mode is the selected deck tile: the send carries the raw text as `image_prompt`.
+    private var isImageMode: Bool {
+        if artifactStudio?.kind.modeId == "image" { return true }
+        let mode = modeStore.mode
+        guard agentModeStore.isAgentEnabled(for: mode) else { return false }
+        let tile = agentModeStore.selectedTile(for: mode)
+        return tile == .image || tile == .artifact
+    }
+
     private var modelForSend: String? {
         if modelStore.didManuallySelectModel { return modelStore.selectedModelId }
         return sessionContext.agentId == nil ? modelStore.selectedModelId : nil
@@ -404,15 +413,6 @@ struct ChatContentView: View {
                 run: nil,
                 onProblem: { viewModel.transientError = $0 }
             )
-        }
-        .alert("Send this image prompt to ChatGPT?", isPresented: Binding(
-            get: { viewModel.pendingBrowserImage != nil },
-            set: { _ in }
-        )) {
-            Button("Send exact prompt") { viewModel.confirmBrowserImage() }
-            Button("Cancel", role: .cancel) { viewModel.declineBrowserImage() }
-        } message: {
-            Text((viewModel.pendingBrowserImage?.prompt ?? "") + "\n\nUses ChatGPT in this phone's ACI browser. Website sign-in is separate from ChatGPT text-chat authorization.")
         }
         .sheet(isPresented: $viewModel.imageBrowserPresented) {
             ACIWebBrowserView(initialURL: URL(string: "https://chatgpt.com/")!, onExit: { viewModel.imageBrowserPresented = false })
@@ -750,22 +750,6 @@ struct ChatContentView: View {
 
             // Pictures and clips being made: one chip each, tap for the full
             // view, press and hold to peek (the strip draws nothing when idle).
-            if modelStore.selectedModelId?.hasPrefix("chatgpt/") == true || viewModel.pendingBrowserImage != nil {
-                Button("Create image in ChatGPT", systemImage: "photo") {
-                    viewModel.requestLocalBrowserImage(inputText)
-                }
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
-                .font(.footnote)
-            }
-            Button("Create image with Codex CLI", systemImage: "photo.badge.plus") {
-                let prompt = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                viewModel.sendMessage("Generate an image using media_generate with lane \"codex\" and provider \"codex\" on my selected runtime. Ask me to confirm before sending. Image brief:\n\n" + prompt,
-                                      runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
-                inputText = ""
-            }
-            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming || viewModel.isCreatingSession || viewModel.pendingBrowserImage != nil || !attachmentStore.attachments.isEmpty || (modelForSend ?? "").isEmpty)
-            .font(.footnote)
-            .accessibilityHint("Uses Codex CLI and its ChatGPT sign-in on the selected runtime. You confirm before it runs. Also available as a backup to ChatGPT images.")
             ACILocalImageOutputs(sessionId: viewModel.currentSessionId)
             RunningGenerationsStrip()
                 // A signed-out error card's "Connect ChatGPT" opens the sign-in here.
@@ -885,7 +869,12 @@ struct ChatContentView: View {
                     self.editingMessageId = nil
                     viewModel.resendEditedMessage(editingMessageId, newText: inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
                 } else {
-                    viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
+                    if isImageMode, attachments.isEmpty, modelStore.selectedModelId?.hasPrefix("chatgpt/") == true {
+                        // Image mode with no runtime: the send starts the picture job on this phone.
+                        viewModel.requestLocalBrowserImage(inputText)
+                    } else {
+                        viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true, imageMode: isImageMode)
+                    }
                 }
                 inputText = ""
             },
@@ -942,6 +931,7 @@ struct ChatContentView: View {
             onRetry: { failedMessageId in
                 viewModel.retryFailedMessage(failedMessageId, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
             },
+            onSignInToChatGPT: { viewModel.imageBrowserPresented = true },
             availableErrorActions: errorActionKinds,
             onErrorAction: { failedMessageId, action in
                 switch action.kind {

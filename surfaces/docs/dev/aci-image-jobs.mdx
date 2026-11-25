@@ -1,6 +1,6 @@
 ---
 title: Device-local ACI image jobs
-description: Same-device browser generation, progress and chat image return
+description: Image mode engine resolver, device browser jobs, GIFs and chat image return
 ---
 
 <Note>This implementation is in development. Safari and Codex probes do not establish support in native ACI webviews.</Note>
@@ -50,14 +50,54 @@ The explicit Desktop and iOS image paths integrate with their existing local per
 
 Source syntax and documentation checks do not establish ChatGPT WebView support. The release train must compile each native target and run the focused contract/ownership/history tests. A real signed-in image run on each supported device must verify prompt confirmation, image mode, current-turn correlation, byte download, original-chat output, Stop, navigation, suspension, account change and replay after interruption. Report unsupported authentication or changed provider markup explicitly. The successful standalone Codex and Safari probes are separate evidence.
 
-## Codex CLI provider
+## Image mode engine resolver
 
-`media_generate` also accepts `lane: "codex", provider: "codex"` for image prompts. `provider: "codex"` or `"codex-cli"` with the ACI or legacy subscription lane selects the same explicit Codex option. A person turn and an always-ask `subscription` permission are required. There is no automatic fallback after browser submission.
+Image mode sends no engine name. The runtime picks the engine, and the person's own send is the confirmation.
 
-The executor is `cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts` on the selected runtime. It starts the installed CLI with `codex app-server --listen stdio://`, checks `account/read` for ChatGPT authentication, starts an ephemeral read-only thread, and asks only for built-in image generation. API-key environment variables are removed for the child. Shell tools are disabled, and requests for other approvals are refused. The 10-minute job owns cancellation and process teardown.
+### Metadata contract
 
-Only a completed structured `imageGeneration` item is accepted. Inline bytes or an artifact path under the job folder or Codex generated-images folder pass through the existing bounded PNG validator before attachment. Agent text, markdown paths, arbitrary file paths and file references without downloadable bytes do not establish success. Stream data is bounded to 24 MiB and PNG bytes to 8 MiB. Progress uses the existing picture stages and tool metadata, so every client receives the same card.
+A person send in Image or Artifact mode carries `metadata.turn = "person"` and `metadata.image_prompt`, the raw composer text as a flat string of 1 to 16000 UTF-16 units (a flat string because iOS metadata is a string map). Three allow-lists must pass both keys: `turn_image_prompt` in `cmd/allternit-api/src/v1_routes.rs`, `cmd/allternit-api/src/agent_session_routes.rs` and `promptHints` in `cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts`. The runtime advertises the capability `image.auto`. Clients do not gate on it: an old runtime drops `image_prompt`, and a client without `image_prompt` keeps the old ACI path. Only the person's own turn carries `image_prompt`.
 
-Desktop, web, PWA, iOS and Android send an explicit Codex image request through normal runtime chat. Gizzi CLI/TUI can call the same media tool directly. This execution path does not alter the browser-image pane-render contract. The existing user and developer guide navigation entries cover both provider choices.
+### Engine order
 
-Protocol evidence: installed Codex 0.171.0 app-server JSON schemas include `imageGeneration`, `savedPath`, `result` and `fileId`; OpenAI source: https://github.com/openai/codex/tree/main/codex-rs/ext/image-generation.
+`media_generate` with `kind: "image"` and no `code` calls the resolver in `image-engine.ts`. The prompt is `image_prompt`, never the model's `params.prompt`. Old `lane` values (`aci`, `codex`, `subscription`) are treated as auto. Engines run in this order:
+
+1. `codex`: the installed Codex CLI on the runtime.
+2. `chatgpt_browser`: the device's ChatGPT browser (Desktop, iOS, Android), over pane-render.
+3. `native`: when no engine is available the tool tells the model to draw it in code and say so.
+
+### Failure classes
+
+| Class | Examples | What happens |
+|---|---|---|
+| Not started | CLI missing, signed out, no device host, capability absent | Try the next engine quietly |
+| Failed, definite | Usage limit, invalid image | Stop with a plain error |
+| Ambiguous | Timeout or exit after `turn/start`, unknown browser outcome, Stop after submit | Stop, "Check before trying again", never retry, never fall through |
+
+A Codex `usageLimitExceeded` result with `resetsAt` sets an in-memory cooldown for that engine; it is skipped until that time. A thrown engine counts as ambiguous. An engine result is accepted only as `data:image/png` or `data:image/gif` base64.
+
+### Picture delivery
+
+An engine picture (PNG) or GIF is delivered as an assistant file part with `mime` `image/png` or `image/gif`, a data URL in `url`, a `filename`, and `source.uri` set to `tool-call://` followed by the call ID. Live, it arrives as an `artifact` stream frame with `sourceUri`, `url` and `mimeType`; on reload it arrives in `metadata.parts` as a file part. Clients fold it onto the matching tool call so the picture shows inside that call's generation card, not as a separate chip or card (web in `rust-stream-adapter.ts`, iOS in `ToolCallRecord.attachedImageURL`, Android in `ToolCallRecord.attachedImageUrl`). The tool result text carries no data URL; the attachment stays on the tool result for the model. Each picture is bounded at 8 MiB. iOS share sends the original bytes, so a GIF stays a GIF.
+
+### Once per message and earlier briefs
+
+`claimImageJob(userMessageId)` allows one engine job per user message. A second call, or an earlier engine part found after that message, returns `already_used`. The engine prompt is the new brief followed by the person's earlier `image_prompt` values from the same chat, labelled as context, within 16000 characters (`buildEnginePrompt`). The model never writes the engine prompt.
+
+### Device host
+
+A browser-image request waits 15 seconds for a device to claim it (`claimTimeoutMs`); with no host the engine counts as not started. The execution, claim and executor ID rules above stay as written. Instead of a confirm dialog, each device keeps the last Image-mode text it sent for the chat and refuses a runtime browser-image request whose prompt differs. This guard is in memory: after an app restart a runtime request is refused.
+
+### GIF
+
+`kind: "gif"` always renders in code. `code` is the body of `draw(ctx, t, w, h, source)`, a pure function of `t`, with a periodic `t` so the loop closes. `source` is the optional title of an earlier picture; the fifth argument is then that picture as an image, otherwise it is undefined. Defaults are 480 px, 12 fps and 3 s. Limits are 640 px, 15 fps, 8 s, 120 frames and 8 MiB. `gifResult` in `pane-render/gif-result.ts` validates the encoded result against these limits before it is attached. The `image/gif` type maps to the existing image artifact kind.
+
+### Result
+
+Result metadata carries `engine` (`codex`, `chatgpt_browser` or `native`) and the legacy `lane` for old clients. Result codes: `person_required`, `already_used`, `invalid_request`, `unsupported`, `signed_out`, `sign_in_needed`, `usage_limit`, `cancelled`, `unavailable`, `invalid_image`, `ambiguous`. The engine is named to the person only in a sign-in action on a failed result.
+
+### Codex app-server
+
+The executor is `cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts`. It resolves the binary with `resolveCliPath`, starts `codex app-server --listen stdio://`, checks `account/read` for ChatGPT authentication and starts an ephemeral read-only thread. ChatGPT sign-in only: `OPENAI_API_KEY`, `CODEX_API_KEY` and `OPENAI_BASE_URL` are removed from the child environment, so there is no API key path. Shell, unified exec, apps, browser use, computer use and image viewing features are disabled with `--disable`, and other approval requests are refused.
+
+Only a completed structured `imageGeneration` item is accepted. Inline bytes, or an artifact path under the job folder or Codex generated-images folder, pass through the bounded PNG validator, and the real decoded size is reported. Stream data is bounded to 24 MiB and PNG bytes to 8 MiB. Agent text and arbitrary paths never establish success. Protocol evidence: Codex 0.171.0 app-server schemas include `imageGeneration`, `savedPath`, `result` and `fileId`.

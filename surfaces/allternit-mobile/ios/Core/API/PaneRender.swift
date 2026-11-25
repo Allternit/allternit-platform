@@ -6,7 +6,7 @@ import CoreFoundation
 /// image or video drawn from code, or an `artifact_check` of an artifact at
 /// each width. The phone answers it the way the web app does.
 struct PaneRenderRequest: Sendable {
-    enum Kind: String, Sendable { case image, video, check; case browserImage = "browser-image" }
+    enum Kind: String, Sendable { case image, video, gif, check; case browserImage = "browser-image" }
 
     let engine: String?
     let prompt: String?
@@ -32,6 +32,8 @@ struct PaneRenderRequest: Sendable {
     let bodyFormat: String?
     let widths: [Int]
     let reference: String?
+    /// GIF: an earlier picture (data:image URL) the scene can draw and animate.
+    let source: String?
     /// When the agent asked (ms), and how long it waits (ms).
     let time: Double?
     let timeoutMs: Double?
@@ -73,11 +75,24 @@ struct PaneRenderRequest: Sendable {
         self.kind = kind
         self.format = format
         self.code = code
-        self.width = Int(width)
-        self.height = Int(height)
-        self.title = str("title") ?? (kind == .video ? "Video" : "Image")
-        self.duration = num("duration")
-        self.fps = num("fps").map { Int($0) }
+        // A GIF is clamped to the shared limits: 640 px, 15 fps, 8 s, 120 frames.
+        var outW = Int(width), outH = Int(height)
+        var outFps = num("fps").map { Int($0) }
+        var outDuration = num("duration")
+        if kind == .gif {
+            let scale = min(1, 640 / Double(max(outW, outH)))
+            outW = max(1, Int((Double(outW) * scale).rounded()))
+            outH = max(1, Int((Double(outH) * scale).rounded()))
+            let f = min(15, max(1, outFps ?? 12))
+            let d = min(8, max(0.2, outDuration ?? 3))
+            outFps = f
+            outDuration = min(d, 120 / Double(f))
+        }
+        self.width = outW
+        self.height = outH
+        self.title = str("title") ?? (kind == .video ? "Video" : kind == .gif ? "GIF" : "Image")
+        self.duration = outDuration
+        self.fps = outFps
         self.motionBlur = num("motionBlur", "motion_blur").map { Int($0) }
         self.audio = str("audio")
         self.artifactKind = str("artifactKind", "artifact_kind")
@@ -85,8 +100,11 @@ struct PaneRenderRequest: Sendable {
         self.widths = ((obj["widths"] as? [NSNumber]) ?? []).map { $0.intValue }.filter { (240...3840).contains($0) }.prefix(4).map { $0 }
         let ref = str("reference")
         self.reference = ref?.hasPrefix("data:image/") == true ? ref : nil
+        let src = str("source")
+        self.source = src.flatMap { $0.hasPrefix("data:image/") && $0.range(of: #"^[A-Za-z0-9:;,/+=._-]+$"#, options: .regularExpression) != nil ? $0 : nil }
         self.time = num("time")
         self.timeoutMs = num("timeoutMs", "timeout_ms")
+        if kind == .gif, format != "canvas" { return nil }
         if kind == .video, format != "canvas" || (duration ?? 0) <= 0 || (fps ?? 0) <= 0 { return nil }
     }
 }

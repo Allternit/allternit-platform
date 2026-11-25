@@ -23,12 +23,14 @@ export namespace PaneRender {
     id: Identifier.schema("question"),
     sessionID: Identifier.schema("session"),
     /** check: artifact_check — the app renders an artifact (code = its body) at each width and reports what it saw. */
-    kind: z.enum(["image", "video", "check", "browser-image"]),
+    kind: z.enum(["image", "video", "gif", "check", "browser-image"]),
     /** Device-local ACI provider request. Never interpreted as drawing code. */
     engine: z.literal("chatgpt-aci").optional(),
     prompt: z.string().trim().min(1).max(16_000).optional(),
     format: Format,
     code: z.string(),
+    /** GIF: the earlier picture to animate, as an image data URL (media_generate resolves the title). Passed to draw() as the 5th argument. Never interpreted as code. */
+    source: z.string().optional(),
     width: z.number().int(),
     height: z.number().int(),
     title: z.string(),
@@ -139,7 +141,7 @@ export namespace PaneRender {
   export const TIMEOUT_MS = 60_000
 
   const state = Instance.state(async () => {
-    const pending: Record<string, { info: Request; resolve: (r: Result) => void; timer: ReturnType<typeof setTimeout>; executorID?: string }> = {}
+    const pending: Record<string, { info: Request; resolve: (r: Result) => void; timer: ReturnType<typeof setTimeout>; claimTimer?: ReturnType<typeof setTimeout>; executorID?: string }> = {}
     return { pending }
   })
 
@@ -150,6 +152,8 @@ export namespace PaneRender {
       abort?: AbortSignal
       /** Called for each progress report the app sends for this request. Unsubscribed when the request ends. */
       onProgress?: (detail: ProgressDetail) => void
+      /** browser-image only: if no host claims the job within this many ms, resolve { ok: false, code: "not_started" } (nothing ran). */
+      claimTimeoutMs?: number
     } = {},
   ): Promise<Result> {
     const s = await state()
@@ -180,6 +184,7 @@ export namespace PaneRender {
         const entry = s.pending[id]
         if (!entry) return
         clearTimeout(entry.timer)
+        if (entry.claimTimer) clearTimeout(entry.claimTimer)
         delete s.pending[id]
         done(result)
       }
@@ -196,6 +201,12 @@ export namespace PaneRender {
         timeoutMs,
       )
       s.pending[id] = { info, resolve: done, timer }
+      if (input.kind === "browser-image" && options.claimTimeoutMs) {
+        s.pending[id]!.claimTimer = setTimeout(() => {
+          const entry = s.pending[id]
+          if (entry && !entry.executorID) finish({ ok: false, error: "No device picked up the picture job.", code: "not_started" })
+        }, options.claimTimeoutMs)
+      }
       if (options.abort?.aborted) return finish({ ok: false, error: "Cancelled." })
       options.abort?.addEventListener("abort", onAbort, { once: true })
       Bus.publish(Event.Requested, info)
@@ -209,6 +220,8 @@ export namespace PaneRender {
     if (!entry || entry.info.kind !== "browser-image" || !/^[A-Za-z0-9_-]{16,128}$/.test(input.executorID)) return false
     if (entry.executorID && entry.executorID !== input.executorID) return false
     entry.executorID = input.executorID
+    if (entry.claimTimer) clearTimeout(entry.claimTimer)
+    entry.claimTimer = undefined
     return true
   }
 
@@ -221,6 +234,7 @@ export namespace PaneRender {
     }
     if (entry.info.kind === "browser-image" && (!entry.executorID || entry.executorID !== input.executorID)) return false
     clearTimeout(entry.timer)
+    if (entry.claimTimer) clearTimeout(entry.claimTimer)
     delete s.pending[input.requestID]
     Bus.publish(Event.Replied, { sessionID: entry.info.sessionID, requestID: input.requestID, ok: input.result.ok })
     entry.resolve(input.result)
