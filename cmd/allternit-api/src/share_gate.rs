@@ -18,6 +18,18 @@
 //!   token). No or wrong token → 401. `public` mode is only for plain app
 //!   shares; MCP shares always need the token.
 //!
+//! MCP shares with an `inbound_share` tunnel policy (plan v3 lane 20b, D3/D10;
+//! `mcp_tunnel_auth`, keyed by the share's `share_link_id`, else its `shr_` id)
+//! also verify the visitor: `Authorization: Bearer <JWT>` is checked by
+//! [`crate::mcp_tunnel_auth::require_inbound_share_auth`] (RS256 against the
+//! issuer JWKS, fail-closed). The per-share token stays the gate credential but
+//! must then come as `X-Allternit-Share-Token`, the cookie or the query, since
+//! `Authorization` carries the JWT. A failed JWT is 401
+//! `share_caller_unauthorized`; on success the JWT is not forwarded and the app
+//! gets the verified caller as `X-Allternit-Share-Caller` (the `sub` claim). A
+//! policy that cannot be read is 503 `share_auth_unavailable`. App shares and
+//! MCP shares without a policy keep the token-only check.
+//!
 //! Only the SHA-256 of the token is kept. The gate strips forwarding headers
 //! (`Forwarded`, `X-Forwarded-*`, `X-Real-IP`), every `X-Allternit-*` header,
 //! hop-by-hop headers and the share credential itself before forwarding, so
@@ -53,6 +65,17 @@ pub const SHARE_QUERY_PARAM: &str = "allternit_share_token";
 /// Header alternative to `Authorization: Bearer` for clients that need their
 /// own `Authorization` header to reach the shared app.
 pub const SHARE_HEADER: &str = "x-allternit-share-token";
+/// Set by the gate (never by the visitor: incoming `X-Allternit-*` is stripped)
+/// to the verified `sub` of an `inbound_share` caller.
+pub const SHARE_CALLER_HEADER: &str = "x-allternit-share-caller";
+
+/// Where an MCP share's `inbound_share` policy lives: the runtime database and
+/// the `mcp_tunnel_auth.tunnel_id` it is keyed by.
+#[derive(Debug, Clone)]
+pub struct InboundShareAuth {
+    pub db: crate::db::DbHandle,
+    pub tunnel_id: String,
+}
 
 /// Ports from Desktop's `PORTS` table (`surfaces/allternit-desktop/src/main/config.ts`).
 /// Keep in sync when a port is added there.
@@ -200,6 +223,8 @@ pub struct GatePolicy {
     pub target_port: u16,
     pub subject: ShareSubject,
     pub auth_mode: ShareAuthMode,
+    /// MCP shares only: where to look for an `inbound_share` policy.
+    inbound: Option<InboundShareAuth>,
     token_hash: RwLock<Option<[u8; 32]>>,
     paused: AtomicBool,
     cancel: CancellationToken,
@@ -215,6 +240,19 @@ impl GatePolicy {
         auth_mode: ShareAuthMode,
         also_denied: &BTreeSet<u16>,
     ) -> Result<(Arc<Self>, Option<String>), ShareRefusal> {
+        Self::new_with_inbound(share_id, target_port, subject, auth_mode, also_denied, None)
+    }
+
+    /// [`GatePolicy::new`] plus the `inbound_share` policy lookup for MCP
+    /// shares. `inbound` is ignored for app shares.
+    pub fn new_with_inbound(
+        share_id: impl Into<String>,
+        target_port: u16,
+        subject: ShareSubject,
+        auth_mode: ShareAuthMode,
+        also_denied: &BTreeSet<u16>,
+        inbound: Option<InboundShareAuth>,
+    ) -> Result<(Arc<Self>, Option<String>), ShareRefusal> {
         check_target_port(target_port, also_denied)?;
         if subject == ShareSubject::Mcp && auth_mode == ShareAuthMode::Public {
             return Err(ShareRefusal::PublicMcp);
@@ -228,6 +266,7 @@ impl GatePolicy {
             target_port,
             subject,
             auth_mode,
+            inbound: if subject == ShareSubject::Mcp { inbound } else { None },
             token_hash: RwLock::new(token.as_deref().map(hash_token)),
             paused: AtomicBool::new(false),
             cancel: CancellationToken::new(),
@@ -364,8 +403,10 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.trim())
 }
 
-fn presented_token(headers: &HeaderMap) -> Option<(String, CredentialSource)> {
-    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+/// The share token on the request. `allow_authorization` is false when
+/// `Authorization` carries the visitor's JWT (MCP share with a policy).
+fn presented_token(headers: &HeaderMap, allow_authorization: bool) -> Option<(String, CredentialSource)> {
+    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).filter(|_| allow_authorization) {
         let value = value.trim();
         if value.len() > 7 && value[..7].eq_ignore_ascii_case("bearer ") {
             return Some((value[7..].trim().to_string(), CredentialSource::Authorization));
@@ -480,6 +521,24 @@ async fn gate_handler(State(state): State<GateState>, request: Request) -> Respo
     let (mut parts, body) = request.into_parts();
     let path_and_query = parts.uri.path_and_query().map(|pq| pq.as_str().to_string()).unwrap_or_else(|| "/".to_string());
 
+    // MCP share with an `inbound_share` policy: the visitor's JWT is verified
+    // below and `Authorization` is not a share-token carrier.
+    let inbound = match policy.inbound.as_ref() {
+        None => None,
+        Some(inbound) => match crate::mcp_tunnel_auth::load_tunnel_auth(&inbound.db, &inbound.tunnel_id) {
+            Ok(Some(_)) => Some(inbound),
+            Ok(None) => None,
+            Err(e) => {
+                warn!(share_id = %policy.share_id, error = %e, "share auth policy could not be read");
+                return gate_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "share_auth_unavailable",
+                    "This share's sign-in check is unavailable.",
+                );
+            }
+        },
+    };
+
     let mut credential = None;
     if policy.auth_mode == ShareAuthMode::Token {
         // First browser visit: token in the query → cookie + clean redirect.
@@ -496,7 +555,7 @@ async fn gate_handler(State(state): State<GateState>, request: Request) -> Respo
             }
             return response;
         }
-        match presented_token(&parts.headers) {
+        match presented_token(&parts.headers, inbound.is_none()) {
             None => {
                 return gate_error(StatusCode::UNAUTHORIZED, "share_token_required", "This share needs its token.");
             }
@@ -509,7 +568,30 @@ async fn gate_handler(State(state): State<GateState>, request: Request) -> Respo
         }
     }
 
-    let forwarded = upstream_headers(&parts.headers, credential);
+    let mut caller = None;
+    if let Some(inbound) = inbound {
+        let bearer = parts.headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+        match crate::mcp_tunnel_auth::require_inbound_share_auth(&inbound.db, &inbound.tunnel_id, None, bearer).await {
+            Ok((_, claims)) => caller = claims.get("sub").and_then(|s| s.as_str()).map(str::to_string),
+            Err(why) => {
+                warn!(share_id = %policy.share_id, reason = why.reason(), "share caller rejected");
+                return gate_error(
+                    StatusCode::UNAUTHORIZED,
+                    "share_caller_unauthorized",
+                    &format!("This share needs a valid sign-in token ({}).", why.reason()),
+                );
+            }
+        }
+    }
+
+    let mut forwarded = upstream_headers(&parts.headers, credential);
+    if inbound.is_some() {
+        // The verified JWT stays at the gate; the app gets only the caller.
+        forwarded.remove(header::AUTHORIZATION);
+        if let Some(value) = caller.as_deref().and_then(|sub| HeaderValue::from_str(sub).ok()) {
+            forwarded.insert(HeaderName::from_static(SHARE_CALLER_HEADER), value);
+        }
+    }
 
     if is_websocket_request(&parts.headers) {
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
@@ -665,6 +747,7 @@ mod tests {
                 "x_allternit_user_id": get("x-allternit-user-id"),
                 "share_header": get(SHARE_HEADER),
                 "cookie": get("cookie"),
+                "share_caller": get(SHARE_CALLER_HEADER),
             }))
         }
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -825,5 +908,119 @@ mod tests {
         let gate = spawn_gate(policy).await.unwrap();
         let response = http().get(format!("http://{}/", gate.addr)).send().await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+    // --- MCP shares with an `inbound_share` policy (lane 20b) ---
+
+    const ISSUER: &str = "https://issuer.share-test.example";
+
+    /// Temp runtime DB holding an `inbound_share` policy for `tunnel_id`
+    /// whose JWKS (one key, `kid-share`) is served on loopback.
+    async fn inbound_policy_db(tunnel_id: &str) -> (InboundShareAuth, aws_lc_rs::rsa::KeyPair) {
+        let key = crate::auth::test_rsa_key_pair();
+        let jwk = crate::auth::test_rsa_jwk(&key, "kid-share");
+        let jwks = Router::new().route("/jwks", get(move || {
+            let jwk = jwk.clone();
+            async move { Json(json!({ "keys": [jwk] })) }
+        }));
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let jwks_url = format!("http://{}/jwks", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, jwks).await.unwrap() });
+
+        let path = std::env::temp_dir().join(format!("allternit_share_gate_test_{}.db", uuid::Uuid::new_v4()));
+        let db = crate::db::DbHandle::new(path).expect("open temp db");
+        db.connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO mcp_tunnel_auth (tunnel_id, oauth_issuer, audience, direction, jwks_url)
+                 VALUES (?1, ?2, 'allternit-share', 'inbound_share', ?3)",
+                rusqlite::params![tunnel_id, ISSUER, jwks_url],
+            )
+            .unwrap();
+        (InboundShareAuth { db, tunnel_id: tunnel_id.to_string() }, key)
+    }
+
+    fn share_jwt(key: &aws_lc_rs::rsa::KeyPair) -> String {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let claims = json!({"iss": ISSUER, "sub": "user_visitor", "aud": "allternit-share", "iat": now, "exp": now + 300});
+        crate::auth::test_sign_rs256(key, "kid-share", &claims)
+    }
+
+    async fn mcp_policy_gate(subject: ShareSubject) -> (RunningGate, String, aws_lc_rs::rsa::KeyPair) {
+        let app_port = spawn_app().await;
+        let (inbound, key) = inbound_policy_db("shl_mcp").await;
+        let (policy, token) = GatePolicy::new_with_inbound(
+            "shr_mcp",
+            app_port,
+            subject,
+            ShareAuthMode::Token,
+            &BTreeSet::new(),
+            Some(inbound),
+        )
+        .unwrap();
+        (spawn_gate(policy).await.unwrap(), token.unwrap(), key)
+    }
+
+    #[tokio::test]
+    async fn share_gate_mcp_policy_forged_jwt_is_401() {
+        let (gate, token, _key) = mcp_policy_gate(ShareSubject::Mcp).await;
+        let base = format!("http://{}/", gate.addr);
+
+        // Right share token, JWT signed by a key the issuer never published.
+        let forged = share_jwt(&crate::auth::test_rsa_key_pair());
+        let response = http().get(&base).header(SHARE_HEADER, &token).bearer_auth(&forged).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "share_caller_unauthorized");
+
+        // Right share token, no JWT at all.
+        let response = http().get(&base).header(SHARE_HEADER, &token).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "share_caller_unauthorized");
+
+        // `Authorization` carries the JWT here, so the share token there alone is not enough.
+        let response = http().get(&base).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "share_token_required");
+    }
+
+    #[tokio::test]
+    async fn share_gate_mcp_policy_valid_jwt_is_forwarded() {
+        let (gate, token, key) = mcp_policy_gate(ShareSubject::Mcp).await;
+        let base = format!("http://{}/", gate.addr);
+        let jwt = share_jwt(&key);
+
+        // A valid JWT still needs the share token (the gate credential).
+        let no_token = http().get(&base).bearer_auth(&jwt).send().await.unwrap();
+        assert_eq!(no_token.status(), StatusCode::UNAUTHORIZED);
+
+        let ok = http()
+            .get(&base)
+            .header(SHARE_HEADER, &token)
+            .header(SHARE_CALLER_HEADER, "spoofed")
+            .bearer_auth(&jwt)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        let body: serde_json::Value = ok.json().await.unwrap();
+        assert_eq!(body["ok"], true);
+        // The app learns who called, from the verified `sub`, never the visitor's own header.
+        assert_eq!(body["share_caller"], "user_visitor");
+        // Neither the JWT nor the share token reaches the app.
+        assert!(body["authorization"].is_null());
+        assert!(body["share_header"].is_null());
+    }
+
+    #[tokio::test]
+    async fn share_gate_app_share_ignores_inbound_policy() {
+        // Same policy row, but an app share: token-only, as before.
+        let (gate, token, _key) = mcp_policy_gate(ShareSubject::App).await;
+        let ok = http().get(format!("http://{}/", gate.addr)).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+        let body: serde_json::Value = ok.json().await.unwrap();
+        assert!(body["share_caller"].is_null());
+        assert!(body["authorization"].is_null());
     }
 }

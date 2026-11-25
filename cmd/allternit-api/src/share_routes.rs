@@ -24,6 +24,10 @@
 //! `share_link_id` so the two records can be matched, and points the tunnel
 //! at `gate_url`. Gates live in memory and end with the process; the caller
 //! re-creates them after a runtime restart.
+//!
+//! MCP shares look up an `inbound_share` tunnel policy in the runtime
+//! database keyed by `share_link_id` (else the `shr_` id); when one exists the
+//! gate also verifies the visitor's JWT (see `share_gate`).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -38,7 +42,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::AuthUser;
-use crate::share_gate::{spawn_gate, GatePolicy, RunningGate, ShareAuthMode, ShareRefusal, ShareSubject};
+use crate::db::DbHandle;
+use crate::share_gate::{spawn_gate, GatePolicy, InboundShareAuth, RunningGate, ShareAuthMode, ShareRefusal, ShareSubject};
 
 /// Most gates one runtime keeps open at once (the cloud caps live links at 3
 /// per account; this only bounds local listeners).
@@ -81,13 +86,25 @@ pub struct ShareRegistry {
 
 static GLOBAL_REGISTRY: Lazy<Arc<ShareRegistry>> = Lazy::new(|| Arc::new(ShareRegistry::default()));
 
+/// The runtime database MCP share gates read `inbound_share` policies from.
+#[derive(Clone)]
+struct ShareDb(Option<DbHandle>);
+
 /// The `/shares` routes on the process-wide registry.
-pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    router_with(GLOBAL_REGISTRY.clone())
+pub fn router<S: Clone + Send + Sync + 'static>(db: DbHandle) -> Router<S> {
+    router_with_db(GLOBAL_REGISTRY.clone(), Some(db))
 }
 
-/// The `/shares` routes on a given registry (tests use a fresh one).
+/// The `/shares` routes on a given registry with no policy database (tests).
 pub fn router_with<S: Clone + Send + Sync + 'static>(registry: Arc<ShareRegistry>) -> Router<S> {
+    router_with_db(registry, None)
+}
+
+/// The `/shares` routes on a given registry and policy database.
+pub fn router_with_db<S: Clone + Send + Sync + 'static>(
+    registry: Arc<ShareRegistry>,
+    db: Option<DbHandle>,
+) -> Router<S> {
     Router::new()
         .route("/shares", get(list_shares).post(create_share))
         .route("/shares/:id", axum::routing::delete(stop_share))
@@ -95,6 +112,7 @@ pub fn router_with<S: Clone + Send + Sync + 'static>(registry: Arc<ShareRegistry
         .route("/shares/:id/pause", post(pause_share))
         .route("/shares/:id/rotate", post(rotate_share))
         .layer(Extension(registry))
+        .layer(Extension(ShareDb(db)))
 }
 
 fn error(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
@@ -147,6 +165,7 @@ struct CreateShare {
 
 async fn create_share(
     Extension(registry): Extension<Arc<ShareRegistry>>,
+    Extension(ShareDb(db)): Extension<ShareDb>,
     user: Option<Extension<AuthUser>>,
     Json(body): Json<CreateShare>,
 ) -> Response {
@@ -183,7 +202,11 @@ async fn create_share(
     // No gate may point at another gate.
     let gate_ports: BTreeSet<u16> = shares.values().map(|s| s.gate.port()).collect();
     let id = format!("shr_{}", uuid::Uuid::new_v4().simple());
-    let (policy, token) = match GatePolicy::new(id.clone(), body.port, subject, auth_mode, &gate_ports) {
+    let inbound = db.map(|db| InboundShareAuth {
+        db,
+        tunnel_id: share_link_id.clone().unwrap_or_else(|| id.clone()),
+    });
+    let (policy, token) = match GatePolicy::new_with_inbound(id.clone(), body.port, subject, auth_mode, &gate_ports, inbound) {
         Ok(pair) => pair,
         Err(why) => return refusal(why),
     };

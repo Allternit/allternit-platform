@@ -1241,7 +1241,7 @@ async fn main() {
         .merge(allternit_api::commerce_routes::router())
         .merge(admin_mcp_tunnel_router())
         // Live-link share gates: GET|POST /shares, /shares/:id{,/stop,/pause,/rotate}.
-        .merge(allternit_api::share_routes::router())
+        .merge(allternit_api::share_routes::router(state.db.clone()))
         .merge(outcome_rubric_router())
         .merge(federation_router())
         .merge(quickstart_router())
