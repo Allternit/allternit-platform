@@ -8,11 +8,12 @@ import Foundation
 ///   POST /api/v1/mcp/elicitation/:id/reply {action, content?}
 ///   POST /api/v1/mcp/task/:id/cancel   (ids contain ':' — URL-encode them).
 
-/// Feature flag `mcp.tasks`, off by default. Turn on with the launch argument
-/// `-allternit.flag.mcp.tasks YES` or the `allternit.flag.mcp.tasks` default.
+/// Feature flag `mcp.tasks`, on by default. Turn off with the launch argument
+/// `-allternit.flag.mcp.tasks NO` or the `allternit.flag.mcp.tasks` default.
 enum McpTasksFlag {
     static let key = "allternit.flag.mcp.tasks"
-    static var isOn: Bool { UserDefaults.standard.bool(forKey: key) }
+    /// On by default (Eoj 2026-11-25: ships as a regular feature); a stored `NO` turns it off.
+    static var isOn: Bool { (UserDefaults.standard.object(forKey: key) as? Bool) ?? true }
 }
 
 // MARK: - Task part

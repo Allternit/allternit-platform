@@ -1024,7 +1024,7 @@ const featureFlagsAPI = {
   },
 };
 
-// ─── Installed apps (plan v3 lane 38; behind feature flag apps.install) ──────
+// ─── Installed apps (plan v3 lane 38; feature flag apps.install, default on) ──────
 
 type AppTier = 'browser' | 'app' | 'full';
 interface InstalledAppInfo {
@@ -1394,7 +1394,7 @@ type ShareFailure = { ok: false; error: string; message: string; details?: unkno
 type ShareEvent = { type: 'share'; share: ShareView } | { type: 'removed'; id: string };
 
 const sharesAPI = {
-  /** Flag `share.live` (default off). */
+  /** Flag `share.live` (default on). */
   status: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke('shares:status'),
   start: (request: {
     port?: number; appSlug?: string; subject?: 'app' | 'mcp'; authMode?: 'token' | 'public'; label?: string; artifactId?: string;

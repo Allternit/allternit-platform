@@ -6,7 +6,9 @@ description: Turn a page into an app with its own name, icon and permission leve
 A page that acts like an app (see [Pages that act like apps](/guides/artifact-apps)) can become a real **app**. It gets a name and an icon, it opens in its own window, and you can share it with a link.
 
 <Note>
-This is in beta. The pieces below sit behind feature flags that are off by default: `apps.install` (Make it an app, Install), `apps.shelf` (the Apps shelf and share-link list), `mcp.tasks` (task card and form in chat) and `mcp.skills` (server skills). Where a section needs one, it says so.
+Everything on this page is on by default in the web app, the phone app, iOS, Android and Desktop.
+
+Live links from your own computer need the live-link relay. Until it is set up for your deployment, starting a live link shows "Live links are not set up on this deployment yet." Hosted app links work without it.
 </Note>
 
 ## Make it an app
@@ -55,8 +57,6 @@ Installing an app someone shared by link works only for **Browser** level apps. 
 
 ## The Apps shelf
 
-<Note>Behind `apps.shelf`.</Note>
-
 The shelf lists your apps in two sections.
 
 - **Made by you / your org**: pages you or your organization turned into apps.
@@ -86,8 +86,6 @@ A link to an app from a connected server opens the Allternit shell and asks the 
 
 ## Tasks and forms in chat
 
-<Note>Behind `mcp.tasks`.</Note>
-
 When a tool takes a while, chat shows one **task card** instead of waiting. It shows the status, any progress, and a **Stop** button. You can keep chatting while it runs.
 
 When a server or an app needs more from you, such as a choice or a missing detail, chat shows one **form** with the fields it asks for. **Accept** sends your answers, **Decline** says no, and closing it cancels. A form that opens a web page for sign-in shows a link instead of fields. If nobody answers within two minutes it counts as cancelled.
@@ -99,8 +97,6 @@ The same card and form appear in apps, in chat and from connected servers, on De
 When a chat is watching for an event from a connected server (a new row, a finished build), a **Watching** strip lists it under the composer. It clears when the session ends. Watches last two hours and each person can have 20 at once. See [MCP events](/guides/mcp-events) for how events work.
 
 ## Server skills
-
-<Note>Behind `mcp.skills`.</Note>
 
 A connected server can ship skills. They appear in the skill list with a **From server** label so you can tell them from your own. A skill is read when you use it; the server's text is treated as data, not as instructions that change your settings.
 

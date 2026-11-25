@@ -82,7 +82,7 @@ import kotlinx.serialization.json.put
 /*
  * Long-running MCP tasks and server questions (elicitation), shown inline in chat. Mirrors iOS
  * Features/McpTasks (PR #2959) and the web McpTaskCard / McpElicitationForm, behind the
- * `mcp.tasks` flag (off by default; FeatureFlags.MCP_TASKS):
+ * `mcp.tasks` flag (on by default; FeatureFlags.MCP_TASKS):
  *   bus events `mcp.task` / `mcp.elicitation` / `mcp.elicitation.resolved`;
  *   POST /api/v1/mcp/elicitation/:id/reply {action, content?}
  *   POST /api/v1/mcp/task/:id/cancel   (ids contain ':', so they are URL-encoded).

@@ -9,11 +9,12 @@ import Foundation
 ///   POST /api/v1/share-links/:id/pause      { paused }
 ///   DELETE /api/v1/share-links/:id
 ///
-/// Feature flag `apps.shelf`, off by default. Turn on with the launch argument
-/// `-allternit.flag.apps.shelf YES` or the `allternit.flag.apps.shelf` default.
+/// Feature flag `apps.shelf`, on by default. Turn off with the launch argument
+/// `-allternit.flag.apps.shelf NO` or the `allternit.flag.apps.shelf` default.
 enum AppsShelfFlag {
     static let key = "allternit.flag.apps.shelf"
-    static var isOn: Bool { UserDefaults.standard.bool(forKey: key) }
+    /// On by default (Eoj 2026-11-25: ships as a regular feature); a stored `NO` turns it off.
+    static var isOn: Bool { (UserDefaults.standard.object(forKey: key) as? Bool) ?? true }
 }
 
 /// What an app may do. Raised tiers ask again; the server answers `needs_consent`.
