@@ -1083,6 +1083,23 @@ const startupAPI = {
   setOnLogin: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('startup:setOnLogin', enabled),
 };
 
+/** Windows/Linux: keep serving live links from the tray after the last window closes. */
+const trayAPI = {
+  getKeepRunning: (): Promise<boolean> => ipcRenderer.invoke('tray:getKeepRunning'),
+  setKeepRunning: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('tray:setKeepRunning', enabled),
+  onKeepRunningChanged: (cb: (enabled: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, enabled: boolean) => cb(enabled);
+    ipcRenderer.on('tray:keepRunningChanged', handler);
+    return () => ipcRenderer.removeListener('tray:keepRunningChanged', handler);
+  },
+  /** Fires once per run when a live link starts with keep-running off (not macOS). */
+  onKeepRunningHint: (cb: (hint: { message: string }) => void): (() => void) => {
+    const handler = (_e: unknown, hint: { message: string }) => cb(hint);
+    ipcRenderer.on('tray:keepRunningHint', handler);
+    return () => ipcRenderer.removeListener('tray:keepRunningHint', handler);
+  },
+};
+
 // ─── MCP Host ────────────────────────────────────────────────────────────────
 
 // ─── Research Backend ────────────────────────────────────────────────────────
@@ -1401,6 +1418,7 @@ const allternitDesktopAPI = {
   locale: localeAPI,
   menuBar: menuBarAPI,
   startup: startupAPI,
+  tray: trayAPI,
   mcp: mcpAPI,
   research: researchAPI,
   worker: workerAPI,
