@@ -30,12 +30,13 @@
 //! routed `cowork_approvals` row is opened; it runs only when
 //! `_meta["allternit/approvalId"]` names a row the approver approved for the
 //! same tool and arguments (`allternit/approved` alone never counts). The actor
-//! is the token's user, or the bot whose session this is (the session's
-//! `isBot` tag); edge callers act as the owner.
+//! is the token's user, or the bot the token names (`isb`/`bot`, set by the
+//! server when it starts the turn); a token minted before those claims existed
+//! falls back to the session's `isBot` tag. Edge callers act as the owner.
 //!
-//! The proxy token is an HMAC-signed `{uid, sid, exp}` — never the user's Clerk
-//! token — and is honoured only together with a matching `X-Allternit-Session`
-//! header. Connector credentials, the proxy token and tool arguments are never
+//! The proxy token is an HMAC-signed `{uid, sid, exp, isb, bot?}` — never the
+//! user's Clerk token — and is honoured only together with a matching
+//! `X-Allternit-Session` header. Connector credentials, the proxy token and tool arguments are never
 //! logged.
 
 use axum::{
@@ -96,6 +97,32 @@ pub struct ProxyClaims {
     pub user_id: String,
     pub session_id: String,
     pub expires_at: i64,
+    /// Who acts on this turn, as the server decided when it minted the token.
+    pub actor: TokenActor,
+}
+
+/// The token's actor claims: `isb` (is the caller a bot) and `bot` (the acting
+/// bot's `agents.id`, when `isb` is true). Only the server writes them, from
+/// the bot the turn runs as; the team rule gate reads them before anything a
+/// client can edit (session metadata, `agent_id`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenActor {
+    /// No `isb` claim: minted before the claim existed. The gate falls back to
+    /// the session's bot tag so live sessions keep working until the token expires.
+    Unstated,
+    /// `isb: false`: the person acting as themself.
+    Person,
+    /// `isb: true, bot: <agents.id>`.
+    Bot(String),
+}
+
+impl TokenActor {
+    pub fn from_bot(bot_id: Option<&str>) -> Self {
+        match bot_id.filter(|b| !b.is_empty()) {
+            Some(b) => TokenActor::Bot(b.to_string()),
+            None => TokenActor::Person,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,16 +160,26 @@ fn sign(payload: &str) -> Hmac<Sha256> {
     mac
 }
 
-fn mint_at(user_id: &str, session_id: &str, now: i64) -> String {
-    let claims = json!({ "uid": user_id, "sid": session_id, "exp": now + TOKEN_TTL_SECS });
+fn mint_at(user_id: &str, session_id: &str, actor: &TokenActor, now: i64) -> String {
+    let mut claims = json!({ "uid": user_id, "sid": session_id, "exp": now + TOKEN_TTL_SECS });
+    match actor {
+        TokenActor::Unstated => {}
+        TokenActor::Person => claims["isb"] = json!(false),
+        TokenActor::Bot(bot) => {
+            claims["isb"] = json!(true);
+            claims["bot"] = json!(bot);
+        }
+    }
     let payload = b64().encode(claims.to_string());
     let tag = b64().encode(sign(&payload).finalize().into_bytes());
     format!("v1.{payload}.{tag}")
 }
 
-/// A proxy token for `user_id` in chat session `session_id`, valid for 15 minutes.
-pub fn mint_proxy_token(user_id: &str, session_id: &str) -> String {
-    mint_at(user_id, session_id, chrono::Utc::now().timestamp())
+/// A proxy token for `user_id` in chat session `session_id`, acting as
+/// `bot_id` (the server-checked bot the turn runs as) or as the person when
+/// `None`. Valid for 15 minutes.
+pub fn mint_proxy_token(user_id: &str, session_id: &str, bot_id: Option<&str>) -> String {
+    mint_at(user_id, session_id, &TokenActor::from_bot(bot_id), chrono::Utc::now().timestamp())
 }
 
 fn verify_at(token: &str, session_id: &str, now: i64) -> Result<ProxyClaims, TokenError> {
@@ -168,7 +205,16 @@ fn verify_at(token: &str, session_id: &str, now: i64) -> Result<ProxyClaims, Tok
     if sid != session_id {
         return Err(TokenError::WrongSession);
     }
-    Ok(ProxyClaims { user_id: uid.into(), session_id: sid.into(), expires_at: exp })
+    let actor = match claims.get("isb") {
+        None => TokenActor::Unstated,
+        Some(Value::Bool(false)) => TokenActor::Person,
+        Some(Value::Bool(true)) => match claims["bot"].as_str().filter(|b| !b.is_empty()) {
+            Some(bot) => TokenActor::Bot(bot.into()),
+            None => return Err(TokenError::Malformed),
+        },
+        Some(_) => return Err(TokenError::Malformed),
+    };
+    Ok(ProxyClaims { user_id: uid.into(), session_id: sid.into(), expires_at: exp, actor })
 }
 
 /// Check `token` for use in `session_id`.
@@ -246,25 +292,56 @@ fn proxy_url() -> String {
 /// The `mcpProxy` prompt field for one gizzi turn, or `None` when the user has
 /// no enabled connector (nothing to proxy, so no token is minted). Gizzi holds
 /// it in memory for that turn only.
-pub async fn proxy_registration(state: &Arc<AppState>, user_id: &str, session_id: &str) -> Option<Value> {
+///
+/// `bot_id` is the bot this turn runs as (the agent-chat bridge's bot marker,
+/// the same one gizzi gets as `bot`). It goes into the token's `isb`/`bot`
+/// claims only when it is one of `user_id`'s own agents; any other id (a
+/// session tag naming someone else's bot) mints a person token, so the
+/// person's own rules apply.
+pub async fn proxy_registration(
+    state: &Arc<AppState>,
+    user_id: &str,
+    session_id: &str,
+    bot_id: Option<&str>,
+) -> Option<Value> {
     let db = state.db.clone();
     let uid = user_id.to_string();
-    let has_connectors = tokio::task::spawn_blocking(move || -> rusqlite::Result<bool> {
-        db.connect()?.query_row(
+    let bot = bot_id.filter(|b| !b.is_empty()).map(str::to_string);
+    let (has_connectors, own_bot) = tokio::task::spawn_blocking(move || -> rusqlite::Result<(bool, Option<String>)> {
+        let conn = db.connect()?;
+        let has: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM mcp_connectors WHERE user_id = ?1 AND enabled = 1)",
             rusqlite::params![uid],
             |r| r.get(0),
-        )
+        )?;
+        if !has {
+            return Ok((false, None));
+        }
+        let own_bot = match bot {
+            Some(bot) => {
+                let owned: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agents WHERE id = ?1 AND user_id = ?2)",
+                    rusqlite::params![bot, uid],
+                    |r| r.get(0),
+                )?;
+                if !owned {
+                    warn!("mcp user proxy: turn's bot is not the user's own agent; token acts as the person");
+                }
+                owned.then_some(bot)
+            }
+            None => None,
+        };
+        Ok((true, own_bot))
     })
     .await
     .ok()?
-    .unwrap_or(false);
+    .unwrap_or((false, None));
     has_connectors.then(|| {
         json!({
             "server": PROXY_SERVER_NAME,
             "url": proxy_url(),
             "sessionId": session_id,
-            "token": mint_proxy_token(user_id, session_id),
+            "token": mint_proxy_token(user_id, session_id, own_bot.as_deref()),
         })
     })
 }
@@ -352,13 +429,15 @@ async fn proxy_post(State(state): State<Arc<AppState>>, headers: HeaderMap, Json
 /// gizzi's per-call approval; an outside AI app relayed by the MCP edge never can.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum RpcCaller<'a> {
-    Turn { session_id: &'a str },
+    /// `actor` is the token's `isb`/`bot` claims (the acting bot).
+    Turn { session_id: &'a str, actor: &'a TokenActor },
     Edge,
 }
 
 /// One JSON-RPC message from an authenticated caller. `None` for notifications.
 async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, allow_private: bool) -> Option<Value> {
-    dispatch_rpc(state, &claims.user_id, RpcCaller::Turn { session_id: &claims.session_id }, body, allow_private).await
+    let caller = RpcCaller::Turn { session_id: &claims.session_id, actor: &claims.actor };
+    dispatch_rpc(state, &claims.user_id, caller, body, allow_private).await
 }
 
 /// The connector union for `user_id`: the same tools for a chat turn and for the
@@ -432,7 +511,7 @@ pub(crate) async fn dispatch_rpc_with(
             let team = TeamCall {
                 user_id: user_id.to_string(),
                 bot_id: match caller {
-                    RpcCaller::Turn { session_id } => session_bot(state, session_id).await,
+                    RpcCaller::Turn { session_id, actor } => acting_bot(state, actor, session_id).await,
                     RpcCaller::Edge => None,
                 },
                 approval_ids: crate::team_rules::approval_ids_from_meta(&params["_meta"]),
@@ -482,7 +561,7 @@ pub(crate) async fn dispatch_rpc_with(
     };
 
     let (via, session_id) = match caller {
-        RpcCaller::Turn { session_id } => ("turn", session_id),
+        RpcCaller::Turn { session_id, .. } => ("turn", session_id),
         RpcCaller::Edge => ("edge", ""),
     };
     info!(
@@ -741,8 +820,10 @@ async fn call_tool(
             let decision =
                 team_gate(state, &team, &connector_id, &connector_name, &tool_name, read_only, &arguments, approved, needs_confirmation)
                     .await?;
-            team_refusal(decision, gate, &connector_name, &tool_name, &team)?;
+            let claimed = team_refusal(decision, gate, &connector_name, &tool_name, &team)?;
             if needs_confirmation {
+                // The gate claims nothing for a call held here; release anything anyway.
+                settle_team_claims(state, claimed, false).await;
                 return Err(AppsError::new(
                     StatusCode::FORBIDDEN,
                     "confirmation_required",
@@ -755,17 +836,24 @@ async fn call_tool(
                 .into());
             }
             let params = json!({ "name": tool_name, "arguments": arguments });
-            if !tasks {
-                return client.request("tools/call", Some(params)).await.map_err(|e| upstream_error(e).into());
-            }
-            match client.call_tool_raw(params).await.map_err(upstream_error)? {
-                ToolOutcome::Complete(result) => Ok::<Value, CallError>(result),
-                ToolOutcome::Task(task) => {
-                    let mut created = serde_json::to_value(&task).map_err(|e| AppsError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
-                    namespace_task_id(&mut created, &connector_id);
-                    Ok(created)
+            let outcome: Result<Value, CallError> = async {
+                if !tasks {
+                    return client.request("tools/call", Some(params)).await.map_err(|e| upstream_error(e).into());
+                }
+                match client.call_tool_raw(params).await.map_err(upstream_error)? {
+                    ToolOutcome::Complete(result) => Ok::<Value, CallError>(result),
+                    ToolOutcome::Task(task) => {
+                        let mut created = serde_json::to_value(&task).map_err(|e| AppsError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
+                        namespace_task_id(&mut created, &connector_id);
+                        Ok(created)
+                    }
                 }
             }
+            .await;
+            // The routed approvals this call claimed: spent only now that the
+            // connector answered; a failed call gives them back for a retry.
+            settle_team_claims(state, claimed, outcome.is_ok()).await;
+            outcome
         }
         .await;
         (client, Ok(result))
@@ -795,7 +883,8 @@ impl From<AppsError> for CallError {
 struct TeamCall {
     /// The confirming user: the turn's user (proxy token) or the edge's owner.
     user_id: String,
-    /// The bot whose turn this is (`agents.id`), from the session's bot tag.
+    /// The bot whose turn this is (`agents.id`): the token's `bot` claim, or
+    /// for an old token without it, the session's bot tag.
     bot_id: Option<String>,
     /// `_meta["allternit/approvalId"]`.
     approval_ids: Vec<String>,
@@ -803,9 +892,21 @@ struct TeamCall {
     job_id: Option<String>,
 }
 
+/// The bot acting on a chat turn. The token's claims win: the server set them
+/// when it started the turn, so neither session metadata nor a client's
+/// `agent_id` can change them. Only a token minted before the claims existed
+/// (`Unstated`) falls back to the session's bot tag. `None` = the person.
+async fn acting_bot(state: &Arc<AppState>, actor: &TokenActor, session_id: &str) -> Option<String> {
+    match actor {
+        TokenActor::Bot(bot) => Some(bot.clone()),
+        TokenActor::Person => None,
+        TokenActor::Unstated => session_bot(state, session_id).await,
+    }
+}
+
 /// The bot a chat turn's session belongs to (the app's `isBot` session tag, the
 /// same lookup the agent-chat bridge uses for the bot marker). `None` = the
-/// person acting as themself.
+/// person acting as themself. Only for tokens without the actor claims.
 async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
     let db = state.db.clone();
     let sid = session_id.to_string();
@@ -868,17 +969,41 @@ async fn team_gate(
     }
 }
 
-/// `Ok` = the gate lets the call go on; otherwise the refusal, in the shape the caller shows.
+/// Spend (`succeeded`) or release the routed approvals a call claimed. A
+/// failure to write is logged: an unsettled claim frees itself after
+/// `team_rules::CLAIM_TTL_MINUTES`, and a spend that did not land leaves the
+/// approval claimed until then, never reusable sooner.
+async fn settle_team_claims(state: &Arc<AppState>, claimed: Vec<String>, succeeded: bool) {
+    if claimed.is_empty() {
+        return;
+    }
+    let db = state.db.clone();
+    let settled = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        crate::team_rules::settle_claims(&conn, &claimed, succeeded).map_err(|e| e.to_string())
+    })
+    .await;
+    match settled {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!(error = %e, succeeded, "mcp user proxy: routed approvals not settled"),
+        Err(e) => warn!(error = %e, succeeded, "mcp user proxy: routed approvals not settled"),
+    }
+}
+
+/// `Ok` = the gate lets the call go on, with the routed approvals it claimed
+/// (settle them once the call ends); otherwise the refusal, in the shape the
+/// caller shows.
 fn team_refusal(
     decision: crate::team_rules::Decision,
     gate: Gate,
     connector_name: &str,
     tool_name: &str,
     team: &TeamCall,
-) -> Result<(), CallError> {
+) -> Result<Vec<String>, CallError> {
     use crate::team_rules::Decision;
     match decision {
-        Decision::Allow => Ok(()),
+        Decision::Allow => Ok(Vec::new()),
+        Decision::AllowClaimed(claimed) => Ok(claimed),
         Decision::DenyNoGrant => Err(AppsError::new(
             StatusCode::FORBIDDEN,
             "no_grant",
@@ -1105,7 +1230,7 @@ fn call_with_elicitation(state: Arc<AppState>, claims: ProxyClaims, body: Value)
     let (outbound, mut forwarded) = mpsc::unbounded_channel();
     let bridge = ElicitBridge { user_id: claims.user_id.clone(), outbound, timeout: ELICIT_ANSWER_TIMEOUT };
     let mut work = tokio::spawn(async move {
-        let caller = RpcCaller::Turn { session_id: &claims.session_id };
+        let caller = RpcCaller::Turn { session_id: &claims.session_id, actor: &claims.actor };
         dispatch_rpc_with(&state, &claims.user_id, caller, &body, allow_private_hosts(), Some(bridge)).await
     });
     let stream = async_stream::stream! {
@@ -1171,15 +1296,47 @@ mod tests {
 
     #[test]
     fn token_round_trips_and_carries_its_binding() {
-        let token = mint_proxy_token("user-1", "ses_1");
+        let token = mint_proxy_token("user-1", "ses_1", None);
         let claims = verify_proxy_token(&token, "ses_1").unwrap();
         assert_eq!((claims.user_id.as_str(), claims.session_id.as_str()), ("user-1", "ses_1"));
+        assert_eq!(claims.actor, TokenActor::Person);
         assert!(claims.expires_at - chrono::Utc::now().timestamp() <= TOKEN_TTL_SECS);
     }
 
     #[test]
+    fn token_minted_for_bot_b_carries_b_and_old_tokens_carry_no_actor() {
+        let token = mint_proxy_token("user-1", "ses_1", Some("bot-b"));
+        let payload = String::from_utf8(b64().decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
+        let raw: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!((raw["isb"].clone(), raw["bot"].clone()), (json!(true), json!("bot-b")));
+        assert_eq!(verify_proxy_token(&token, "ses_1").unwrap().actor, TokenActor::Bot("bot-b".into()));
+        // An empty id is no bot.
+        assert_eq!(verify_proxy_token(&mint_proxy_token("u", "s", Some("")), "s").unwrap().actor, TokenActor::Person);
+        // A token minted before the claims existed: `{uid, sid, exp}` only.
+        let now = chrono::Utc::now().timestamp();
+        let old = mint_at("user-1", "ses_1", &TokenActor::Unstated, now);
+        let raw = String::from_utf8(b64().decode(old.split('.').nth(1).unwrap()).unwrap()).unwrap();
+        assert!(!raw.contains("isb") && !raw.contains("bot"), "{raw}");
+        assert_eq!(verify_at(&old, "ses_1", now).unwrap().actor, TokenActor::Unstated);
+        // Signed but inconsistent actor claims are refused, never read as the person.
+        let signed = |claims: Value| {
+            let payload = b64().encode(claims.to_string());
+            let tag = b64().encode(sign(&payload).finalize().into_bytes());
+            format!("v1.{payload}.{tag}")
+        };
+        let exp = now + 60;
+        for bad in [
+            json!({ "uid": "u", "sid": "s", "exp": exp, "isb": true }),
+            json!({ "uid": "u", "sid": "s", "exp": exp, "isb": true, "bot": "" }),
+            json!({ "uid": "u", "sid": "s", "exp": exp, "isb": "yes", "bot": "b" }),
+        ] {
+            assert_eq!(verify_at(&signed(bad.clone()), "s", now), Err(TokenError::Malformed), "{bad}");
+        }
+    }
+
+    #[test]
     fn token_expires() {
-        let token = mint_at("u", "s", 1_000);
+        let token = mint_at("u", "s", &TokenActor::Person, 1_000);
         assert!(verify_at(&token, "s", 1_000 + TOKEN_TTL_SECS - 1).is_ok());
         assert_eq!(verify_at(&token, "s", 1_000 + TOKEN_TTL_SECS), Err(TokenError::Expired));
         assert_eq!(verify_at(&token, "s", 1_000 + 10 * TOKEN_TTL_SECS), Err(TokenError::Expired));
@@ -1187,13 +1344,13 @@ mod tests {
 
     #[test]
     fn token_is_single_session() {
-        let token = mint_proxy_token("u", "ses_a");
+        let token = mint_proxy_token("u", "ses_a", None);
         assert_eq!(verify_proxy_token(&token, "ses_b"), Err(TokenError::WrongSession));
     }
 
     #[test]
     fn tampered_tokens_are_rejected() {
-        let token = mint_at("victim", "s", chrono::Utc::now().timestamp());
+        let token = mint_at("victim", "s", &TokenActor::Person, chrono::Utc::now().timestamp());
         let parts: Vec<&str> = token.split('.').collect();
         // a forged payload (another user) under the original signature
         let forged = b64().encode(json!({ "uid": "attacker", "sid": "s", "exp": i64::MAX / 2 }).to_string());
@@ -1218,7 +1375,7 @@ mod tests {
 
     #[test]
     fn token_does_not_contain_anything_secret() {
-        let token = mint_proxy_token("user-1", "ses_1");
+        let token = mint_proxy_token("user-1", "ses_1", Some("bot-1"));
         let payload = token.split('.').nth(1).unwrap();
         let text = String::from_utf8(b64().decode(payload).unwrap()).unwrap();
         assert!(text.contains("user-1") && text.contains("ses_1"));
@@ -1286,8 +1443,9 @@ mod e2e {
     use std::sync::Mutex;
     use tower::ServiceExt;
 
+    /// A token minted before the actor claims (`Unstated`): the gate reads the session's bot tag.
     fn claims(user: &str) -> ProxyClaims {
-        ProxyClaims { user_id: user.into(), session_id: "ses_1".into(), expires_at: i64::MAX }
+        ProxyClaims { user_id: user.into(), session_id: "ses_1".into(), expires_at: i64::MAX, actor: TokenActor::Unstated }
     }
 
     async fn rpc(state: &Arc<AppState>, user: &str, method: &str, params: Value) -> Value {
@@ -1628,7 +1786,7 @@ mod e2e {
     async fn the_route_demands_a_valid_token_for_this_session() {
         let (state, _server, _) = fixture().await;
         let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
-        let token = mint_proxy_token("user-1", "ses_1");
+        let token = mint_proxy_token("user-1", "ses_1", None);
         let auth = |t: &str| ("authorization", format!("Bearer {t}"));
         let sid = |s: &str| (SESSION_HEADER, s.to_string());
 
@@ -1647,13 +1805,14 @@ mod e2e {
     #[tokio::test]
     async fn registration_is_minted_only_for_users_with_connectors() {
         let (state, _server, _) = fixture().await;
-        let reg = proxy_registration(&state, "user-1", "ses_1").await.expect("registration");
+        let reg = proxy_registration(&state, "user-1", "ses_1", None).await.expect("registration");
         assert_eq!(reg["server"], PROXY_SERVER_NAME);
         assert_eq!(reg["sessionId"], "ses_1");
         assert!(reg["url"].as_str().unwrap().ends_with("/mcp/user-proxy"));
         let claims = verify_proxy_token(reg["token"].as_str().unwrap(), "ses_1").unwrap();
         assert_eq!(claims.user_id, "user-1");
-        assert!(proxy_registration(&state, "user-9", "ses_1").await.is_none());
+        assert_eq!(claims.actor, TokenActor::Person);
+        assert!(proxy_registration(&state, "user-9", "ses_1", None).await.is_none());
     }
 
     // ── OAuth refresh ────────────────────────────────────────────────────────
@@ -2117,9 +2276,111 @@ mod e2e {
         // The person acting as themself (a session that is not the bot's) has no level check.
         crate::team_store::revoke_grant(&conn, BotKind::Agent, "bot-1", AppKind::Connector, "conn-1").unwrap();
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": approved("dash-server__plain", json!({})) });
-        let person = ProxyClaims { user_id: "user-1".into(), session_id: "ses_person".into(), expires_at: i64::MAX };
+        let person = ProxyClaims {
+            user_id: "user-1".into(),
+            session_id: "ses_person".into(),
+            expires_at: i64::MAX,
+            actor: TokenActor::Unstated,
+        };
         let ran = handle_rpc(&state, &person, &body, true).await.unwrap();
         assert!(ran.get("result").is_some(), "{ran}");
+    }
+
+    /// bot-a and bot-b are user-1's bots; bot-x is boss's. One rule, scoped to
+    /// bot-b only: `model_only` needs boss's approval.
+    fn team_two_bots_and_a_bot_b_rule(state: &Arc<AppState>) {
+        team_org(state);
+        let conn = state.db.connect().unwrap();
+        for (bot, owner) in [("bot-a", "user-1"), ("bot-b", "user-1"), ("bot-x", "boss")] {
+            conn.execute(
+                "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES (?1, ?2, ?1, 'm', 'p', 1, '{}')",
+                params![bot, owner],
+            )
+            .unwrap();
+        }
+        crate::team_store::create_rule(
+            &conn,
+            &RuleInput {
+                org_id: Some("org-t".into()),
+                owner_user_id: "boss".into(),
+                scope_kind: ScopeKind::Bot,
+                scope_ref: Some(BotKind::Agent.node_ref("bot-b")),
+                app_kind: Some(AppKind::Connector),
+                app_ref: Some("conn-1".into()),
+                tool: "model_only".into(),
+                field: None,
+                op: RuleOp::Always,
+                value: None,
+                unit_label: None,
+                approver_kind: ApproverKind::User,
+                approver_user_id: Some("boss".into()),
+                enabled: true,
+            },
+            "boss",
+        )
+        .unwrap();
+    }
+
+    async fn call_as(state: &Arc<AppState>, claims: &ProxyClaims, name: &str) -> Value {
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name } });
+        handle_rpc(state, claims, &body, true).await.expect("response")
+    }
+
+    #[tokio::test]
+    async fn team_token_minted_for_bot_b_applies_b_rule_whatever_the_session_metadata_says() {
+        let (state, server, _) = fixture().await;
+        team_two_bots_and_a_bot_b_rule(&state);
+        let read = "dash-server__model_only";
+        // The session says it is bot-a's (or, below, nobody's); the token the server minted says bot-b.
+        state.db.set_session_metadata("ses_1", &json!({ "isBot": true, "agentId": "bot-a" })).unwrap();
+        let reg = proxy_registration(&state, "user-1", "ses_1", Some("bot-b")).await.expect("registration");
+        let as_b = verify_proxy_token(reg["token"].as_str().unwrap(), "ses_1").unwrap();
+        assert_eq!(as_b.actor, TokenActor::Bot("bot-b".into()));
+
+        let held = call_as(&state, &as_b, read).await;
+        assert_eq!(held["error"]["data"]["code"], "owner_approval_required", "{held}");
+        assert_eq!(held["error"]["data"]["approver"]["user_id"], "boss");
+        let approval_id = held["error"]["data"]["approval_id"].as_str().unwrap().to_string();
+        {
+            let conn = state.db.connect().unwrap();
+            let routed = crate::team_store::get_routed_approval(&conn, &approval_id).unwrap().unwrap();
+            assert_eq!(routed.routing.bot_id.as_deref(), Some("bot-b"), "the ask names the claimed bot, not the session's");
+        }
+        state.db.set_session_metadata("ses_1", &json!({})).unwrap();
+        let still = call_as(&state, &as_b, read).await;
+        assert_eq!(still["error"]["data"]["code"], "owner_approval_required", "{still}");
+        assert!(server.called_tools().is_empty());
+
+        // The claim also wins the other way: a person token is the person even
+        // when the session is tagged as bot-b's.
+        state.db.set_session_metadata("ses_1", &json!({ "isBot": true, "agentId": "bot-b" })).unwrap();
+        let person = ProxyClaims { actor: TokenActor::Person, ..as_b.clone() };
+        assert!(call_as(&state, &person, read).await.get("result").is_some());
+
+        // Only the user's own bot goes into the claim: a session tag naming
+        // someone else's bot mints a person token.
+        let foreign = proxy_registration(&state, "user-1", "ses_1", Some("bot-x")).await.expect("registration");
+        assert_eq!(verify_proxy_token(foreign["token"].as_str().unwrap(), "ses_1").unwrap().actor, TokenActor::Person);
+    }
+
+    #[tokio::test]
+    async fn team_token_without_the_actor_claim_falls_back_to_the_session_bot_tag() {
+        let (state, server, _) = fixture().await;
+        team_two_bots_and_a_bot_b_rule(&state);
+        let read = "dash-server__model_only";
+        let old = claims("user-1");
+        assert_eq!(old.actor, TokenActor::Unstated);
+
+        // Session tagged as bot-b's: bot-b's rule applies, as before the claim existed.
+        state.db.set_session_metadata("ses_1", &json!({ "isBot": true, "agentId": "bot-b" })).unwrap();
+        let held = call_as(&state, &old, read).await;
+        assert_eq!(held["error"]["data"]["code"], "owner_approval_required", "{held}");
+        assert!(server.called_tools().is_empty());
+
+        // Untagged session: the person, whom the bot-b rule does not cover.
+        state.db.set_session_metadata("ses_1", &json!({})).unwrap();
+        assert!(call_as(&state, &old, read).await.get("result").is_some());
+        assert_eq!(server.called_tools(), ["model_only"]);
     }
 }
 
@@ -2238,7 +2499,7 @@ mod tasks_e2e {
 
     async fn turn(state: &Arc<AppState>, method: &str, params: Value, elicit: Option<ElicitBridge>) -> Value {
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
-        dispatch_rpc_with(state, "user-1", RpcCaller::Turn { session_id: "ses_1" }, &body, true, elicit)
+        dispatch_rpc_with(state, "user-1", RpcCaller::Turn { session_id: "ses_1", actor: &TokenActor::Unstated }, &body, true, elicit)
             .await
             .expect("response")
     }
