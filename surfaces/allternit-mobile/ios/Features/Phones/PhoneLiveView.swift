@@ -10,6 +10,9 @@ struct PhoneLiveView: View {
     @State private var typed = ""
     @State private var touching = false
     @State private var lastMove = Date.distantPast
+    /// Where a tap just landed on the shown screen (view coordinates). Bot taps would set this
+    /// too; their x/y do not reach the app yet (see PhoneTapMarker).
+    @State private var tapMark: PhoneTapMark?
 
     init(phone: ACIComputersClient.CloudPhone) {
         _session = StateObject(wrappedValue: PhoneLiveSession(phone: phone))
@@ -27,6 +30,7 @@ struct PhoneLiveView: View {
                     AnnexBDisplayLayer { session.attach($0) }
                         .opacity(session.state == .live ? 1 : 0)
                     if session.state == .live && tapsEnabled { touchSurface }
+                    PhoneTapMarker(mark: tapMark)
                     overlay
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -142,6 +146,7 @@ struct PhoneLiveView: View {
                         .onEnded { value in
                             guard touching else { return }
                             touching = false
+                            tapMark = PhoneTapMark(point: value.location)
                             if let p = PhoneLiveGeometry.videoPoint(value.location, view: geo.size, video: session.videoSize, clamp: true) {
                                 session.send([.touch(.up, x: Int(p.x), y: Int(p.y))])
                             }
@@ -188,5 +193,44 @@ struct PhoneLiveView: View {
         guard !typed.isEmpty else { return }
         session.send([.text(typed)])
         typed = ""
+    }
+}
+
+/// A tap's place on the live screen, in the screen view's coordinates. `id` makes each tap new.
+struct PhoneTapMark: Equatable {
+    let id = UUID()
+    let point: CGPoint
+}
+
+/// A ring where a tap landed: grows in and fades in about 0.5 s; under Reduce Motion a still ring
+/// that fades. Only taps made in this view feed it today. The bot's tap x/y live in phone_runs
+/// Step.args on the runtime but the trail the app reads (RunStep) carries only n, label, ok, map, so
+/// bot taps need that to reach the app first.
+struct PhoneTapMarker: View {
+    let mark: PhoneTapMark?
+    @ReducedMotion private var reduceMotion
+    @State private var shownId: UUID?
+    @State private var grown = false
+
+    var body: some View {
+        ZStack {
+            if let mark, shownId == mark.id {
+                Circle()
+                    .strokeBorder(Color.white, lineWidth: 2)
+                    .background(Circle().fill(Color.white.opacity(0.18)))
+                    .frame(width: 36, height: 36)
+                    .scaleEffect(reduceMotion ? 1 : (grown ? 1.35 : 0.5))
+                    .opacity(grown ? 0 : 1)
+                    .position(mark.point)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: mark) { _, new in
+            guard let new else { return }
+            shownId = new.id
+            grown = false
+            withAnimation(.easeOut(duration: reduceMotion ? 0.3 : 0.5)) { grown = true }
+        }
     }
 }

@@ -316,9 +316,21 @@ struct RunThoughtStream: View {
 
     private func row(_ step: RunStep, current: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(current ? "›" : "✓")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 12, alignment: .center)
+            // Radio while the step runs, a check once it is done (the dot settles into the tick).
+            Group {
+                if current {
+                    Image(systemName: "circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.6)))
+                }
+            }
+            .id(current)
+            .frame(width: 12, alignment: .center)
+            .accessibilityHidden(true)
             Text(step.label)
                 .font(.system(size: 13, weight: current ? .medium : .regular))
                 .lineLimit(2)
@@ -447,4 +459,105 @@ struct PhoneRunSheet: View {
             try? await Task.sleep(for: .seconds(status == .waitingApproval ? 4 : 2))
         }
     }
+}
+
+/// "0:30" / "1:05:09". Whole seconds, never negative.
+enum RunClock {
+    static func text(_ seconds: TimeInterval) -> String {
+        let t = max(0, Int(seconds))
+        let h = t / 3600, m = (t % 3600) / 60, s = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+}
+
+/// The run's timer: ticks each second while it runs (start time is the run's first event); once the
+/// run closed it shows the time this device saw it finish, or nothing when that was not seen.
+struct RunElapsedText: View {
+    let card: PhoneTaskCardModel
+
+    var body: some View {
+        if let start = card.startedAt {
+            if card.status.isActive {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    Text(RunClock.text(ctx.date.timeIntervalSince(start)))
+                }
+                .monospacedDigit()
+                .accessibilityLabel("Running for \(RunClock.text(Date().timeIntervalSince(start)))")
+            } else if let end = card.endedAt {
+                Text(RunClock.text(end.timeIntervalSince(start))).monospacedDigit()
+            }
+        }
+    }
+}
+
+/// "n steps" bar for a live run. The runtime's step cap (15) is the bar's end, as before; the
+/// label never claims a total the runtime did not send.
+struct RunStepBar: View {
+    let step: Int
+    let tint: Color
+    static let cap = 15
+
+    @ReducedMotion private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color("FillNeutral"))
+                    Capsule().fill(tint)
+                        .frame(width: geo.size.width * CGFloat(min(max(step, 0), Self.cap)) / CGFloat(Self.cap))
+                        .animation(reduceMotion ? .linear(duration: 0.1) : .spring(response: 0.35, dampingFraction: 0.85), value: step)
+                }
+            }
+            .frame(height: 4)
+            Text("\(step) \(step == 1 ? "step" : "steps")")
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundColor(Color("TextSecondary"))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step)")
+    }
+}
+
+/// One mono beam lap around a card edge while a run works (web `WorkingBeam`, colorVariant mono,
+/// strength 0.8). Starts after 3 s of running; off under Reduce Motion.
+struct RunBeamBorder: ViewModifier {
+    let active: Bool
+    let radius: CGFloat
+    @ReducedMotion private var reduceMotion
+    @State private var since: Date?
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if shown && active && !reduceMotion {
+                    TimelineView(.animation) { ctx in
+                        let t = ctx.date.timeIntervalSinceReferenceDate
+                        let angle = Angle.degrees((t.truncatingRemainder(dividingBy: 2.4) / 2.4) * 360)
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .strokeBorder(
+                                AngularGradient(stops: [
+                                    .init(color: Color("TextPrimary").opacity(0), location: 0),
+                                    .init(color: Color("TextPrimary").opacity(0), location: 0.7),
+                                    .init(color: Color("TextPrimary").opacity(0.8), location: 1)
+                                ], center: .center, angle: angle),
+                                lineWidth: 1.5)
+                    }
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .accessibilityHidden(true)
+                }
+            }
+            .task(id: active) {
+                guard active else { shown = false; return }
+                try? await Task.sleep(for: .seconds(3))
+                if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { shown = true } }
+            }
+    }
+}
+
+extension View {
+    func runBeam(active: Bool, radius: CGFloat = 16) -> some View { modifier(RunBeamBorder(active: active, radius: radius)) }
 }

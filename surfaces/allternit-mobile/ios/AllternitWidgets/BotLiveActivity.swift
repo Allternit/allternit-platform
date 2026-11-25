@@ -164,8 +164,8 @@ private struct LockScreenView: View {
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(1)
                     if let progress = context.state.progress {
-                        ProgressView(value: min(max(progress, 0), 1))
-                            .tint(BotLiveActivityWidget.statusColor(context.state.status))
+                        LiveMarkerLine(progress: progress, start: "Start", end: "Done",
+                                       tint: BotLiveActivityWidget.statusColor(context.state.status))
                     }
                 } else {
                     Text(BotLiveActivityWidget.statusLabel(context.state.status))
@@ -262,5 +262,41 @@ extension WidgetConfiguration {
         } else {
             return self
         }
+    }
+}
+
+
+/// Start label, a line, a marker at the progress, end label. The marker moves with each content-state
+/// update. No time left: the activity carries no estimate, so none is shown.
+struct LiveMarkerLine: View {
+    let progress: Double
+    let start: String
+    let end: String
+    let tint: Color
+
+    var body: some View {
+        let p = min(max(progress, 0), 1)
+        VStack(spacing: 2) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(tint.opacity(0.25)).frame(height: 3)
+                    Capsule().fill(tint).frame(width: geo.size.width * p, height: 3)
+                    Circle().fill(tint)
+                        .frame(width: 9, height: 9)
+                        .offset(x: max(0, geo.size.width - 9) * p)
+                }
+                .frame(maxHeight: .infinity)
+            }
+            .frame(height: 10)
+            HStack {
+                Text(start)
+                Spacer(minLength: 4)
+                Text(end)
+            }
+            .font(.system(size: 10))
+            .foregroundColor(Color("TextSecondary"))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Progress \(Int((p * 100).rounded())) percent")
     }
 }

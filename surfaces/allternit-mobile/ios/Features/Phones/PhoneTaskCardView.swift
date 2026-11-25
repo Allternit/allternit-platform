@@ -41,6 +41,8 @@ struct PhoneTaskCardModel: Identifiable, Equatable, Sendable {
     var steps: [RunStep] = []
     /// When the run's first event happened; places the run among the messages.
     var startedAt: Date? = nil
+    /// When this device saw the run close (no end time comes from the runtime). Nil if not seen.
+    var endedAt: Date? = nil
     /// False for runs started from the composer: their pill stays on the card (decision 5).
     var hostable: Bool = true
     /// App Maps (report fields `map_steps`, `model_calls`; the map's app label or package). Nil on older runtimes.
@@ -320,6 +322,8 @@ final class PhoneRunStore: ObservableObject {
             if merged.steps.isEmpty { merged.steps = old.steps }
             if let a = old.startedAt, a < (merged.startedAt ?? .distantFuture) { merged.startedAt = a }
             if merged.goal.isEmpty { merged.goal = old.goal }
+            merged.endedAt = old.endedAt
+            if merged.endedAt == nil, old.status.isActive, merged.status.isFinal { merged.endedAt = Date() }
             if merged.mapSteps == nil { merged.mapSteps = old.mapSteps }
             if merged.modelCalls == nil { merged.modelCalls = old.modelCalls }
             if merged.mapApp == nil { merged.mapApp = old.mapApp }
@@ -386,8 +390,44 @@ struct PhoneTaskCardView: View {
 
     @State private var thumb: UIImage?
     @State private var thumbLoaded = false
+    @State private var expanded = false
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
+        if card.status == .done && !hosted && !expanded {
+            collapsedRow
+        } else {
+            fullCard
+        }
+    }
+
+    /// A finished task folds to one line (goal, check, time); a tap opens it again.
+    private var collapsedRow: some View {
+        Button {
+            withAnimation(reduceMotion ? .linear(duration: 0.1) : .spring(response: 0.35, dampingFraction: 0.85)) { expanded = true }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                    .accessibilityHidden(true)
+                Text(card.summary ?? card.goal)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if card.endedAt != nil { RunElapsedText(card: card).font(.system(size: 12)).foregroundColor(Color("TextSecondary")) }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity)
+        .accessibilityLabel("Task done: \(card.summary ?? card.goal)")
+        .accessibilityHint("Shows the steps")
+    }
+
+    private var fullCard: some View {
         HStack(alignment: .top, spacing: 12) {
             thumbnail
             VStack(alignment: .leading, spacing: 6) {
@@ -398,6 +438,7 @@ struct PhoneTaskCardView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
+                    if card.status.isActive || card.endedAt != nil { RunElapsedText(card: card).font(.system(size: 11)) }
                     if !hosted { RunStatusPill(card: card) }
                 }
                 .foregroundColor(Color("TextSecondary"))
@@ -406,10 +447,8 @@ struct PhoneTaskCardView: View {
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-                if !hosted, card.steps.isEmpty, card.status.isActive {
-                    ProgressView(value: Double(min(card.step, 15)), total: 15)
-                        .tint(card.status.tint)
-                        .accessibilityLabel("Step \(card.step)")
+                if !hosted, card.status.isActive, card.step > 0 {
+                    RunStepBar(step: card.step, tint: card.status.tint)
                 }
                 Text(stepLine)
                     .font(.system(size: 12))
@@ -431,6 +470,7 @@ struct PhoneTaskCardView: View {
         .padding(12)
         .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
+        .runBeam(active: card.status == .running)
         .task(id: "\(card.runId)-\(card.status.rawValue)-\(card.step)") {
             guard let loadThumb else { return }
             thumb = await loadThumb(card.runId)
