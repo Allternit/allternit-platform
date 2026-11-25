@@ -69,6 +69,7 @@ import com.allternit.core.design.BlockText
 import com.allternit.core.design.DockSpec
 import com.allternit.core.design.DockingBlockTitle
 import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.EmptyBox
 import com.allternit.core.design.GlassPill
 import com.allternit.core.design.IntroKeys
@@ -246,7 +247,7 @@ fun ProjectsListScreen(
                         gutter.fillMaxWidth().clip(cardShape).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), cardShape).padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text("No computer connected. Connect a computer or start Allternit Cloud to use this.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f).testTag("projectsNoComputer"))
+                        InlineEmpty("No computer connected. Connect a computer or start Allternit Cloud to use this.", modifier = Modifier.weight(1f).testTag("projectsNoComputer"), art = EmptyArtKind.ConnectScene)
                         nav.onConnect?.let { connect ->
                             GlassPill(onClick = connect, height = 34.dp, modifier = Modifier.testTag("projectsConnect")) {
                                 Text("Connect", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

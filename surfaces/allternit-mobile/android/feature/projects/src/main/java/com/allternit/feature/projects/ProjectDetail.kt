@@ -1,5 +1,9 @@
 package com.allternit.feature.projects
 
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.FriendlyStyle
+import com.allternit.core.design.FriendlyState
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.AllternitSerif
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -276,8 +280,7 @@ fun ProjectDetailScreen(
                         )
                     }
                     if (threads.isEmpty() && serverThreads.isEmpty()) {
-                        Text("No threads yet", color = c.textPrimary, fontSize = 14.sp)
-                        Text("Start one from the composer.", color = c.textSecondary, fontSize = 13.sp)
+                        FriendlyState(FriendlyStyle.Empty, "No threads yet", "Start one from the composer.", art = EmptyArtKind.Envelope, panel = true, icon = {})
                     }
                     threads.forEach { s -> ThreadRow(s.name.ifEmpty { "Untitled" }, relativeTime(s.updatedAt), "projectThread${s.id}") { nav.openSession(s.id, "chat") } }
                     serverThreads.forEach { t -> ThreadRow(t.title, t.statusLine ?: relativeTime(t.at), "projectServerThread${t.id}") { t.sessionId?.let { nav.openSession(it, "chat") } } }
@@ -320,8 +323,7 @@ fun ProjectDetailScreen(
                         }
                         files == null -> LibrarySpinner("Loading files")
                         files!!.isEmpty() -> Column {
-                            Text("No files yet", color = c.textPrimary, fontSize = 14.sp)
-                            Text("Add files to give every chat in this project the same context.", color = c.textSecondary, fontSize = 13.sp)
+                            FriendlyState(FriendlyStyle.Empty, "No files yet", "Add files to give every chat in this project the same context.", art = EmptyArtKind.Sheets, panel = true, icon = {})
                         }
                         else -> files!!.forEach { f ->
                             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -454,7 +456,7 @@ private fun ProjectStatusSheet(status: ProjectStatus?, onDismiss: () -> Unit) {
                     Text(text, color = c.textSecondary, fontSize = 14.sp)
                 }
             }
-            if (status == null || status.sections.isEmpty()) Text("Nothing on the status page yet.", color = c.textTertiary, fontSize = 13.sp)
+            if (status == null || status.sections.isEmpty()) InlineEmpty("Nothing on the status page yet.", art = EmptyArtKind.Sheets)
         }
     }
 }
