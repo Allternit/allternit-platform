@@ -283,16 +283,7 @@ internal fun AciAppsShelf() {
                     Text(name, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     Text("Done", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.heightIn(min = 48.dp).clickable { opened = null }.padding(8.dp).testTag("aciAppsDone"))
                 }
-                var failed by remember(url) { mutableStateOf(false) }
-                var reload by remember(url) { mutableStateOf(0) }
-                Box(Modifier.fillMaxSize()) {
-                    AciPlainWebView(url, Modifier.fillMaxSize(), reload = reload, onFail = { failed = true })
-                    if (failed) Column(Modifier.fillMaxSize().background(c.bgPrimary), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Couldn’t load $name.", color = c.textSecondary, fontSize = 14.sp)
-                        Text("Try again", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                            modifier = Modifier.heightIn(min = 44.dp).clickable { failed = false; reload += 1 }.padding(12.dp).testTag("aciAppsRetry"))
-                    }
-                }
+                AppPage(url, name, Modifier.fillMaxSize())
             }
         }
     }
@@ -426,6 +417,22 @@ private fun ConsentSheet(request: ConsentRequest, onAllow: () -> Unit, onCancel:
             Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(CircleShape).background(c.accentPrimary).clickable(onClick = onAllow), contentAlignment = Alignment.Center) {
                 Text(if (request.raised) "Allow" else "Install", color = c.onAccent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
+        }
+    }
+}
+
+/** An app's web page, or "Couldn’t load <name>." with Try again when the page fails (shared by the shelf and the home-screen shortcut). */
+@Composable
+internal fun AppPage(url: String, name: String, modifier: Modifier = Modifier) {
+    val c = AllternitTheme.colors
+    var failed by remember(url) { mutableStateOf(false) }
+    var reload by remember(url) { mutableStateOf(0) }
+    Box(modifier) {
+        AciPlainWebView(url, Modifier.fillMaxSize(), reload = reload, onFail = { failed = true })
+        if (failed) Column(Modifier.fillMaxSize().background(c.bgPrimary), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Couldn’t load $name.", color = c.textSecondary, fontSize = 14.sp)
+            Text("Try again", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.heightIn(min = 44.dp).clickable { failed = false; reload += 1 }.padding(12.dp).testTag("aciAppsRetry"))
         }
     }
 }

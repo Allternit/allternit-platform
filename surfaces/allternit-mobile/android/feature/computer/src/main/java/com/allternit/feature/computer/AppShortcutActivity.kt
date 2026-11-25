@@ -1,7 +1,5 @@
 package com.allternit.feature.computer
 
-import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -11,69 +9,45 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Bundle
-import android.view.ViewGroup
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import com.allternit.core.design.AllternitTheme
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 
 /**
  * An installed Allternit app opened from its home-screen shortcut: the app's page in a web view
- * screen of its own. On open it mints the one-time sign-in handoff and loads `open_url`; if the
+ * screen of its own (AppPage: Try again on a failed load). On open it mints the one-time sign-in handoff and loads `open_url`; if the
  * mint fails (or the app is a vendor app) it loads the plain link. Only https pages on our own
  * domains load (AppsShelfLinks); anything else opens in the browser.
  */
-class AppShortcutActivity : Activity() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var web: WebView? = null
-
-    @SuppressLint("SetJavaScriptEnabled")
+class AppShortcutActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val link = intent.getStringExtra(EXTRA_LINK)
         val slug = intent.getStringExtra(EXTRA_SLUG).orEmpty()
         val vendor = intent.getBooleanExtra(EXTRA_VENDOR, false)
-        title = intent.getStringExtra(EXTRA_NAME) ?: "Allternit app"
-        val view = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
-                    if (AppsShelfLinks.openUrl(request.url.toString()) != null) return false
-                    openExternal(this@AppShortcutActivity, request.url.toString())
-                    return true
+        val name = intent.getStringExtra(EXTRA_NAME) ?: "Allternit app"
+        title = name
+        setContent {
+            AllternitTheme {
+                var target by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) {
+                    target = AppsShelfModel.openLink(slug, link, vendor)
+                    if (target == null) finish()
                 }
+                // The same page, and the same "Couldn’t load" + Try again state, as the shelf's opened app.
+                target?.let { AppPage(it, name, Modifier.fillMaxSize()) }
             }
         }
-        web = view
-        setContentView(FrameLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
-            addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        })
-        scope.launch {
-            val target = AppsShelfModel.openLink(slug, link, vendor)
-            if (target != null) view.loadUrl(target) else finish()
-        }
-    }
-
-    @Deprecated("Back goes through the page history first")
-    override fun onBackPressed() {
-        val w = web
-        if (w != null && w.canGoBack()) w.goBack() else super.onBackPressed()
-    }
-
-    override fun onDestroy() {
-        scope.cancel()
-        web?.destroy()
-        super.onDestroy()
     }
 
     companion object {
