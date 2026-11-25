@@ -508,9 +508,9 @@ struct AgentHubView: View {
             } else if visibleAgents.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "magnifyingglass",
                     title: "No matches",
-                    message: "No agents or bots match your search."
+                    message: "No agents or bots match your search.",
+                    art: .search
                 )
                 .padding(.horizontal, 20)
             }
@@ -533,9 +533,9 @@ struct AgentHubView: View {
             if filteredBots.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "magnifyingglass",
                     title: "No matches",
-                    message: "No bots match your search."
+                    message: "No bots match your search.",
+                    art: .search
                 )
                 .padding(.horizontal, 20)
             } else {
@@ -716,9 +716,9 @@ struct AgentHubView: View {
                 } else if botSessions.isEmpty {
                     FriendlyStateView(
                         style: .empty,
-                        icon: "bubble.left",
                         title: "No bot sessions yet",
-                        message: "Start a bot to see its runs here."
+                        message: "Start a bot to see its runs here.",
+                        art: .gizzi
                     )
                 } else {
                     LazyVStack(spacing: 10) {

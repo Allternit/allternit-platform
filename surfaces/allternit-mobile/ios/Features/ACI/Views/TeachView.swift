@@ -848,9 +848,7 @@ private struct TeachSkillEditor: View {
     @ViewBuilder
     private var steps: some View {
         if draft.steps.isEmpty {
-            Text("No steps yet. Add the first one.")
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextTertiary"))
+            FriendlyInlineStateView(title: "No steps yet. Add the first one.", art: .log)
         }
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(draft.steps.enumerated()), id: \.element.id) { index, step in
@@ -1032,9 +1030,7 @@ private struct TeachSkillEditor: View {
     @ViewBuilder
     private var inputs: some View {
         if draft.inputs.isEmpty {
-            Text("No inputs. Add one for a value that changes each run, then use {{name}} in a step.")
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextTertiary"))
+            FriendlyInlineStateView(title: "No inputs. Add one for a value that changes each run, then use {{name}} in a step.", art: .log)
         }
         VStack(alignment: .leading, spacing: 8) {
             ForEach($draft.inputs) { $input in
