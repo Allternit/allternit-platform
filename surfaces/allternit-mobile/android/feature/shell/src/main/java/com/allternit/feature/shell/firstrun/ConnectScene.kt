@@ -36,13 +36,6 @@ import androidx.compose.ui.unit.dp
 
 internal enum class ConnectSceneState { Asleep, Connecting, Connected }
 
-/** off / needs -> asleep, connecting -> connecting, on -> connected. A failure lands on Asleep (never an unearned check). */
-internal fun ConnState.sceneState(): ConnectSceneState = when (this) {
-    ConnState.Connecting -> ConnectSceneState.Connecting
-    ConnState.On -> ConnectSceneState.Connected
-    ConnState.Off, ConnState.Needs -> ConnectSceneState.Asleep
-}
-
 private val EaseOut = CubicBezierEasing(.16f, 1f, .3f, 1f)
 private val EaseInOut = CubicBezierEasing(.65f, 0f, .35f, 1f)
 

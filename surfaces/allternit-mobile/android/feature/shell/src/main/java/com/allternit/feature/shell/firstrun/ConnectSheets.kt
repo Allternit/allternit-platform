@@ -363,7 +363,13 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
             SheetNote("Chats you send on this model are billed to your Claude organization, not to Allternit credits. ${ConnectionsCatalog.CLAUDE_ORG_NOTE} Allternit never sees your password.")
         }
     }
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ConnectScene(store.row(id).state.sceneState()) }
+    // Connecting = the sheet's waiting phase (opened the vendor / checking the code), not the per-poll row flag.
+    val sceneState = when {
+        phase == LoginPhase.Done || store.row(id).state == ConnState.On -> ConnectSceneState.Connected
+        phase is LoginPhase.Vendor && (opened || submitting) -> ConnectSceneState.Connecting
+        else -> ConnectSceneState.Asleep
+    }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ConnectScene(sceneState) }
     when (val p = phase) {
         LoginPhase.Starting -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = c.sub)
