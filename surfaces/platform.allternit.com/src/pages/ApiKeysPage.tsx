@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Key,
   Plus,
   Copy,
   Trash,
@@ -363,7 +362,7 @@ export function ApiKeysPage() {
         </div>
       ) : keys.length === 0 ? (
         <EmptyState
-          icon={<Key size={32} weight="thin" />}
+          art="key"
           title="No API keys yet"
           caption="Create a scoped key to authenticate scripts, agents, or CI pipelines against the Allternit cloud API."
           ctaLabel="Create your first key"

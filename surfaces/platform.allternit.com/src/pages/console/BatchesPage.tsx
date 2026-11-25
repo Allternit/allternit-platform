@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Briefcase01Icon,
   AlertCircleIcon,
   Cancel01Icon,
   DocumentCodeIcon,
@@ -328,7 +327,7 @@ export function BatchesPage(): React.ReactNode {
       ) : filtered.length === 0 ? (
         <div className="space-y-6">
           <EmptyState
-            icon={<HugeiconsIcon icon={Briefcase01Icon} size={32} />}
+            art="sheets"
             title="No batches yet"
             caption={
               statusFilter

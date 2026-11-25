@@ -62,7 +62,7 @@ export function AdminOAuthAppsPage() {
             </div>
           ) : apps.length === 0 ? (
             <div className={CARD_CLASS}>
-              <EmptyState icon={<ShieldCheck size={32} aria-hidden />} title="Nothing in review" caption="Apps that developers submit for review show up here." />
+              <EmptyState art="bell" size="panel" title="Nothing in review" caption="Apps that developers submit for review show up here." />
             </div>
           ) : (
             <ul className="m-0 list-none space-y-3 p-0">
