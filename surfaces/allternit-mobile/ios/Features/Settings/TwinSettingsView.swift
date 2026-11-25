@@ -111,7 +111,11 @@ struct TwinSettingsView: View {
                 }
                 Section {
                     if active.isEmpty {
-                        Text("Nothing saved yet.").font(.subheadline).foregroundColor(Color("TextSecondary"))
+                        VStack(spacing: 8) {
+                            EmptyArt(kind: .sheets, size: .panel)
+                            Text("Nothing saved yet.").font(.subheadline).foregroundColor(Color("TextSecondary"))
+                        }
+                        .frame(maxWidth: .infinity)
                     } else {
                         ForEach(active) { memoryRow($0) }
                     }

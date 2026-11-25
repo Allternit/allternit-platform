@@ -76,9 +76,13 @@ struct ConnectComputerSheet: View {
                         }
                         .listRowBackground(Color("BgPanel"))
                     } else if relay.devices.isEmpty {
-                        Text("No computers yet.")
-                            .foregroundColor(Color("TextSecondary"))
-                            .listRowBackground(Color("BgPanel"))
+                        VStack(spacing: 8) {
+                            EmptyArt(kind: .connectScene, size: .panel)
+                            Text("No computers yet.")
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color("BgPanel"))
                     } else {
                         automaticRow
                         ForEach(relay.devices) { device in

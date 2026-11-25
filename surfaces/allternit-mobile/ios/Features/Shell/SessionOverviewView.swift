@@ -226,11 +226,14 @@ struct SessionOverviewView: View {
         if !store.hasLoaded && store.isLoading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if shown.isEmpty {
-            Text(query.isEmpty ? emptyText : "Nothing matches “\(query)”.")
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+            VStack(spacing: 8) {
+                EmptyArt(kind: .search, size: .panel)
+                Text(query.isEmpty ? emptyText : "Nothing matches “\(query)”.")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch layout {
