@@ -45,7 +45,7 @@ import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
-import { isAppLink, appSlugFromLink, appShellUrl } from './app-link.js';
+import { isAppLink, appSlugFromLink, appShellUrl, resolveAppUrl, trustedAppUrl, requestAppHandoff } from './app-link.js';
 import { createAppLaunchers, isValidAppSlug, type AppInstallRequest } from './app-launchers.js';
 import { openAppWindow, closeAppWindow } from './app-window.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
@@ -3730,20 +3730,31 @@ function appHelperBaseUrl(): string {
  * Desktop window. `handoff` is the one-time token the app shell swaps for a
  * session (D15); the helper loads <url>?handoff=<token>.
  */
-async function openInstalledApp(slug: string, handoff?: string | null): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> {
+async function openInstalledApp(
+  slug: string,
+  handoff?: string | null,
+  urlHint?: string | null,
+): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> {
   if (!appsInstallEnabled()) {
     log.info('[Main] apps.install is off; ignoring app open', slug);
     return { ok: false, error: 'disabled' };
   }
   if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug' };
   const installed = await appLaunchers.get(slug);
+  const base = appHelperBaseUrl();
+  // The stored app link, else a fresh one from the caller, else the old /app/<slug>.
+  const appUrl = trustedAppUrl(installed?.url, base, slug) ?? resolveAppUrl(urlHint, base, slug);
+  // One-time handoff from cloud-api; offline or signed out opens the plain link
+  // and the app page shows its own sign-in.
+  const token = await authManager.getClerkToken().catch(() => null);
+  const openUrl = (await requestAppHandoff({ apiBase: URLS.CLOUD_API, slug, appUrl, token })) ?? appUrl;
   if (process.platform === 'darwin' && installed?.kind === 'mac-dock') {
-    if (await appLaunchers.launchMacHelper(slug, appShellUrl(appHelperBaseUrl(), slug), handoff)) {
+    if (await appLaunchers.launchMacHelper(slug, openUrl, handoff)) {
       return { ok: true, mode: 'helper' };
     }
   }
   openAppWindow(
-    { slug, name: installed?.name ?? null, iconPath: installed?.kind === 'windows-start-menu' ? installed.iconPath : null },
+    { slug, name: installed?.name ?? null, iconPath: installed?.kind === 'windows-start-menu' ? installed.iconPath : null, url: openUrl },
     {
       preloadPath: join(__dirname, '../preload/index.js'),
       platformUrl: () => activePlatformUrl,
@@ -3760,7 +3771,7 @@ handleGuarded('apps:install', async (_event, request: AppInstallRequest) => {
   if (!appsInstallEnabled()) return { ok: false, error: 'disabled', message: 'Installing apps is off (apps.install).' };
   const slug = request?.slug;
   if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug', message: 'Bad app slug.' };
-  return appLaunchers.install(request, appShellUrl(appHelperBaseUrl(), slug));
+  return appLaunchers.install(request, resolveAppUrl(request.url, appHelperBaseUrl(), slug));
 });
 
 handleGuarded('apps:uninstall', async (_event, slug: string) => {
@@ -3769,8 +3780,8 @@ handleGuarded('apps:uninstall', async (_event, slug: string) => {
   return appLaunchers.uninstall(slug);
 });
 
-handleGuarded('apps:open', (_event, slug: string, options?: { handoff?: string | null }) =>
-  openInstalledApp(slug, options?.handoff ?? null),
+handleGuarded('apps:open', (_event, slug: string, options?: { handoff?: string | null; url?: string | null }) =>
+  openInstalledApp(slug, options?.handoff ?? null, options?.url ?? null),
 );
 
 handleGuarded('apps:status', async (_event, slug: string) => {
