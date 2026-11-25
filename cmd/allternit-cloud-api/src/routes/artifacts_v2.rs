@@ -74,6 +74,8 @@ const MAX_JSON_FIELD_BYTES: usize = 16 * 1024;
 const MAX_ALLOWED_EXTERNAL: usize = 1000;
 /// Artifact kinds `put_app` refuses (F5): Docs, Sheets, Slides.
 const OFFICE_KINDS: [&str; 3] = ["doc", "sheet", "slides"];
+/// `plan_status` values (migration 166 checks the same list). NULL reads as `open`.
+const PLAN_STATUSES: [&str; 3] = ["open", "approved", "done"];
 const DEFAULT_PUBLIC_BASE_URL: &str = "https://ai.allternit.com/a";
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -401,13 +403,32 @@ fn origin_json(origin: &Value, access: Access) -> Value {
     Value::Object(out)
 }
 
+/// `plan_status` (NULL read as `open`) of the plan rows among `rows`, by id.
+/// Only plan rows read the 166 column, so no other kind depends on it and the
+/// shared `ARTIFACT_COLUMNS` / `ArtifactRow` stay as they were.
+async fn plan_statuses(db: &PgPool, rows: &[ArtifactRow]) -> Result<HashMap<String, String>> {
+    let ids: Vec<String> = rows.iter().filter(|r| r.kind == kinds::PLAN).map(|r| r.id.clone()).collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let found: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, COALESCE(plan_status, 'open') FROM artifacts WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(db)
+            .await?;
+    Ok(found.into_iter().collect())
+}
+
+/// `plans` comes from `plan_statuses`; a plan row gets `plan: {status}`,
+/// every other kind has no `plan` field.
 fn summary_json(
     row: &ArtifactRow,
     access: Access,
     caller: &Caller,
     names: &HashMap<String, (Option<String>, Option<String>)>,
+    plans: &HashMap<String, String>,
 ) -> Value {
-    json!({
+    let mut out = json!({
         "id": row.id,
         "kind": row.kind,
         "title": row.title,
@@ -420,7 +441,12 @@ fn summary_json(
         "origin": origin_json(&row.origin, access),
         "runtime_version": row.runtime_version,
         "thumbnail_url": row.thumbnail_url,
-    })
+    });
+    if row.kind == kinds::PLAN {
+        let status = plans.get(&row.id).map(String::as_str).unwrap_or("open");
+        out["plan"] = json!({ "status": status });
+    }
+    out
 }
 
 fn version_json(version: &VersionRow, with_body: bool) -> Value {
@@ -453,7 +479,8 @@ async fn artifact_json(db: &PgPool, row: &ArtifactRow, access: Access, caller: &
             "artifact {} is missing version {seen}",
             row.id
         ))))?;
-    let mut out = summary_json(row, access, caller, &names);
+    let plans = plan_statuses(db, std::slice::from_ref(row)).await?;
+    let mut out = summary_json(row, access, caller, &names, &plans);
     out["template_id"] = json!(row.template_id);
     out["capabilities"] = row.capabilities.clone();
     out["shared_version"] = json!(row.shared_version);
@@ -638,7 +665,9 @@ async fn list_artifacts(
                  )
              ))
          )
-         AND ($5::text IS NULL OR a.kind = $5)
+         -- D11: plans are listed only when asked for (kind=plan), so they
+         -- never flood the default list on any client version.
+         AND (($5::text IS NULL AND a.kind <> 'plan') OR a.kind = $5)
          AND ($6::text IS NULL OR a.title ILIKE $6 ESCAPE '\\')
          AND ($7::text IS NULL OR a.origin->>'surface' = $7)
          AND ($8::timestamptz IS NULL OR (a.updated_at, a.id) < ($8, $9))
@@ -678,13 +707,14 @@ async fn list_artifacts(
     owner_ids.sort();
     owner_ids.dedup();
     let names = profiles(&state.db, &owner_ids).await;
+    let plans = plan_statuses(&state.db, &rows).await?;
     let now = Utc::now();
     let items: Vec<Value> = rows
         .iter()
         .filter_map(|row| {
             let row_grants = grants.get(&row.id).map(Vec::as_slice).unwrap_or(&[]);
             compute_access(&row.facts(), &caller, row_grants, now)
-                .map(|access| summary_json(row, access, &caller, &names))
+                .map(|access| summary_json(row, access, &caller, &names, &plans))
         })
         .collect();
     Ok(Json(json!({ "items": items, "next_cursor": next_cursor, "archive_supported": true })))
@@ -907,17 +937,19 @@ async fn patch_artifact(
     let (row, access) = load_with_access(&state.db, &id, &caller).await?;
 
     let touches_content = patch.contains_key("title") || patch.contains_key("icon");
-    let touches_owner = patch.contains_key("shared_version") || patch.contains_key("capabilities");
+    let touches_owner = patch.contains_key("shared_version")
+        || patch.contains_key("capabilities")
+        || patch.contains_key("plan_status");
     if !touches_content && !touches_owner {
         return Err(ArtifactError::bad_request(
-            "nothing to change: send title, icon, shared_version or capabilities",
+            "nothing to change: send title, icon, shared_version, capabilities or plan_status",
         ));
     }
     if touches_content {
         require(access, Access::Edit, "Renaming or changing the icon")?;
     }
     if touches_owner {
-        require(access, Access::Owner, "Changing the shared version or capabilities")?;
+        require(access, Access::Owner, "Changing the shared version, capabilities or plan status")?;
     }
 
     let mut title = row.title.clone();
@@ -969,7 +1001,29 @@ async fn patch_artifact(
         }
         capabilities = value.clone();
     }
+    // D12: plan status changes without a new version. Gizzi sets it.
+    let mut plan_status = None;
+    if let Some(value) = patch.get("plan_status") {
+        if row.kind != kinds::PLAN {
+            return Err(ArtifactError::unprocessable("not_a_plan", "plan_status is only for plan artifacts"));
+        }
+        let Some(status) = value.as_str().filter(|s| PLAN_STATUSES.contains(s)) else {
+            return Err(ArtifactError::unprocessable(
+                "invalid_plan_status",
+                "plan_status must be open, approved or done",
+            ));
+        };
+        plan_status = Some(status.to_string());
+    }
 
+    let mut tx = state.db.begin().await?;
+    if let Some(status) = &plan_status {
+        sqlx::query("UPDATE artifacts SET plan_status = $2 WHERE id = $1")
+            .bind(&row.id)
+            .bind(status)
+            .execute(&mut *tx)
+            .await?;
+    }
     let updated = sqlx::query_as::<_, ArtifactRow>(&format!(
         "UPDATE artifacts SET title = $2, icon = $3, shared_version = $4, capabilities = $5, \
              updated_at = now() \
@@ -980,9 +1034,10 @@ async fn patch_artifact(
     .bind(icon.as_deref())
     .bind(shared_version)
     .bind(&capabilities)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(ArtifactError::not_found)?;
+    tx.commit().await?;
     Ok(Json(artifact_json(&state.db, &updated, access, &caller).await?))
 }
 
@@ -1452,6 +1507,10 @@ async fn put_app(
             "kind_not_installable",
             "Docs, Slides and Sheets can't be made into apps yet.",
         ));
+    }
+    // A plan is a chat's record, not something to install (D10).
+    if row.kind == kinds::PLAN {
+        return Err(ArtifactError::unprocessable("kind_not_installable", "A plan can't be made into an app."));
     }
 
     let name = check_app_name(&req.name)?;
