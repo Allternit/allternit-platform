@@ -2290,7 +2290,7 @@ async fn list_connectors(
 /// exist yet, degrades to the unfiltered select rather than erroring. A
 /// missing table surfaces as a prepare error and is handled by the caller's
 /// is_no_such_table fallback.
-fn prepare_approvals_list_stmt(
+pub(crate) fn prepare_approvals_list_stmt(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<rusqlite::Statement<'_>> {
     conn.prepare(
