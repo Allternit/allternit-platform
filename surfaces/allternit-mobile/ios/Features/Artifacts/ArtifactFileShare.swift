@@ -137,6 +137,9 @@ struct ArtifactSharePanel: View {
     @State private var invite = ""
     @State private var inviteLevel = "view"
     @State private var copied = false
+    @State private var copiedAppLink = false
+    /// Install state for an artifact that is an app (the Apps shelf rows).
+    @StateObject private var appsModel = AppsShelfModel()
 
     private var isOwner: Bool { ArtifactAccessLevel(myAccess: myAccess) == .owner }
     private var currentVisibility: String { sharing?.visibility ?? visibility }
@@ -183,7 +186,9 @@ struct ArtifactSharePanel: View {
         .background(Color("BgPrimary").ignoresSafeArea())
         .task {
             tab = initialTab
+            async let apps: Void = appsModel.refresh()
             await loadSharing()
+            await apps
         }
     }
 
@@ -217,7 +222,72 @@ struct ArtifactSharePanel: View {
             }
             if let saveError { errorText(saveError) }
             copyLinkButton
+            appSection
         }
+        .sheet(item: $appsModel.consent) { request in
+            AppsConsentSheet(request: request,
+                             onAllow: { Task { await appsModel.confirmInstall(request) } },
+                             onCancel: { appsModel.consent = nil })
+                .presentationDetents([.medium])
+        }
+    }
+
+    /// This artifact as an app, when it is on the person's Apps shelf (same
+    /// install client and consent sheet as the shelf). Hidden when it is not
+    /// an app, or while signed out / the shelf can't load.
+    private var appRow: AppsShelfRow? {
+        appsModel.yours.first { $0.kind == "artifact" && $0.slug == artifactId }
+    }
+
+    @ViewBuilder
+    private var appSection: some View {
+        if isOwner, let row = appRow {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("App")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.top, 6)
+                appButton(row.installed ? "Installed" : "Install app",
+                          icon: row.installed ? "checkmark.circle" : "arrow.down.circle",
+                          busy: appsModel.busy.contains(row.id),
+                          disabled: row.installed) {
+                    appsModel.requestInstall(row)
+                }
+                appButton(copiedAppLink ? "Copied" : "Copy app link",
+                          icon: copiedAppLink ? "checkmark" : "link",
+                          busy: false,
+                          disabled: false) {
+                    guard let link = row.link, !link.isEmpty else {
+                        appsModel.notice = "This app has no link yet."
+                        return
+                    }
+                    UIPasteboard.general.string = AppsShelfLinks.openURL(for: link)?.absoluteString ?? link
+                    Haptics.success()
+                    copiedAppLink = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copiedAppLink = false
+                    }
+                }
+                if let notice = appsModel.notice { errorText(notice) }
+            }
+        }
+    }
+
+    private func appButton(_ title: String, icon: String, busy: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if busy { ProgressView().controlSize(.small) } else { Image(systemName: icon) }
+                Text(title)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(Color("TextPrimary"))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled || busy)
+        .opacity(disabled ? 0.6 : 1)
     }
 
     private func inviteRow(policy: ArtifactV2SharingPolicy) -> some View {

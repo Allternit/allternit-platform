@@ -30,8 +30,8 @@ struct ArtifactsLibraryView: View {
     @State private var openOnShare = false
     @State private var show: ArtifactShowChip = .all
     @StateObject private var appsModel = AppsShelfModel()
+    @State private var openedApp: AppsShelfView.OpenedApp?
     @ObservedObject private var pinsStore = DeckPinsStore.shared
-    @Environment(\.openURL) private var openURL
     @State private var studio: ArtifactStudioSession?
     @State private var notice: String?
     @State private var deletingSession: ArtifactStudioSession?
@@ -85,6 +85,9 @@ struct ArtifactsLibraryView: View {
         .tracksScrollForHide($barHidden)
         .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title, startOnShare: openOnShare)
+        }
+        .fullScreenCover(item: $openedApp) { app in
+            AppsOpenedView(app: app) { openedApp = nil }
         }
         .sheet(item: $appsModel.consent) { request in
             AppsConsentSheet(request: request,
@@ -512,7 +515,7 @@ struct ArtifactsLibraryView: View {
         }
         Task {
             if let link = await appsModel.openLink(for: row), let url = AppsShelfLinks.openURL(for: link) {
-                openURL(url)
+                openedApp = AppsShelfView.OpenedApp(url: url, name: row.name)
             } else {
                 notice = "Couldn’t open \(row.name). Try again."
             }
