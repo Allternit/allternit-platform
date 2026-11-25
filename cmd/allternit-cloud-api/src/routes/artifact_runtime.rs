@@ -113,7 +113,12 @@ impl Ctx {
 }
 
 async fn ctx(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<Ctx> {
-    let who = caller(state, headers).await?;
+    // D15: an app origin signs in with its app session, good for this one
+    // artifact only; everyone else is the normal workspace caller.
+    let who = match super::app_handoff::app_session_caller(&state.db, headers, id).await? {
+        Some(who) => who,
+        None => caller(state, headers).await?,
+    };
     let (row, access) = load_with_access(&state.db, id, &who).await?;
     // The artifact's org decides the switches, not the viewer's.
     let settings = match row.org_id.as_deref() {

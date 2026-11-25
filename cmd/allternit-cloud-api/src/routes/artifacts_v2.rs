@@ -57,6 +57,9 @@ use crate::{auth, ApiState};
 // Page runtime (storage, consents, AI) and the org "Shared outside" list.
 #[path = "artifact_runtime.rs"]
 pub(crate) mod artifact_runtime;
+// App-origin sessions (D15): one-time handoff -> per-app session.
+#[path = "app_handoff.rs"]
+pub mod app_handoff;
 // Motion cloud render (jobs, queue, MP4 download).
 #[path = "artifact_render.rs"]
 mod artifact_render;
@@ -69,6 +72,8 @@ const MAX_TITLE_CHARS: usize = 300;
 const MAX_ICON_CHARS: usize = 32;
 const MAX_JSON_FIELD_BYTES: usize = 16 * 1024;
 const MAX_ALLOWED_EXTERNAL: usize = 1000;
+/// Artifact kinds `put_app` refuses (F5): Docs, Sheets, Slides.
+const OFFICE_KINDS: [&str; 3] = ["doc", "sheet", "slides"];
 const DEFAULT_PUBLIC_BASE_URL: &str = "https://ai.allternit.com/a";
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -100,12 +105,14 @@ pub fn routes() -> Router<Arc<ApiState>> {
         // public app record by its slug (no auth).
         .route("/api/v2/artifacts/:id/app", get(get_app).put(put_app))
         .route("/api/v2/public/apps/:slug", get(public_app))
+        .route("/api/v2/public/apps/:slug/content", get(public_app_content))
         .route(
             "/api/v2/org/artifact-settings",
             get(get_org_settings).put(put_org_settings),
         )
         .merge(artifact_runtime::routes())
         .merge(artifact_render::routes())
+        .merge(app_handoff::routes())
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +204,9 @@ pub(crate) fn ts(at: DateTime<Utc>) -> String {
 }
 
 pub(crate) async fn caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller> {
+    // D15: an app origin (<slug>.allternitusercontent.com) never acts with a
+    // workspace session; it uses an app session (app_handoff) or nothing.
+    app_handoff::refuse_app_origin(headers)?;
     // Tests stand in for Clerk sessions (org, role, email) with this header;
     // compiled out of every non-test build.
     #[cfg(test)]
@@ -1435,6 +1445,14 @@ async fn put_app(
     let req: AppRequest = parse_json(&body)?;
     let (row, access) = load_with_access(&state.db, &id, &caller).await?;
     require(access, Access::Owner, "Making an artifact an app")?;
+    // F5 (contract freeze 2026-11-24): Office documents are not installable
+    // as apps for now, the same as Claude. The UI hides the action too.
+    if OFFICE_KINDS.contains(&row.kind.as_str()) {
+        return Err(ArtifactError::unprocessable(
+            "kind_not_installable",
+            "Docs, Slides and Sheets can't be made into apps yet.",
+        ));
+    }
 
     let name = check_app_name(&req.name)?;
     let icon = req.icon.as_deref().map(check_icon).transpose()?;
@@ -1560,11 +1578,10 @@ fn install_rule(
     }
 }
 
-async fn public_app(
-    State(state): State<Arc<ApiState>>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-) -> Result<Response> {
+/// The app a public slug (or one of its active hosted link names) opens, with
+/// the same gates for the record and its content: 404 unknown / paused /
+/// private / org artifacts off, 410 `killed`.
+async fn resolve_public_app(state: &ApiState, slug: &str) -> Result<PublicAppRow> {
     if slug.is_empty()
         || slug.len() > 63
         || !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -1575,7 +1592,7 @@ async fn public_app(
     let mut row = sqlx::query_as::<_, PublicAppRow>(&format!(
         "SELECT id, owner_id, org_id, visibility, {APP_COLUMNS} FROM artifacts WHERE app_slug = $1"
     ))
-    .bind(&slug)
+    .bind(slug)
     .fetch_optional(&state.db)
     .await?;
     if row.is_none() {
@@ -1583,7 +1600,7 @@ async fn public_app(
             "SELECT artifact_id, status FROM share_links \
              WHERE subdomain = $1 AND kind = 'hosted' AND subject = 'artifact'",
         )
-        .bind(&slug)
+        .bind(slug)
         .fetch_optional(&state.db)
         .await?;
         match link {
@@ -1612,6 +1629,18 @@ async fn public_app(
     if settings.as_ref().is_some_and(|s| !s.enabled) {
         return Err(ArtifactError::not_found());
     }
+    if row.app.app_permission_tier.is_none() {
+        return Err(ArtifactError::not_found());
+    }
+    Ok(row)
+}
+
+async fn public_app(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Response> {
+    let row = resolve_public_app(&state, &slug).await?;
     let tier = row.app.app_permission_tier.clone().ok_or_else(ArtifactError::not_found)?;
     // Signed in is optional: it only widens `install` for the owner and the org.
     let viewer = if has_credentials(&headers) { caller(&state, &headers).await.ok() } else { None };
@@ -1639,6 +1668,78 @@ async fn public_app(
     });
     if let Err(reason) = install {
         body["install_reason"] = json!(reason);
+    }
+    let mut response = Json(body).into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    headers.insert("x-robots-tag", HeaderValue::from_static("noindex"));
+    Ok(response)
+}
+
+// GET /api/v2/public/apps/:slug/content (lane 32c) -> the app's page at its
+// pinned version (else the latest): `{ slug, kind, title, icon, body,
+// body_format, meta, version, updated_at, runtime_version, artifact_id? }`,
+// the public link route's shape keyed by slug. Same 404/410 gates as the
+// record. A `browser` tier app shared by link is public; any other app needs
+// `Authorization: Bearer aps_…` for this artifact (D15), or, off the app
+// domain, a workspace caller with view access: else 401
+// `app_session_required` (403 `app_session_wrong_app` for another app's
+// session). `artifact_id` is sent only to such an authorized caller, never
+// to an anonymous one. `no-store`.
+async fn public_app_content(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Response> {
+    let app = resolve_public_app(&state, &slug).await?;
+    let row = fetch_row(&state.db, &app.id).await?.ok_or_else(ArtifactError::not_found)?;
+    let settings = settings_for(&state.db, row.org_id.as_deref()).await?;
+    let public = app.app.app_permission_tier.as_deref() == Some("browser")
+        && app.app.app_install_scope.as_deref() == Some("link")
+        && policy(&row.subject(), settings.as_ref()).link_allowed;
+
+    // Who is asking: an app session for this artifact first, then (never from
+    // an app origin; app_session_caller refuses that) a workspace caller.
+    let viewer = match app_handoff::app_session_caller(&state.db, &headers, &row.id).await {
+        Ok(Some(who)) => Some(who),
+        Ok(None) if has_credentials(&headers) => caller(&state, &headers).await.ok(),
+        Ok(None) => None,
+        // A stale or wrong session doesn't hide a public app.
+        Err(_) if public => None,
+        Err(e) => return Err(e),
+    };
+    let authorized = match viewer {
+        Some(who) => match load_with_access(&state.db, &row.id, &who).await {
+            Ok(_) => true,
+            Err(_) if public => false,
+            Err(e) => return Err(e),
+        },
+        None => false,
+    };
+    if !public && !authorized {
+        return Err(ArtifactError::coded(
+            StatusCode::UNAUTHORIZED,
+            "app_session_required",
+            "Sign in to open this app.",
+        ));
+    }
+
+    let seen = app.app.app_pinned_version.unwrap_or(row.current_version);
+    let version = fetch_version(&state.db, &row.id, seen).await?.ok_or_else(ArtifactError::not_found)?;
+    let mut body = json!({
+        "slug": app.app.app_slug.clone().unwrap_or(slug),
+        "kind": row.kind,
+        "title": row.title,
+        "icon": row.icon,
+        "body": version.body,
+        "body_format": version.body_format,
+        "meta": version.meta,
+        "version": version.version,
+        "updated_at": ts(row.updated_at),
+        "runtime_version": row.runtime_version,
+    });
+    if authorized {
+        body["artifact_id"] = json!(row.id);
     }
     let mut response = Json(body).into_response();
     let headers = response.headers_mut();
