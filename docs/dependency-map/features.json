@@ -1699,6 +1699,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-11-25",
+          "note": "Artifacts redesign (Eoj): one mode list (contracts/agent-modes/agent-modes-v1.json, generated Swift/Kotlin/TS) starts every kind of work; the Artifacts page is a library with a Your apps row and a Plans chip. Plans are artifacts of kind plan (id art_plan_<session>, Markdown body, plan_status open/approved/done in cloud-api migration 166), written by Gizzi plan_exit, left out of the default list, opened in the app with Approve / Revise / Ask a question, and opened from the terminal with allternit://artifact/<id> (gizzi artifact list --plans). Docs: guides/plan-approval, artifact-apps, cli/plan, api/artifacts-v2, tools/artifact-tools."
+        },
+        {
           "on": "2026-10-20",
           "note": "Ops sheets added as artifact kind `ops` (Eoj: a deploy-sheet style artifact for DevOps, deployed sites, MCP apps and computer/VPS status). Status header with segmented progress, up to 4 action buttons that ask before every call, tabs of steps/logs/stats/fields/charts/tables. Runs on the dashboard runtime (same consent, cache and refresh); actions use createActionClient. Built-in allternit__* sources read the viewer's computers (list, get, history) and start/stop/restart them without a connector; dashboards can use the reads. Server: kinds.rs ops KindSpec, ops_connectors derives capabilities on save, runtime allows connectors for ops like dashboards. gizzi-code Artifacts.FORMATS accepts ops. All three surfaces from one component; gallery tile + Output picker /ops."
         },
@@ -1865,6 +1869,10 @@
         "allternit-ai/src/lib/agents"
       ],
       "decisions": [
+        {
+          "on": "2026-11-25",
+          "note": "plan_exit saves the plan as one artifact per chat (art_plan_<session>, kind plan) and carries plan.body, plan.title and plan.artifact in the question; Yes sets plan_status approved, all todos completed sets done. artifact_create can't make kind plan; artifact_list leaves plans out and gizzi artifact list --plans lists them."
+        },
         {
           "on": "2026-10-08",
           "note": "Contract docs/design/artifacts-v2.md section 5: create an artifact when content is substantial (~15+ lines), self-contained, likely edited or reused, or asked for. gizzi mints art_+ULID ids; 409 stale_version makes the model read, merge and retry."
