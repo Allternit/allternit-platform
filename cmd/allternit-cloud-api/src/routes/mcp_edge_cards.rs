@@ -31,6 +31,14 @@ const CATALOG_TYPE: &str = "application/ai-catalog+json";
 const CARD_PATH: &str = "/.well-known/mcp";
 const CATALOG_PATH: &str = "/.well-known/ai-catalog.json";
 const CARD_NAME: &str = "com.allternit/allternit";
+// Extension ids the card lists. Defined here (same strings as
+// `mcp_edge_tasks::TASKS_EXTENSION_ID` from #2948 and
+// `mcp_edge_skills::EXTENSION` / `capability()` from #2940, which live only on
+// those branches) so this file compiles in any merge order. The ids are what
+// `initialize` advertises under `capabilities.extensions`.
+const EXT_TASKS: &str = "io.modelcontextprotocol/tasks";
+const EXT_SKILLS: &str = "io.modelcontextprotocol/skills";
+const EXT_UI: &str = "io.modelcontextprotocol/ui";
 const DESCRIPTION: &str = "Your Allternit agents, bots and connected apps as MCP tools.";
 
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
@@ -43,10 +51,10 @@ pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
 /// The Server Card for `origin` (no trailing slash).
 pub fn server_card(origin: &str) -> Value {
     let extensions = json!({
-        "tasks": { "description": "Long-running tool calls as tasks" },
+        EXT_TASKS: { "description": "Long-running tool calls as tasks" },
         "events": { "description": "Event catalog and subscriptions" },
-        "ui": { "description": "MCP Apps: tools return interactive UI" },
-        "skills": { "description": "Skills served as resources" }
+        EXT_UI: { "description": "MCP Apps: tools return interactive UI" },
+        EXT_SKILLS: { "description": "Skills served as resources (skill:// URIs)" }
     });
     let remote = |url: String, variables: Value| {
         let mut r = json!({
@@ -155,7 +163,7 @@ mod tests {
             assert_eq!(remotes[1]["url"], "https://mcp.allternit.com/mcp/connectors");
             assert_eq!(remotes[2]["url"], "https://mcp.allternit.com/mcp/bots/{vendor_bot_id}");
             assert_eq!(remotes[0]["supportedProtocolVersions"], json!(mcp_protocol::SUPPORTED));
-            for e in ["tasks", "events", "ui", "skills"] {
+            for e in [EXT_TASKS, "events", EXT_UI, EXT_SKILLS] {
                 assert!(remotes[0]["extensionsInfo"].get(e).is_some(), "{e}");
             }
             assert_eq!(card["_meta"]["com.allternit/auth"]["protectedResourceMetadata"], "https://mcp.allternit.com/.well-known/oauth-protected-resource");
