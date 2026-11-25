@@ -30,7 +30,9 @@
 //! It returns `artifact_id` only to an authorized caller.
 //!
 //! CORS: [`is_app_origin`] + [`is_app_cors_path`] let app origins reach the
-//! exchange, runtime and public app routes only (see `cors_origin_allowed`).
+//! exchange, runtime, public app routes and their own app's install
+//! ([`is_app_install_path`], bearer only, no cookies) and nothing else (see
+//! `cors_origin_allowed`).
 
 use std::sync::Arc;
 
@@ -62,6 +64,8 @@ pub const EXCHANGE_PATH: &str = "/api/v1/apps/handoff/exchange";
 const RUNTIME_PREFIX: &str = "/api/v2/artifact-runtime/";
 /// The public app record and its content (`/api/v2/public/apps/:slug[/content]`).
 const PUBLIC_APPS_PREFIX: &str = "/api/v2/public/apps/";
+/// `/api/v1/apps/` (the shelf and install routes, lane 9).
+const APPS_PREFIX: &str = "/api/v1/apps/";
 const HANDOFF_PREFIX: &str = "aph_";
 const SESSION_PREFIX: &str = "aps_";
 
@@ -100,7 +104,19 @@ pub fn is_app_origin(origin: &str) -> bool {
 
 /// The only routes an app origin may call cross-origin.
 pub fn is_app_cors_path(path: &str) -> bool {
-    path == EXCHANGE_PATH || path.starts_with(RUNTIME_PREFIX) || path.starts_with(PUBLIC_APPS_PREFIX)
+    path == EXCHANGE_PATH
+        || path.starts_with(RUNTIME_PREFIX)
+        || path.starts_with(PUBLIC_APPS_PREFIX)
+        || is_app_install_path(path)
+}
+
+/// `/api/v1/apps/artifact/<ref>/install`: the hosted shell grants its own app
+/// after the consent sheet (lane 34e). Vendor installs, the shelf and pin stay
+/// workspace-only. The handler binds an `aps_` session to `<ref>`.
+pub fn is_app_install_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(APPS_PREFIX) else { return false };
+    let parts: Vec<&str> = rest.split('/').collect();
+    matches!(parts.as_slice(), ["artifact", app_ref, "install"] if !app_ref.is_empty())
 }
 
 pub(crate) fn from_app_origin(headers: &HeaderMap) -> bool {
@@ -134,7 +150,7 @@ fn new_token(prefix: &str) -> String {
     format!("{prefix}{}", URL_SAFE_NO_PAD.encode(bytes))
 }
 
-fn token_hash(token: &str) -> String {
+pub(crate) fn token_hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 

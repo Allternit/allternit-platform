@@ -13,6 +13,7 @@ async fn setup() -> Arc<ApiState> {
     for sql in [
         include_str!("../../migrations_pg/085_artifacts_v2.sql"),
         include_str!("../../migrations_pg/161_apps_mcp_2026.sql"),
+        include_str!("../../migrations_pg/162_app_handoff.sql"),
     ] {
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration");
     }
@@ -193,4 +194,110 @@ async fn install_writes_granted_capabilities_as_an_array_of_names() {
     // The stored array covers the same snapshot: no second consent.
     let (_, again) = call(&state, "POST", &path, json!({ "granted_tier": "app" })).await;
     assert_eq!(again["needs_consent"], false, "{again}");
+}
+
+// ── Lane 34e: the hosted shell installs its own app with an `aps_` session ──
+
+const APP_ORIGIN: &str = "https://abcdefgh12345678.allternitusercontent.com";
+
+/// An `aps_` session for DEV_USER bound to `artifact_id` (what the handoff
+/// exchange writes), returned as the bearer token.
+async fn seed_session(db: &sqlx::PgPool, artifact_id: &str) -> String {
+    let token = format!("aps_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO app_sessions (token_hash, user_id, artifact_id, app_slug, expires_at) \
+         VALUES ($1, $2, $3, 'slug', now() + interval '1 hour')",
+    )
+    .bind(app_handoff::token_hash(&token))
+    .bind(DEV_USER)
+    .bind(artifact_id)
+    .execute(db)
+    .await
+    .unwrap();
+    token
+}
+
+/// A request from the app origin: `bearer` only, never the dev token or a cookie.
+async fn call_from_app(state: &Arc<ApiState>, method: &str, path: &str, bearer: Option<&str>, body: Value) -> (StatusCode, Value) {
+    let mut b = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header("origin", APP_ORIGIN)
+        .header("content-type", "application/json");
+    if let Some(t) = bearer {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    let body = if body.is_null() { String::new() } else { body.to_string() };
+    let res = routes().with_state(state.clone()).oneshot(b.body(axum::body::Body::from(body)).unwrap()).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn app_session_installs_its_own_app_through_consent() {
+    let state = setup().await;
+    let a = seed_app(&state.db, json!({ "storage": true })).await;
+    let token = seed_session(&state.db, &a).await;
+    let path = format!("/api/v1/apps/artifact/{a}/install");
+
+    let (status, first) = call_from_app(&state, "POST", &path, Some(&token), json!({ "granted_tier": "app" })).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["needs_consent"], false);
+    assert_eq!(first["install"]["granted_tier"], "app");
+    assert_eq!(first["install"]["user_id"], DEV_USER);
+
+    // The app grows a capability: the shell's check asks again, then the
+    // consent sheet's `consent: true` stores the grant.
+    sqlx::query("UPDATE artifacts SET app_capability_snapshot = $1 WHERE id = $2")
+        .bind(json!({ "storage": true, "ai": true }))
+        .bind(&a)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let (status, ask) = call_from_app(&state, "POST", &path, Some(&token), json!({ "granted_tier": "app" })).await;
+    assert_eq!(status, StatusCode::OK, "{ask}");
+    assert_eq!(ask["needs_consent"], true);
+    assert_eq!(ask["added_capabilities"], json!(["ai"]));
+    let (status, ok) =
+        call_from_app(&state, "POST", &path, Some(&token), json!({ "granted_tier": "app", "consent": true })).await;
+    assert_eq!(status, StatusCode::OK, "{ok}");
+    assert_eq!(ok["needs_consent"], false);
+    assert_eq!(ok["install"]["granted_capabilities"], json!(["ai", "storage"]));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn app_session_cannot_install_another_app() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let a = seed_app(&state.db, json!({})).await;
+    let b = seed_app(&state.db, json!({})).await;
+    let token = seed_session(&state.db, &a).await;
+
+    let (status, body) =
+        call_from_app(&state, "POST", &format!("/api/v1/apps/artifact/{b}/install"), Some(&token), json!({ "granted_tier": "app" })).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"], "app_session_wrong_app");
+
+    let vendor = seed_vendor(&state).await;
+    let (status, body) = call_from_app(
+        &state, "POST", &format!("/api/v1/apps/vendor/{vendor}/install"), Some(&token), json!({ "granted_tier": "app" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"], "app_session_wrong_app");
+
+    // An app origin never rides a workspace session, and only installs.
+    let (status, body) =
+        call_from_app(&state, "POST", &format!("/api/v1/apps/artifact/{a}/install"), Some("dev-api-token"), json!({ "granted_tier": "app" })).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"], "app_session_required");
+    let (status, _) = call_from_app(&state, "DELETE", &format!("/api/v1/apps/artifact/{a}/install"), Some(&token), Value::Null).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app_installs WHERE user_id = $1").bind(DEV_USER).fetch_one(&state.db).await.unwrap(),
+        0,
+    );
 }

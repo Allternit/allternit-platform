@@ -1009,6 +1009,20 @@ mod cors_origin_tests {
     }
 
     #[test]
+    fn app_origins_reach_only_their_routes() {
+        // Lane 34e: a hosted app origin preflights its install, never the shelf or pin.
+        let configured: Vec<String> = DEFAULT_CORS_ORIGINS.iter().map(|o| o.to_string()).collect();
+        let app = "https://abcdefgh12345678.allternitusercontent.com";
+        assert!(super::cors_origin_allowed(app, "/api/v1/apps/artifact/art_1/install", &configured));
+        assert!(super::cors_origin_allowed(app, "/api/v1/apps/handoff/exchange", &configured));
+        assert!(!super::cors_origin_allowed(app, "/api/v1/apps", &configured));
+        assert!(!super::cors_origin_allowed(app, "/api/v1/apps/vendor/v_1/install", &configured));
+        assert!(!super::cors_origin_allowed(app, "/api/v1/apps/artifact/art_1/pin", &configured));
+        assert!(!super::cors_origin_allowed(app, "/api/v1/api-keys", &configured));
+        assert!(!super::cors_origin_allowed("https://a.live.allternitusercontent.com", "/api/v1/apps/artifact/art_1/install", &configured));
+    }
+
+    #[test]
     fn desktop_loopback_ui_is_an_allowed_origin() {
         assert!(DEFAULT_CORS_ORIGINS.contains(&"http://127.0.0.1:8013"));
         assert!(DEFAULT_CORS_ORIGINS.contains(&"http://localhost:8013"));

@@ -277,4 +277,12 @@ fn app_origins_and_cors_paths() {
     assert!(is_app_cors_path("/api/v2/public/apps/abc/content"));
     assert!(!is_app_cors_path("/api/v2/artifacts/art_1"));
     assert!(!is_app_cors_path("/api/v1/apps/abc/handoff"));
+    // Lane 34e: the shell's own install, and nothing else under /api/v1/apps.
+    assert!(is_app_cors_path("/api/v1/apps/artifact/art_1/install"));
+    assert!(!is_app_cors_path("/api/v1/apps/vendor/v_1/install"));
+    assert!(!is_app_cors_path("/api/v1/apps/artifact/art_1/pin"));
+    assert!(!is_app_cors_path("/api/v1/apps/artifact//install"));
+    assert!(!is_app_cors_path("/api/v1/apps/artifact/art_1/install/x"));
+    assert!(!is_app_cors_path("/api/v1/apps"));
+    assert!(!is_app_cors_path("/api/v1/vendor-apps"));
 }

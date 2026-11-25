@@ -12,6 +12,10 @@
 //!   client), so servers lists only recorded vendor apps (`POST /api/v1/vendor-apps`).
 //! * `POST /api/v1/apps/:kind/:ref/install` `{ granted_tier, pinned?, consent? }` ->
 //!   `{ install, needs_consent, requested_tier?, added_capabilities? }`.
+//!   The hosted app shell calls it from `https://<slug>.allternitusercontent.com`
+//!   with `Authorization: Bearer aps_…` (D15, lane 34e): accepted only for
+//!   `artifact/<that app's id>` (else 403 `app_session_wrong_app`); CORS opens
+//!   this path alone to app origins (`app_handoff::is_app_install_path`).
 //!   `PATCH` the same path `{ pinned }` and `POST .../pin` `{ pinned }` -> install.
 //!   `DELETE` the same path -> 204.
 //! * `POST /api/v1/vendor-apps` `{ connector_id, server_url, ui_resource, name, icon?,
@@ -37,6 +41,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::routes::artifacts_v2::app_handoff;
 use crate::routes::paired_computers::{signed_in_caller, Caller};
 use crate::routes::platform_v1::new_id;
 use crate::{ApiError, ApiState};
@@ -360,13 +365,37 @@ async fn load_install(state: &ApiState, user_id: &str, kind: &str, app_ref: &str
     .await?)
 }
 
+/// Who installs: a hosted app's `aps_` session (D15) for that one artifact
+/// only, else the workspace caller. An `aps_` session on another artifact or
+/// on a vendor app -> 403 `app_session_wrong_app`; an app origin with no app
+/// session -> 401 `app_session_required` (it never rides a workspace cookie).
+async fn install_caller(state: &ApiState, headers: &HeaderMap, kind: &str, app_ref: &str) -> Result<Caller, Response> {
+    // No artifact id is empty, so a vendor ref never matches a session.
+    let bound = if kind == "artifact" { app_ref } else { "" };
+    match app_handoff::app_session_caller(&state.db, headers, bound).await {
+        Ok(Some(c)) => Ok(Caller { user_id: c.id, organization_id: c.org_id }),
+        Ok(None) => signed_in_caller(state, headers).await.map_err(IntoResponse::into_response),
+        Err(e) => Err(e.into_response()),
+    }
+}
+
+/// Uninstall and pin are workspace-only; their path is open to app origins
+/// for the install POST, so refuse an app origin here.
+async fn workspace_caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller, Response> {
+    app_handoff::refuse_app_origin(headers).map_err(IntoResponse::into_response)?;
+    signed_in_caller(state, headers).await.map_err(IntoResponse::into_response)
+}
+
 async fn install(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
     Path((kind, app_ref)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let caller = signed_in_caller(&state, &headers).await?;
+    let caller = match install_caller(&state, &headers, &kind, &app_ref).await {
+        Ok(c) => c,
+        Err(refused) => return Ok(refused),
+    };
     if !valid_kind(&kind) {
         return Ok(not_found());
     }
@@ -441,7 +470,10 @@ async fn uninstall(
     headers: HeaderMap,
     Path((kind, app_ref)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let caller = signed_in_caller(&state, &headers).await?;
+    let caller = match workspace_caller(&state, &headers).await {
+        Ok(c) => c,
+        Err(refused) => return Ok(refused),
+    };
     if !valid_kind(&kind) {
         return Ok(not_found());
     }
@@ -466,7 +498,10 @@ async fn patch_install(
     Path((kind, app_ref)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let caller = signed_in_caller(&state, &headers).await?;
+    let caller = match workspace_caller(&state, &headers).await {
+        Ok(c) => c,
+        Err(refused) => return Ok(refused),
+    };
     if !valid_kind(&kind) {
         return Ok(not_found());
     }
