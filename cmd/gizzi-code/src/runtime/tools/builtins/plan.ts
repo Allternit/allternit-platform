@@ -8,6 +8,7 @@ import { MessageV2 } from "@/runtime/session/message-v2"
 import { Identifier } from "@/shared/id/id"
 import { Provider } from "@/runtime/providers/provider"
 import { Instance } from "@/runtime/context/project/instance"
+import { Artifacts } from "@/runtime/integrations/artifacts"
 import { Todo } from "@/runtime/session/todo"
 import EXIT_DESCRIPTION from "@/runtime/tools/builtins/plan-exit.txt"
 import ENTER_DESCRIPTION from "@/runtime/tools/builtins/plan-enter.txt"
@@ -58,6 +59,12 @@ export function stepsFromMarkdown(markdown: string): Question.PlanStep[] {
   return items.length >= 2 ? (Question.readPlan(items.slice(0, Question.MAX_PLAN_STEPS).map((title) => ({ title }))) ?? []) : []
 }
 
+/** The plan's title: its first Markdown heading, else the session title. */
+function planTitle(markdown: string, fallback: string): string {
+  const heading = /^#{1,3}\s+(.+)$/m.exec(markdown)?.[1]?.replace(/[*`]/g, "").trim()
+  return (heading || fallback || "Plan").slice(0, 120)
+}
+
 function sameSteps(a: Question.PlanStep[], b: Question.PlanStep[]) {
   return a.length === b.length && a.every((s, i) => s.title === b[i].title && (s.detail ?? "") === (b[i].detail ?? ""))
 }
@@ -75,9 +82,25 @@ export const PlanExitTool = Tool.define("plan_exit", {
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
     const given = Question.readPlan(params.steps ?? []) ?? []
-    const proposed = given.length
-      ? given
-      : stepsFromMarkdown(await fs.readFile(Session.plan(session), "utf8").catch(() => ""))
+    const markdown = await fs.readFile(Session.plan(session), "utf8").catch(() => "")
+    const proposed = given.length ? given : stepsFromMarkdown(markdown)
+    // One plan artifact per chat: saved as a new version when the text changed.
+    const body = markdown.trim().slice(0, Question.MAX_PLAN_BODY)
+    const title = planTitle(body, session.title)
+    const saved = body
+      ? await Artifacts.savePlan(
+          {
+            sessionID: ctx.sessionID,
+            title,
+            body,
+            origin: {
+              session_title: session.title,
+              ...(Instance.project.name ? { project_title: Instance.project.name } : {}),
+            },
+          },
+          ctx.abort,
+        )
+      : undefined
     const { answers, plan: editedPlan } = await Question.askWithPlan({
       sessionID: ctx.sessionID,
       questions: [
@@ -85,7 +108,16 @@ export const PlanExitTool = Tool.define("plan_exit", {
           question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
           header: "Build Agent",
           custom: false,
-          ...(proposed.length ? { plan: { steps: proposed } } : {}),
+          ...(proposed.length || saved
+            ? {
+                plan: {
+                  steps: proposed,
+                  ...(saved
+                    ? { body, title, artifact: { id: saved.id, version: saved.version, persisted: saved.persisted } }
+                    : {}),
+                },
+              }
+            : {}),
           options: [
             { label: "Yes", description: "Switch to build agent and start implementing the plan" },
             {
