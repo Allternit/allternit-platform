@@ -74,6 +74,8 @@ class CoworkHost(
      * [focus] opens a node (`p:<user>`, `b:<bot>`); null opens the whole map. Null here hides every Team map entry.
      */
     val teamMapSheet: (@Composable (focus: String?, onDismiss: () -> Unit) -> Unit)? = null,
+    /** The "Team approvals" section (`:feature:bots` TeamAsksSection), given by the shell only while flag `team.map` is on. */
+    val teamAsks: (@Composable () -> Unit)? = null,
 )
 
 private sealed interface CoworkPage {
@@ -105,7 +107,7 @@ fun CoworkRoot(host: CoworkHost, initialTasks: Boolean = false) {
     when (val p = page) {
         CoworkPage.Launchpad -> CoworkLaunchpad(host, api, onOpen = { page = CoworkPage.Session(it) }, onApprovals = { page = CoworkPage.Approvals })
         is CoworkPage.Session -> CoworkSessionScreen(host, api, p.id, onBack = { page = CoworkPage.Launchpad }, onTasks = { tasksOpen = true })
-        CoworkPage.Approvals -> FabricApprovalsScreen(api, host.teamMapSheet, onBack = { page = CoworkPage.Launchpad })
+        CoworkPage.Approvals -> FabricApprovalsScreen(api, host.teamMapSheet, host.teamAsks, onBack = { page = CoworkPage.Launchpad })
         is CoworkPage.Task -> Unit
     }
 }
@@ -392,7 +394,7 @@ private fun CreateCoworkTaskSheet(defaultAgent: Boolean, onDismiss: () -> Unit, 
 /** iOS FabricApprovalsView: pending approvals with Grant / Deny, then recent runs that open their events. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FabricApprovalsScreen(api: CoworkApi, teamMapSheet: (@Composable (String?, () -> Unit) -> Unit)?, onBack: () -> Unit) {
+private fun FabricApprovalsScreen(api: CoworkApi, teamMapSheet: (@Composable (String?, () -> Unit) -> Unit)?, teamAsks: (@Composable () -> Unit)?, onBack: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var pending by remember { mutableStateOf<List<Approval>>(emptyList()) }
@@ -418,6 +420,7 @@ private fun FabricApprovalsScreen(api: CoworkApi, teamMapSheet: (@Composable (St
         LibraryHeader(title = "Fabric Transport", onBack = onBack, backTag = "fabricBack")
         PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { refresh() } }, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                teamAsks?.invoke()
                 Text("Pending approvals", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 if (pending.isEmpty()) Text(if (noComputer) "Connect a computer to see approvals." else error ?: "No approvals waiting.", color = c.textSecondary, fontSize = 13.sp)
                 pending.forEach { a ->

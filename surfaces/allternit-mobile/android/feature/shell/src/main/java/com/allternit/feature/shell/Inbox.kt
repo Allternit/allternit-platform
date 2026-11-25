@@ -503,6 +503,7 @@ internal fun InboxSheet(
                                 }
                             }
                         }
+                        if (teamMapOn) item(key = "teamAsks") { com.allternit.feature.bots.TeamAsksSection(reloadKey = refreshing) }
                         items(shownItems, key = { it.id }) { item ->
                             InboxEntry(
                                 item = item,

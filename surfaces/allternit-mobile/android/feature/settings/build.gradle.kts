@@ -45,6 +45,8 @@ dependencies {
     api(project(":feature:chat"))
     // LibraryNet (the /api/v1 routes) and the JSON helpers.
     implementation(project(":feature:artifacts"))
+    // "Who can use this" on a connected connector (Team map, flag `team.map`).
+    implementation(project(":feature:bots"))
     implementation(project(":core:auth"))
     implementation(libs.activity.compose)
     // Wave H1: Billing (Google Play Billing, the store pieces, the account plan state).

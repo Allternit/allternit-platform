@@ -226,12 +226,48 @@ data class TeamRuleInput(
     val scopeKind: String, val scopeRef: String?, val appKind: String?, val appRef: String?, val tool: String,
     val field: String?, val op: String, val value: JsonElement?, val unitLabel: String?, val approverKind: String, val approverUserId: String?,
 ) {
-    fun json(): JsonObject = buildJsonObject {
-        put("scope_kind", scopeKind); scopeRef?.let { put("scope_ref", it) }
-        appKind?.let { put("app_kind", it) }; appRef?.let { put("app_ref", it) }
-        put("tool", tool); field?.let { put("field", it) }; put("op", op)
-        value?.let { put("value", it) }; unitLabel?.let { put("unit_label", it) }
-        put("approver_kind", approverKind); approverUserId?.let { put("approver_user_id", it) }
+    /** On create, null fields are left out; on PATCH ([clearsMissing]) they are sent as null so a cleared blank clears the stored value. */
+    fun json(clearsMissing: Boolean = false): JsonObject = buildJsonObject {
+        fun opt(key: String, v: JsonElement?) { if (v != null) put(key, v) else if (clearsMissing) put(key, JsonNull) }
+        put("scope_kind", scopeKind); put("tool", tool); put("op", op); put("approver_kind", approverKind)
+        opt("scope_ref", scopeRef?.let { JsonPrimitive(it) }); opt("app_kind", appKind?.let { JsonPrimitive(it) })
+        opt("app_ref", appRef?.let { JsonPrimitive(it) }); opt("field", field?.let { JsonPrimitive(it) })
+        opt("value", value); opt("unit_label", unitLabel?.let { JsonPrimitive(it) })
+        opt("approver_user_id", approverUserId?.let { JsonPrimitive(it) })
+    }
+}
+
+/** A rule as `GET /team/rules` returns it: every field the editor needs (the map's short form lacks them). */
+data class TeamFullRule(
+    val id: String, val scopeKind: String, val scopeRef: String?, val app: TeamAppRef?, val tool: String, val field: String?,
+    val op: String, val value: JsonElement?, val unitLabel: String?, val approverKind: String, val approverUserId: String?, val enabled: Boolean,
+) {
+    companion object {
+        fun parse(r: JsonObject): TeamFullRule? = TeamFullRule(
+            id = r.str("id") ?: return null,
+            scopeKind = r.child("scope").str("kind") ?: "org", scopeRef = r.child("scope").str("ref"),
+            app = r.child("app")?.let { a -> TeamAppRef(a.str("kind") ?: return@let null, a.str("ref") ?: return@let null, a.str("name")) },
+            tool = r.str("tool") ?: "*", field = r.str("field"), op = r.str("op") ?: "always",
+            value = r["value"]?.takeIf { it !is JsonNull }, unitLabel = r.str("unit_label"),
+            approverKind = r.child("approver").str("kind") ?: "owner", approverUserId = r.child("approver").str("user_id"),
+            enabled = r.bool("enabled") ?: true,
+        )
+    }
+}
+
+/** `GET /team/apps/:kind/:ref/access`: people and bots that can use one app. */
+data class TeamAppAccess(val people: List<Person>, val bots: List<Bot>) {
+    data class Person(val user: String, val level: String)
+    data class Bot(val bot: String, val owner: String?, val level: String)
+
+    companion object {
+        fun parse(e: JsonElement): TeamAppAccess? {
+            val o = e as? JsonObject ?: return null
+            return TeamAppAccess(
+                o.list("people").mapNotNull { Person(it.str("user") ?: return@mapNotNull null, it.str("level") ?: "app") },
+                o.list("bots").mapNotNull { Bot(it.str("bot") ?: return@mapNotNull null, it.str("owner"), it.str("level") ?: "browser") },
+            )
+        }
     }
 }
 
@@ -303,6 +339,30 @@ object TeamMapClient {
         unit(LibraryNet.send("PUT", "team/people/${LibraryNet.escape(userId)}", JsonObject(mapOf("reports_to_user_id" to (managerUserId?.let { JsonPrimitive(it) } ?: JsonNull)))))
 
     suspend fun createRule(input: TeamRuleInput): TeamResult<Unit> = unit(LibraryNet.send("POST", "team/rules", input.json()))
+
+    /** `GET /team/rules`: every rule with all its fields. */
+    suspend fun rules(): TeamResult<List<TeamFullRule>> = wrap(LibraryNet.get("team/rules")) { e ->
+        (e as? JsonObject)?.list("rules")?.mapNotNull { TeamFullRule.parse(it) }
+    }
+
+    /** `GET /team/apps/:kind/:ref/access`: who can use one app. */
+    suspend fun appAccess(kind: String, ref: String): TeamResult<TeamAppAccess> =
+        wrap(LibraryNet.get("team/apps/${LibraryNet.escape(kind)}/${LibraryNet.escape(ref)}/access")) { TeamAppAccess.parse(it) }
+
+    /** `PATCH /team/rules/:id` (org owner/admin): cleared blanks are sent as null. */
+    suspend fun updateRule(id: String, input: TeamRuleInput): TeamResult<Unit> =
+        unit(LibraryNet.send("PATCH", "team/rules/${LibraryNet.escape(id)}", input.json(clearsMissing = true)))
+
+    /** `PATCH /team/rules/:id` with only `enabled` (the row's On/Off). */
+    suspend fun setRuleEnabled(id: String, enabled: Boolean): TeamResult<Unit> =
+        unit(LibraryNet.send("PATCH", "team/rules/${LibraryNet.escape(id)}", buildJsonObject { put("enabled", enabled) }))
+
+    /** `DELETE /team/grants?bot_kind&bot_id&app_kind&app_ref` (bot owner, org owner, admin). */
+    suspend fun revokeGrant(grant: TeamGrant): TeamResult<Unit> = unit(LibraryNet.send(
+        "DELETE",
+        "team/grants?bot_kind=${LibraryNet.escape(grant.botKind)}&bot_id=${LibraryNet.escape(grant.botId)}" +
+            "&app_kind=${LibraryNet.escape(grant.app.kind)}&app_ref=${LibraryNet.escape(grant.app.ref)}",
+    ))
 
     suspend fun deleteRule(id: String): TeamResult<Unit> = unit(LibraryNet.send("DELETE", "team/rules/${LibraryNet.escape(id)}"))
 

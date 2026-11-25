@@ -32,7 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +75,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -101,6 +105,8 @@ import kotlinx.serialization.json.JsonPrimitive
 private sealed interface TeamMapRoute {
     data class Node(val id: String) : TeamMapRoute
     data class NewRule(val scope: String) : TeamMapRoute
+    /** The same editor on an existing rule, prefilled. */
+    data class EditRule(val id: String, val scope: String) : TeamMapRoute
 }
 
 private object TeamMapPalette {
@@ -142,6 +148,7 @@ fun TeamMapSheet(focus: String? = null, onAddBot: (() -> Unit)? = null, onDismis
         null -> "Team map"
         is TeamMapRoute.Node -> model.map?.name(top.id) ?: "Team map"
         is TeamMapRoute.NewRule -> "New rule"
+        is TeamMapRoute.EditRule -> "Edit rule"
     }
     LibrarySheet(
         title = title,
@@ -162,8 +169,10 @@ fun TeamMapSheet(focus: String? = null, onAddBot: (() -> Unit)? = null, onDismis
                 when (route) {
                     null -> TeamMapRootContent(model, onOpen = { stack.add(TeamMapRoute.Node(it)) }, onNewRule = { stack.add(TeamMapRoute.NewRule(it)) },
                         onAddBot = onAddBot?.let { add -> { onDismiss(); add() } })
-                    is TeamMapRoute.Node -> TeamNodeDetail(model, route.id, onOpen = { stack.add(TeamMapRoute.Node(it)) }, onNewRule = { stack.add(TeamMapRoute.NewRule(it)) })
-                    is TeamMapRoute.NewRule -> TeamRuleEditor(model, route.scope, onSaved = { stack.removeAt(stack.lastIndex) })
+                    is TeamMapRoute.Node -> TeamNodeDetail(model, route.id, onOpen = { stack.add(TeamMapRoute.Node(it)) }, onNewRule = { stack.add(TeamMapRoute.NewRule(it)) },
+                        onEditRule = { id, scope -> stack.add(TeamMapRoute.EditRule(id, scope)) })
+                    is TeamMapRoute.NewRule -> TeamRuleEditor(model, route.scope, null, onSaved = { stack.removeAt(stack.lastIndex) })
+                    is TeamMapRoute.EditRule -> TeamRuleEditor(model, route.scope, route.id, onSaved = { stack.removeAt(stack.lastIndex) })
                 }
             }
         }
@@ -405,18 +414,35 @@ private fun TeamFilledButton(title: String, tag: String, enabled: Boolean, modif
     ) { Text(title, color = if (prominent) Color.White else c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
 }
 
+/** One rule line: lock + "Always on" for a built-in rule, else On/Off. With [onEdit] the sentence opens the editor; with [onToggle] On/Off is a switch (owner/admin only; locked rules never get either). */
 @Composable
-private fun TeamRuleRow(rule: TeamRule, onDelete: (() -> Unit)? = null) {
+private fun TeamRuleRow(rule: TeamRule, onDelete: (() -> Unit)? = null, onEdit: (() -> Unit)? = null, onToggle: ((Boolean) -> Unit)? = null) {
     val c = AllternitTheme.colors
     val status = if (rule.locked) "Always on" else if (rule.enabled) "On" else "Off"
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(horizontal = 12.dp, vertical = 8.dp).testTag("teamRule${rule.id}"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(Modifier.weight(1f).clearAndSetSemantics { contentDescription = "${rule.text}. $status" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val canEdit = onEdit != null && !rule.locked
+        Row(
+            Modifier.weight(1f).heightIn(min = 44.dp)
+                .then(if (canEdit) Modifier.clickable(role = Role.Button, onClick = onEdit!!) else Modifier)
+                .clearAndSetSemantics {
+                    contentDescription = if (canEdit) "${rule.text}. $status. Edit this rule" else "${rule.text}. $status"
+                    if (canEdit) onClick(label = "Edit this rule") { onEdit!!(); true }
+                }
+                .testTag("teamRuleEdit${rule.id}"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Icon(painterResource(if (rule.locked) DesignR.drawable.ph_lock_fill else DesignR.drawable.ph_shield_check), null, tint = c.textSecondary, modifier = Modifier.size(16.dp))
             Text(rule.text, color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Text(status, color = c.textSecondary, fontSize = 12.sp)
+            if (onToggle == null || rule.locked) Text(status, color = c.textSecondary, fontSize = 12.sp)
+        }
+        if (onToggle != null && !rule.locked) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            Switch(
+                checked = rule.enabled, onCheckedChange = onToggle,
+                modifier = Modifier.semantics { contentDescription = "Rule $status. Turns this rule on or off"; stateDescription = status }.testTag("teamRuleToggle${rule.id}"),
+            )
         }
         if (onDelete != null && !rule.locked) Box(
             Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onDelete)
@@ -498,13 +524,14 @@ private fun TeamCard(header: String?, footer: String? = null, content: @Composab
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TeamNodeDetail(model: TeamMapViewModel, nodeId: String, onOpen: (String) -> Unit, onNewRule: (String) -> Unit) {
+private fun TeamNodeDetail(model: TeamMapViewModel, nodeId: String, onOpen: (String) -> Unit, onNewRule: (String) -> Unit, onEditRule: (id: String, scope: String) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     var reportsError by remember { mutableStateOf<String?>(null) }
     var savingReports by remember { mutableStateOf(false) }
     var ruleError by remember { mutableStateOf<String?>(null) }
+    var whoApp by remember { mutableStateOf<TeamAppRef?>(null) }
     val map = model.map
     val node = map?.node(nodeId)
     if (map == null || node == null) {
@@ -550,7 +577,7 @@ private fun TeamNodeDetail(model: TeamMapViewModel, nodeId: String, onOpen: (Str
                     if (grants.isEmpty()) Text("No apps yet. Give this bot an app from its settings.", color = c.textSecondary, fontSize = 13.sp)
                     grants.forEachIndexed { i, g ->
                         if (i > 0) HorizontalDivider(color = c.borderSubtle)
-                        TeamLevelPicker(model, g, map.canEditLevels(node.id))
+                        TeamLevelPicker(model, g, map.canEditLevels(node.id), onWhoCanUse = { whoApp = g.app })
                     }
                 }
             } else {
@@ -604,20 +631,29 @@ private fun TeamNodeDetail(model: TeamMapViewModel, nodeId: String, onOpen: (Str
                 if (map.viewerIsAdmin) "Rules win over the level." else "Only the owner or an admin can change rules.",
             ) {
                 if (rules.isEmpty()) Text("No rules about ${if (you) "you" else node.name} yet.", color = c.textSecondary, fontSize = 13.sp)
-                rules.forEach { rule -> TeamRuleRow(rule, onDelete = if (map.viewerIsAdmin) ({ ruleError = null; scope.launch { ruleError = model.deleteRule(rule.id) } }) else null) }
+                rules.forEach { rule ->
+                    TeamRuleRow(
+                        rule,
+                        onDelete = if (map.viewerIsAdmin) ({ ruleError = null; scope.launch { ruleError = model.deleteRule(rule.id) } }) else null,
+                        onEdit = if (map.viewerIsAdmin) ({ onEditRule(rule.id, rule.scopeKey) }) else null,
+                        onToggle = if (map.viewerIsAdmin) ({ on -> ruleError = null; scope.launch { ruleError = model.setRuleEnabled(rule.id, on) } }) else null,
+                    )
+                }
                 ruleError?.let { TeamErrorText(it) }
                 if (map.viewerIsAdmin) TeamTextButton("New rule", DesignR.drawable.ph_plus, "teamNodeNewRule") { onNewRule(node.id) }
             }
         }
     }
+    whoApp?.let { app -> TeamWhoCanUseSheet(app, model, onDismiss = { whoApp = null }) }
 }
 
 @Composable
-private fun TeamLevelPicker(model: TeamMapViewModel, grant: TeamGrant, canEdit: Boolean) {
+private fun TeamLevelPicker(model: TeamMapViewModel, grant: TeamGrant, canEdit: Boolean, onWhoCanUse: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var saving by remember(grant.id) { mutableStateOf<String?>(null) }
     var error by remember(grant.id) { mutableStateOf<String?>(null) }
+    var confirmRemove by remember(grant.id) { mutableStateOf(false) }
     val levels = listOf(
         "browser" to "Open the app and read. No changes.",
         "app" to "Call its tools. Changes follow the rules.",
@@ -667,7 +703,32 @@ private fun TeamLevelPicker(model: TeamMapViewModel, grant: TeamGrant, canEdit: 
         ceilingReason?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
         if (!canEdit) Text("Only the bot's owner or an admin can change its level.", color = c.textTertiary, fontSize = 12.sp)
         error?.let { TeamErrorText(it) }
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            onWhoCanUse?.let { TeamTextButton("Who can use this", null, "teamGrantWho${grant.id}", onClick = it) }
+            if (canEdit) TeamTextButton("Remove access", null, "teamGrantRemove${grant.id}", enabled = saving == null) { confirmRemove = true }
+        }
     }
+    if (confirmRemove) AlertDialog(
+        onDismissRequest = { confirmRemove = false },
+        title = { Text("Remove $app from this bot?", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
+        text = { Text("The bot can't use $app until someone gives it back.", color = c.textSecondary, fontSize = 14.sp) },
+        containerColor = c.bgPrimary,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    confirmRemove = false
+                    saving = "remove"; error = null
+                    scope.launch { error = model.revokeGrant(grant); saving = null }
+                },
+                modifier = Modifier.heightIn(min = 44.dp).testTag("teamGrantRemoveConfirm${grant.id}"),
+            ) { Text("Remove access", color = AllternitStatic.StatusError, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            TextButton(onClick = { confirmRemove = false }, modifier = Modifier.heightIn(min = 44.dp).testTag("teamGrantRemoveCancel${grant.id}")) {
+                Text("Cancel", color = c.textPrimary, fontSize = 15.sp)
+            }
+        },
+    )
 }
 
 // MARK: - Rule editor
@@ -706,6 +767,20 @@ private fun RuleDraft.problem(): String? {
     if (parsedValue() == null) return if (op == "gt" || op == "gte") "Enter a number." else "Enter a value."
     return null
 }
+
+private fun valueText(v: JsonElement?): String = when (v) {
+    is JsonPrimitive -> v.content.let { c -> c.toDoubleOrNull()?.takeIf { !v.isString && it == Math.rint(it) && Math.abs(it) < 1e15 }?.toLong()?.toString() ?: c }
+    is JsonArray -> v.joinToString(", ") { valueText(it) }
+    else -> ""
+}
+
+/** iOS TeamRuleEditorView.draft(from:). */
+private fun TeamFullRule.toDraft(): RuleDraft = RuleDraft(
+    scope = when (scopeKind) { "person" -> scopeRef?.let { "p:$it" } ?: "org"; "bot" -> scopeRef ?: "org"; else -> "org" },
+    app = app?.key ?: "*", tool = if (tool == "*") "" else tool, field = field.orEmpty(), op = op,
+    value = valueText(value), unit = unitLabel.orEmpty(),
+    approver = if (approverKind == "user") "u:${approverUserId.orEmpty()}" else approverKind,
+)
 
 private fun RuleDraft.approverShort(map: TeamMap): String = when (approver) {
     "owner" -> "the owner"
@@ -749,17 +824,44 @@ private fun RuleDraft.input(): TeamRuleInput? {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TeamRuleEditor(model: TeamMapViewModel, scopeKey: String, onSaved: () -> Unit) {
+private fun TeamRuleEditor(model: TeamMapViewModel, scopeKey: String, ruleId: String?, onSaved: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     var draft by remember(scopeKey) { mutableStateOf(RuleDraft(scopeKey)) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember(ruleId) { mutableStateOf(ruleId != null) }
+    var loadError by remember(ruleId) { mutableStateOf<String?>(null) }
+    var loadTick by remember(ruleId) { mutableStateOf(0) }
+    /** The edited rule's app, kept as a choice even when no bot has a grant for it. */
+    var ruleApp by remember(ruleId) { mutableStateOf<TeamAppRef?>(null) }
+    // The map lists a rule's sentence only; the editor needs op, tool and value.
+    LaunchedEffect(ruleId, loadTick) {
+        if (ruleId == null) return@LaunchedEffect
+        loading = true; loadError = null
+        when (val r = model.fullRule(ruleId)) {
+            is TeamResult.Ok -> { ruleApp = r.value.app; draft = r.value.toDraft(); loading = false }
+            is TeamResult.Failed -> { loadError = r.error.text; loading = false }
+        }
+    }
     val map = model.map ?: return
+    if (loadError != null || loading) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (loadError != null) {
+                Text(loadError.orEmpty(), color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+                TeamTextButton("Try again", null, "teamRuleLoadRetry") { loadTick++ }
+            } else {
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
+                Text("Loading the rule…", color = c.textSecondary, fontSize = 14.sp)
+            }
+        }
+        return
+    }
+    val appChoices = map.apps + listOfNotNull(ruleApp?.takeIf { r -> map.apps.none { it.key == r.key } })
     fun edit(next: RuleDraft) { draft = next; error = null }
     val scopeName = if (draft.scope == "org") "Anyone" else map.name(draft.scope) ?: "Someone"
-    val appName = if (draft.app == "*") "any app" else map.apps.firstOrNull { it.key == draft.app }?.displayName ?: draft.app
+    val appName = if (draft.app == "*") "any app" else appChoices.firstOrNull { it.key == draft.app }?.displayName ?: draft.app
     val opLabel = RULE_OPS.firstOrNull { it.first == draft.op }?.second ?: "over"
     val current = map.rulesInScope(draft.scope)
     val problem = draft.problem()
@@ -767,9 +869,14 @@ private fun TeamRuleEditor(model: TeamMapViewModel, scopeKey: String, onSaved: (
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp).testTag("teamRuleEditor"), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         TeamCard("$scopeName · ${teamCount(current.size, "rule")} today") {
             if (current.isEmpty()) Text("No rules yet.", color = c.textSecondary, fontSize = 13.sp)
-            current.forEach { TeamRuleRow(it) }
+            current.forEach { rule ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) { TeamRuleRow(rule) }
+                    if (rule.id == ruleId) Text("Editing", color = c.textSecondary, fontSize = 12.sp)
+                }
+            }
         }
-        TeamCard("New rule", "Rules win over the level.") {
+        TeamCard(if (ruleId == null) "New rule" else "This rule", "Rules win over the level.") {
             FlowRow(
                 Modifier.semantics { contentDescription = "Rule sentence" },
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -781,7 +888,7 @@ private fun TeamRuleEditor(model: TeamMapViewModel, scopeKey: String, onSaved: (
                         map.bots.map { b -> RulePick(b.name, "Bots") { edit(draft.copy(scope = b.id)) } })
                 RuleWord("uses")
                 RulePickBlank("App", appName, "teamRuleApp",
-                    listOf(RulePick("Any app") { edit(draft.copy(app = "*")) }) + map.apps.map { a -> RulePick(a.displayName) { edit(draft.copy(app = a.key)) } })
+                    listOf(RulePick("Any app") { edit(draft.copy(app = "*")) }) + appChoices.map { a -> RulePick(a.displayName) { edit(draft.copy(app = a.key)) } })
                 RuleWord("·")
                 RuleField("Tool", draft.tool, "any tool", 80, "teamRuleTool") { edit(draft.copy(tool = it)) }
                 if (draft.op == "always") {
@@ -812,11 +919,11 @@ private fun TeamRuleEditor(model: TeamMapViewModel, scopeKey: String, onSaved: (
             problem?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
             error?.let { TeamErrorText(it) }
         }
-        TeamFilledButton(if (saving) "Saving…" else "Save rule", "teamRuleSave", enabled = problem == null && !saving, modifier = Modifier.fillMaxWidth()) {
+        TeamFilledButton(if (saving) "Saving…" else if (ruleId == null) "Save rule" else "Save changes", "teamRuleSave", enabled = problem == null && !saving, modifier = Modifier.fillMaxWidth()) {
             val input = draft.input() ?: return@TeamFilledButton
             saving = true; error = null
             scope.launch {
-                val failure = model.createRule(input)
+                val failure = if (ruleId != null) model.updateRule(ruleId, input) else model.createRule(input)
                 saving = false
                 if (failure == null) { Haptics.perform(view, Haptics.Kind.Success); onSaved() } else error = failure
             }
@@ -881,4 +988,148 @@ private fun RuleField(label: String, value: String, placeholder: String, minWidt
             }
         },
     )
+}
+
+// MARK: - Who can use this
+
+/**
+ * "Who can use this": for one connection or app, the people and bots that can use it, each with a level chip
+ * (Browser / App / Full). iOS TeamWhoCanUseSheet (#3038). Opened from an app row on a bot's page and from a
+ * connected connector. [ready] holds the load until the map is in (the host resolves the app against it first).
+ */
+@Composable
+internal fun TeamWhoCanUseSheet(app: TeamAppRef, model: TeamMapViewModel, ready: Boolean = true, onDismiss: () -> Unit) {
+    val c = AllternitTheme.colors
+    var access by remember(app.key) { mutableStateOf<TeamAppAccess?>(null) }
+    var failure by remember(app.key) { mutableStateOf<TeamMapError?>(null) }
+    var tick by remember(app.key) { mutableStateOf(0) }
+    LaunchedEffect(app.key, ready, tick) {
+        if (!ready) return@LaunchedEffect
+        if (model.map == null) model.load()
+        failure = null
+        when (val r = model.appAccess(app.kind, app.ref)) {
+            is TeamResult.Ok -> access = r.value
+            is TeamResult.Failed -> failure = r.error
+        }
+    }
+    fun name(id: String): String = model.map?.name(id) ?: id.drop(2)
+    fun grant(bot: String): TeamGrant? = model.map?.grants?.firstOrNull { it.bot == bot && it.app.kind == app.kind && it.app.ref == app.ref }
+    fun botDetail(bot: TeamAppAccess.Bot): String {
+        val owner = bot.owner ?: model.map?.owner(bot.bot)
+        var text = owner?.let { "${name(it)}'s" } ?: "No owner"
+        grant(bot.bot)?.ceiling?.takeIf { it != "full" }?.let { text += " · stops at ${TeamLevel.label(it)}" }
+        return text
+    }
+    val ceilings = (model.map?.grants ?: emptyList()).filter { it.app.kind == app.kind && it.app.ref == app.ref }.map { it.ceiling }
+    val appCeiling = ceilings.firstOrNull()?.takeIf { first -> ceilings.all { it == first } }
+    @Composable fun chip(level: String) = Text(
+        TeamLevel.label(level), color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+        modifier = Modifier.clip(CircleShape).background(c.fillNeutral).padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+    LibrarySheet(
+        title = "Who can use ${app.displayName}", testTag = "teamWhoSheet", onDismiss = onDismiss,
+        trailing = LibrarySheetAction("Done", bold = true, testTag = "teamWhoDone", onClick = onDismiss),
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.7f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp).testTag("teamWhoContent"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            val a = access
+            val f = failure
+            when {
+                f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (f === TeamMapError.NoRuntime) Text("Connect a computer to see who can use this.", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+                    else {
+                        Text(f.text, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+                        TeamTextButton("Try again", null, "teamWhoRetry") { tick++ }
+                    }
+                }
+                a == null -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
+                }
+                else -> {
+                    TeamSectionTitle("People")
+                    if (a.people.isEmpty()) Text("No one yet.", color = c.textSecondary, fontSize = 13.sp)
+                    a.people.forEach { p ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clearAndSetSemantics { contentDescription = "${name(p.user)}, ${TeamLevel.label(p.level)}" },
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(painterResource(DesignR.drawable.ph_user_circle), null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+                            Text(name(p.user), color = c.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            chip(p.level)
+                        }
+                    }
+                    TeamSectionTitle("Bots")
+                    if (a.bots.isEmpty()) Text("No bots yet.", color = c.textSecondary, fontSize = 13.sp)
+                    a.bots.forEach { b ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clearAndSetSemantics { contentDescription = "${name(b.bot)}, ${botDetail(b)}, ${TeamLevel.label(b.level)}" },
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(painterResource(DesignR.drawable.ph_cpu), null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(name(b.bot), color = c.textPrimary, fontSize = 15.sp)
+                                Text(botDetail(b), color = c.textSecondary, fontSize = 12.sp)
+                            }
+                            chip(b.level)
+                        }
+                    }
+                    Text(
+                        if (app.kind == "vendor" || appCeiling == "app") "Vendor app: levels stop at App." else "Change a bot's level from its page on the team map.",
+                        color = c.textTertiary, fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The map's own ref for [kind]/[ref]/[name]: same ref, `mcp_<ref>`, or the same name (case-insensitive) among the
+ * map's grants of that kind. Unchanged when the map is not loaded or nothing matches (the sheet then shows nobody).
+ * iOS TeamWhoCanUseHost.resolve (a5ee2e0b6e).
+ */
+internal fun resolveTeamApp(app: TeamAppRef, map: TeamMap?): TeamAppRef {
+    if (map == null) return app
+    val known = map.grants.map { it.app }.filter { it.kind == app.kind }
+    known.firstOrNull { it.ref == app.ref || it.ref == "mcp_${app.ref}" }?.let { return it }
+    val name = app.name?.lowercase() ?: return app
+    return known.firstOrNull { it.name?.lowercase() == name } ?: app
+}
+
+/**
+ * "Who can use this" for a screen with no team map of its own (the Connectors list): owns a map model, resolves the
+ * connector's catalog id to the map's ref, and shows the sheet.
+ */
+@Composable
+fun TeamWhoCanUseHost(kind: String, ref: String, name: String?, onDismiss: () -> Unit) {
+    val model = remember { TeamMapViewModel() }
+    LaunchedEffect(model) { model.load() }
+    val app = resolveTeamApp(TeamAppRef(kind, ref, name), model.map)
+    TeamWhoCanUseSheet(app, model, ready = model.phase !is TeamMapViewModel.Phase.Loading, onDismiss = onDismiss)
+}
+
+// MARK: - Team approvals (Inbox, Cowork Fabric approvals)
+
+/**
+ * The asks the viewer can decide, above an approvals list: Rule, Approver, Asked by, Level, Approve/Deny. Asks with no
+ * `resolve` are read-only. Shows nothing when flag `team.map` is off or there are no asks. iOS FabricApprovalsView (#3038).
+ */
+@Composable
+fun TeamAsksSection(reloadKey: Any? = null, horizontalPadding: androidx.compose.ui.unit.Dp = 20.dp) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (!com.allternit.core.api.FeatureFlags.isOn(context, com.allternit.core.api.FeatureFlags.TEAM_MAP)) return
+    val c = AllternitTheme.colors
+    val scope = rememberCoroutineScope()
+    val model = remember { TeamMapViewModel() }
+    var sheetOpen by remember { mutableStateOf(false) }
+    var focus by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(model, reloadKey) { model.load() }
+    val map = model.map
+    if (map != null && map.asks.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 12.dp).testTag("teamAsksSection"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        TeamSectionTitle("Team approvals")
+        map.asks.forEach { ask ->
+            TeamAskRow(ask, map, onDecide = { model.decide(ask, it) }, onWhoApproves = { focus = ask.approverUserId?.let { "p:$it" }; sheetOpen = true })
+        }
+        map.partialNote?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
+    }
+    if (sheetOpen) TeamMapSheet(focus = focus, onDismiss = { sheetOpen = false; scope.launch { model.load() } })
 }

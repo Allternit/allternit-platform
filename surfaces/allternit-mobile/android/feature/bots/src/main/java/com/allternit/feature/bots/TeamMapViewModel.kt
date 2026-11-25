@@ -36,6 +36,19 @@ class TeamMapViewModel(private val client: TeamMapClient = TeamMapClient) {
     suspend fun setReportsTo(userId: String, managerUserId: String?): String? = write { client.setReportsTo(userId, managerUserId) }
     suspend fun createRule(input: TeamRuleInput): String? = write { client.createRule(input) }
     suspend fun deleteRule(id: String): String? = write { client.deleteRule(id) }
+    suspend fun updateRule(id: String, input: TeamRuleInput): String? = write { client.updateRule(id, input) }
+    suspend fun setRuleEnabled(id: String, enabled: Boolean): String? = write { client.setRuleEnabled(id, enabled) }
+    suspend fun revokeGrant(grant: TeamGrant): String? = write { client.revokeGrant(grant) }
+
+    /** The full rule (every field) for the editor; a failure is one plain sentence. */
+    suspend fun fullRule(id: String): TeamResult<TeamFullRule> = when (val r = client.rules()) {
+        is TeamResult.Ok -> r.value.firstOrNull { it.id == id }?.let { TeamResult.Ok(it) }
+            ?: TeamResult.Failed(TeamMapError.Refused("This rule no longer exists. Reload the map."))
+        is TeamResult.Failed -> r
+    }
+
+    suspend fun appAccess(kind: String, ref: String): TeamResult<TeamAppAccess> = client.appAccess(kind, ref)
+
     suspend fun decide(ask: TeamAsk, approve: Boolean): String? = write { client.resolve(ask, approve) }
 
     private suspend fun write(body: suspend () -> TeamResult<Unit>): String? = when (val r = body()) {
