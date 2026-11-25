@@ -5,11 +5,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "bun build src/index.ts --target=bun --outfile=dist/index.js",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
+    "@allternit/share-tunnel": "workspace:*",
     "ws": "^8.16.0"
   },
   "devDependencies": {

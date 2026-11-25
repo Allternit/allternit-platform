@@ -4,6 +4,7 @@ import { hostname, homedir, platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import { discoverAgentClis } from './discovery';
+import { startShareHost, type StartShareResult } from './share-host';
 
 const CLOUD_API_URL = (process.env.ALLTERNIT_CLOUD_API_URL || 'https://api.allternit.com').replace(/\/$/, '');
 const RUNTIME_NAME = process.env.ALLTERNIT_RUNTIME_NAME || `${hostname()} VPS`;
@@ -291,11 +292,47 @@ function connectRelay(): void {
   socket.on('error', (error) => console.error('[AgentDaemon] Relay:', error.message));
 }
 
+let shareHostRef: ReturnType<typeof startShareHost> | undefined;
+
 async function handleRelayRequest(socket: WebSocket, message: any): Promise<void> {
   const requestId = typeof message.request_id === 'string' ? message.request_id : '';
   const method = typeof message.method === 'string' ? message.method.toUpperCase() : 'GET';
   const requestPath = typeof message.path === 'string' ? message.path : '';
   if (!identity || !requestId || !requestPath.startsWith('/') || requestPath.includes('..') || requestPath.includes('://')) return;
+  // Host command (not an allternit-api route): start a live share for a local port.
+  if (requestPath.split('?')[0] === '/host/shares/start') {
+    let result: StartShareResult;
+    if (method !== 'POST') result = { status: 405, body: { error: 'method_not_allowed' } };
+    else if (!shareHostRef) result = { status: 502, body: { error: 'share_host_unavailable', message: 'Share host is not running yet.' } };
+    else {
+      let input: any = {};
+      try {
+        if (message.body) input = JSON.parse(Buffer.from(message.body, message.body_encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'));
+      } catch {
+        input = {};
+      }
+      result = await shareHostRef.startShare(input ?? {}).catch((error) => ({
+        status: 502,
+        body: { error: 'tunnel_failed', message: error instanceof Error ? error.message : String(error) },
+      }));
+    }
+    socket.send(JSON.stringify({ type: 'response_start', request_id: requestId, status: result.status, headers: { 'content-type': 'application/json' } }));
+    socket.send(JSON.stringify({ type: 'response_chunk', request_id: requestId, body: Buffer.from(JSON.stringify(result.body)).toString('base64'), body_encoding: 'base64' }));
+    socket.send(JSON.stringify({ type: 'response_end', request_id: requestId }));
+    return;
+  }
+  // Host commands on one live link: resume re-opens the tunnel the cloud dropped on pause.
+  const shareCommand = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(requestPath.split('?')[0]);
+  if (shareCommand) {
+    let result: StartShareResult;
+    if (method !== 'POST') result = { status: 405, body: { error: 'method_not_allowed' } };
+    else if (!shareHostRef) result = { status: 502, body: { error: 'share_host_unavailable', message: 'Share host is not running yet.' } };
+    else result = await shareHostRef.hostCommand(shareCommand[2], shareCommand[1]);
+    socket.send(JSON.stringify({ type: 'response_start', request_id: requestId, status: result.status, headers: { 'content-type': 'application/json' } }));
+    socket.send(JSON.stringify({ type: 'response_chunk', request_id: requestId, body: Buffer.from(JSON.stringify(result.body)).toString('base64'), body_encoding: 'base64' }));
+    socket.send(JSON.stringify({ type: 'response_end', request_id: requestId }));
+    return;
+  }
   const allowedPrefixes = [
     '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
     '/terminal', '/mcp', '/platform', '/metrics', '/cowork',
@@ -468,6 +505,21 @@ async function main() {
   await heartbeat();
   console.log(`[AgentDaemon] ${RUNTIME_NAME} is online. Runtime ID: ${identity.runtimeId}`);
   connectRelay();
+
+  // Live links on this cloud computer: loopback control API; links survive a restart.
+  const shareHost = startShareHost({
+    getRuntimeDeviceId: () => identity?.runtimeId,
+    cloudApi: CLOUD_API_URL,
+    relayApi: process.env.ALLTERNIT_SHARE_RELAY_API || 'https://api.live.allternitusercontent.com',
+    gatewayUrl: LOCAL_GATEWAY_URL,
+    getAuthToken: async () => identity?.deviceToken ?? '',
+    dataDir: process.env.ALLTERNIT_SHARE_DATA_DIR || join(dirname(IDENTITY_PATH), 'share-host'),
+    controlPort: Number(process.env.ALLTERNIT_SHARE_HOST_PORT) || 18099,
+  });
+  shareHostRef = shareHost;
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(sig, () => void shareHost.stop().finally(() => process.exit(0)));
+  }
 
   setInterval(() => {
     void rotateIfNeeded()
