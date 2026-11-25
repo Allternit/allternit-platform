@@ -89,6 +89,13 @@ enum AgentChatEvent: Decodable, Sendable {
     /// The tool calls rail draws Deny / Allow on the matching tool row.
     case permissionAsked(AgentPermissionAsk)
 
+    /// A long-running MCP task changed (`mcp.task`), a server asked a question
+    /// (`mcp.elicitation`) or it was answered (`mcp.elicitation.resolved`).
+    /// Drawn by Features/McpTasks, behind the `mcp.tasks` flag.
+    case mcpTask(sessionID: String?, part: McpTaskPart)
+    case mcpElicitation(sessionID: String?, part: McpElicitationPart)
+    case mcpElicitationResolved(requestID: String, action: String?)
+
     /// `{"type":"control",language?,speed?,reply_mode?,end_call?}`: a voice_control
     /// tool part asked the voice session to change.
     case control(VoiceControl)
@@ -494,6 +501,27 @@ enum AgentChatEvent: Decodable, Sendable {
             if let id = ((try? Envelope(from: decoder).properties?.requestID) ?? nil)
                 ?? (try? Ids(from: decoder).requestID) ?? nil {
                 self = .questionClosed(requestID: id)
+            } else {
+                self = .ignored
+            }
+
+        case "mcp.task":
+            if let env = try? McpBusEnvelope<McpTaskPart>(from: decoder), let part = env.part {
+                self = .mcpTask(sessionID: env.sessionID, part: part)
+            } else {
+                self = .ignored
+            }
+
+        case "mcp.elicitation":
+            if let env = try? McpBusEnvelope<McpElicitationPart>(from: decoder), let part = env.part {
+                self = .mcpElicitation(sessionID: env.sessionID, part: part)
+            } else {
+                self = .ignored
+            }
+
+        case "mcp.elicitation.resolved":
+            if let done = try? McpElicitationResolved(from: decoder), let id = done.requestID {
+                self = .mcpElicitationResolved(requestID: id, action: done.action)
             } else {
                 self = .ignored
             }

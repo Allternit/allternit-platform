@@ -279,6 +279,9 @@ struct MessageRow: View {
                     ForEach(unplacedPermissions) { ask in
                         PermissionAskView(ask: ask)
                     }
+                    if McpTasksFlag.isOn {
+                        McpTasksSection(taskIds: message.mcpTaskIds, formIds: message.mcpFormIds)
+                    }
                 }
 
                 // Structured failure card (replaces raw backend error text)
@@ -1357,5 +1360,26 @@ struct SleepRow: View {
             Text(reason.isEmpty ? base : "\(base) \u{2014} \(reason)")
         }
         .font(.footnote).foregroundStyle(.secondary)
+    }
+}
+
+
+/// A reply's MCP tasks (orb-and-beam cards) and any server question that has
+/// no task card to sit in. Behind the `mcp.tasks` flag.
+private struct McpTasksSection: View {
+    let taskIds: [String]
+    let formIds: [String]
+    @ObservedObject private var store = McpTasksStore.shared
+
+    var body: some View {
+        ForEach(taskIds, id: \.self) { McpTaskCardView(taskId: $0) }
+        ForEach(looseForms) { McpElicitationFormView(request: $0) }
+    }
+
+    private var looseForms: [McpElicitationPart] {
+        formIds.compactMap { store.elicitations[$0] }.filter { form in
+            guard let taskId = form.taskId else { return true }
+            return store.tasks[taskId] == nil
+        }
     }
 }

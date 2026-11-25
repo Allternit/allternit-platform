@@ -63,6 +63,10 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     var questions: [AgentQuestionRequest] = []
     /// Permissions the agent waited on during this reply.
     var permissions: [AgentPermissionAsk] = []
+    /// MCP task and question ids from this reply (latest state lives in
+    /// McpTasksStore; drawn only when the `mcp.tasks` flag is on).
+    var mcpTaskIds: [String] = []
+    var mcpFormIds: [String] = []
     var artifacts: [ArtifactRecord] = []
     /// Structured stream/transport failure rendered as an inline error card
     /// (ChatErrorCardView) instead of raw backend text in the bubble.
@@ -1262,6 +1266,23 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 }
             }
 
+        case .mcpTask(let sessionID, let part):
+            guard McpTasksFlag.isOn else { break }
+            McpTasksStore.shared.apply(part, sessionID: sessionID)
+            updateMessage(messageId) { message in
+                if !message.mcpTaskIds.contains(part.taskId) { message.mcpTaskIds.append(part.taskId) }
+            }
+
+        case .mcpElicitation(let sessionID, let part):
+            guard McpTasksFlag.isOn else { break }
+            McpTasksStore.shared.apply(part, sessionID: sessionID)
+            updateMessage(messageId) { message in
+                if !message.mcpFormIds.contains(part.id) { message.mcpFormIds.append(part.id) }
+            }
+
+        case .mcpElicitationResolved(let requestID, let action):
+            McpTasksStore.shared.markResolved(id: requestID, action: action ?? "resolved")
+
         case .sessionStatus(let status):
             updateMessage(messageId) { $0.busyLine = status.busy ? status.line : nil }
 
@@ -1486,7 +1507,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         guard pendingText.isEmpty, pendingReasoning.isEmpty,
               let message = messages.first(where: { $0.id == messageId }) else { return false }
         return message.content.isEmpty && message.toolStatus == nil && message.artifacts.isEmpty
-            && message.toolCalls.isEmpty && message.questions.isEmpty
+            && message.toolCalls.isEmpty && message.questions.isEmpty && message.mcpTaskIds.isEmpty && message.mcpFormIds.isEmpty
     }
 
     private func updateMessage(_ id: String, _ mutate: (inout MessageRecord) -> Void) {
