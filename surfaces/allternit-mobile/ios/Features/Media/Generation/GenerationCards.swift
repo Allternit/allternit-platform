@@ -125,6 +125,10 @@ struct MediaGenerateCard: View {
             .onChange(of: call.state) { old, new in
                 if old == .running, new == .done { Task { await playReveal() } }
             }
+            .onDisappear {
+                // The card left mid-reveal: let go of the bubble now.
+                if reveal != nil { reveal = nil; onRevealing(false) }
+            }
     }
 
     @ViewBuilder
@@ -179,10 +183,13 @@ struct MediaGenerateCard: View {
         guard let image = final ?? halftoneShown else { return }
         reveal = Reveal(image: image, style: style)
         onRevealing(true)
+        // Runs on every exit, including a cancelled sleep, so the hold always lets go.
+        defer {
+            reveal = nil
+            halftoneShown = nil
+            onRevealing(false)
+        }
         try? await Task.sleep(nanoseconds: UInt64(Self.revealSeconds * 1_000_000_000))
-        reveal = nil
-        halftoneShown = nil
-        onRevealing(false)
     }
 
     /// The first inline picture or https picture link in a tool result.

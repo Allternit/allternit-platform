@@ -303,7 +303,16 @@ struct MessageRow: View {
         .onAppear { reportOnScreen() }
         .onChange(of: message.content) { _, _ in reportOnScreen() }
         .onChange(of: sessionId) { _, _ in reportOnScreen() }
-        .onDisappear { ScreenContextResponder.shared.hide(messageId: message.id) }
+        .onDisappear {
+            ScreenContextResponder.shared.hide(messageId: message.id)
+            revealingCalls.removeAll()
+        }
+        // Safety: the hold never outlives ~1.5 s, whatever happened to the reveal.
+        .task(id: revealingCalls) {
+            guard !revealingCalls.isEmpty else { return }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !Task.isCancelled { revealingCalls.removeAll() }
+        }
         .sheet(isPresented: $showsRunTree) {
             AgentRunTreeSheet(
                 steps: message.toolCalls,
