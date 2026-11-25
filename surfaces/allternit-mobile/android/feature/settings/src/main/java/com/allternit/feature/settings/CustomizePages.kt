@@ -347,7 +347,7 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
             val connected = it["connection"].obj.str("status") == "connected"
             (!onlyConnected || connected) && (query.isBlank() || (it.str("name") ?: "").contains(query, ignoreCase = true) || (it.str("category") ?: "").contains(query, ignoreCase = true))
         }
-        if (rows.isEmpty()) StateBox(if (query.isBlank()) (if (onlyConnected) "Nothing connected yet" else "No connectors yet") else "No connectors match", if (onlyConnected) "Connect an app from Discover and it shows up here." else "Try another word.", null, null) else CCard {
+        if (rows.isEmpty()) StateBox(if (query.isBlank()) (if (onlyConnected) "Nothing connected yet" else "No connectors yet") else "No connectors match", if (onlyConnected) "Connect an app from Discover and it shows up here." else "Try another word.", null, null, if (query.isBlank()) com.allternit.core.design.EmptyArtKind.Sheets else null) else CCard {
             rows.forEachIndexed { i, c ->
                 val id = c.str("id") ?: return@forEachIndexed
                 val connected = c["connection"].obj.str("status") == "connected"

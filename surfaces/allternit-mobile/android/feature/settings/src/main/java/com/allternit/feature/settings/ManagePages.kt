@@ -56,7 +56,7 @@ internal fun ModelsPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
             val rows = body.listUnder("models", "items").filter {
                 query.isBlank() || (it.str("name") ?: it.str("id") ?: "").contains(query, ignoreCase = true)
             }
-            if (rows.isEmpty()) SNote(if (query.isBlank()) "No models yet. Connect a provider to add some." else "No models match \"$query\".") else {
+            if (rows.isEmpty()) SNote(if (query.isBlank()) "No models yet. Connect a provider to add some." else "No models match \"$query\".", art = if (query.isBlank()) com.allternit.core.design.EmptyArtKind.Sheets else null) else {
                 val groups = rows.groupBy { it.str("provider") ?: it.str("providerId") ?: (it.str("id") ?: "").substringBefore('/', "Models") }
                 for ((provider, models) in groups.toSortedMap()) {
                     SLabel(provider)
@@ -88,7 +88,7 @@ internal fun SubagentsPage(host: SettingsHost, back: () -> Unit) {
         SNote("Helpers a bot can hand work to. Each has its own instructions.")
         LoadView(load, reload, "load subagents") { body ->
             val rows = body.listUnder("types", "subagent_types", "items")
-            if (rows.isEmpty()) SNote("No subagents yet.") else SCard {
+            if (rows.isEmpty()) SNote("No subagents yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, t ->
                     val slug = t.str("slug") ?: t.str("id") ?: return@forEachIndexed
                     val builtin = t.bool("is_custom") == false
@@ -226,7 +226,7 @@ internal fun WebhooksPage(host: SettingsHost, back: () -> Unit) {
             SLabel("Recent deliveries")
             LoadView(deliveries, { selected = open }, "load deliveries") { body ->
                 val rows = body.listUnder("deliveries", "items")
-                if (rows.isEmpty()) SNote("Nothing has called this webhook yet.") else SCard {
+                if (rows.isEmpty()) SNote("Nothing has called this webhook yet.", art = com.allternit.core.design.EmptyArtKind.Bell) else SCard {
                     rows.forEachIndexed { i, d ->
                         if (i > 0) SDivider()
                         SRow(d.str("status") ?: d.str("result") ?: "Delivery", "webhook_delivery_$i", detail = d.str("created_at") ?: d.str("at"), chevron = false)
@@ -239,7 +239,7 @@ internal fun WebhooksPage(host: SettingsHost, back: () -> Unit) {
             SNote("A webhook is a URL an outside service can call to start one of your bots.")
             LoadView(load, reload, "load webhooks") { body ->
                 val rows = body.listUnder("triggers", "webhooks", "items")
-                if (rows.isEmpty()) SNote("No webhooks yet.") else SCard {
+                if (rows.isEmpty()) SNote("No webhooks yet.", art = com.allternit.core.design.EmptyArtKind.Bell) else SCard {
                     rows.forEachIndexed { i, t ->
                         val id = t.str("id") ?: return@forEachIndexed
                         if (i > 0) SDivider()

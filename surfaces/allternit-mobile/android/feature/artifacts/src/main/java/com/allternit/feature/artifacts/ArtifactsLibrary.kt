@@ -414,7 +414,7 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(ArtifactKinds.icon(k)), null, tint = c.textSecondary)
                             }
                         store.show == ArtifactLibraryStore.Show.Archive && !store.filteredBeyondArchive() ->
-                            FriendlyState(FriendlyStyle.Empty, "No archived artifacts", "Archived work stays available here. Restore an artifact to return it to Saved work.") {
+                            FriendlyState(FriendlyStyle.Empty, "No archived artifacts", "Archived work stays available here. Restore an artifact to return it to Saved work.", art = com.allternit.core.design.EmptyArtKind.Sheets) {
                                 Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
                             }
                         store.filtered ->
@@ -422,7 +422,7 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
                         else ->
-                            EmptyBox("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"))
+                            EmptyBox("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"), art = com.allternit.core.design.EmptyArtKind.Sheets, actionLabel = "New artifact", onAction = { newOpen = true })
                     }
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {

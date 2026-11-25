@@ -596,6 +596,7 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
                 when {
                     store.agentsError != null && bots.isEmpty() -> ErrorLine(store.agentsError ?: "")
                     bots.isEmpty() && !store.agentsLoading -> Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.allternit.core.design.GizziWalk(Modifier.align(Alignment.CenterHorizontally))
                         Text("No bots yet.", color = c.textSecondary, fontSize = 13.sp)
                         val view = androidx.compose.ui.platform.LocalView.current
                         Row(

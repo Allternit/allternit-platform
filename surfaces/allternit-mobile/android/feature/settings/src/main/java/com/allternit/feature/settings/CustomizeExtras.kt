@@ -112,7 +112,7 @@ internal fun SourcesPage(onBack: () -> Unit) {
     var label by remember { mutableStateOf("") }
     SPage("Sources", tag = "customizeSources", onBack = onBack) {
         SNote("Where skills and plugins come from: marketplaces, GitHub repos, URLs, and local folders you've added.")
-        if (sources.isEmpty()) SNote("No sources added yet.") else SCard {
+        if (sources.isEmpty()) SNote("No sources added yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
             sources.forEachIndexed { i, s ->
                 if (i > 0) SDivider()
                 SRow(s.label ?: s.value, "source_${s.id}", detail = "${s.type} · ${s.value}", chevron = false,

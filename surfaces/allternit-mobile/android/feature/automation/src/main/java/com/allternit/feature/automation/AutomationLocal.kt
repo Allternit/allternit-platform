@@ -90,7 +90,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
             is AResult.Failed -> ErrorState("Couldn't load ${tab.label.lowercase()}", state.message, { tick++ })
             is AResult.Ok -> if (tab == LocalTab.Routines) {
                 val rows = st.routines?.orNull().orEmpty().filter { query.isBlank() || it.name.contains(query, true) }
-                if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No routines" else "No matches", if (query.isBlank()) "Chain a few commands into a named routine you can run on demand, anytime." else "No routines match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New routine" else null) { newRoutine = true }
+                if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No routines" else "No matches", if (query.isBlank()) "Chain a few commands into a named routine you can run on demand, anytime." else "No routines match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New routine" else null, art = if (query.isBlank()) com.allternit.core.design.EmptyArtKind.Bell else null) { newRoutine = true }
                 else LazyColumn(Modifier.fillMaxSize().testTag("automationLocalRoutines"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(rows, key = { it.id }) { r ->
                         LocalRow(r.name, listOfNotNull(r.state, "${r.steps.size} steps", r.schedule).joinToString(" · "), r.state, "automationRoutine_${r.id}") { routine = r }
@@ -98,7 +98,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
                 }
             } else {
                 val rows = st.loops?.orNull().orEmpty().filter { query.isBlank() || it.command.contains(query, true) }
-                if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No loops" else "No matches", if (query.isBlank()) "Run a command on repeat until it exits clean or hits its iteration cap." else "No loops match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New loop" else null) { newLoop = true }
+                if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No loops" else "No matches", if (query.isBlank()) "Run a command on repeat until it exits clean or hits its iteration cap." else "No loops match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New loop" else null, art = if (query.isBlank()) com.allternit.core.design.EmptyArtKind.Bell else null) { newLoop = true }
                 else LazyColumn(Modifier.fillMaxSize().testTag("automationLocalLoops"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(rows, key = { it.id }) { l ->
                         LocalRow(l.command, "${l.state} · ${l.iterations.size}/${l.maxIterations} iterations", l.state, "automationLoop_${l.id}") { loop = l }

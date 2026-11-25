@@ -651,7 +651,7 @@ fun AgentTemplateSheet(onDismiss: () -> Unit, onConfirm: (AgentTemplate) -> Unit
     LaunchedEffect(Unit) { load() }
     LibrarySheet(title = "New from Template", testTag = "agentTemplateSheet", onDismiss = onDismiss, leading = LibrarySheetAction("Close", onClick = onDismiss)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
-            if (!ListState(loading, error, templates.isEmpty(), "Couldn't load templates", "No templates yet.") { scope.launch { load() } }) {
+            if (!ListState(loading, error, templates.isEmpty(), "Couldn't load templates", "No templates yet.", com.allternit.core.design.EmptyArtKind.Sheets) { scope.launch { load() } }) {
                 RowGroup {
                     templates.forEachIndexed { i, t ->
                         Column(Modifier.fillMaxWidth().testTag("agentTemplate${t.id}").clickable { pending = t }.padding(horizontal = 16.dp, vertical = 10.dp)) {
