@@ -10,7 +10,6 @@ import { Byline } from './Byline';
 import { KeyboardShortcutHint } from './KeyboardShortcutHint';
 import { ListItem } from './ListItem';
 import { Pane } from './Pane';
-import { EmptyLine } from '../EmptyLine'
 type PickerAction<T> = {
   /** Hint label shown in the byline, e.g. "mention" → "Tab to mention". */
   action: string;
@@ -241,7 +240,7 @@ function List(t0) {
     emptyText
   } = t0;
   if (visible.length === 0) {
-    const t1 = <EmptyLine>{emptyText}</EmptyLine>;
+    const t1 = <Text dimColor={true}>{emptyText}</Text>;
 
     const t2 = <Box height={visibleCount} flexShrink={0}>{t1}</Box>;
 
