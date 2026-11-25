@@ -31,6 +31,7 @@ Every record has a `kind` and a `runtime_version`:
 | `code` | `text/plain` + `language` in `meta` | Code viewer | 1 |
 | `pdf` | `application/pdf` | PDF craft editor | craft editors Phase 1 (live) |
 | `video` | `application/vnd.allternit.video+json` (FilmCraft project) | FilmCraft editor | craft editors Phase 3 (live) |
+| `plan` | `text/markdown` (the plan as Markdown) | Plan viewer (read-only; written by Gizzi) | artifacts redesign 2026-11-25. Hidden from the default list, see "Plans" below |
 
 Unknown kinds render as `page` if HTML, otherwise as code. The kind list lives in one shared file per side: `cmd/allternit-cloud-api/src/artifacts/kinds.rs` and `allternit-ai/src/lib/artifacts/kinds.ts`.
 
@@ -153,10 +154,10 @@ Viewers who aren't editors see `shared_version` (or latest when null); editors a
 
 | Method + path | Body / query | Returns |
 |---|---|---|
-| `GET /api/v2/artifacts` | `scope=mine\|shared\|all` (default all), `kind`, `q` (title search), `origin` (surface), `cursor`, `limit≤100` | `{items:[ArtifactSummary], next_cursor}` newest `updated_at` first |
+| `GET /api/v2/artifacts` | `scope=mine\|shared\|all` (default all), `kind`, `q` (title search), `origin` (surface), `cursor`, `limit≤100` | `{items:[ArtifactSummary], next_cursor}` newest `updated_at` first. Without `kind`, `plan` rows are left out; only `kind=plan` lists them |
 | `POST /api/v2/artifacts` | `{id?, kind, title, icon?, template_id?, origin?, capabilities?, body, body_format, meta?, runtime_version?}` | `Artifact` (201). Supplying an existing `id` you own returns it unchanged (idempotent). `runtime_version:1` only with `origin.legacy_source` set. |
 | `GET /api/v2/artifacts/:id` | — | `Artifact` incl. `version_body` of the version this caller sees |
-| `PATCH /api/v2/artifacts/:id` | `{title?, icon?, shared_version? (number\|null), capabilities?}` | `Artifact` |
+| `PATCH /api/v2/artifacts/:id` | `{title?, icon?, shared_version? (number\|null), capabilities?, plan_status? ('open'\|'approved'\|'done')}` | `Artifact`. `plan_status`: owner only (403 otherwise), plan rows only (422 `not_a_plan`), other values 422 `invalid_plan_status`; it adds no version |
 | `DELETE /api/v2/artifacts/:id` | — | 204. Owner only. **Permanent**, no trash. |
 | `GET /api/v2/artifacts/:id/versions` | — | `{items:[{version, author_id, created_at, size_bytes, meta}]}` |
 | `GET /api/v2/artifacts/:id/versions/:v` | — | `{version, body, body_format, meta, ...}` |
@@ -175,7 +176,7 @@ Presence (`/:id/presence`, `POST` heartbeat and `GET`) is stored in `artifact_pr
 
 ```ts
 type Access = 'owner' | 'edit' | 'comment' | 'view';
-interface ArtifactSummary { id; kind; title; icon?; owner:{id,name?,image_url?}; updated_at; current_version; visibility; my_access:Access; origin:{surface?,legacy_source?}; runtime_version; thumbnail_url? }
+interface ArtifactSummary { id; kind; title; icon?; owner:{id,name?,image_url?}; updated_at; current_version; visibility; my_access:Access; origin:{surface?,legacy_source?}; runtime_version; thumbnail_url?; plan?:{status:'open'|'approved'|'done'} /* plan rows only */ }
 interface Artifact extends ArtifactSummary { template_id?; capabilities; shared_version:number|null; created_at; version:{version, body, body_format, meta, author_id, created_at} }
 interface Sharing { visibility:'private'|'people'|'org'|'link'; shares:{principal_type, principal_id, level, display?, expires_at?, accepted_at?}[]; link_url?:string; policy:{link_allowed:boolean, outside_invites_allowed:boolean, reason?:string} }
 ```
@@ -224,3 +225,13 @@ The list query's `archived` flag defaults to false. Its predicate remains inside
 Saved and archived lists have distinct cache keys. New creations enter saved lists only. Archive writes wait for server acknowledgement, invalidate matching library membership, then refresh caches. Request sequencing prevents a pre-mutation list response or a prior account's list from repopulating the current library.
 
 Apply migration 109 and deploy Cloud API before releasing the shared workspace UI. No production migration is executed by this source change.
+
+## Plans (2026-11-25, migration 166)
+
+A plan is an artifact of kind `plan` (artifacts redesign plan D10-D12). Gizzi writes it at `plan_exit`.
+
+- **One per chat.** The id is `art_plan_<session id>`. A create with an id the caller already owns returns that row unchanged (the idempotent create above), so a chat never gets a second plan row. A revised plan is a new version (`POST /:id/versions`).
+- **Never in the default list.** `GET /api/v2/artifacts` without `kind` leaves `plan` rows out, so shipped clients (old Desktop, iOS, Android) never show plans in Recent or Everything. The Plans filter asks for `kind=plan`. Search, scope, origin and archive combine with the same rule.
+- **Status** is the nullable `artifacts.plan_status` column (`open`, `approved`, `done`; NULL reads as `open`). Only the owner sets it, with `PATCH {plan_status}`, and a status change adds no version. `ArtifactSummary.plan = {status}` appears on plan rows only. The server reads the column only for plan rows, so no other kind depends on migration 166.
+- **Not an app.** `PUT /:id/app` refuses a plan with 422 `kind_not_installable`.
+- Migration 166 (`migrations_pg/166_plan_artifacts.sql`) is additive: the column with its check, and a partial index on `(owner_id, updated_at DESC) WHERE kind = 'plan'` for the Plans filter.
