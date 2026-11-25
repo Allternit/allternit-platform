@@ -180,6 +180,9 @@ data class MessageRecord(
     val toolCalls: List<ToolCallRecord> = emptyList(),
     val questions: List<QuestionAsk> = emptyList(),
     val permissions: List<PermissionAsk> = emptyList(),
+    /** MCP task and question ids from this reply; the latest state lives in [McpTasksStore] (drawn only with the `mcp.tasks` flag). */
+    val mcpTaskIds: List<String> = emptyList(),
+    val mcpFormIds: List<String> = emptyList(),
     val artifacts: List<ArtifactRecord> = emptyList(),
     val error: ChatError? = null,
     val perfStats: PerfStats? = null,
