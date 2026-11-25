@@ -271,11 +271,15 @@ Bots in the app have the same rule on the server side, for every attached MCP se
 
 Some servers run slow tools as tasks (MCP revision 2025-11-25). When a server declares task support for `tools/call` and a tool sets `execution.taskSupport` to `optional` or `required`, Gizzi starts the call as a task and checks on it at the interval the server asks for (between 0.25 and 5 seconds) instead of waiting on one request.
 
-- The tool line shows the task's state, time so far and the server's status text, for example `MCP task Working · 42s · Indexing 3,000 files`.
-- **Esc** stops it: Gizzi sends `tasks/cancel` to the server.
-- The result is read with `tasks/result` once the task leaves the working state, so a task that needs input can ask for it.
-- On a 2026-07-28 connection, tasks are an extension the SDK Gizzi uses (`@modelcontextprotocol/client` 2.3.1) does not run yet, so those tools are called normally.
-- The terminal app and the engine (`gizzi run`, the app's Code sessions) both do this. Developers: `src/shared/util/mcp-tasks.ts`, test `test/mcp/tasks.test.ts`.
+- The tool line shows the server, the task's state, time so far, progress and the server's status text, for example `MCP task Working · docs · 42s · 3/10 · Indexing 3,000 files · Esc to stop`.
+- **Esc** stops it: Gizzi sends `tasks/cancel` to the server. Apps and the web chat show the same task as one card with a Stop button (`POST /mcp/task/:taskId/cancel`).
+- **2026-07-28 connections** use the final tasks extension (`io.modelcontextprotocol/tasks`). Gizzi calls the tool normally; if the server answers with a task it polls `tasks/get` at the server's `pollInterval` and stops at its `ttl`. When the task is `input_required`, each entry in `inputRequests` opens the normal elicitation form and is answered with `tasks/update`. The result comes back inside the completed task; there is no `tasks/result`.
+- **Older connections (2025-11-25)** read the result with `tasks/result` once the task leaves the working state, so a task that needs input can ask for it there.
+- The terminal app and the engine (`gizzi run`, the app's Code sessions) both do this. Developers: `src/shared/util/mcp-tasks.ts`, stream parts in `src/runtime/tools/mcp/task-stream.ts` (`mcp.task`, `mcp.elicitation`, reply `POST /mcp/elicitation/:requestID/reply`), test `test/mcp/tasks.test.ts`.
+
+## MCP skills
+
+A server that lists `skill://<name>/SKILL.md` resources gets each one added as a command named `mcp__<server>__skill_<name>`. This is on by default (the `MCP_SKILLS` feature flag).
 
 ## Disabling MCP support
 

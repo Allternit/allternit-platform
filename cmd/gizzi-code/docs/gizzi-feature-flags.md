@@ -42,7 +42,7 @@ ALLOW_TEST_VERSIONS, BREAK_CACHE_COMMAND, HARD_FAIL, FILE_LOGGING, SLOW_OPERATIO
 ## Off, incomplete or superseded here
 
 - BASH_CLASSIFIER, POWERSHELL_AUTO_MODE: `bashClassifier.ts` is an internal-only stub, and auto mode runs on TRANSCRIPT_CLASSIFIER alone.
-- COORDINATOR_MODE, WEB_BROWSER_TOOL, HISTORY_SNIP, MCP_SKILLS, EXPERIMENTAL_SKILL_SEARCH: their tool or command modules were never ported.
+- COORDINATOR_MODE, WEB_BROWSER_TOOL, HISTORY_SNIP, EXPERIMENTAL_SKILL_SEARCH: their tool or command modules were never ported.
 - REACTIVE_COMPACT, CONTEXT_COLLAPSE, BG_SESSIONS: context-management and background-session experiments.
 - TREE_SITTER_BASH_SHADOW: telemetry-only comparison of the AST and legacy checks; TREE_SITTER_BASH is on instead.
 - VOICE_MODE: Claude Code voice uses Anthropic's voice endpoint. Allternit voice has its own architecture.

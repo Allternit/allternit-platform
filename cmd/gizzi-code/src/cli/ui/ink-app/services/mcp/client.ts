@@ -85,6 +85,7 @@ import {
   type ElicitationWaitingState,
   runElicitationHooks,
   runElicitationResultHooks,
+  elicitViaQueue,
 } from './elicitationHandler.js'
 import { buildMcpToolName } from './mcpStringUtils.js'
 import { normalizeNameForMCP } from './normalization.js'
@@ -98,7 +99,12 @@ const fetchMcpSkillsForClient = feature('MCP_SKILLS')
   : null
 
 import { UnauthorizedError } from '@modelcontextprotocol/client'
-import { callToolAsTask, formatTaskUpdate, shouldCallAsTask } from '@/shared/util/mcp-tasks'
+import {
+  callToolAsTask,
+  formatTaskUpdate,
+  shouldCallAsTask,
+  type McpInputResponse,
+} from '@/shared/util/mcp-tasks'
 import type { AssistantMessage } from './../../types/message.ts'
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { classifyMcpToolForCollapse } from '../../tools/MCPTool/classifyForCollapse.js'
@@ -2862,6 +2868,7 @@ export async function callMCPToolWithUrlElicitationRetry({
     signal: AbortSignal
     onProgress?: (data: MCPProgress) => void
     taskSupport?: string
+    setAppState?: (f: (prev: AppState) => AppState) => void
   }) => Promise<MCPToolCallResult>
   /** Handler for URL elicitations when no hook handles them.
    * In print/SDK mode, delegates to structuredIO. In REPL, falls back to queue. */
@@ -2882,6 +2889,7 @@ export async function callMCPToolWithUrlElicitationRetry({
         signal,
         onProgress,
         taskSupport,
+        setAppState,
       })
     } catch (error) {
       // The MCP SDK's Protocol may create a plain ProtocolError (not UrlElicitationRequiredError)
@@ -3059,6 +3067,7 @@ async function callMCPTool({
   signal,
   onProgress,
   taskSupport,
+  setAppState,
 }: {
   client: ConnectedMCPServer
   tool: string
@@ -3067,6 +3076,7 @@ async function callMCPTool({
   signal: AbortSignal
   onProgress?: (data: MCPProgress) => void
   taskSupport?: string
+  setAppState?: (f: (prev: AppState) => AppState) => void
 }): Promise<{
   content: MCPToolResult
   _meta?: Record<string, unknown>
@@ -3127,13 +3137,26 @@ async function callMCPTool({
             meta,
             signal,
             requestTimeoutMs: timeoutMs,
+            // Final-spec input requests open the same dialog as a plain elicitation.
+            onElicit: setAppState
+              ? async requests => {
+                  const out: Record<string, McpInputResponse> = {}
+                  for (const [key, request] of Object.entries(requests)) {
+                    out[key] =
+                      request.method && request.method !== 'elicitation/create'
+                        ? { action: 'decline' }
+                        : ((await elicitViaQueue(name, request.params ?? {}, signal, setAppState)) as McpInputResponse)
+                  }
+                  return out
+                }
+              : undefined,
             onUpdate: update =>
               onProgress?.({
                 type: 'mcp_progress',
                 status: 'progress',
                 serverName: name,
                 toolName: tool,
-                progressMessage: formatTaskUpdate(update),
+                progressMessage: `${formatTaskUpdate(update, name)} · Esc to stop`,
               }),
           })
         : client.callTool(
