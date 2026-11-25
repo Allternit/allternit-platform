@@ -618,6 +618,10 @@ export type BranchPR = {
   isDraft: boolean
   branch: string
   checks: PrCheck[]
+  /** gh `baseRefName`, `mergeable` (MERGEABLE | CONFLICTING | UNKNOWN) and `mergeStateStatus`. */
+  base?: string
+  mergeable?: string
+  mergeState?: string
 }
 
 export function checkState(c: any): PrCheck["state"] {
@@ -636,6 +640,9 @@ export function toBranchPR(json: any): BranchPR {
     state: json.state,
     isDraft: !!json.isDraft,
     branch: json.headRefName,
+    base: json.baseRefName,
+    mergeable: json.mergeable,
+    mergeState: json.mergeStateStatus,
     checks: (json.statusCheckRollup ?? []).map((c: any) => ({
       name: c.name || c.context || "check",
       state: checkState(c),
@@ -648,7 +655,7 @@ export function toBranchPR(json: any): BranchPR {
 export async function currentBranchPR(cwd: string = process.cwd()): Promise<BranchPR | null> {
   try {
     const proc = Bun.spawn(
-      ["gh", "pr", "view", "--json", "number,title,url,state,isDraft,headRefName,statusCheckRollup"],
+      ["gh", "pr", "view", "--json", "number,title,url,state,isDraft,headRefName,baseRefName,mergeable,mergeStateStatus,statusCheckRollup"],
       { cwd, stdout: "pipe", stderr: "ignore" },
     )
     const timer = setTimeout(() => proc.kill(), 15_000)
@@ -661,12 +668,92 @@ export async function currentBranchPR(cwd: string = process.cwd()): Promise<Bran
   }
 }
 
+/**
+ * How many files conflict with the base: `git merge-tree --write-tree`
+ * (git 2.38+) lists them. undefined when it can't be told (old git, no
+ * remote ref); only asked when gh says the PR is CONFLICTING.
+ */
+export async function conflictCount(base: string, cwd: string = process.cwd()): Promise<number | undefined> {
+  try {
+    const proc = Bun.spawn(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", `origin/${base}`, "HEAD"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const timer = setTimeout(() => proc.kill(), 15_000)
+    const out = await new Response(proc.stdout).text()
+    clearTimeout(timer)
+    if ((await proc.exited) !== 1) return undefined
+    return parseConflictFiles(out)
+  } catch {
+    return undefined
+  }
+}
+
+/** merge-tree output: tree id, then one conflicted path per line (a blank line ends the list). */
+export function parseConflictFiles(out: string): number {
+  const [, ...rest] = out.split("\n")
+  const files = new Set<string>()
+  for (const l of rest) {
+    if (!l.trim()) break
+    files.add(l.trim())
+  }
+  return files.size
+}
+
 export function checkCounts(pr: BranchPR): { pass: number; fail: number; pending: number } {
   return {
     pass: pr.checks.filter((c) => c.state === "pass").length,
     fail: pr.checks.filter((c) => c.state === "fail").length,
     pending: pr.checks.filter((c) => c.state === "pending").length,
   }
+}
+
+const MERGE_STATE: Record<string, { text: string; tone: "good" | "bad" | "wait" | "none" }> = {
+  CLEAN: { text: "ready to merge", tone: "good" },
+  HAS_HOOKS: { text: "ready to merge", tone: "good" },
+  UNSTABLE: { text: "checks failing", tone: "bad" },
+  BLOCKED: { text: "blocked", tone: "bad" },
+  BEHIND: { text: "behind base", tone: "wait" },
+  DIRTY: { text: "has conflicts", tone: "bad" },
+  DRAFT: { text: "draft", tone: "none" },
+  UNKNOWN: { text: "checking", tone: "wait" },
+}
+
+export type PrStatusLine = { label: string; text: string; tone: "good" | "bad" | "wait" | "none" }
+
+const NAMED_CHECKS: Array<[string, RegExp]> = [
+  ["lint", /lint/i],
+  ["types", /type(s|check)?\b|tsc/i],
+  ["preview", /preview|deploy|vercel|pages/i],
+]
+const CHECK_MARK: Record<PrCheck["state"], string> = { pass: "✓", fail: "✗", pending: "●", skip: "–" }
+
+/**
+ * The /pr status lines under the title: merge state with the conflict count,
+ * and lint / types / preview check marks (a name with no matching check is
+ * left out). Plain glyphs and words, so it reads the same without color.
+ */
+export function formatPrStatus(pr: BranchPR, conflicts?: number): PrStatusLine[] {
+  const lines: PrStatusLine[] = []
+  const conflicting = pr.mergeable === "CONFLICTING"
+  const merge = MERGE_STATE[pr.mergeState ?? ""] ?? MERGE_STATE.UNKNOWN!
+  const parts = [conflicting && pr.mergeState !== "DIRTY" ? "has conflicts" : merge.text]
+  if (conflicting) parts.push(conflicts === undefined ? "conflicts with " + (pr.base ?? "base") : `${conflicts} conflicting file${conflicts === 1 ? "" : "s"}`)
+  else if (pr.mergeable === "MERGEABLE") parts.push("no conflicts")
+  lines.push({ label: "Merge", text: parts.join(" · "), tone: conflicting ? "bad" : merge.tone })
+  const marks: string[] = []
+  let worst: PrStatusLine["tone"] = "good"
+  for (const [name, re] of NAMED_CHECKS) {
+    const hit = pr.checks.filter((c) => re.test(c.name))
+    if (!hit.length) continue
+    const state: PrCheck["state"] = hit.some((c) => c.state === "fail") ? "fail" : hit.some((c) => c.state === "pending") ? "pending" : hit.every((c) => c.state === "skip") ? "skip" : "pass"
+    marks.push(`${name} ${CHECK_MARK[state]}`)
+    if (state === "fail") worst = "bad"
+    else if (state === "pending" && worst !== "bad") worst = "wait"
+  }
+  if (marks.length) lines.push({ label: "Checks", text: marks.join(" · "), tone: worst })
+  return lines
 }
 
 /** `PR #123 ✓4 ✗1 ●2` — the footer chip. */
