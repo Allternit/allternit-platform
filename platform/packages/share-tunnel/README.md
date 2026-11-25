@@ -11,7 +11,7 @@ const tunnel = createShareTunnel({
   relayApi: "https://api.live.allternitusercontent.com",
   cloudApi: "https://api.allternit.com",
   getAuthToken: () => session.token(),
-  gate: httpShareGate({ baseUrl: "http://127.0.0.1:8013", token: localApiToken }),
+  gate: httpShareGate({ baseUrl: "http://127.0.0.1:8013", auth: { bearer: () => session.token() } }),
   onEvent: (event) => log(event),
 });
 const link = await cloudApi.createShareLink({ kind: "live", subject: "port", target_port: 3000, runtime_device_id });
@@ -20,6 +20,10 @@ share.url;            // https://<subdomain>.live.allternitusercontent.com
 await share.stop();   // or it stops itself: heartbeat 410 → "killed"/"revoked", paused → "paused"
 ```
 
+- Gate contract (allternit-api `share_routes.rs`): `POST /shares {port, subject, auth_mode: "token"|"public", share_link_id}`
+  → `{share, token}`; `pause`, `rotate`, `stop` (`DELETE` also). `share.token` (`ast_...`) is what visitors send, as
+  `X-Allternit-Share-Token` (or `?allternit_share_token=` once), never Bearer. `share.pause()` / `share.rotate()` call the gate.
+  Runtime auth: `{ bearer }` (session) or `{ userId, desktopAccessToken }` (Desktop bootstrap). `signed_in`/`org` links use `token`.
 - Ports 8013, 18013 (allternit-api) and 4096 (gizzi) are refused here and again in the gate.
 - One OpenTunnel profile per link (profile = subdomain) under `dataDir` (default `~/.allternit/share-tunnel`).
   The first start on a device needs the relay credential; later starts reuse the saved identity.

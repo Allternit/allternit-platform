@@ -96,7 +96,7 @@ describe.skipIf(!run)("relay admission + share tunnel (local opentunnel-server)"
     const name = newName();
     const gateClosed: string[] = [];
     const gate: ShareGate = {
-      open: async () => ({ id: "gate_1", target: `127.0.0.1:${appPort}` }),
+      open: async () => ({ id: "gate_1", target: `127.0.0.1:${appPort}`, token: "ast_t1", authMode: "token" as const, paused: false }),
       close: async (id) => void gateClosed.push(id),
     };
     const tunnel = createShareTunnel({

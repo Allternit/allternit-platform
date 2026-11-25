@@ -11,6 +11,7 @@ import {
   ShareTunnelError,
   type LiveShare,
   type LiveShareStatus,
+  type GateShare,
   type ShareGate,
   type ShareTunnelEvent,
   type StartShareInput,
@@ -115,13 +116,14 @@ export function createShareTunnel(options: ShareTunnelOptions): ShareTunnel {
       client = openTunnel(admissionApi(options.relayApi, credential));
     }
 
-    let gateShare: { id: string; target: string };
+    let gateShare: GateShare;
     try {
       gateShare = await options.gate.open({
         linkId: link.id,
-        subdomain: link.subdomain,
         port,
-        authMode: input.authMode ?? "public",
+        authMode: input.authMode ?? "token",
+        ...(input.subject ? { subject: input.subject } : {}),
+        ...(input.label ? { label: input.label } : {}),
       });
     } catch (error) {
       await client.dispose();
@@ -227,6 +229,18 @@ export function createShareTunnel(options: ShareTunnelOptions): ShareTunnel {
       subdomain: link.subdomain,
       url: `https://${connection.tunnel.hostname}`,
       port,
+      get token() {
+        return gateShare.token;
+      },
+      async pause(paused = true) {
+        if (!options.gate.pause) throw new ShareTunnelError("gate_failed", "This share gate cannot pause.");
+        await options.gate.pause(gateShare.id, paused);
+      },
+      async rotate() {
+        if (!options.gate.rotate) throw new ShareTunnelError("gate_failed", "This share gate cannot rotate.");
+        gateShare = { ...gateShare, token: await options.gate.rotate(gateShare.id) };
+        return gateShare.token;
+      },
       status: () => ({ ...status }),
       stop: (reason) => stop(reason ?? "stopped"),
       stopped,
