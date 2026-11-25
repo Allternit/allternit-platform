@@ -5604,6 +5604,10 @@
         {
           "on": "2026-11-25",
           "note": "Bar window is a white card; the pill is a black capsule. Android opens a Compose bar screen from a widget because a widget cannot hold text input."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "Round 3 components (join touches when their PRs merge, since touches must resolve): ai src/components/bar, src/components/island, src/pages/BarWindowPage.tsx, src/pages/PillWindowPage.tsx; desktop island-hotkey.ts, island-bar-window.ts, island-pill-window.ts (platform #3035, #3039; ai #1351, #1353); iOS Features/IslandBar (#3037); android feature/bar; api bar_routes.rs. Global shortcut: Alt+Space, fallback Alt+Shift+Space, never steals a key another app holds. Pill shows while a job waits, works or needs input and hides 4 s after. Needs bar.island on in Desktop and in the app."
         }
       ],
       "evidence": [
@@ -5640,6 +5644,10 @@
         {
           "on": "2026-11-25",
           "note": "Ceiling checks fail closed (503 tier_check_unavailable). A bot on a vendor app needs both the app grant and the connector grant."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "Round 3 components (join touches when their PRs merge): ai office TeamMap; iOS Features/Office/TeamMap (#3038); api team_routes.rs, team_rules.rs. Rules carry locked (always false today), review approver.role, rule unit_label filled from the tool's currency (#3036, #3000)."
         }
       ],
       "evidence": [

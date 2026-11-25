@@ -29,6 +29,8 @@ You can cancel a job that has not finished.
 | ai.allternit.com and m.allternit.com | The same sentence appears in the composer after you pick an app chip. On a phone it opens as a bottom sheet. |
 | Terminal | `gizzi do`. See [gizzi do](/cli/do). |
 
+On iPhone the island pill shows the job. The composer has **Do with an app**, which opens the same bar as a sheet. `allternit://bar` opens it from a link. The **Do with Allternit** Shortcut starts a run from the Shortcuts app. A finished job leaves a Live Activity receipt such as "Refunded €320". Your connections also appear in Spotlight.
+
 Android widgets cannot hold a text box, so the widget opens the bar screen rather than typing in place.
 
 ## The hotkey
@@ -39,7 +41,22 @@ Android widgets cannot hold a text box, so the widget opens the bar screen rathe
 | Windows | Alt + Space |
 | Linux | Alt + Space |
 
-You can change it in Settings, on the shortcut row for the bar.
+Change it in Settings, Keyboard shortcuts, on the row **Open Island bar**.
+
+### The pill
+
+While a job waits, works or needs your input, a small pill shows. When the job ends it hides after 4 seconds.
+
+| System | Where the pill sits |
+| --- | --- |
+| macOS | Top centre, under the menu bar and the notch |
+| Windows | Top centre of the display the cursor is on |
+| Linux (X11) | Top centre |
+| Linux (Wayland) | A dot in the tray |
+
+### Deep link
+
+`allternit://bar?app=<app>&tool=<tool>&v.<field>=<value>` opens the bar on that app and tool, with the blanks you name already filled. Only `allternit://bar` opens it empty.
 
 ### If the hotkey does nothing
 
@@ -47,12 +64,13 @@ Another app may already hold the key. Option + Space is often used by launchers 
 
 - If Allternit cannot take the key, it tries Option + Shift + Space (Mac) or Alt + Shift + Space (Windows, Linux) and shows a one-time notice that asks you to pick your own shortcut.
 - If you pick a key another app already uses, Settings shows a conflict message and the old key stays.
+- Allternit never takes a key another app holds.
 - If you set a key and the other app still wins, turn the key off in that app, or pick a different one.
 - You can always open the bar from the tray or menu bar icon.
 
 ### Linux on Wayland
 
-Some Wayland desktops do not let apps register a global hotkey. On those, the hotkey does not work. Click the tray icon, or open the link `allternit://bar`. You can also bind a key in your desktop's own keyboard settings to run that link.
+Linux on Wayland has no global shortcut for apps. Use the tray item **Open Island bar**, or open the link `allternit://bar`. You can also bind a key in your desktop's own keyboard settings to run that link.
 
 ## Approvals
 
@@ -80,7 +98,7 @@ The bar runs your tools through your computer. If none is connected, you get the
 - Apps made from artifacts are listed, but the runtime cannot run them yet.
 - The access ceiling for another member's bot on an artifact or vendor app returns 503 (`tier_check_unavailable`). It fails closed, so the change is refused.
 - Callers on the edge get 403 with an `allternit/approvalId`. There is no waiting task: approve, then retry with that id.
-- Both features are behind flags, `bar.island` and `team.map`, and both are off by default.
+- Both features are behind flags, `bar.island` and `team.map`, and both are off by default. `bar.island` must be on in both Desktop and the app: set `ALLTERNIT_FLAG_BAR_ISLAND=1` or add it to `~/.allternit/flags.json` for Desktop, and turn it on in the app. `team.map` turns on the Team map.
 
 ## What is not ready yet
 
