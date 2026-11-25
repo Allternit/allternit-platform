@@ -56,7 +56,17 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
                     val id = f.str("id") ?: return@forEachIndexed
                     val text = f.str("text") ?: f.str("content") ?: f.str("fact") ?: id
                     if (i > 0) SDivider()
-                    SRow(text, "memory_fact_$id", detail = f.str("source"), chevron = false, onClick = { forget = id to text })
+                    SRow(text, "memory_fact_$id", detail = f.str("source"), chevron = false, onClick = { forget = if (forget?.first == id) null else id to text })
+                    if (forget?.first == id) {
+                        // Forgetting is a hold, never a dialog.
+                        com.allternit.core.design.HoldButton("Hold to forget", "memoryForgetHold_$id", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), danger = true) {
+                            forget = null
+                            scope.launch {
+                                val r = Net.send("DELETE", "memory/v2/facts/${LibraryNet.escape(id)}")
+                                if (r is ApiResult.Ok) { error = null; reloadFacts() } else error = r.friendly("forget that memory")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -75,23 +85,6 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
         SLabel("Memory drive")
         SCard {
             SRow("Memory drive", "memory_drive_row", detail = "The files your bots keep, with every change saved.", onClick = { push("memory-drive") })
-        }
-        forget?.let { (id, text) ->
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { forget = null },
-                title = { androidx.compose.material3.Text("Forget this?") },
-                text = { androidx.compose.material3.Text("Allternit forgets “$text”.") },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        forget = null
-                        scope.launch {
-                            val r = Net.send("DELETE", "memory/v2/facts/${LibraryNet.escape(id)}")
-                            if (r is ApiResult.Ok) { error = null; reloadFacts() } else error = r.friendly("forget that memory")
-                        }
-                    }) { androidx.compose.material3.Text("Forget", color = Danger) }
-                },
-                dismissButton = { androidx.compose.material3.TextButton(onClick = { forget = null }) { androidx.compose.material3.Text("Cancel") } },
-            )
         }
     }
 }
@@ -142,6 +135,8 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
             SLabel("Files")
             LoadView(tree, reloadTree, "load the files") { body ->
                 val rows = body.listUnder("files", "entries", "tree", "items").filter { (it.str("type") ?: "file") != "dir" && (it.str("type") ?: "file") != "directory" }
+                val skipped = (body.obj["skipped_entries"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
+                if (skipped > 0) SNote("$skipped ${if (skipped == 1) "entry was" else "entries were"} skipped because ${if (skipped == 1) "it" else "they"} could not be read. The rest of your drive is synced.")
                 if (rows.isEmpty()) SNote("No files yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                     rows.forEachIndexed { i, f ->
                         val path = f.str("path") ?: f.str("name") ?: return@forEachIndexed

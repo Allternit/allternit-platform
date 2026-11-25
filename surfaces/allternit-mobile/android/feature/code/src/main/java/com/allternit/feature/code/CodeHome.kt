@@ -329,8 +329,9 @@ private fun ThreadActionsSheet(host: CodeHost, s: CodeSessionRow, onDismiss: () 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 CodePill("Rename", testTag = "codeThreadRename", filled = true, enabled = name.isNotBlank() && name != s.title) { act { CodeApi.rename(s.id, name.trim()) } }
                 if (s.status == CodeSessionStatus.ReadyForReview) CodePill("Mark reviewed", testTag = "codeThreadReviewed") { act { CodeApi.markReviewed(s.id) } }
-                if (s.status != CodeSessionStatus.Archived) CodePill("Archive", testTag = "codeThreadArchive", tint = AllternitStatic.StatusError) { act { CodeApi.archive(s.id) } }
             }
+            // Deleting a thread is a hold, never a dialog (the web ConfirmMorph hold mode).
+            if (s.status != CodeSessionStatus.Archived) com.allternit.core.design.HoldButton("Hold to delete", "codeThreadArchive", danger = true) { act { CodeApi.archive(s.id) } }
             Box(Modifier.padding(bottom = 16.dp))
         }
     }
