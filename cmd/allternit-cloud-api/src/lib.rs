@@ -499,6 +499,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // handler resolves the caller itself (Clerk session, token or device token).
         .merge(routes::share_links::routes())
         .merge(routes::admin_share_links::routes())
+        // App shelf, installs, vendor app records (Apps + MCP 2026 lane 9).
+        .merge(routes::apps::routes())
         .merge(routes::artifacts_comments::routes())
         // Agent suggestions (SPEC-agent-watch): pending edits the client accepts or rejects.
         .merge(routes::artifacts_suggestions::routes())
