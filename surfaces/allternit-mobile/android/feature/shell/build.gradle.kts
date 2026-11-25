@@ -62,6 +62,8 @@ dependencies {
     implementation(project(":feature:push"))
     // Wave I2: status snapshot refresh on foreground, the system links (widget, tiles, shortcuts).
     implementation(project(":feature:system"))
+    // Island bar: "Do with an app" in the + sheet and allternit://bar (flag bar.island, off by default).
+    implementation(project(":feature:bar"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Gap run GS-B: FilesSession (the Files drive signs in with the native session).

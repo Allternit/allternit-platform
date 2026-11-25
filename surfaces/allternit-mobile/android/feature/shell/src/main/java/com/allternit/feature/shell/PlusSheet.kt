@@ -181,6 +181,14 @@ internal fun PlusSheet(
                     PlusDivider()
                     // iOS: Camera · Add files · GitHub link · Sketch (full-screen canvas).
                     PlusRow(com.allternit.core.design.R.drawable.ph_scribble_loop, "Sketch", testTag = "plusSheetSketch") { sketchOpen = true }
+                    if (com.allternit.feature.bar.BarFlag.isOn(context)) {
+                        PlusDivider()
+                        // The island bar (feature/bar): run one tool of a connected app (iOS plusSheetIslandBar).
+                        PlusRow(com.allternit.core.design.R.drawable.ph_lightning, com.allternit.feature.bar.BarWording.entry, testTag = "plusSheetIslandBar") {
+                            onDismiss()
+                            com.allternit.feature.bar.BarDeepLink.open(context)
+                        }
+                    }
                 }
                 PlusGroup {
                     PlusRow(com.allternit.core.design.R.drawable.ph_shield_check, "Permission settings", chevron = true) {

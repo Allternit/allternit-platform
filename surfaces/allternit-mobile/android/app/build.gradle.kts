@@ -227,6 +227,8 @@ dependencies {
     "nativeappImplementation"(project(":feature:shell"))
     // Wave I2: the widget, tiles and share target classes the nativeapp manifest declares (also reached through :feature:shell).
     "nativeappImplementation"(project(":feature:system"))
+    // Island bar: BarActivity, declared in the nativeapp manifest (flag bar.island, off by default).
+    "nativeappImplementation"(project(":feature:bar"))
     // Files key crypto (files/FilesKeyCrypto.kt): X25519, HKDF-SHA256 and
     // ChaCha20-Poly1305 from BouncyCastle (MIT), the same version :ondevice uses.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
