@@ -39,8 +39,8 @@ struct AgentModeEntry: Sendable {
 enum AgentModes {
     static let version = 1
     static let surfaces: [String] = ["chat","bot","code","browser","design"]
-    static let legacyIds: [String: String] = {"artifact":"agent"}
-    static let legacySurfaces: [String: String] = {"cowork":"chat"}
+    static let legacyIds: [String: String] = ["artifact": "agent"]
+    static let legacySurfaces: [String: String] = ["cowork": "chat"]
 
     static let all: [AgentModeEntry] = [
         AgentModeEntry(id: "agent", label: "Agent (auto)", icon: "auto", artifact: false, beta: false, isNew: false, placeholder: "Ask anything...", launchType: .agentMode, agentMode: "artifact", session: nil, pick: nil, libraryKind: nil, surfaces: ["chat","bot"], connectors: .none, storage: .none, ai: .none),
