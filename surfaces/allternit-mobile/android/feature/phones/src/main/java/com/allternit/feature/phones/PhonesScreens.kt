@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -286,34 +290,110 @@ fun AndroidScreenPairingScreen(host: PhonesHost, onBack: () -> Unit) {
     }
 }
 
-/** iOS PhoneTaskCardView: one phone task run, read only. Goal, status, step, the last screenshot, "Needs your OK". */
+/** Android animator scale 0 = reduced motion (the system "remove animations" switch). */
+@Composable
+private fun rememberReducedMotion(): Boolean {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    return remember { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+}
+
+private fun clock(ms: Long): String { val t = (ms / 1000).coerceAtLeast(0); return "%d:%02d".format(t / 60, t % 60) }
+
+/**
+ * iOS PhoneTaskCardView: one phone task run, read only. Goal, timer, step rows (radio to check), an n/m bar, a mono beam
+ * while it runs, and a one-line green-check row once it is done (tap to open it again). "Needs your OK" stays.
+ */
 @Composable
 fun PhoneTaskCard(runId: String, backend: ChatBackend, onOpenInbox: () -> Unit, modifier: Modifier = Modifier) {
     val c = AllternitTheme.colors
+    val reduce = rememberReducedMotion()
     var run by remember(runId) { mutableStateOf<PhoneRun?>(null) }
     var lost by remember(runId) { mutableStateOf(false) }
     var thumb by remember(runId) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var startedAt by remember(runId) { mutableStateOf(System.currentTimeMillis()) }
+    var now by remember(runId) { mutableStateOf(startedAt) }
+    var endedAt by remember(runId) { mutableStateOf<Long?>(null) }
+    var expanded by remember(runId) { mutableStateOf(false) }
+    // Step labels seen while following; the runtime list carries only the current one.
+    val seen = remember(runId) { androidx.compose.runtime.mutableStateListOf<String>() }
     LaunchedEffect(runId) {
         while (true) {
             val r = backend.phoneRun(runId)
-            if (r == null) lost = true else { lost = false; run = r }
+            if (r == null) lost = true else {
+                lost = false; run = r
+                if (r.startedAt > 0) startedAt = r.startedAt
+                r.stepLabel?.let { if (it !in seen) seen.add(it) }
+            }
             backend.runtimeBytes("/api/v1/phones/runs/${com.allternit.feature.artifacts.LibraryNet.escape(runId)}/thumb", "image/*")?.takeIf { it.first == 200 }?.let { (_, bytes) ->
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { thumb = it.asImageBitmap() }
             }
-            if (r?.terminal == true) break
+            if (r?.terminal == true) { endedAt = System.currentTimeMillis(); break }
             delay(2_000)
         }
     }
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp)).testTag("phoneTaskCard$runId").padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val r = run
+    LaunchedEffect(runId, endedAt) { while (endedAt == null) { now = System.currentTimeMillis(); delay(1_000) } }
+    val r = run
+    val running = r != null && !r.terminal
+    val elapsed = (endedAt ?: now) - startedAt
+    val done = r != null && r.status in setOf("completed", "done")
+    val collapsed = done && !expanded
+    val shape = RoundedCornerShape(14.dp)
+    // One mono beam lap on the running card border; off under reduced motion and for the first 3 s.
+    val beam = if (running && !reduce && elapsed > 3_000) {
+        val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "phoneBeam")
+        t.animateFloat(0f, 360f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(2400, easing = androidx.compose.animation.core.LinearEasing)), label = "beamAngle").value
+    } else null
+    val beamColor = c.textPrimary
+    Column(
+        modifier.fillMaxWidth().clip(shape).background(c.bgPanel)
+            .border(BorderStroke(1.dp, c.borderSubtle), shape)
+            .then(if (beam != null) Modifier.drawWithContent {
+                drawContent()
+                rotate(beam) {
+                    drawRoundRect(
+                        brush = androidx.compose.ui.graphics.Brush.sweepGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, androidx.compose.ui.graphics.Color.Transparent, beamColor.copy(alpha = 0.55f), androidx.compose.ui.graphics.Color.Transparent)),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()),
+                    )
+                }
+            } else Modifier)
+            .then(if (done) Modifier.clickable(role = Role.Button) { expanded = !expanded } else Modifier)
+            .testTag("phoneTaskCard$runId").padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         if (r == null) {
             Text(if (lost) "Can't reach your computer to follow this phone task." else "Following the phone task…", color = c.textSecondary, fontSize = 14.sp)
+        } else if (collapsed) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("✓", color = AllternitStatic.StatusSuccess, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(r.goal.ifEmpty { "Phone task" }, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                Text(clock(elapsed), color = c.textSecondary, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            }
         } else {
-            Text(r.goal.ifEmpty { "Phone task" }, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
-            val tint = when { r.status in setOf("completed", "done") -> AllternitStatic.StatusSuccess; r.terminal -> AllternitStatic.StatusError; else -> AllternitStatic.StatusInfo }
-            Text(r.status.replace('_', ' ').replaceFirstChar { it.uppercase() } + (r.stepLabel?.let { " · $it" } ?: if (!r.terminal && r.step > 0) " · step ${r.step}" else ""), color = tint, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(r.goal.ifEmpty { "Phone task" }, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, modifier = Modifier.weight(1f))
+                Text(clock(elapsed), color = c.textSecondary, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            }
+            val tint = when { done -> AllternitStatic.StatusSuccess; r.terminal -> AllternitStatic.StatusError; else -> AllternitStatic.StatusInfo }
+            Text(r.status.replace('_', ' ').replaceFirstChar { it.uppercase() } + (r.stepLabel?.let { " · $it" } ?: if (running && r.step > 0) " · step ${r.step}" else ""), color = tint, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             thumb?.let { Image(it, null, Modifier.fillMaxWidth().heightIn(max = 260.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Fit) }
-            if (r.steps > 0) Text("${r.steps} steps" + if (r.failed > 0) ", ${r.failed} failed" else "", color = c.textSecondary, fontSize = 12.sp)
+            // Step rows: earlier steps are checks, the current one is a radio dot (a check once the run is done).
+            seen.forEachIndexed { i, label ->
+                val current = running && i == seen.lastIndex
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (current) Box(Modifier.size(10.dp).clip(CircleShape).border(BorderStroke(1.5.dp, c.textTertiary), CircleShape))
+                    else Text("✓", color = AllternitStatic.StatusSuccess, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(10.dp))
+                    Text(label, color = if (current) c.textPrimary else c.textSecondary, fontSize = 12.sp, maxLines = 1)
+                }
+            }
+            if (r.steps > 0) {
+                val total = maxOf(r.steps, r.step)
+                val frac = if (done) 1f else (r.step.toFloat() / total).coerceIn(0f, 1f)
+                Box(Modifier.fillMaxWidth().height(3.dp).clip(CircleShape).background(c.fillNeutral)) {
+                    Box(Modifier.fillMaxWidth(frac).height(3.dp).clip(CircleShape).background(tint))
+                }
+                Text((if (done) "${r.steps}/${r.steps}" else "${r.step}/$total") + " steps" + if (r.failed > 0) ", ${r.failed} failed" else "", color = c.textSecondary, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            }
             if (r.approvalId != null && !r.terminal) Pill("Needs your OK", "phoneTaskReview$runId", onClick = onOpenInbox)
         }
     }
