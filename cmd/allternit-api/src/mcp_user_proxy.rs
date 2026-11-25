@@ -30,16 +30,23 @@
 use axum::{
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, Sse},
+        IntoResponse, Response,
+    },
     routing::post,
     Json, Router,
 };
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use mcp_client::McpClient;
+use mcp_client::{ElicitContext, McpClient, ServerRequestHandler, ToolOutcome};
+use mcp_protocol::tasks::{self as tasks_ext, ElicitRequest, ElicitResult};
 use serde_json::{json, Value};
 use sha2::Sha256;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::{mpsc, oneshot};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -313,8 +320,18 @@ async fn proxy_post(State(state): State<Arc<AppState>>, headers: HeaderMap, Json
         Ok(c) => c,
         Err(r) => return r,
     };
+    // gizzi answering a server-to-client request we sent on a call's stream
+    // (`elicitation/create`): a JSON-RPC response, not a request.
+    if body.get("method").is_none() && body.get("id").is_some() && (body.get("result").is_some() || body.get("error").is_some()) {
+        resolve_server_response(&claims.user_id, &body);
+        return StatusCode::ACCEPTED.into_response();
+    }
+    let method = body["method"].as_str().unwrap_or_default();
+    if method == "tools/call" && caller_accepts_elicitation(&body) && accepts_event_stream(&headers) {
+        return call_with_elicitation(state, claims, body);
+    }
     match handle_rpc(&state, &claims, &body, allow_private_hosts()).await {
-        Some(payload) => crate::mcp_server_routes::rpc_response(body["method"].as_str().unwrap_or_default(), &body["params"], payload),
+        Some(payload) => crate::mcp_server_routes::rpc_response(method, &body["params"], payload),
         // Notification (e.g. notifications/initialized): acknowledged, nothing to do.
         None => StatusCode::ACCEPTED.into_response(),
     }
@@ -343,12 +360,25 @@ pub(crate) async fn dispatch_rpc(
     body: &Value,
     allow_private: bool,
 ) -> Option<Value> {
+    dispatch_rpc_with(state, user_id, caller, body, allow_private, None).await
+}
+
+/// [`dispatch_rpc`] plus the stream a chat turn's elicitations travel on (see
+/// [`ElicitBridge`]). `None` = decline every upstream elicitation.
+pub(crate) async fn dispatch_rpc_with(
+    state: &Arc<AppState>,
+    user_id: &str,
+    caller: RpcCaller<'_>,
+    body: &Value,
+    allow_private: bool,
+    elicit: Option<ElicitBridge>,
+) -> Option<Value> {
     let id = body.get("id").cloned()?;
     let method = body.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = body.get("params").cloned().unwrap_or(Value::Null);
     let started = Instant::now();
-    let spec = server_spec();
     let era = mcp_protocol::Era::of(method, &params, None);
+    let spec = server_spec_for(&era);
     if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, method) {
         return Some(done);
     }
@@ -378,7 +408,16 @@ pub(crate) async fn dispatch_rpc(
             };
             let connectors = load_user_connectors(state, user_id, allow_private).await;
             let modes = load_install_modes(state, user_id).await;
-            let result = call_tool(state, &connectors, &modes, &name, arguments, gate, allow_private).await;
+            // Tasks and elicitation are chat-turn features: an edge caller keeps today's
+            // behavior (every call completes before it answers).
+            let opts = match caller {
+                RpcCaller::Turn { .. } => CallOptions {
+                    tasks: era.client_capabilities(&params).is_some_and(tasks_ext::client_declares_tasks),
+                    elicit,
+                },
+                RpcCaller::Edge => CallOptions::default(),
+            };
+            let result = call_tool(state, &connectors, &modes, &name, arguments, gate, allow_private, opts).await;
             let outcome = if result.is_ok() { "ok" } else { "error" };
             let payload = match result {
                 Ok(v) => rpc_result(&id, v),
@@ -389,6 +428,21 @@ pub(crate) async fn dispatch_rpc(
                 Err(e) => rpc_from_apps_error(&id, &e),
             };
             (payload, Some(name), outcome)
+        }
+        // Task passthrough (D28: the proxy keeps no task state; the outside server does).
+        // `tasks/result` exists only in the 2025-11-25 tasks: the upstream client refuses it
+        // for any other negotiated version.
+        "tasks/get" | "tasks/update" | "tasks/cancel" | "tasks/result"
+            if matches!(caller, RpcCaller::Turn { .. }) && (method != "tasks/result" || !era.is_modern()) =>
+        {
+            let connectors = load_user_connectors(state, user_id, allow_private).await;
+            let result = task_passthrough(state, &connectors, method, &params, allow_private).await;
+            let outcome = if result.is_ok() { "ok" } else { "error" };
+            let payload = match result {
+                Ok(v) => rpc_result(&id, v),
+                Err(e) => rpc_from_apps_error(&id, &e),
+            };
+            (payload, None, outcome)
         }
         "resources/read" => {
             let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("").to_string();
@@ -429,6 +483,23 @@ fn server_spec() -> mcp_protocol::ServerSpec {
         capabilities: json!({ "tools": { "listChanged": false }, "resources": {} }),
         instructions: None,
     }
+}
+
+/// The proxy's capabilities for this caller's era. The tasks extension is offered only where
+/// the protocol has it: the stateless era, and the 2025-11-25 revision that introduced
+/// `extensions`. (Elicitation is a client capability, so there is nothing to advertise: the
+/// proxy sends `elicitation/create` only to a caller that declared it, see
+/// [`caller_accepts_elicitation`].)
+fn server_spec_for(era: &mcp_protocol::Era) -> mcp_protocol::ServerSpec {
+    let mut spec = server_spec();
+    let has_tasks = match era {
+        mcp_protocol::Era::Modern { .. } => true,
+        mcp_protocol::Era::Legacy { version } => version.as_deref().is_some_and(|v| v >= "2025-11-25"),
+    };
+    if has_tasks {
+        spec.capabilities["extensions"] = json!({ tasks_ext::TASKS_EXTENSION_ID: tasks_ext::extension_entry() });
+    }
+    spec
 }
 
 // ─── permission modes ────────────────────────────────────────────────────────
@@ -602,14 +673,24 @@ async fn call_tool(
     arguments: Value,
     gate: Gate,
     allow_private: bool,
+    opts: CallOptions,
 ) -> Result<Value, AppsError> {
     let (connector, tool_name) = resolve_namespaced(connectors, namespaced_name).ok_or_else(|| {
         AppsError::new(StatusCode::NOT_FOUND, "tool_not_found", format!("unknown tool '{namespaced_name}'"))
     })?;
     let tool_name = tool_name.to_string();
     let connector_name = connector.name.clone();
+    let connector_id = connector.id.clone();
     let mode = mode_for(modes, connector);
     with_session(state, connector, allow_private, |client| async move {
+        // Declared per caller, not per connection: a task only comes back when gizzi asked for
+        // one, and the upstream is asked on gizzi's behalf (with its own stored credentials).
+        let tasks = opts.tasks;
+        let client = if tasks { client.with_tasks() } else { client };
+        let client = match opts.elicit {
+            Some(bridge) => client.with_server_request_handler(Arc::new(GizziElicitation { bridge })),
+            None => client,
+        };
         let result = async {
             // Visibility is only knowable from the connector's own list: app-only
             // tools are not callable by the model, whatever name it asks for.
@@ -638,15 +719,230 @@ async fn call_tool(
                     },
                 ));
             }
-            client
-                .request("tools/call", Some(json!({ "name": tool_name, "arguments": arguments })))
-                .await
-                .map_err(upstream_error)
+            let params = json!({ "name": tool_name, "arguments": arguments });
+            if !tasks {
+                return client.request("tools/call", Some(params)).await.map_err(upstream_error);
+            }
+            match client.call_tool_raw(params).await.map_err(upstream_error)? {
+                ToolOutcome::Complete(result) => Ok(result),
+                ToolOutcome::Task(task) => {
+                    let mut created = serde_json::to_value(&task).map_err(|e| AppsError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
+                    namespace_task_id(&mut created, &connector_id);
+                    Ok(created)
+                }
+            }
         }
         .await;
         (client, result)
     })
     .await
+}
+
+// ─── tasks (SEP-2663) ────────────────────────────────────────────────────────
+
+/// What a `tools/call` asks of the upstream on its caller's behalf.
+#[derive(Default)]
+struct CallOptions {
+    /// gizzi declared the tasks extension on this request: the upstream may answer with a task.
+    tasks: bool,
+    /// Where upstream elicitations go. `None` = decline them.
+    elicit: Option<ElicitBridge>,
+}
+
+/// Task ids handed to gizzi are `<connector_id>:<upstream_task_id>`, so a later `tasks/get`,
+/// `tasks/update` or `tasks/cancel` finds its connector without the proxy keeping any state.
+pub(crate) fn namespaced_task_id(connector_id: &str, task_id: &str) -> String {
+    format!("{connector_id}:{task_id}")
+}
+
+/// The connector a namespaced task id belongs to (the longest matching id, so ids that
+/// are prefixes of each other cannot be confused) and the upstream's own task id.
+pub(crate) fn split_task_id<'a>(connectors: &'a [Connector], task_id: &'a str) -> Option<(&'a Connector, &'a str)> {
+    connectors
+        .iter()
+        .filter_map(|c| Some((c, task_id.strip_prefix(c.id.as_str())?.strip_prefix(':')?)))
+        .max_by_key(|(c, _)| c.id.len())
+}
+
+/// Rewrite a task result's `taskId` (a `CreateTaskResult` or `tasks/get` result is flat) in place.
+fn namespace_task_id(task: &mut Value, connector_id: &str) {
+    if let Some(id) = task.get("taskId").and_then(|t| t.as_str()).map(|t| namespaced_task_id(connector_id, t)) {
+        task["taskId"] = json!(id);
+    }
+}
+
+/// `tasks/get|update|cancel|result` forwarded to the connector that owns the task, with its
+/// stored credentials. Only the user's own connectors are searched, so another user's task
+/// id resolves to nothing.
+async fn task_passthrough(
+    state: &Arc<AppState>,
+    connectors: &[Connector],
+    method: &str,
+    params: &Value,
+    allow_private: bool,
+) -> Result<Value, AppsError> {
+    let namespaced = params.get("taskId").and_then(|t| t.as_str()).ok_or_else(|| {
+        AppsError::new(StatusCode::BAD_REQUEST, "invalid_params", "taskId is required".to_string())
+    })?;
+    let (connector, upstream_id) = split_task_id(connectors, namespaced)
+        .ok_or_else(|| AppsError::new(StatusCode::NOT_FOUND, "task_not_found", format!("unknown task '{namespaced}'")))?;
+    // Gizzi's own `_meta` (protocol version, approval flag) is not the upstream's.
+    let mut upstream = params.clone();
+    if let Some(obj) = upstream.as_object_mut() {
+        obj.remove("_meta");
+        obj.insert("taskId".into(), json!(upstream_id));
+    }
+    let (method, upstream_id, connector_id) = (method.to_string(), upstream_id.to_string(), connector.id.clone());
+    with_session(state, connector, allow_private, |client| async move {
+        let client = client.with_tasks();
+        let result = if method == tasks_ext::METHOD_TASKS_RESULT_LEGACY {
+            client.tasks_result(&upstream_id).await
+        } else {
+            client.request(&method, Some(upstream)).await
+        }
+        .map(|mut v| {
+            namespace_task_id(&mut v, &connector_id);
+            v
+        })
+        .map_err(upstream_error);
+        (client, result)
+    })
+    .await
+}
+
+// ─── elicitation forwarded to gizzi ──────────────────────────────────────────
+
+/// How long gizzi has to answer a forwarded elicitation before it counts as cancelled.
+const ELICIT_ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
+
+type PendingAnswers = Mutex<HashMap<String, oneshot::Sender<Value>>>;
+
+/// Server-to-client requests waiting for gizzi's answer, keyed by `user\0request id`. The
+/// proxy is stateless between calls, but a call in flight lives in this process, so its
+/// answer (a later POST) finds it here.
+fn pending_answers() -> &'static PendingAnswers {
+    static PENDING: OnceLock<PendingAnswers> = OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+fn pending_key(user_id: &str, request_id: &str) -> String {
+    format!("{user_id}\0{request_id}")
+}
+
+/// A JSON-RPC response from gizzi to a request we sent it. Unknown or already-expired ids are ignored.
+fn resolve_server_response(user_id: &str, response: &Value) {
+    let Some(id) = response.get("id").and_then(|i| i.as_str()) else { return };
+    let waiting = pending_answers().lock().ok().and_then(|mut m| m.remove(&pending_key(user_id, id)));
+    if let Some(tx) = waiting {
+        let _ = tx.send(response.clone());
+    }
+}
+
+/// The open response stream of one chat-turn `tools/call`, plus whom to ask.
+#[derive(Debug, Clone)]
+pub(crate) struct ElicitBridge {
+    user_id: String,
+    outbound: mpsc::UnboundedSender<Value>,
+    timeout: Duration,
+}
+
+/// Forwards the upstream's `elicitation/create` to gizzi on the call's response stream and
+/// returns gizzi's answer. Form and URL requests are forwarded exactly as the upstream sent
+/// them: the proxy never collects anything itself (a form is never a place for secrets, and
+/// a URL request sends the person to the upstream's own page).
+#[derive(Debug)]
+struct GizziElicitation {
+    bridge: ElicitBridge,
+}
+
+#[async_trait::async_trait]
+impl ServerRequestHandler for GizziElicitation {
+    fn supports_elicitation(&self) -> bool {
+        true
+    }
+
+    async fn elicit(&self, request: ElicitRequest, _context: ElicitContext) -> ElicitResult {
+        let request_id = format!("proxy-elicit-{}", uuid::Uuid::new_v4());
+        let key = pending_key(&self.bridge.user_id, &request_id);
+        let (tx, rx) = oneshot::channel();
+        match pending_answers().lock() {
+            Ok(mut m) => m.insert(key.clone(), tx),
+            Err(_) => return ElicitResult::decline(),
+        };
+        let message = json!({
+            "jsonrpc": "2.0", "id": request_id, "method": tasks_ext::METHOD_ELICITATION_CREATE,
+            "params": serde_json::to_value(&request).unwrap_or(Value::Null),
+        });
+        let answer = if self.bridge.outbound.send(message).is_ok() {
+            tokio::time::timeout(self.bridge.timeout, rx).await.ok().and_then(|r| r.ok())
+        } else {
+            None
+        };
+        let Some(answer) = answer else {
+            if let Ok(mut m) = pending_answers().lock() {
+                m.remove(&key);
+            }
+            return ElicitResult::cancel();
+        };
+        answer.get("result").cloned().and_then(|r| serde_json::from_value(r).ok()).unwrap_or_else(ElicitResult::decline)
+    }
+}
+
+/// Did gizzi say it can show an elicitation? Per-request capabilities (stateless era), or the
+/// explicit `_meta["allternit/elicitation"]` flag for a caller that negotiated a legacy session.
+fn caller_accepts_elicitation(body: &Value) -> bool {
+    let params = body.get("params").cloned().unwrap_or(Value::Null);
+    let era = mcp_protocol::Era::of("tools/call", &params, None);
+    era.client_capabilities(&params).is_some_and(|c| c.get("elicitation").is_some_and(|e| !e.is_null()))
+        || params["_meta"]["allternit/elicitation"] == json!(true)
+}
+
+fn accepts_event_stream(headers: &HeaderMap) -> bool {
+    headers.get("accept").and_then(|v| v.to_str().ok()).is_some_and(|a| a.contains("text/event-stream"))
+}
+
+fn sse_message(message: &Value) -> Event {
+    Event::default().event("message").data(message.to_string())
+}
+
+/// A chat-turn `tools/call` answered as an event stream: any server-to-client request the
+/// upstream makes mid-call (`elicitation/create`) goes out as an event, gizzi's answer comes
+/// back as a separate POST (see [`resolve_server_response`]), and the final event is the
+/// call's own response.
+fn call_with_elicitation(state: Arc<AppState>, claims: ProxyClaims, body: Value) -> Response {
+    enum Step {
+        Message(Option<Value>),
+        Done(Option<Value>),
+    }
+    let (outbound, mut forwarded) = mpsc::unbounded_channel();
+    let bridge = ElicitBridge { user_id: claims.user_id.clone(), outbound, timeout: ELICIT_ANSWER_TIMEOUT };
+    let mut work = tokio::spawn(async move {
+        let caller = RpcCaller::Turn { session_id: &claims.session_id };
+        dispatch_rpc_with(&state, &claims.user_id, caller, &body, allow_private_hosts(), Some(bridge)).await
+    });
+    let stream = async_stream::stream! {
+        let mut finished = None;
+        while finished.is_none() {
+            let step = tokio::select! {
+                message = forwarded.recv() => Step::Message(message),
+                done = &mut work => Step::Done(done.ok().flatten()),
+            };
+            match step {
+                Step::Message(Some(message)) => yield Ok::<Event, Infallible>(sse_message(&message)),
+                Step::Message(None) => finished = Some((&mut work).await.ok().flatten()),
+                Step::Done(done) => {
+                    while let Ok(message) = forwarded.try_recv() {
+                        yield Ok(sse_message(&message));
+                    }
+                    finished = Some(done);
+                }
+            }
+        }
+        if let Some(Some(response)) = finished {
+            yield Ok(sse_message(&response));
+        }
+    };
+    Sse::new(stream).into_response()
 }
 
 /// `resources/read` for a `ui://` URI: served by the connector that declares it
@@ -1496,5 +1792,188 @@ mod e2e {
         assert_eq!(crate::token_crypto::open(&secret), "later-secret");
         // and the connector still works
         assert!(tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await).contains(&"dash-server__plain".to_string()));
+    }
+}
+
+/// Tasks passthrough and elicitation forwarding against fake legacy upstreams.
+#[cfg(test)]
+mod tasks_e2e {
+    use super::*;
+    use axum::body::Body;
+    use axum::extract::State as AxState;
+    use rusqlite::params;
+
+    #[derive(Clone, Default)]
+    struct Fake {
+        name: &'static str,
+        log: Arc<Mutex<Vec<(String, Value)>>>,
+        answer: Arc<Mutex<Option<oneshot::Sender<Value>>>>,
+    }
+
+    impl Fake {
+        fn methods(&self) -> Vec<String> {
+            self.log.lock().unwrap().iter().map(|(m, _)| m.clone()).collect()
+        }
+        fn params_of(&self, method: &str) -> Vec<Value> {
+            self.log.lock().unwrap().iter().filter(|(m, _)| m == method).map(|(_, p)| p.clone()).collect()
+        }
+    }
+
+    async fn fake_mcp(AxState(fake): AxState<Fake>, Json(req): Json<Value>) -> Response {
+        let method = req["method"].as_str().unwrap_or("").to_string();
+        fake.log.lock().unwrap().push((method.clone(), req["params"].clone()));
+        // gizzi-side answer to the server request this fake sent: no method, an id
+        if req.get("method").is_none() {
+            if let Some(tx) = fake.answer.lock().unwrap().take() {
+                let _ = tx.send(req.clone());
+            }
+            return StatusCode::ACCEPTED.into_response();
+        }
+        let Some(id) = req.get("id").cloned() else { return StatusCode::ACCEPTED.into_response() };
+        let ok = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        let payload = match method.as_str() {
+            "initialize" => ok(json!({
+                "protocolVersion": "2025-06-18", "capabilities": { "tools": {} },
+                "serverInfo": { "name": fake.name, "version": "1" }
+            })),
+            "tools/list" => ok(json!({ "tools": [
+                { "name": "job", "inputSchema": { "type": "object" }, "annotations": { "readOnlyHint": true } },
+                { "name": "ask", "inputSchema": { "type": "object" }, "annotations": { "readOnlyHint": true } }
+            ]})),
+            "tools/call" if req["params"]["name"] == "job" => ok(json!({
+                "resultType": "task", "taskId": format!("{}-task", fake.name), "status": "working",
+                "createdAt": "2026-11-24T00:00:00Z", "lastUpdatedAt": "2026-11-24T00:00:00Z", "ttlMs": null
+            })),
+            "tools/call" => {
+                // `ask`: an elicitation on the response stream, then the result once it is answered
+                let (tx, rx) = oneshot::channel();
+                *fake.answer.lock().unwrap() = Some(tx);
+                let asked = json!({ "jsonrpc": "2.0", "id": "srv-1", "method": "elicitation/create",
+                    "params": { "mode": "form", "message": "Which name?", "requestedSchema": { "type": "object" } } });
+                let reply_id = id.clone();
+                let stream = async_stream::stream! {
+                    yield Ok::<_, Infallible>(format!("event: message\ndata: {asked}\n\n"));
+                    let answer = rx.await.unwrap_or(Value::Null);
+                    let result = json!({ "jsonrpc": "2.0", "id": reply_id, "result": {
+                        "content": [{ "type": "text", "text": answer["result"].to_string() }] } });
+                    yield Ok(format!("event: message\ndata: {result}\n\n"));
+                };
+                return Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(stream))
+                    .unwrap();
+            }
+            "tasks/get" => ok(json!({
+                "taskId": req["params"]["taskId"], "status": "completed",
+                "createdAt": "2026-11-24T00:00:00Z", "lastUpdatedAt": "2026-11-24T00:00:00Z",
+                "result": { "content": [{ "type": "text", "text": format!("done on {}", fake.name) }] }
+            })),
+            "tasks/cancel" => ok(json!({})),
+            other => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("no {other}") } }),
+        };
+        (StatusCode::OK, Json(payload)).into_response()
+    }
+
+    async fn spawn_fake(name: &'static str) -> (String, Fake) {
+        let fake = Fake { name, ..Default::default() };
+        let app = Router::new().route("/mcp", post(fake_mcp)).with_state(fake.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/mcp"), fake)
+    }
+
+    /// user-1 has connectors `con-a` -> fake A and `con-b` -> fake B.
+    async fn two_connectors() -> (Arc<AppState>, Fake, Fake) {
+        let temp = tempfile::tempdir().unwrap().keep();
+        let state = crate::beta_session_routes::tests::test_app_state(&temp).await;
+        let (url_a, a) = spawn_fake("alpha").await;
+        let (url_b, b) = spawn_fake("beta").await;
+        let conn = state.db.connect().unwrap();
+        for (id, name_id, url) in [("con-a", "alpha", url_a), ("con-b", "beta", url_b)] {
+            conn.execute(
+                "INSERT INTO mcp_connectors (id, user_id, name, name_id, url, enabled) VALUES (?1, 'user-1', ?2, ?2, ?3, 1)",
+                params![id, name_id, url],
+            )
+            .unwrap();
+        }
+        (state, a, b)
+    }
+
+    fn tasks_meta() -> Value {
+        json!({
+            mcp_protocol::META_PROTOCOL_VERSION: mcp_protocol::LATEST,
+            mcp_protocol::META_CLIENT_CAPABILITIES: { "extensions": { tasks_ext::TASKS_EXTENSION_ID: {} } },
+            APPROVED_META_KEY: true
+        })
+    }
+
+    async fn turn(state: &Arc<AppState>, method: &str, params: Value, elicit: Option<ElicitBridge>) -> Value {
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        dispatch_rpc_with(state, "user-1", RpcCaller::Turn { session_id: "ses_1" }, &body, true, elicit)
+            .await
+            .expect("response")
+    }
+
+    #[tokio::test]
+    async fn a_task_from_the_upstream_reaches_gizzi_with_a_namespaced_id_and_follow_ups_hit_the_owning_connector() {
+        let (state, a, b) = two_connectors().await;
+        let created = turn(&state, "tools/call", json!({ "name": "beta__job", "arguments": {}, "_meta": tasks_meta() }), None).await;
+        assert_eq!(created["result"]["resultType"], "task");
+        assert_eq!(created["result"]["taskId"], "con-b:beta-task", "namespaced so later calls find the connector");
+
+        // tasks/get with the namespaced id: B answers, A is never contacted, the id stays namespaced
+        let got = turn(&state, "tasks/get", json!({ "taskId": "con-b:beta-task", "_meta": tasks_meta() }), None).await;
+        assert_eq!(got["result"]["status"], "completed");
+        assert_eq!(got["result"]["taskId"], "con-b:beta-task");
+        assert_eq!(got["result"]["result"]["content"][0]["text"], "done on beta");
+        assert_eq!(b.params_of("tasks/get")[0]["taskId"], "beta-task", "the upstream sees its own id");
+        assert!(!a.methods().contains(&"tasks/get".to_string()));
+
+        // an id that belongs to nobody (or to another user) is not forwarded anywhere
+        let ghost = turn(&state, "tasks/cancel", json!({ "taskId": "con-z:x" }), None).await;
+        assert_eq!(ghost["error"]["data"]["code"], "task_not_found");
+        assert!(!a.methods().contains(&"tasks/cancel".to_string()) && !b.methods().contains(&"tasks/cancel".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_caller_that_did_not_declare_tasks_never_gets_one_and_the_edge_has_no_task_methods() {
+        let (state, _a, _b) = two_connectors().await;
+        // the fake answers `job` with a task regardless; an undeclared caller gets an error, not a task
+        let plain = turn(&state, "tools/call", json!({ "name": "alpha__job", "arguments": {}, "_meta": { APPROVED_META_KEY: true } }), None).await;
+        assert!(plain["result"]["taskId"].is_null() && plain["error"].is_object(), "no task for a caller that did not ask: {plain}");
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tasks/get", "params": { "taskId": "con-a:x" } });
+        let edge = dispatch_rpc(&state, "user-1", RpcCaller::Edge, &body, true).await.unwrap();
+        assert_eq!(edge["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn an_upstream_elicitation_goes_to_gizzi_and_the_answer_returns_to_the_tool() {
+        let (state, a, _b) = two_connectors().await;
+        let (outbound, mut forwarded) = mpsc::unbounded_channel();
+        let bridge = ElicitBridge { user_id: "user-1".into(), outbound, timeout: Duration::from_secs(10) };
+        let call = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                turn(&state, "tools/call", json!({ "name": "alpha__ask", "arguments": {}, "_meta": { APPROVED_META_KEY: true } }), Some(bridge)).await
+            })
+        };
+        let asked = tokio::time::timeout(Duration::from_secs(10), forwarded.recv()).await.unwrap().expect("forwarded to gizzi");
+        assert_eq!(asked["method"], "elicitation/create");
+        assert_eq!(asked["params"]["message"], "Which name?");
+        let answer = json!({ "jsonrpc": "2.0", "id": asked["id"], "result": { "action": "accept", "content": { "name": "Ada" } } });
+        resolve_server_response("user-2", &answer); // someone else's answer is ignored
+        resolve_server_response("user-1", &answer);
+        let done = call.await.unwrap();
+        let text = done["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("accept") && text.contains("Ada"), "upstream got gizzi's answer: {text}");
+        assert!(a.methods().contains(&"tools/call".to_string()));
+    }
+
+    #[tokio::test]
+    async fn without_an_elicitation_bridge_the_upstream_is_declined() {
+        let (state, _a, _b) = two_connectors().await;
+        let done = turn(&state, "tools/call", json!({ "name": "alpha__ask", "arguments": {}, "_meta": { APPROVED_META_KEY: true } }), None).await;
+        assert!(done["result"]["content"][0]["text"].as_str().unwrap().contains("decline"), "{done}");
     }
 }
