@@ -17,7 +17,10 @@
 //!
 //! A link is `{ id, kind, subject, artifact_id, runtime_device_id, label, subdomain,
 //! target_port, auth_mode, status, abuse_flag, bytes_month, app_kind, vendor_app_id,
-//! created_at, last_seen_at }`. `abuse_note` is admin-only and never returned.
+//! url, created_at, last_seen_at }`. `abuse_note` is admin-only and never returned.
+//! `url` (see [`link_url`]): hosted = `https://<subdomain>.<APP_DOMAIN>`, or
+//! `https://ai.allternit.com/app/<subdomain>` when `APP_DOMAIN` is unset; live =
+//! `https://<subdomain>.live.<APP_DOMAIN>`, `null` when `APP_DOMAIN` is unset.
 //!
 //! Rules here: `live` needs one of the caller's own runtime devices; `port`
 //! needs `live` and a `target_port`; `artifact` needs an artifact the caller
@@ -25,9 +28,19 @@
 //! are DNS labels (3-63 of `a-z 0-9 -`, no hyphen at either end), minted at
 //! random (16 chars) when not given, unique across every link (409 when taken).
 //!
-//! Lane 8 owns caps (D8: links per user, bytes per month -> 429), the admin
-//! kill/flag routes, tiers and the name rule; the hooks are [`enforce_caps`]
-//! and [`check_kill`].
+//! Lane 8 rules:
+//! * Caps (D8), live links only: at most [`MAX_ACTIVE_LIVE_LINKS`] active per
+//!   account and [`MAX_LIVE_BYTES_MONTH`] served a month (`bytes_month`, summed
+//!   over the account's live links). Over either: 429
+//!   `{ error: "cap_reached", message, cap: "links"|"bytes", used, limit }`, on
+//!   create and on resume.
+//! * Kill (admin, `admin_share_links`): a killed link never serves again (410
+//!   `killed` on heartbeat and resume), and the artifact or vendor app it shared
+//!   can't get a new link (410 `killed` on create). A flag alone only marks the
+//!   link for review.
+//! * Names (D23): no `allternit` or `gizzi` anywhere, no other vendor brand as a
+//!   word or prefix, and no infrastructure names ([`reserved_name`]) -> 400
+//!   `reserved_subdomain`.
 
 use axum::{
     body::Bytes,
@@ -53,6 +66,11 @@ pub const AUTH_MODES: [&str; 3] = ["public", "signed_in", "org"];
 pub const APP_KINDS: [&str; 2] = ["artifact", "vendor"];
 pub const MAX_LABEL: usize = 80;
 pub const MINTED_SUBDOMAIN_LEN: usize = 16;
+/// D8 caps (recommended, Eoj 2026-11-24): live links per account and bytes a month.
+pub const MAX_ACTIVE_LIVE_LINKS: i64 = 3;
+pub const MAX_LIVE_BYTES_MONTH: i64 = 20_000_000_000;
+/// Path-mode origin for hosted links when `APP_DOMAIN` is unset.
+pub const WORKSPACE_ORIGIN: &str = "https://ai.allternit.com";
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
@@ -111,7 +129,7 @@ pub struct ShareLinkRow {
     pub last_seen_at: Option<DateTime<Utc>>,
 }
 
-const COLS: &str = "id, user_id, org_id, kind, subject, artifact_id, runtime_device_id, label, \
+pub(crate) const COLS: &str = "id, user_id, org_id, kind, subject, artifact_id, runtime_device_id, label, \
     subdomain, target_port, auth_mode, status, abuse_flag, bytes_month, app_kind, vendor_app_id, \
     created_at, last_seen_at";
 
@@ -132,27 +150,97 @@ impl ShareLinkRow {
             "bytes_month": self.bytes_month,
             "app_kind": self.app_kind,
             "vendor_app_id": self.vendor_app_id,
+            "url": link_url(&self.kind, &self.subdomain),
             "created_at": rfc3339(self.created_at),
             "last_seen_at": self.last_seen_at.map(rfc3339),
         })
     }
 }
 
+// ------------------------------------------------------------ the URLs ----
+
+/// `APP_DOMAIN` (e.g. `allternitugc.app`), normalized like the client's
+/// `appDomain()`: no scheme, no path, no dots at the ends, lower case. `None`
+/// when unset or not a domain.
+pub fn app_domain() -> Option<String> {
+    let raw = std::env::var("APP_DOMAIN").ok()?;
+    let d = raw.trim().to_ascii_lowercase();
+    let d = d.strip_prefix("https://").or_else(|| d.strip_prefix("http://")).unwrap_or(d.as_str());
+    let d = d.split('/').next().unwrap_or_default().trim_matches('.');
+    let labels: Vec<&str> = d.split('.').collect();
+    let ok = labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+        })
+        && labels.last().is_some_and(|tld| tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_lowercase()));
+    ok.then(|| d.to_string())
+}
+
+/// The public URL of a link (same rule as the client's `appLink` / `liveLink`).
+pub fn link_url(kind: &str, subdomain: &str) -> Option<String> {
+    match (kind, app_domain()) {
+        ("live", Some(domain)) => Some(format!("https://{subdomain}.live.{domain}")),
+        ("live", None) => None,
+        (_, Some(domain)) => Some(format!("https://{subdomain}.{domain}")),
+        (_, None) => Some(format!("{WORKSPACE_ORIGIN}/app/{subdomain}")),
+    }
+}
+
 // ---------------------------------------------------------- the checks ----
 
-/// A DNS label: 3-63 of `a-z 0-9 -`, no hyphen at either end. Lowercases.
-/// The reserved-name and brand rule is lane 8's (the name rule).
-pub fn check_subdomain(raw: &str) -> Result<String, &'static str> {
+/// Our own names: refused anywhere in a link name.
+const OWN_BRANDS: [&str; 2] = ["allternit", "gizzi"];
+/// Other vendors' brands: refused as a word (`my-claude`) or a prefix (`claudeai`).
+const VENDOR_BRANDS: [&str; 22] = [
+    "anthropic", "claude", "openai", "chatgpt", "gpt", "google", "gmail", "gemini", "apple",
+    "icloud", "microsoft", "copilot", "github", "facebook", "instagram", "whatsapp", "amazon",
+    "aws", "paypal", "stripe", "cloudflare", "grok",
+];
+/// Short or common vendor words: refused only as a whole word.
+const VENDOR_WORDS: [&str; 3] = ["meta", "xai", "twitter"];
+/// Infrastructure and support names: refused as the whole name.
+const RESERVED_EXACT: [&str; 24] = [
+    "admin", "api", "www", "mail", "live", "app", "apps", "auth", "login", "signin", "signup",
+    "account", "billing", "support", "help", "status", "docs", "security", "root", "smtp",
+    "cdn", "static", "assets", "dashboard",
+];
+
+/// D23: true when a (lower-cased) link name is ours, a vendor's or infrastructure's.
+pub fn reserved_name(label: &str) -> bool {
+    if RESERVED_EXACT.contains(&label) || OWN_BRANDS.iter().any(|b| label.contains(b)) {
+        return true;
+    }
+    let words: Vec<&str> = label.split('-').filter(|w| !w.is_empty()).collect();
+    words.iter().any(|w| VENDOR_WORDS.contains(w))
+        || VENDOR_BRANDS.iter().any(|b| label.starts_with(b) || words.iter().any(|w| w == b))
+}
+
+/// A DNS label: 3-63 of `a-z 0-9 -`, no hyphen at either end, not a reserved
+/// name. Lowercases. `Err((code, message))`: `invalid_subdomain` or
+/// `reserved_subdomain`.
+pub fn check_subdomain(raw: &str) -> Result<String, (&'static str, &'static str)> {
     let s = raw.trim().to_ascii_lowercase();
     let ok = (3..=63).contains(&s.len())
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && !s.starts_with('-')
         && !s.ends_with('-');
-    if ok {
-        Ok(s)
-    } else {
-        Err("A link name is 3 to 63 lowercase letters, digits or hyphens, and can't start or end with a hyphen.")
+    if !ok {
+        return Err((
+            "invalid_subdomain",
+            "A link name is 3 to 63 lowercase letters, digits or hyphens, and can't start or end with a hyphen.",
+        ));
     }
+    if reserved_name(&s) {
+        return Err((
+            "reserved_subdomain",
+            "That link name is reserved. Names can't use Allternit, Gizzi or another company's brand.",
+        ));
+    }
+    Ok(s)
 }
 
 /// A random DNS-safe label of `len` chars: a letter first, then `a-z 0-9`.
@@ -177,25 +265,83 @@ fn one_of(value: &str, allowed: &[&str]) -> bool {
     allowed.contains(&value)
 }
 
-/// Lane 8: per-user caps (D8; recommended 3 links, 20 GB a month) answer 429
-/// here before a link is made or resumed. No limit until then.
-async fn enforce_caps(_db: &PgPool, _caller: &Caller, _kind: &str) -> Result<(), Response> {
-    // TODO(lane 8): count active links + bytes_month for the caller; 429 over the cap.
-    Ok(())
+fn cap_reached(cap: &str, used: i64, limit: i64, message: &str) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({ "error": "cap_reached", "message": message, "cap": cap, "used": used, "limit": limit })),
+    )
+        .into_response()
 }
 
-/// Lane 8: the admin kill switch and abuse flag. A killed link is gone for
-/// good: the owner can't resume or heartbeat it (410).
-fn check_kill(row: &ShareLinkRow) -> Result<(), Response> {
-    // TODO(lane 8): also stop a flagged link per the abuse rule.
-    if row.status == "killed" {
-        return Err(fail(
-            StatusCode::GONE,
-            "killed",
-            "This link was turned off by Allternit and can't be used again.",
+/// D8 caps, live links only (hosted links are served by our app host and
+/// metered elsewhere): [`MAX_ACTIVE_LIVE_LINKS`] active per account and
+/// [`MAX_LIVE_BYTES_MONTH`] served this month over every live link the account
+/// made (revoking a link doesn't give its bytes back). Checked before a live
+/// link is made or resumed; 429 `cap_reached` over either.
+async fn enforce_caps(db: &PgPool, caller: &Caller, kind: &str) -> Result<(), Response> {
+    if kind != "live" {
+        return Ok(());
+    }
+    let (active, bytes): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE status = 'active')::BIGINT, COALESCE(SUM(bytes_month), 0)::BIGINT \
+         FROM share_links WHERE user_id = $1 AND kind = 'live'",
+    )
+    .bind(&caller.user_id)
+    .fetch_one(db)
+    .await
+    .map_err(db_fail)?;
+    if active >= MAX_ACTIVE_LIVE_LINKS {
+        return Err(cap_reached(
+            "links",
+            active,
+            MAX_ACTIVE_LIVE_LINKS,
+            "You already have 3 live links on. Pause or delete one first.",
+        ));
+    }
+    if bytes >= MAX_LIVE_BYTES_MONTH {
+        return Err(cap_reached(
+            "bytes",
+            bytes,
+            MAX_LIVE_BYTES_MONTH,
+            "Your live links served 20 GB this month. They start again next month.",
         ));
     }
     Ok(())
+}
+
+fn killed() -> Response {
+    fail(StatusCode::GONE, "killed", "This link was turned off by Allternit and can't be used again.")
+}
+
+/// A killed link is gone for good: the owner can't resume or heartbeat it
+/// (410). A flag alone only marks it for review; an admin kill stops it.
+fn check_kill(row: &ShareLinkRow) -> Result<(), Response> {
+    if row.status == "killed" {
+        return Err(killed());
+    }
+    Ok(())
+}
+
+/// True when an admin killed a link to this artifact or vendor app: it can't
+/// be shared again (a new link would route around the kill).
+pub(crate) async fn subject_killed(
+    db: &PgPool,
+    artifact_id: Option<&str>,
+    vendor_app_id: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    if artifact_id.is_none() && vendor_app_id.is_none() {
+        return Ok(false);
+    }
+    let hit: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM share_links WHERE status = 'killed' \
+           AND (($1::TEXT IS NOT NULL AND artifact_id = $1) OR ($2::TEXT IS NOT NULL AND vendor_app_id = $2)) \
+         LIMIT 1",
+    )
+    .bind(artifact_id)
+    .bind(vendor_app_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(hit.is_some())
 }
 
 // ---------------------------------------------------------------- CRUD ----
@@ -329,17 +475,31 @@ async fn create_link(
     let given_subdomain = match req.subdomain.as_deref() {
         Some(raw) => match check_subdomain(raw) {
             Ok(s) => Some(s),
-            Err(msg) => return Ok(bad("invalid_subdomain", msg)),
+            Err((code, msg)) => return Ok(bad(code, msg)),
         },
         None => None,
     };
+    match subject_killed(&state.db, req.artifact_id.as_deref(), req.vendor_app_id.as_deref()).await {
+        Ok(true) => return Ok(killed()),
+        Ok(false) => {}
+        Err(e) => return Ok(db_fail(e)),
+    }
     if let Err(res) = enforce_caps(&state.db, &caller, &req.kind).await {
         return Ok(res);
     }
 
     // A minted name retries on the (vanishingly rare) clash; a chosen one is 409.
     for _ in 0..3 {
-        let subdomain = given_subdomain.clone().unwrap_or_else(|| mint_label(MINTED_SUBDOMAIN_LEN));
+        let subdomain = match given_subdomain.clone() {
+            Some(s) => s,
+            // A random name that happens to start with a brand is redrawn.
+            None => loop {
+                let s = mint_label(MINTED_SUBDOMAIN_LEN);
+                if !reserved_name(&s) {
+                    break s;
+                }
+            },
+        };
         let inserted: Result<ShareLinkRow, sqlx::Error> = sqlx::query_as(&format!(
             "INSERT INTO share_links (id, user_id, org_id, kind, subject, artifact_id, \
                  runtime_device_id, label, subdomain, target_port, auth_mode, app_kind, vendor_app_id) \
