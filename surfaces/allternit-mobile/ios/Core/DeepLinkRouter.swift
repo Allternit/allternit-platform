@@ -61,6 +61,10 @@ enum DeepLink: Equatable, Sendable {
     /// Meetings (`/meetings`), or one meeting's live page / recap
     /// (`/meetings/<id>`: the MCP `page_url`, notification taps, the Live Activity).
     case meetings(String?)
+    /// The in-app bar with an app, a tool and values filled in
+    /// (`allternit://bar?app=<kind>:<ref>&tool=<name>&bot=<id>&v.<key>=<value>`), sent
+    /// by "Do with Allternit" when Siri can't ask for every value.
+    case bar(BarLinkRequest)
 
     static let webHosts: Set<String> = ["ai.allternit.com", "m.allternit.com"]
 
@@ -78,7 +82,8 @@ enum DeepLink: Equatable, Sendable {
             if !url.path.isEmpty { path += url.path }
             var comps = URLComponents()
             comps.path = path
-            comps.query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.query
+            // The encoded query, so an encoded `&` or `=` inside a value stays in it.
+            comps.percentEncodedQuery = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQuery
             return parse(components: comps, origin: "m.allternit.com")
         }
         return nil
@@ -182,6 +187,8 @@ enum DeepLink: Equatable, Sendable {
             return .routine(segments[1])
         case "handoff":
             return .handoff
+        case "bar":
+            return .bar(BarLinkRequest(query: query))
         case "meetings":
             let id = segments.count >= 2 ? segments[1].removingPercentEncoding : nil
             // `allternit://meetings/calendar-connected` is the calendar consent return.
@@ -189,6 +196,36 @@ enum DeepLink: Equatable, Sendable {
         default:
             return nil
         }
+    }
+}
+
+/// What `allternit://bar` asks the in-app bar to show. Every field may be
+/// empty: a bare `allternit://bar` just opens the bar.
+struct BarLinkRequest: Equatable, Sendable {
+    /// `<kind>:<ref>` (as `BarAppInfo.id`), nil for no app.
+    var app: String?
+    var tool: String?
+    /// The bot that does it; nil = the person themself.
+    var bot: String?
+    /// Blank key -> value as text, from `v.<key>` query items.
+    var values: [String: String]
+
+    init(app: String?, tool: String?, bot: String? = nil, values: [String: String]) {
+        self.app = app
+        self.tool = tool
+        self.bot = bot
+        self.values = values
+    }
+
+    init(query: [String: String]) {
+        app = query["app"]
+        tool = query["tool"]
+        bot = query["bot"]
+        var values: [String: String] = [:]
+        for (name, value) in query where name.hasPrefix("v.") && name.count > 2 {
+            values[String(name.dropFirst(2))] = value
+        }
+        self.values = values
     }
 }
 
@@ -245,6 +282,18 @@ final class DeepLinkRouter: ObservableObject {
     func takeComposerPrefill() -> String? {
         defer { composerPrefill = nil }
         return composerPrefill
+    }
+
+    /// What the last `allternit://bar` link asked for. The in-app bar
+    /// (Features/IslandBar) watches this, opens and takes it.
+    @Published private(set) var barRequest: BarLinkRequest?
+
+    func setBarRequest(_ request: BarLinkRequest) { barRequest = request }
+
+    /// Takes the bar request (the bar calls this when it opens with it).
+    func takeBarRequest() -> BarLinkRequest? {
+        defer { barRequest = nil }
+        return barRequest
     }
 
     /// Takes the pending link (the host calls this once it can act on it).

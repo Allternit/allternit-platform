@@ -15,6 +15,7 @@ import SwiftUI
 /// - computers → the Computers list (Settings → Devices) in a sheet
 /// - decisions → Decisions in a sheet
 /// - phoneRun → that run's status, steps and Review in a sheet
+/// - bar     → the in-app bar, filled in (`DeepLinkRouter.barRequest`)
 struct DeepLinkHost: ViewModifier {
     @ObservedObject private var router = DeepLinkRouter.shared
     @EnvironmentObject private var modeStore: AppModeStore
@@ -196,6 +197,10 @@ struct DeepLinkHost: ViewModifier {
             Task { await openRoutine(id) }
         case .meetings(let id):
             meetingsLink = MeetingsLink(meetingId: id)
+        case .bar(let request):
+            // The in-app bar (Features/IslandBar) opens on this with the
+            // values filled in; nothing runs until the person reviews it.
+            router.setBarRequest(request)
         case .handoff:
             // The bots launchpad composer hands a task to the team (a new bot
             // project + its coordinator), same as HandOffTaskIntent.
