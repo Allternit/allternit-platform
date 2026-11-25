@@ -14,6 +14,19 @@
 //! * `POST /api/v1/share-links/:id/pause` `{ paused?: bool }` (default true; false resumes) -> link
 //! * `POST /api/v1/share-links/:id/heartbeat` -> link, `last_seen_at` = now. A revoked
 //!   or killed link answers 410 so the tunnel client stops serving it.
+//! * `POST /api/v1/share-links/:id/relay-credential` -> `{ credential, expires_at }`, a
+//!   fresh relay admission credential for reconnecting an active live link (410
+//!   `killed`|`revoked`, 409 `paused`, 400 `not_live`, 503 `relay_not_configured`).
+//!
+//! Relay (OpenTunnel + `infrastructure/opentunnel/patches/0001`, lane 17b):
+//! * Admission: the 201 for a `live` link carries `relay_credential`, the string
+//!   the relay checks on `POST /api/tunnel` (see [`mint_relay_credential`]),
+//!   signed with env `ALLTERNIT_RELAY_ADMISSION_SECRET` (= the relay's
+//!   `ADMISSION_SECRET`). Unset = 503 `relay_not_configured` for live links only.
+//! * Drop: revoke, pause and admin kill of a live link call the relay's
+//!   `POST {ALLTERNIT_RELAY_ADMIN_URL}/api/admin/tunnel/<subdomain>/delete` with
+//!   `Bearer {ALLTERNIT_RELAY_ADMIN_TOKEN}` ([`relay_drop_tunnel`]). A failure is
+//!   logged and never blocks the change here: the heartbeat 410 stops the host.
 //!
 //! A link is `{ id, kind, subject, artifact_id, runtime_device_id, label, subdomain,
 //! target_port, auth_mode, status, abuse_flag, bytes_month, app_kind, vendor_app_id,
@@ -50,8 +63,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, SecondsFormat, Utc};
-use serde::Deserialize;
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -78,6 +94,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/share-links/:id", axum::routing::delete(delete_link))
         .route("/api/v1/share-links/:id/pause", post(pause_link))
         .route("/api/v1/share-links/:id/heartbeat", post(heartbeat_link))
+        .route("/api/v1/share-links/:id/relay-credential", post(relay_credential))
 }
 
 fn fail(status: StatusCode, error: &str, message: &str) -> Response {
@@ -348,6 +365,91 @@ pub(crate) async fn subject_killed(
     Ok(hit.is_some())
 }
 
+// --------------------------------------------------------------- relay ----
+
+pub const RELAY_SECRET_ENV: &str = "ALLTERNIT_RELAY_ADMISSION_SECRET";
+pub const RELAY_ADMIN_URL_ENV: &str = "ALLTERNIT_RELAY_ADMIN_URL";
+pub const RELAY_ADMIN_TOKEN_ENV: &str = "ALLTERNIT_RELAY_ADMIN_TOKEN";
+/// Credential version the relay accepts (`admission.rs` `VERSION`).
+pub const RELAY_CREDENTIAL_VERSION: &str = "ota1";
+/// How long a credential admits a tunnel create (relay max 3600 s, 600 recommended).
+pub const RELAY_CREDENTIAL_TTL_SECS: i64 = 600;
+/// Bound on the relay delete call, so a slow relay never holds a revoke.
+pub const RELAY_ADMIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+/// The relay admission secret, or `None` when this deployment has no relay.
+pub fn relay_secret() -> Option<String> {
+    env_nonempty(RELAY_SECRET_ENV)
+}
+
+fn relay_not_configured() -> Response {
+    fail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "relay_not_configured",
+        "Live links are not set up on this deployment yet.",
+    )
+}
+
+#[derive(Serialize)]
+struct RelayClaims<'a> {
+    sub: &'a str,
+    lid: &'a str,
+    exp: i64,
+}
+
+/// `ota1.<payload>.<signature>`, exactly what the relay's `admission::verify`
+/// checks: payload = base64url-no-pad(JSON `{sub, lid, exp}`), signature =
+/// base64url-no-pad(HMAC-SHA256(secret, "ota1." + payload)). `sub` becomes the
+/// tunnel id, i.e. the link's subdomain; `exp` is unix seconds.
+pub fn mint_relay_credential(secret: &[u8], subdomain: &str, link_id: &str, exp: i64) -> String {
+    let claims = RelayClaims { sub: subdomain, lid: link_id, exp };
+    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).expect("claims serialize"));
+    let signed = format!("{RELAY_CREDENTIAL_VERSION}.{payload}");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("HMAC takes any key length");
+    mac.update(signed.as_bytes());
+    format!("{signed}.{}", URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+/// A credential for `row` that expires [`RELAY_CREDENTIAL_TTL_SECS`] from now.
+fn credential_for(secret: &str, row: &ShareLinkRow) -> (String, DateTime<Utc>) {
+    let expires_at = Utc::now() + chrono::Duration::seconds(RELAY_CREDENTIAL_TTL_SECS);
+    let credential = mint_relay_credential(secret.as_bytes(), &row.subdomain, &row.id, expires_at.timestamp());
+    (credential, expires_at)
+}
+
+/// Tells the relay to drop a live link's tunnel. Hosted links and an
+/// unconfigured relay are a no-op; 204 and 404 both mean the tunnel is gone.
+/// Errors are logged only: the DB change already happened and the host's next
+/// heartbeat (410) stops it anyway.
+pub(crate) async fn relay_drop_tunnel(row: &ShareLinkRow) {
+    if row.kind != "live" {
+        return;
+    }
+    let (Some(base), Some(token)) = (env_nonempty(RELAY_ADMIN_URL_ENV), env_nonempty(RELAY_ADMIN_TOKEN_ENV)) else {
+        tracing::warn!(link = %row.id, "relay admin not configured; live tunnel not dropped");
+        return;
+    };
+    let url = format!("{}/api/admin/tunnel/{}/delete", base.trim().trim_end_matches('/'), row.subdomain);
+    let client = match reqwest::Client::builder().timeout(RELAY_ADMIN_TIMEOUT).build() {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!(link = %row.id, "relay drop: client: {e}");
+            return;
+        }
+    };
+    match client.post(&url).bearer_auth(token.trim()).send().await {
+        Ok(res) if res.status().as_u16() == 204 || res.status().as_u16() == 404 => {
+            tracing::info!(link = %row.id, status = res.status().as_u16(), "relay tunnel dropped");
+        }
+        Ok(res) => tracing::warn!(link = %row.id, status = res.status().as_u16(), "relay drop refused"),
+        Err(e) => tracing::warn!(link = %row.id, "relay drop failed: {e}"),
+    }
+}
+
 // ---------------------------------------------------------------- CRUD ----
 
 async fn load(db: &PgPool, user_id: &str, id: &str) -> Result<Option<ShareLinkRow>, sqlx::Error> {
@@ -491,6 +593,15 @@ async fn create_link(
     if let Err(res) = enforce_caps(&state.db, &caller, &req.kind).await {
         return Ok(res);
     }
+    // A live link is useless without a relay that admits it.
+    let secret = if req.kind == "live" {
+        match relay_secret() {
+            Some(secret) => Some(secret),
+            None => return Ok(relay_not_configured()),
+        }
+    } else {
+        None
+    };
 
     // A minted name retries on the (vanishingly rare) clash; a chosen one is 409.
     for _ in 0..3 {
@@ -525,7 +636,13 @@ async fn create_link(
         .fetch_one(&state.db)
         .await;
         match inserted {
-            Ok(row) => return Ok((StatusCode::CREATED, Json(row.json())).into_response()),
+            Ok(row) => {
+                let mut body = row.json();
+                if let Some(secret) = secret.as_deref() {
+                    body["relay_credential"] = json!(credential_for(secret, &row).0);
+                }
+                return Ok((StatusCode::CREATED, Json(body)).into_response());
+            }
             Err(e) if is_unique_violation(&e) && given_subdomain.is_some() => {
                 return Ok(fail(
                     StatusCode::CONFLICT,
@@ -587,7 +704,10 @@ async fn delete_link(
         Err(e) => return Ok(db_fail(e)),
     };
     match row {
-        Some(row) => Ok(Json(json!({ "revoked": true, "link": row.json() })).into_response()),
+        Some(row) => {
+            relay_drop_tunnel(&row).await;
+            Ok(Json(json!({ "revoked": true, "link": row.json() })).into_response())
+        }
         None => Ok(not_found()),
     }
 }
@@ -637,6 +757,9 @@ async fn pause_link(
     .bind(next)
     .fetch_one(&state.db)
     .await?;
+    if paused {
+        relay_drop_tunnel(&row).await;
+    }
     Ok(Json(row.json()).into_response())
 }
 
@@ -663,6 +786,36 @@ async fn heartbeat_link(
     .fetch_one(&state.db)
     .await?;
     Ok(Json(row.json()).into_response())
+}
+
+/// A fresh admission credential so the host can reconnect an active live link
+/// (the one in the create response expires after ten minutes).
+async fn relay_credential(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let caller = signed_in_caller(&state, &headers).await?;
+    let Some(row) = load(&state.db, &caller.user_id, &id).await? else {
+        return Ok(not_found());
+    };
+    if let Err(res) = check_kill(&row) {
+        return Ok(res);
+    }
+    if row.status == "revoked" {
+        return Ok(fail(StatusCode::GONE, "revoked", "This link was deleted. Make a new one."));
+    }
+    if row.kind != "live" {
+        return Ok(bad("not_live", "Only a live link connects through the relay."));
+    }
+    if row.status == "paused" {
+        return Ok(fail(StatusCode::CONFLICT, "paused", "This link is paused. Resume it first."));
+    }
+    let Some(secret) = relay_secret() else {
+        return Ok(relay_not_configured());
+    };
+    let (credential, expires_at) = credential_for(&secret, &row);
+    Ok(Json(json!({ "credential": credential, "expires_at": rfc3339(expires_at) })).into_response())
 }
 
 #[cfg(test)]

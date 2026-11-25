@@ -7,7 +7,8 @@
 //!   un-kill it by deleting, the artifact or vendor app it shared can't get a
 //!   new link, and a hosted app's public route answers 410 on the next request
 //!   (`GET /api/v2/public/apps/:slug` is `no-store`, so no cache outlives the
-//!   kill). Sets `abuse_flag`; `note` goes in `abuse_note`.
+//!   kill). Sets `abuse_flag`; `note` goes in `abuse_note`. A live link's
+//!   relay tunnel is dropped at once (`share_links::relay_drop_tunnel`).
 //! * `POST /api/v1/admin/share-links/:id/flag` `{ flagged?: bool (default true), note? }`
 //!   -> `{ link }`. Marks a link for review; it keeps serving.
 //!
@@ -113,8 +114,12 @@ async fn kill_link(
     .bind(req.note.as_deref())
     .fetch_optional(&state.db)
     .await;
-    if let Ok(Some(_)) = &row {
+    if let Ok(Some(killed)) = &row {
         tracing::info!(link = %id, "share link killed by admin");
+        // A live link's tunnel goes now, not at the host's next heartbeat.
+        if let Ok(link) = ShareLinkRow::from_row(killed) {
+            crate::routes::share_links::relay_drop_tunnel(&link).await;
+        }
     }
     Ok(respond(row))
 }

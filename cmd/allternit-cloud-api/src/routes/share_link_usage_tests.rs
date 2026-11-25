@@ -20,6 +20,8 @@ async fn setup() -> Arc<ApiState> {
     ] {
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration");
     }
+    // Live links need the relay admission secret (lane 17b).
+    std::env::set_var(crate::routes::share_links::RELAY_SECRET_ENV, "test-relay-admission-secret-0123456789");
     state
 }
 
