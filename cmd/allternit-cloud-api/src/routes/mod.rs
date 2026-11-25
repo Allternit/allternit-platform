@@ -7,6 +7,8 @@ pub mod api_keys;
 pub mod artifacts_comments;
 pub mod artifacts_suggestions;
 pub mod artifacts_v2;
+// Apps + MCP 2026 share-link registry (migration 161).
+pub mod share_links;
 pub mod gateway_catalog;
 pub mod runtimes;
 // Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).
