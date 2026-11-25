@@ -642,7 +642,7 @@ private struct SheetGridView: View {
 
     var body: some View {
         if grid.rows.isEmpty && grid.columns.isEmpty {
-            FriendlyStateView(style: .empty, icon: "tablecells", title: "No rows yet", message: "This sheet is empty.")
+            FriendlyStateView(style: .empty, title: "No rows yet", message: "This sheet is empty.", art: .chart)
         } else {
             ScrollView([.horizontal, .vertical]) {
                 Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {

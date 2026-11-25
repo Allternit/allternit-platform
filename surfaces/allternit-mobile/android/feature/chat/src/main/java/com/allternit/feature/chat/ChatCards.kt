@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.R as DesignR
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -763,7 +765,7 @@ internal fun AnswerCard(card: JsonObject, fallbackText: String?, backend: ChatBa
                 val places = data.arr("places").mapNotNull { it as? JsonObject }
                 val sub = listOfNotNull(data.str("query"), data.str("near")?.let { "near $it" }).joinToString(" · ")
                 if (sub.isNotEmpty()) Text(sub, color = c.textSecondary, fontSize = 12.sp)
-                if (places.isEmpty()) Text("No places found.", color = c.textSecondary, fontSize = 13.sp)
+                if (places.isEmpty()) InlineEmpty("No places found.", art = EmptyArtKind.Search)
                 places.forEach { p ->
                     val lat = p.double("lat")
                     val lon = p.double("lon")

@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
@@ -405,7 +406,7 @@ private fun ArtifactBody(a: ArtifactV2, dark: Boolean) {
 private fun SheetGrid(rows: List<List<String>>) {
     val c = AllternitTheme.colors
     if (rows.isEmpty() || rows.all { it.isEmpty() }) {
-        FriendlyState(FriendlyStyle.Empty, "No rows yet", "This sheet is empty.") { Icon(painterResource(DesignR.drawable.deck_sheets), null, tint = c.textSecondary) }
+        FriendlyState(FriendlyStyle.Empty, "No rows yet", "This sheet is empty.", art = EmptyArtKind.Chart)
         return
     }
     val cols = rows.maxOf { it.size }
