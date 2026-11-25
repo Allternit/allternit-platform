@@ -751,6 +751,7 @@ internal fun AnswerCard(card: JsonObject, fallbackText: String?, backend: ChatBa
                     Text(data.str("title") ?: url.orEmpty(), color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
                     data.str("description")?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                     url?.let { Text("${Uri.parse(it).host.orEmpty()} ↗", color = c.textSecondary, fontSize = 12.sp) }
+                    if (url != null) CapsuleButton("Open page", primary = true, label = "Opens the page in your browser") { openUrl(context, url) }
                 }
             }
             "places" -> {
@@ -833,18 +834,18 @@ internal fun WritingDraftCard(data: JsonObject) {
         }
         Text(body, color = c.textPrimary, fontSize = 15.sp, lineHeight = 22.sp)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            CapsuleButton(if (copied) "Copied" else "Copy", icon = DesignR.drawable.ph_copy) {
+            CapsuleButton(if (copied) "Copied" else "Copy", icon = DesignR.drawable.ph_copy, primary = variant != "email" && variant != "text_message") {
                 copyToClipboard(context, if (subject != null) "$subject\n\n$body" else body)
                 copied = true
             }
             if (variant == "email") {
-                CapsuleButton("Open in Mail", label = "Opens Mail with this draft. You send it from there.") {
+                CapsuleButton("Open in Mail", primary = true, label = "Opens Mail with this draft. You send it from there.") {
                     val addr = to?.takeIf { it.contains('@') }.orEmpty()
                     openUrl(context, "mailto:$addr?subject=${Uri.encode(subject.orEmpty())}&body=${Uri.encode(body)}")
                 }
             }
             if (variant == "text_message") {
-                CapsuleButton("Open in Messages", label = "Opens Messages with this draft. You send it from there.") {
+                CapsuleButton("Open in Messages", primary = true, label = "Opens Messages with this draft. You send it from there.") {
                     val number = to?.takeIf { t -> t.isNotEmpty() && t.all { it.isDigit() || it in "+-() " } }.orEmpty()
                     runCatching {
                         context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).putExtra("sms_body", body).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

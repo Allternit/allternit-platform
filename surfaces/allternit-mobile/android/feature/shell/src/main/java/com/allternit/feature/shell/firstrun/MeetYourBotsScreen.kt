@@ -49,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -334,6 +335,7 @@ internal fun MeetYourBotsScreen(onFinish: (String?) -> Unit, doneLabel: String? 
             }
             // Header: dots, Back, Skip
             Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(start = 20.dp, end = 20.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (model.stepIndex > 0) IntroShrinkMark(model)
                 Row(
                     Modifier.semantics(mergeDescendants = true) { contentDescription = "Step ${model.stepIndex + 1} of ${model.steps.size}" },
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -413,12 +415,59 @@ private fun notificationsEnabled(context: Context): Boolean {
     return enabled && granted
 }
 
+/**
+ * The first step's stage (clip 3): a colour wash fills from the top (600 ms ease-out), the leader bot drops in on a spring,
+ * and a speech bubble says its two lines, 1.5 s each. Reduced motion (animator scale 0): the finished frame, no loop.
+ */
+@Composable
+private fun MeetIntroStage(model: MeetYourBotsModel) {
+    val c = setupColors
+    val reduce = com.allternit.core.design.rememberDotReducedMotion()
+    val wash = remember { androidx.compose.animation.core.Animatable(if (reduce) 1f else 0f) }
+    val drop = remember { androidx.compose.animation.core.Animatable(if (reduce) 1f else 0f) }
+    var line by remember { mutableStateOf(0) }
+    val setup = model.entry == MeetEntry.Setup
+    val lines = listOf(
+        if (setup) "Hi, I’ll lead your bots." else "Welcome to ${model.leader}’s team.",
+        if (setup) "Pick a few and I’ll hand them work." else "Add a few bots and give me a first job.",
+    )
+    LaunchedEffect(reduce) {
+        if (reduce) return@LaunchedEffect
+        launch { wash.animateTo(1f, tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+        kotlinx.coroutines.delay(250)
+        drop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 220f))
+        kotlinx.coroutines.delay(300)
+        while (true) { kotlinx.coroutines.delay(1500); line = (line + 1) % lines.size }
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().background(meetSoft).testTag("meet-intro-stage")) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(wash.value.coerceIn(0f, 1f))
+            .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.coral.copy(alpha = 0.22f), c.coral.copy(alpha = 0.04f)))))
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            androidx.compose.animation.AnimatedContent(lines[line], transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(150)) }, label = "meet-bubble") { text ->
+                Text(text, fontSize = 14.sp, color = c.ink, modifier = Modifier.padding(horizontal = 32.dp)
+                    .background(c.bg, RoundedCornerShape(16.dp)).border(1.dp, c.line, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 10.dp).testTag("meet-intro-bubble"))
+            }
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.graphicsLayer { translationY = -(1f - drop.value) * 160.dp.toPx(); alpha = drop.value.coerceIn(0f, 1f) }) { LeaderTile(model, 110.dp, live = true) }
+        }
+    }
+}
+
+/** The header mark the intro bot shrinks into (3x to 1x, 300 ms) when the first step is left. Instant under reduced motion. */
+@Composable
+private fun IntroShrinkMark(model: MeetYourBotsModel) {
+    val reduce = com.allternit.core.design.rememberDotReducedMotion()
+    val from = remember { androidx.compose.animation.core.Animatable(if (reduce) 1f else 3f) }
+    LaunchedEffect(reduce) { if (!reduce) from.animateTo(1f, tween(300, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+    Box(Modifier.padding(end = 10.dp).size(24.dp).graphicsLayer { scaleX = from.value; scaleY = from.value }) { LeaderTile(model, 24.dp) }
+}
+
 @Composable
 private fun MeetVisual(model: MeetYourBotsModel, step: MeetYourBotsModel.Step, notificationsOn: Boolean) {
     val c = setupColors
     val hasLeader = model.entry == MeetEntry.BotMode || model.steps.indexOf(MeetYourBotsModel.Step.Main).let { it < 0 || model.stepIndex > it }
     when (step) {
-        MeetYourBotsModel.Step.Start -> MeetNetworkView()
+        MeetYourBotsModel.Step.Start -> MeetIntroStage(model)
         MeetYourBotsModel.Step.Team -> {
             val n = model.members.size
             MeetTeamGrid(model.members, model.catalog, if (hasLeader) ({ LeaderTile(model, 68.dp, live = true) }) else null, model.leader,

@@ -620,6 +620,57 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
     }
 }
 
+/**
+ * A vertical rail of the room's bots on the right edge. Drag a finger along it: the face under the finger
+ * grows, its neighbours ease back, and the bot's name shows to the left. Release and it settles. Reduced
+ * motion (animator scale 0) skips the spring and the fade; the magnify still follows the finger.
+ */
+@Composable
+private fun GroupScrubRail(store: BotModeStore, members: List<GroupMember>, modifier: Modifier = Modifier) {
+    val c = AllternitTheme.colors
+    val reduce = remember(LocalContext.current) { android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val slot = 34.dp
+    val slotPx = with(density) { slot.toPx() }
+    var focus by remember { mutableStateOf<Float?>(null) }
+    val shown by androidx.compose.animation.core.animateFloatAsState(
+        if (focus != null) 1f else 0f,
+        if (reduce) tween(0) else androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 500f),
+        label = "railFocus",
+    )
+    val label = focus?.let { members.getOrNull(it.roundToInt().coerceIn(0, members.lastIndex)) }
+    Row(modifier.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (label != null) {
+            Text(
+                label.displayName, color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(end = 8.dp).widthIn(max = 140.dp).background(c.bgPanel, RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp).testTag("groupRailLabel"),
+            )
+        }
+        Column(
+            Modifier.semantics { contentDescription = "Bots in this room. Drag to magnify." }.testTag("groupScrubRail")
+                .pointerInput(members.size) {
+                    detectVerticalDragGestures(
+                        onDragStart = { o -> focus = (o.y / slotPx - 0.5f).coerceIn(0f, members.lastIndex.toFloat()) },
+                        onDragEnd = { focus = null },
+                        onDragCancel = { focus = null },
+                        onVerticalDrag = { change, _ -> focus = (change.position.y / slotPx - 0.5f).coerceIn(0f, members.lastIndex.toFloat()) },
+                    )
+                },
+        ) {
+            members.forEachIndexed { i, m ->
+                val near = focus?.let { f -> (1f - kotlin.math.abs(f - i) / 1.6f).coerceAtLeast(0f) } ?: 0f
+                val scale = 1f + 0.55f * near * shown.coerceAtLeast(near.coerceAtMost(1f))
+                Box(Modifier.size(slot), contentAlignment = Alignment.Center) {
+                    Box(Modifier.graphicsLayer { scaleX = scale; scaleY = scale; translationX = -(scale - 1f) * 10.dp.toPx() }.clip(CircleShape).border(BorderStroke(1.5.dp, c.bgPanel), CircleShape)) {
+                        MemberFace(store, m.botId, 26.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Up to four overlapping faces (iOS GroupAvatarStack). */
 @Composable
 private fun GroupFaces(store: BotModeStore, ids: List<String>, size: androidx.compose.ui.unit.Dp) {
@@ -808,7 +859,10 @@ internal fun GroupRoomScreen(groupId: String, host: BotsHost, store: BotModeStor
                 ) {
                     GroupStage(room, store, speaking, onSuggestion = { send(it) }, onDock = { docked = true })
                 }
-                GroupLog(room, store, speaking, runError, docked, Modifier.weight(1f))
+                Box(Modifier.weight(1f)) {
+                    GroupLog(room, store, speaking, runError, docked, Modifier.fillMaxSize())
+                    if (count > 1) GroupScrubRail(store, room.members, Modifier.align(Alignment.CenterEnd))
+                }
                 host.composer(
                     BotComposerSpec(
                         sessionOpen = true, onNewThread = { nav.reset() },
