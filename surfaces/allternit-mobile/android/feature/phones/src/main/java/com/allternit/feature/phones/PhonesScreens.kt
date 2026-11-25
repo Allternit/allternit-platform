@@ -310,7 +310,7 @@ fun PhoneTaskCard(runId: String, backend: ChatBackend, onOpenInbox: () -> Unit, 
     var run by remember(runId) { mutableStateOf<PhoneRun?>(null) }
     var lost by remember(runId) { mutableStateOf(false) }
     var thumb by remember(runId) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    val startedAt = remember(runId) { System.currentTimeMillis() }
+    var startedAt by remember(runId) { mutableStateOf(System.currentTimeMillis()) }
     var now by remember(runId) { mutableStateOf(startedAt) }
     var endedAt by remember(runId) { mutableStateOf<Long?>(null) }
     var expanded by remember(runId) { mutableStateOf(false) }
@@ -321,6 +321,7 @@ fun PhoneTaskCard(runId: String, backend: ChatBackend, onOpenInbox: () -> Unit, 
             val r = backend.phoneRun(runId)
             if (r == null) lost = true else {
                 lost = false; run = r
+                if (r.startedAt > 0) startedAt = r.startedAt
                 r.stepLabel?.let { if (it !in seen) seen.add(it) }
             }
             backend.runtimeBytes("/api/v1/phones/runs/${com.allternit.feature.artifacts.LibraryNet.escape(runId)}/thumb", "image/*")?.takeIf { it.first == 200 }?.let { (_, bytes) ->
