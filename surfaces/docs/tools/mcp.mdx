@@ -378,3 +378,14 @@ Behind the local flag `mcp.tasks` (off by default), the Android app draws the sa
 - **Question form.** When an MCP server asks something, the card shows the server's name, the question and the requested fields (text, number, yes or no, choice). **Send** answers, **Decline** refuses. A server that asks for a URL gets **Open page** (https or http only), then **Done**. A form that asks for a password, key or token is never filled in the app: the card points to the server's own sign-in page and offers only Decline.
 
 Turn the flag on for a sideloaded debug build by setting the boolean `mcp.tasks` in `shared_prefs/allternit_flags.xml`.
+
+## Apps shelf, share list and home-screen shortcut on Android
+
+Behind the local flag `apps.shelf` (off by default), MCP Apps gets an **Apps** tab next to Installed, Discover and Build. It matches iOS:
+
+- **Made by you / your org** and **From a connected server**: one card per app with its icon, name, who made it (You, Your org, Shared with you) and its permission tier (Browser, App, Full). An installed app has Open, Pin or Unpin, Add to home screen and Remove. An app not installed yet has Install, which shows what the tier allows and installs only after you tap Install. If a later version asks for more access, the sheet comes back with the new access listed.
+- **Open** asks the server for a one-time sign-in handoff and loads that page; if that fails it loads the app's plain link. Vendor apps open their link directly. Only https pages on allternitusercontent.com and ai.allternit.com load.
+- **Your links**: each share link shows Hosted or Live from your computer, Copy link, Pause or Resume, and Stop (after a confirmation).
+- **Add to home screen** asks the launcher to pin a shortcut with the app's icon. Tapping it opens the app in its own screen.
+
+Turn the flag on for a sideloaded debug build by setting the boolean `apps.shelf` in `shared_prefs/allternit_flags.xml`.
