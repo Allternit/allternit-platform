@@ -32,3 +32,9 @@ The Arc `EmptyState` takes an optional `art` and a muted second headline. Withou
 4. Check light, dark and reduced motion.
 
 The Gizzi walk uses the mascot already in each app. Android has no sprite sheet, so it shows the still mascot.
+
+## How each app takes the art
+
+- **iOS:** `EmptyBox` takes `art:` and an optional action pill. `FriendlyStateView` takes `art:` for its empty style only. A screen that has a filter passes the art only when the filter is off.
+- **Android:** the Code and Automation `EmptyState` helpers, the bots `ListState` and the Meetings `PanelEmpty` take an optional `art`, null by default. `FriendlyState` takes a `gizzi` flag for the Gizzi walk. `ListState` has `art` before its trailing `onRetry` lambda, so callers that use the trailing lambda are unchanged.
+- **iOS connect scene:** `ConnectScene.swift` draws the connect-a-computer panel from real state only (asleep, connecting, connected). The check never shows before a computer is online.
