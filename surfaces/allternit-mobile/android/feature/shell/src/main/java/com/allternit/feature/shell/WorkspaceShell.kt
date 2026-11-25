@@ -607,7 +607,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 page = ShellPage.Chat(session = null, draft = ComposerDraft())
                             },
                             codeHome = if (mode == ShellMode.Code) ({
-                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
+                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it }, onNewSession = { chat.startNewSession() })
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                             codeActions = if (mode == ShellMode.Code) CodeComposerActions(

@@ -442,6 +442,7 @@ internal fun TelegramFlow(host: PhonesHost, botId: String, onClose: () -> Unit) 
             }
         }
         else -> {
+            com.allternit.core.design.BadgePop(earned = true, label = "Connected")
             Heading("Telegram is connected")
             Note(if (managed) "Your new bot answers the Allternit bots you switch it on for. Messages wait while your computer is off and arrive in order." else "Your Telegram bot answers the Allternit bots you switch it on for. Messages wait while your computer is off and arrive in order.", "connectTelegramDone")
             ConnectButton("Done", "connectTelegramFinish", onClick = onClose)
@@ -562,6 +563,7 @@ internal fun OAuthChannelFlow(host: PhonesHost, provider: ChannelProvider, onClo
             }
         }
         else -> {
+            com.allternit.core.design.BadgePop(earned = true, label = "Connected")
             Heading("${provider.label} is connected")
             Note((workspace?.let { "Connected to $it. " } ?: "") + copy.done, "connectOAuthDone$key")
             ConnectButton("Done", "connectOAuthFinish$key", onClick = onClose)

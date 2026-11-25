@@ -590,7 +590,7 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
                 Gap(8.dp)
             }
             if (store.groups.isEmpty() && !loading && error == null) {
-                EmptyBox("No group chats yet.", "Pick two or more bots and start a room.", Modifier.padding(horizontal = 16.dp).testTag("groupsEmptyNew"), onClick = { creating = true })
+                EmptyBox("No group chats yet.", "Pick two or more bots and start a room.", Modifier.padding(horizontal = 16.dp).testTag("groupsEmptyNew"), onClick = { creating = true }, art = com.allternit.core.design.EmptyArtKind.Envelope)
             } else if (!ListState(loading && store.groups.isEmpty(), error, store.groups.isEmpty(), "Couldn't load group chats", "No group chats yet.") { scope.launch { load() } }) {
                 Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(20.dp))) {
                     shown.forEachIndexed { i, g ->
