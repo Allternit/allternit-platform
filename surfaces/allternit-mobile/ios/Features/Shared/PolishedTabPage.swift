@@ -42,6 +42,23 @@ struct EmptyBox: View {
     /// Optional pill under the line.
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    var size: EmptyArtSize = .full
+
+    init(icon: String = "plus", title: String, line: String, art: EmptyArtKind? = nil,
+         scene: ConnectSceneState? = nil, actionTitle: String? = nil,
+         action: (() -> Void)? = nil, size: EmptyArtSize = .full) {
+        self.icon = icon; self.title = title; self.line = line; self.art = art
+        self.scene = scene; self.actionTitle = actionTitle; self.action = action
+        self.size = size
+    }
+
+    /// Contract shape: `EmptyBox(title:message:art:)`.
+    init(icon: String = "plus", title: String, message: String, art: EmptyArtKind? = nil,
+         scene: ConnectSceneState? = nil, actionTitle: String? = nil,
+         action: (() -> Void)? = nil, size: EmptyArtSize = .full) {
+        self.init(icon: icon, title: title, line: message, art: art, scene: scene,
+                  actionTitle: actionTitle, action: action, size: size)
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -49,7 +66,7 @@ struct EmptyBox: View {
                 ConnectScene(state: scene)
                     .padding(.bottom, 2)
             } else if let art {
-                EmptyArt(kind: art, paper: Color("BgPrimary"))
+                EmptyArt(kind: art, size: size, paper: Color("BgPrimary"))
                     .padding(.bottom, 2)
             } else {
                 Image(systemName: icon)
