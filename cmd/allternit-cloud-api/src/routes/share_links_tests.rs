@@ -66,8 +66,14 @@ async fn setup() -> Arc<ApiState> {
         sqlx::raw_sql(sql).execute(&state.db).await.expect("migration twice");
     }
     sqlx::query("DELETE FROM share_links").execute(&state.db).await.unwrap();
+    // Live links need the relay secret; the relay admin is off unless a test turns it on.
+    std::env::set_var(RELAY_SECRET_ENV, RELAY_TEST_SECRET);
+    std::env::remove_var(RELAY_ADMIN_URL_ENV);
+    std::env::remove_var(RELAY_ADMIN_TOKEN_ENV);
     state
 }
+
+const RELAY_TEST_SECRET: &str = "test-relay-admission-secret-0123456789";
 
 fn dev_token_on() -> std::sync::MutexGuard<'static, ()> {
     use crate::auth::dev_token::{ALLOW_DEV_TOKEN_ENV, DEV_TOKEN_ENV_LOCK};
@@ -353,4 +359,216 @@ async fn share_links_over_cap_answer_429_and_killed_subjects_cannot_be_shared_ag
     // A reserved name is its own error.
     let (status, body) = call(&state, "POST", "/api/v1/share-links", json!({ "kind": "hosted", "subject": "mcp", "subdomain": "claude" })).await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("reserved_subdomain")));
+}
+
+// ------------------------------------------------------------- relay (lane 17b) ----
+
+use base64::Engine as _;
+
+#[derive(Debug, Deserialize)]
+struct RelayClaims {
+    sub: String,
+    lid: String,
+    exp: u64,
+}
+
+/// The relay's `admission::verify` (infrastructure/opentunnel/patches/0001), ported
+/// line for line: ring HMAC-SHA256, base64url without padding, serde JSON claims.
+fn relay_verify(secret: &[u8], credential: &str, now: u64) -> Result<RelayClaims, &'static str> {
+    use ring::hmac;
+    if credential.is_empty() {
+        return Err("credential required");
+    }
+    let mut parts = credential.split('.');
+    let (Some(version), Some(payload), Some(signature), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err("malformed credential");
+    };
+    if version != "ota1" {
+        return Err("unknown credential version");
+    }
+    let signature = URL_SAFE_NO_PAD.decode(signature).map_err(|_| "malformed credential")?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
+    hmac::verify(&key, format!("ota1.{payload}").as_bytes(), &signature).map_err(|_| "bad signature")?;
+    let claims: RelayClaims = URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or("malformed credential")?;
+    if claims.exp.saturating_add(60) < now {
+        return Err("credential expired");
+    }
+    if claims.exp > now.saturating_add(3600) {
+        return Err("credential lifetime too long");
+    }
+    let label = claims.sub.as_bytes();
+    let valid_label = !label.is_empty()
+        && label.len() <= 63
+        && label.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        && label[0] != b'-'
+        && label[label.len() - 1] != b'-';
+    if !valid_label || claims.lid.is_empty() {
+        return Err("invalid link");
+    }
+    Ok(claims)
+}
+
+fn now_secs() -> u64 {
+    Utc::now().timestamp() as u64
+}
+
+#[test]
+fn share_links_relay_credential_round_trips_through_the_relay_verify() {
+    let now = now_secs();
+    let cred = mint_relay_credential(b"s3cret", "k3x9q2m7v8w4p5ra", "shl_1", now as i64 + 600);
+    assert!(cred.starts_with("ota1.") && !cred.contains('='), "{cred}");
+    let claims = relay_verify(b"s3cret", &cred, now).expect("the relay admits it");
+    assert_eq!((claims.sub.as_str(), claims.lid.as_str(), claims.exp), ("k3x9q2m7v8w4p5ra", "shl_1", now + 600));
+
+    assert_eq!(relay_verify(b"other", &cred, now).unwrap_err(), "bad signature");
+    let (_, sig) = cred.rsplit_once('.').unwrap();
+    let forged_payload = URL_SAFE_NO_PAD.encode(br#"{"sub":"evil","lid":"shl_1","exp":9999999999}"#);
+    let tampered = format!("ota1.{forged_payload}.{sig}");
+    assert_eq!(relay_verify(b"s3cret", &tampered, now).unwrap_err(), "bad signature");
+    assert_eq!(relay_verify(b"s3cret", &cred, now + 600 + 61).unwrap_err(), "credential expired");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn share_links_live_links_get_relay_credentials_and_reconnect_ones() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let device = unique("rt");
+    seed_runtime_device(&state.db, &device, DEV_USER).await;
+    let name = unique("cred").replace('_', "-")[..20].to_string();
+    let (status, live) = call(
+        &state,
+        "POST",
+        "/api/v1/share-links",
+        json!({ "kind": "live", "subject": "port", "runtime_device_id": device, "target_port": 3000, "subdomain": name }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{live}");
+    let id = live["id"].as_str().unwrap().to_string();
+    let claims = relay_verify(RELAY_TEST_SECRET.as_bytes(), live["relay_credential"].as_str().unwrap(), now_secs())
+        .expect("create's credential admits the tunnel");
+    assert_eq!((claims.sub, claims.lid), (name.clone(), id.clone()), "tunnel id = the link's subdomain");
+
+    let art = seed_artifact(&state.db, DEV_USER).await;
+    let (_, hosted) = call(
+        &state,
+        "POST",
+        "/api/v1/share-links",
+        json!({ "kind": "hosted", "subject": "artifact", "artifact_id": art }),
+    )
+    .await;
+    assert!(hosted.get("relay_credential").is_none(), "hosted links never touch the relay");
+
+    let again = format!("/api/v1/share-links/{id}/relay-credential");
+    let (status, fresh) = call(&state, "POST", &again, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{fresh}");
+    let claims = relay_verify(RELAY_TEST_SECRET.as_bytes(), fresh["credential"].as_str().unwrap(), now_secs()).unwrap();
+    assert!(claims.exp <= now_secs() + RELAY_CREDENTIAL_TTL_SECS as u64);
+    assert!(fresh["expires_at"].is_string());
+
+    let hosted_again = format!("/api/v1/share-links/{}/relay-credential", hosted["id"].as_str().unwrap());
+    let (status, body) = call(&state, "POST", &hosted_again, Value::Null).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("not_live")));
+    let (status, _) = call(&state, "POST", "/api/v1/share-links/shl_nope/relay-credential", Value::Null).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    call(&state, "POST", &format!("/api/v1/share-links/{id}/pause"), Value::Null).await;
+    let (status, body) = call(&state, "POST", &again, Value::Null).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("paused")));
+    call(&state, "DELETE", &format!("/api/v1/share-links/{id}"), Value::Null).await;
+    let (status, body) = call(&state, "POST", &again, Value::Null).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::GONE, Some("revoked")));
+
+    // No relay secret: live links are refused, hosted links still work.
+    std::env::remove_var(RELAY_SECRET_ENV);
+    let (status, body) = call(
+        &state,
+        "POST",
+        "/api/v1/share-links",
+        json!({ "kind": "live", "subject": "mcp", "runtime_device_id": device }),
+    )
+    .await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("relay_not_configured")));
+    let (status, _) = call(&state, "POST", "/api/v1/share-links", json!({ "kind": "hosted", "subject": "mcp" })).await;
+    assert_eq!(status, StatusCode::CREATED);
+    std::env::set_var(RELAY_SECRET_ENV, RELAY_TEST_SECRET);
+}
+
+/// A stand-in relay admin: records `METHOD path` + Authorization, answers 204.
+async fn mock_relay() -> (String, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
+    let hits = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = hits.clone();
+    let app: Router = Router::new().fallback(move |req: axum::http::Request<axum::body::Body>| {
+        let seen = seen.clone();
+        async move {
+            let auth = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            seen.lock().unwrap().push((format!("{} {}", req.method(), req.uri().path()), auth));
+            StatusCode::NO_CONTENT
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}/"), hits)
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn share_links_pause_and_revoke_drop_the_relay_tunnel_and_survive_a_dead_relay() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let (relay, hits) = mock_relay().await;
+    std::env::set_var(RELAY_ADMIN_URL_ENV, &relay);
+    std::env::set_var(RELAY_ADMIN_TOKEN_ENV, "relay-admin-token");
+    let device = unique("rt");
+    seed_runtime_device(&state.db, &device, DEV_USER).await;
+    let name = unique("drop").replace('_', "-")[..20].to_string();
+    let (_, live) = call(
+        &state,
+        "POST",
+        "/api/v1/share-links",
+        json!({ "kind": "live", "subject": "mcp", "runtime_device_id": device, "subdomain": name }),
+    )
+    .await;
+    let id = live["id"].as_str().unwrap().to_string();
+    let want = (format!("POST /api/admin/tunnel/{name}/delete"), "Bearer relay-admin-token".to_string());
+
+    let pause = format!("/api/v1/share-links/{id}/pause");
+    call(&state, "POST", &pause, Value::Null).await;
+    assert_eq!(hits.lock().unwrap().clone(), vec![want.clone()], "pause drops the tunnel");
+    // The host learns it is paused from its heartbeat: 200 with status "paused"
+    // (@allternit/share-tunnel stops with reason `paused` on exactly that).
+    let (status, beat) = call(&state, "POST", &format!("/api/v1/share-links/{id}/heartbeat"), Value::Null).await;
+    assert_eq!((status, beat["status"].as_str()), (StatusCode::OK, Some("paused")));
+    call(&state, "POST", &pause, json!({ "paused": false })).await;
+    assert_eq!(hits.lock().unwrap().len(), 1, "resume does not");
+
+    let (status, gone) = call(&state, "DELETE", &format!("/api/v1/share-links/{id}"), Value::Null).await;
+    assert_eq!((status, gone["link"]["status"].as_str()), (StatusCode::OK, Some("revoked")));
+    assert_eq!(hits.lock().unwrap().clone(), vec![want.clone(), want], "revoke drops the tunnel");
+
+    // A relay that is down never blocks the revoke.
+    let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead_url = format!("http://{}", dead.local_addr().unwrap());
+    drop(dead);
+    std::env::set_var(RELAY_ADMIN_URL_ENV, dead_url);
+    let name2 = unique("dead").replace('_', "-")[..20].to_string();
+    let (_, live2) = call(
+        &state,
+        "POST",
+        "/api/v1/share-links",
+        json!({ "kind": "live", "subject": "mcp", "runtime_device_id": device, "subdomain": name2 }),
+    )
+    .await;
+    let (status, gone) =
+        call(&state, "DELETE", &format!("/api/v1/share-links/{}", live2["id"].as_str().unwrap()), Value::Null).await;
+    assert_eq!((status, gone["link"]["status"].as_str()), (StatusCode::OK, Some("revoked")));
+    std::env::remove_var(RELAY_ADMIN_URL_ENV);
+    std::env::remove_var(RELAY_ADMIN_TOKEN_ENV);
 }

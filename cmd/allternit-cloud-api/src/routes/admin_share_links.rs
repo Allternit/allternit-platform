@@ -7,7 +7,8 @@
 //!   un-kill it by deleting, the artifact or vendor app it shared can't get a
 //!   new link, and a hosted app's public route answers 410 on the next request
 //!   (`GET /api/v2/public/apps/:slug` is `no-store`, so no cache outlives the
-//!   kill). Sets `abuse_flag`; `note` goes in `abuse_note`.
+//!   kill). Sets `abuse_flag`; `note` goes in `abuse_note`. A live link's
+//!   relay tunnel is dropped at once (`share_links::relay_drop_tunnel`).
 //! * `POST /api/v1/admin/share-links/:id/flag` `{ flagged?: bool (default true), note? }`
 //!   -> `{ link }`. Marks a link for review; it keeps serving.
 //!
@@ -113,8 +114,12 @@ async fn kill_link(
     .bind(req.note.as_deref())
     .fetch_optional(&state.db)
     .await;
-    if let Ok(Some(_)) = &row {
+    if let Ok(Some(killed)) = &row {
         tracing::info!(link = %id, "share link killed by admin");
+        // A live link's tunnel goes now, not at the host's next heartbeat.
+        if let Ok(link) = ShareLinkRow::from_row(killed) {
+            crate::routes::share_links::relay_drop_tunnel(&link).await;
+        }
     }
     Ok(respond(row))
 }
@@ -270,5 +275,69 @@ mod tests {
         let (status, _) = call(&state, routes(), "POST", "/api/v1/admin/share-links/shl_nope/kill", Value::Null).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         std::env::remove_var("ALLTERNIT_ADMIN_USER_IDS");
+    }
+
+    /// A stand-in relay admin (only the HTTP edge is fake): records `METHOD path` + Authorization, answers 204.
+    async fn mock_relay() -> (String, Arc<std::sync::Mutex<Vec<(String, String)>>>) {
+        let hits = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = hits.clone();
+        let app: Router = Router::new().fallback(move |req: axum::http::Request<axum::body::Body>| {
+            let seen = seen.clone();
+            async move {
+                let auth = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                seen.lock().unwrap().push((format!("{} {}", req.method(), req.uri().path()), auth));
+                StatusCode::NO_CONTENT
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), hits)
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn admin_share_links_kill_drops_a_live_links_relay_tunnel() {
+        use crate::routes::share_links::{RELAY_ADMIN_TOKEN_ENV, RELAY_ADMIN_URL_ENV};
+        let _g = dev_token_on();
+        let state = setup().await;
+        let (relay, hits) = mock_relay().await;
+        std::env::set_var(RELAY_ADMIN_URL_ENV, &relay);
+        std::env::set_var(RELAY_ADMIN_TOKEN_ENV, "relay-admin-token");
+        std::env::set_var("ALLTERNIT_ADMIN_USER_IDS", DEV_USER);
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let device = format!("rt_{suffix}");
+        crate::routes::test_support::seed_runtime_device(&state.db, &device, DEV_USER).await;
+        let (link, sub) = (format!("shl_{suffix}"), format!("l{}", &suffix[..15]));
+        sqlx::query(
+            "INSERT INTO share_links (id, user_id, kind, subject, runtime_device_id, subdomain) \
+             VALUES ($1, $2, 'live', 'mcp', $3, $4)",
+        )
+        .bind(&link)
+        .bind(DEV_USER)
+        .bind(&device)
+        .bind(&sub)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let (status, body) =
+            call(&state, routes(), "POST", &format!("/api/v1/admin/share-links/{link}/kill"), Value::Null).await;
+        assert_eq!((status, body["link"]["status"].as_str()), (StatusCode::OK, Some("killed")), "{body}");
+        assert_eq!(
+            hits.lock().unwrap().clone(),
+            vec![(format!("POST /api/admin/tunnel/{sub}/delete"), "Bearer relay-admin-token".to_string())],
+            "kill drops the live tunnel at the relay"
+        );
+
+        // A hosted link has no tunnel: the relay is not called.
+        let (hosted, _, _) = hosted_app(&state.db).await;
+        call(&state, routes(), "POST", &format!("/api/v1/admin/share-links/{hosted}/kill"), Value::Null).await;
+        assert_eq!(hits.lock().unwrap().len(), 1);
+
+        std::env::remove_var("ALLTERNIT_ADMIN_USER_IDS");
+        std::env::remove_var(RELAY_ADMIN_URL_ENV);
+        std::env::remove_var(RELAY_ADMIN_TOKEN_ENV);
     }
 }
