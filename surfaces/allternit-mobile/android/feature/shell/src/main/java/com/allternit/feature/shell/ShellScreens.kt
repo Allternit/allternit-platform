@@ -174,6 +174,9 @@ internal fun ShellHome(
     codeActions: CodeComposerActions? = null,
     /** The home composer's voice button (iOS ComposerView onVoiceMode on the home chat): a new chat in voice mode. */
     onVoiceMode: (() -> Unit)? = null,
+    /** Artifact mode + Send starts that kind's artifact session (Artifacts redesign D5); PDF opens the file picker. */
+    onStartArtifact: ((DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit)? = null,
+    onPickPdf: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -246,6 +249,8 @@ internal fun ShellHome(
                 onSend = onNewChat,
                 onOpenSection = onOpenSection,
                 onVoiceMode = if (mode == ShellMode.Home) onVoiceMode else null,
+                onStartArtifact = if (mode == ShellMode.Home) onStartArtifact else null,
+                onPickPdf = if (mode == ShellMode.Home) onPickPdf else null,
             )
         } else {
             Spacer(Modifier.navigationBarsPadding())

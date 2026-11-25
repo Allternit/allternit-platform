@@ -1,5 +1,7 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.api.gen.AgentModeEntry
+import com.allternit.core.api.gen.AgentModeLaunchType
 import com.allternit.core.api.gen.AgentModes
 import com.allternit.core.design.MatrixLogo
 import android.content.Context
@@ -156,7 +158,15 @@ internal data class DeckMode(
     val beta: Boolean,
     val isNew: Boolean,
     val wire: String?,
-)
+    /** The registry entry: launch type and the "It can" defaults. */
+    val entry: AgentModeEntry,
+) {
+    /** An artifact kind that starts an artifact session on Send (Docs, Sheets, Page, Dashboard, App, Build ...). */
+    val startsSession: Boolean get() = entry.artifact && entry.launchType == AgentModeLaunchType.SESSION
+
+    /** PDF: picking it opens the file picker instead of arming a mode. */
+    val picksFile: Boolean get() = entry.launchType == AgentModeLaunchType.PICK
+}
 
 private fun deckIcon(id: String): Int = when (id) {
     "agent" -> DesignR.drawable.deck_auto
@@ -165,6 +175,7 @@ private fun deckIcon(id: String): Int = when (id) {
     "sheets" -> DesignR.drawable.deck_sheets
     "slides" -> DesignR.drawable.deck_slides
     "pdf" -> DesignR.drawable.deck_pdf
+    "app" -> DesignR.drawable.deck_app
     "page" -> DesignR.drawable.deck_page
     "dashboard" -> DesignR.drawable.deck_dashboard
     "ops" -> DesignR.drawable.deck_ops
@@ -189,7 +200,7 @@ private fun deckColor(id: String): Color? = when (id) {
 
 /** Every mode the chat surface can run, in registry order. "agent" is the default (no mode armed). */
 internal val DeckModes: List<DeckMode> = AgentModes.modes("chat").map { e ->
-    DeckMode(e.id, e.label, deckIcon(e.id), deckColor(e.id), e.placeholder, e.beta, e.isNew, e.agentMode)
+    DeckMode(e.id, e.label, deckIcon(e.id), deckColor(e.id), e.placeholder, e.beta, e.isNew, e.agentMode, e)
 }
 
 /** Which deck rides under the card (iOS ComposerDeckVariant): Full on Home, Compact in a chat, None on Bots. */
@@ -226,6 +237,10 @@ internal fun Composer(
     agentChips: (@Composable (iconOnly: Boolean) -> Unit)? = null,
     sessionOpen: Boolean = deck == ComposerDeck.Compact,
     onNewItem: (() -> Unit)? = null,
+    /** Send with an artifact mode picked starts that kind's artifact session with the text as its first message (D5); null sends as a normal turn. */
+    onStartArtifact: ((DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit)? = null,
+    /** Picking PDF in the mode list opens the file picker (as on the Artifacts page); null hides the PDF mode. */
+    onPickPdf: (() -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -238,6 +253,8 @@ internal fun Composer(
     var deckFolded by remember { mutableStateOf(true) }
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     var agentMode by rememberSaveable { mutableStateOf<String?>(null) }
+    // The picked kind's "It can" choices (registry defaults); a new pick resets them.
+    var itCan by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var plusOpen by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
     var placeholderIndex by remember { mutableIntStateOf(0) }
@@ -365,7 +382,15 @@ internal fun Composer(
         )
         text = ""
         attachments.clear()
-        onSend(draft)
+        val start = onStartArtifact
+        if (armedMode != null && armedMode.startsSession && start != null) {
+            val choices = itCan
+            agentMode = null
+            itCan = emptyMap()
+            start(armedMode, draft, choices)
+        } else {
+            onSend(draft)
+        }
     }
 
     Column(
@@ -526,6 +551,9 @@ internal fun Composer(
             }
         }
         // Tools changes in place; reduced motion never animates the composer's height.
+        if (armedMode != null && armedMode.startsSession && onStartArtifact != null && itCan.isNotEmpty()) {
+            ItCanRow(itCan, onToggle = { k -> Haptics.perform(view, Haptics.Kind.Tap); itCan = itCan + (k to (itCan[k] != true)) }, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 2.dp))
+        }
         if (deckOpen) {
             DeckBand(
                 onHide = { setDeckFolded(true) },
@@ -533,9 +561,15 @@ internal fun Composer(
                 onMention = { tag -> if (!text.contains(tag)) text = tag + text },
                 onAt = { text += if (text.isEmpty() || text.endsWith(" ")) "@" else " @" },
                 armed = armedMode,
+                showPdf = onPickPdf != null,
                 onPickMode = { m ->
                     Haptics.perform(view, Haptics.Kind.Tap)
-                    agentMode = m?.id
+                    if (m != null && m.picksFile) {
+                        onPickPdf?.invoke()
+                    } else {
+                        agentMode = m?.id
+                        itCan = if (m != null && m.startsSession) m.itCanDefaults() else emptyMap()
+                    }
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
@@ -744,6 +778,8 @@ private fun DeckBand(
     onAt: () -> Unit,
     onPlugins: () -> Unit,
     onArtifacts: () -> Unit,
+    /** PDF opens a file picker; hidden when the host cannot provide one. */
+    showPdf: Boolean,
 ) {
     val c = AllternitTheme.colors
     var menu by remember { mutableStateOf(false) }
@@ -777,7 +813,7 @@ private fun DeckBand(
                 Text("Agent mode", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
                 // One list, two columns, row by row (R2-deck-mode): the registry order reads left to right.
                 Column(Modifier.width(320.dp).padding(horizontal = 4.dp)) {
-                    DeckModes.chunked(2).forEach { pair ->
+                    DeckModes.filter { !it.picksFile || showPdf }.chunked(2).forEach { pair ->
                         Row(Modifier.fillMaxWidth()) {
                             pair.forEach { m ->
                                 Box(Modifier.weight(1f)) {

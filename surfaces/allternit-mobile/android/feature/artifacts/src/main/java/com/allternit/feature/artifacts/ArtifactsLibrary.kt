@@ -141,6 +141,9 @@ enum class StudioKind(val raw: String, private val fallbackLabel: String, val de
 
     companion object {
         /** Registry order (the mode list order), kinds the registry lacks last. */
+        /** The studio kind a registry mode id starts. App has no kind of its own: it runs as a Build session (site or app). */
+        fun forMode(id: String): StudioKind? = entries.firstOrNull { it.raw == id } ?: if (id == "app") Build else null
+
         val ordered: List<StudioKind> by lazy {
             val order = AgentModes.all.map { it.id }
             entries.sortedBy { k -> order.indexOf(k.raw).let { if (it < 0) Int.MAX_VALUE else it } }
@@ -241,6 +244,8 @@ fun ArtifactsLibraryScreen(
     onConnectors: () -> Unit,
     onSignIn: () -> Unit,
     initialArtifactId: String? = null,
+    /** A studio session the composer just started (Artifacts redesign 6.2): the library opens straight into it. */
+    initialStudio: StudioSession? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -253,7 +258,7 @@ fun ArtifactsLibraryScreen(
     var officeOpen by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<ArtifactSummary?>(null) }
     var confirmDelete by remember { mutableStateOf<ArtifactSummary?>(null) }
-    var studio by remember { mutableStateOf<StudioSession?>(null) }
+    var studio by remember { mutableStateOf(initialStudio) }
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var newOpen by remember { mutableStateOf(false) }
