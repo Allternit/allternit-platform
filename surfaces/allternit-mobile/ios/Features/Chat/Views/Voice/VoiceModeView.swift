@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Full voice mode (Phase 7b, Claude iOS parity): a full-screen takeover
 /// with an ambient gradient tinted by turn state (blue family = listening,
@@ -10,6 +11,13 @@ import SwiftUI
 /// through the normal chat stream, so the text thread stays in sync. On end
 /// (X) the caller files a "Voice chat ended · Ns" card into the feed and
 /// dismisses the cover.
+///
+/// Orb travel (SCOPE-B1 clip 3): the cover is presented and dismissed with no
+/// system slide and a clear background (`VoiceHost.present`). The stage then
+/// moves its own orb: in from the quick bar's orb (window coordinates, so it
+/// crosses the presentation boundary that `matchedGeometryEffect` cannot) while
+/// the stage fades in round it; back down onto the bar on minimize; and a melt
+/// to a dot on end. With no bar on screen, or Reduce Motion, it crossfades.
 struct VoiceModeView: View {
     /// The live session, owned by `VoiceHost` (so the quick bar and this
     /// full-screen view are the same conversation).
@@ -28,6 +36,17 @@ struct VoiceModeView: View {
     @State private var pulse = false
     /// PTT/tap disambiguation on the mic button (tap = mute, hold = talk).
     @State private var pressStartedAt: Date? = nil
+    @ReducedMotion private var reduceMotion
+    /// The stage is up. False while the orb travels in from the bar or back to it.
+    @State private var revealed = false
+    /// End (X): the orb melts out before the call ends.
+    @State private var ending = false
+    /// Where the stage orb rests, in window coordinates.
+    @State private var restFrame: CGRect = .zero
+
+    /// Bar ↔ stage travel, ~0.4 s in and ~0.35 s back (ui-motion: large shared element).
+    private static let travelIn: Animation = .spring(response: 0.42, dampingFraction: 0.86)
+    private static let travelOut: Animation = .spring(response: 0.35, dampingFraction: 0.92)
 
     init(host: VoiceHost, viewModel: VoiceModeViewModel, bot: AgentRecord? = nil, onEnd: @escaping (Int) -> Void) {
         self.host = host
@@ -40,6 +59,8 @@ struct VoiceModeView: View {
         Group {
             if let bot { botStage(bot) } else { plainStage }
         }
+        // Controls act only once the stage is up, and not while it leaves.
+        .allowsHitTesting(revealed && !ending)
         .sheet(isPresented: $isSettingsPresented) {
             VoiceSettingsSheet(bot: bot)
         }
@@ -89,43 +110,53 @@ struct VoiceModeView: View {
             : viewModel.state == .thinking && viewModel.replyText.isEmpty ? "\(bot.botDisplayName) is thinking" : nil
         return ZStack {
             Color("BgPrimary").ignoresSafeArea()
+                .opacity(stageOpacity)
             VStack(spacing: 0) {
                 Text("Talking with \(bot.botDisplayName)")
                     .font(.subheadline.weight(.medium))
                     .foregroundColor(Color("TextSecondary"))
                     .padding(.top, 12)
+                    .opacity(stageOpacity)
                 Spacer(minLength: 0)
-                VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette, botColor: color, size: 148) {
-                    BotAvatarView(bot: bot, size: 148, live: true)
+                travelling(style: look.style) {
+                    VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette, botColor: color, size: VoiceHost.stageFaceSize) {
+                        BotAvatarView(bot: bot, size: VoiceHost.stageFaceSize, live: true)
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { viewModel.interrupt() }
-                Text(statusLabel.uppercased())
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(1.6)
-                    .foregroundColor(Color("TextSecondary"))
-                    .padding(.top, 8)
-                    .accessibilityLabel(statusLabel)
-                if let engine = viewModel.engineLabel {
-                    Text(engine).font(.caption2).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+                Group {
+                    Text(statusLabel.uppercased())
+                        .font(.system(size: 12, weight: .semibold))
+                        .tracking(1.6)
+                        .foregroundColor(Color("TextSecondary"))
+                        .padding(.top, 8)
+                        .accessibilityLabel(statusLabel)
+                    if let engine = viewModel.engineLabel {
+                        Text(engine).font(.caption2).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+                    }
+                    if let statusLine = viewModel.statusLine {
+                        Text(statusLine)
+                            .font(.caption)
+                            .foregroundColor(Theme.statusWarning)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                            .padding(.top, 6)
+                    }
                 }
-                if let statusLine = viewModel.statusLine {
-                    Text(statusLine)
-                        .font(.caption)
-                        .foregroundColor(Theme.statusWarning)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                        .padding(.top, 6)
-                }
+                .opacity(stageOpacity)
                 Spacer(minLength: 0)
-                VoiceCaptionsView(you: youTalking, name: bot.botDisplayName, color: color, text: captionText, quiet: quiet, size: looks.captionSize) {
-                    BotAvatarView(bot: bot, size: 18)
+                Group {
+                    VoiceCaptionsView(you: youTalking, name: bot.botDisplayName, color: color, text: captionText, quiet: quiet, size: looks.captionSize) {
+                        BotAvatarView(bot: bot, size: 18)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
+                    .onTapGesture { viewModel.interrupt() }
+                    controlsRow
+                        .padding(.bottom, 20)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
-                .onTapGesture { viewModel.interrupt() }
-                controlsRow
-                    .padding(.bottom, 20)
+                .opacity(stageOpacity)
             }
         }
     }
@@ -139,17 +170,25 @@ struct VoiceModeView: View {
     private var plainStage: some View {
         ZStack {
             ambientBackground
+                .opacity(stageOpacity)
 
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
-                VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette, botColor: nil, size: 148) {
-                    VoiceMarkFace(state: viewModel.state, size: 148)
+                travelling(style: looks.style) {
+                    VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette, botColor: nil, size: VoiceHost.stageFaceSize) {
+                        VoiceMarkFace(state: viewModel.state, size: VoiceHost.stageFaceSize)
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { viewModel.interrupt() }
                 .padding(.bottom, 8)
-                centerContent
+                Group {
+                    centerContent
+                }
+                .opacity(stageOpacity)
                 Spacer(minLength: 0)
+
+                Group {
 
                 // Live STT transcript (Claude parity: italics, bottom).
                 Text(viewModel.liveTranscript.isEmpty ? " " : viewModel.liveTranscript)
@@ -180,7 +219,93 @@ struct VoiceModeView: View {
 
                 controlsRow
                     .padding(.bottom, 20)
+                }
+                .opacity(stageOpacity)
             }
+        }
+    }
+
+    // MARK: - Orb travel
+
+    /// Everything but the orb: up with the stage, down while it travels or melts.
+    private var stageOpacity: Double { revealed && !ending ? 1 : 0 }
+
+    /// The quick bar's orb to travel from and back to; nil = crossfade (a new
+    /// call opened straight to full voice grows its orb in place instead).
+    private var barTarget: CGRect? {
+        reduceMotion || host.growPending || host.barOrbFrame == .zero ? nil : host.barOrbFrame
+    }
+
+    /// The stage orb, moved by the reveal: at the bar's orb (scaled to its
+    /// face) before the stage is up, at rest once it is, a dot on end. The
+    /// look inside keeps following the voice level the whole way.
+    private func travelling<Orb: View>(style: SpeakerStyle, @ViewBuilder _ orb: () -> Orb) -> some View {
+        let target = barTarget
+        let measured = restFrame != .zero
+        let atBar = !revealed && !ending && target != nil
+        let s = VoiceHost.barFaceSize / VoiceHost.stageFaceSize
+        // The Ring look seats the face below its centre; line face up with face.
+        let faceDy = VoiceSpeakerView<VoiceMarkFace>.faceDy(style: style, size: VoiceHost.stageFaceSize, compact: false)
+        var offset = CGSize.zero
+        if atBar, let target, measured {
+            offset = CGSize(width: target.midX - restFrame.midX, height: target.midY - restFrame.midY - faceDy * s)
+        }
+        let scale: CGFloat = ending ? (reduceMotion ? 1 : 0.06)
+            : atBar ? s
+            : revealed || reduceMotion ? 1 : 0.92
+        let opacity: Double = ending ? 0 : atBar ? (measured ? 1 : 0) : revealed ? 1 : 0
+        return ZStack {
+            orb()
+                .modifier(VoiceOrbGrow(host: host))
+                .scaleEffect(scale)
+                .offset(offset)
+                .opacity(opacity)
+        }
+        // Measured outside the moving layer, so it reads the resting frame.
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear {
+                    restFrame = proxy.frame(in: .global)
+                    reveal()
+                }
+                .onChange(of: proxy.frame(in: .global)) { _, frame in restFrame = frame }
+        })
+    }
+
+    /// Brings the stage up one frame after the orb is drawn at the bar.
+    private func reveal() {
+        guard !revealed, !ending else { return }
+        DispatchQueue.main.async {
+            let animation: Animation = barTarget != nil ? Self.travelIn
+                : reduceMotion ? Motion.fade : .easeOut(duration: 0.22)
+            withAnimation(animation) { revealed = true } completion: {
+                // The cover arrived without a system transition: point VoiceOver at it.
+                UIAccessibility.post(notification: .screenChanged, argument: nil)
+            }
+        }
+    }
+
+    /// Minimize: the orb travels back onto the bar, then the cover goes.
+    private func minimize() {
+        guard revealed, !ending else { return }
+        let animation: Animation = barTarget != nil ? Self.travelOut
+            : reduceMotion ? Motion.fade : .easeOut(duration: 0.2)
+        withAnimation(animation) { revealed = false } completion: {
+            host.present(.bar)
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
+        }
+    }
+
+    /// End (X): the orb melts to a dot and the stage fades, then the call ends.
+    private func endCall() {
+        guard !ending else { return }
+        withAnimation(reduceMotion ? Motion.fade : .easeIn(duration: 0.26)) { ending = true } completion: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if let durationSeconds = host.end() { onEnd(durationSeconds) }
+            }
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
         }
     }
 
@@ -303,7 +428,7 @@ struct VoiceModeView: View {
             }
 
             controlButton(systemName: "arrow.down.right.and.arrow.up.left", label: "Minimize to voice bar") {
-                host.presentation = .bar
+                minimize()
             }
 
             Spacer()
@@ -313,7 +438,7 @@ struct VoiceModeView: View {
             Spacer()
 
             controlButton(systemName: "xmark", label: "End voice chat") {
-                if let durationSeconds = host.end() { onEnd(durationSeconds) }
+                endCall()
             }
         }
         .padding(.horizontal, 36)

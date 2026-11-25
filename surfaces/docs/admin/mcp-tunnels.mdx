@@ -188,7 +188,18 @@ Tunnels support three layers of security:
 
 1. **Tunnel token** — a shared secret presented by the MCP server.
 2. **mTLS client certificate** — `client_cert_pem` can be provided for mutual TLS.
-3. **OAuth issuer and audience** — JWT bearer tokens from the configured issuer are validated for the given audience.
+3. **OAuth issuer and audience** — the request must come from the configured issuer and audience. How that is checked depends on the policy's direction.
+
+### Policy direction
+
+Each policy row in `mcp_tunnel_auth` has a `direction`:
+
+| Direction | Used for | How the issuer and audience are checked | No policy row |
+|-----------|----------|------------------------------------------|---------------|
+| `outbound` (default) | Admin tunnels to externally hosted MCP servers (this page) | The mTLS terminator in front of `/mcp/server` sends the certificate thumbprint and the token's issuer and audience in the `x-allternit-client-cert-thumbprint`, `x-allternit-oauth-issuer` and `x-allternit-oauth-audience` headers, and the API compares them with the policy. | Allowed (existing attachments keep working) |
+| `inbound_share` | Share links that let someone outside reach a local port or MCP server through the share gate | The bearer token's RS256 signature is verified against the issuer's JWKS, then `iss`, `aud`, `exp` and `nbf` are read from the verified token. Headers are never trusted for this direction. | Refused (MCP shares always require auth) |
+
+For `inbound_share`, the JWKS comes from the policy's `jwks_url`, or, when `jwks_url` is empty, from the issuer URL followed by `/.well-known/jwks.json`. Only `https` URLs are accepted (plain `http` only to `localhost` or `127.0.0.1`). Keys are cached for an hour. A token signed with a key the cache does not know (key rotation) triggers a fresh fetch, at most once every 30 seconds.
 
 ## Error codes
 

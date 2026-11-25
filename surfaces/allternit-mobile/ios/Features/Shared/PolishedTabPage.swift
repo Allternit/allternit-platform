@@ -35,16 +35,31 @@ struct EmptyBox: View {
     var icon: String = "plus"
     let title: String
     let line: String
+    /// Line art above the title (replaces the icon circle). Nil keeps today's look.
+    var art: EmptyArtKind? = nil
+    /// Connect scene in place of the art (no-computer empties). Nil keeps the art/icon.
+    var scene: ConnectSceneState? = nil
+    /// Optional pill under the line.
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(PolishTokens.ink)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(Color.white))
-                .overlay(Circle().strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
-                .accessibilityHidden(true)
+            if let scene {
+                ConnectScene(state: scene)
+                    .padding(.bottom, 2)
+            } else if let art {
+                EmptyArt(kind: art, paper: Color("BgPrimary"))
+                    .padding(.bottom, 2)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(PolishTokens.ink)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color.white))
+                    .overlay(Circle().strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
+                    .accessibilityHidden(true)
+            }
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(PolishTokens.ink)
@@ -53,12 +68,28 @@ struct EmptyBox: View {
                 .font(.system(size: 14))
                 .foregroundStyle(Color("TextSecondary"))
                 .multilineTextAlignment(.center)
+            if let actionTitle, let action {
+                Button {
+                    Haptics.light()
+                    action()
+                } label: {
+                    Text(actionTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(PolishTokens.ink)
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(Color("BgPanel")))
+                        .overlay(Capsule().strokeBorder(Color("BorderSubtle"), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
         .padding(.horizontal, 20)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: action == nil ? .combine : .contain)
     }
 }
 

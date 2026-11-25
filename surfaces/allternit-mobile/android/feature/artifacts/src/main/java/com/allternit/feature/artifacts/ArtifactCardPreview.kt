@@ -355,7 +355,10 @@ internal fun ArtifactCardPreview(summary: ArtifactSummary, modifier: Modifier) {
                     }
                 }
             }
-            null -> DotField(DotFieldMode.Field(DotPattern.Band), Modifier.fillMaxSize().background(c.bgPrimary).testTag("cardPreviewDots"))
+            null -> Box(Modifier.fillMaxSize().background(c.bgPrimary), contentAlignment = Alignment.BottomStart) {
+                DotField(DotFieldMode.Field(DotPattern.Band), Modifier.fillMaxSize().testTag("cardPreviewDots"))
+                Text("Preparing preview", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(12.dp).testTag("cardPreviewPreparing"))
+            }
             CardContent.Art -> Box(Modifier.fillMaxSize().background(c.bgPrimary), contentAlignment = Alignment.Center) {
                 Icon(painterResource(ArtifactKinds.icon(summary.kind)), null, tint = c.textTertiary, modifier = Modifier.size(32.dp))
             }

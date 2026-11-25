@@ -184,14 +184,42 @@ internal suspend fun ChatBackend.stopBoard(id: String): Boolean =
     runtimeJson("POST", "/api/v1/phones/boards/${LibraryNet.escape(id)}/stop", "{}") is RuntimeCall.Ok
 
 /** iOS PhoneTaskClient.RunSummary (read only). */
-data class PhoneRun(val runId: String, val serial: String, val goal: String, val status: String, val step: Int, val stepLabel: String?, val steps: Int, val failed: Int, val approvalId: String?) {
+data class PhoneRun(val runId: String, val serial: String, val goal: String, val status: String, val step: Int, val stepLabel: String?, val steps: Int, val failed: Int, val approvalId: String?, val startedAt: Long = 0L) {
     val terminal: Boolean get() = status in setOf("completed", "done", "failed", "max_steps", "timeout", "refused", "stopped", "cancelled")
 }
 
 internal suspend fun ChatBackend.phoneRun(runId: String): PhoneRun? =
     (runtimeJson("GET", "/api/v1/phones/history") as? RuntimeCall.Ok)?.body.listUnder("runs").map { o ->
         fun s(vararg k: String) = k.firstNotNullOfOrNull { o.str(it)?.takeIf { v -> v.isNotEmpty() } }.orEmpty()
-        PhoneRun(s("run_id", "runId"), s("serial"), s("goal", "skill"), s("status"), (o.num("step") ?: 0.0).toInt(), o.str("step_label")?.takeIf { it.isNotEmpty() }, (o.num("steps") ?: 0.0).toInt(), (o.num("failed") ?: 0.0).toInt(), o.str("approvalId")?.takeIf { it.isNotEmpty() })
+        PhoneRun(s("run_id", "runId"), s("serial"), s("goal", "skill"), s("status"), (o.num("step") ?: 0.0).toInt(), o.str("step_label")?.takeIf { it.isNotEmpty() }, (o.num("steps") ?: 0.0).toInt(), (o.num("failed") ?: 0.0).toInt(), o.str("approvalId")?.takeIf { it.isNotEmpty() }, parseTime(o.str("started_at")))
     }.firstOrNull { it.runId == runId }
 
 private fun JsonElement?.obj2(): JsonObject? = this as? JsonObject
+
+/**
+ * Where the bot tapped, read from a recorded history step (iOS/web `tapOfStep`): `phone.tap` args x/y, or the centre of
+ * `target.rect` for `phone.find_and_tap`. `screenW/H` come from `target.screen` and are 0 when the step did not say.
+ * All fields are optional on the wire; a step without a point gives no tap.
+ */
+data class PhoneTap(val id: String, val x: Float, val y: Float, val screenW: Float, val screenH: Float)
+
+internal fun tapOfStep(o: JsonObject): PhoneTap? {
+    val tool = o.str("tool")
+    if (tool != "phone.tap" && tool != "phone.find_and_tap") return null
+    fun nums(e: JsonElement?): List<Double?> = (e as? kotlinx.serialization.json.JsonArray)?.map { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() } ?: emptyList()
+    val target = o["target"] as? JsonObject
+    val args = o["args"] as? JsonObject
+    val screen = nums(target?.get("screen"))
+    var x = args?.num("x"); var y = args?.num("y")
+    if (x == null || y == null) {
+        val r = nums(target?.get("rect"))
+        if (r.size >= 4 && r.take(4).all { it != null }) { x = r[0]!! + r[2]!! / 2; y = r[1]!! + r[3]!! / 2 }
+    }
+    if (x == null || y == null) return null
+    val id = o.str("id") ?: return null
+    return PhoneTap(id, x.toFloat(), y.toFloat(), (screen.getOrNull(0) ?: 0.0).toFloat().coerceAtLeast(0f), (screen.getOrNull(1) ?: 0.0).toFloat().coerceAtLeast(0f))
+}
+
+/** This phone's recorded taps, oldest first; null when the runtime can't be read (older runtime, no computer). */
+internal suspend fun ChatBackend.phoneTaps(serial: String): List<PhoneTap>? =
+    (runtimeJson("GET", "/api/v1/phones/${LibraryNet.escape(serial)}/history") as? RuntimeCall.Ok)?.body.listUnder("steps").mapNotNull { tapOfStep(it) }

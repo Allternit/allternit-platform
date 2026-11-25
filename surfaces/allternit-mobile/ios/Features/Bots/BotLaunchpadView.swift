@@ -266,6 +266,15 @@ struct BotLaunchpadView: View {
                 }
             }
             RosterStatusWord(status: entry.status, size: 11)
+            // What it is on right now (the thread it is working or waiting in).
+            if entry.botId != nil, entry.status != .idle, let task = cardFacts(entry).task, !task.isEmpty {
+                Text(task)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Color("TextTertiary"))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .accessibilityLabel("Current task: \(task)")
+            }
         }
         .frame(width: 76)
     }

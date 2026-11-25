@@ -4,9 +4,58 @@ import z from "zod/v4"
 import { MCP } from "@/runtime/tools/mcp"
 import { errors } from "@/runtime/server/error"
 import { lazy } from "@/shared/util/lazy"
+import { McpTaskStream } from "@/runtime/tools/mcp/task-stream"
 
 export const McpRoutes = lazy(() =>
   new Hono()
+    .post(
+      "/elicitation/:requestID/reply",
+      describeRoute({
+        summary: "Answer an MCP elicitation",
+        description:
+          "Answer an `mcp.elicitation` stream part (form or URL ask from an MCP server or task). Body is an ElicitationResponse: { action: accept | decline | cancel, content? }.",
+        operationId: "mcp.elicitation.reply",
+        responses: {
+          200: { description: "Answered", content: { "application/json": { schema: resolver(z.any()) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ requestID: z.string() })),
+      validator(
+        "json",
+        z.object({
+          action: z.enum(["accept", "decline", "cancel"]),
+          content: z.record(z.string(), z.any()).optional(),
+        }),
+      ),
+      async (c) => {
+        const { requestID } = c.req.valid("param")
+        const body = c.req.valid("json")
+        const ok = McpTaskStream.reply(decodeURIComponent(requestID), {
+          action: body.action,
+          ...(body.action === "accept" && body.content ? { content: body.content } : {}),
+        })
+        return ok ? c.json(true) : c.json({ error: "unknown_or_answered", message: "No open elicitation with that id" }, 404)
+      },
+    )
+    .post(
+      "/task/:taskId/cancel",
+      describeRoute({
+        summary: "Cancel an MCP task",
+        description: "Stop a running MCP task (an `mcp.task` card's Stop button): sends tasks/cancel to the server.",
+        operationId: "mcp.task.cancel",
+        responses: {
+          200: { description: "Cancelling", content: { "application/json": { schema: resolver(z.any()) } } },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ taskId: z.string() })),
+      async (c) => {
+        const { taskId } = c.req.valid("param")
+        const ok = McpTaskStream.cancel(decodeURIComponent(taskId))
+        return ok ? c.json(true) : c.json({ error: "unknown_task", message: "No running task with that id" }, 404)
+      },
+    )
     .get(
       "/",
       describeRoute({

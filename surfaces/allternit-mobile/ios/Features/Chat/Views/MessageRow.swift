@@ -35,6 +35,7 @@ struct MessageRow: View {
     /// reply's top-left and its steps under the reply text, before the action icons.
     var hostedRun: PhoneTaskCardModel? = nil
 
+    @State private var runStepsOpen = false
     @State private var isThinkingExpanded = false
     @State private var showsRunTree = false
     /// media_generate calls whose dot reveal is playing. The bubble (which may
@@ -215,11 +216,34 @@ struct MessageRow: View {
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {
                     VStack(alignment: .leading, spacing: 6) {
-                        RunStatusPill(card: run)
+                        HStack(spacing: 8) {
+                            RunStatusPill(card: run)
+                            if run.status.isActive || run.endedAt != nil {
+                                RunElapsedText(card: run)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color("TextSecondary"))
+                            }
+                        }
                         if (!message.content.isEmpty || message.error == nil) && !holdsBubble {
                             bubble
                         }
-                        RunThoughtStream(steps: run.steps, active: run.status.isActive)
+                        if run.status.isActive, run.step > 0 {
+                            RunStepBar(step: run.step, tint: run.status.tint)
+                                .frame(maxWidth: 220, alignment: .leading)
+                        }
+                        // A finished run folds to its pill line; tap the line to open the steps.
+                        if run.status.isActive || runStepsOpen {
+                            RunThoughtStream(steps: run.steps, active: run.status.isActive)
+                        } else if !run.steps.isEmpty {
+                            Button { withAnimation(.easeOut(duration: 0.15)) { runStepsOpen = true } } label: {
+                                Text("Show \(run.steps.count) \(run.steps.count == 1 ? "step" : "steps")")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color("TextSecondary"))
+                                    .frame(minHeight: 28)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 } else if (!message.content.isEmpty || message.error == nil) && !holdsBubble {
                     bubble
@@ -254,6 +278,9 @@ struct MessageRow: View {
                     }
                     ForEach(unplacedPermissions) { ask in
                         PermissionAskView(ask: ask)
+                    }
+                    if McpTasksFlag.isOn {
+                        McpTasksSection(taskIds: message.mcpTaskIds, formIds: message.mcpFormIds)
                     }
                 }
 
@@ -291,6 +318,17 @@ struct MessageRow: View {
 
                     if let stats = message.perfStats {
                         perfStatsLine(stats)
+                    }
+                }
+
+                // Follow-ups: only under the newest finished reply, from its own
+                // closing "Next step:" line (web 5.2). Hidden while streaming.
+                if message.role == "assistant", isLastAssistant, !message.isStreaming,
+                   message.error == nil, let onSendPrompt {
+                    let followUps = FollowUps.fromText(message.content)
+                    if !followUps.isEmpty {
+                        FollowUpChips(prompts: followUps, onPick: onSendPrompt)
+                            .id("followups-\(message.id)")
                     }
                 }
             }
@@ -1322,5 +1360,26 @@ struct SleepRow: View {
             Text(reason.isEmpty ? base : "\(base) \u{2014} \(reason)")
         }
         .font(.footnote).foregroundStyle(.secondary)
+    }
+}
+
+
+/// A reply's MCP tasks (orb-and-beam cards) and any server question that has
+/// no task card to sit in. Behind the `mcp.tasks` flag.
+private struct McpTasksSection: View {
+    let taskIds: [String]
+    let formIds: [String]
+    @ObservedObject private var store = McpTasksStore.shared
+
+    var body: some View {
+        ForEach(taskIds, id: \.self) { McpTaskCardView(taskId: $0) }
+        ForEach(looseForms) { McpElicitationFormView(request: $0) }
+    }
+
+    private var looseForms: [McpElicitationPart] {
+        formIds.compactMap { store.elicitations[$0] }.filter { form in
+            guard let taskId = form.taskId else { return true }
+            return store.tasks[taskId] == nil
+        }
     }
 }

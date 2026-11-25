@@ -210,12 +210,32 @@ struct CodeSessionsOverview: View {
                 }
                 Section {
                     if items.isEmpty {
-                        Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextSecondary"))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 12)
-                            .plainCodeRow()
+                        VStack(spacing: 12) {
+                            GizziWalk()
+                            Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color("TextSecondary"))
+                                .multilineTextAlignment(.center)
+                            if q.isEmpty {
+                                Button {
+                                    Haptics.light()
+                                    go(.start)
+                                } label: {
+                                    Text("New session")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Color("TextPrimary"))
+                                        .padding(.horizontal, 18)
+                                        .frame(height: 40)
+                                        .background(Color("BgPanel"))
+                                        .clipShape(Capsule())
+                                        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .plainCodeRow()
                     } else {
                         switch layout {
                         case .list:
@@ -841,18 +861,10 @@ struct CodeScheduledScreen: View {
                 .refreshable { await store.refresh() }
             } else if loaded {
                 Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 22))
-                        .foregroundColor(Color("TextTertiary"))
-                    Text("No scheduled tasks")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text("Scheduled tasks on your computer show here.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                }
-                .accessibilityElement(children: .combine)
+EmptyBox(icon: "clock", title: "No scheduled tasks",
+                         line: "Scheduled tasks on your computer show here.",
+                         art: .bell)
+                    .padding(.horizontal, 16)
                 Spacer()
             } else {
                 Spacer()

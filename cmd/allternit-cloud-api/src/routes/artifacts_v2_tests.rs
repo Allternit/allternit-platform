@@ -1,5 +1,6 @@
 //! Route tests for the artifacts v2 API (contract §3). Each test gets its
-//! own Postgres schema (routes::test_support) with migration 085 applied.
+//! own Postgres schema (routes::test_support) with migrations 085, 109 and
+//! 161 applied.
 //! Clerk-session callers (org, role, email) are stood in for by the
 //! test-only `x-test-caller` header; API-token and device-token callers go
 //! through the real resolvers.
@@ -20,6 +21,8 @@ async fn setup() -> (Router, PgPool) {
         .expect("085 applies");
     sqlx::raw_sql(include_str!("../../migrations_pg/109_artifact_library_archive.sql"))
         .execute(&state.db).await.expect("109 applies");
+    sqlx::raw_sql(include_str!("../../migrations_pg/161_apps_mcp_2026.sql"))
+        .execute(&state.db).await.expect("161 applies");
     let db = state.db.clone();
     (routes().with_state(state), db)
 }
@@ -563,4 +566,120 @@ async fn api_tokens_and_device_tokens_resolve_to_their_user() {
     sqlx::query("UPDATE runtime_devices SET revoked_at = now() WHERE id = 'rt_art'").execute(&db).await.unwrap();
     let (status, _) = send(&router, bearer("GET", "/api/v2/artifacts", device_token, None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "revoked devices lose access");
+}
+
+#[tokio::test]
+async fn make_an_app_mints_the_slug_once_and_the_public_record_reads_it() {
+    let (router, db) = setup().await;
+    let owner = who("u_app_owner", None, None);
+    let id = create(&router, &owner, "page", "Tip calculator").await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+
+    let (status, body) = call(&router, "GET", &app_path, &owner, None).await;
+    assert_eq!((status, body["app"].clone()), (StatusCode::OK, Value::Null), "not an app yet");
+
+    let (status, made) = call(
+        &router, "PUT", &app_path, &owner,
+        Some(json!({"name": " Tips ", "icon": "calculator", "tier": "browser", "skill_ref": "skill://tips"})),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    let slug = made["app"]["slug"].as_str().unwrap().to_string();
+    assert_eq!(slug.len(), 16);
+    assert!(slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()), "{slug} is DNS-safe");
+    assert_eq!(made["app"]["name"], "Tips");
+    assert_eq!(made["app"]["pinned_version"], 1);
+    assert_eq!(made["app"]["install_scope"], "private", "defaults to the artifact's visibility");
+    assert_eq!(made["app"]["capability_snapshot"], json!({}));
+
+    // Re-publishing keeps the slug and re-takes the capability snapshot.
+    sqlx::query("UPDATE artifacts SET capabilities = '{\"storage\": true}' WHERE id = $1")
+        .bind(&id).execute(&db).await.unwrap();
+    let (status, again) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "Tips", "tier": "app"}))).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["app"]["slug"], json!(slug), "the slug is minted once");
+    assert_eq!(again["app"]["tier"], "app");
+    assert_eq!(again["app"]["capability_snapshot"], json!({"storage": true}));
+
+    let public = format!("/api/v2/public/apps/{slug}");
+    let (status, _) = send(&router, request("GET", &public, None, None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a private artifact's app is not public");
+    let (status, _) = share(&router, &owner, &id, "people", json!([])).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, record) = send(&router, request("GET", &public, None, None)).await;
+    assert_eq!(status, StatusCode::OK, "{record}");
+    assert_eq!(record["slug"], json!(slug));
+    assert_eq!(record["name"], "Tips");
+    assert_eq!(record["tier"], "app");
+    assert_eq!(record["install"], false, "only browser-tier apps install from the record");
+    assert!(record.get("body").is_none(), "the record never carries the artifact body");
+    call(&router, "PUT", &app_path, &owner, Some(json!({"name": "Tips", "tier": "browser"}))).await;
+    let (_, record) = send(&router, request("GET", &public, None, None)).await;
+    assert_eq!(record["install"], true);
+
+    let (status, _) = send(&router, request("GET", "/api/v2/public/apps/nosuchapp0000000", None, None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = send(&router, request("GET", "/api/v2/public/apps/Bad.Slug", None, None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn only_the_owner_makes_an_app_and_fields_are_checked() {
+    let (router, _db) = setup().await;
+    let owner = who("u_app_owner2", None, None);
+    let editor = who("u_app_editor", None, None);
+    let outsider = who("u_app_outsider", None, None);
+    let id = create(&router, &owner, "page", "Owner only").await;
+    share(&router, &owner, &id, "people", json!([{"principal_type": "user", "principal_id": "u_app_editor", "level": "edit"}])).await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+    let good = json!({"name": "Mine", "tier": "browser"});
+
+    let (status, _) = call(&router, "PUT", &app_path, &editor, Some(good.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&router, "PUT", &app_path, &outsider, Some(good.clone())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(&router, "GET", &app_path, &editor, None).await;
+    assert_eq!(status, StatusCode::OK, "anyone who can see the artifact sees its app package");
+    let (status, _) = send(&router, request("PUT", &app_path, None, Some(good))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    for (body, code) in [
+        (json!({"name": "", "tier": "browser"}), "invalid_app_name"),
+        (json!({"name": "X", "tier": "admin"}), "invalid_tier"),
+        (json!({"name": "X", "tier": "app", "install_scope": "world"}), "invalid_install_scope"),
+        (json!({"name": "X", "tier": "app", "tools": {"a": 1}}), "invalid_tools"),
+        (json!({"name": "X", "tier": "app", "skill_ref": "https://x"}), "invalid_skill_ref"),
+        (json!({"name": "X", "tier": "app", "pinned_version": 2}), "invalid_pinned_version"),
+    ] {
+        let (status, got) = call(&router, "PUT", &app_path, &owner, Some(body.clone())).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body} -> {got}");
+        assert_eq!(got["error"], code, "{got}");
+    }
+    let (status, _) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "X", "tier": "app", "owner": "me"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown fields are refused");
+}
+
+#[tokio::test]
+async fn put_app_accepts_export_mcp_and_keeps_it_when_omitted() {
+    let (router, db) = setup().await;
+    let owner = who("u_app_export_mcp", None, None);
+    let id = create(&router, &owner, "page", "Exports").await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+    sqlx::query("UPDATE artifacts SET capabilities = '{\"storage\": true}' WHERE id = $1")
+        .bind(&id).execute(&db).await.unwrap();
+
+    let (status, made) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "export_mcp": true}))).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    assert_eq!(made["app"]["capability_snapshot"], json!({"storage": true, "export_mcp": true}));
+
+    let (_, kept) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "Exports", "tier": "app"}))).await;
+    assert_eq!(kept["app"]["capability_snapshot"]["export_mcp"], json!(true), "omitted keeps it");
+
+    let (_, off) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "export_mcp": false}))).await;
+    assert_eq!(off["app"]["capability_snapshot"]["export_mcp"], json!(false));
+
+    let (status, _) = call(&router, "PUT", &app_path, &owner,
+        Some(json!({"name": "Exports", "tier": "app", "snapshot": {"export_mcp": true}}))).await;
+    assert!(status.is_client_error(), "unknown fields stay refused");
 }

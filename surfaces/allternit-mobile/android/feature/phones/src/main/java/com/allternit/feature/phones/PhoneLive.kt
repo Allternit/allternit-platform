@@ -314,6 +314,54 @@ private fun videoPoint(x: Float, y: Float, vw: Float, vh: Float, w: Float, h: Fl
     return Math.round(px) to Math.round(py)
 }
 
+/**
+ * Where the bot just tapped: a dot with an expanding ring, placed by fraction of the phone screen over the letterboxed
+ * video. Polls the run history every 1.5 s while the screen is live and the app is while its window has focus; taps already in
+ * the first poll are not replayed; fails quietly. Instant ring at animator scale 0.
+ */
+@Composable
+private fun PhoneTapMarker(serial: String, backend: ChatBackend, vw: Float, vh: Float, w: Float, h: Float) {
+    var tap by remember(serial) { mutableStateOf<PhoneTap?>(null) }
+    val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
+    LaunchedEffect(serial) {
+        var seen: Set<String>? = null
+        while (true) {
+            if (windowInfo.isWindowFocused) {
+                backend.phoneTaps(serial)?.let { taps ->
+                    val known = seen
+                    if (known == null) seen = taps.map { it.id }.toSet()
+                    else {
+                        val fresh = taps.filter { it.id !in known }
+                        if (fresh.isNotEmpty()) { seen = known + fresh.map { it.id }; tap = fresh.last() }
+                    }
+                }
+            }
+            kotlinx.coroutines.delay(1_500)
+        }
+    }
+    val t = tap ?: return
+    val fw = if (t.screenW > 0f) t.screenW else vw
+    val fh = if (t.screenH > 0f) t.screenH else vh
+    if (fw <= 0f || fh <= 0f || vw <= 0f || vh <= 0f || w <= 0f || h <= 0f) return
+    val scale = minOf(w / vw, h / vh)
+    val rw = vw * scale; val rh = vh * scale
+    val px = (w - rw) / 2 + (t.x / fw).coerceIn(0f, 1f) * rw
+    val py = (h - rh) / 2 + (t.y / fh).coerceIn(0f, 1f) * rh
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val reduce = remember { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val p = remember(t.id) { androidx.compose.animation.core.Animatable(if (reduce) 1f else 0f) }
+    LaunchedEffect(t.id) { if (!reduce) p.animateTo(1f, androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+    val gone = remember(t.id) { mutableStateOf(false) }
+    LaunchedEffect(t.id) { kotlinx.coroutines.delay(if (reduce) 700 else 900); gone.value = true }
+    if (gone.value) return
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize().testTag("phoneTapMarker")) {
+        val ring = (10f + 22f * p.value).dp.toPx()
+        val a = if (reduce) 0.9f else (1f - p.value).coerceIn(0f, 1f)
+        drawCircle(Color.White.copy(alpha = a), radius = ring, center = androidx.compose.ui.geometry.Offset(px, py), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+        drawCircle(Color.White.copy(alpha = if (reduce) 0.9f else 0.95f), radius = 5.dp.toPx(), center = androidx.compose.ui.geometry.Offset(px, py))
+    }
+}
+
 /** Full-screen live view of one linked phone (iOS PhoneLiveView). */
 @Composable
 fun PhoneLiveView(phone: CloudPhone, backend: ChatBackend, onClose: () -> Unit) {
@@ -384,6 +432,7 @@ fun PhoneLiveView(phone: CloudPhone, backend: ChatBackend, onClose: () -> Unit) 
                     },
                 )
             }
+            if (session.state == LiveState.Live) PhoneTapMarker(phone.serial, backend, session.videoW.toFloat(), session.videoH.toFloat(), wPx, hPx)
             when (val st = session.state) {
                 LiveState.Live -> Unit
                 LiveState.Connecting -> LiveMessage("Connecting…", false) { }

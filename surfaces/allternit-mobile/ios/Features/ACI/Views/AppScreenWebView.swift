@@ -149,7 +149,7 @@ final class WebPageClerkReply: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-private struct AppScreenWebView: UIViewRepresentable {
+struct AppScreenWebView: UIViewRepresentable {
     let url: URL
     let scrolls: Bool
     let reloadToken: Int

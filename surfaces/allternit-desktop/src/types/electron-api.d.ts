@@ -801,6 +801,13 @@ export interface AllternitDesktopAPI {
   locale: LocaleAPI;
   menuBar: MenuBarAPI;
   startup: StartupAPI;
+  /** Windows/Linux only (absent on macOS). */
+  tray?: {
+    getKeepRunning(): Promise<boolean>;
+    setKeepRunning(enabled: boolean): Promise<boolean>;
+    onKeepRunningChanged(cb: (enabled: boolean) => void): () => void;
+    onKeepRunningHint(cb: (hint: { message: string }) => void): () => void;
+  };
   mcp: McpAPI;
   research: ResearchAPI;
   worker: WorkerAPI;

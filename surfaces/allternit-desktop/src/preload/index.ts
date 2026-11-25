@@ -1024,6 +1024,33 @@ const featureFlagsAPI = {
   },
 };
 
+// ─── Installed apps (plan v3 lane 38; feature flag apps.install, default on) ──────
+
+type AppTier = 'browser' | 'app' | 'full';
+interface InstalledAppInfo {
+  slug: string;
+  name: string;
+  tier: AppTier;
+  menuBar: boolean;
+  kind: 'mac-dock' | 'windows-start-menu' | 'linux-desktop-entry';
+  launcherPath: string;
+  iconPath: string | null;
+  installedAt: string;
+}
+
+const appsAPI = {
+  /** Adds the app's own launcher: macOS Dock app, Windows Start menu, Linux app menu. */
+  install: (request: { slug: string; name: string; iconUrl?: string | null; tier: AppTier; menuBar?: boolean; url?: string | null }): Promise<
+    | { ok: true; app: InstalledAppInfo }
+    | { ok: false; error: 'disabled' | 'bad_slug' | 'bad_name' | 'unsupported_platform' | 'helper_missing' | 'install_failed'; message: string }
+  > => ipcRenderer.invoke('apps:install', request),
+  uninstall: (slug: string): Promise<{ ok: boolean; removed: boolean }> => ipcRenderer.invoke('apps:uninstall', slug),
+  /** Opens the app in its own window (its own Dock helper on macOS). handoff = one-time session token (D15). */
+  open: (slug: string, options?: { handoff?: string | null; url?: string | null }): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> =>
+    ipcRenderer.invoke('apps:open', slug, options),
+  status: (slug: string): Promise<{ enabled: boolean; installed: InstalledAppInfo | null }> => ipcRenderer.invoke('apps:status', slug),
+};
+
 // ─── Persisted State ──────────────────────────────────────────────────────────
 
 const stateAPI = {
@@ -1081,6 +1108,23 @@ const menuBarAPI = {
 const startupAPI = {
   getOnLogin: (): Promise<boolean> => ipcRenderer.invoke('startup:getOnLogin'),
   setOnLogin: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('startup:setOnLogin', enabled),
+};
+
+/** Windows/Linux: keep serving live links from the tray after the last window closes. */
+const trayAPI = {
+  getKeepRunning: (): Promise<boolean> => ipcRenderer.invoke('tray:getKeepRunning'),
+  setKeepRunning: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('tray:setKeepRunning', enabled),
+  onKeepRunningChanged: (cb: (enabled: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, enabled: boolean) => cb(enabled);
+    ipcRenderer.on('tray:keepRunningChanged', handler);
+    return () => ipcRenderer.removeListener('tray:keepRunningChanged', handler);
+  },
+  /** Fires once per run when a live link starts with keep-running off (not macOS). */
+  onKeepRunningHint: (cb: (hint: { message: string }) => void): (() => void) => {
+    const handler = (_e: unknown, hint: { message: string }) => cb(hint);
+    ipcRenderer.on('tray:keepRunningHint', handler);
+    return () => ipcRenderer.removeListener('tray:keepRunningHint', handler);
+  },
 };
 
 // ─── MCP Host ────────────────────────────────────────────────────────────────
@@ -1339,6 +1383,35 @@ const screenContextAPI = {
   captureWindow: (): Promise<unknown> => ipcRenderer.invoke('screen-context:capture-window'),
 };
 
+// Live links this computer hosts (main/share-manager.ts). Results are {ok:true,...} | {ok:false,error,message}.
+type ShareView = {
+  id: string; subdomain: string; url: string; shareUrl: string; token: string | null; port: number;
+  subject: 'app' | 'mcp'; authMode: 'token' | 'public'; label: string | null;
+  state: 'connected' | 'reconnecting' | 'paused' | 'stopped'; connections: number;
+  lastHeartbeatAt: number | null; lastError: string | null; stopReason: string | null;
+};
+type ShareFailure = { ok: false; error: string; message: string; details?: unknown };
+type ShareEvent = { type: 'share'; share: ShareView } | { type: 'removed'; id: string };
+
+const sharesAPI = {
+  /** Flag `share.live` (default on). */
+  status: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke('shares:status'),
+  start: (request: {
+    port?: number; appSlug?: string; subject?: 'app' | 'mcp'; authMode?: 'token' | 'public'; label?: string; artifactId?: string;
+  }): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:start', request),
+  list: (): Promise<ShareView[]> => ipcRenderer.invoke('shares:list'),
+  pause: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:pause', id),
+  resume: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:resume', id),
+  stop: (id: string): Promise<{ ok: true; stopped: true } | ShareFailure> => ipcRenderer.invoke('shares:stop', id),
+  rotate: (id: string): Promise<{ ok: true; share: ShareView } | ShareFailure> => ipcRenderer.invoke('shares:rotate', id),
+  /** Status changes (connected, reconnecting, paused, stopped, token rotated) and removals. */
+  onEvent: (callback: (event: ShareEvent) => void): (() => void) => {
+    const handler = (_: IpcRendererEvent, event: ShareEvent) => callback(event);
+    ipcRenderer.on('shares:event', handler);
+    return () => ipcRenderer.off('shares:event', handler);
+  },
+};
+
 const allternitDesktopAPI = {
   /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
   promptsBeforeUnload: true,
@@ -1372,12 +1445,15 @@ const allternitDesktopAPI = {
   locale: localeAPI,
   menuBar: menuBarAPI,
   startup: startupAPI,
+  // Windows/Linux only: macOS keeps the app in the Dock when windows close, so the setting would do nothing there.
+  ...(process.platform === "darwin" ? {} : { tray: trayAPI }),
   mcp: mcpAPI,
   research: researchAPI,
   worker: workerAPI,
   hyperframes: hyperframesAPI,
   motion: motionAPI,
   miniApps: miniAppsAPI,
+  apps: appsAPI,
   hermesRouting: hermesRoutingAPI,
   aciImage: {
     read: (id: string) => ipcRenderer.invoke('aci-image:read', id),
@@ -1397,6 +1473,7 @@ const allternitDesktopAPI = {
   voiceKeys: voiceKeysAPI,
   meetings: meetingsAPI,
   screenContext: screenContextAPI,
+  shares: sharesAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);

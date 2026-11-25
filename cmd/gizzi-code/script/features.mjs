@@ -36,6 +36,7 @@ export const FEATURES = [
   // Checked live 2026-09-28
   "TERMINAL_PANEL", // meta+j persistent shell panel (tmux-backed)
   "TREE_SITTER_BASH", // AST-based bash permission checks (pure-TS parser)
+  "MCP_SKILLS", // skill:// resources from MCP servers become skill commands (runtime/skills/mcpSkills.ts)
 ];
 
 /** Extra flags for one-off experiments: GIZZI_FEATURES_EXTRA=FOO,BAR */

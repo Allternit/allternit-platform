@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -112,7 +113,16 @@ internal fun PlusSheet(
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = null,
     ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().testTag("plusSheet")) {
+        // Polish 6.6: the content scales up from the plus (bottom-left) as the sheet rises; rows unchanged.
+        val reduced = remember(context) { android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+        val grow = remember { androidx.compose.animation.core.Animatable(if (reduced) 1f else 0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) { grow.animateTo(1f, androidx.compose.animation.core.tween(300, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().testTag("plusSheet").graphicsLayer {
+            val sc = 0.92f + 0.08f * grow.value
+            scaleX = sc; scaleY = sc
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.1f, 1f)
+            alpha = 0.4f + 0.6f * grow.value
+        }) {
             // Header: grabber, centered title, ✕ left, Photos right.
             Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.width(36.dp).height(5.dp).clip(CircleShape).background(c.borderStrong))

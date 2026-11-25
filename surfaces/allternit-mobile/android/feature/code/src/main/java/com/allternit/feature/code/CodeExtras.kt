@@ -145,7 +145,7 @@ internal fun CodeUsageScreen(host: CodeHost, onBack: () -> Unit) {
                 }
             }
             if (rows.isEmpty()) {
-                EmptyState("No usage yet", "Start a Code thread and your activity shows up here.")
+                EmptyState("No usage yet", "Start a Code thread and your activity shows up here.", art = com.allternit.core.design.EmptyArtKind.Coins)
             } else if (tab == "Models") {
                 if (m.models.isEmpty()) {
                     Text("No model usage in this period.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(16.dp).testTag("codeUsageModelsEmpty"))
@@ -240,7 +240,7 @@ internal fun CodeScheduledScreen(host: CodeHost, onBack: () -> Unit) {
     CodeScaffold("Scheduled", null, onBack, "codeScheduledBack") {
         CodeLoader(Unit, "Couldn't load scheduled tasks", load = { host.backend.codeCall("GET", "v1/automations/routines", null, "load scheduled tasks").map { parseRoutines(it) } }) { routines, reload ->
             ScrollBody {
-                if (routines.isEmpty()) EmptyState("No scheduled tasks", "Scheduled tasks on your computer show here.")
+                if (routines.isEmpty()) EmptyState("No scheduled tasks", "Scheduled tasks on your computer show here.", art = com.allternit.core.design.EmptyArtKind.Bell)
                 routines.forEach { r -> CodeRow(r.name, routineLine(r), "codeScheduled-${r.id}") { } }
                 createError?.let { Text(it, color = AllternitTheme.colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(16.dp)) }
                 Box(Modifier.padding(16.dp)) { CodePill("New task", testTag = "codeScheduledNew", filled = true) { creating = true } }

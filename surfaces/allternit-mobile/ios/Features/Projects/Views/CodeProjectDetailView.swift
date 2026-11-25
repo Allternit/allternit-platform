@@ -156,12 +156,12 @@ struct CodeProjectDetailView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 32)
             } else {
-                Text("No sessions yet. Start one to work on this project.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextTertiary"))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 32)
+                EmptyBox(title: "No sessions yet",
+                         line: "Start one to work on this project.",
+                         art: .sheets,
+                         actionTitle: "New session",
+                         action: { thread = CodeThreadTarget(sessionId: nil) })
+                    .padding(.vertical, 12)
             }
         } else {
             Text("Sessions")

@@ -134,13 +134,14 @@ internal fun <T> LoadView(load: Load<T>, retry: () -> Unit, doing: String = "loa
 }
 
 @Composable
-internal fun StateBox(title: String, message: String, actionTitle: String?, onAction: (() -> Unit)?) {
+internal fun StateBox(title: String, message: String, actionTitle: String?, onAction: (() -> Unit)?, art: com.allternit.core.design.EmptyArtKind? = null) {
     val c = AllternitTheme.colors
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(AllternitRadii.LG)).background(c.fillNeutral).padding(20.dp).testTag("settingsState"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (art != null) com.allternit.core.design.EmptyArt(art, size = 72.dp)
         Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         Text(message, color = c.textSecondary, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
         if (actionTitle != null && onAction != null) SButton(actionTitle, onClick = onAction)
@@ -272,8 +273,11 @@ internal fun SToggleRow(title: String, tag: String, checked: Boolean, onChange: 
 
 /** `SettingsDescription`: a paragraph of quiet text. */
 @Composable
-internal fun SNote(text: String, modifier: Modifier = Modifier) {
-    Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp, modifier = modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp))
+internal fun SNote(text: String, modifier: Modifier = Modifier, art: com.allternit.core.design.EmptyArtKind? = null) {
+    if (art != null) Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        com.allternit.core.design.EmptyArt(art, size = 72.dp)
+        Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
+    } else Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp, modifier = modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp))
 }
 
 @Composable

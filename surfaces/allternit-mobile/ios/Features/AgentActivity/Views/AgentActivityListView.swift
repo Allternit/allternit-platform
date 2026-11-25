@@ -290,7 +290,8 @@ struct AgentActivityListView: View {
             style: .empty,
             icon: "bubble.left.and.bubble.right",
             title: "No agent activity yet",
-            message: "Threads show up here as agents send mail through the Factory."
+            message: "Threads show up here as agents send mail through the Factory.",
+            art: .bell
         )
     }
 

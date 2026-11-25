@@ -60,6 +60,10 @@ object LiveRunNotification {
         val progress = focus?.progress
         if (progress != null) builder.setProgress(100, (progress.coerceIn(0.0, 1.0) * 100).toInt(), false)
         else builder.setProgress(0, 0, true)
+        // Marker line under the bar: start label, a position dot on a mono track, end label (shown when expanded).
+        if (progress != null && focus != null && !focus.isPrivate) {
+            builder.setSubText(markerLine(progress))
+        }
         PushNotifications.openIntent(context, "$TAG-open", data)?.let { builder.setContentIntent(it) }
         val inline = focus != null && focus.approveInline && !focus.question.isNullOrBlank() && !focus.inboxId.isNullOrBlank() && !focus.contentHash.isNullOrBlank()
         if (inline) {
@@ -69,5 +73,12 @@ object LiveRunNotification {
                 .forEach { builder.addAction(it) }
         }
         nm.notify(TAG, ID, builder.build())
+    }
+
+    /** "Start ──●──── Done": the dot sits where the progress is. Ten cells keep it one line in the shade. */
+    internal fun markerLine(progress: Double, cells: Int = 10): String {
+        val at = (progress.coerceIn(0.0, 1.0) * (cells - 1)).toInt()
+        val track = buildString { for (i in 0 until cells) append(if (i == at) '●' else '─') }
+        return "Start $track Done"
     }
 }

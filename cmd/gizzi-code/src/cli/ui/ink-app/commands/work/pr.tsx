@@ -1,9 +1,9 @@
 import * as React from 'react'
-import { Text } from '../../ink'
+import { Box, Text } from '../../ink'
 import { getCwdState } from '../../bootstrap/state.js'
 import { openBrowser } from '../../utils/browser.js'
 import type { LocalJSXCommandCall } from '../../types/command.js'
-import { checkCounts, currentBranchPR, prChip, type PrCheck } from '@/cli/work/api'
+import { checkCounts, conflictCount, currentBranchPR, formatPrStatus, prChip, type BranchPR, type PrCheck, type PrStatusLine } from '@/cli/work/api'
 import { useLoaded, WorkPane } from './WorkPane'
 
 /**
@@ -18,27 +18,43 @@ const MARK: Record<PrCheck['state'], { mark: string; color?: string }> = {
   skip: { mark: '–' },
 }
 
+const TONE: Record<PrStatusLine['tone'], string | undefined> = { good: 'success', bad: 'error', wait: 'warning', none: undefined }
+
 export function PrPane({ onDone }: { onDone: () => void }): React.ReactNode {
   const { data, error } = useLoaded(async () => {
     const pr = await currentBranchPR(getCwdState())
     if (!pr) throw new Error('No pull request for this branch (or `gh` is not installed and signed in).')
-    return pr
+    const conflicts = pr.mergeable === 'CONFLICTING' && pr.base ? await conflictCount(pr.base, getCwdState()) : undefined
+    return { pr, conflicts }
   }, 20_000)
-  const n = data && checkCounts(data)
+  const pr: BranchPR | undefined = data?.pr
+  const n = pr && checkCounts(pr)
   return (
     <WorkPane
-      title={data ? `PR #${data.number} ${data.title}` : 'Pull request'}
+      title={pr ? `PR #${pr.number} ${pr.title}` : 'Pull request'}
       subtitle={
-        data &&
-        `${data.isDraft ? 'draft' : data.state.toLowerCase()} · ${data.branch} · ${n!.pass} passed, ${n!.fail} failed, ${n!.pending} running`
+        pr &&
+        `${pr.isDraft ? 'draft' : pr.state.toLowerCase()} · ${pr.branch} · ${n!.pass} passed, ${n!.fail} failed, ${n!.pending} running`
       }
-      items={data?.checks}
+      items={pr?.checks}
+      header={
+        pr ? (
+          <Box flexDirection="column">
+            {formatPrStatus(pr, data?.conflicts).map(l => (
+              <Text key={l.label}>
+                <Text dimColor>{l.label.padEnd(7)}</Text>
+                <Text color={TONE[l.tone]}>{l.text}</Text>
+              </Text>
+            ))}
+          </Box>
+        ) : null
+      }
       error={error}
       empty="This PR has no checks."
       hint="↑/↓ choose · enter open check · o open PR"
       onClose={onDone}
       onKey={(input, check) => {
-        if (input === 'o' && data) void openBrowser(data.url)
+        if (input === 'o' && pr) void openBrowser(pr.url)
         if (input === '\r' && check?.url) void openBrowser(check.url)
       }}
       renderRow={c => (
@@ -55,7 +71,12 @@ export const call: LocalJSXCommandCall = async (onDone, context) => {
     const pr = await currentBranchPR(getCwdState())
     onDone(
       pr
-        ? [`${prChip(pr)} · ${pr.title} · ${pr.url}`, ...pr.checks.map(c => `  ${MARK[c.state].mark} ${c.name}`)].join('\n')
+        ? [
+            `${prChip(pr)} · ${pr.title} · ${pr.url}`,
+            ...formatPrStatus(pr, pr.mergeable === 'CONFLICTING' && pr.base ? await conflictCount(pr.base, getCwdState()) : undefined).map(
+              l => `  ${l.label.padEnd(7)}${l.text}`,
+            ),
+            ...pr.checks.map(c => `  ${MARK[c.state].mark} ${c.name}`)].join('\n')
         : 'No pull request for this branch.',
       { display: 'system' },
     )

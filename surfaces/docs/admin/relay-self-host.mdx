@@ -1,0 +1,41 @@
+---
+title: Relay self-host runbook
+description: Stub for running the live-link relay yourself. The relay is not live yet.
+---
+
+<Warning>
+**Not live yet.** The live-link relay is not deployed. Live links (`https://NAME.live.allternitusercontent.com`) cannot be created until it is. Hosted links work without it. This page records the planned setup so it can be reviewed; nothing here is verified on a running host.
+</Warning>
+
+## What it is
+
+A live link reaches an app that runs on the owner's own computer. The computer opens an outbound tunnel to a relay, and the relay serves the link. The relay is OpenTunnel (`infra/opentunnel/` in the platform repository), with small patches for admission (caps, kill) and revoke by id.
+
+## Planned layout
+
+| Part | Plan |
+| --- | --- |
+| Host | A VPS that does not hold production databases or APIs, so an attack on a link cannot reach them. Disk and log size need a limit first. |
+| Front door | nginx `stream` with `ssl_preread` on port 443: names under `*.live.allternitusercontent.com` pass through by SNI to the relay on `:8443` with TLS untouched; every other name stays with the existing http sites. Keep a rollback copy of the old nginx config. |
+| Certificates | One certificate per link, issued by ZeroSSL using External Account Binding (EAB). The EAB key id and HMAC key live in the host's environment file, never in the repository. |
+| Database | MySQL bound to loopback only, for the relay's own state. |
+| Usage | The relay emits analytics events to `ANALYTICS_URL`; cloud-api consumes them to meter the 20 GB a month cap. Client-reported bytes are not used. |
+
+## Known risks
+
+- Passing connections through `stream` can hide visitor IP addresses from the host's other http sites unless the PROXY protocol is set up.
+- The Public Suffix List entry for the domain cannot be filed until the registration has two or more years left, so a flagged link could affect the whole domain in browser safe-browsing lists.
+
+## Before it goes live
+
+1. Domain DNS for `*.live` and the hosted-app Worker.
+2. ZeroSSL account and EAB keys on the host.
+3. nginx change, shown and approved first, with the rollback file in place.
+4. A health check run by hand, and a backup of the relay's MySQL.
+5. A test link: old sites answer as before, and the relay certificate is valid.
+
+## Related
+
+- [MCP Tunnels](/admin/mcp-tunnels)
+- [Make it an app](/guides/make-it-an-app)
+- [Apps and MCP developer reference](/api/apps-mcp-2026)

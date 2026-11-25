@@ -229,6 +229,7 @@ internal fun ImpactMapView(
                 Pill("Retry", "impactRetry") { scope.launch { load() } }
             }
             graph.items.isEmpty() -> Column(card.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Sheets, size = 72.dp)
                 Text("Nothing to map yet", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text("As your bots learn things, use skills and run routines, you will see here what depends on what.", color = c.textSecondary, fontSize = 12.5.sp)
             }

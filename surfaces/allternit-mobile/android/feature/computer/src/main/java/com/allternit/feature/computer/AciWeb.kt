@@ -173,14 +173,22 @@ internal fun AppScreenSection(target: AppScreenTarget, onConnect: (() -> Unit)? 
 /** A plain in-app web page (iOS MiniAppRuntimeView's WebView). */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-internal fun AciPlainWebView(url: String, modifier: Modifier = Modifier) {
+internal fun AciPlainWebView(url: String, modifier: Modifier = Modifier, reload: Int = 0, onFail: (() -> Unit)? = null) {
     AndroidView(modifier = modifier, factory = { ctx ->
         WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                // The page itself failed to load (not a sub-resource): the caller shows "Try again".
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                    if (request.isForMainFrame) onFail?.invoke()
+                }
+            }
+            tag = reload
             loadUrl(url)
         }
+    }, update = { view ->
+        if (view.tag != reload) { view.tag = reload; view.loadUrl(url) }
     }, onRelease = { it.destroy() })
 }

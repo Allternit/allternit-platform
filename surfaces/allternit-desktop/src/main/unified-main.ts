@@ -45,6 +45,9 @@ import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
+import { isAppLink, appSlugFromLink, appShellUrl, resolveAppUrl, trustedAppUrl, requestAppHandoff } from './app-link.js';
+import { createAppLaunchers, isValidAppSlug, type AppInstallRequest } from './app-launchers.js';
+import { openAppWindow, closeAppWindow } from './app-window.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
@@ -90,6 +93,7 @@ import { exportHermesRouting } from './hermes-routing-bridge.js';
 import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager.js';
 
 import { tunnelManager } from './tunnel-manager.js';
+import { ShareManager, DEFAULT_RELAY_API, type ShareStartRequest } from './share-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
 import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
 import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTINGS_SCRIPT } from './window-chrome.js';
@@ -2608,6 +2612,19 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Live links: each running share with its own Stop. Stop revokes it.
+  const liveShares = shareManager.list().filter((share) => share.state !== 'stopped');
+  const liveLinksSection: Electron.MenuItemConstructorOptions[] = liveShares.length
+    ? [
+        { label: `Live links (${liveShares.length})`, enabled: false },
+        ...liveShares.map((share): Electron.MenuItemConstructorOptions => ({
+          label: `Stop ${share.label || share.subdomain}`,
+          click: () => { void shareManager.stop(share.id); },
+        })),
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
@@ -2623,7 +2640,8 @@ async function updateTrayMenu(): Promise<void> {
       },
     },
     ...(permItem ? [permItem, { type: 'separator' as const }] : []),
-    { label: 'Show Window', click: () => showOrReopenMainWindow() },
+    { label: 'Open Allternit', click: () => showOrReopenMainWindow() },
+    ...liveLinksSection,
     { label: 'Show Desktop Pet', click: () => desktopCompanion.show() },
     { label: 'Desktop Pet Settings…', click: () => desktopCompanion.settings() },
     { label: 'Reset Pet Position', click: () => desktopCompanion.reset() },
@@ -2769,6 +2787,15 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    return;
+  }
+
+  // An installed app's launcher (Windows Start menu, Linux .desktop):
+  // allternit://app/<slug>. Only the slug is used; see app-link.ts.
+  if (isAppLink(url)) {
+    const slug = appSlugFromLink(url);
+    if (slug) void openInstalledApp(slug);
+    else log.warn('[Main] rejected app link');
     return;
   }
 
@@ -3270,7 +3297,13 @@ app.whenReady().then(async () => {
 let appWindowOpened = false;
 
 app.on('window-all-closed', () => {
-  if (!isMac && appWindowOpened) app.quit();
+  if (isMac || !appWindowOpened) return;
+  // Keep running in the tray (Windows/Linux, opt-in): live links and app
+  // helpers keep serving. Only with a tray icon to reopen from, else the app
+  // would be running with no way back in. Quit from the tray still stops
+  // and revokes every live link.
+  if (persistedState.get('prefs').keepRunningInTray && tray) return;
+  app.quit();
 });
 
 async function handoffInFlightToCloud(): Promise<void> {
@@ -3324,6 +3357,53 @@ async function handoffInFlightToCloud(): Promise<void> {
     log.error('[Main] cloud continuation handoff failed', err);
   }
 }
+
+// Live links hosted by this computer (D5). The gate is allternit-api on loopback, so shares stop
+// before it does on quit. A quit always ends them: the process that serves them is gone.
+const shareManager = new ShareManager({
+  isEnabled: () => featureFlagManager.get<boolean>('share.live') === true,
+  cloudApi: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+  relayApi: () => process.env.ALLTERNIT_SHARE_RELAY_API || DEFAULT_RELAY_API,
+  getClerkToken: () => authManager.getClerkToken(),
+  getRuntimeDeviceId: () => authManager.getSessionSnapshot()?.runtimeId ?? null,
+  gateBaseUrl: () => backendManager.getUrl(),
+  gateUserId: () => authManager.getSessionSnapshot()?.userId ?? 'desktop-local',
+  getDesktopAccessToken: () => backendManager.getDesktopAccessToken(),
+  // D7: every Desktop service port is refused, not only allternit-api and gizzi.
+  extraDeniedPorts: Object.values(PORTS) as readonly number[],
+  emit: (event) => {
+    broadcastToMainWindows('shares:event', event);
+    void updateTrayMenu();
+  },
+});
+authManager.setRelayHostHandler((method, path, body) => {
+  if (method !== 'POST') return Promise.resolve(null);
+  if (path === '/host/shares/start') return shareManager.handleHostStart(body);
+  const command = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(path);
+  return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
+});
+featureFlagManager.onChange((key, value) => {
+  if (key === 'share.live' && value !== true) void shareManager.disable();
+});
+
+// Windows/Linux with keep-in-tray off: live links end when the last window
+// closes. Tell the renderer once per run, when a link starts, so it can show
+// "Live links stop when Allternit closes" with a button that turns it on.
+let trayHintSent = false;
+handleGuarded('shares:start', async (_event, request: ShareStartRequest) => {
+  const result = await shareManager.start(request);
+  if (result.ok && !isMac && !trayHintSent && !persistedState.get('prefs').keepRunningInTray) {
+    trayHintSent = true;
+    broadcastToMainWindows('tray:keepRunningHint', { message: 'Live links stop when Allternit closes' });
+  }
+  return result;
+});
+handleGuarded('shares:list', () => shareManager.list());
+handleGuarded('shares:pause', (_event, id: string) => shareManager.pause(String(id)));
+handleGuarded('shares:resume', (_event, id: string) => shareManager.resume(String(id)));
+handleGuarded('shares:stop', (_event, id: string) => shareManager.stop(String(id)));
+handleGuarded('shares:rotate', (_event, id: string) => shareManager.rotate(String(id)));
+handleGuarded('shares:status', () => ({ enabled: featureFlagManager.get<boolean>('share.live') === true }));
 
 // Electron does not await before-quit, so an async handler that awaits
 // before reaping lets the process exit with gizzi-code still running
@@ -3386,6 +3466,8 @@ async function shutdownAllServices(): Promise<void> {
   featureFlagManager.destroy();
   mcpHostManager.shutdown();
   await workerBus.shutdown();
+  // Before stopBackend: the share gate lives in allternit-api.
+  await shareManager.stopAll().catch((err) => log.warn('[Main] live links stop on quit failed', err));
   tunnelManager.stop();
   await backendManager.stopBackend();
   await localEngineManager.stop();
@@ -3664,6 +3746,119 @@ function openDesignStudio(prompt?: string | null): void {
   designWindow.on('closed', () => { designWindow = null; });
   void designWindow.loadURL(targetUrl);
 }
+
+// ============================================================================
+// Installed apps: own launcher, own window (plan v3 lane 38, E1 = B, D18)
+// ============================================================================
+
+const APP_HELPER_BINARY = app.isPackaged
+  ? join(process.resourcesPath, 'native', 'app-helper', 'AllternitAppHelper')
+  : join(__dirname, '..', '..', 'native', 'app-helper', 'build', 'AllternitAppHelper');
+// Linux AppImage launches go through the AppImage file, not the mounted binary.
+const APP_LAUNCH_EXEC = process.platform === 'linux' && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath;
+const APP_LAUNCH_ARGS = process.defaultApp && process.argv[1] ? [process.argv[1]] : [];
+
+const appLaunchers = createAppLaunchers({
+  platform: process.platform,
+  home: app.getPath('home'),
+  userData: app.getPath('userData'),
+  appData: app.getPath('appData'),
+  helperBinary: process.platform === 'darwin' ? APP_HELPER_BINARY : null,
+  execPath: APP_LAUNCH_EXEC,
+  execArgs: APP_LAUNCH_ARGS,
+  resizePng: (bytes, size) => {
+    const image = nativeImage.createFromBuffer(bytes);
+    if (image.isEmpty()) return null;
+    return image.resize({ width: size, height: size, quality: 'best' }).toPNG();
+  },
+  writeShortcut: (lnkPath, opts) => shell.writeShortcutLink(lnkPath, 'create', { ...opts, iconIndex: 0 }),
+  registerLinuxScheme: async () => {
+    const { registerProtocolHandler: registerLinux } = await import('./platform-linux.js');
+    await registerLinux();
+  },
+  log,
+});
+
+function appsInstallEnabled(): boolean {
+  return featureFlagManager.get<boolean>('apps.install') === true;
+}
+
+// The Mac helper is its own process, so it needs an origin that is up when
+// Desktop is not: never a loopback UI server outside dev.
+function appHelperBaseUrl(): string {
+  try {
+    const host = new URL(activePlatformUrl).hostname;
+    if (!isDev && (host === '127.0.0.1' || host === 'localhost')) return URLS.PLATFORM;
+  } catch {
+    return URLS.PLATFORM;
+  }
+  return activePlatformUrl;
+}
+
+/**
+ * Opens an installed app: its own helper on macOS (own Dock tile), else a
+ * Desktop window. `handoff` is the one-time token the app shell swaps for a
+ * session (D15); the helper loads <url>?handoff=<token>.
+ */
+async function openInstalledApp(
+  slug: string,
+  handoff?: string | null,
+  urlHint?: string | null,
+): Promise<{ ok: boolean; mode?: 'helper' | 'window'; error?: string }> {
+  if (!appsInstallEnabled()) {
+    log.info('[Main] apps.install is off; ignoring app open', slug);
+    return { ok: false, error: 'disabled' };
+  }
+  if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug' };
+  const installed = await appLaunchers.get(slug);
+  const base = appHelperBaseUrl();
+  // The stored app link, else a fresh one from the caller, else the old /app/<slug>.
+  const appUrl = trustedAppUrl(installed?.url, base, slug) ?? resolveAppUrl(urlHint, base, slug);
+  // One-time handoff from cloud-api; offline or signed out opens the plain link
+  // and the app page shows its own sign-in.
+  const token = await authManager.getClerkToken().catch(() => null);
+  const openUrl = (await requestAppHandoff({ apiBase: URLS.CLOUD_API, slug, appUrl, token })) ?? appUrl;
+  if (process.platform === 'darwin' && installed?.kind === 'mac-dock') {
+    if (await appLaunchers.launchMacHelper(slug, openUrl, handoff)) {
+      return { ok: true, mode: 'helper' };
+    }
+  }
+  openAppWindow(
+    { slug, name: installed?.name ?? null, iconPath: installed?.kind === 'windows-start-menu' ? installed.iconPath : null, url: openUrl },
+    {
+      preloadPath: join(__dirname, '../preload/index.js'),
+      platformUrl: () => activePlatformUrl,
+      installNavigationGuard: installWillNavigateGuard,
+      openExternal: (next) => { void openExternalAllowlisted(next); },
+      execPath: APP_LAUNCH_EXEC,
+      execArgs: APP_LAUNCH_ARGS,
+    },
+  );
+  return { ok: true, mode: 'window' };
+}
+
+handleGuarded('apps:install', async (_event, request: AppInstallRequest) => {
+  if (!appsInstallEnabled()) return { ok: false, error: 'disabled', message: 'Installing apps is off (apps.install).' };
+  const slug = request?.slug;
+  if (!isValidAppSlug(slug)) return { ok: false, error: 'bad_slug', message: 'Bad app slug.' };
+  return appLaunchers.install(request, resolveAppUrl(request.url, appHelperBaseUrl(), slug));
+});
+
+handleGuarded('apps:uninstall', async (_event, slug: string) => {
+  if (!appsInstallEnabled()) return { ok: false, removed: false };
+  if (isValidAppSlug(slug)) closeAppWindow(slug);
+  return appLaunchers.uninstall(slug);
+});
+
+handleGuarded('apps:open', (_event, slug: string, options?: { handoff?: string | null; url?: string | null }) =>
+  openInstalledApp(slug, options?.handoff ?? null, options?.url ?? null),
+);
+
+handleGuarded('apps:status', async (_event, slug: string) => {
+  const enabled = appsInstallEnabled();
+  const installed = enabled ? await appLaunchers.get(slug) : null;
+  return { enabled, installed };
+});
 
 // Approves a terminal's `gizzi login` (see handleProtocolCallback): a native
 // confirmation, then the account's Clerk token approves it; the hosted page
@@ -5352,6 +5547,14 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
     }
   }
   broadcastToMainWindows('menuBar:modeChanged', enabled);
+  return true;
+});
+
+ipcMain.handle('tray:getKeepRunning', () => persistedState.get('prefs').keepRunningInTray);
+
+handleGuarded('tray:setKeepRunning', (_event, enabled: boolean) => {
+  persistedState.patch('prefs', { keepRunningInTray: enabled === true });
+  broadcastToMainWindows('tray:keepRunningChanged', enabled === true);
   return true;
 });
 

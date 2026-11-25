@@ -119,6 +119,10 @@ struct ComposerView: View {
     /// Dictation (C3): the mic left of the voice button.
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
+    /// The Undo dictation pill shows after dictation stops with words in.
+    @State private var showsUndoDictation = false
+    /// Keep mine ends dictation without offering the undo pill.
+    @State private var suppressUndoPill = false
     @ObservedObject private var chipStore = ComputerChipStore.shared
     @ReducedMotion private var reduceMotion
     /// The + sheet grows from the + (iOS 18 zoom).
@@ -207,6 +211,21 @@ struct ComposerView: View {
                     }
             }
 
+            if dictation.isRecording, !isTerminal {
+                DictationPanel(
+                    onCancel: cancelDictation,
+                    onStop: { Haptics.light(); dictation.stop() },
+                    onKeep: { Haptics.light(); suppressUndoPill = true; dictation.stop() }
+                )
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            } else if showsUndoDictation, !isTerminal {
+                UndoDictationPill(
+                    onUndo: undoDictation,
+                    onExpire: { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { showsUndoDictation = false } }
+                )
+                .transition(.opacity)
+            }
+
             modeOrbRow
 
             card
@@ -234,6 +253,16 @@ struct ComposerView: View {
         }
         .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
         .animation(reduceMotion ? nil : DeckMotion.animation, value: deck)
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85), value: dictation.isRecording)
+        .onChange(of: dictation.isRecording) { _, recording in
+            if recording {
+                showsUndoDictation = false
+            } else if suppressUndoPill {
+                suppressUndoPill = false
+            } else if !dictation.transcript.isEmpty {
+                showsUndoDictation = true
+            }
+        }
         .background(ComposerFrameReporter())
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
@@ -440,7 +469,10 @@ struct ComposerView: View {
             Image(systemName: "plus")
                 .font(.system(size: size > 40 ? 20 : 17, weight: .medium))
                 .foregroundColor(Color("TextSecondary"))
+                // The plus turns into an x while its sheet is open (the
+                // sheet zooms out of this same button).
                 .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
+                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.75), value: isPlusSheetPresented)
                 .frame(width: size, height: size)
                 .background(Color("FillNeutral"), in: Circle())
                 // The folded computer chip.
@@ -675,9 +707,26 @@ struct ComposerView: View {
             isModelPickerPresented = true
             return
         }
+        suppressUndoPill = dictation.isRecording
+        showsUndoDictation = false
         dictation.stop()
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
+    }
+
+    /// Cancel: stop listening and put the field back as it was.
+    private func cancelDictation() {
+        Haptics.light()
+        suppressUndoPill = true
+        dictation.stop()
+        inputText = dictationBase
+    }
+
+    /// Undo dictation: the field goes back to what it held before the mic.
+    private func undoDictation() {
+        Haptics.light()
+        inputText = dictationBase.trimmingCharacters(in: .whitespaces).isEmpty ? "" : dictationBase
+        showsUndoDictation = false
     }
 
     private func toggleDictation() {

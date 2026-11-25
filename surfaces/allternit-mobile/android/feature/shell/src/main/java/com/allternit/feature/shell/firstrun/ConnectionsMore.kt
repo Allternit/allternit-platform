@@ -242,10 +242,13 @@ private fun CatalogResults(
             }
         }
         visible.isEmpty() -> Box(modifier.testTag("connectionsMoreEmpty"), contentAlignment = Alignment.Center) {
-            Text(
-                if (query.isBlank()) "Nothing more to add here." else "Nothing matches “${query.trim()}”.",
-                color = c.sub, fontSize = 14.sp,
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (query.isBlank()) com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Sheets, size = 72.dp)
+                Text(
+                    if (query.isBlank()) "Nothing more to add here." else "Nothing matches “${query.trim()}”.",
+                    color = c.sub, fontSize = 14.sp,
+                )
+            }
         }
         else -> when (layout) {
             LibraryLayout.List -> {

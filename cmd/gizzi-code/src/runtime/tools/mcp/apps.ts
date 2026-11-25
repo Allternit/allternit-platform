@@ -11,6 +11,8 @@ export const MCP_APP_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app"
 export const MCP_APPS_CLIENT_CAPABILITIES = {
   extensions: {
     [MCP_APPS_EXTENSION_ID]: { mimeTypes: [MCP_APP_RESOURCE_MIME_TYPE] },
+    // SEP-2663 tasks: the server may answer tools/call with a task (shared/util/mcp-tasks.ts).
+    "io.modelcontextprotocol/tasks": {},
   },
 } as Record<string, unknown>
 

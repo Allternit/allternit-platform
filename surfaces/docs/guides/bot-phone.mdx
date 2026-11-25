@@ -102,6 +102,26 @@ When a bot runs a phone or computer task, you can follow it in the chat. This wo
 
 For the same task in the terminal, see [gizzi work](/cli/work#phone-tasks). For tasks started from Messages, see [Allternit in iMessage](/guides/imessage-app).
 
+### Task card details
+
+The task card in chat has a few more touches. They work on ai.allternit.com, the phone layout, the m.allternit.com app, Desktop, iOS and Android.
+
+- **A timer** counts up while the task runs.
+- **Step rows** start as an empty circle and turn into a check when the step is done. A small bar shows how many steps are done out of the steps seen so far. The total grows as the bot goes, because the bot does not know it ahead of time.
+- **A thin light** runs along the card after the first 3 seconds of a running task. It is off when your device is set to reduce motion.
+- **When the task is done**, the card folds to one line with a check and how long it took. Tap it to open the steps again.
+- **Row times** show only when the app knows when a step ran. On the web they are the time you first saw the step.
+
+### The tap marker
+
+On the live phone screen, a white ring shows where the bot just tapped. It glides from one tap to the next and fades. A tap made before you opened the live view is not shown. The ring can lag by up to about a second and a half. With reduced motion the ring just appears, with no glide.
+
+### Live Activity and notifications
+
+On iPhone, the Live Activity for a running task has a thin line with a Start label and an End label. On Android the running-task notification shows the same line. There is no "time left" estimate, because nothing predicts it.
+
+In the terminal, `gizzi phone task` shows one line that updates in place, such as `step 3 · Open Settings`. With a pipe, `NO_COLOR` or a plain terminal it prints one plain line per step instead.
+
 ## What the bot can do on its own
 
 Each channel app has a chip under its header (for example **Ask first**) that sets how far the bot goes on its own there, and **Settings** lists every place. See [What your bot can do on its own](/guides/bot-autonomy).

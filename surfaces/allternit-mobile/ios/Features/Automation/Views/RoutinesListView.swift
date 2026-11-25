@@ -282,7 +282,8 @@ struct RoutinesListView: View {
             action: {
                 Haptics.light()
                 isCreateSheetPresented = true
-            }
+            },
+            art: .bell
         )
     }
 

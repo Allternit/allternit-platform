@@ -20,6 +20,33 @@ final class VoiceHost: ObservableObject {
 
     var isActive: Bool { viewModel != nil }
 
+    /// A new call: the first orb on screen grows from a dot (SCOPE-B1 clip 3).
+    /// Not published: the orb reads it on its first render and takes it once grown.
+    private(set) var growPending = false
+
+    /// The quick bar's orb, in window coordinates: where the full-screen orb
+    /// travels from on expand and back to on minimize. The bar keeps its place
+    /// (hidden) while full voice is up, so this stays current. `.zero` when no
+    /// bar has been laid out. Not published (it moves with the keyboard).
+    var barOrbFrame: CGRect = .zero
+
+    /// Face sizes of the two orbs; the travel scales one into the other.
+    static let barFaceSize: CGFloat = 28
+    static let stageFaceSize: CGFloat = 148
+
+    /// The grow has run.
+    func finishGrow() { growPending = false }
+
+    /// Bar ↔ full without the system cover slide: the voice views run the
+    /// orb's own travel (VoiceModeView) and the bar's fade-in instead.
+    func present(_ next: Presentation) {
+        // Expanding mid-grow: the orb travels from the bar instead of growing again.
+        if next == .full, presentation == .bar { growPending = false }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { presentation = next }
+    }
+
     /// Starts a voice conversation in `presentation` (no-op if one is live —
     /// it just changes presentation).
     func start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, bot: AgentRecord? = nil,
@@ -34,8 +61,14 @@ final class VoiceHost: ObservableObject {
             }
             viewModel = model
             model.begin(dictation: dictation, speaker: speaker)
+            // A new call: the first orb on screen grows from a dot.
+            growPending = true
         }
-        self.presentation = presentation
+        if presentation == .full || self.presentation == .full {
+            present(presentation)
+        } else {
+            self.presentation = presentation
+        }
     }
 
     /// Ends the session; returns its length in seconds for the summary card.
@@ -45,6 +78,8 @@ final class VoiceHost: ObservableObject {
         let seconds = viewModel.endSession()
         self.viewModel = nil
         presentation = .none
+        growPending = false
+        barOrbFrame = .zero
         speaker.stop()
         return seconds
     }
@@ -91,56 +126,90 @@ struct VoiceQuickBar: View {
     @ObservedObject var viewModel: VoiceModeViewModel
     /// Bot conversations: the bot's face in a small version of its live mode look.
     var bot: AgentRecord? = nil
+    /// The session's host: the bar reports its orb's frame (the full-screen
+    /// orb travels to and from it) and runs a new call's grow.
+    var host: VoiceHost? = nil
+    /// False while full voice is up: the bar holds its place, hidden, so the
+    /// full-screen orb has a fixed spot to travel from and back to.
+    var docked: Bool = true
     let onExpand: () -> Void
     let onEnd: () -> Void
     @ObservedObject private var looks = SpeakerLookStore.shared
+    @ReducedMotion private var reduceMotion
+    /// After minimize the orb lands on the bar first, then the rest fades in.
+    @State private var chromeArrived = true
 
     var body: some View {
         HStack(spacing: 12) {
-            if let bot {
-                let look = looks.look(for: bot.id)
-                VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette,
-                                 botColor: BotColorStore.shared.hex(for: bot).map { Color(hex: $0) }, size: 28, compact: true) {
-                    BotAvatarView(bot: bot, size: 28)
+            Group {
+                if let bot {
+                    let look = looks.look(for: bot.id)
+                    VoiceSpeakerView(phase: speakerPhase, muted: viewModel.isMuted, style: look.style, palette: look.palette,
+                                     botColor: BotColorStore.shared.hex(for: bot).map { Color(hex: $0) }, size: VoiceHost.barFaceSize, compact: true) {
+                        BotAvatarView(bot: bot, size: VoiceHost.barFaceSize)
+                    }
+                } else {
+                    VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette,
+                                     botColor: nil, size: VoiceHost.barFaceSize, compact: true) {
+                        VoiceMarkFace(state: viewModel.state, size: VoiceHost.barFaceSize)
+                    }
                 }
-                .frame(width: 34, height: 34)
-            } else {
-                VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette,
-                                 botColor: nil, size: 28, compact: true) {
-                    VoiceMarkFace(state: viewModel.state, size: 28)
-                }
-                .frame(width: 34, height: 34)
             }
+            .modifier(VoiceOrbGrow(host: host))
+            .opacity(docked ? 1 : 0)
+            .frame(width: 34, height: 34)
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { host?.barOrbFrame = proxy.frame(in: .global) }
+                    .onChange(of: proxy.frame(in: .global)) { _, frame in host?.barOrbFrame = frame }
+            })
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(statusText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                if let secondary = secondaryText {
-                    Text(secondary)
-                        .font(.caption)
-                        .foregroundColor(viewModel.statusLine != nil ? Theme.statusWarning : Color("TextSecondary"))
+            Group {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(statusText)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
+                    if let secondary = secondaryText {
+                        Text(secondary)
+                            .font(.caption)
+                            .foregroundColor(viewModel.statusLine != nil ? Theme.statusWarning : Color("TextSecondary"))
+                            .lineLimit(1)
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Voice chat, \(statusText)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Voice chat, \(statusText)")
 
-            barButton(viewModel.isMuted ? "mic.slash.fill" : "mic.fill",
-                      label: viewModel.isMuted ? "Unmute microphone" : "Mute microphone",
-                      tint: viewModel.isMuted ? Theme.statusError : nil) { viewModel.toggleMute() }
-            barButton("arrow.up.left.and.arrow.down.right", label: "Open full-screen voice", action: onExpand)
-            barButton("xmark", label: "End voice chat", action: onEnd)
+                barButton(viewModel.isMuted ? "mic.slash.fill" : "mic.fill",
+                          label: viewModel.isMuted ? "Unmute microphone" : "Mute microphone",
+                          tint: viewModel.isMuted ? Theme.statusError : nil) { viewModel.toggleMute() }
+                barButton("arrow.up.left.and.arrow.down.right", label: "Open full-screen voice", action: onExpand)
+                barButton("xmark", label: "End voice chat", action: onEnd)
+            }
+            .opacity(docked && chromeArrived ? 1 : 0)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color("BgSecondary"))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
-        .overlay(RoundedRectangle(cornerRadius: Theme.radiusMD).stroke(Theme.borderWarmDefault, lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: Theme.radiusMD)
+                .fill(Color("BgSecondary"))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radiusMD).stroke(Theme.borderWarmDefault, lineWidth: 1))
+                .opacity(docked && chromeArrived ? 1 : 0)
+        )
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+        .allowsHitTesting(docked)
+        .accessibilityHidden(!docked)
+        .onAppear { chromeArrived = docked }
+        .onChange(of: docked) { _, isDocked in
+            if isDocked {
+                // The full-screen orb has just landed on this one; the bar fades in round it.
+                withAnimation(reduceMotion ? Motion.fade : .easeOut(duration: 0.2)) { chromeArrived = true }
+            } else {
+                chromeArrived = false
+            }
+        }
     }
 
     private var speakerPhase: VoiceSpeakerView<BotAvatarView>.Phase {

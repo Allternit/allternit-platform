@@ -57,11 +57,17 @@
 
 pub mod bridge;
 pub mod error;
+pub mod events_poll;
 pub mod health;
 pub mod oauth;
 pub mod protocol;
 pub mod registry;
+pub mod server_requests;
+pub mod skills;
 pub mod transport;
+
+#[cfg(test)]
+mod tasks_tests;
 
 // Re-export main types
 pub use error::{McpError, OAuthError, Result, TransportError};
@@ -76,6 +82,41 @@ pub use transport::{
     TransportConfig, TransportType,
 };
 
+// Server-to-client request hook (elicitation) and MCP Tasks (SEP-2663)
+pub use mcp_protocol::tasks::{
+    CreateTaskResult, DetailedTask, ElicitAction, ElicitRequest, ElicitResult, InputRequest, InputRequests,
+    InputResponse, InputResponses, Task, TaskStatus, TASKS_EXTENSION_ID,
+};
+pub use events_poll::PollBatch;
+pub use skills::SkillInfo;
+pub use server_requests::{DeclineAll, ElicitContext, HandlerError, ServerRequestHandler};
+
+/// What `tools/call` produced: the tool's result, or (only when the client
+/// declared the tasks extension, see [`McpClient::with_tasks`]) a task
+/// handle to follow with [`McpClient::tasks_get`] / [`McpClient::tasks_update`]
+/// / [`McpClient::tasks_cancel`].
+#[derive(Debug, Clone)]
+pub enum ToolOutcome<T = ToolResult> {
+    Complete(T),
+    Task(CreateTaskResult),
+}
+
+impl<T> ToolOutcome<T> {
+    /// The complete result, or [`McpError::TaskCreated`] for a task (for
+    /// callers that do not follow tasks).
+    pub fn into_complete(self) -> Result<T> {
+        match self {
+            ToolOutcome::Complete(r) => Ok(r),
+            ToolOutcome::Task(t) => Err(McpError::TaskCreated(Box::new(t))),
+        }
+    }
+}
+
+/// Bounds for honoring a task's `pollIntervalMs` in [`McpClient::wait_for_task`].
+const MIN_POLL: Duration = Duration::from_millis(10);
+const MAX_POLL: Duration = Duration::from_secs(30);
+const DEFAULT_POLL: Duration = Duration::from_secs(1);
+
 // Re-export registry types
 pub use registry::{
     ConnectionState, McpRegistry, McpServerRecord, McpServerStatus, OAuthTokenRecord,
@@ -87,12 +128,13 @@ pub use health::{
 };
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tracing::{debug, info};
 
-use mcp_protocol::client::{self as dual, ProbeVerdict};
+use mcp_protocol::client::{self as dual, ProbeVerdict, ResultKind};
+use mcp_protocol::tasks as tasks_ext;
 
 /// How long a stdio era probe (`server/discover`) may go unanswered before
 /// the server is taken to be legacy (spec: "the probe returns a non-modern
@@ -190,6 +232,7 @@ pub struct McpClient {
     era: ProtocolEra,
     client_capabilities: Value,
     client_info: Value,
+    server_requests: Arc<dyn ServerRequestHandler>,
 }
 
 impl McpClient {
@@ -205,7 +248,49 @@ impl McpClient {
             client_capabilities: serde_json::to_value(ClientCapabilities::with_mcp_apps())
                 .unwrap_or_else(|_| json!({})),
             client_info: json!({ "name": "allternit-mcp-client", "version": env!("CARGO_PKG_VERSION") }),
+            server_requests: Arc::new(DeclineAll) as Arc<dyn ServerRequestHandler>,
         }
+    }
+
+    /// Declare the MCP Tasks extension (`io.modelcontextprotocol/tasks`,
+    /// SEP-2663) on every request. Servers may then answer `tools/call` with
+    /// a task: [`McpClient::call_tool`] returns [`ToolOutcome::Task`], and
+    /// [`McpClient::request`] (which cannot return one) fails with
+    /// [`McpError::TaskCreated`]. Without this a server MUST NOT return a task.
+    pub fn with_tasks(mut self) -> Self {
+        if !self.client_capabilities.is_object() {
+            self.client_capabilities = json!({});
+        }
+        let caps = self.client_capabilities.as_object_mut().expect("object ensured above");
+        let ext = caps.entry("extensions").or_insert_with(|| json!({}));
+        if !ext.is_object() {
+            *ext = json!({});
+        }
+        ext[tasks_ext::TASKS_EXTENSION_ID] = tasks_ext::extension_entry();
+        self
+    }
+
+    /// Install the hook that answers server-to-client requests: legacy
+    /// `elicitation/create` on the transport's streams, and the
+    /// `inputRequests` of tasks ([`McpClient::answer_task_inputs`]). Without
+    /// one, every elicitation is declined ([`DeclineAll`]). A handler whose
+    /// [`ServerRequestHandler::supports_elicitation`] is true makes the
+    /// client advertise `elicitation` (form + url).
+    pub fn with_server_request_handler(mut self, handler: Arc<dyn ServerRequestHandler>) -> Self {
+        if handler.supports_elicitation() {
+            if !self.client_capabilities.is_object() {
+                self.client_capabilities = json!({});
+            }
+            self.client_capabilities["elicitation"] = json!({ "form": {}, "url": {} });
+        }
+        self.transport.set_server_request_handler(handler.clone());
+        self.server_requests = handler;
+        self
+    }
+
+    /// Whether requests declare the tasks extension.
+    pub fn tasks_declared(&self) -> bool {
+        tasks_ext::client_declares_tasks(&self.client_capabilities)
     }
 
     /// Identify as `name`/`version` (`clientInfo`) instead of the default.
@@ -377,9 +462,12 @@ impl McpClient {
         Ok(init_result)
     }
 
-    /// Send one request shaped for the negotiated era and return its result.
-    async fn send(&self, method: &str, params: Option<Value>) -> Result<Value> {
+    /// Send one request shaped for the negotiated era and return its result
+    /// with its shape. `task` is only accepted for `tools/call` when the
+    /// tasks extension is declared ([`dual::check_result_type_for`]).
+    async fn send_checked(&self, method: &str, params: Option<Value>) -> Result<(Value, ResultKind)> {
         self.ensure_initialized()?;
+        let tasks = self.tasks_declared();
         match &self.era {
             ProtocolEra::Modern { version } => {
                 let params = dual::with_modern_meta(params, version, &self.client_capabilities, &self.client_info);
@@ -395,10 +483,28 @@ impl McpClient {
                         _ => e,
                     }
                 })?;
-                dual::check_result_type(&result).map_err(McpError::Protocol)?;
-                Ok(result)
+                let kind = dual::check_result_type_for(method, &result, tasks).map_err(McpError::Protocol)?;
+                Ok((result, kind))
             }
-            _ => self.transport.request(method, params).await,
+            _ => {
+                let result = self.transport.request(method, params).await?;
+                // Legacy results are taken as-is, except a task we asked for.
+                let kind = match result.get("resultType").and_then(Value::as_str) {
+                    Some(tasks_ext::RESULT_TYPE_TASK) => {
+                        dual::check_result_type_for(method, &result, tasks).map_err(McpError::Protocol)?
+                    }
+                    _ => ResultKind::Complete,
+                };
+                Ok((result, kind))
+            }
+        }
+    }
+
+    /// [`Self::send_checked`] for callers that take only complete results.
+    async fn send(&self, method: &str, params: Option<Value>) -> Result<Value> {
+        match self.send_checked(method, params).await? {
+            (result, ResultKind::Complete) => Ok(result),
+            (result, ResultKind::Task) => Err(McpError::TaskCreated(Box::new(parse_task(result)?))),
         }
     }
 
@@ -410,13 +516,102 @@ impl McpClient {
         Ok(list_result.tools)
     }
 
-    /// Call a tool on the MCP server
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolResult> {
+    /// Call a tool on the MCP server. A task comes back only when the
+    /// client declared the tasks extension ([`McpClient::with_tasks`]).
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolOutcome> {
         debug!("Calling tool: {name}");
         let params = json!({ "name": name, "arguments": arguments });
-        let result = self.send("tools/call", Some(params)).await?;
-        let tool_result: ToolResult = serde_json::from_value(result)?;
-        Ok(tool_result)
+        match self.call_tool_raw(params).await? {
+            ToolOutcome::Complete(result) => Ok(ToolOutcome::Complete(serde_json::from_value(result)?)),
+            ToolOutcome::Task(task) => Ok(ToolOutcome::Task(task)),
+        }
+    }
+
+    /// `tools/call` with caller-built `params` (`name`, `arguments`, any
+    /// `_meta`), returning the untouched `CallToolResult` JSON (so
+    /// `structuredContent` and `_meta` survive) or the task handle.
+    pub async fn call_tool_raw(&self, params: Value) -> Result<ToolOutcome<Value>> {
+        match self.send_checked("tools/call", Some(params)).await? {
+            (result, ResultKind::Complete) => Ok(ToolOutcome::Complete(result)),
+            (result, ResultKind::Task) => Ok(ToolOutcome::Task(parse_task(result)?)),
+        }
+    }
+
+    /// `tasks/get`: the task's current state, with `inputRequests` when
+    /// `input_required`, `result` when `completed`, `error` when `failed`.
+    pub async fn tasks_get(&self, task_id: &str) -> Result<DetailedTask> {
+        let result = self.send(tasks_ext::METHOD_TASKS_GET, Some(json!({ "taskId": task_id }))).await?;
+        Ok(serde_json::from_value(result)?)
+    }
+
+    /// `tasks/update`: answer outstanding `inputRequests` (keys as given).
+    /// The ack is eventually consistent; keep polling [`Self::tasks_get`].
+    pub async fn tasks_update(&self, task_id: &str, input_responses: InputResponses) -> Result<()> {
+        let params = json!({ "taskId": task_id, "inputResponses": input_responses });
+        self.send(tasks_ext::METHOD_TASKS_UPDATE, Some(params)).await.map(|_| ())
+    }
+
+    /// `tasks/cancel`: cooperative and ack-only; the task may still finish.
+    pub async fn tasks_cancel(&self, task_id: &str) -> Result<()> {
+        self.send(tasks_ext::METHOD_TASKS_CANCEL, Some(json!({ "taskId": task_id }))).await.map(|_| ())
+    }
+
+    /// `tasks/result`, which exists only in the 2025-11-25 core-spec tasks
+    /// (SEP-2663 removed it: a completed task carries `result` inline in
+    /// [`Self::tasks_get`]). Refused unless that legacy version was negotiated.
+    pub async fn tasks_result(&self, task_id: &str) -> Result<Value> {
+        match &self.era {
+            ProtocolEra::Legacy { version } if tasks_ext::legacy_has_tasks_result(version) => {
+                self.send(tasks_ext::METHOD_TASKS_RESULT_LEGACY, Some(json!({ "taskId": task_id }))).await
+            }
+            era => Err(McpError::Protocol(format!(
+                "tasks/result does not exist in protocol {:?}; read `result` from tasks/get",
+                era.version().unwrap_or("unknown")
+            ))),
+        }
+    }
+
+    /// Answer a task's outstanding `inputRequests` through the installed
+    /// [`ServerRequestHandler`] and send them with `tasks/update`. Keys in
+    /// `answered` are skipped (polls repeat them) and new ones are added.
+    /// Returns whether anything was sent.
+    pub async fn answer_task_inputs(&self, task: &DetailedTask, answered: &mut HashSet<String>) -> Result<bool> {
+        let Some(requests) = task.input_requests.as_ref().filter(|_| task.task.status == TaskStatus::InputRequired) else {
+            return Ok(false);
+        };
+        let responses =
+            server_requests::answer_input_requests(self.server_requests.as_ref(), &task.task.task_id, requests, answered).await;
+        if responses.is_empty() {
+            return Ok(false);
+        }
+        self.tasks_update(&task.task.task_id, responses).await?;
+        Ok(true)
+    }
+
+    /// Poll a task until it is terminal, answering `input_required` through
+    /// the installed handler and honoring `pollIntervalMs`. Gives up with
+    /// [`McpError::Timeout`] after `max_wait` (the task keeps running at the
+    /// server; cancel it if it should stop).
+    pub async fn wait_for_task(&self, task_id: &str, max_wait: Duration) -> Result<DetailedTask> {
+        let deadline = tokio::time::Instant::now() + max_wait;
+        let mut answered = HashSet::new();
+        loop {
+            let task = self.tasks_get(task_id).await?;
+            if task.task.status.is_terminal() {
+                return Ok(task);
+            }
+            self.answer_task_inputs(&task, &mut answered).await?;
+            let interval = task
+                .task
+                .poll_interval_ms
+                .map(Duration::from_millis)
+                .unwrap_or(DEFAULT_POLL)
+                .clamp(MIN_POLL, MAX_POLL);
+            if tokio::time::Instant::now() + interval > deadline {
+                return Err(McpError::Timeout(max_wait));
+            }
+            tokio::time::sleep(interval).await;
+        }
     }
 
     /// List available resources from the MCP server
@@ -596,8 +791,14 @@ impl Clone for McpClient {
             era: self.era.clone(),
             client_capabilities: self.client_capabilities.clone(),
             client_info: self.client_info.clone(),
+            server_requests: Arc::clone(&self.server_requests),
         }
     }
+}
+
+/// Decode a `resultType: "task"` result.
+fn parse_task(result: Value) -> Result<CreateTaskResult> {
+    serde_json::from_value(result).map_err(|e| McpError::Protocol(format!("invalid CreateTaskResult: {e}")))
 }
 
 #[cfg(test)]

@@ -86,6 +86,12 @@ const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
 /// How long to wait for JWKS fetch
 const JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Minimum gap between two JWKS fetches triggered by a cache miss. An unknown
+/// `kid` (key rotation) refetches at most this often, so a stream of tokens
+/// with made-up `kid`s cannot turn every request into a fetch against the
+/// issuer, and an unreachable JWKS endpoint is not retried on every request.
+const JWKS_MIN_REFETCH_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Runtime authentication configuration.
 #[derive(Clone, Debug)]
 pub struct AuthConfig {
@@ -321,6 +327,9 @@ pub struct JwksManager {
     cache: RwLock<Option<CachedJwks>>,
     client: reqwest::Client,
     jwks_url: String,
+    /// When the last miss-triggered fetch was started (success or failure).
+    last_fetch_attempt: std::sync::Mutex<Option<Instant>>,
+    min_refetch_interval: Duration,
 }
 
 impl JwksManager {
@@ -332,7 +341,33 @@ impl JwksManager {
                 .build()
                 .expect("Failed to build HTTP client"),
             jwks_url: config.clerk_jwks_url.clone(),
+            last_fetch_attempt: std::sync::Mutex::new(None),
+            min_refetch_interval: JWKS_MIN_REFETCH_INTERVAL,
         }
+    }
+
+    /// Test seam: shorten the refetch gap so rotation is testable quickly.
+    #[cfg(test)]
+    pub(crate) fn with_min_refetch_interval(mut self, interval: Duration) -> Self {
+        self.min_refetch_interval = interval;
+        self
+    }
+
+    /// Claims the right to fetch after a cache miss. Returns false when a
+    /// fetch was started less than `min_refetch_interval` ago; the slot is
+    /// taken before the fetch so concurrent misses do not all fetch.
+    fn try_claim_refetch(&self) -> bool {
+        let mut last = self
+            .last_fetch_attempt
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(at) = *last {
+            if at.elapsed() < self.min_refetch_interval {
+                return false;
+            }
+        }
+        *last = Some(Instant::now());
+        true
     }
 
     /// Returns `true` when a JWKS fetch has succeeded recently enough to be usable.
@@ -378,7 +413,12 @@ impl JwksManager {
             }
         }
 
-        // Cache miss or expired — fetch fresh JWKS
+        // Cache miss or expired — fetch fresh JWKS, at most once per
+        // `min_refetch_interval` (unknown kid = possible rotation).
+        if !self.try_claim_refetch() {
+            warn!("JWKS refetch for kid {} skipped: last fetch was too recent", kid);
+            return None;
+        }
         match self.fetch_jwks().await {
             Ok(keys) => {
                 let mut cache = self.cache.write().await;
@@ -527,6 +567,20 @@ pub(crate) async fn verify_token_claims(
     // `HashMap<String, String> extras`, so any non-string custom claim
     // (Clerk's numeric `oiat`) fails decode_header AND decode() for every
     // Clerk token. Verify RS256 + issuer + expiry manually instead.
+    let primary = config.clerk_issuer.as_str();
+    verify_rs256_with_jwks(jwks, token, |iss| allowed_clerk_issuers(primary).contains(&iss)).await
+}
+
+/// Verifies an RS256 JWT against `jwks` (key picked by the header `kid`,
+/// refetched on an unknown `kid` at a bounded rate), then checks `iss` with
+/// `issuer_ok` and `exp` (60 s leeway). Shared by the Clerk path and the
+/// inbound MCP tunnel/share path (`mcp_tunnel_auth`), whose issuer is per
+/// tunnel instead of Clerk's.
+pub(crate) async fn verify_rs256_with_jwks(
+    jwks: &JwksManager,
+    token: &str,
+    issuer_ok: impl Fn(&str) -> bool,
+) -> Result<serde_json::Value, AuthError> {
     let kid = jwt_header_kid(token)?;
 
     // Fetch the signing key
@@ -544,7 +598,7 @@ pub(crate) async fn verify_token_claims(
         .as_ref()
         .ok_or_else(|| AuthError::KeyNotFound("JWK missing 'e'".to_string()))?;
 
-    verify_rs256(token, n, e, &config.clerk_issuer)
+    verify_rs256(token, n, e, issuer_ok)
 }
 
 pub(crate) fn user_from_claims(claims: &serde_json::Value) -> Result<AuthUser, AuthError> {
@@ -588,7 +642,7 @@ fn verify_rs256(
     token: &str,
     n_b64: &str,
     e_b64: &str,
-    issuer: &str,
+    issuer_ok: impl Fn(&str) -> bool,
 ) -> Result<serde_json::Value, AuthError> {
     let mut parts = token.split('.');
     let (header_b64, payload_b64, signature_b64) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
@@ -622,7 +676,7 @@ fn verify_rs256(
     .map_err(|e| AuthError::TokenDecode(e.to_string()))?;
 
     let iss = claims.get("iss").and_then(|v| v.as_str()).unwrap_or("");
-    if !allowed_clerk_issuers(issuer).contains(&iss) {
+    if !issuer_ok(iss) {
         return Err(AuthError::TokenDecode("Invalid issuer".to_string()));
     }
     let now = std::time::SystemTime::now()
@@ -1327,25 +1381,52 @@ pub(crate) async fn test_clerk_token(jwks: &JwksManager, issuer: &str, sub: &str
 /// Like [`test_clerk_token`] but signs an arbitrary claim set (OAuth `aud`/`scope` tests).
 #[cfg(test)]
 pub(crate) async fn test_clerk_token_with_claims(jwks: &JwksManager, claims: serde_json::Value) -> String {
-    use aws_lc_rs::rsa::{KeyPair, KeySize, PublicKeyComponents};
-    use aws_lc_rs::signature::KeyPair as _;
-    let key_pair = KeyPair::generate(KeySize::Rsa2048).expect("rsa key");
-    let components: PublicKeyComponents<Vec<u8>> = key_pair.public_key().into();
+    let (kid, key_pair) = test_seed_rsa_key(jwks).await;
+    test_sign_rs256(&key_pair, &kid, &claims)
+}
+
+/// Test-only: a fresh RSA-2048 key pair whose public half is seeded into
+/// `jwks`'s cache under a new `kid`. Returns `(kid, key_pair)`.
+#[cfg(test)]
+pub(crate) async fn test_seed_rsa_key(jwks: &JwksManager) -> (String, aws_lc_rs::rsa::KeyPair) {
+    let key_pair = test_rsa_key_pair();
     let kid = format!("test-{}", uuid::Uuid::new_v4());
-    let jwk = JwkKey {
-        kid: kid.clone(),
-        kty: "RSA".into(),
-        key_use: Some("sig".into()),
-        n: Some(URL_SAFE_NO_PAD.encode(&components.n)),
-        e: Some(URL_SAFE_NO_PAD.encode(&components.e)),
-        extra: HashMap::new(),
-    };
+    let jwk: JwkKey = serde_json::from_value(test_rsa_jwk(&key_pair, &kid)).expect("jwk");
     {
         let mut cache = jwks.cache.write().await;
         let cached = cache.get_or_insert_with(|| CachedJwks { keys: HashMap::new(), fetched_at: Instant::now() });
         cached.keys.insert(kid.clone(), jwk);
         cached.fetched_at = Instant::now();
     }
+    (kid, key_pair)
+}
+
+/// Test-only: a fresh RSA-2048 key pair (not seeded anywhere).
+#[cfg(test)]
+pub(crate) fn test_rsa_key_pair() -> aws_lc_rs::rsa::KeyPair {
+    aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048).expect("rsa key")
+}
+
+/// Test-only: the public JWK (`kty` RSA, `n`, `e`) for `key_pair` under `kid`,
+/// as a JWKS endpoint would publish it.
+#[cfg(test)]
+pub(crate) fn test_rsa_jwk(key_pair: &aws_lc_rs::rsa::KeyPair, kid: &str) -> serde_json::Value {
+    use aws_lc_rs::rsa::PublicKeyComponents;
+    use aws_lc_rs::signature::KeyPair as _;
+    let components: PublicKeyComponents<Vec<u8>> = key_pair.public_key().into();
+    json!({
+        "kid": kid,
+        "kty": "RSA",
+        "use": "sig",
+        "n": URL_SAFE_NO_PAD.encode(&components.n),
+        "e": URL_SAFE_NO_PAD.encode(&components.e),
+    })
+}
+
+/// Test-only: an RS256 JWT over `claims`, signed by `key_pair`, with `kid` in
+/// the header (the `kid` need not belong to `key_pair`: that is a forgery).
+#[cfg(test)]
+pub(crate) fn test_sign_rs256(key_pair: &aws_lc_rs::rsa::KeyPair, kid: &str, claims: &serde_json::Value) -> String {
     let header = URL_SAFE_NO_PAD.encode(json!({"alg": "RS256", "typ": "JWT", "kid": kid}).to_string());
     let payload = URL_SAFE_NO_PAD.encode(claims.to_string());
     let signing_input = format!("{header}.{payload}");

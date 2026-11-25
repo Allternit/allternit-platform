@@ -15,8 +15,28 @@
 //! Connector calls run in the app with the viewer's own credentials (the MCP
 //! Apps bridge); the server stores the viewer's approval and per-tool "off"
 //! list and says whether connectors are allowed at all.
+//!
+//! Apps (plan v3 lane 8, E7 / D24 / D27). When the artifact is an app
+//! (`app_permission_tier` set), every storage, AI and connector call first
+//! passes [`app_gate`]:
+//! * The app runs at `min(app tier, max_tier)`. [`max_tier`] is `full` only for
+//!   the viewer's own app or their org's; everyone else, and every vendor app,
+//!   gets at most `app`. Below the method's tier ([`AppMethod::min_tier`]:
+//!   storage, AI = `app`; viewer connectors, Tasks, Event wake, skill install =
+//!   `full`) -> 403 `tier_too_low` `{ tier, required_tier }`.
+//! * The method's capability must be in the app's published snapshot -> else
+//!   409 `capability_not_declared`.
+//! * Anyone but the owner needs an `app_installs` grant that covers the app:
+//!   `granted_tier` >= the app's tier for them and every snapshot capability
+//!   in `granted_capabilities`. When the app grew past the grant (tier or
+//!   capability) -> 403 `consent_required` `{ requested_tier, added_capabilities }`.
+//!   The same snapshot never asks again. The grant is the consent, so an
+//!   installed viewer isn't asked again per capability (`artifact_consents`).
+//!
+//! Capability names (`added_capabilities`): `storage`, `ai`, `tasks`,
+//! `events`, `skill`, and `connector:<connector>/<tool>` per connector tool.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -93,7 +113,12 @@ impl Ctx {
 }
 
 async fn ctx(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<Ctx> {
-    let who = caller(state, headers).await?;
+    // D15: an app origin signs in with its app session, good for this one
+    // artifact only; everyone else is the normal workspace caller.
+    let who = match super::app_handoff::app_session_caller(&state.db, headers, id).await? {
+        Some(who) => who,
+        None => caller(state, headers).await?,
+    };
     let (row, access) = load_with_access(&state.db, id, &who).await?;
     // The artifact's org decides the switches, not the viewer's.
     let settings = match row.org_id.as_deref() {
@@ -170,6 +195,271 @@ fn allowed_json(result: std::result::Result<(), Denied>) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// App tiers and growth-only consent (lane 8)
+// ---------------------------------------------------------------------------
+
+/// What an app may use; each tier includes the one before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Tier {
+    Browser,
+    App,
+    Full,
+}
+
+impl Tier {
+    pub(crate) fn parse(raw: &str) -> Option<Tier> {
+        match raw {
+            "browser" => Some(Tier::Browser),
+            "app" => Some(Tier::App),
+            "full" => Some(Tier::Full),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Tier::Browser => "browser",
+            Tier::App => "app",
+            Tier::Full => "full",
+        }
+    }
+}
+
+/// A runtime method an app calls, and the tier it needs. Tasks, Events and
+/// Skill are gated by the lanes that add those calls (edge Tasks, Event wake,
+/// skill install); they call [`app_gate`] with them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum AppMethod {
+    Storage,
+    Ai,
+    Connectors,
+    Tasks,
+    Events,
+    Skill,
+}
+
+impl AppMethod {
+    pub(crate) fn min_tier(self) -> Tier {
+        match self {
+            AppMethod::Storage | AppMethod::Ai => Tier::App,
+            AppMethod::Connectors | AppMethod::Tasks | AppMethod::Events | AppMethod::Skill => Tier::Full,
+        }
+    }
+
+    /// The snapshot key that declares it.
+    fn key(self) -> &'static str {
+        match self {
+            AppMethod::Storage => "storage",
+            AppMethod::Ai => "ai",
+            AppMethod::Connectors => "connectors",
+            AppMethod::Tasks => "tasks",
+            AppMethod::Events => "events",
+            AppMethod::Skill => "skill",
+        }
+    }
+}
+
+/// The tier a capability name needs (`connector:*` = viewer connectors).
+fn capability_tier(name: &str) -> Tier {
+    match name {
+        "storage" | "ai" => Tier::App,
+        _ => Tier::Full,
+    }
+}
+
+/// The highest tier an app holds for a viewer. Vendor apps cap at `app`
+/// (D27: we can't vouch for vendor code); `full` is only for the viewer's own
+/// app or their org's (E7).
+pub(crate) fn max_tier(
+    app_kind: &str,
+    owner_id: Option<&str>,
+    app_org: Option<&str>,
+    viewer_id: &str,
+    viewer_org: Option<&str>,
+) -> Tier {
+    if app_kind != "artifact" {
+        return Tier::App;
+    }
+    let own = owner_id.is_some_and(|o| o == viewer_id);
+    let same_org = app_org.is_some() && viewer_org == app_org;
+    if own || same_org {
+        Tier::Full
+    } else {
+        Tier::App
+    }
+}
+
+/// Every capability a snapshot (or grant) names, in the lane 13 shape
+/// `{ storage?, ai?, connectors?: [{connector, tools}], tasks?, events?, skill? }`.
+pub(crate) fn capability_set(snapshot: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    // An install grant stores the names themselves (an array); a snapshot is the object shape.
+    if let Some(names) = snapshot.as_array() {
+        out.extend(names.iter().filter_map(Value::as_str).map(str::to_string));
+        return out;
+    }
+    for key in ["storage", "ai", "tasks", "events", "skill"] {
+        if snapshot.get(key).and_then(Value::as_bool).unwrap_or(false) {
+            out.insert(key.to_string());
+        }
+    }
+    for entry in snapshot.get("connectors").and_then(Value::as_array).into_iter().flatten() {
+        let Some(connector) = entry.get("connector").and_then(Value::as_str) else { continue };
+        let tools: Vec<&str> = entry
+            .get("tools")
+            .and_then(Value::as_array)
+            .map(|t| t.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if tools.is_empty() {
+            out.insert(format!("connector:{connector}/*"));
+        }
+        for tool in tools {
+            out.insert(format!("connector:{connector}/{tool}"));
+        }
+    }
+    out
+}
+
+fn declares(snapshot: &Value, method: AppMethod) -> bool {
+    match method {
+        AppMethod::Connectors => capability_set(snapshot).iter().any(|c| c.starts_with("connector:")),
+        other => capability_set(snapshot).contains(other.key()),
+    }
+}
+
+/// What a consent sheet must show: the tier asked for and what's new.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConsentAsk {
+    pub(crate) requested_tier: Tier,
+    pub(crate) added_capabilities: Vec<String>,
+}
+
+/// D24, growth-only consent. `None` when the grant covers the app as it is
+/// now (same snapshot never asks again); otherwise what to ask. Only
+/// capabilities the viewer's tier can reach count (`effective`).
+pub(crate) fn growth(effective: Tier, snapshot: &Value, grant: Option<(Tier, &Value)>) -> Option<ConsentAsk> {
+    let wanted: BTreeSet<String> =
+        capability_set(snapshot).into_iter().filter(|c| capability_tier(c) <= effective).collect();
+    let (granted_tier, granted) = match grant {
+        Some((tier, caps)) => (Some(tier), capability_set(caps)),
+        None => (None, BTreeSet::new()),
+    };
+    let added: Vec<String> = wanted.difference(&granted).cloned().collect();
+    let tier_rose = granted_tier.map_or(true, |g| g < effective);
+    (tier_rose || !added.is_empty()).then_some(ConsentAsk { requested_tier: effective, added_capabilities: added })
+}
+
+/// How an app call was let through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Gate {
+    /// Not an app: the page rules and `artifact_consents` apply as before.
+    NotAnApp,
+    /// The owner runs their own app (tier still applies, no install needed).
+    Owner,
+    /// The viewer's install grant covers it (that grant is their consent).
+    Installed,
+}
+
+async fn app_gate(db: &PgPool, c: &Ctx, method: AppMethod) -> Result<Gate> {
+    let app = sqlx::query_as::<_, (Option<String>, Option<Value>)>(
+        "SELECT app_permission_tier, app_capability_snapshot FROM artifacts WHERE id = $1",
+    )
+    .bind(&c.row.id)
+    .fetch_optional(db)
+    .await?;
+    let Some((Some(tier), snapshot)) = app else {
+        return Ok(Gate::NotAnApp);
+    };
+    let snapshot = snapshot.unwrap_or_else(|| json!({}));
+    let app_tier = Tier::parse(&tier).unwrap_or(Tier::Browser);
+    let cap = max_tier(
+        "artifact",
+        Some(&c.row.owner_id),
+        c.row.org_id.as_deref(),
+        &c.caller.id,
+        c.caller.org_id.as_deref(),
+    );
+    let effective = app_tier.min(cap);
+    if effective < method.min_tier() {
+        return Err(ArtifactError::coded(
+            StatusCode::FORBIDDEN,
+            "tier_too_low",
+            format!("This app runs at {} level here; that needs {} level", effective.as_str(), method.min_tier().as_str()),
+        )
+        .with("tier", json!(effective.as_str()))
+        .with("required_tier", json!(method.min_tier().as_str())));
+    }
+    if !declares(&snapshot, method) {
+        return Err(ArtifactError::coded(
+            StatusCode::CONFLICT,
+            "capability_not_declared",
+            "The app's published version doesn't use this",
+        ));
+    }
+    if c.row.owner_id == c.caller.id {
+        return Ok(Gate::Owner);
+    }
+    let grant = sqlx::query_as::<_, (String, Value)>(
+        "SELECT granted_tier, granted_capabilities FROM app_installs \
+         WHERE user_id = $1 AND app_kind = 'artifact' AND app_ref = $2",
+    )
+    .bind(&c.caller.id)
+    .bind(&c.row.id)
+    .fetch_optional(db)
+    .await?;
+    let grant = grant.as_ref().map(|(t, caps)| (Tier::parse(t).unwrap_or(Tier::Browser), caps));
+    match growth(effective, &snapshot, grant) {
+        None => Ok(Gate::Installed),
+        Some(ask) => Err(ArtifactError::coded(
+            StatusCode::FORBIDDEN,
+            "consent_required",
+            "The viewer hasn't approved this version of the app yet",
+        )
+        .with("requested_tier", json!(ask.requested_tier.as_str()))
+        .with("added_capabilities", json!(ask.added_capabilities))),
+    }
+}
+
+/// The app's state for this viewer, for the context call (`null` when the
+/// artifact isn't an app).
+async fn app_context(db: &PgPool, c: &Ctx) -> Result<Value> {
+    let app = sqlx::query_as::<_, (Option<String>, Option<Value>)>(
+        "SELECT app_permission_tier, app_capability_snapshot FROM artifacts WHERE id = $1",
+    )
+    .bind(&c.row.id)
+    .fetch_optional(db)
+    .await?;
+    let Some((Some(tier), snapshot)) = app else {
+        return Ok(Value::Null);
+    };
+    let snapshot = snapshot.unwrap_or_else(|| json!({}));
+    let cap = max_tier("artifact", Some(&c.row.owner_id), c.row.org_id.as_deref(), &c.caller.id, c.caller.org_id.as_deref());
+    let effective = Tier::parse(&tier).unwrap_or(Tier::Browser).min(cap);
+    let owner = c.row.owner_id == c.caller.id;
+    let grant = sqlx::query_as::<_, (String, Value)>(
+        "SELECT granted_tier, granted_capabilities FROM app_installs \
+         WHERE user_id = $1 AND app_kind = 'artifact' AND app_ref = $2",
+    )
+    .bind(&c.caller.id)
+    .bind(&c.row.id)
+    .fetch_optional(db)
+    .await?;
+    let ask = if owner {
+        None
+    } else {
+        growth(effective, &snapshot, grant.as_ref().map(|(t, caps)| (Tier::parse(t).unwrap_or(Tier::Browser), caps)))
+    };
+    Ok(json!({
+        "tier": effective.as_str(),
+        "granted_tier": grant.as_ref().map(|(t, _)| t.clone()),
+        "needs_consent": ask.is_some(),
+        "requested_tier": ask.as_ref().map(|a| a.requested_tier.as_str()),
+        "added_capabilities": ask.map(|a| a.added_capabilities).unwrap_or_default(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
@@ -204,6 +494,7 @@ async fn get_context(
         },
         "consents": consents,
         "storage": { "used_bytes": used_bytes(&state.db, &c.row.id).await?, "limit_bytes": rules::MAX_STORAGE_BYTES },
+        "app": app_context(&state.db, &c).await?,
     })))
 }
 
@@ -225,6 +516,7 @@ async fn list_storage(
 ) -> Result<Json<Value>> {
     let c = ctx(&state, &headers, &id).await?;
     c.allowed().storage.map_err(deny)?;
+    app_gate(&state.db, &c, AppMethod::Storage).await?;
     let scope = parse_scope(q.scope.as_deref())?;
     let prefix = q.prefix.unwrap_or_default();
     if !rules::valid_prefix(&prefix) {
@@ -265,6 +557,7 @@ async fn get_storage(
 ) -> Result<Json<Value>> {
     let c = ctx(&state, &headers, &id).await?;
     c.allowed().storage.map_err(deny)?;
+    app_gate(&state.db, &c, AppMethod::Storage).await?;
     check_key(&key)?;
     let scope = parse_scope(q.scope.as_deref())?;
     let value = sqlx::query_scalar::<_, String>(
@@ -281,8 +574,9 @@ async fn get_storage(
 }
 
 /// Shared writes need the viewer's consent first (their first write asks).
-async fn require_shared_consent(db: &PgPool, c: &Ctx, scope: Scope) -> Result<()> {
-    if scope == Scope::Shared {
+/// An installed app's grant already is that consent.
+async fn require_shared_consent(db: &PgPool, c: &Ctx, scope: Scope, gate: Gate) -> Result<()> {
+    if scope == Scope::Shared && gate != Gate::Installed {
         let granted = consent_row(db, &c.row.id, &c.caller.id, rules::CAP_STORAGE_SHARED)
             .await?
             .is_some_and(|(g, _)| g);
@@ -302,6 +596,7 @@ async fn put_storage(
 ) -> Result<Json<Value>> {
     let c = ctx(&state, &headers, &id).await?;
     c.allowed().storage.map_err(deny)?;
+    let gate = app_gate(&state.db, &c, AppMethod::Storage).await?;
     check_key(&key)?;
     let scope = parse_scope(q.scope.as_deref())?;
     let payload: Value = parse_json(&body)?;
@@ -315,7 +610,7 @@ async fn put_storage(
             "A stored value can be at most 5 MB",
         ));
     }
-    require_shared_consent(&state.db, &c, scope).await?;
+    require_shared_consent(&state.db, &c, scope, gate).await?;
     let owner = scope.owner_column(&c.caller.id);
     let new_bytes = rules::entry_bytes(&key, value);
 
@@ -371,9 +666,10 @@ async fn delete_storage(
 ) -> Result<StatusCode> {
     let c = ctx(&state, &headers, &id).await?;
     c.allowed().storage.map_err(deny)?;
+    let gate = app_gate(&state.db, &c, AppMethod::Storage).await?;
     check_key(&key)?;
     let scope = parse_scope(q.scope.as_deref())?;
-    require_shared_consent(&state.db, &c, scope).await?;
+    require_shared_consent(&state.db, &c, scope, gate).await?;
     sqlx::query(
         "DELETE FROM artifact_storage WHERE artifact_id = $1 AND scope = $2 AND user_id = $3 AND key = $4",
     )
@@ -439,12 +735,14 @@ async fn put_consent(
     // A viewer can only approve what the page declared and the org allows.
     if granted {
         let allowed = c.allowed();
-        let gate = match capability {
-            rules::CAP_STORAGE_SHARED => allowed.storage,
-            rules::CAP_AI => allowed.ai,
-            _ => allowed.connectors,
+        let (gate, method) = match capability {
+            rules::CAP_STORAGE_SHARED => (allowed.storage, AppMethod::Storage),
+            rules::CAP_AI => (allowed.ai, AppMethod::Ai),
+            _ => (allowed.connectors, AppMethod::Connectors),
         };
         gate.map_err(deny)?;
+        // An app only gets what its tier reaches for this viewer (connectors = full).
+        app_gate(&state.db, &c, method).await?;
     }
     sqlx::query(
         "INSERT INTO artifact_consents (artifact_id, user_id, capability, granted, denied_tools, updated_at) \
@@ -505,9 +803,11 @@ async fn complete_ai(
 ) -> Result<Json<Value>> {
     let c = ctx(&state, &headers, &id).await?;
     c.allowed().ai.map_err(deny)?;
-    let consented = consent_row(&state.db, &c.row.id, &c.caller.id, rules::CAP_AI)
-        .await?
-        .is_some_and(|(g, _)| g);
+    let gate = app_gate(&state.db, &c, AppMethod::Ai).await?;
+    let consented = gate == Gate::Installed
+        || consent_row(&state.db, &c.row.id, &c.caller.id, rules::CAP_AI)
+            .await?
+            .is_some_and(|(g, _)| g);
     if !consented {
         return Err(consent_required(rules::CAP_AI));
     }

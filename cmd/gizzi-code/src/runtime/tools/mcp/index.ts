@@ -44,7 +44,8 @@ import {
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { getStreamContext } from "@/runtime/session/stream-context"
 import { McpEra } from "@/runtime/tools/mcp/era"
-import { callToolAsTask, shouldCallAsTask } from "@/shared/util/mcp-tasks"
+import { callToolAsTask, shouldCallAsTask, taskProtocol } from "@/shared/util/mcp-tasks"
+import { McpTaskStream } from "./task-stream"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -165,7 +166,7 @@ export namespace MCP {
   const SESSION_META = "allternit/session"
   const SESSION_META_SERVERS = new Set(["allternit-connectors"])
 
-  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, sendSession = false): Promise<Tool> {
+  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, sendSession = false, serverName = ""): Promise<Tool> {
     const inputSchema = mcpTool.inputSchema
 
     // Spread first, then override type to ensure it's always "object"
@@ -188,17 +189,38 @@ export namespace MCP {
           ...(approved ? { [MCP_APPROVED_META]: true } : {}),
           ...(sessionID ? { [SESSION_META]: sessionID } : {}),
         }
-        // Long-running tools the server runs as MCP tasks (2025-11-25): poll
-        // until done; stopping the turn sends tasks/cancel.
-        if (shouldCallAsTask(client, mcpTool.execution?.taskSupport)) {
-          return callToolAsTask({
-            client,
-            name: mcpTool.name,
-            args: (args || {}) as Record<string, unknown>,
-            ...(Object.keys(meta).length ? { meta } : {}),
-            signal: options?.abortSignal,
-            requestTimeoutMs: timeout,
-          })
+        // Long-running tools the server runs as MCP tasks (2025-11-25, or the final
+        // io.modelcontextprotocol/tasks extension): poll until done, publish one task card
+        // on the session stream, route input requests to the user's form; stopping the turn
+        // (or the card's Stop, POST /mcp/task/:taskId/cancel) sends tasks/cancel.
+        const protocol = taskProtocol(client, mcpTool.execution?.taskSupport)
+        if (protocol) {
+          const stop = new AbortController()
+          const parent = options?.abortSignal
+          const relay = () => stop.abort()
+          if (parent?.aborted) stop.abort()
+          else parent?.addEventListener("abort", relay, { once: true })
+          const info = { source: serverName, toolName: mcpTool.name, toolCallID: options?.toolCallId, startedAt: Date.now() }
+          let untrack: (() => void) | undefined
+          try {
+            return await callToolAsTask({
+              client,
+              name: mcpTool.name,
+              args: (args || {}) as Record<string, unknown>,
+              ...(Object.keys(meta).length ? { meta } : {}),
+              signal: stop.signal,
+              requestTimeoutMs: timeout,
+              protocol,
+              onElicit: McpTaskStream.elicitFor(serverName, options?.toolCallId),
+              onUpdate: (update) => {
+                untrack ??= McpTaskStream.track(update.taskId, stop)
+                McpTaskStream.publishTask(update, info)
+              },
+            })
+          } finally {
+            untrack?.()
+            parent?.removeEventListener("abort", relay)
+          }
         }
         return client.callTool(
           {
@@ -802,7 +824,7 @@ export namespace MCP {
           let counter = 2
           while (descriptors[qualifiedName]) qualifiedName = withToolSuffix(normalizedBase, String(counter++))
         }
-        result[qualifiedName] = await convertMcpTool(mcpTool, client, timeout, SESSION_META_SERVERS.has(clientName))
+        result[qualifiedName] = await convertMcpTool(mcpTool, client, timeout, SESSION_META_SERVERS.has(clientName), clientName)
         descriptors[qualifiedName] = {
           qualifiedName,
           ...incoming,

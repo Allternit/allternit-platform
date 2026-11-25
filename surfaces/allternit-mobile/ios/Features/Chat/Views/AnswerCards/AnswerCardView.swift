@@ -329,14 +329,18 @@ struct LinkPreviewAnswerCard: View {
                         .lineLimit(4)
                         .multilineTextAlignment(.leading)
                 }
-                HStack(spacing: 4) {
-                    Text(link?.host ?? data.url)
-                        .lineLimit(1)
+                // The card's one main button; the whole card opens the same page.
+                HStack(spacing: 6) {
+                    Text("Open").lineLimit(1)
+                    Text(link?.host ?? data.url).lineLimit(1).opacity(0.7)
                     Image(systemName: "arrow.up.right")
                         .accessibilityHidden(true)
                 }
                 .font(.caption.weight(.semibold))
-                .foregroundColor(Color("AccentPrimary"))
+                .foregroundColor(Color("BgPrimary"))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color("TextPrimary")))
                 Text(data.credit)
                     .font(.caption2)
                     .foregroundColor(Color("TextSecondary"))

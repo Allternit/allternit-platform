@@ -77,7 +77,8 @@ struct AutomationHubView: View {
                 title: "No routines yet",
                 message: "Schedule a task and a bot runs it for you on time.",
                 actionTitle: "New scheduled task",
-                action: { isScheduleSheetPresented = true }
+                action: { isScheduleSheetPresented = true },
+                art: .bell
             )
         } else {
             List {
@@ -497,7 +498,7 @@ struct GoalsListView: View {
                               action: { Task { await store.load() } })
         } else if store.goals.isEmpty {
             FriendlyStateView(style: .empty, icon: "flag", title: "No goals yet",
-                              message: "A goal groups the routines working toward it.")
+                              message: "A goal groups the routines working toward it.", art: .bell)
         } else {
             List {
                 ForEach(store.goals) { goal in

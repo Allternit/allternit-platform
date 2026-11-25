@@ -32,6 +32,7 @@ struct BotPageView: View {
                 banner
                 BotSummaryTiles(bot: bot, model: summary)
                 rows
+                recentActivity
             }
             .padding(.bottom, 32)
         }
@@ -45,9 +46,10 @@ struct BotPageView: View {
         }
         .task {
             desktop.fetchStatusIfNeeded(botId: bot.id)
+            async let contacts: Void = InappCallStore.shared.loadCallableContacts(botId: bot.id)
             async let counts: Void = loadCounts()
             async let tiles: Void = summary.load(botId: bot.id)
-            _ = await (counts, tiles)
+            _ = await (contacts, counts, tiles)
         }
     }
 
@@ -61,6 +63,12 @@ struct BotPageView: View {
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(1)
                 .padding(.top, 8)
+            if let lastActive {
+                Text(lastActive)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                    .padding(.top, 2)
+            }
             if !roleLine.isEmpty {
                 Text(roleLine)
                     .font(.system(size: 13))
@@ -81,6 +89,8 @@ struct BotPageView: View {
                     bannerAction("Workspace", icon: "doc.text")
                 }
                 .buttonStyle(.plain)
+                // Rings someone who joined through this bot's invite; absent when nobody can be called.
+                BotCallButton(botId: bot.id, style: .capsule)
             }
             .padding(.top, 10)
         }
@@ -105,6 +115,56 @@ struct BotPageView: View {
             .background(Capsule().fill(Color("BgPanel")))
             .overlay(Capsule().stroke(Color("BorderSubtle")))
             .contentShape(Capsule())
+    }
+
+    /// "Active 25 minutes ago", from the bot's newest thread.
+    private var lastActive: String? {
+        guard let newest = store.threads(for: bot.id).map(\.lastActivityAt).max(),
+              BotTime.date(newest) != nil else { return nil }
+        return "Active \(BotTime.relative(newest))"
+    }
+
+    /// The bot's few latest threads: title and when. Each opens its thread.
+    @ViewBuilder
+    private var recentActivity: some View {
+        let recent = Array(store.threads(for: bot.id)
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }.prefix(3))
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Recent activity")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.horizontal, 28)
+                VStack(spacing: 0) {
+                    ForEach(Array(recent.enumerated()), id: \.element.id) { index, thread in
+                        Button { navigator.openThread(thread) } label: {
+                            HStack(spacing: 8) {
+                                Text(thread.displayTitle)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(Color("TextPrimary"))
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text(BotTime.relative(thread.lastActivityAt))
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color("TextTertiary"))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 46)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .bottom) {
+                            if index < recent.count - 1 { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+                        }
+                    }
+                }
+                .background(Color("BgPanel"))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
+                .padding(.horizontal, 14)
+            }
+        }
     }
 
     private var roleLine: String {

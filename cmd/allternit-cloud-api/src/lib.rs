@@ -63,6 +63,11 @@ pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> b
     configured.iter().any(|allowed| allowed == origin)
         || (routes::freeweights::FREEWEIGHTS_CORS_ORIGINS.contains(&origin)
             && routes::freeweights::is_freeweights_cors_path(path))
+        // D15: hosted app origins (`https://<slug>.allternitusercontent.com`, or
+        // `APP_DOMAIN`) reach only the handoff exchange, the page runtime and the
+        // public app record + content.
+        || (routes::artifacts_v2::app_handoff::is_app_origin(origin)
+            && routes::artifacts_v2::app_handoff::is_app_cors_path(path))
 }
 
 /// Sign in with Allternit endpoints a browser-only public app (PKCE) calls
@@ -495,6 +500,14 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.
         .merge(routes::artifacts_v2::routes())
+        // Share-link registry (Apps + MCP 2026, migration 161): owner-scoped, every
+        // handler resolves the caller itself (Clerk session, token or device token).
+        .merge(routes::share_links::routes())
+        .merge(routes::admin_share_links::routes())
+        // App shelf, installs, vendor app records (Apps + MCP 2026 lane 9).
+        .merge(routes::apps::routes())
+        // OpenTunnel analytics -> bytes meter (lane 29); shared-secret header, no session.
+        .merge(routes::share_link_usage::routes())
         .merge(routes::artifacts_comments::routes())
         // Agent suggestions (SPEC-agent-watch): pending edits the client accepts or rejects.
         .merge(routes::artifacts_suggestions::routes())
@@ -681,6 +694,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computers_host::routes())
         // Computers console snippets: CRUD + run on many computers, approval required (step 2.9).
         .merge(routes::computer_snippets::routes())
+        // Cloud store for user and org Agent Skills, served over MCP as skill:// (lane 47b).
+        .merge(routes::cloud_skills::routes())
         // One computer, one row: unpair a whole machine by any of its ids (step 2.10).
         .merge(routes::computer_machines::routes())
         // Whole-disk file roots on servers, setting-gated, default off (step 2.11).

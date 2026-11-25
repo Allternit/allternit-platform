@@ -1,5 +1,6 @@
 packages:
   - "cmd/agent-daemon"
+  - "platform/packages/share-tunnel"
 
 onlyBuiltDependencies:
   - ws

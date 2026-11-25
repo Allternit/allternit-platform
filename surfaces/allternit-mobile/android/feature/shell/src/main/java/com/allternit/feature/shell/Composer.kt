@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -264,9 +265,25 @@ internal fun Composer(
     val rest = !focused && !hasDraft && !isStreaming && !dictation.isRecording && !deckOpen
     var dictationBase by remember { mutableStateOf("") }
     var dictationOnboarding by remember { mutableStateOf(false) }
+    var dictationDiscarded by remember { mutableStateOf(false) }
+    var dictationKept by remember { mutableStateOf(false) }
     androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
     LaunchedEffect(dictation) {
-        androidx.compose.runtime.snapshotFlow { dictation.transcript }.collect { t -> if (t.isNotEmpty()) text = dictationBase + t }
+        androidx.compose.runtime.snapshotFlow { dictation.transcript }.collect { t -> if (t.isNotEmpty() && !dictationDiscarded) text = dictationBase + t }
+    }
+    // Polish 6.7: Undo dictation pill for 5 s after a dictation that added text stops (not after Cancel / Keep mine).
+    var undoVisible by remember { mutableStateOf(false) }
+    var dictationWasRecording by remember { mutableStateOf(false) }
+    LaunchedEffect(dictation.isRecording) {
+        if (dictation.isRecording) { dictationWasRecording = true; undoVisible = false }
+        else if (dictationWasRecording) {
+            dictationWasRecording = false
+            if (!dictationDiscarded && !dictationKept && text != dictationBase) {
+                undoVisible = true
+                delay(5_000)
+                undoVisible = false
+            }
+        }
     }
     LaunchedEffect(dictation) {
         androidx.compose.runtime.snapshotFlow { dictation.errorMessage }.collect { m ->
@@ -276,6 +293,9 @@ internal fun Composer(
     fun startDictation() {
         com.allternit.feature.chat.voice.VoicePrefs.load(context)
         dictationBase = if (text.isEmpty() || text.endsWith(" ")) text else "$text "
+        dictationDiscarded = false
+        dictationKept = false
+        undoVisible = false
         dictation.start()
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -382,7 +402,7 @@ internal fun Composer(
                 }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (rest) ComposerPlusButton { plusOpen = true }
+                if (rest) ComposerPlusButton(open = plusOpen) { plusOpen = true }
                 Box(Modifier.weight(1f).padding(start = if (rest) 0.dp else 16.dp, end = 16.dp, top = if (rest) 12.dp else 14.dp, bottom = if (rest) 12.dp else 4.dp)) {
                     if (text.isEmpty()) {
                         Crossfade(targetState = placeholders[placeholderIndex % placeholders.size], animationSpec = tween(250), label = "placeholder") { p ->
@@ -412,6 +432,15 @@ internal fun Composer(
                         "Show tools", "composerTools") { setDeckFolded(false) }
                 }
             }
+            if (dictation.isRecording) DictationPanel(
+                level = dictation.micLevel,
+                onCancel = { dictationDiscarded = true; dictation.stop(); text = dictationBase },
+                onStop = { dictation.stop() },
+                onKeepMine = { dictationKept = true; dictation.stop() },
+            )
+            if (undoVisible && !dictation.isRecording) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                UndoDictationPill { dictationDiscarded = true; undoVisible = false; text = dictationBase }
+            }
             if (!rest) Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(1.dp).background(c.borderSubtle))
             // Expanded composer line: add, Tools, dictation/voice and the turn controls.
             if (!rest) Row(
@@ -419,7 +448,7 @@ internal fun Composer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ComposerPlusButton { plusOpen = true }
+                ComposerPlusButton(open = plusOpen) { plusOpen = true }
                 Spacer(Modifier.weight(1f))
                 if (deck != ComposerDeck.None) ControlGlyph(DesignR.drawable.ph_sliders_horizontal,
                     if (deckOpen) "Hide tools" else "Show tools", "composerTools") { setDeckFolded(!deckFolded) }
@@ -786,12 +815,16 @@ private fun Modifier.drawBehindOutline(color: Color): Modifier = this.then(
 
 /** One filled add control, shared by the rest and open composer. */
 @Composable
-private fun ComposerPlusButton(onClick: () -> Unit) {
+private fun ComposerPlusButton(open: Boolean, onClick: () -> Unit) {
     val c = AllternitTheme.colors
+    // Polish 6.6: the plus turns 45 degrees into an x while the sheet is open (instant with animations off).
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val reduced = remember(ctx) { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val turn by animateFloatAsState(if (open) 45f else 0f, if (reduced) tween(0) else tween(250), label = "plusTurn")
     Box(Modifier.padding(6.dp).size(44.dp).clip(CircleShape).background(c.textPrimary)
         .testTag("composerPlus").clickable(role = Role.Button, onClickLabel = "Add to chat", onClick = onClick),
         contentAlignment = Alignment.Center) {
-        Icon(painterResource(DesignR.drawable.ph_plus), "Add to chat", tint = c.bgPrimary, modifier = Modifier.size(20.dp))
+        Icon(painterResource(DesignR.drawable.ph_plus), "Add to chat", tint = c.bgPrimary, modifier = Modifier.size(20.dp).graphicsLayer { rotationZ = turn })
     }
 }
 

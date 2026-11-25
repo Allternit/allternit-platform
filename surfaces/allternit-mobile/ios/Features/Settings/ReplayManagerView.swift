@@ -273,7 +273,8 @@ struct ReplayManagerView: View {
             title: "No replay sessions found",
             message: searchText.isEmpty && captureFilter == .all
                 ? "Run tools or workflows with replay enabled to populate this view."
-                : "Clear the filters to inspect the full capture catalog."
+                : "Clear the filters to inspect the full capture catalog.",
+            art: searchText.isEmpty && captureFilter == .all ? .bell : nil
         )
         .padding(.vertical, 24)
         .background(Color("BgPanel"))

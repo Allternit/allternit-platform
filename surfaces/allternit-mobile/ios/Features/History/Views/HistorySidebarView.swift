@@ -586,13 +586,7 @@ struct HistorySidebarView: View {
         let filtered = isRecentsFiltered
         let mode = modeStore.shellMode
         return VStack(spacing: 0) {
-            Image(systemName: mode == .aci ? "globe" : "bubble.left.and.text.bubble.right")
-                .font(.system(size: 20))
-                .foregroundColor(Color("TextSecondary"))
-                .frame(width: 48, height: 48)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-                .accessibilityHidden(true)
+            EmptyArt(kind: .envelope, size: 80)
             Text(filtered ? "Nothing matches" : Self.emptyTitle(for: mode))
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(Color("TextPrimary"))

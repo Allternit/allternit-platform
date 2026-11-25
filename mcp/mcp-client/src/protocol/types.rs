@@ -171,12 +171,33 @@ pub struct ClientCapabilities {
     pub roots: Option<RootsCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<Value>,
+    /// `{"form": {}, "url": {}}` when the host can show elicitation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<Value>,
     /// Protocol extensions, keyed by extension id (e.g. MCP Apps)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Value>,
 }
 
 impl ClientCapabilities {
+    /// Also declare the MCP Tasks extension (`io.modelcontextprotocol/tasks`,
+    /// SEP-2663): servers may then answer `tools/call` with a task.
+    pub fn with_tasks(mut self) -> Self {
+        let mut ext = match self.extensions.take() {
+            Some(Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+        ext.insert(mcp_protocol::tasks::TASKS_EXTENSION_ID.into(), mcp_protocol::tasks::extension_entry());
+        self.extensions = Some(Value::Object(ext));
+        self
+    }
+
+    /// Also declare elicitation, form and URL modes.
+    pub fn with_elicitation(mut self) -> Self {
+        self.elicitation = Some(serde_json::json!({ "form": {}, "url": {} }));
+        self
+    }
+
     /// Capabilities that declare this client an MCP Apps host:
     /// `extensions["io.modelcontextprotocol/ui"] = {"mimeTypes":["text/html;profile=mcp-app"]}`.
     pub fn with_mcp_apps() -> Self {

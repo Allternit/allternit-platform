@@ -179,7 +179,7 @@ private fun CoworkLaunchpad(host: CoworkHost, api: CoworkApi, onOpen: (String) -
                     when {
                         noComputer -> FriendlyState(FriendlyStyle.Empty, "No computer yet", "Cowork sessions run on your computer. Connect one and they show up here.") { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary) }
                         loadError != null && sessions.isEmpty() -> FriendlyState(FriendlyStyle.Error, "Couldn't load sessions", loadError.orEmpty(), Modifier, "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusError) }
-                        sessions.isEmpty() && loaded -> FriendlyState(FriendlyStyle.Empty, "No sessions yet", "Start your first Cowork session above.") { Icon(painterResource(DesignR.drawable.ph_book_open), null, tint = c.textSecondary) }
+                        sessions.isEmpty() && loaded -> FriendlyState(FriendlyStyle.Empty, "No sessions yet", "Start your first Cowork session above.", art = com.allternit.core.design.EmptyArtKind.Envelope) { Icon(painterResource(DesignR.drawable.ph_book_open), null, tint = c.textSecondary) }
                         else -> sessions.forEach { s ->
                             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Column(Modifier.weight(1f).clickable(role = Role.Button) { onOpen(s.id) }.testTag("coworkSession${s.id}"), verticalArrangement = Arrangement.spacedBy(2.dp)) {

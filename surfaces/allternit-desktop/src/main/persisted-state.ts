@@ -41,6 +41,7 @@ export const AppPrefsSchema = z.object({
   locale: z.string().optional(),
   menuBarMode: z.boolean().default(false),
   startupOnLogin: z.boolean().default(false),
+  keepRunningInTray: z.boolean().default(false),
   viewMode: z.enum(['verbose', 'normal', 'summary']).default('normal'),
 });
 
@@ -77,6 +78,7 @@ const DEFAULTS: PersistedStateSchema = {
     theme: 'system',
     menuBarMode: false,
     startupOnLogin: false,
+    keepRunningInTray: false,
     viewMode: 'normal',
   },
   onboardingComplete: false,

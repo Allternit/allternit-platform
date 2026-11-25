@@ -103,13 +103,15 @@ internal fun ErrorState(title: String, message: String, onRetry: (() -> Unit)?, 
 }
 
 @Composable
-internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier) {
+internal fun EmptyState(title: String, message: String, modifier: Modifier = Modifier, art: com.allternit.core.design.EmptyArtKind? = null, gizzi: Boolean = false) {
     val c = AllternitTheme.colors
     FriendlyState(
         style = FriendlyStyle.Empty,
         title = title,
         message = message,
         modifier = modifier,
+        art = art,
+        gizzi = gizzi,
         icon = { Icon(painterResource(DesignR.drawable.ph_terminal), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) },
     )
 }

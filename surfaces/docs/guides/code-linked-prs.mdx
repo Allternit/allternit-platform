@@ -53,6 +53,21 @@ A status is reused for 60 seconds before it is checked again, and for 10 minutes
 
 A PR counts as **Merged** once GitHub reports a merge, **Closed** when it was closed without one, and **Conflict** when GitHub says it can't be merged cleanly. While GitHub is still working that out, the badge shows the PR as open.
 
+## Status and branch graph
+
+Under each PR row in the Changes card, and in the PR badge popover on the rail, a small graph and a status pill show where the PR stands.
+
+| State | Look |
+| --- | --- |
+| Open, no conflicts | Green check |
+| Conflicts | Amber mark and a short callout |
+| Merged | Purple card |
+| Draft | Dashed line |
+| Closed | Red x |
+| Checking | Quiet placeholder |
+
+The line draws in once when the row appears. On iPhone the Code panel shows the same states as a pill with plus and minus counts. In Gizzi Code, `/pr` prints the merge state first, then the conflict count and lint, types and preview marks. Branch names, commit lists and test pills show **only when the server sends them**. Today it does not.
+
 ## For developers
 
 PR links are stored with the session in Gizzi Code's storage (`session_prs/<sessionID>.json`) and deleted with the session. Code: `cmd/gizzi-code/src/runtime/session/linked-prs.ts` (`LinkedPRs`). The detector runs from `Session.updatePart` when a tool part completes, off the turn's path. It is wrapped so a failure is logged and never reaches the tool pipeline.

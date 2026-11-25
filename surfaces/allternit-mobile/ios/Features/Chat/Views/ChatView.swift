@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Chat surface (Home)
 
@@ -377,6 +378,8 @@ struct ChatContentView: View {
                     // conversation itself is already in the thread.
                     viewModel.appendVoiceSummary(durationSeconds: durationSeconds)
                 })
+                // Clear: the stage fades in round the travelling orb, over this chat.
+                .presentationBackground(.clear)
             }
         }
         .onDisappear {
@@ -507,6 +510,9 @@ struct ChatContentView: View {
 
     // MARK: Launch screen
 
+    /// True while the keyboard is up on the launch screen.
+    @State private var launchKeyboardUp = false
+
     /// Web chat launch on the phone: the greeting sits in the middle of the
     /// space above the composer; the composer with its full deck rests at
     /// the bottom, and the template gallery (hidden once there's a draft)
@@ -548,11 +554,22 @@ struct ChatContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
                 .frame(minHeight: proxy.size.height)
+                // The greeting stays centered in the free area when the
+                // keyboard rises: the spacers recenter on a spring.
+                .animation(reducedMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: launchKeyboardUp)
                 .animation(.easeOut(duration: 0.2), value: inputText.isEmpty)
                 .animation(.easeOut(duration: 0.2), value: agentModeStore.isAgentEnabled(for: modeStore.mode))
             }
             .scrollDismissesKeyboard(.interactively)
-            .background { BotWashedBackground().ignoresSafeArea() }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in launchKeyboardUp = true }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in launchKeyboardUp = false }
+            .background {
+                ZStack {
+                    BotWashedBackground()
+                    LaunchNeutralWash()
+                }
+                .ignoresSafeArea()
+            }
         }
     }
 
@@ -712,12 +729,16 @@ struct ChatContentView: View {
                 editingBanner
             }
 
-            // Quick voice bar while a voice conversation runs.
-            if voiceHost.presentation == .bar, let voiceModel = voiceHost.viewModel {
+            // Quick voice bar while a voice conversation runs. It keeps its
+            // place (hidden) under full voice, where the orb travels to and from.
+            if voiceHost.presentation != .none, let voiceModel = voiceHost.viewModel {
                 VoiceQuickBar(
                     viewModel: voiceModel,
                     bot: chatBot,
-                    onExpand: { voiceHost.presentation = .full },
+                    host: voiceHost,
+                    docked: voiceHost.presentation == .bar,
+                    // No system slide: the orb travels up from the bar (VoiceModeView).
+                    onExpand: { voiceHost.present(.full) },
                     onEnd: {
                         if let seconds = voiceHost.end() {
                             viewModel.appendVoiceSummary(durationSeconds: seconds)
@@ -1033,6 +1054,9 @@ struct ChatLaunchGreeting: View {
     /// The bot stands on its stage above this chat: no second face here.
     @Environment(\.chatBotOnStage) private var botOnStage
     @State private var revealed = false
+    /// First launch only: the A:// mark stands where the title will be, then
+    /// blurs into it (the logo-to-greeting hand-off).
+    @State private var handoffMark = false
     @ReducedMotion private var reduceMotion
 
     @MainActor private static var cachedTitle: String?
@@ -1048,8 +1072,13 @@ struct ChatLaunchGreeting: View {
         let name = AuthManager.shared.firstName
         let weekday = now.formatted(.dateTime.weekday(.wide))
         let hour = Calendar.current.component(.hour, from: now)
-        let timeOfDay = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
-        func withName(_ base: String) -> String { name.map { "\(base), \($0)" } ?? base }
+        let isNight = hour < 5 || hour >= 23
+        let timeOfDay = isNight ? "Hello, night owl" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
+        // The night line stands on its own; the others take the first name.
+        func withName(_ base: String) -> String {
+            if isNight, base == timeOfDay { return base }
+            return name.map { "\(base), \($0)" } ?? base
+        }
         let pool = [
             withName("Happy \(weekday)"),
             withName(timeOfDay),
@@ -1068,7 +1097,7 @@ struct ChatLaunchGreeting: View {
     /// Date + time-of-day bucket (night / morning / afternoon / evening).
     static func titleBucket(_ date: Date, calendar: Calendar = .current) -> String {
         let hour = calendar.component(.hour, from: date)
-        let part = hour < 5 ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
+        let part = (hour < 5 || hour >= 23) ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
         let day = calendar.dateComponents([.year, .month, .day], from: date)
         return "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)-\(part)"
     }
@@ -1104,14 +1133,25 @@ struct ChatLaunchGreeting: View {
                 }
             }
             .accessibilityHidden(true)
-            Text(Self.sessionTitle())
-                .font(.system(size: 33, design: .serif))
-                .tracking(-0.4)
-                .lineSpacing(2)
-                .foregroundColor(Color("TextPrimary"))
-                .multilineTextAlignment(.center)
-                .opacity(revealed ? 1 : 0)
-                .offset(y: revealed ? 0 : 8)
+            ZStack {
+                Text(Self.sessionTitle())
+                    .font(.system(size: 33, design: .serif))
+                    .tracking(-0.4)
+                    .lineSpacing(2)
+                    .foregroundColor(Color("TextPrimary"))
+                    .multilineTextAlignment(.center)
+                    .opacity(revealed ? 1 : 0)
+                    .offset(y: revealed ? 0 : 8)
+                    .blur(radius: revealed ? 0 : 6)
+                if handoffMark {
+                    AProtocolMark(height: 30)
+                        .foregroundColor(Color("TextPrimary"))
+                        .opacity(revealed ? 0 : 1)
+                        .scaleEffect(revealed ? 0.9 : 1)
+                        .blur(radius: revealed ? 6 : 0)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
         // The web keeps the old tagline row's gap under the title.
@@ -1124,8 +1164,42 @@ struct ChatLaunchGreeting: View {
             if reduceMotion || !firstMount {
                 revealed = true
             } else {
-                withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.5)) { revealed = true }
+                handoffMark = (bot == nil)
+                Task { @MainActor in
+                    // Hold the mark a beat, then hand off to the greeting.
+                    try? await Task.sleep(for: .milliseconds(450))
+                    withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.5)) { revealed = true }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    handoffMark = false
+                }
             }
+        }
+    }
+}
+
+/// A neutral wash that rises from the top of the launch screen and settles:
+/// white + the neutral fill, graphite in dark, never tan. Plain chats only;
+/// a bot's own tint wash stays as it is.
+private struct LaunchNeutralWash: View {
+    @Environment(\.chatBot) private var bot
+    @State private var risen = false
+    @ReducedMotion private var reduceMotion
+
+    var body: some View {
+        if bot == nil {
+            LinearGradient(colors: [Color("FillNeutral"), Color("FillNeutral").opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 360)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .opacity(risen ? 0.7 : 0)
+                .offset(y: risen ? 0 : -40)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .onAppear {
+                    if reduceMotion { risen = true } else {
+                        withAnimation(.easeOut(duration: 0.9)) { risen = true }
+                    }
+                }
         }
     }
 }

@@ -1,0 +1,4 @@
+repo=https://github.com/anomalyco/opentunnel.git
+tag=v0.6.2
+commit=1ad859e17924ec3f6741cbc4cdb54ce381c9007c
+license=MIT

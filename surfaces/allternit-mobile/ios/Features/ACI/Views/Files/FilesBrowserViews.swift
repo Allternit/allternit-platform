@@ -245,7 +245,8 @@ struct FilesFolderScreen: View {
                     .listRowBackground(Color.clear)
             } else if items.isEmpty {
                 FriendlyStateView(style: .empty, icon: "folder", title: "Nothing here yet",
-                                  message: canWrite ? "Tap + to add a photo, a file or a scan, or drop files here." : "This folder is empty.")
+                                  message: canWrite ? "Tap + to add a photo, a file or a scan, or drop files here." : "This folder is empty.",
+                                  art: .sheets)
                     .listRowBackground(Color.clear)
             } else {
                 Section {

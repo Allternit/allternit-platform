@@ -69,6 +69,15 @@ The same `/mcp` mount also serves the routes that manage which external MCP serv
 | `POST` | `/mcp/test` | Test a connection to an MCP server. |
 | `GET` | `/mcp/oauth/callback` | OAuth callback for MCP servers that require it. |
 
+### Tasks and forms from attached servers
+
+Allternit talks to attached servers through the Rust MCP client (`mcp/mcp-client`). It supports two parts of the protocol that long-running tools use:
+
+- **Tasks** (extension `io.modelcontextprotocol/tasks`, SEP-2663). A client built with `McpClient::with_tasks()` lists the extension in each request's `_meta` client capabilities. A server may then answer `tools/call` with `resultType: "task"`, and `call_tool` returns `ToolOutcome::Task`. The client follows the task with `tasks/get`, answers `input_required` with `tasks/update` `inputResponses`, and stops it with `tasks/cancel`. A completed task carries its `CallToolResult` in `result`. A JSON-RPC error makes the task `failed`; a tool result with `isError: true` is still `completed`. `tasks/result` is sent only to a server that negotiated `2025-11-25`, the one version that has it. A client without `with_tasks()` never gets a task, because the server must answer it directly.
+- **Elicitation** (`elicitation/create`, form and URL mode). The host installs a `ServerRequestHandler` with `with_server_request_handler`. The handler answers both a task's `inputRequests` and the `elicitation/create` requests that legacy-era servers send on the stdio or HTTP stream. Without a handler, every elicitation is declined, so the server is never left waiting.
+
+The user proxy that gizzi-code connects to does not pass tasks or forms through yet. Until it does, it does not declare tasks, so attached servers answer directly. A tool that only works as a task is refused with `-32021`, and the user proxy declines a server's form.
+
 ## Protocol versions
 
 The server speaks both MCP eras on the same endpoint:

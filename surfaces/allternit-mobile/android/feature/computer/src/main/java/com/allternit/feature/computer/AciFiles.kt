@@ -364,7 +364,10 @@ private fun AciInboxRequests(api: FilesApi, onBack: () -> Unit, onChanged: (List
                     when {
                         failed != null && list == null -> AciStateCard("Couldn’t load requests", failed.orEmpty(), "Retry", { scope.launch { load() } })
                         list == null -> AciStateCard("Loading…", "Checking Inbox.")
-                        list.isEmpty() -> AciStateCard("Nothing waits for you", "Files dropped in Inbox show here until you approve or reject them.")
+                        list.isEmpty() -> Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Bell)
+                            AciStateCard("Nothing waits for you", "Files dropped in Inbox show here until you approve or reject them.")
+                        }
                         else -> {
                             list.forEach { task ->
                                 Column(Modifier.fillMaxWidth().padding(vertical = 10.dp).testTag("aciInboxTask"), verticalArrangement = Arrangement.spacedBy(10.dp)) {

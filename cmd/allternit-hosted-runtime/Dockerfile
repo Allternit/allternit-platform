@@ -34,11 +34,13 @@ COPY package.json pnpm-lock.yaml ./
 COPY cmd/allternit-hosted-runtime/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY patches ./patches
 COPY cmd/agent-daemon/package.json ./cmd/agent-daemon/
+COPY platform/packages/share-tunnel/package.json ./platform/packages/share-tunnel/
 
 RUN npm install -g pnpm@10.28.0 \
     && pnpm install --filter @allternit/agent-daemon... --frozen-lockfile
 
 COPY cmd/agent-daemon/src ./cmd/agent-daemon/src
+COPY platform/packages/share-tunnel/src ./platform/packages/share-tunnel/src
 
 RUN cd cmd/agent-daemon \
     && bun build src/index.ts --target=bun --outfile=dist/index.js

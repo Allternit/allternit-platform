@@ -63,7 +63,7 @@ enum class BotHomeTab(val label: String) { Threads("Chat"), Artifacts("Artifacts
  * Channels.
  */
 @Composable
-internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator, onOpenThreads: (() -> Unit)? = null, onOpenTasks: (() -> Unit)? = null, backend: com.allternit.feature.chat.ChatBackend? = null) {
+internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator, onOpenThreads: (() -> Unit)? = null, onOpenTasks: (() -> Unit)? = null, backend: com.allternit.feature.chat.ChatBackend? = null, onCall: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var routinesOn by remember { mutableStateOf<Int?>(null) }
@@ -84,6 +84,10 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
     val accent = bot.accentHex?.let { hexColor(it) }
     val working = store.workingCount(bot.id)
     val waiting = store.waitingCount(bot.id)
+    val myThreads = store.threads(bot.id).sortedByDescending { it.lastActivityAt }
+    // Current task: the thread that is working or waiting on you, the same line the roster shows.
+    val nowTask = myThreads.firstOrNull { it.group == "working" || it.group == "waiting" }?.let { it.statusLine?.takeIf { l -> l.isNotEmpty() } ?: it.displayTitle.takeIf { t -> t.isNotEmpty() } }
+    val lastActive = botTimeRelative(myThreads.firstOrNull()?.lastActivityAt ?: bot.lastRunAt)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 28.dp).testTag("botPage"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(
             Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp))
@@ -95,12 +99,25 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
             com.allternit.core.design.BotNameText(bot.displayName, color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             val role = listOfNotNull(bot.tagline, bot.modelShort).filter { it.isNotEmpty() }.joinToString(" · ")
             if (role.isNotEmpty()) Text(role, color = c.textSecondary, fontSize = 13.sp, textAlign = TextAlign.Center)
+            if (nowTask != null) Text("Now: $nowTask", color = c.textPrimary, fontSize = 13.sp, maxLines = 2, textAlign = TextAlign.Center, modifier = Modifier.testTag("botPageNow"))
+            if (lastActive.isNotEmpty()) Text("Last active $lastActive", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.testTag("botPageLastActive"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                if (onCall != null) Pill("Call", "botPageCall", icon = com.allternit.core.design.R.drawable.ph_phone) { onCall() }
                 Pill("Edit bot", "botPageEdit", icon = com.allternit.core.design.R.drawable.ph_pencil_simple) { editOpen = true }
                 Pill("Workspace", "botPageWorkspace", icon = com.allternit.core.design.R.drawable.ph_file_text) { nav.open(BotRoute.Settings(bot.id)) }
             }
         }
         BotSummaryTiles(summary)
+        if (myThreads.isNotEmpty()) {
+            Column(Modifier.testTag("botPageRecent")) {
+                SectionHeader("Recent activity")
+                RowGroup {
+                    myThreads.take(3).forEachIndexed { i, t ->
+                        NavRow(t.displayTitle.ifEmpty { t.statusLine.orEmpty() }, com.allternit.core.design.R.drawable.ph_chat_circle, botTimeShort(t.lastActivityAt), "botPageRecent${t.id}", last = i == minOf(3, myThreads.size) - 1) { nav.openThread(t) }
+                    }
+                }
+            }
+        }
         RowGroup {
             NavRow("Model", DesignR.drawable.ph_cpu, summary?.model?.split("/")?.lastOrNull()?.takeIf { it.isNotBlank() } ?: bot.modelShort, "botPageModel", last = false) { nav.open(BotRoute.Settings(bot.id)) }
             NavRow("Threads", com.allternit.core.design.R.drawable.ph_chat_circle, "${store.openThreadCount(bot.id)} open", "botPageThreads", last = false) { onOpenThreads?.invoke() ?: nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Threads)) }
@@ -326,7 +343,7 @@ internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator, backend: com.allte
             }
         }
         Gap(8.dp)
-        if (!ListState(loading, error, filtered.isEmpty() && memories.isEmpty(), "Couldn't load memory", "Nothing remembered yet.") { scope.launch { load() } }) {
+        if (!ListState(loading, error, filtered.isEmpty() && memories.isEmpty(), "Couldn't load memory", "Nothing remembered yet.", com.allternit.core.design.EmptyArtKind.Sheets) { scope.launch { load() } }) {
             if (filtered.isEmpty()) Text("No matches.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
             else RowGroup {
                 filtered.forEachIndexed { i, m ->
@@ -365,7 +382,7 @@ internal fun BotChannelsView(bot: BotRecord) {
     }
     LaunchedEffect(bot.id) { load() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp).testTag("botChannels")) {
-        if (!ListState(loading, error, channels.isEmpty(), "Couldn't load channels", "No messaging connections yet.") { scope.launch { load() } }) {
+        if (!ListState(loading, error, channels.isEmpty(), "Couldn't load channels", "No messaging connections yet.", com.allternit.core.design.EmptyArtKind.Envelope) { scope.launch { load() } }) {
             RowGroup {
                 channels.forEachIndexed { i, ch ->
                     ToggleRow(

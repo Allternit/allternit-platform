@@ -297,6 +297,9 @@ fun EmptyBox(
     description: String,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    art: EmptyArtKind? = null,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
     icon: @Composable () -> Unit = { Text("+", color = AllternitTheme.colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium) },
 ) {
     val colors = AllternitTheme.colors
@@ -310,7 +313,9 @@ fun EmptyBox(
             .padding(horizontal = 18.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
+        if (art != null) {
+            EmptyArt(art)
+        } else Box(
             Modifier.size(34.dp).clip(CircleShape).background(if (PolishGlass.isDark()) Color(0xFF3A3A3C) else Color.White)
                 .border(1.dp, PolishGlass.border(), CircleShape),
             contentAlignment = Alignment.Center,
@@ -320,6 +325,7 @@ fun EmptyBox(
             description, color = colors.textSecondary, fontSize = 12.sp, lineHeight = 17.sp,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 6.dp),
         )
+        if (actionLabel != null && onAction != null) EmptyPill(actionLabel, Modifier.padding(top = 14.dp), onAction)
     }
 }
 

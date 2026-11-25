@@ -6,7 +6,13 @@ pub mod agent_sessions;
 pub mod api_keys;
 pub mod artifacts_comments;
 pub mod artifacts_suggestions;
+pub mod apps;
 pub mod artifacts_v2;
+// Apps + MCP 2026 share-link registry (migration 161).
+pub mod share_links;
+pub mod share_link_usage;
+// Admin kill / flag for share links (lane 8).
+pub mod admin_share_links;
 pub mod gateway_catalog;
 pub mod runtimes;
 // Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).
@@ -73,6 +79,10 @@ pub mod me_usage;
 pub mod setup_checks;
 pub mod a2a_edge;
 pub mod mcp_edge;
+pub mod mcp_edge_apps;
+pub mod mcp_edge_cards;
+pub mod mcp_edge_skills;
+pub mod mcp_edge_tasks;
 /// Allternit as an ID-JAG issuer for managed connector auth (WP1).
 pub mod managed_auth;
 /// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
@@ -119,6 +129,7 @@ pub mod computer_alerts;
 pub mod computer_metrics;
 pub mod computers_host;
 pub mod computer_snippets;
+pub mod cloud_skills;
 pub mod computer_machines;
 pub mod computer_file_roots;
 pub mod computers_cloud;

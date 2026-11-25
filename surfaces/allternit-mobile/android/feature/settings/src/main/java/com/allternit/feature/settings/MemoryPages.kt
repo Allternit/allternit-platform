@@ -51,7 +51,7 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
         SLabel("Memories")
         LoadView(facts, reloadFacts, "load your memories") { body ->
             val rows = body.listUnder("facts", "items", "memories")
-            if (rows.isEmpty()) SNote("Nothing yet. Chat with your bots and what matters shows up here.") else SCard {
+            if (rows.isEmpty()) SNote("Nothing yet. Chat with your bots and what matters shows up here.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, f ->
                     val id = f.str("id") ?: return@forEachIndexed
                     val text = f.str("text") ?: f.str("content") ?: f.str("fact") ?: id
@@ -64,7 +64,7 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
         SLabel("Documents")
         LoadView(docs, reloadDocs, "load your documents") { body ->
             val rows = body.listUnder("documents", "items")
-            if (rows.isEmpty()) SNote("No documents yet.") else SCard {
+            if (rows.isEmpty()) SNote("No documents yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, d ->
                     if (i > 0) SDivider()
                     val chunks = d.num("chunk_count") ?: d.num("chunkCount")
@@ -142,7 +142,7 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
             SLabel("Files")
             LoadView(tree, reloadTree, "load the files") { body ->
                 val rows = body.listUnder("files", "entries", "tree", "items").filter { (it.str("type") ?: "file") != "dir" && (it.str("type") ?: "file") != "directory" }
-                if (rows.isEmpty()) SNote("No files yet.") else SCard {
+                if (rows.isEmpty()) SNote("No files yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                     rows.forEachIndexed { i, f ->
                         val path = f.str("path") ?: f.str("name") ?: return@forEachIndexed
                         if (i > 0) SDivider()
@@ -188,7 +188,7 @@ internal fun MemoryHistoryPage(host: SettingsHost, back: () -> Unit) {
         SNote(path.ifBlank { "No file chosen. Open a file in the Memory drive first." })
         LoadView(history, reloadHistory, "load the history") { body ->
             val rows = body.listUnder("history", "revisions", "items", "commits")
-            if (rows.isEmpty()) SNote("No saved versions yet.") else SCard {
+            if (rows.isEmpty()) SNote("No saved versions yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, r ->
                     val rev = r.str("revision") ?: r.str("id") ?: r.str("sha") ?: return@forEachIndexed
                     if (i > 0) SDivider()

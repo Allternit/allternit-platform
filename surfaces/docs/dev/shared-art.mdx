@@ -1,0 +1,40 @@
+---
+title: Shared UI art
+description: The parts that draw empty screens, the connect scene and badges, and the reference files every app copies.
+---
+
+The drawings on empty screens, the connect scene and the badge pop have one source of truth per drawing. Each app copies it exactly: same shapes, same timings, same easing. Do not redraw them.
+
+## Reference files
+
+The reference files are `reference/EmptyArt.reference.tsx`, `reference/BadgePop.reference.tsx` and `reference/ConnectScene.reference.tsx`, in the UI polish handoff folder. Each one has the geometry, the timings and the still frame used for reduced motion at the top of the file.
+
+- One colour (the text colour), thin round lines, a loop of about 3.4 seconds.
+- Reduced motion shows a named still frame and nothing moves.
+- A solid shape is filled with the screen background so layers hide what is behind them.
+
+## Where each app has it
+
+| Part | Web (allternit-ai) | iOS | Android |
+| --- | --- | --- | --- |
+| Empty art | `src/components/polish/empty-art.tsx` | `EmptyArt.swift` | `EmptyArt.kt` |
+| Empty block (art, text, button) | `src/components/polish/EmptyBlock.tsx` | wired per screen | `EmptyBox`, `FriendlyState` |
+| Badge pop | in the connect and milestone views | `BadgePop.swift` | `BadgePop.kt` |
+| Connect scene | `connect-kit/connect-scene` | `ConnectScene.swift` | `ConnectScene.kt` |
+
+The Arc `EmptyState` takes an optional `art` and a muted second headline. Without them it draws its icon as before.
+
+## Adding a drawing
+
+1. Add it to the reference file first, with its still frame.
+2. Copy the paths and timings to each app. Do not change them.
+3. Put it in a screen with the empty block. Keep the screen's words. Add a button only if the action already exists.
+4. Check light, dark and reduced motion.
+
+The Gizzi walk uses the mascot already in each app. Android has no sprite sheet, so it shows the still mascot.
+
+## How each app takes the art
+
+- **iOS:** `EmptyBox` takes `art:` and an optional action pill. `FriendlyStateView` takes `art:` for its empty style only. A screen that has a filter passes the art only when the filter is off.
+- **Android:** the Code and Automation `EmptyState` helpers, the bots `ListState` and the Meetings `PanelEmpty` take an optional `art`, null by default. `FriendlyState` takes a `gizzi` flag for the Gizzi walk. `ListState` has `art` before its trailing `onRetry` lambda, so callers that use the trailing lambda are unchanged.
+- **iOS connect scene:** `ConnectScene.swift` draws the connect-a-computer panel from real state only (asleep, connecting, connected). The check never shows before a computer is online.

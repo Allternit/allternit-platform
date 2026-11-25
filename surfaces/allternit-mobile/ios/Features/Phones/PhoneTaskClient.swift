@@ -64,6 +64,62 @@ final class PhoneTaskClient: @unchecked Sendable {
         var mapSteps: Int? = nil
         var modelCalls: Int? = nil
         var mapApp: String? = nil
+        /// Run timestamps when the row carries them (`started_at`, `ended_at`, ISO 8601).
+        var startedAt: Date? = nil
+        var endedAt: Date? = nil
+    }
+
+    /// A tap the bot made, from `GET /phones/<serial>/history` `steps[]`: `phone.tap` has
+    /// `args.x/y`; `phone.find_and_tap` has `target.rect` ([x,y,w,h]) whose centre is the point.
+    /// `target.screen` ([w,h]) says which screen the pixels are in. Tolerant: any missing or
+    /// malformed part makes the step a non-tap.
+    struct TapStep: Equatable, Sendable {
+        let id: String
+        let x: Double
+        let y: Double
+        let screenW: Double?
+        let screenH: Double?
+        let at: Date?
+
+        init?(step: [String: Any]) {
+            let tool = step["tool"] as? String
+            guard tool == "phone.tap" || tool == "phone.find_and_tap", let id = step["id"] as? String else { return nil }
+            func num(_ v: Any?) -> Double? {
+                guard let n = v as? NSNumber, !(v is Bool) else { return nil }
+                let d = n.doubleValue
+                return d.isFinite ? d : nil
+            }
+            let args = step["args"] as? [String: Any]
+            let target = step["target"] as? [String: Any]
+            let screen = target?["screen"] as? [Any] ?? []
+            var px = num(args?["x"]), py = num(args?["y"])
+            if px == nil || py == nil, let r = target?["rect"] as? [Any], r.count >= 4,
+               let rx = num(r[0]), let ry = num(r[1]), let rw = num(r[2]), let rh = num(r[3]) {
+                px = rx + rw / 2; py = ry + rh / 2
+            }
+            guard let x = px, let y = py else { return nil }
+            self.id = id; self.x = x; self.y = y
+            let w = screen.count > 0 ? num(screen[0]) : nil, h = screen.count > 1 ? num(screen[1]) : nil
+            screenW = (w ?? 0) > 0 ? w : nil
+            screenH = (h ?? 0) > 0 ? h : nil
+            at = (step["at"] as? String).flatMap(PhoneTaskClient.isoDate)
+        }
+    }
+
+    /// The bot's taps on this phone, oldest first. Throws on any failure (the caller stays quiet).
+    func tapSteps(serial: String) async throws -> [TapStep] {
+        let (data, status) = try await runtime("phones/\(Self.escape(serial))/history")
+        try Self.check(status, data: data)
+        let steps = (Self.object(data)?["steps"] as? [[String: Any]]) ?? []
+        return steps.compactMap(TapStep.init(step:))
+    }
+
+    static func isoDate(_ raw: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: raw) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: raw)
     }
 
     private let api: APIClient
@@ -206,6 +262,8 @@ final class PhoneTaskClient: @unchecked Sendable {
         run.modelCalls = (row["model_calls"] as? NSNumber)?.intValue
         let app = s("app_label", "app")
         run.mapApp = app.isEmpty ? nil : app
+        run.startedAt = (row["started_at"] as? String).flatMap(isoDate)
+        run.endedAt = (row["ended_at"] as? String).flatMap(isoDate)
         return run
     }
 

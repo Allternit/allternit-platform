@@ -17,13 +17,14 @@ import UIKit
 /// - `GET  miniapps/submissions` (Build › Your apps)
 struct ACIMcpAppsView: View {
     enum Tab: String, CaseIterable {
-        case installed, discover, build
+        case installed, discover, build, shelf
 
         var label: String {
             switch self {
             case .installed: return "Installed"
             case .discover: return "Discover"
             case .build: return "Build"
+            case .shelf: return "Apps"
             }
         }
     }
@@ -66,14 +67,14 @@ struct ACIMcpAppsView: View {
 
     var body: some View {
         Group {
-            if tab == .build {
+            if tab == .build || tab == .shelf {
                 // Build keeps its own scroll, so it keeps the serif title.
                 VStack(spacing: 0) {
                     ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16)
                         .padding(.horizontal, 16)
                     bar
                     noticeRow
-                    ACIMcpBuildTab(model: model)
+                    if tab == .shelf { AppsShelfView() } else { ACIMcpBuildTab(model: model) }
                 }
             } else {
                 ACIDockReader { dock in
@@ -141,7 +142,7 @@ struct ACIMcpAppsView: View {
 
     private var bar: some View {
         ACICompactBar(query: $query, searchLabel: "Search MCP Apps", placeholder: "Search apps") {
-            ForEach(Tab.allCases, id: \.self) { item in
+            ForEach(Tab.allCases.filter { $0 != .shelf || AppsShelfFlag.isOn }, id: \.self) { item in
                 ACIBarChip(title: item.label, isOn: tab == item) { go(item) }
             }
         } actions: {
@@ -151,7 +152,7 @@ struct ACIMcpAppsView: View {
             limit = Self.pageSize
             if !next.isEmpty {
                 route = .landing
-                if tab == .build { go(.discover) }
+                if tab == .build || tab == .shelf { go(.discover) }
             }
         }
     }
@@ -211,7 +212,8 @@ struct ACIMcpAppsView: View {
                     VStack(spacing: 12) {
                         EmptyBox(icon: "square.grid.2x2",
                                  title: q.isEmpty ? "No apps connected yet" : "No matches",
-                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.")
+                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.",
+                                 art: q.isEmpty ? .sheets : nil)
                         if q.isEmpty {
                             GlassPill(title: "Browse apps") { go(.discover) }
                         }

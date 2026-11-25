@@ -199,6 +199,10 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/questions", get(list_questions))
         .route("/questions/:id/reply", post(reply_question))
         .route("/questions/:id/reject", post(reject_question))
+        // MCP tasks + elicitation (gizzi `mcp.task` / `mcp.elicitation` events):
+        // the app's form answer and the task card's Stop, relayed to gizzi.
+        .route("/mcp/elicitation/:id/reply", post(reply_mcp_elicitation))
+        .route("/mcp/task/:id/cancel", post(cancel_mcp_task))
         // Answers to gizzi's permission asks raised in agent-session turns
         // (the terminal `/bots` chat and any other `/agent-sessions` client).
         // Those turns create no cowork_approvals row, so the approvals route
@@ -1892,6 +1896,56 @@ async fn reply_permission(
     }
 }
 
+/// `{ action: "accept" | "decline" | "cancel", content? }` for gizzi's
+/// `/v1/mcp/elicitation/:requestID/reply`. Request ids look like `<taskId>:<key>`,
+/// so the path param arrives decoded and is encoded again for gizzi.
+fn mcp_elicitation_payload(body: &serde_json::Value) -> Option<serde_json::Value> {
+    let action = body.get("action").and_then(|v| v.as_str())?;
+    if !matches!(action, "accept" | "decline" | "cancel") {
+        return None;
+    }
+    let mut payload = json!({ "action": action });
+    if let Some(content) = body.get("content").filter(|c| !c.is_null()) {
+        payload["content"] = content.clone();
+    }
+    Some(payload)
+}
+
+fn mcp_elicitation_path(request_id: &str) -> String {
+    format!("/v1/mcp/elicitation/{}/reply", urlencoding::encode(request_id))
+}
+
+fn mcp_task_cancel_path(task_id: &str) -> String {
+    format!("/v1/mcp/task/{}/cancel", urlencoding::encode(task_id))
+}
+
+async fn reply_mcp_elicitation(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(payload) = mcp_elicitation_payload(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "action must be accept, decline or cancel" })),
+        )
+            .into_response();
+    };
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &mcp_elicitation_path(&request_id), Some(payload)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn cancel_mcp_task(headers: HeaderMap, Path(task_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &mcp_task_cancel_path(&task_id), Some(json!({}))).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn reject_question(headers: HeaderMap, Path(request_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/question/{}/reject", urlencoding::encode(&request_id));
@@ -2854,6 +2908,19 @@ async fn transform_bus_event(
             "type": if event_type == "question.replied" { "question_replied" } else { "question_rejected" },
             "request_id": props.get("requestID"),
             "session_id": props.get("sessionID"),
+        })),
+        // MCP task cards + elicitation forms (gizzi PR #2925). Same shape the
+        // apps read: `{type, session_id, part}` / `{type, session_id, request_id, action}`.
+        "mcp.task" | "mcp.elicitation" => Some(json!({
+            "type": event_type.replace('.', "_"),
+            "session_id": props.get("sessionID"),
+            "part": props.get("part"),
+        })),
+        "mcp.elicitation.resolved" => Some(json!({
+            "type": "mcp_elicitation_resolved",
+            "session_id": props.get("sessionID"),
+            "request_id": props.get("requestID"),
+            "action": props.get("action"),
         })),
         "pane_browser.requested" => Some(pane_browser_requested_event(&props)),
         // capture_screen_context: the app showing this session answers with
@@ -4610,6 +4677,40 @@ mod tests {
         .unwrap();
         let out = transform_bus_event(&Client::new(), &db, event).await.expect("guardrail event");
         assert_eq!(out, json!({ "type": "guardrail_tripped", "session_id": "ses_g", "message_id": "msg_1", "trip": trip }));
+    }
+
+    #[tokio::test]
+    async fn mcp_task_and_elicitation_events_pass_through() {
+        let temp = std::env::temp_dir().join(format!("mcp-task-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let part = json!({ "type": "mcp-task", "taskId": "t1", "status": "working" });
+        let cases = [
+            ("mcp.task", json!({ "sessionID": "ses_m", "part": part }), json!({ "type": "mcp_task", "session_id": "ses_m", "part": part })),
+            ("mcp.elicitation", json!({ "sessionID": "ses_m", "part": part }), json!({ "type": "mcp_elicitation", "session_id": "ses_m", "part": part })),
+            (
+                "mcp.elicitation.resolved",
+                json!({ "sessionID": "ses_m", "requestID": "t1:k", "action": "accept" }),
+                json!({ "type": "mcp_elicitation_resolved", "session_id": "ses_m", "request_id": "t1:k", "action": "accept" }),
+            ),
+        ];
+        for (name, props, want) in cases {
+            let event: GizziBusEvent = serde_json::from_value(json!({ "type": name, "properties": props })).unwrap();
+            let out = transform_bus_event(&Client::new(), &db, event).await.expect(name);
+            assert_eq!(out, want);
+        }
+    }
+
+    #[test]
+    fn mcp_reply_forwards_encoded_ids_and_validated_body() {
+        assert_eq!(mcp_elicitation_path("t1:k"), "/v1/mcp/elicitation/t1%3Ak/reply");
+        assert_eq!(mcp_task_cancel_path("c:up/1"), "/v1/mcp/task/c%3Aup%2F1/cancel");
+        assert_eq!(
+            mcp_elicitation_payload(&json!({ "action": "accept", "content": { "a": 1 }, "junk": 1 })),
+            Some(json!({ "action": "accept", "content": { "a": 1 } }))
+        );
+        assert_eq!(mcp_elicitation_payload(&json!({ "action": "decline", "content": null })), Some(json!({ "action": "decline" })));
+        assert_eq!(mcp_elicitation_payload(&json!({ "action": "nope" })), None);
     }
 
     #[tokio::test]

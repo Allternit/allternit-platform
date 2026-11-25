@@ -84,7 +84,7 @@ internal fun FileBrowserDirectory(backend: ChatBackend, path: String?, onDirecto
     val c = AllternitTheme.colors
     CodeLoader(key = path ?: "", failedTitle = "Couldn't load files", load = { CodeApi.tree(backend, path) }) { nodes, reload ->
         if (nodes.isEmpty()) {
-            EmptyState("Empty folder", "There is nothing in this folder yet.")
+            EmptyState("Empty folder", "There is nothing in this folder yet.", art = com.allternit.core.design.EmptyArtKind.Sheets)
         } else {
             val sorted = nodes.sortedWith(compareByDescending<FileNode> { it.isDirectory }.thenBy { it.name.lowercase() })
             LazyColumn(Modifier.fillMaxSize().testTag("codeFileList")) {

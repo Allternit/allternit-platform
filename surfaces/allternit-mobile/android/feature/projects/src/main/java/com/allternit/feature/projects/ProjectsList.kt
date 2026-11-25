@@ -68,6 +68,7 @@ import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.BlockText
 import com.allternit.core.design.DockSpec
 import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.EmptyBox
 import com.allternit.core.design.GlassPill
 import com.allternit.core.design.IntroKeys
@@ -277,6 +278,12 @@ fun ProjectsListScreen(
                             "No projects yet",
                             "Tap New project to start one. Its chats, tasks and files stay together.",
                             gutter.testTag("projectsEmpty"),
+                            art = EmptyArtKind.Sheets,
+                            actionLabel = "New project",
+                            onAction = {
+                                val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
+                                if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
+                            },
                         )
                     }
                     store.loaded && visible.isEmpty() && store.projects.isNotEmpty() -> item(key = "noresults", span = full) {

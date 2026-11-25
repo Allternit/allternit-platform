@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { cloudInferenceToken, cloudOrigin } from '@/runtime/providers/discovery/allternit-cloud.js'
 import { getSessionId } from '../../bootstrap/state.js'
 import type { LocalCommandCall } from '../../types/command.js'
+import { LINK_VERBS, linksView } from './links.js'
 
 export type ShareTurn = { role: 'user' | 'assistant'; text: string; tools?: string[] }
 
@@ -62,6 +63,8 @@ function failure(status: number): string {
 }
 
 export const call: LocalCommandCall = async (args, context) => {
+  const words = args.trim().split(/\s+/).filter(Boolean)
+  if (words[0] && LINK_VERBS.has(words[0].toLowerCase())) return { type: 'text', value: await linksView([words[0].toLowerCase(), ...words.slice(1)]) }
   const off = args.trim().toLowerCase() === 'off'
   const token = await cloudInferenceToken().catch(() => undefined)
   if (!token) return { type: 'text', value: SIGN_IN }

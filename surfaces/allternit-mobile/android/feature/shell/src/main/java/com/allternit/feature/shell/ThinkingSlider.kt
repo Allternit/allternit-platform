@@ -1,6 +1,11 @@
 package com.allternit.feature.shell
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -74,7 +79,7 @@ internal fun ModelThinking.labelFor(id: String): String = levels.firstOrNull { i
  * one. The level picked here is the effort the chat sends with (ModelStore.level).
  */
 @Composable
-internal fun ThinkingSlider(thinking: ModelThinking, value: String, onChange: (String) -> Unit) {
+internal fun ThinkingSlider(thinking: ModelThinking, value: String, costLine: String? = null, onChange: (String) -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val context = LocalContext.current
@@ -88,6 +93,12 @@ internal fun ThinkingSlider(thinking: ModelThinking, value: String, onChange: (S
     val fill by animateFloatAsState(target, if (reduceMotion) tween(0) else tween(150), label = "thinkingFill")
     val mono = thinking.vendor == "openai"
     val current by rememberUpdatedState(value)
+    // Polish 6.6: the top level gets an art state (pixel dissolve sweeping the right 40% of the grid,
+    // a few orange/white sparks), stepped at 0.25 s over a 3 s loop. Static when animations are off.
+    val isTop = n >= 3 && index == n - 1
+    val loop = rememberInfiniteTransition(label = "effortArt")
+    val sweepRaw by loop.animateFloat(0f, 1f, infiniteRepeatable(androidx.compose.animation.core.tween(3000, easing = LinearEasing), RepeatMode.Restart), label = "sweep")
+    val sweep = if (reduceMotion) 0.5f else (sweepRaw * 12f).toInt() / 12f
 
     fun pickAt(x: Float, width: Float) {
         if (n == 0) return
@@ -122,6 +133,15 @@ internal fun ThinkingSlider(thinking: ModelThinking, value: String, onChange: (S
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(Modifier.size(7.dp).clip(RoundedCornerShape(2.dp)).background(tint))
             Text(thinking.termOrDefault, color = c.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+            if (value == thinking.default) {
+                Text(
+                    "Default",
+                    color = c.textSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(c.bgPanel).padding(horizontal = 6.dp, vertical = 1.dp).testTag("thinkingDefaultMark"),
+                )
+            }
             Spacer(Modifier.weight(1f))
             Text(
                 "${thinking.vendorName.orEmpty()} · default ${thinking.labelFor(thinking.default)}",
@@ -162,6 +182,22 @@ internal fun ThinkingSlider(thinking: ModelThinking, value: String, onChange: (S
                     val head = fill - x < 1.5f / COLS
                     val color = if (head) CoreHead else tint.copy(alpha = 0.28f + 0.72f * (x / maxOf(fill, 0.01f)))
                     for (row in 0 until ROWS) {
+                        if (isTop && x >= 0.6f) {
+                            // Dissolve: cells behind the sweep front thin out; cells at the front spark.
+                            val h = ((col * 7 + row * 13) % 10) / 10f
+                            val front = 0.6f + sweep * 0.4f
+                            val dist = front - x
+                            if (dist in 0f..0.12f && h < 0.5f + dist * 3f) continue
+                            if (kotlin.math.abs(dist) < 0.03f && h > 0.4f) {
+                                drawRoundRect(
+                                    color = if ((col + row) % 2 == 0) Color(0xFFFF8A3D) else Color.White,
+                                    topLeft = Offset(col * (cellW + gap), row * (cellH + gap)),
+                                    size = Size(cellW, cellH),
+                                    cornerRadius = radius,
+                                )
+                                continue
+                            }
+                        }
                         drawRoundRect(
                             color = color,
                             topLeft = Offset(col * (cellW + gap), row * (cellH + gap)),
@@ -189,6 +225,7 @@ internal fun ThinkingSlider(thinking: ModelThinking, value: String, onChange: (S
                 if (i < n - 1) Spacer(Modifier.weight(1f))
             }
         }
+        costLine?.let { Text(it, color = c.textTertiary, fontSize = 10.5.sp, modifier = Modifier.testTag("thinkingCostLine")) }
         thinking.note?.takeIf { it.isNotEmpty() }?.let { Text(it, color = c.textTertiary, fontSize = 10.5.sp) }
     }
 }
