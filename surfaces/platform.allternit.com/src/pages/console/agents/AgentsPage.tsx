@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  BotIcon,
   AlertCircleIcon,
   ArrowRight01Icon,
 } from "@hugeicons/core-free-icons";
@@ -145,7 +144,8 @@ export function AgentsPage(): React.ReactNode {
         pagination={{ page, totalPages, onPage: setPage }}
         emptyState={
           <EmptyState
-            icon={<HugeiconsIcon icon={BotIcon} size={32} />}
+            art="search"
+            size="panel"
             title={search || statusFilter || kindFilter !== "all" ? "No agents match your filters" : "No agents yet"}
             caption={
               search || statusFilter || kindFilter !== "all"

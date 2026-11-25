@@ -380,7 +380,7 @@ export function MembersPage(): React.ReactNode {
         <SkeletonRow lines={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={UserGroupIcon} size={32} />}
+          art="search"
           title={search ? "No members match" : "No members yet"}
           caption={
             search

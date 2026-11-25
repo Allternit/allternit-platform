@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   AlertCircleIcon,
-  Timer01Icon,
 } from "@hugeicons/core-free-icons";
 import { api, formatApiError, AllternitApiError } from "@/lib/api-client";
 import {
@@ -188,7 +187,8 @@ function RuntimeRateLimitsPage(): React.ReactNode {
         ) : (
           !callerError && (
             <EmptyState
-              icon={<HugeiconsIcon icon={Timer01Icon} size={32} />}
+              art="chart"
+              size="panel"
               title="No quota data"
               caption="The gateway did not return a quota snapshot for this key."
               ctaLabel="Retry"

@@ -159,7 +159,7 @@ export function PlatformProjectsPanel() {
 
       {projects.length === 0 && !showNewProject ? (
         <EmptyState
-          icon={<Cube size={32} aria-hidden />}
+          art="sheets"
           title="No projects yet"
           caption="A project is your app. It holds its accounts, numbers, agents and keys. Start with a sandbox project to test."
           ctaLabel="New project"
@@ -563,7 +563,7 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
           <CircleNotch size={16} className="animate-spin" aria-hidden /> Loading keys…
         </div>
       ) : keys.length === 0 ? (
-        <EmptyState icon={<Key size={28} aria-hidden />} title="No keys yet" caption={`Create a ${prefix}… key to call the Platform API from your server.`} />
+        <EmptyState art="key" size="panel" title="No keys yet" caption={`Create a ${prefix}… key to call the Platform API from your server.`} />
       ) : (
         <ul className="divide-y divide-[var(--border-subtle)]">
           {keys.map((k) => {

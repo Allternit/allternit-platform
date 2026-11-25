@@ -392,7 +392,8 @@ function RuntimeUsagePage(): React.ReactNode {
           {groupBy === "model" ? (
             modelRollup.length === 0 ? (
               <EmptyState
-                icon={<HugeiconsIcon icon={Analytics01Icon} size={32} />}
+                art="coins"
+                size="panel"
                 title="No usage yet"
                 caption="Send a request through the gateway with any API key and it will show up here within a minute of completing."
               />
