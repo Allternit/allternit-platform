@@ -34,26 +34,21 @@ final class DecisionsStore: ObservableObject {
 
     var waitingCount: Int { visibleQuestions.count + approvals.count }
 
-    /// Done / Later on the deck (this phone only; the agent keeps waiting and the
-    /// question stays in its chat). `snoozedUntil` is when a Later question returns.
-    @Published private(set) var handled: Set<String> = []
-    @Published private(set) var snoozedUntil: [String: Date] = [:]
-
     var visibleQuestions: [AgentQuestionRequest] {
-        let now = Date()
-        return questions.filter {
-            !AgentAskStore.shared.isResolved($0.id)
-                && !handled.contains($0.id)
-                && (snoozedUntil[$0.id].map { $0 <= now } ?? true)
-        }
+        questions.filter { !AgentAskStore.shared.isResolved($0.id) }
     }
 
-    /// Done: the card leaves the deck. The question is not answered or rejected.
-    func markDone(_ id: String) { handled.insert(id) }
+    /// Done / Later on a Factory approval: the same inbox calls the web Inbox uses
+    /// (`POST /inbox/factory:<id>/dismiss` and `/snooze`). A pending question is not an
+    /// inbox item, so the server cannot snooze or dismiss it and the deck offers neither.
+    func dismiss(_ approval: FactoryApprovalsClient.Approval) async throws {
+        try await InboxClient.shared.dismiss("factory:\(approval.id)")
+        approvals.removeAll { $0.id == approval.id }
+    }
 
-    /// Later: the card returns after `minutes`.
-    func snooze(_ id: String, minutes: Int) {
-        snoozedUntil[id] = Date().addingTimeInterval(TimeInterval(minutes * 60))
+    func snooze(_ approval: FactoryApprovalsClient.Approval, minutes: Int) async throws {
+        try await InboxClient.shared.snooze("factory:\(approval.id)", minutes: minutes)
+        approvals.removeAll { $0.id == approval.id }
     }
 
     func startWatching() {
@@ -94,12 +89,6 @@ final class DecisionsStore: ObservableObject {
             guard started == generation else { return }
             questions = fetched
             questionsError = nil
-            // Drop the Done / Later marks of questions that are gone, and expired snoozes
-            // (the assignment also wakes the deck so a returned card shows).
-            let ids = Set(fetched.map(\.id))
-            handled = handled.intersection(ids)
-            let now = Date()
-            snoozedUntil = snoozedUntil.filter { ids.contains($0.key) && $0.value > now }
             await resolveAgentNames()
         } catch {
             guard started == generation else { return }
@@ -131,7 +120,15 @@ final class DecisionsStore: ObservableObject {
             guard started == generation else { return }
             let listed = Set(pending.map(\.id))
             resolvedApprovals = resolvedApprovals.intersection(listed)
-            approvals = pending.filter { !resolvedApprovals.contains($0.id) }
+            var open = pending.filter { !resolvedApprovals.contains($0.id) }
+            // Dismissed or snoozed in the inbox (here or on another device): leave the deck too.
+            // When the inbox is not reachable, show every pending approval.
+            if let needsYou = try? await InboxClient.shared.list() {
+                let ids = Set(needsYou.map(\.id))
+                open = open.filter { ids.contains("factory:\($0.id)") }
+            }
+            guard started == generation else { return }
+            approvals = open
             approvalsError = nil
         } catch {
             guard started == generation else { return }
@@ -151,8 +148,6 @@ final class DecisionsStore: ObservableObject {
         approvalsError = nil
         hasLoaded = false
         agentNames = [:]
-        handled = []
-        snoozedUntil = [:]
         resolvedApprovals = []
     }
 
@@ -178,7 +173,6 @@ struct DecisionsDeckView: View {
     @ObservedObject private var asks = AgentAskStore.shared
     @State private var index = 0
     @State private var collapsed = false
-    @State private var showsLater = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -281,42 +275,6 @@ struct DecisionsDeckView: View {
             }
             .id(current.id)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
-            laterRow(current)
-        }
-    }
-
-    /// Done / Later under the card. Later opens a short row of lengths (minutes).
-    private func laterRow(_ current: AgentQuestionRequest) -> some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                Button("Later") {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showsLater.toggle() }
-                }
-                .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
-                .accessibilityLabel("Later: choose when this comes back")
-                Button("Done") { dismissCurrent(current) { store.markDone(current.id) } }
-                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
-                    .accessibilityLabel("Done: hide this decision from the deck")
-            }
-            if showsLater {
-                HStack(spacing: 8) {
-                    ForEach([(15, "15 min"), (60, "1 hour"), (180, "3 hours")], id: \.0) { minutes, label in
-                        Button(label) { dismissCurrent(current) { store.snooze(current.id, minutes: minutes) } }
-                            .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
-                    }
-                }
-                .transition(.opacity)
-            }
-        }
-    }
-
-    private func dismissCurrent(_ current: AgentQuestionRequest, _ apply: () -> Void) {
-        Haptics.success()
-        showsLater = false
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-            apply()
-            index = min(index, max(0, store.visibleQuestions.count - 1))
         }
     }
 
@@ -375,6 +333,7 @@ struct FactoryApprovalCard: View {
     @ObservedObject private var store = DecisionsStore.shared
     @State private var busy: String? = nil
     @State private var error: String? = nil
+    @State private var showsLater = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -407,9 +366,26 @@ struct FactoryApprovalCard: View {
                 .font(.caption2)
                 .foregroundColor(Color("TextTertiary"))
             HStack(spacing: 8) {
+                Button("Later") { showsLater.toggle() }
+                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    .disabled(busy != nil)
+                    .accessibilityLabel("Later: choose when this comes back")
+                Button("Done") { inboxAct("dismiss") { try await store.dismiss(approval) } }
+                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    .disabled(busy != nil)
+                    .accessibilityLabel("Done: dismiss \(approval.title) from the inbox")
                 Spacer(minLength: 0)
                 decisionButton("Reject", decision: "reject", kind: .quiet)
                 decisionButton("Approve", decision: "approve", kind: .primary)
+            }
+            if showsLater {
+                HStack(spacing: 8) {
+                    ForEach([(15, "15 min"), (60, "1 hour"), (180, "3 hours")], id: \.0) { minutes, label in
+                        Button(label) { inboxAct("snooze") { try await store.snooze(approval, minutes: minutes) } }
+                            .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                            .disabled(busy != nil)
+                    }
+                }
             }
             if let error {
                 Text(error)
@@ -426,6 +402,22 @@ struct FactoryApprovalCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(approval.isHighRisk ? Color.red.opacity(0.35) : Color("BorderSubtle"), lineWidth: 1)
         )
+    }
+
+    private func inboxAct(_ key: String, _ work: @escaping () async throws -> Void) {
+        busy = key
+        error = nil
+        showsLater = false
+        Task {
+            do {
+                try await work()
+                Haptics.success()
+            } catch {
+                self.error = FriendlyErrorMessage.from(error.localizedDescription)
+                Haptics.error()
+            }
+            busy = nil
+        }
     }
 
     private func decisionButton(_ title: String, decision: String, kind: QuestionCardButtonStyle.Kind) -> some View {
