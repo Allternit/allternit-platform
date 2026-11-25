@@ -14,6 +14,7 @@ struct AutomationTasksPhoneView: View {
     @EnvironmentObject private var modeStore: AppModeStore
 
     @StateObject private var store = AutomationStore()
+    @State private var barHidden = false
     @ObservedObject private var cron = CronJobStore.shared
     @ObservedObject private var bots = BotModeStore.shared
     @ObservedObject private var agentHub = AgentHubStore.shared
@@ -234,7 +235,9 @@ struct AutomationTasksPhoneView: View {
                     Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
                 }
             )
+            .hidesOnScroll(barHidden)
         }
+        .tracksScrollForHide($barHidden)
         .sheet(isPresented: $isFilterPresented) {
             AutomationFilterSheet(activeTab: $activeTab, sortBy: $sortBy, routinesViewRaw: $routinesViewRaw)
         }
