@@ -77,6 +77,7 @@
               "guides/link-your-computer",
               "guides/setup-checklist",
               "guides/sidebar-navigation",
+              "guides/empty-states",
               "guides/session-overview",
               "guides/system-drawer",
               "guides/office-view",
@@ -437,7 +438,8 @@
               "reference/changelog",
               "dev/computers-console-contract",
               "dev/computer-pairing",
-              "dev/aci-image-jobs"
+              "dev/aci-image-jobs",
+              "dev/shared-art"
             ],
             "icon": "/icons/book.svg"
           },
