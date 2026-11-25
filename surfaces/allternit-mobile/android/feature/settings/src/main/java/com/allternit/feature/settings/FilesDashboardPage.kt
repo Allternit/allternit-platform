@@ -234,7 +234,7 @@ internal fun FilesPage(back: () -> Unit, push: (String) -> Unit) {
         }
         when (tab) {
             FilesTab.Sharing -> if (shares.isEmpty()) {
-                SNote("No shares. Folders you share from the web, Desktop or a computer's Files screen show here, and you can turn them off.")
+                SNote("No shares. Folders you share from the web, Desktop or a computer's Files screen show here, and you can turn them off.", art = com.allternit.core.design.EmptyArtKind.ConnectScene)
             } else {
                 SCard(Modifier.padding(top = 12.dp)) {
                     shares.forEachIndexed { i, (share, name) ->

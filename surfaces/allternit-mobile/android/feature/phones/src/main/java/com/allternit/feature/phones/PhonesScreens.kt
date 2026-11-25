@@ -49,6 +49,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
@@ -104,7 +106,7 @@ fun PhonesSheet(host: PhonesHost, onDismiss: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = c.textSecondary)
                     Text("Checking your bots…", color = c.textSecondary, fontSize = 14.sp)
                 }
-                l is PhonesLoad.Failed && l.noComputer -> FriendlyState(FriendlyStyle.Offline, "No computer connected", "Connect a computer or start Allternit Cloud to use this.", Modifier, "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary) }
+                l is PhonesLoad.Failed && l.noComputer -> FriendlyState(FriendlyStyle.Offline, "No computer connected", "Connect a computer or start Allternit Cloud to use this.", Modifier, "Retry", { attempt++ }, art = EmptyArtKind.ConnectScene, icon = {})
                 l is PhonesLoad.Failed -> FriendlyState(FriendlyStyle.Offline, "Couldn't load your bots' phones", l.message, Modifier, "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
                 l is PhonesLoad.Ok && l.entries.none { it.hasPhone } -> Text("No bot has a phone yet. Give one a number, an email address or a messaging channel.", color = c.textSecondary, fontSize = 13.sp)
                 l is PhonesLoad.Ok -> l.entries.filter { it.hasPhone }.forEach { e ->
@@ -173,7 +175,7 @@ fun AppPhonesSettingsScreen(host: PhonesHost, onBack: () -> Unit, onOpenLive: (C
                     Pill("Unpair this phone", "appPhonesUnpair", danger = true) { confirmUnpair = mine }
                 }
                 error != null -> { Text(error.orEmpty(), color = AllternitStatic.StatusError, fontSize = 14.sp); Pill("Try again", "appPhonesRetry") { attempt++ } }
-                devices.orEmpty().isEmpty() -> Text("No Desktop is paired with your account yet. Open Allternit Desktop and sign in, then pull to refresh.", color = c.textSecondary, fontSize = 14.sp)
+                devices.orEmpty().isEmpty() -> InlineEmpty("No Desktop is paired with your account yet. Open Allternit Desktop and sign in, then pull to refresh.", art = EmptyArtKind.ConnectScene)
                 else -> {
                     Text("Choose a Desktop", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     Text("The Desktop must be open. You'll approve this phone there. Pairing starts from Allternit's Share screen › Link with a code on this phone.", color = c.textSecondary, fontSize = 13.sp)
