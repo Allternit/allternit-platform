@@ -90,6 +90,41 @@ function findElicitationInQueue(
   )
 }
 
+/**
+ * Ask the user through the same dialog queue a server-initiated elicitation uses
+ * (a final-spec task's `inputRequests` entry). Aborting `signal` cancels the ask.
+ */
+export function elicitViaQueue(
+  serverName: string,
+  params: ElicitRequestParams,
+  signal: AbortSignal,
+  setAppState: (f: (prevState: AppState) => AppState) => void,
+): Promise<ElicitResult> {
+  return new Promise<ElicitResult>(resolve => {
+    const onAbort = () => resolve({ action: 'cancel' })
+    if (signal.aborted) return onAbort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    ;(setAppState as any)((prev: any) => ({
+      ...prev,
+      elicitation: {
+        queue: [
+          ...prev.elicitation.queue,
+          {
+            serverName,
+            requestId: `task-elicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            params,
+            signal,
+            respond: (result: ElicitResult) => {
+              signal.removeEventListener('abort', onAbort)
+              resolve(result)
+            },
+          },
+        ],
+      },
+    }))
+  })
+}
+
 export function registerElicitationHandler(
   client: Client,
   serverName: string,
