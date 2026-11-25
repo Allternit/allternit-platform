@@ -4,6 +4,7 @@ import { hostname, homedir, platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import { discoverAgentClis } from './discovery';
+import { startShareHost } from './share-host';
 
 const CLOUD_API_URL = (process.env.ALLTERNIT_CLOUD_API_URL || 'https://api.allternit.com').replace(/\/$/, '');
 const RUNTIME_NAME = process.env.ALLTERNIT_RUNTIME_NAME || `${hostname()} VPS`;
@@ -468,6 +469,19 @@ async function main() {
   await heartbeat();
   console.log(`[AgentDaemon] ${RUNTIME_NAME} is online. Runtime ID: ${identity.runtimeId}`);
   connectRelay();
+
+  // Live links on this cloud computer: loopback control API; links survive a restart.
+  const shareHost = startShareHost({
+    cloudApi: CLOUD_API_URL,
+    relayApi: process.env.ALLTERNIT_SHARE_RELAY_API || 'https://api.live.allternitusercontent.com',
+    gatewayUrl: LOCAL_GATEWAY_URL,
+    getAuthToken: async () => identity?.deviceToken ?? '',
+    dataDir: process.env.ALLTERNIT_SHARE_DATA_DIR || join(dirname(IDENTITY_PATH), 'share-host'),
+    controlPort: Number(process.env.ALLTERNIT_SHARE_HOST_PORT) || 18099,
+  });
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(sig, () => void shareHost.stop().finally(() => process.exit(0)));
+  }
 
   setInterval(() => {
     void rotateIfNeeded()

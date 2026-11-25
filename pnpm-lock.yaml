@@ -116,6 +116,9 @@ importers:
 
   cmd/agent-daemon:
     dependencies:
+      '@allternit/share-tunnel':
+        specifier: workspace:*
+        version: link:../../platform/packages/share-tunnel
       ws:
         specifier: ^8.16.0
         version: 8.19.0
