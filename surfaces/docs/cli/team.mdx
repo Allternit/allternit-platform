@@ -1,0 +1,44 @@
+---
+title: "gizzi team"
+description: "List teammates and message them, see the team map, decide asks, manage approval rules and grant a bot access to an app."
+---
+
+`gizzi team` works with your organization. The older `list` and `send` subcommands are unchanged. The new ones use the same routes as the [team map](/guides/team-map).
+
+```bash
+gizzi team list
+gizzi team send maya/session "Can you look at this?"
+gizzi team map
+gizzi team asks
+gizzi team asks --approve ask_123
+gizzi team rules
+gizzi team rules add --app stripe --tool refund_payment --field amount --op gt --value 250 --approver manager
+gizzi team grant refunds stripe app
+```
+
+## Subcommands
+
+| Command | What it does |
+| --- | --- |
+| `gizzi team list [--json]` | Teammates' live sessions: people, machines, sessions and bots. |
+| `gizzi team send <address> <message..> [--reply-to <hop>]` | Message a teammate's session or bot. |
+| `gizzi team map [--json]` | The tree of people, bots and sub-bots, with asks and waiting jobs marked. |
+| `gizzi team asks [--approve <id> \| --decline <id>] [--json]` | Asks waiting on you. With a flag, decide one. |
+| `gizzi team rules [list \| add \| rm <id>]` | Approval rules. `add` needs `--op` and `--approver`. |
+| `gizzi team grant <bot> <app> <level>` | Let a bot use an app at `browser`, `app` or `full`. |
+
+## Rule options
+
+| Option | Meaning |
+| --- | --- |
+| `--app` | App name or `kind:ref`. Leave out for every app. |
+| `--tool` | Tool name, or `*` for any. This is the default. |
+| `--field` | The input to check, such as `amount`. |
+| `--op` | `always`, `gt`, `gte`, `eq` or `in`. |
+| `--value` | The value to compare. Numbers are sent as numbers. |
+| `--approver` | `owner`, `manager` or a user id. |
+| `--bot` | Limit the rule to one bot. The default is the whole organization. |
+
+`--computer <id>` picks the computer for `map`, `asks`, `rules` and `grant` when more than one is online.
+
+A grant above the owner's ceiling is refused, and `full` still confirms each call. See [levels](/guides/team-map#levels).

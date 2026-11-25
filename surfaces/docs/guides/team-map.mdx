@@ -1,0 +1,86 @@
+---
+title: "Team map"
+description: "See who is on your team, which bots they own, what each bot can use, who approves what, and the asks waiting on people."
+---
+
+**Status: BUILDING.** This is built and waiting to ship. It stays off until the `team.map` flag is turned on. See [status labels](/architecture#status-labels).
+
+The team map is one picture of your organization: people, the bots each person owns, and the sub-bots under them. On it you can see which bots are working, which need input and which are waiting on an approval. You can also set who reports to whom, what each bot may use, and the rules that decide when a person must approve.
+
+## The map
+
+- **People** are drawn with their role. Lines show who reports to whom.
+- **Bots** hang under their owner. A sub-bot hangs under its parent bot.
+- Each node shows a state: Idle, Working, Needs input, Waiting on approval or Offline.
+- A small count shows how many asks and jobs belong to that node.
+- A job waiting on someone shows as a line such as "refunds asks Noah".
+
+On a computer the map is a view in Workspace. On a phone it opens as a sheet from the floor menu. There is no Map tab. From the terminal, use [gizzi team map](/cli/team).
+
+## Owners
+
+Every bot has one owner, the person who made it. The owner decides what the bot can use, within the limits below. An organization owner or admin can also change a bot's access and the rules.
+
+## Levels
+
+A level is how much an app lets a bot do. It is the same three levels as for [apps](/guides/make-it-an-app).
+
+| Level | A bot can |
+| --- | --- |
+| `browser` | Look. Tools that change things are refused. |
+| `app` | Use the app's tools. |
+| `full` | Everything `app` allows, with the app's wider access. |
+
+Each level has a **ceiling**: the owner cannot give a bot more than the owner has. If the owner has not installed an app, there is no ceiling and the bot cannot get it. The `full` choice is shown locked, with the reason, when the ceiling does not allow it.
+
+<Warning>
+`full` does not mean unattended. Every call still asks for confirmation, and any rule that applies still needs its approver.
+</Warning>
+
+Some limits to know:
+
+- A bot using an app from a connected vendor needs access to the app and to the connection behind it.
+- Changing the access of another member's bot on an artifact or vendor app can answer "Can't change this right now". It fails closed rather than guess.
+
+## Rules
+
+A rule says when a person must approve a tool call. Rules read as one sentence:
+
+`anyone needs Noah to approve refund_payment in Stripe when amount is over 250 EUR.`
+
+You build a rule from chips: who it covers (everyone, one person or one bot), the app, the tool, the condition and who approves. An "In words" line shows the sentence it makes.
+
+- Who approves can be the bot's owner, the person's manager, or a named person.
+- A condition is "always", or compares one input of the tool: is over, is at least, is, or is one of. Amounts are compared as numbers. There is no currency conversion; the unit is only a label.
+- An organization owner or admin edits rules. Other members can read them.
+- A person cannot approve a run that a rule says someone else must approve.
+
+## Asks
+
+An ask is a request waiting for a person to decide. It names the bot, the app and tool, why it stopped (the rule) and what it will do. Asks come from Cowork, the Factory and cloud approvals in one list.
+
+- **Approve** lets the call run once. **Deny** stops it.
+- An ask expires after 24 hours.
+- Some asks cannot be decided from here. Those show read-only, with where to decide them.
+- If a source is unavailable, the list says some approvals may be missing.
+
+## Who can use this
+
+Open an app in the connect screen and choose **Who can use this**. It lists the people who have installed the app, with their level, and the bots that may use it, with their owner and level. Bots outside your organization are not shown.
+
+## Who can change what
+
+| Action | Who |
+| --- | --- |
+| Read the map, asks and rules | Any member |
+| Set who reports to whom | Organization owner or admin |
+| Change a bot's levels | The bot's owner, an organization owner or an admin |
+| Add, edit or remove rules | Organization owner or admin |
+
+A reporting line that would make a loop is refused.
+
+## Related
+
+- [The Island bar](/guides/island-bar)
+- [Team API](/api/island-bar#team-routes)
+- [gizzi team](/cli/team)

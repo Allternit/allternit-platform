@@ -1,0 +1,95 @@
+---
+title: "The Island bar"
+description: "Run one tool from an app in a few seconds: on desktop with a hotkey, on iPhone from the island or Search or Ask, on Android from a widget, in the web composer, or from the terminal with gizzi do."
+---
+
+**Status: BUILDING.** This is built and waiting to ship. It stays off until the `bar.island` flag is turned on. See [status labels](/architecture#status-labels).
+
+The Island bar lets you ask an app to do one thing without opening the app. You pick an app, pick a tool, fill in a short sentence, check it, and run it. For example: "Refund order 1042, 320 EUR, because the customer asked." You then see the job's progress and a receipt when it finishes.
+
+The bar only uses apps you have connected and tools those apps offer. It does not guess which tool you mean: you pick it from a list.
+
+## How a run goes
+
+1. **Pick an app.** Recent apps show first.
+2. **Pick a tool.** Start typing to narrow the list.
+3. **Fill the blanks.** The tool becomes a sentence with blanks, such as order, amount and reason. Blanks remember what you used before, and the bar shows your recent values. Required blanks must be filled before you can continue.
+4. **Review.** You see every value, and whether a rule needs someone to approve it first.
+5. **Run.** The job shows as working, waiting on an approver, needing your input, or done. When it is done you get a receipt such as "Refunded 320 EUR".
+
+You can cancel a job that has not finished.
+
+## Where it runs
+
+| Where | How you open it |
+| --- | --- |
+| Desktop app | Global hotkey. The bar is a white card. While a job runs, a small black pill sits at the top of the screen. |
+| iPhone | The in-app bar grows out of the Dynamic Island. On an iPhone without an island it is a small capsule near the top. While a job runs it shows in a Live Activity. You can also start from the Shortcuts app or from iOS Search or Ask, which list your apps and bots. |
+| Android | A home screen widget opens the bar. A job in progress shows in an ongoing notification. |
+| ai.allternit.com and m.allternit.com | The same sentence appears in the composer after you pick an app chip. On a phone it opens as a bottom sheet. |
+| Terminal | `gizzi do`. See [gizzi do](/cli/do). |
+
+Android widgets cannot hold a text box, so the widget opens the bar screen rather than typing in place.
+
+## The hotkey
+
+| System | Default |
+| --- | --- |
+| macOS | Option + Space |
+| Windows | Alt + Space |
+| Linux | Alt + Space |
+
+You can change it in Settings, on the shortcut row for the bar.
+
+### If the hotkey does nothing
+
+Another app may already hold the key. Option + Space is often used by launchers and other assistants on Mac. Alt + Space is used by the Windows window menu and by PowerToys Run.
+
+- If Allternit cannot take the key, it tries Option + Shift + Space (Mac) or Alt + Shift + Space (Windows, Linux) and shows a one-time notice that asks you to pick your own shortcut.
+- If you pick a key another app already uses, Settings shows a conflict message and the old key stays.
+- If you set a key and the other app still wins, turn the key off in that app, or pick a different one.
+- You can always open the bar from the tray or menu bar icon.
+
+### Linux on Wayland
+
+Some Wayland desktops do not let apps register a global hotkey. On those, the hotkey does not work. Click the tray icon, or open the link `allternit://bar`. You can also bind a key in your desktop's own keyboard settings to run that link.
+
+## Approvals
+
+Some runs need a person to say yes. A [team rule](/guides/team-map#rules) can require this, for example "anyone needs Noah to approve refund_payment in Stripe when amount is over 250 EUR."
+
+- The review step names the rule and the approver. If the approver is you, you approve there.
+- If it is someone else, the job waits on them. The bar shows "Waiting on Noah", and the same ask appears in that person's approvals: **Approvals** on a phone, the Needs you inbox and Cowork on other surfaces.
+- An ask not answered in 24 hours expires and the job fails with "not approved in time".
+- You cannot approve your own run when a rule names someone else.
+- The `full` access level still confirms each call. See [levels](/guides/team-map#levels).
+
+Money and sending actions stay under your own rules. The bar does not skip them.
+
+## When a bot runs the tool
+
+A bot can use an app only if its owner gave it access. Without it, the run stops with "Ask the owner to grant access". With read-only (`browser`) access, a tool that writes is refused and the bar shows the level. A bot using an app from a connected vendor needs two grants: one for the vendor app and one for the connection (connector) behind it. Without both, the run is refused with `no_grant`.
+
+## When there is no computer
+
+The bar runs your tools through your computer. If none is connected, you get the connect screen instead of a result. Connect a computer and run it again.
+
+## Limits
+
+- The `full` level still confirms each call. It does not skip the approval step.
+- Apps made from artifacts are listed, but the runtime cannot run them yet.
+- The access ceiling for another member's bot on an artifact or vendor app returns 503 (`tier_check_unavailable`). It fails closed, so the change is refused.
+- Callers on the edge get 403 with an `allternit/approvalId`. There is no waiting task: approve, then retry with that id.
+- Both features are behind flags, `bar.island` and `team.map`, and both are off by default.
+
+## What is not ready yet
+
+- Apps made from artifacts are listed but cannot be run from the bar yet.
+- App icons are not shown for connections yet. A generic icon appears.
+- A list can come back partly empty. If so, a note says some approvals or apps may be missing.
+
+## Related
+
+- [Team map](/guides/team-map)
+- [gizzi do](/cli/do)
+- [Island bar API](/api/island-bar)

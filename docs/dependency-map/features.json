@@ -5570,6 +5570,78 @@
         "allternit/surfaces/allternit-mobile/android/core/design/src/main/java/com/allternit/core/design/PixelWordmark.kt",
         "allternit-ai/src/components/brand/block-type.ts"
       ]
+    },
+    {
+      "id": "feature:island-bar",
+      "label": "Island bar (run one app tool from anywhere)",
+      "product": "product:mcp-apps",
+      "status": "building",
+      "description": "Pick an app and a tool, fill a short sentence, review, run, get a receipt. Desktop global hotkey with a white bar card and a black pill, an iPhone in-app bar plus Live Activity and Search or Ask intents, an Android widget and ongoing notification, the web composer, and gizzi do. Jobs live in the bar_jobs table on the runtime (allternit-api V295, /api/v1/bar/*); the engine makes the tool call. Behind the bar.island flag, default off. Files in open lane PRs (bar_routes.rs, bar_blanks.rs, gizzi do.ts, the ai src/lib/bar and island components, the desktop island-bar-window and hotkey, iOS bar and intents, Android bar and widget) join touches once they merge.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/allternit-api/src/factory_approvals.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/team.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/registry.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/BotLiveActivityManager.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/push/src/main/java/com/allternit/feature/push/LiveRunNotification.kt",
+        "allternit-ai/src/components/mcp",
+        "allternit/surfaces/docs/guides/island-bar.mdx",
+        "allternit/surfaces/docs/api/island-bar.mdx",
+        "allternit/surfaces/docs/cli/do.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-25",
+          "note": "Hotkey default Option+Space on Mac and Alt+Space on Windows and Linux; if register fails try the Shift variant and show a one-time pick-your-shortcut notice; Wayland without the portal uses the tray and allternit://bar."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "The user picks the tool from a list; no model call routes a sentence to a tool. The full level still confirms each call."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "Bar window is a white card; the pill is a black capsule. Android opens a Compose bar screen from a widget because a widget cannot hold text input."
+        }
+      ]
+    },
+    {
+      "id": "feature:team-map",
+      "label": "Team map, access levels and approval rules",
+      "product": "product:mcp-apps",
+      "status": "building",
+      "description": "One map of people, the bots they own and sub-bots, with per-bot app levels (browser, app, full) capped by the owner's own level, structured approval rules shown as a sentence, and asks routed to the right approver across Cowork, Factory and cloud approvals (allternit-api V294, /api/v1/team/*, cloud-api GET /api/v1/approvals?approver=me and /approvals/routed). Who can use this lists people and bots per app. gizzi team map|asks|rules|grant. Behind the team.map flag, default off. Files in open lane PRs (team_routes.rs, team_rules, the ai src/lib/team and map view, phone sheets) join touches once they merge.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/allternit-api/src/factory_approvals.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs",
+        "allternit/cmd/gizzi-code/src/cli/commands/team.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/registry.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+        "allternit/surfaces/allternit-desktop/src/main/teach-recorder.ts",
+        "allternit/surfaces/allternit-mobile/ios/Core/BotLiveActivityManager.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/push/src/main/java/com/allternit/feature/push/LiveRunNotification.kt",
+        "allternit-ai/src/components/mcp",
+        "allternit/surfaces/docs/guides/island-bar.mdx",
+        "allternit/surfaces/docs/api/island-bar.mdx",
+        "allternit/surfaces/docs/cli/do.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-25",
+          "note": "Owner is agents.user_id and the parent is parent_agent_id; reports_to_user_id lives on organization_members. No new owner column."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "A rule match needs allternit/approvalId checked in the database; allternit/approved alone is not trusted. Asks expire after 24 hours. Owner and admins edit rules."
+        },
+        {
+          "on": "2026-11-25",
+          "note": "Ceiling checks fail closed (503 tier_check_unavailable). A bot on a vendor app needs both the app grant and the connector grant."
+        }
+      ]
     }
   ],
   "journeys": [
@@ -6270,6 +6342,37 @@
       "evidence": [
         "allternit/surfaces/docs/guides/claude-organization.mdx",
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "id": "journey:bar-refund-with-approval",
+      "label": "Run a refund from the Island bar when a rule needs approval",
+      "description": "From the hotkey to a receipt, with an owner rule that makes the job wait on a named approver.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/allternit-desktop/src/main/unified-main.ts",
+          "says": "The person presses the hotkey. The bar opens (the tray and allternit://bar open it when the key cannot be registered)."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+          "says": "The bar's run makes the tool call through the engine. The gate reads the team rules and answers owner_approval_required when a rule matches."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/factory_approvals.rs",
+          "says": "An ask is written for the approver named by the rule. The job shows Waiting on that person."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs",
+          "says": "Routed approvals for the approver are read with approver=me. The approver sees the ask in Approvals and decides."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/cli/commands/team.ts",
+          "says": "The approver can also decide from the terminal with gizzi team asks --approve."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+          "says": "The call is retried with allternit/approvalId, runs once, and the job ends with a receipt."
+        }
       ]
     }
   ]

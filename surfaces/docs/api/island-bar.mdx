@@ -1,0 +1,124 @@
+---
+title: "Island bar and team map API"
+description: "Reference for the team and bar routes on allternit-api, the cloud approvals routes, the tool-call route, the _meta keys and the error codes."
+---
+
+This page is the developer reference for the [Island bar](/guides/island-bar) and the [team map](/guides/team-map). Both are behind the flags `bar.island` and `team.map`, which default to off.
+
+<Note>
+Team and bar routes are on `allternit-api` (your computer's runtime) under `/api/v1`. Approvals reads and routing are on cloud-api (`https://api.allternit.com`). Auth is the signed-in user's session. A bot or runtime token acts as the bot. Nullable fields are always present, as `null`.
+</Note>
+
+## Team routes
+
+All are under `/api/v1/team`.
+
+| Method and path | Who | Purpose |
+| --- | --- | --- |
+| `GET /team/map` | Member | The map: `{org, me, nodes, edges, grants, rules, asks, jobs, partial}`. `org` is `null` on a solo account. |
+| `GET /team/approvals?role=approver\|requester&state=pending` | Member | `{asks, partial}`. Any `state` other than `pending` is `400`. |
+| `GET /team/apps/:kind/:app_ref/access` | Member | Who can use an app: `{people: [{user, level}], bots: [{bot, owner, level}]}`. `kind` is `connector`, `vendor` or `artifact`. |
+| `PUT /team/people/:user_id` | Org owner or admin | Body `{reports_to_user_id: string or null}`. |
+| `GET /team/grants` | Member | `{grants, partial}`. |
+| `PUT /team/grants` | Bot owner, org owner or admin | Body `{bot_kind: "agent" or "vendor", bot_id, app_kind, app_ref, level}`. Returns `{grant}`. |
+| `DELETE /team/grants` | Bot owner, org owner or admin | Query `bot_kind, bot_id, app_kind, app_ref`. Returns `{revoked}`. |
+| `GET /team/rules` | Member | `{rules}` in short form: `id, text, enabled, scope, approver`. |
+| `POST /team/rules` | Org owner or admin | Create a rule. Returns `{rule}`. |
+| `PATCH /team/rules/:rule_id` | Org owner or admin | Partial update. Returns `{rule}`. |
+| `DELETE /team/rules/:rule_id` | Org owner or admin | Returns `{deleted}`. |
+
+### Shapes
+
+- **Node**: `{id, kind: "person" or "bot", name, avatar, role, is_main, computer, state, counts: {asks, jobs}}`. Ids are `p:<user_id>`, `b:<agent_id>` or `v:<vendor_bot_id>`. `state` is `idle`, `working`, `needs_input`, `waiting_approval` or `offline`.
+- **Edge**: `{from, to, kind}`. `kind` is `reports_to` (person to person), `owns` (person to bot) or `parent` (bot to bot).
+- **Grant**: `{id, bot, app: {kind, ref, name, icon}, level, ceiling, granted_by, created_at}`. `level` and `ceiling` are `browser`, `app` or `full`. `ceiling` is `null` when the owner has not installed the app. Connector icons are always `null`.
+- **Rule**: `{id, text, enabled, scope: {kind, ref}, app, tool, field, op, value, unit_label, approver: {kind, user_id}, created_by, created_at, updated_at}`. `tool` is `*` for any tool. `app` is `null` for every app. `op` is `always`, `gt`, `gte`, `eq` or `in`.
+- **Rule input** (POST and PATCH): `scope_kind` (`org`, `person` or `bot`, required), `scope_ref`, `app_kind`, `app_ref`, `tool`, `field`, `op` (required), `value`, `unit_label` (up to 24 characters), `approver_kind` (`owner`, `manager` or `user`, required), `approver_user_id` (required when the kind is `user`), `enabled`.
+- **Ask**: `{id, store: "cowork", "factory", "cloud" or "platform", title, summary, actor, approver_user_id, rule_id, app, tool, risk, state: "pending", created_at, expires_at, job_id, resolve: {method, path, body} or null}`. `resolve` names the call that decides it. Platform asks have `resolve: null` and are read-only.
+
+### Rule text
+
+The server builds one sentence for every rule and shows it as `rule.text`. Clients show it as sent.
+
+`<who> needs <approver> to approve <tool> [in <app>] when <condition>.`
+
+Example: `anyone needs Noah to approve refund_payment in Stripe when amount is over 250 EUR.`
+
+## Bar routes
+
+All are under `/api/v1/bar`.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /bar/apps` | `{apps: [{app, level, tool_count}]}`. |
+| `GET /bar/apps/:kind/:app_ref/tools` | `{app, tools: [{name, title, has_ui, task_capable, read_only}]}`. |
+| `POST /bar/intent` | Body `{app: {kind, ref}, tool, bot_id?}`. Returns `{intent_id, app, tool: {name, title}, sentence, blanks, source}`. |
+| `GET /bar/recents` | `{recents}`. |
+| `DELETE /bar/recents` | `{deleted: number}`. |
+| `POST /bar/review` | Body `{intent_id, args: {key: value}, bot_id?}`. Returns the review (below). |
+| `GET /bar/jobs` | `{jobs}`. |
+| `GET /bar/jobs/:id` | `{job}`. Job owner only. |
+| `POST /bar/jobs/:id/run` | Runs the job. `{job}`, whose state can be `waiting_approval`. |
+| `GET /bar/jobs/:id/events` | Server-sent events for the job. |
+| `POST /bar/jobs/:id/cancel` | `{job}`. `409` if the job has finished. |
+
+- **Intent**: `sentence` is a list of `{type: "text", text}` and `{type: "blank", key}` parts. A blank is `{key, label, type, required, unit?, options?, recent, picker: {kind}}`. `picker.kind` is `standard`, or `mcp_app` when the tool has its own screen. `intent_id` carries the tool and app, so the server keeps no state: send it back with `args`.
+- **Review**: `{job_id, state: "review", level, needs_confirmation, rule: {id, text} or null, approver: {user_id, name, is_you} or null, lines: [{key, label, value}]}`. A missing required value is `422 missing_fields` with the text "Fill in X first."
+- **Job**: `{id, user_id, bot_id, app: {kind, ref, name}, tool, title, args, level, rule_id, approver_user_id, approval_id, task_id, session_id, state, result, error, created_at, updated_at, started_at, finished_at}`. `app.name` can be `null` for a vendor job. Fall back to the tool title.
+- **Job states**: `working`, `waiting_approval`, `input_required`, `review`, `completed`, `failed`, `cancelled`. The last three are final.
+- **Events** (the stream): each `data:` line is JSON `{type, session_id, part}`. `type` is `bar_job`, `mcp_task`, `mcp_elicitation` or `mcp_elicitation_resolved`.
+- **Not runnable yet**: artifact apps are listed but cannot run from the bar.
+
+## Cloud approvals
+
+On cloud-api, for a signed-in user.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/v1/approvals?approver=me` | Asks waiting on you: `{asks}`. `401` if signed out. |
+| `GET /api/v1/approvals/routed` | Approvals routed to a person by a rule. The runtime calls it to read the routed list. |
+
+Decide an ask with the call named in its `resolve`. The Cowork decision accepts `approve`, and `reject` or `deny` to refuse.
+
+## Tool calls
+
+`POST /api/v1/agent-sessions/tool-call` lets a bot or runtime token call a tool on a connected server and apply the team gate.
+
+```json
+{ "sessionID": "ses_1", "server": "stripe", "tool": "refund_payment",
+  "args": { "amount": 320 }, "_meta": { "allternit/approvalId": "apr_1" } }
+```
+
+`sessionID`, `server` and `tool` are required (`400` otherwise). The result is the MCP `tools/call` result, or a JSON-RPC error. The gate answers `403`. The gizzi runtime uses `POST /v1/mcp/tool/call` for the same call, with `sessionId` in its body.
+
+### `_meta` keys
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `allternit/approvalId` | string or list of strings | The approval or approvals that let the call run. Send it when you retry after the gate. An approval is used up once. |
+| `allternit/jobId` | string | Ties the call to its bar job. |
+| `allternit/approved` | boolean | Set by the runtime after a person approves. Not trusted on its own: a matching rule still needs an `allternit/approvalId` it can check. |
+
+## Errors
+
+Error bodies have four shapes. Team routes send `{error: code}` or `{error: code, message}`. Bar routes send `{error: message, code}`. Tool calls send a JSON-RPC error, with the gate code in `error.data.code`. Cloud and edge routes can send a plain string. Read all four rather than one.
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `owner_approval_required` | 403 | A rule needs an approval. `data` has `approval_id`, `approver` and `rule_id`. The job waits. Retry with `allternit/approvalId`. A caller on the edge gets this `403` and retries with the id; no task waits for it. |
+| `no_grant` | 403 | The bot has no access to this app at this level. |
+| `level_read_only` | 403 | The grant is `browser`, so tools that write are refused. |
+| `approver_required` | 403 | A rule needs an approver and none is named. |
+| `team_rules_unavailable` | 503 | Rules could not be read. The call is refused rather than allowed. Try again. |
+| `tier_check_unavailable` | 503 | The ceiling could not be checked, for example for another member's bot on an artifact or vendor app. Refused. |
+| `above_ceiling` | 422 | The level is above what the owner may give. |
+| `app_not_installed` | 422 | The owner has not installed the app. |
+| `owner_or_admin_required` | 403 | Only the bot's owner, an organization owner or an admin may do this. |
+| `bot_not_found`, `rule_not_found` | 404 | No such bot or rule. |
+| `invalid_rule`, `invalid_body` | 422 | The body is wrong. |
+| `missing_fields` | 422 | A required blank is empty. |
+| `not_member`, `manager_not_member`, `reports_to_cycle`, `no_org` | 422 | A reporting line is refused. |
+| `app_kind_unsupported` | 404 | The app kind is not served here. |
+| `no_runtime` | 409 | No computer is connected. A `428` or no reply at all means the same. |
+
+Lists can carry `partial`: a list of sources that were missing, such as `platform_approvals` or `app_tiers`. Treat the list as incomplete.
