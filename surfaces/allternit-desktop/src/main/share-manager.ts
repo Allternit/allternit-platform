@@ -301,6 +301,22 @@ export class ShareManager {
     return { status: HOST_STATUS[result.error], payload: { error: result.error, message: result.message } };
   }
 
+  /**
+   * `POST /host/shares/:share_link_id/{resume,pause,stop}` relayed from the web (platform #2971 / ai #1307):
+   * the web only flips cloud state, so Resume must come here to re-open the tunnel. 200 `{share, share_link_id}`
+   * (stop: `{stopped: true, share_link_id}`); errors `{error, message}` (404 not_found when this computer is not
+   * serving that link, 403 disabled, 410 killed, 502 tunnel/cloud failure).
+   */
+  async handleHostCommand(action: string, id: string): Promise<{ status: number; payload: unknown }> {
+    const result =
+      action === 'resume' ? await this.resume(id) : action === 'pause' ? await this.pause(id) : action === 'stop' ? await this.stop(id) : null;
+    if (!result) return { status: 404, payload: { error: 'not_found', message: 'Unknown live link command.' } };
+    if (result.ok) {
+      return { status: 200, payload: { ...('share' in result ? { share: result.share } : { stopped: true }), share_link_id: id } };
+    }
+    return { status: HOST_STATUS[result.error], payload: { error: result.error, message: result.message } };
+  }
+
   list(): ShareView[] {
     return [...this.entries.values()].map((entry) => this.view(entry));
   }
@@ -335,20 +351,17 @@ export class ShareManager {
     entry.paused = false;
     entry.stopReason = null;
     entry.lastError = null;
-    if (entry.share) {
-      try {
-        await entry.share.pause(false);
-      } catch (error) {
-        return tunnelFailure(error);
-      }
-    } else {
-      try {
-        await this.serve(entry);
-      } catch (error) {
-        entry.lastError = error instanceof Error ? error.message : String(error);
-        this.publish(entry);
-        return tunnelFailure(error);
-      }
+    // Pausing made cloud-api drop the relay tunnel, so the old handle cannot carry traffic again:
+    // close it (this also drops its saved identity) and open a fresh tunnel with a fresh relay credential.
+    const previous = entry.share;
+    entry.share = null;
+    if (previous) await previous.stop('paused').catch(() => undefined);
+    try {
+      await this.serve(entry);
+    } catch (error) {
+      entry.lastError = error instanceof Error ? error.message : String(error);
+      this.publish(entry);
+      return tunnelFailure(error);
     }
     this.publish(entry);
     return { ok: true, share: this.view(entry) };

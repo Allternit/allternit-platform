@@ -248,7 +248,7 @@ export class DesktopAuthManager {
   private relayWatchdogTimer: NodeJS.Timeout | null = null;
   private relayLastMessageAt = 0;
   private relayLocalSockets = new Map<string, WebSocket>();
-  /** Relayed `/host/...` commands the Desktop host itself answers (today: `POST /host/shares/start`, lane 40). */
+  /** Relayed `/host/...` commands the Desktop host itself answers (`POST /host/shares/start`, `POST /host/shares/:id/{resume,pause,stop}`, lane 40). */
   private relayHostHandler: RelayHostHandler | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private readonly identityPath = path.join(app.getPath('userData'), 'auth', 'runtime-identity.json');
@@ -1626,7 +1626,7 @@ export class DesktopAuthManager {
       '/v1/',
     ];
     // The one host command (lane 40): exact path only, never the whole /host prefix (matches cloud-api's allow-list).
-    if (requestPath === '/host/shares/start') {
+    if (requestPath === '/host/shares/start' || /^\/host\/shares\/[A-Za-z0-9_-]{1,64}\/(?:resume|pause|stop)$/.test(requestPath)) {
       const result = method === 'POST' && this.relayHostHandler
         ? await this.relayHostHandler(method, requestPath, typeof message.body === 'string'
           ? (message.body_encoding === 'base64' ? Buffer.from(message.body, 'base64').toString('utf8') : message.body)

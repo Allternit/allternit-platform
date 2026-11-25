@@ -3341,9 +3341,12 @@ const shareManager = new ShareManager({
   extraDeniedPorts: Object.values(PORTS) as readonly number[],
   emit: (event) => broadcastToMainWindows('shares:event', event),
 });
-authManager.setRelayHostHandler((method, path, body) =>
-  method === 'POST' && path === '/host/shares/start' ? shareManager.handleHostStart(body) : Promise.resolve(null),
-);
+authManager.setRelayHostHandler((method, path, body) => {
+  if (method !== 'POST') return Promise.resolve(null);
+  if (path === '/host/shares/start') return shareManager.handleHostStart(body);
+  const command = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(path);
+  return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
+});
 featureFlagManager.onChange((key, value) => {
   if (key === 'share.live' && value !== true) void shareManager.disable();
 });
