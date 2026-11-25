@@ -203,6 +203,8 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // the app's form answer and the task card's Stop, relayed to gizzi.
         .route("/mcp/elicitation/:id/reply", post(reply_mcp_elicitation))
         .route("/mcp/task/:id/cancel", post(cancel_mcp_task))
+        // One MCP tool called by the gizzi engine with no model turn (Island bar run path).
+        .route("/agent-sessions/tool-call", post(call_mcp_tool_direct))
         // Answers to gizzi's permission asks raised in agent-session turns
         // (the terminal `/bots` chat and any other `/agent-sessions` client).
         // Those turns create no cowork_approvals row, so the approvals route
@@ -1933,6 +1935,30 @@ async fn reply_mcp_elicitation(
     };
     let client = gizzi_client(&headers);
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &mcp_elicitation_path(&request_id), Some(payload)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// `{sessionID, server, tool, args?, meta?}` -> engine `POST /v1/mcp/tool/call`.
+/// The engine publishes `mcp.task` / `mcp.elicitation` under `sessionID` (e.g. `bar:<job_id>`).
+async fn call_mcp_tool_direct(headers: HeaderMap, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let text = |key: &str| body.get(key).and_then(|v| v.as_str()).filter(|v| !v.is_empty());
+    let (Some(session), Some(server), Some(tool)) = (text("sessionID"), text("server"), text("tool")) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "sessionID, server and tool are required" })),
+        )
+            .into_response();
+    };
+    let mut payload = json!({ "sessionID": session, "server": server, "tool": tool });
+    for key in ["args", "meta"] {
+        if let Some(v) = body.get(key).filter(|v| v.is_object()) {
+            payload[key] = v.clone();
+        }
+    }
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, "/v1/mcp/tool/call", Some(payload)).await {
         Ok(value) => Json(value).into_response(),
         Err(response) => response,
     }
