@@ -12,12 +12,22 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 async fn setup() -> Router {
+    setup_with_db().await.0
+}
+
+/// Migrations 085 and 161 (the app columns and `app_installs` the tier gate reads).
+async fn setup_with_db() -> (Router, PgPool) {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     sqlx::raw_sql(include_str!("../../migrations_pg/085_artifacts_v2.sql"))
         .execute(&state.db)
         .await
         .expect("085 applies");
-    super::super::routes().with_state(state)
+    sqlx::raw_sql(include_str!("../../migrations_pg/161_apps_mcp_2026.sql"))
+        .execute(&state.db)
+        .await
+        .expect("161 applies");
+    let db = state.db.clone();
+    (super::super::routes().with_state(state), db)
 }
 
 fn who(id: &str, org: Option<&str>, role: Option<&str>) -> Value {
@@ -380,4 +390,151 @@ fn ai_rate_limit_is_per_viewer_and_artifact() {
     assert!(!ai_rate_ok("rate_u1", "rate_a1"));
     assert!(ai_rate_ok("rate_u2", "rate_a1"));
     assert!(ai_rate_ok("rate_u1", "rate_a2"));
+}
+
+// ---------------------------------------------------------------------------
+// App tiers and growth-only consent (plan v3 lane 8)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn app_tier_growth_rule_same_snapshot_does_not_ask() {
+    let snap = json!({"storage": true, "ai": true, "connectors": [{"connector": "gh", "tools": ["list"]}]});
+    // No grant yet: ask for everything the viewer's tier reaches.
+    let ask = growth(Tier::App, &snap, None).expect("first use asks");
+    assert_eq!(ask.requested_tier, Tier::App);
+    assert_eq!(ask.added_capabilities, vec!["ai".to_string(), "storage".to_string()], "connectors need full");
+    // Same snapshot, same tier: never asks again.
+    let granted = json!({"storage": true, "ai": true});
+    assert_eq!(growth(Tier::App, &snap, Some((Tier::App, &granted))), None);
+    // A grant above what the app needs still covers it.
+    assert_eq!(growth(Tier::App, &json!({"storage": true}), Some((Tier::Full, &granted))), None);
+    // Tier rises: ask, with the newly reachable capability.
+    let ask = growth(Tier::Full, &snap, Some((Tier::App, &granted))).expect("higher tier asks");
+    assert_eq!((ask.requested_tier, ask.added_capabilities), (Tier::Full, vec!["connector:gh/list".to_string()]));
+    // Same tier, one more connector tool: ask for just that tool.
+    let full_grant = json!({"storage": true, "ai": true, "connectors": [{"connector": "gh", "tools": ["list"]}]});
+    let grown = json!({"storage": true, "ai": true, "connectors": [{"connector": "gh", "tools": ["list", "write"]}]});
+    let ask = growth(Tier::Full, &grown, Some((Tier::Full, &full_grant))).expect("added tool asks");
+    assert_eq!(ask.added_capabilities, vec!["connector:gh/write".to_string()]);
+}
+
+#[test]
+fn app_tier_vendor_apps_and_outsiders_never_get_full() {
+    assert_eq!(max_tier("vendor", Some("u_me"), Some("org_a"), "u_me", Some("org_a")), Tier::App, "vendor apps cap at app");
+    assert_eq!(max_tier("artifact", Some("u_me"), None, "u_me", None), Tier::Full, "own app");
+    assert_eq!(max_tier("artifact", Some("u_a"), Some("org_a"), "u_b", Some("org_a")), Tier::Full, "org app");
+    assert_eq!(max_tier("artifact", Some("u_a"), Some("org_a"), "u_c", Some("org_b")), Tier::App, "another org");
+    assert_eq!(max_tier("artifact", Some("u_a"), None, "u_c", None), Tier::App, "someone else's personal app");
+    // A full app seen by an outsider runs at app: connectors are out of reach.
+    assert_eq!(Tier::Full.min(max_tier("vendor", None, None, "u_c", None)), Tier::App);
+    assert!(Tier::App < AppMethod::Connectors.min_tier());
+    assert_eq!(AppMethod::Storage.min_tier(), Tier::App);
+}
+
+async fn make_app(router: &Router, owner: &Value, id: &str, tier: &str) -> Value {
+    let (status, body) = send(
+        router,
+        "PUT",
+        &format!("/api/v2/artifacts/{id}/app"),
+        Some(owner),
+        Some(json!({ "name": "Tracker", "tier": tier })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+async fn grant(db: &PgPool, user: &str, id: &str, tier: &str, caps: Value) {
+    sqlx::query(
+        "INSERT INTO app_installs (id, user_id, app_kind, app_ref, granted_tier, granted_capabilities) \
+         VALUES ($1, $2, 'artifact', $3, $4, $5) \
+         ON CONFLICT (user_id, app_kind, app_ref) DO UPDATE \
+         SET granted_tier = EXCLUDED.granted_tier, granted_capabilities = EXCLUDED.granted_capabilities",
+    )
+    .bind(format!("ain_{}", uuid::Uuid::new_v4().simple()))
+    .bind(user)
+    .bind(id)
+    .bind(tier)
+    .bind(caps)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn app_runtime_same_snapshot_does_not_ask_and_a_higher_tier_asks() {
+    let (router, db) = setup_with_db().await;
+    let owner = who("u_app_owner", Some("org_a"), None);
+    let member = who("u_app_member", Some("org_a"), None);
+    let id = page(&router, &owner, json!({"storage": true, "connectors": [{"connector": "gh", "tools": ["list"]}]})).await;
+    share_with(&router, &owner, &id, "people", json!([{"principal_type": "user", "principal_id": "u_app_member", "level": "view"}])).await;
+    make_app(&router, &owner, &id, "app").await;
+    let write = url(&id, "storage/k?scope=shared");
+
+    // Not installed yet: the gate asks, and says what for.
+    let (status, body) = send(&router, "PUT", &write, Some(&member), Some(json!({"value": "v"}))).await;
+    assert_eq!((status, body["code"].as_str()), (StatusCode::FORBIDDEN, Some("consent_required")), "{body}");
+    assert_eq!(body["requested_tier"], "app");
+    assert_eq!(body["added_capabilities"], json!(["storage"]), "connectors are above app tier");
+    // The owner runs their own app without an install.
+    let (status, body) = send(&router, "PUT", &url(&id, "storage/k"), Some(&owner), Some(json!({"value": "v"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Installed: the grant is the consent (no separate shared-storage ask).
+    grant(&db, "u_app_member", &id, "app", json!({"storage": true})).await;
+    let (status, body) = send(&router, "PUT", &write, Some(&member), Some(json!({"value": "v"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Re-publishing the same snapshot never asks again.
+    make_app(&router, &owner, &id, "app").await;
+    let (status, body) = send(&router, "PUT", &write, Some(&member), Some(json!({"value": "w"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, ctx) = send(&router, "GET", &url(&id, "context"), Some(&member), None).await;
+    assert_eq!((ctx["app"]["tier"].as_str(), ctx["app"]["needs_consent"].as_bool()), (Some("app"), Some(false)));
+
+    // A higher tier asks again, for the tier and what it adds.
+    make_app(&router, &owner, &id, "full").await;
+    let (status, body) = send(&router, "PUT", &write, Some(&member), Some(json!({"value": "v"}))).await;
+    assert_eq!((status, body["code"].as_str()), (StatusCode::FORBIDDEN, Some("consent_required")), "{body}");
+    assert_eq!(body["requested_tier"], "full");
+    assert_eq!(body["added_capabilities"], json!(["connector:gh/list"]));
+    let (_, ctx) = send(&router, "GET", &url(&id, "context"), Some(&member), None).await;
+    assert_eq!(ctx["app"]["needs_consent"], true);
+
+    // Browser tier reaches no viewer data at all.
+    make_app(&router, &owner, &id, "browser").await;
+    let (status, body) = send(&router, "GET", &url(&id, "storage/k"), Some(&owner), None).await;
+    assert_eq!((status, body["code"].as_str()), (StatusCode::FORBIDDEN, Some("tier_too_low")), "{body}");
+    assert_eq!((body["tier"].as_str(), body["required_tier"].as_str()), (Some("browser"), Some("app")));
+}
+
+#[tokio::test]
+async fn app_install_rule_link_shared_capability_app_cannot_be_installed() {
+    let router = setup().await;
+    let owner = who("u_link_owner", Some("org_l"), None);
+    let member = who("u_link_member", Some("org_l"), None);
+    let id = page(&router, &owner, json!({"storage": true})).await;
+    share_with(&router, &owner, &id, "link", json!([])).await;
+
+    // full can't go out by link.
+    let (status, body) = send(
+        &router, "PUT", &format!("/api/v2/artifacts/{id}/app"), Some(&owner),
+        Some(json!({"name": "Tracker", "tier": "full", "install_scope": "link"})),
+    )
+    .await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("full_tier_not_allowed")), "{body}");
+
+    let made = make_app(&router, &owner, &id, "app").await;
+    let public = format!("/api/v2/public/apps/{}", made["app"]["slug"].as_str().unwrap());
+    let (status, record) = send(&router, "GET", &public, None, None).await;
+    assert_eq!(status, StatusCode::OK, "{record}");
+    assert_eq!((record["install"].as_bool(), record["install_reason"].as_str()), (Some(false), Some("tier_too_high")));
+    // The owner and the org install any tier.
+    let (_, record) = send(&router, "GET", &public, Some(&owner), None).await;
+    assert_eq!(record["install"], true);
+    let (_, record) = send(&router, "GET", &public, Some(&member), None).await;
+    assert_eq!((record["install"].as_bool(), record.get("install_reason")), (Some(true), None));
+    // Browser tier installs from a link.
+    make_app(&router, &owner, &id, "browser").await;
+    let (_, record) = send(&router, "GET", &public, None, None).await;
+    assert_eq!(record["install"], true);
 }

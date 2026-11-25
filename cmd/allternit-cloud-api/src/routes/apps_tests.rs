@@ -143,3 +143,54 @@ async fn reinstall_with_the_same_snapshot_needs_no_consent() {
     let (status, _) = call(&state, "DELETE", &path, Value::Null).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn shelf_rows_carry_slug_and_shared_provenance() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let mine = seed_app(&state.db, json!({})).await;
+    // Someone else's link app the caller installed.
+    let other = format!("art_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO artifacts (id, owner_id, kind, title, app_name, app_slug, app_permission_tier, \
+                                app_install_scope, app_capability_snapshot, app_pinned_version) \
+         VALUES ($1, 'someone_else', 'page', 'Theirs', 'Theirs', $2, 'browser', 'link', '{}', 1)",
+    )
+    .bind(&other)
+    .bind(crate::routes::share_links::mint_label(16))
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let path = format!("/api/v1/apps/artifact/{other}/install");
+    let (status, body) = call(&state, "POST", &path, json!({ "granted_tier": "browser" })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (_, shelf) = call(&state, "GET", "/api/v1/apps", Value::Null).await;
+    let rows = shelf["yours"].as_array().unwrap();
+    let own = rows.iter().find(|r| r["ref"] == mine).unwrap();
+    let theirs = rows.iter().find(|r| r["ref"] == other).unwrap();
+    assert_eq!(own["provenance"], "you");
+    assert_eq!(theirs["provenance"], "shared");
+    assert_eq!(theirs["link"], format!("/app/{}", theirs["slug"].as_str().unwrap()));
+    assert_eq!(own["slug"].as_str().unwrap().len(), 16);
+    sqlx::query("DELETE FROM artifacts WHERE id = $1").bind(&other).execute(&state.db).await.unwrap();
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn install_writes_granted_capabilities_as_an_array_of_names() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let art = seed_app(
+        &state.db,
+        json!({ "storage": true, "ai": false, "connectors": [{ "connector": "gh", "tools": ["list"] }], "export_mcp": true }),
+    )
+    .await;
+    let path = format!("/api/v1/apps/artifact/{art}/install");
+    let (_, first) = call(&state, "POST", &path, json!({ "granted_tier": "app" })).await;
+    assert_eq!(first["install"]["granted_capabilities"], json!(["connector:gh/list", "storage"]), "{first}");
+    // The stored array covers the same snapshot: no second consent.
+    let (_, again) = call(&state, "POST", &path, json!({ "granted_tier": "app" })).await;
+    assert_eq!(again["needs_consent"], false, "{again}");
+}

@@ -23,7 +23,36 @@ fn link_names_are_dns_labels_and_minted_names_are_random() {
     assert_eq!(a.len(), 16);
     assert_ne!(a, b);
     assert!(a.as_bytes()[0].is_ascii_lowercase());
-    assert_eq!(check_subdomain(&a), Ok(a.clone()));
+    assert!(check_subdomain(&a).is_ok() || reserved_name(&a), "{a} is a DNS label");
+}
+
+#[test]
+fn share_links_reserved_names_refuse_our_brands_vendor_brands_and_infrastructure() {
+    for name in [
+        "allternit", "my-allternit-demo", "gizzi", "gizziapp", "claude", "claudeai", "my-claude",
+        "openai-demo", "chatgpt", "google", "apple-pay", "microsoft", "github", "admin", "api",
+        "www", "mail", "live", "meta",
+    ] {
+        assert_eq!(check_subdomain(name).map_err(|e| e.0), Err("reserved_subdomain"), "{name}");
+    }
+    for name in ["pineapple", "my-demo", "admin-panel", "metal-band", "tip-calc"] {
+        assert_eq!(check_subdomain(name), Ok(name.to_string()), "{name} is allowed");
+    }
+    assert_eq!(check_subdomain("-bad").map_err(|e| e.0), Err("invalid_subdomain"));
+}
+
+#[test]
+#[serial_test::serial]
+fn share_links_url_follows_app_domain() {
+    std::env::remove_var("APP_DOMAIN");
+    assert_eq!(link_url("hosted", "tips"), Some("https://ai.allternit.com/app/tips".into()));
+    assert_eq!(link_url("live", "tips"), None, "live links need their own domain");
+    std::env::set_var("APP_DOMAIN", " https://AllternitUGC.app/ ");
+    assert_eq!(link_url("hosted", "tips"), Some("https://tips.allternitugc.app".into()));
+    assert_eq!(link_url("live", "tips"), Some("https://tips.live.allternitugc.app".into()));
+    std::env::set_var("APP_DOMAIN", "not a domain");
+    assert_eq!(link_url("hosted", "tips"), Some("https://ai.allternit.com/app/tips".into()));
+    std::env::remove_var("APP_DOMAIN");
 }
 
 async fn setup() -> Arc<ApiState> {
@@ -266,4 +295,60 @@ async fn share_links_need_a_signed_in_caller() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn share_links_over_cap_answer_429_and_killed_subjects_cannot_be_shared_again() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let device = unique("rt");
+    seed_runtime_device(&state.db, &device, DEV_USER).await;
+    let live = json!({ "kind": "live", "subject": "mcp", "runtime_device_id": device });
+
+    let mut ids = Vec::new();
+    for _ in 0..MAX_ACTIVE_LIVE_LINKS {
+        let (status, made) = call(&state, "POST", "/api/v1/share-links", live.clone()).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        assert!(made.get("url").is_some(), "every link carries url");
+        ids.push(made["id"].as_str().unwrap().to_string());
+    }
+    let (status, body) = call(&state, "POST", "/api/v1/share-links", live.clone()).await;
+    assert_eq!((status, body["error"].as_str(), body["cap"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("cap_reached"), Some("links")), "{body}");
+    assert_eq!((body["used"].as_i64(), body["limit"].as_i64()), (Some(3), Some(3)));
+    // Hosted links don't count against the live cap.
+    let (status, _) = call(&state, "POST", "/api/v1/share-links", json!({ "kind": "hosted", "subject": "mcp" })).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Pausing frees a slot; resuming over the cap is refused.
+    let pause = format!("/api/v1/share-links/{}/pause", ids[0]);
+    call(&state, "POST", &pause, Value::Null).await;
+    let (status, _) = call(&state, "POST", "/api/v1/share-links", live.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = call(&state, "POST", &pause, json!({ "paused": false })).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("cap_reached")));
+
+    // 20 GB served this month stops new live links, deleted ones included.
+    sqlx::query("UPDATE share_links SET status = 'revoked' WHERE user_id = $1").bind(DEV_USER).execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE share_links SET bytes_month = $2 WHERE id = $1")
+        .bind(&ids[1])
+        .bind(MAX_LIVE_BYTES_MONTH)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let (status, body) = call(&state, "POST", "/api/v1/share-links", live.clone()).await;
+    assert_eq!((status, body["cap"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("bytes")), "{body}");
+
+    // An artifact whose link was killed can't be shared again.
+    let art = seed_artifact(&state.db, DEV_USER).await;
+    let hosted = json!({ "kind": "hosted", "subject": "artifact", "artifact_id": art });
+    let (status, made) = call(&state, "POST", "/api/v1/share-links", hosted.clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    sqlx::query("UPDATE share_links SET status = 'killed' WHERE id = $1").bind(made["id"].as_str().unwrap()).execute(&state.db).await.unwrap();
+    let (status, body) = call(&state, "POST", "/api/v1/share-links", hosted).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::GONE, Some("killed")));
+
+    // A reserved name is its own error.
+    let (status, body) = call(&state, "POST", "/api/v1/share-links", json!({ "kind": "hosted", "subject": "mcp", "subdomain": "claude" })).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("reserved_subdomain")));
 }

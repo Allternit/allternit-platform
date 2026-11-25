@@ -10,6 +10,8 @@ pub mod apps;
 pub mod artifacts_v2;
 // Apps + MCP 2026 share-link registry (migration 161).
 pub mod share_links;
+// Admin kill / flag for share links (lane 8).
+pub mod admin_share_links;
 pub mod gateway_catalog;
 pub mod runtimes;
 // Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).

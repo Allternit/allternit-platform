@@ -1321,16 +1321,24 @@ async fn public_artifact(
 // * `GET /api/v2/artifacts/:id/app` (view) -> `{ app: AppPackage | null }`
 // * `PUT /api/v2/artifacts/:id/app` (owner) `{ name, icon?, tier: browser|app|full,
 //   install_scope?: private|people|org|link, tools?: [..], skill_ref?: "skill://..",
-//   pinned_version? }` -> `{ app: AppPackage }`. Makes the artifact an app (or
+//   pinned_version?, export_mcp? }` -> `{ app: AppPackage }`. `export_mcp` lands in
+//   `capability_snapshot.export_mcp` (omitted keeps the stored value). Makes the artifact an app (or
 //   re-publishes it): `app_slug` is minted once and never changes;
 //   `capability_snapshot` is the artifact's capabilities at this moment;
 //   `pinned_version` defaults to the shared version (or the latest).
-// * `GET /api/v2/public/apps/:slug` (no auth) -> `{ slug, name, icon, tier,
-//   pinned_version, capability_snapshot, install, made_by }`. 404 when the
-//   slug is unknown, the artifact is private, or its org turned artifacts off.
+// * `GET /api/v2/public/apps/:slug` (auth optional) -> `{ slug, name, icon, tier,
+//   pinned_version, capability_snapshot, install, install_reason?, made_by }`.
+//   `slug` is the app's slug or one of its active hosted link names. 404 when
+//   the slug is unknown, the link is paused or deleted, the artifact is private,
+//   or its org turned artifacts off; 410 `killed` once an admin killed a link to
+//   it. `no-store`, so a kill shows on the next request.
 //
-// Lane 8 owns the tier rules (full = own and org apps only), growth-only
-// consent and the install rule (D14); `install` here is `tier == browser`.
+// Lane 8 rules: `full` tier is for the owner's and the org's own use, so a
+// full-tier app can't be installed by link (422 `full_tier_not_allowed`); the
+// runtime caps everyone else at `app` (artifact_runtime::max_tier). Install
+// rule (D14): the owner and the app's org install any tier; anyone else
+// (a link recipient) installs `browser` tier only (`install_reason`
+// `tier_too_high`), and an org-scoped app only inside the org (`org_only`).
 // ---------------------------------------------------------------------------
 
 const MAX_APP_NAME_CHARS: usize = 80;
@@ -1401,6 +1409,9 @@ struct AppRequest {
     tools: Option<Value>,
     skill_ref: Option<String>,
     pinned_version: Option<i64>,
+    /// Whether the app is offered over MCP (`app_capability_snapshot.export_mcp`).
+    /// Omitted keeps the stored value.
+    export_mcp: Option<bool>,
 }
 
 fn check_app_name(name: &str) -> Result<String> {
@@ -1437,6 +1448,20 @@ async fn put_app(
             "install_scope is private, people, org or link",
         ));
     }
+    // E7: full reaches the viewer's own connectors, so it is for the owner and
+    // their org only, never for whoever holds a link.
+    if req.tier == "full" && install_scope == "link" {
+        return Err(ArtifactError::unprocessable(
+            "full_tier_not_allowed",
+            "A full-level app is only for you and your organization. Pick app level to share it by link.",
+        ));
+    }
+    if req.tier == "full" && install_scope == "org" && row.org_id.is_none() {
+        return Err(ArtifactError::unprocessable(
+            "invalid_install_scope",
+            "Only an artifact in an organization can be installed by the organization.",
+        ));
+    }
     let tools = req.tools.clone().unwrap_or_else(|| json!([]));
     if !tools.is_array() || tools.to_string().len() > MAX_JSON_FIELD_BYTES {
         return Err(ArtifactError::unprocessable(
@@ -1466,7 +1491,12 @@ async fn put_app(
         let minted = crate::routes::share_links::mint_label(APP_SLUG_LEN);
         let updated = sqlx::query_as::<_, AppRow>(&format!(
             "UPDATE artifacts SET app_name = $2, app_icon = $3, app_slug = COALESCE(app_slug, $4), \
-                 app_pinned_version = $5, app_capability_snapshot = capabilities, \
+                 app_pinned_version = $5, \
+                 app_capability_snapshot = CASE \
+                     WHEN COALESCE($10::boolean, (app_capability_snapshot->>'export_mcp')::boolean) IS NULL \
+                     THEN capabilities \
+                     ELSE capabilities || jsonb_build_object('export_mcp', \
+                          COALESCE($10::boolean, (app_capability_snapshot->>'export_mcp')::boolean)) END, \
                  app_permission_tier = $6, app_install_scope = $7, app_tools = $8, \
                  app_skill_ref = $9, updated_at = now() \
              WHERE id = $1 RETURNING {APP_COLUMNS}"
@@ -1480,6 +1510,7 @@ async fn put_app(
         .bind(&install_scope)
         .bind(&tools)
         .bind(req.skill_ref.as_deref())
+        .bind(req.export_mcp)
         .fetch_optional(&state.db)
         .await;
         match updated {
@@ -1498,6 +1529,7 @@ async fn put_app(
 
 #[derive(Debug, FromRow)]
 struct PublicAppRow {
+    id: String,
     owner_id: String,
     org_id: Option<String>,
     visibility: String,
@@ -1505,20 +1537,72 @@ struct PublicAppRow {
     app: AppRow,
 }
 
+/// D14 install rule: `Ok(())` installs; `Err(reason)` is `install_reason`.
+fn install_rule(
+    tier: &str,
+    install_scope: Option<&str>,
+    app_owner: &str,
+    app_org: Option<&str>,
+    viewer: Option<&Caller>,
+) -> std::result::Result<(), &'static str> {
+    let own = viewer.is_some_and(|v| v.id == app_owner);
+    let same_org = viewer.is_some_and(|v| app_org.is_some() && v.org_id.as_deref() == app_org);
+    if own || same_org {
+        return Ok(());
+    }
+    if install_scope == Some("org") {
+        return Err("org_only");
+    }
+    if tier == "browser" {
+        Ok(())
+    } else {
+        Err("tier_too_high")
+    }
+}
+
 async fn public_app(
     State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Response> {
-    if slug.is_empty() || slug.len() > 63 || !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) {
+    if slug.is_empty()
+        || slug.len() > 63
+        || !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
         return Err(ArtifactError::not_found());
     }
-    let row = sqlx::query_as::<_, PublicAppRow>(&format!(
-        "SELECT owner_id, org_id, visibility, {APP_COLUMNS} FROM artifacts WHERE app_slug = $1"
+    // The app's own slug first, then a hosted link name pointing at it.
+    let mut row = sqlx::query_as::<_, PublicAppRow>(&format!(
+        "SELECT id, owner_id, org_id, visibility, {APP_COLUMNS} FROM artifacts WHERE app_slug = $1"
     ))
     .bind(&slug)
     .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(ArtifactError::not_found)?;
+    .await?;
+    if row.is_none() {
+        let link = sqlx::query_as::<_, (Option<String>, String)>(
+            "SELECT artifact_id, status FROM share_links \
+             WHERE subdomain = $1 AND kind = 'hosted' AND subject = 'artifact'",
+        )
+        .bind(&slug)
+        .fetch_optional(&state.db)
+        .await?;
+        match link {
+            Some((_, status)) if status == "killed" => return Err(killed_app()),
+            Some((Some(artifact_id), status)) if status == "active" => {
+                row = sqlx::query_as::<_, PublicAppRow>(&format!(
+                    "SELECT id, owner_id, org_id, visibility, {APP_COLUMNS} FROM artifacts WHERE id = $1"
+                ))
+                .bind(&artifact_id)
+                .fetch_optional(&state.db)
+                .await?;
+            }
+            _ => {}
+        }
+    }
+    let row = row.ok_or_else(ArtifactError::not_found)?;
+    if crate::routes::share_links::subject_killed(&state.db, Some(&row.id), None).await? {
+        return Err(killed_app());
+    }
     // A private artifact is the owner's alone; an org that turns artifacts off
     // closes its apps at once (same re-check as the public link route).
     if row.visibility == "private" {
@@ -1529,26 +1613,52 @@ async fn public_app(
         return Err(ArtifactError::not_found());
     }
     let tier = row.app.app_permission_tier.clone().ok_or_else(ArtifactError::not_found)?;
+    // Signed in is optional: it only widens `install` for the owner and the org.
+    let viewer = if has_credentials(&headers) { caller(&state, &headers).await.ok() } else { None };
+    let install = install_rule(
+        &tier,
+        row.app.app_install_scope.as_deref(),
+        &row.owner_id,
+        row.org_id.as_deref(),
+        viewer.as_ref(),
+    );
     let made_by = profiles(&state.db, std::slice::from_ref(&row.owner_id))
         .await
         .remove(&row.owner_id)
         .and_then(|(name, _)| name);
-    let body = json!({
-        "slug": slug,
+    let mut body = json!({
+        // Always the app's own slug, also when it was opened by a link name.
+        "slug": row.app.app_slug.clone().unwrap_or(slug),
         "name": row.app.app_name,
         "icon": row.app.app_icon,
         "tier": tier,
         "pinned_version": row.app.app_pinned_version,
         "capability_snapshot": row.app.app_capability_snapshot,
-        // TODO(lane 8): the D14 install rule (link-shared installs for browser only, per tier and scope).
-        "install": tier == "browser",
+        "install": install.is_ok(),
         "made_by": made_by,
     });
+    if let Err(reason) = install {
+        body["install_reason"] = json!(reason);
+    }
     let mut response = Json(body).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     headers.insert("x-robots-tag", HeaderValue::from_static("noindex"));
     Ok(response)
+}
+
+fn killed_app() -> ArtifactError {
+    ArtifactError::coded(StatusCode::GONE, "killed", "This app was turned off by Allternit.")
+}
+
+/// Whether the request carries anything `caller` could resolve (so an
+/// anonymous visitor never waits on a Clerk lookup).
+fn has_credentials(headers: &HeaderMap) -> bool {
+    #[cfg(test)]
+    if headers.contains_key("x-test-caller") {
+        return true;
+    }
+    headers.contains_key(header::AUTHORIZATION) || headers.contains_key(header::COOKIE)
 }
 
 // ---------------------------------------------------------------------------
