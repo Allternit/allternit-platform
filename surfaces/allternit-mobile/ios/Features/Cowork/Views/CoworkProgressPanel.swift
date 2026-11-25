@@ -67,7 +67,7 @@ struct CoworkProgressPanel: View {
             sectionTitle("Tasks", icon: "checklist")
 
             if tasks.isEmpty {
-                emptyState("No tasks parsed yet.")
+                emptyState("No tasks parsed yet.", art: .bell)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(tasks) { task in
@@ -97,7 +97,7 @@ struct CoworkProgressPanel: View {
             sectionTitle("Working Files", icon: "folder")
 
             if workingFiles.isEmpty {
-                emptyState("No files detected yet.")
+                emptyState("No files detected yet.", art: .sheets)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(workingFiles, id: \.self) { path in
@@ -131,11 +131,8 @@ struct CoworkProgressPanel: View {
         }
     }
 
-    private func emptyState(_ text: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundColor(Color("TextSecondary"))
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func emptyState(_ text: String, art: EmptyArtKind) -> some View {
+        FriendlyInlineStateView(title: text, art: art)
     }
 
     // MARK: - Parsing

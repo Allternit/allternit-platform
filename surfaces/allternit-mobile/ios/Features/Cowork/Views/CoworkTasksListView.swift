@@ -163,7 +163,8 @@ struct CoworkTasksListView: View {
             action: {
                 Haptics.light()
                 isCreateSheetPresented = true
-            }
+            },
+            art: .bell
         )
     }
 

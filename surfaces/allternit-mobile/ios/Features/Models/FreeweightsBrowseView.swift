@@ -261,7 +261,8 @@ struct FreeweightsSection: View {
                     style: .empty,
                     icon: "magnifyingglass",
                     title: store.query.isEmpty ? "The catalog is empty" : "No models match \u{201C}\(store.query)\u{201D}",
-                    message: "Try a family name like qwen, gemma or deepseek."
+                    message: "Try a family name like qwen, gemma or deepseek.",
+                    art: .search
                 )
             } else {
                 card {
@@ -1175,7 +1176,8 @@ private struct ComputerPullPanel: View {
                         title: "No computer paired",
                         message: "Pulls run on a computer. Pair one in Computers.",
                         actionTitle: "Pair a computer",
-                        action: { isConnectSheetPresented = true }
+                        action: { isConnectSheetPresented = true },
+                        art: .connectScene
                     )
                 case .unreachable:
                     FriendlyInlineStateView(
