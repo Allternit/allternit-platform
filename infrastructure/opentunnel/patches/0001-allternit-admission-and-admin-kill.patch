@@ -1,0 +1,321 @@
+diff --git a/crates/opentunnel-server/src/admin.rs b/crates/opentunnel-server/src/admin.rs
+index 61623bf..54e2383 100644
+--- a/crates/opentunnel-server/src/admin.rs
++++ b/crates/opentunnel-server/src/admin.rs
+@@ -4,6 +4,8 @@
+ //!   not have written itself (`migration::check`)
+ //! - `POST /api/admin/export`: every record, in the same format, streamed a page at a time
+ //! - `POST /api/admin/stats`: tunnel, alarm and job counts, this machine's counters, and every machine's bridges
++//! - `POST /api/admin/tunnel/<id>/delete` (Allternit patch): deletes one tunnel and closes its bridges on every
++//!   machine; 204, or 404 `TunnelNotFoundError` when there is no such live tunnel
+ 
+ use std::sync::Arc;
+ use std::sync::atomic::Ordering;
+@@ -35,6 +37,28 @@ impl Admin for TokenAdmin {
+         async move {
+             let service = &app.service;
+             let (path, query) = path.split_once('?').unwrap_or((&path, ""));
++            // Allternit patch: revoke one tunnel by ID.
++            if let Some(id) = path
++                .strip_prefix("tunnel/")
++                .and_then(|rest| rest.strip_suffix("/delete"))
++                .filter(|id| !id.is_empty() && !id.contains('/'))
++            {
++                return match service.kill(id).await {
++                    Ok(crate::service::Lookup::NotFound) => json_response(
++                        StatusCode::NOT_FOUND,
++                        &json!({
++                            "_tag": "TunnelNotFoundError",
++                            "tunnelID": id,
++                            "message": "Tunnel not found",
++                        }),
++                    ),
++                    Ok(_) => response(StatusCode::NO_CONTENT),
++                    Err(error) => json_response(
++                        StatusCode::SERVICE_UNAVAILABLE,
++                        &json!({ "error": format!("{error:#}") }),
++                    ),
++                };
++            }
+             match path {
+                 "import" => {
+                     let file: ExportFile = match serde_json::from_slice(&body) {
+diff --git a/crates/opentunnel-server/src/admission.rs b/crates/opentunnel-server/src/admission.rs
+new file mode 100644
+index 0000000..9de3c14
+--- /dev/null
++++ b/crates/opentunnel-server/src/admission.rs
+@@ -0,0 +1,172 @@
++//! Allternit patch (`allternit-platform/infra/opentunnel/patches/0001`): tunnel admission.
++//!
++//! Upstream lets anyone `POST /api/tunnel`. With `ADMISSION_SECRET` set, a create needs a credential that
++//! Allternit's cloud-api mints for one live share link:
++//!
++//! ```text
++//! ota1.<payload>.<signature>
++//! payload   = base64url(JSON {"sub": "<link subdomain>", "lid": "<share link id>", "exp": <unix seconds>})
++//! signature = base64url(HMAC-SHA256(ADMISSION_SECRET, "ota1." + payload))
++//! ```
++//!
++//! The tunnel gets `sub` as its ID, so the public name is the one the share-link registry minted, and a
++//! credential can make at most one tunnel (a second create with the same `sub` answers 409). The credential
++//! rides as `Authorization: Bearer <credential>` or as a path prefix `/admit/<credential>/...`, because the
++//! OpenTunnel SDK can only set its API base URL. Every other route keeps its tunnel-token auth and ignores
++//! the prefix. Without `ADMISSION_SECRET` the server behaves as upstream.
++
++use std::sync::OnceLock;
++
++use hyper::Request;
++use ring::hmac;
++use serde::Deserialize;
++
++pub const PREFIX: &str = "/admit/";
++const VERSION: &str = "ota1";
++/// Longest lifetime accepted, so a credential cannot be minted far ahead of use.
++const MAX_LIFETIME_SECS: u64 = 3600;
++const SKEW_SECS: u64 = 60;
++
++/// The credential taken from a `/admit/<credential>` path prefix, kept as a request extension.
++#[derive(Debug, Clone)]
++pub struct Credential(pub String);
++
++#[derive(Debug, Clone, Deserialize)]
++pub struct Claims {
++    pub sub: String,
++    pub lid: String,
++    pub exp: u64,
++}
++
++/// `ADMISSION_SECRET`, read once. `None` (unset or empty) turns admission off.
++pub fn secret() -> Option<&'static [u8]> {
++    static SECRET: OnceLock<Option<Vec<u8>>> = OnceLock::new();
++    SECRET
++        .get_or_init(|| {
++            std::env::var("ADMISSION_SECRET")
++                .ok()
++                .filter(|value| !value.is_empty())
++                .map(String::into_bytes)
++        })
++        .as_deref()
++}
++
++/// Moves a `/admit/<credential>` prefix out of the path into a [`Credential`] extension.
++pub fn strip_prefix<B>(request: &mut Request<B>) {
++    let Some(rest) = request.uri().path().strip_prefix(PREFIX) else {
++        return;
++    };
++    let (credential, path) = match rest.find('/') {
++        Some(index) => (&rest[..index], &rest[index..]),
++        None => (rest, "/"),
++    };
++    let credential = credential.to_owned();
++    let uri = match request.uri().query() {
++        Some(query) => format!("{path}?{query}"),
++        None => path.to_owned(),
++    };
++    if let Ok(uri) = uri.parse() {
++        *request.uri_mut() = uri;
++        request.extensions_mut().insert(Credential(credential));
++    }
++}
++
++pub fn now_secs() -> u64 {
++    std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map_or(0, |elapsed| elapsed.as_secs())
++}
++
++/// Checks a credential. `Err` is a short reason for the refusal message.
++pub fn verify(secret: &[u8], credential: &str, now: u64) -> Result<Claims, &'static str> {
++    if credential.is_empty() {
++        return Err("credential required");
++    }
++    let mut parts = credential.split('.');
++    let (Some(version), Some(payload), Some(signature), None) =
++        (parts.next(), parts.next(), parts.next(), parts.next())
++    else {
++        return Err("malformed credential");
++    };
++    if version != VERSION {
++        return Err("unknown credential version");
++    }
++    let signature = crate::crypto::decode_base64url(signature).ok_or("malformed credential")?;
++    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
++    hmac::verify(&key, format!("{VERSION}.{payload}").as_bytes(), &signature)
++        .map_err(|_| "bad signature")?;
++    let claims: Claims = crate::crypto::decode_base64url(payload)
++        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++        .ok_or("malformed credential")?;
++    if claims.exp.saturating_add(SKEW_SECS) < now {
++        return Err("credential expired");
++    }
++    if claims.exp > now.saturating_add(MAX_LIFETIME_SECS) {
++        return Err("credential lifetime too long");
++    }
++    if !valid_label(&claims.sub) || claims.lid.is_empty() {
++        return Err("invalid link");
++    }
++    Ok(claims)
++}
++
++/// One lowercase DNS label: `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`.
++fn valid_label(label: &str) -> bool {
++    let bytes = label.as_bytes();
++    !bytes.is_empty()
++        && bytes.len() <= 63
++        && bytes
++            .iter()
++            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
++        && bytes[0] != b'-'
++        && bytes[bytes.len() - 1] != b'-'
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const SECRET: &[u8] = b"test-admission-secret";
++
++    fn mint(secret: &[u8], payload: &str) -> String {
++        let payload = crate::crypto::base64url(payload.as_bytes());
++        let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
++        let signature = hmac::sign(&key, format!("{VERSION}.{payload}").as_bytes());
++        format!(
++            "{VERSION}.{payload}.{}",
++            crate::crypto::base64url(signature.as_ref())
++        )
++    }
++
++    #[test]
++    fn accepts_a_fresh_credential() {
++        let credential = mint(SECRET, r#"{"sub":"k3x9q2m7v8w4p5ra","lid":"shl_1","exp":1600}"#);
++        let claims = verify(SECRET, &credential, 1000).expect("valid");
++        assert_eq!(claims.sub, "k3x9q2m7v8w4p5ra");
++        assert_eq!(claims.lid, "shl_1");
++    }
++
++    #[test]
++    fn refuses_missing_forged_expired_and_bad_names() {
++        assert_eq!(verify(SECRET, "", 1000).unwrap_err(), "credential required");
++        let forged = mint(b"other", r#"{"sub":"abc","lid":"shl_1","exp":1600}"#);
++        assert_eq!(verify(SECRET, &forged, 1000).unwrap_err(), "bad signature");
++        let expired = mint(SECRET, r#"{"sub":"abc","lid":"shl_1","exp":900}"#);
++        assert_eq!(verify(SECRET, &expired, 1000).unwrap_err(), "credential expired");
++        let long = mint(SECRET, r#"{"sub":"abc","lid":"shl_1","exp":99999}"#);
++        assert_eq!(verify(SECRET, &long, 1000).unwrap_err(), "credential lifetime too long");
++        let bad_name = mint(SECRET, r#"{"sub":"a.b","lid":"shl_1","exp":1600}"#);
++        assert_eq!(verify(SECRET, &bad_name, 1000).unwrap_err(), "invalid link");
++    }
++
++    #[test]
++    fn strips_the_admit_prefix() {
++        let mut request = Request::builder()
++            .uri("/admit/ota1.x.y/api/tunnel?a=1")
++            .body(())
++            .unwrap();
++        strip_prefix(&mut request);
++        assert_eq!(request.uri(), "/api/tunnel?a=1");
++        assert_eq!(request.extensions().get::<Credential>().unwrap().0, "ota1.x.y");
++    }
++}
+diff --git a/crates/opentunnel-server/src/http.rs b/crates/opentunnel-server/src/http.rs
+index 3d0830d..bad33c6 100644
+--- a/crates/opentunnel-server/src/http.rs
++++ b/crates/opentunnel-server/src/http.rs
+@@ -304,7 +304,8 @@ async fn payload(request: Request<Incoming>) -> Result<Value, Response<Body>> {
+ }
+ 
+ impl App {
+-    pub async fn handle(self: Arc<Self>, request: Request<Incoming>) -> Response<Body> {
++    pub async fn handle(self: Arc<Self>, mut request: Request<Incoming>) -> Response<Body> {
++        crate::admission::strip_prefix(&mut request);
+         let path = request.uri().path().to_owned();
+         if path == "/health" {
+             return json_response(StatusCode::OK, &json!({ "ok": true }));
+@@ -464,6 +465,28 @@ impl App {
+     async fn create(&self, request: Request<Incoming>) -> Response<Body> {
+         let client = analytics::client(user_agent(request.headers()));
+         let source = request.extensions().get::<Source>().copied();
++        // Allternit patch: only a credential minted for one share link may create a tunnel (admission.rs).
++        let admitted = match crate::admission::secret() {
++            None => None,
++            Some(secret) => {
++                let credential = match request.extensions().get::<crate::admission::Credential>() {
++                    Some(credential) => credential.0.clone(),
++                    None => bearer(request.headers()),
++                };
++                match crate::admission::verify(secret, &credential, crate::admission::now_secs()) {
++                    Ok(claims) => Some(claims),
++                    Err(reason) => {
++                        return ordered(
++                            StatusCode::BAD_REQUEST,
++                            &[
++                                ("_tag", "InvalidRequestError".into()),
++                                ("message", format!("Tunnel admission refused: {reason}").into()),
++                            ],
++                        );
++                    }
++                }
++            }
++        };
+         let address = match (self.service.limits(), source) {
+             (Some(limits), Some(Source(source))) => {
+                 Some(limits.proxies.client(source.ip(), request.headers()))
+@@ -511,11 +534,14 @@ impl App {
+                 }
+             }
+         }
+-        let id = slug();
++        let id = admitted.as_ref().map_or_else(slug, |claims| claims.sub.clone());
+         let token = token();
+         match self.service.create(&id, hash_token(&token)).await {
+             Ok(Some(tunnel)) => {
+                 let mut event = json!({ "tunnel_id": id });
++                if let Some(claims) = &admitted {
++                    event["share_link_id"] = claims.lid.clone().into();
++                }
+                 for (key, value) in client.fields() {
+                     event[key] = value;
+                 }
+diff --git a/crates/opentunnel-server/src/lib.rs b/crates/opentunnel-server/src/lib.rs
+index 0d75aad..8e9a15e 100644
+--- a/crates/opentunnel-server/src/lib.rs
++++ b/crates/opentunnel-server/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! certificate, and issues and renews tunnel certificates. See `docs/protocol.md` and `docs/server.md`.
+ 
+ pub mod acme;
++pub mod admission;
+ pub mod admin;
+ pub mod analytics;
+ pub mod bridge;
+diff --git a/crates/opentunnel-server/src/service.rs b/crates/opentunnel-server/src/service.rs
+index db9fd78..2964ce9 100644
+--- a/crates/opentunnel-server/src/service.rs
++++ b/crates/opentunnel-server/src/service.rs
+@@ -958,12 +958,24 @@ impl Service {
+     }
+ 
+     pub async fn remove(&self, id: &str, token: &str) -> Result<Lookup<()>> {
++        self.delete(id, Some(token)).await
++    }
++
++    /// Allternit patch: deletes a tunnel without its token, for `POST /api/admin/tunnel/<id>/delete`
++    /// (an operator or cloud-api killing one share link).
++    pub async fn kill(&self, id: &str) -> Result<Lookup<()>> {
++        self.delete(id, None).await
++    }
++
++    async fn delete(&self, id: &str, token: Option<&str>) -> Result<Lookup<()>> {
+         let entry = self.entry(id);
+         let mut state = self.lock_fresh(&entry).await?;
+         let Some(record) = state.record().cloned() else {
+             return Ok(Lookup::NotFound);
+         };
+-        if !token_matches(token, &record.token_hash) {
++        if let Some(token) = token
++            && !token_matches(token, &record.token_hash)
++        {
+             return Ok(Lookup::Unauthorized);
+         }
+         for bridge in &state.bridges {

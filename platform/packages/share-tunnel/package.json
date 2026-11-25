@@ -1,0 +1,30 @@
+{
+  "name": "@allternit/share-tunnel",
+  "version": "0.1.0",
+  "description": "One live-link client for Desktop, agent-daemon and gizzi: a local port through the share gate and the OpenTunnel relay, with cloud-api heartbeats",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opentunnel/client": "0.6.2",
+    "effect": "4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^1.6.0"
+  }
+}
