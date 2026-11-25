@@ -338,6 +338,7 @@ struct BotPhoneView: View {
                                   actionTitle: "Give it a phone", action: { givingPhone = true })
                     .listRowBackground(Color.clear)
             } else {
+                presenceHeader
                 identitySection
                 conversationsSection
             }
@@ -375,6 +376,17 @@ struct BotPhoneView: View {
         } message: {
             Text(openError ?? "")
         }
+    }
+
+    /// The bot at rest on its own phone (Allo motion kit: bob, static under Reduce Motion).
+    private var presenceHeader: some View {
+        HStack {
+            Spacer()
+            BotPresenceView(bot: bot, size: 72, presence: .idle)
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .listRowBackground(Color.clear)
     }
 
     @ViewBuilder
