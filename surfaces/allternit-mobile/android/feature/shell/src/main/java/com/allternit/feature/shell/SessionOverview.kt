@@ -79,6 +79,9 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.FriendlyState
+import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 import kotlin.math.roundToInt
@@ -373,13 +376,27 @@ internal fun SessionOverviewScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !store.hasLoaded && store.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
-                shown.isEmpty() -> Text(
-                    if (query.isEmpty()) emptyText else "Nothing matches “$query”.",
-                    color = c.textSecondary,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
+                shown.isEmpty() && query.isNotEmpty() -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = "Nothing matches “$query”.",
+                    message = "",
+                    art = EmptyArtKind.Search,
                     modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
-                )
+                ) {}
+                shown.isEmpty() && viewFilter == OverviewView.Archived -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = emptyText,
+                    message = "",
+                    art = EmptyArtKind.Archive,
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
+                ) {}
+                shown.isEmpty() -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = emptyText,
+                    message = "",
+                    art = EmptyArtKind.Sheets,
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
+                ) {}
                 layout == OverviewLayout.List -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp)) {
                     items(shown, key = { it.id }) { s ->
                         OverviewListRow(

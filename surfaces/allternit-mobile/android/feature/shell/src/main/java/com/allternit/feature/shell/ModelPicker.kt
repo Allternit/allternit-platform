@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
@@ -212,13 +214,21 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                         }
                     }
                     groups.isEmpty() -> item(key = "empty") {
-                        Text(
-                            if (pick == PickerScope.Favorites) "Star a model to keep it here." else "No models match",
-                            color = c.textSecondary,
-                            fontSize = 14.sp,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        )
+                        if (pick == PickerScope.Favorites) {
+                            Text(
+                                "Star a model to keep it here.",
+                                color = c.textSecondary,
+                                fontSize = 14.sp,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        } else {
+                            InlineEmpty(
+                                text = "No models match",
+                                art = EmptyArtKind.Search,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 16.dp),
+                            )
+                        }
                     }
                     else -> groups.forEach { group ->
                         item(key = "h-${group.key}") {

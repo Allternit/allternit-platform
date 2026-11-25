@@ -448,6 +448,7 @@ internal fun InboxSheet(
                     style = FriendlyStyle.Offline,
                     title = if (store.noComputer) NoComputerCopy.TITLE else "No inbox on this computer yet",
                     message = if (store.noComputer) NoComputerCopy.DETAIL else "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you.",
+                    art = if (store.noComputer) com.allternit.core.design.EmptyArtKind.ConnectScene else com.allternit.core.design.EmptyArtKind.Envelope,
                     modifier = Modifier.align(Alignment.Center).padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_desktop), contentDescription = null, tint = c.textSecondary) }
                 store.error != null && store.items.isEmpty() -> FriendlyState(

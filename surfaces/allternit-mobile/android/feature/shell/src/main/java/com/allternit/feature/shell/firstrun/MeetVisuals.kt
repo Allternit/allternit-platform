@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.allternit.core.design.ThinkingOrb
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.ThinkingOrbSize
 import com.allternit.core.design.ThinkingOrbState
 import com.allternit.feature.shell.R
@@ -333,7 +335,7 @@ internal fun MeetRoutineDay(routines: List<MeetRoutineDraft>, colorOf: (String) 
             }
         }
         if (placed.isEmpty()) {
-            Text("Nothing runs today.", fontSize = 12.5.sp, color = c.mut, modifier = Modifier.align(Alignment.Center))
+            InlineEmpty(text = "Nothing runs today.", art = EmptyArtKind.Calendar, modifier = Modifier.align(Alignment.Center))
         }
     }
 }

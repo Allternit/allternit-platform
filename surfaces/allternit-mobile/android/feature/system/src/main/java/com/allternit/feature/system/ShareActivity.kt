@@ -45,6 +45,8 @@ import com.allternit.core.api.ApiResult
 import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.auth.AuthState
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.ThemeMode
 import com.allternit.feature.chat.ChatBackends
 import com.allternit.feature.chat.RuntimeCall
@@ -136,7 +138,7 @@ private fun ShareToBotScreen(shared: SharedItems, onFinish: () -> Unit, onOpenAp
             Text(summary(shared), color = c.textSecondary)
             when {
                 shared.isEmpty -> {
-                    Text("Nothing to share here. Share text, a link, a photo or a file.", color = c.textSecondary)
+                    InlineEmpty(text = "Nothing to share here. Share text, a link, a photo or a file.", art = EmptyArtKind.Envelope)
                     TextButton(onClick = onFinish) { Text("Close") }
                 }
                 authState !is AuthState.SignedIn -> {
@@ -146,7 +148,7 @@ private fun ShareToBotScreen(shared: SharedItems, onFinish: () -> Unit, onOpenAp
                 else -> when (val p = phase) {
                     SharePhase.Picking -> {
                         if (bots.isEmpty()) {
-                            Text("No bots yet. Open Allternit to set up your first bot.", color = c.textSecondary)
+                            InlineEmpty(text = "No bots yet. Open Allternit to set up your first bot.", art = EmptyArtKind.Gizzi)
                             Button(onClick = onOpenApp) { Text("Open Allternit") }
                         } else {
                             LazyColumn(Modifier.fillMaxWidth().height(220.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

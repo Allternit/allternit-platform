@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.listUnder
@@ -59,6 +60,7 @@ internal class ResourceSpec(
     val titleKeys: List<String> = listOf("name", "id"),
     val detailKeys: List<String> = emptyList(),
     val empty: String,
+    val art: EmptyArtKind = EmptyArtKind.Sheets,
     val actions: List<RAction> = emptyList(),
     val createTitle: String? = null,
     val createPath: String? = null,
@@ -99,7 +101,7 @@ internal fun ResourcePage(spec: ResourceSpec, back: () -> Unit, footer: (@Compos
         SNote(spec.note)
         LoadView(load, reload, "load ${spec.title.lowercase()}") { body ->
             val rows = body.listUnder(*spec.listKeys.toTypedArray())
-            if (rows.isEmpty()) StateBox("Nothing here yet", spec.empty, null, null, com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
+            if (rows.isEmpty()) EmptyStateBox(spec) else SCard {
                 rows.forEachIndexed { i, item ->
                     val id = item.first(spec.idKeys) ?: "$i"
                     if (i > 0) SDivider()
@@ -210,6 +212,10 @@ private fun ResourceForm(spec: ResourceSpec, onBack: () -> Unit, onDone: () -> U
     }
 }
 
+/** Empty block for a resource list: the spec's own art kind. */
+@Composable
+private fun EmptyStateBox(spec: ResourceSpec) = StateBox("Nothing here yet", spec.empty, null, null, art = spec.art)
+
 private fun esc(s: String) = LibraryNet.escape(s)
 private fun JsonObject.id(): String = first(listOf("deployment_id", "id", "name")) ?: ""
 
@@ -220,6 +226,7 @@ internal val CLOUD_INSTANCES = ResourceSpec(
     idKeys = listOf("deployment_id", "id"), titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider", "step"),
     note = "Servers you registered with Allternit. Advance a setup, bootstrap it, or cancel it.",
     empty = "No registered instances. Register one and it shows up here.",
+    art = EmptyArtKind.Network,
     actions = listOf(
         RAction("Advance", "cloudInstances_advance", "POST", { "$WIZ/${esc(it.id())}/advance" }),
         RAction("Bootstrap", "cloudInstances_bootstrap", "POST", { "$WIZ/${esc(it.id())}/bootstrap" }, confirm = "This installs Allternit on the server. It can take a few minutes."),
@@ -244,6 +251,7 @@ internal val CLOUD_DEPLOY = ResourceSpec(
     idKeys = listOf("deployment_id", "id"), titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider_id", "region_id"),
     note = "Allternit servers being built at a cloud provider, and the ones already running.",
     empty = "No deployments yet.",
+    art = EmptyArtKind.Log,
     actions = listOf(
         RAction("Cancel deployment", "cloudDeploy_cancel", "DELETE", { "deployments/${esc(it.id())}/cancel" }, destructive = true,
             confirm = "The build stops. Anything already created at the provider stays there.",
@@ -268,6 +276,7 @@ internal val VPS_SERVERS = ResourceSpec(
     titleKeys = listOf("name", "host", "id"), detailKeys = listOf("host", "status"),
     note = "Servers Allternit reaches over SSH. Connect to start using one, disconnect to let it go.",
     empty = "No servers yet. Add one with its address and a key or password.",
+    art = EmptyArtKind.ConnectScene,
     actions = listOf(
         RAction("Connect", "vpsServers_connect", "POST", { "ssh-connections/${esc(it.id())}/connect" }, show = { it.str("status") != "connected" }),
         RAction("Disconnect", "vpsServers_disconnect", "POST", { "ssh-connections/${esc(it.id())}/disconnect" }, show = { it.str("status") == "connected" }),
@@ -290,6 +299,7 @@ internal val NODES = ResourceSpec(
     titleKeys = listOf("name", "hostname", "id"), detailKeys = listOf("status", "hostname"),
     note = "Machines that joined your mesh. Remove one and it has to join again with a new token.",
     empty = "No nodes have joined yet. Make a token below and run the join command on the machine.",
+    art = EmptyArtKind.ConnectScene,
     actions = listOf(RAction("Remove node", "nodes_delete", "DELETE", { "nodes/${esc(it.id())}" }, destructive = true, confirm = "The node leaves your mesh.")),
 )
 
@@ -298,6 +308,7 @@ internal val CLOUD_BACKUPS = ResourceSpec(
     titleKeys = listOf("name", "id"), detailKeys = listOf("status", "region"),
     note = "Pick a cloud computer to see its restore points.",
     empty = "No cloud computers yet.",
+    art = EmptyArtKind.ConnectScene,
 )
 
 internal val BYOC = ResourceSpec(
@@ -305,6 +316,7 @@ internal val BYOC = ResourceSpec(
     titleKeys = listOf("label", "provider", "id"), detailKeys = listOf("provider", "region", "status"),
     note = "Cloud accounts your organization connected, so Allternit can build environments in them.",
     empty = "No provider connections yet.",
+    art = EmptyArtKind.Model,
     actions = listOf(RAction("Revoke", "byoc_revoke", "DELETE", { "cloud-credentials/${esc(it.id())}" }, destructive = true, confirm = "Allternit can't use this connection any more.")),
     createTitle = "Connect a provider", createPath = "cloud-credentials",
     createNote = "The secret is sent once to Allternit's vault and never shown again.",
@@ -329,6 +341,7 @@ fun CloudBackupsPage(back: () -> Unit) {
             titleKeys = listOf("name", "id"), detailKeys = listOf("created_at", "status"),
             note = "Restore points for this computer. Restoring replaces what is on it now.",
             empty = "No restore points yet.",
+            art = EmptyArtKind.Sheets,
             actions = listOf(
                 RAction("Restore", "cloudBackups_restore", "POST", { "$base/snapshots/${esc(it.id())}/restore" }, destructive = true, confirm = "This computer goes back to this restore point. Anything newer is lost."),
                 RAction("Delete restore point", "cloudBackups_delete", "DELETE", { "$base/snapshots/${esc(it.id())}" }, destructive = true, confirm = "This restore point is gone for good."),
@@ -347,7 +360,7 @@ private fun ResourcePicker(spec: ResourceSpec, back: () -> Unit, onPick: (JsonOb
         SNote(spec.note)
         LoadView(load, reload, "load your computers") { body ->
             val rows = body.listUnder(*spec.listKeys.toTypedArray())
-            if (rows.isEmpty()) StateBox("Nothing here yet", spec.empty, null, null, com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
+            if (rows.isEmpty()) EmptyStateBox(spec) else SCard {
                 rows.forEachIndexed { i, item ->
                     if (i > 0) SDivider()
                     SRow(item.first(spec.titleKeys) ?: "Computer", "${spec.tag}_${item.id()}", detail = spec.detailKeys.mapNotNull { item.str(it) }.joinToString(" · ").ifBlank { null }, onClick = { onPick(item) })
