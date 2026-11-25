@@ -317,6 +317,17 @@ struct MessageRow: View {
                         perfStatsLine(stats)
                     }
                 }
+
+                // Follow-ups: only under the newest finished reply, from its own
+                // closing "Next step:" line (web 5.2). Hidden while streaming.
+                if message.role == "assistant", isLastAssistant, !message.isStreaming,
+                   message.error == nil, let onSendPrompt {
+                    let followUps = FollowUps.fromText(message.content)
+                    if !followUps.isEmpty {
+                        FollowUpChips(prompts: followUps, onPick: onSendPrompt)
+                            .id("followups-\(message.id)")
+                    }
+                }
             }
 
             .frame(maxWidth: message.role == "user" ? UIScreen.main.bounds.width * 0.8 : .infinity,

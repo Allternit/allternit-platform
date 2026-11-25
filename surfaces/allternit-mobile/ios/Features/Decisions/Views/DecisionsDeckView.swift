@@ -38,6 +38,21 @@ final class DecisionsStore: ObservableObject {
         questions.filter { !AgentAskStore.shared.isResolved($0.id) }
     }
 
+    /// Done / Later on a Factory approval: the same inbox calls the web Inbox uses
+    /// (`POST /inbox/factory:<id>/dismiss` and `/snooze`). A pending question is not an
+    /// inbox item, so the server cannot snooze or dismiss it and the deck offers neither.
+    func dismiss(_ approval: FactoryApprovalsClient.Approval) async throws {
+        try await InboxClient.shared.dismiss("factory:\(approval.id)")
+        resolvedApprovals.insert(approval.id)
+        approvals.removeAll { $0.id == approval.id }
+    }
+
+    func snooze(_ approval: FactoryApprovalsClient.Approval, minutes: Int) async throws {
+        try await InboxClient.shared.snooze("factory:\(approval.id)", minutes: minutes)
+        resolvedApprovals.insert(approval.id)
+        approvals.removeAll { $0.id == approval.id }
+    }
+
     func startWatching() {
         watchers += 1
         guard pollTask == nil else { return }
@@ -151,6 +166,8 @@ struct DecisionsDeckView: View {
     @ObservedObject private var store = DecisionsStore.shared
     @ObservedObject private var asks = AgentAskStore.shared
     @State private var index = 0
+    @State private var collapsed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let items = store.visibleQuestions
@@ -210,7 +227,7 @@ struct DecisionsDeckView: View {
                     .font(.footnote)
                     .foregroundColor(Color("TextSecondary"))
                 Spacer(minLength: 0)
-                if items.count > 1 {
+                if items.count > 1, !collapsed {
                     HStack(spacing: 0) {
                         Text("\(at + 1) of \(items.count)")
                             .font(.footnote.monospacedDigit())
@@ -219,7 +236,28 @@ struct DecisionsDeckView: View {
                         pagerButton("chevron.right", label: "Next decision", disabled: at >= items.count - 1) { index = at + 1 }
                     }
                 }
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { collapsed.toggle() }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Color("TextSecondary"))
+                .accessibilityLabel(collapsed ? "Expand decisions" : "Collapse decisions")
             }
+            if !collapsed {
+                questionBody(current, at: at)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func questionBody(_ current: AgentQuestionRequest, at: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             QuestionCardView(request: current, agentName: store.agentNames[current.sessionID]) {
                 // Let "Sent" read before the next one slides in.
                 Task {
@@ -289,6 +327,7 @@ struct FactoryApprovalCard: View {
     @ObservedObject private var store = DecisionsStore.shared
     @State private var busy: String? = nil
     @State private var error: String? = nil
+    @State private var showsLater = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -321,9 +360,26 @@ struct FactoryApprovalCard: View {
                 .font(.caption2)
                 .foregroundColor(Color("TextTertiary"))
             HStack(spacing: 8) {
+                Button("Later") { showsLater.toggle() }
+                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    .disabled(busy != nil)
+                    .accessibilityLabel("Later: choose when this comes back")
+                Button("Done") { inboxAct("dismiss") { try await store.dismiss(approval) } }
+                    .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                    .disabled(busy != nil)
+                    .accessibilityLabel("Done: dismiss \(approval.title) from the inbox")
                 Spacer(minLength: 0)
                 decisionButton("Reject", decision: "reject", kind: .quiet)
                 decisionButton("Approve", decision: "approve", kind: .primary)
+            }
+            if showsLater {
+                HStack(spacing: 8) {
+                    ForEach([(15, "15 min"), (60, "1 hour"), (180, "3 hours")], id: \.0) { minutes, label in
+                        Button(label) { inboxAct("snooze") { try await store.snooze(approval, minutes: minutes) } }
+                            .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+                            .disabled(busy != nil)
+                    }
+                }
             }
             if let error {
                 Text(error)
@@ -340,6 +396,22 @@ struct FactoryApprovalCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(approval.isHighRisk ? Color.red.opacity(0.35) : Color("BorderSubtle"), lineWidth: 1)
         )
+    }
+
+    private func inboxAct(_ key: String, _ work: @escaping () async throws -> Void) {
+        busy = key
+        error = nil
+        showsLater = false
+        Task {
+            do {
+                try await work()
+                Haptics.success()
+            } catch {
+                self.error = FriendlyErrorMessage.from(error.localizedDescription)
+                Haptics.error()
+            }
+            busy = nil
+        }
     }
 
     private func decisionButton(_ title: String, decision: String, kind: QuestionCardButtonStyle.Kind) -> some View {
