@@ -23,6 +23,8 @@ import { createInterface } from "node:readline"
 import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
+import chalk from "@/shared/util/chalk"
+import { shouldAnimateDots } from "@/shared/util/dot-progress"
 import { platformFetch, PlatformSignedOutError } from "@/runtime/bots/platform-api"
 
 // ── transport ─────────────────────────────────────────────────────────────
@@ -280,6 +282,8 @@ export interface FollowDeps {
   /** Answer one hold (see resolveHold). */
   hold(approvalId: string): Promise<Decision>
   say(line: string): void
+  /** Draw a step on the one-line ticker; without it each step is a `say` line. */
+  tick?(row: RunRow): void
   pollMs?: number
 }
 
@@ -292,6 +296,45 @@ export function formatStep(row: RunRow): string {
   const n = row.step ?? row.steps
   const label = row.step_label?.trim()
   return `  step ${n}${label ? ` · ${label}` : ""}${row.failed ? ` (${row.failed} failed)` : ""}`
+}
+
+const CLEAR_LINE = "\r\x1b[2K"
+
+/**
+ * The live one-line step ticker: "▸ step 3 · Open Settings", redrawn in
+ * place and cut to the terminal width. Pure: returns the text to write.
+ * `live` false (pipe, NO_COLOR, TERM=dumb, reduced motion) gives the static
+ * line formatStep makes, one per step, with no escape codes.
+ */
+export function formatTicker(row: RunRow, live: boolean, width = 80): string {
+  if (!live) return formatStep(row) + "\n"
+  const n = row.step ?? row.steps
+  const label = row.step_label?.trim()
+  const plain = `▸ step ${n}${label ? ` · ${label}` : ""}${row.failed ? ` (${row.failed} failed)` : ""}`
+  const cut = plain.length > width - 1 ? plain.slice(0, Math.max(1, width - 2)) + "…" : plain
+  const head = `▸ step ${n}`
+  const rest = cut.slice(head.length)
+  return CLEAR_LINE + chalk.cyan(head) + (row.failed ? chalk.red(rest) : chalk.dim(rest))
+}
+
+/** Writes the ticker; a normal line first wipes the ticker so nothing is left half-drawn. */
+export function makeTicker(out: { write(s: string): unknown; columns?: number }, live: boolean) {
+  let on = false
+  return {
+    tick(row: RunRow) {
+      out.write(formatTicker(row, live, out.columns || 80))
+      on = live
+    },
+    say(line: string) {
+      if (on) out.write(CLEAR_LINE)
+      on = false
+      out.write(line + "\n")
+    },
+    end() {
+      if (on) out.write(CLEAR_LINE)
+      on = false
+    },
+  }
 }
 
 export async function followTask(d: FollowDeps): Promise<TaskReport> {
@@ -320,7 +363,8 @@ export async function followTask(d: FollowDeps): Promise<TaskReport> {
       if (n > lastStep || (n === lastStep && line !== lastLine && row.step_label)) {
         lastStep = n
         lastLine = line
-        d.say(line)
+        if (d.tick) d.tick(row)
+        else d.say(line)
       }
     }
     const waiting = rows.find((r) => r.status === "waiting_approval" && r.approvalId && !seen.has(r.approvalId))
@@ -443,9 +487,12 @@ const TaskCommand = cmd({
         },
       )
       const io = terminalIO()
+      const ticker = makeTicker(process.stdout, shouldAnimateDots() && Boolean(process.stdout.isTTY))
+      io.say = ticker.say
       const report = await followTask({
         task,
-        say: io.say,
+        say: ticker.say,
+        tick: ticker.tick,
         runs: async () =>
           (await listRuns())
             .filter((r) => r.serial === phone.serial && Date.parse(r.started_at) >= startedAt)
@@ -459,6 +506,7 @@ const TaskCommand = cmd({
           return resolveHold(hold, io)
         },
       })
+      ticker.end()
       if (report.status === "refused") {
         process.stdout.write((report.message || "The task was refused.") + "\n")
         process.exitCode = 1

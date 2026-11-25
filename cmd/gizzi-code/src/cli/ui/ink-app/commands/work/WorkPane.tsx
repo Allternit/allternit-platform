@@ -54,7 +54,9 @@ export function WorkPane<T>({
   onClose,
   notice,
   blockTitle,
+  header,
 }: {
+  header?: React.ReactNode
   blockTitle?: boolean
   title: string
   subtitle?: string
@@ -85,6 +87,7 @@ export function WorkPane<T>({
         {blockTitle ? <BlockTitle title={title.toUpperCase()} /> : <Text bold>{title}</Text>}
         {subtitle ? <Text dimColor> · {subtitle}</Text> : null}
       </Box>
+      {header}
       {error ? <Text color="warning">{error}</Text> : null}
       {!items && !error ? <Text dimColor>Loading…</Text> : null}
       {items && items.length === 0 ? <Text dimColor>{empty}</Text> : null}
