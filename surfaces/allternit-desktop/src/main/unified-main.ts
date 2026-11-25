@@ -2612,6 +2612,19 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Live links: each running share with its own Stop. Stop revokes it.
+  const liveShares = shareManager.list().filter((share) => share.state !== 'stopped');
+  const liveLinksSection: Electron.MenuItemConstructorOptions[] = liveShares.length
+    ? [
+        { label: `Live links (${liveShares.length})`, enabled: false },
+        ...liveShares.map((share): Electron.MenuItemConstructorOptions => ({
+          label: `Stop ${share.label || share.subdomain}`,
+          click: () => { void shareManager.stop(share.id); },
+        })),
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
@@ -2627,7 +2640,8 @@ async function updateTrayMenu(): Promise<void> {
       },
     },
     ...(permItem ? [permItem, { type: 'separator' as const }] : []),
-    { label: 'Show Window', click: () => showOrReopenMainWindow() },
+    { label: 'Open Allternit', click: () => showOrReopenMainWindow() },
+    ...liveLinksSection,
     { label: 'Show Desktop Pet', click: () => desktopCompanion.show() },
     { label: 'Desktop Pet Settings…', click: () => desktopCompanion.settings() },
     { label: 'Reset Pet Position', click: () => desktopCompanion.reset() },
@@ -3283,7 +3297,13 @@ app.whenReady().then(async () => {
 let appWindowOpened = false;
 
 app.on('window-all-closed', () => {
-  if (!isMac && appWindowOpened) app.quit();
+  if (isMac || !appWindowOpened) return;
+  // Keep running in the tray (Windows/Linux, opt-in): live links and app
+  // helpers keep serving. Only with a tray icon to reopen from, else the app
+  // would be running with no way back in. Quit from the tray still stops
+  // and revokes every live link.
+  if (persistedState.get('prefs').keepRunningInTray && tray) return;
+  app.quit();
 });
 
 async function handoffInFlightToCloud(): Promise<void> {
@@ -3351,7 +3371,10 @@ const shareManager = new ShareManager({
   getDesktopAccessToken: () => backendManager.getDesktopAccessToken(),
   // D7: every Desktop service port is refused, not only allternit-api and gizzi.
   extraDeniedPorts: Object.values(PORTS) as readonly number[],
-  emit: (event) => broadcastToMainWindows('shares:event', event),
+  emit: (event) => {
+    broadcastToMainWindows('shares:event', event);
+    void updateTrayMenu();
+  },
 });
 authManager.setRelayHostHandler((method, path, body) => {
   if (method !== 'POST') return Promise.resolve(null);
@@ -3363,7 +3386,18 @@ featureFlagManager.onChange((key, value) => {
   if (key === 'share.live' && value !== true) void shareManager.disable();
 });
 
-handleGuarded('shares:start', (_event, request: ShareStartRequest) => shareManager.start(request));
+// Windows/Linux with keep-in-tray off: live links end when the last window
+// closes. Tell the renderer once per run, when a link starts, so it can show
+// "Live links stop when Allternit closes" with a button that turns it on.
+let trayHintSent = false;
+handleGuarded('shares:start', async (_event, request: ShareStartRequest) => {
+  const result = await shareManager.start(request);
+  if (result.ok && !isMac && !trayHintSent && !persistedState.get('prefs').keepRunningInTray) {
+    trayHintSent = true;
+    broadcastToMainWindows('tray:keepRunningHint', { message: 'Live links stop when Allternit closes' });
+  }
+  return result;
+});
 handleGuarded('shares:list', () => shareManager.list());
 handleGuarded('shares:pause', (_event, id: string) => shareManager.pause(String(id)));
 handleGuarded('shares:resume', (_event, id: string) => shareManager.resume(String(id)));
@@ -5513,6 +5547,14 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
     }
   }
   broadcastToMainWindows('menuBar:modeChanged', enabled);
+  return true;
+});
+
+ipcMain.handle('tray:getKeepRunning', () => persistedState.get('prefs').keepRunningInTray);
+
+handleGuarded('tray:setKeepRunning', (_event, enabled: boolean) => {
+  persistedState.patch('prefs', { keepRunningInTray: enabled === true });
+  broadcastToMainWindows('tray:keepRunningChanged', enabled === true);
   return true;
 });
 
