@@ -13,9 +13,9 @@ private struct IdentifiableString: Identifiable {
 /// The Artifacts section as the phone opens it from the drawer (allternit-ai
 /// src/views/library/ArtifactsView.tsx `phoneChrome`): a round ☰ and filter
 /// (Show · Owner · Kind) on top, the serif "Artifacts" title with the
-/// List · Grid · Deck switch, "Make something new", "Or start from your
-/// connected tools", then "Your artifacts"; a floating search pill and a
-/// round + (New artifact menu) at the bottom. Records are the account's
+/// List · Grid · Deck switch, then "Your artifacts" (empty: the kinds); a
+/// floating search pill and a round + (New artifact: the deck's mode list
+/// sheet) at the bottom. Records are the account's
 /// Artifacts v2 library, the same ones Desktop and the web show.
 struct ArtifactsLibraryView: View {
     @Binding var isSidebarOpen: Bool
@@ -31,10 +31,9 @@ struct ArtifactsLibraryView: View {
     @State private var notice: String?
     @State private var deletingSession: ArtifactStudioSession?
     @State private var showingOfficeDocuments = false
-    @State private var showingConnectors = false
+    @State private var choosingNew = false
     @State private var searchDraft = ""
     @State private var searching = false
-    @State private var tilesShown = false
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
     @State private var choosingPhoto = false
@@ -62,8 +61,6 @@ struct ArtifactsLibraryView: View {
                     PolishedTabPage(title: "Artifacts", chrome: .overlay(barCenter: dock.barCenter),
                                     introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
                         if let notice { noticeBar(notice) }
-                        makeSection
-                        toolsSection
                         yourArtifacts
                     }
                     .scrollDismissesKeyboard(.interactively)
@@ -71,11 +68,10 @@ struct ArtifactsLibraryView: View {
                 }
             }
             // Floating "New artifact": keeps every item the old bar's menu had.
-            Menu {
-                newMenuItems
-            } label: {
+            Button { Haptics.light(); choosingNew = true } label: {
                 NewArtifactPill()
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
             .hidesOnScroll(barHidden)
@@ -106,8 +102,12 @@ struct ArtifactsLibraryView: View {
         .sheet(isPresented: $showingOfficeDocuments) {
             OfficeDocumentsView()
         }
-        .sheet(isPresented: $showingConnectors) {
-            ConnectorsListView()
+        .sheet(isPresented: $choosingNew) {
+            ArtifactNewModeSheet(modes: newModes, busy: launcher.launching != nil, onPick: pick,
+                                 onUpload: { kind in
+                                     afterSheet { switch kind { case .image: choosingPhoto = true; case .video: choosingVideo = true } }
+                                 },
+                                 onOffice: { afterSheet { showingOfficeDocuments = true } })
         }
         .fileImporter(isPresented: $importingPDF, allowedContentTypes: [.pdf]) { result in
             if case .success(let url) = result { Task { await uploadPDF(url) } }
@@ -264,99 +264,45 @@ struct ArtifactsLibraryView: View {
         }
     }
 
-    private var makeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionLabel("Make something new")
-                Spacer()
-                Text("\(tiles.count) types")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(Array(tiles.enumerated()), id: \.element) { index, kind in
-                        Button { tileTapped(kind) } label: { createCard(kind) }
-                            .buttonStyle(ArtifactTilePressStyle())
-                            .accessibilityAddTraits(selectedTile == kind ? .isSelected : [])
-                            // amt2-enter: the row slides in on open, 45 ms apart.
-                            .opacity(tilesShown ? 1 : 0)
-                            .offset(x: tilesShown ? 0 : 28)
-                            .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42).delay(Double(min(index, 6)) * 0.045), value: tilesShown)
-                            .disabled(launcher.launching != nil)
-                            .accessibilityLabel("New \(kind.label)")
-                            .accessibilityHint(kind.description)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            .padding(.horizontal, -14)
-            .onAppear {
-                if ReducedMotion.current { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
-            }
+    /// The deck's mode list (same order), minus kinds the org turned off.
+    private var newModes: [ChatDeckMode] {
+        ArtifactNewModes.list { kind in
+            guard let template = kind.templateKind, let settings = store.orgSettings else { return true }
+            return settings.allows(kind: template)
         }
     }
 
-    private func createCard(_ kind: ArtifactStudioKind) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                ArtifactCreateTileArt(kind: kind)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .padding(3)
-                if launcher.launching == kind {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color("BgPanel").opacity(0.7))
-                        .overlay(ProgressView().controlSize(.small))
-                } else if kind.isBeta {
-                    Text("Beta")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color("BgPanel")))
-                        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
-                        .padding(6)
-                }
-            }
-            .frame(width: 136, height: 95)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
-            // Soft inner edge; the picked tile gets an ink ring.
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(selectedTile == kind ? PolishTokens.ink : PolishTokens.glassBorder, lineWidth: selectedTile == kind ? 2 : 1))
+    /// A row in the + New sheet or the empty library: PDF opens the file
+    /// picker; every other kind starts its artifact session.
+    private func pick(_ mode: ChatDeckMode) {
+        if let kind = DeckLaunch.kind(for: mode.entry) {
+            startMode(kind, mode)
+        } else if mode.entry.pick == "pdf" {
+            afterSheet { importingPDF = true }
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(kind.label)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                Text(kind.description)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+    /// A picker or sheet can't present while the + New sheet is still dismissing.
+    private func afterSheet(_ work: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func startMode(_ kind: ArtifactStudioKind, _ mode: ChatDeckMode) {
+        Haptics.light()
+        let can = ItCanStore.shared.choices(for: mode.entry)
+        Task {
+            do {
+                studio = try await launcher.launch(kind, can: can, recordKind: mode.entry.id == "app" ? "app" : nil)
+            } catch is CancellationError {
+                return
+            } catch {
+                notice = "Couldn't start a \(kind.noun.lowercased()) session. \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
-            .padding(.horizontal, 2)
-            .frame(width: 136, alignment: .leading)
         }
     }
 
     private var selectedTile: ArtifactStudioKind? {
         ArtifactTileFilter.selectedTile(for: store.kind, in: tiles)
-    }
-
-    /// Tap filters to the tile's kind, tap again clears; a tile with no
-    /// matching kind (Build, Deep Research) still creates.
-    private func tileTapped(_ tile: ArtifactStudioKind) {
-        switch ArtifactTileFilter.tap(tile, current: store.kind) {
-        case .noFilter:
-            start(tile)
-        case .filter(let kind):
-            Haptics.light()
-            setKind(kind)
-        case .clear:
-            Haptics.light()
-            setKind(nil)
-        }
     }
 
     private func start(_ kind: ArtifactStudioKind) {
@@ -505,40 +451,6 @@ struct ArtifactsLibraryView: View {
         }
     }
 
-    // MARK: - Connected tools
-
-    private var toolsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Or start from your connected tools")
-            GlassPill(title: "Connect your tools", systemImage: "powerplug") { showingConnectors = true }
-        }
-    }
-
-    // MARK: - New artifact menu
-
-    @ViewBuilder
-    private var newMenuItems: some View {
-        Section("Make something new") {
-            ForEach(tiles) { kind in
-                Button { start(kind) } label: {
-                    Label(kind.isBeta ? "\(kind.label)  Beta" : kind.label, systemImage: kind.systemImage)
-                }
-                .disabled(launcher.launching != nil)
-            }
-        }
-        Section("Upload") {
-            Button { importingPDF = true } label: { Label("PDF", systemImage: "square.and.arrow.up") }
-            Button { choosingPhoto = true } label: { Label("Image", systemImage: "square.and.arrow.up") }
-            Button { choosingVideo = true } label: { Label("Video", systemImage: "square.and.arrow.up") }
-        }
-        Section("Start from your connected tools") {
-            Button { showingConnectors = true } label: { Label("Connect your tools", systemImage: "powerplug") }
-        }
-        Section {
-            Button { showingOfficeDocuments = true } label: { Label("Allternit Office", systemImage: "doc.text") }
-        }
-    }
-
     // MARK: - Your artifacts
 
     private var filterLabel: String? {
@@ -671,11 +583,7 @@ struct ArtifactsLibraryView: View {
                     .padding(.vertical, 24)
                     .accessibilityAddTraits(.updatesFrequently)
             } else if items.isEmpty, !filtered, !store.archived {
-                EmptyBox(
-                    title: "No artifacts yet",
-                    line: "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
-                    art: .sheets
-                )
+                ArtifactEmptyKinds(modes: newModes, busy: launcher.launching != nil, onPick: pick)
             } else if items.isEmpty {
                 stateMessage(
                     icon: nil,
@@ -684,7 +592,7 @@ struct ArtifactsLibraryView: View {
                         ? "Try another filter or search."
                         : store.archived
                             ? "Archived work stays available here. Restore an artifact to return it to Saved work."
-                            : "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
+                            : "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap New artifact.",
                     action: filtered ? ("Clear filters", clearFilters) : nil
                 )
             } else {
@@ -1129,7 +1037,7 @@ private struct ArtifactsIntroHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            label("Make something new", trailing: "12 types")
+            label("Make something new", trailing: nil)
             HStack(spacing: 7) {
                 ForEach(Array(types.enumerated()), id: \.offset) { i, name in
                     VStack(alignment: .leading, spacing: 3) {

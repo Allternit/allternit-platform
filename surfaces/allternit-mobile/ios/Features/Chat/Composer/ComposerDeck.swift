@@ -415,6 +415,8 @@ struct DeckArtifactsSheet: View {
     private enum LoadState { case loading, loaded([ArtifactV2Summary]), failed }
     @State private var state: LoadState = .loading
     @State private var openArtifact: ArtifactV2Summary? = nil
+    @State private var openPin: DeckPin? = nil
+    @ObservedObject private var pinsStore = DeckPinsStore.shared
 
     private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
@@ -429,24 +431,34 @@ struct DeckArtifactsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     heading("Pinned")
-                    // Pins are made with "Pin to deck" on an open artifact
-                    // (web deck-pins); this app has none of its own yet.
-                    VStack(spacing: 8) {
-                        EmptyArt(kind: .sheets, size: .panel)
-                        (Text("Nothing pinned yet. Open an artifact and choose ")
-                            + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
-                            + Text("."))
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color("TextSecondary"))
-                            .multilineTextAlignment(.center)
+                    // Pins live per user on the runtime (DeckPinsStore, web deck-pins);
+                    // Pin / Unpin is on the artifact card's ⋯ menu.
+                    if pinsStore.pins.isEmpty {
+                        VStack(spacing: 8) {
+                            EmptyArt(kind: .sheets, size: .panel)
+                            (Text("Nothing pinned yet. Open an artifact and choose ")
+                                + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
+                                + Text("."))
+                                .font(.system(size: 12.5))
+                                .foregroundColor(Color("TextSecondary"))
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 20)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        )
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(pinsStore.pins) { pin in
+                                Button(action: { openPin = pin }) { pinCard(pin) }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Open \(pin.title)")
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 20)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    )
 
                     heading("Recent")
                         .padding(.top, 16)
@@ -482,9 +494,41 @@ struct DeckArtifactsSheet: View {
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
         .task { await load() }
+        .task { await pinsStore.load() }
         .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
         }
+        .fullScreenCover(item: $openPin) { pin in
+            V2ArtifactView(artifactId: pin.id, initialTitle: pin.title)
+        }
+    }
+
+    private func pinCard(_ pin: DeckPin) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                Color("FillNeutral")
+                Image(ArtifactV2Kind.iconAsset(for: pin.kind))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pin.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Text(ArtifactV2Kind(rawValue: pin.kind)?.noun ?? pin.kind.capitalized)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
     }
 
     private func heading(_ label: String) -> some View {
