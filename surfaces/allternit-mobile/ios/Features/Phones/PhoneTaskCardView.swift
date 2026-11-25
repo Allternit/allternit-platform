@@ -41,7 +41,7 @@ struct PhoneTaskCardModel: Identifiable, Equatable, Sendable {
     var steps: [RunStep] = []
     /// When the run's first event happened; places the run among the messages.
     var startedAt: Date? = nil
-    /// When this device saw the run close (no end time comes from the runtime). Nil if not seen.
+    /// The run's last step time when the runtime row has it, else when this device saw it close. Nil if neither.
     var endedAt: Date? = nil
     /// False for runs started from the composer: their pill stays on the card (decision 5).
     var hostable: Bool = true
@@ -85,6 +85,8 @@ extension PhoneTaskCardModel {
         if let m = run.mapSteps { mapSteps = m }
         if let m = run.modelCalls { modelCalls = m }
         if let a = run.mapApp { mapApp = a }
+        // Real run times when the row has them; else the first-seen times stay.
+        if let t = run.startedAt { startedAt = t }
         if goal.isEmpty { goal = run.goal }
         if !run.status.isEmpty {
             status = .init(raw: run.status)
@@ -97,6 +99,7 @@ extension PhoneTaskCardModel {
         } else if status.isActive {
             status = run.failed > 0 ? .failed : .done
             step = max(step, run.stepCount)
+            if let t = run.endedAt { endedAt = t }
         }
     }
 }
@@ -322,7 +325,7 @@ final class PhoneRunStore: ObservableObject {
             if merged.steps.isEmpty { merged.steps = old.steps }
             if let a = old.startedAt, a < (merged.startedAt ?? .distantFuture) { merged.startedAt = a }
             if merged.goal.isEmpty { merged.goal = old.goal }
-            merged.endedAt = old.endedAt
+            if merged.endedAt == nil { merged.endedAt = old.endedAt }
             if merged.endedAt == nil, old.status.isActive, merged.status.isFinal { merged.endedAt = Date() }
             if merged.mapSteps == nil { merged.mapSteps = old.mapSteps }
             if merged.modelCalls == nil { merged.modelCalls = old.modelCalls }

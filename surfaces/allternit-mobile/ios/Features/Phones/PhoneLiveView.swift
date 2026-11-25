@@ -10,9 +10,9 @@ struct PhoneLiveView: View {
     @State private var typed = ""
     @State private var touching = false
     @State private var lastMove = Date.distantPast
-    /// Where a tap just landed on the shown screen (view coordinates). Bot taps would set this
-    /// too; their x/y do not reach the app yet (see PhoneTapMarker).
+    /// Where a tap just landed on the shown screen (view coordinates). The bot's taps set it too (`watchBotTaps`).
     @State private var tapMark: PhoneTapMark?
+    @Environment(\.scenePhase) private var scenePhase
 
     init(phone: ACIComputersClient.CloudPhone) {
         _session = StateObject(wrappedValue: PhoneLiveSession(phone: phone))
@@ -30,7 +30,14 @@ struct PhoneLiveView: View {
                     AnnexBDisplayLayer { session.attach($0) }
                         .opacity(session.state == .live ? 1 : 0)
                     if session.state == .live && tapsEnabled { touchSurface }
-                    PhoneTapMarker(mark: tapMark)
+                    GeometryReader { geo in
+                        PhoneTapMarker(mark: tapMark)
+                            .task(id: session.state == .live) {
+                                guard session.state == .live else { return }
+                                await watchBotTaps(in: geo.size)
+                            }
+                    }
+                    .allowsHitTesting(false)
                     overlay
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -50,6 +57,34 @@ struct PhoneLiveView: View {
         }
         .task { session.start() }
         .onDisappear { session.stop() }
+    }
+
+    /// Polls the phone's history about every 1.5 s while this view is on screen and live, and rings
+    /// each new bot tap. Taps already there on the first poll are not replayed. Fails quietly.
+    private func watchBotTaps(in size: CGSize) async {
+        var seen: Set<String>?
+        while !Task.isCancelled {
+            if scenePhase == .active, let taps = try? await PhoneTaskClient.shared.tapSteps(serial: session.phone.serial) {
+                if seen == nil {
+                    seen = Set(taps.map(\.id))
+                } else if let fresh = taps.filter({ !(seen?.contains($0.id) ?? false) }).last {
+                    taps.forEach { seen?.insert($0.id) }
+                    place(fresh, in: size)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(1500))
+        }
+    }
+
+    /// Maps the tap's pixel point to the shown screen by fraction: of the step's own screen size, else
+    /// the live video size.
+    private func place(_ tap: PhoneTaskClient.TapStep, in size: CGSize) {
+        let w = tap.screenW ?? Double(session.videoSize.width), h = tap.screenH ?? Double(session.videoSize.height)
+        guard w > 0, h > 0, session.videoSize.width > 0 else { return }
+        let rect = PhoneLiveGeometry.fittedRect(video: session.videoSize, in: size)
+        guard rect.width > 0 else { return }
+        let fx = min(max(tap.x / w, 0), 1), fy = min(max(tap.y / h, 0), 1)
+        tapMark = PhoneTapMark(point: CGPoint(x: rect.minX + fx * rect.width, y: rect.minY + fy * rect.height))
     }
 
     // MARK: Pieces
@@ -203,9 +238,7 @@ struct PhoneTapMark: Equatable {
 }
 
 /// A ring where a tap landed: grows in and fades in about 0.5 s; under Reduce Motion a still ring
-/// that fades. Only taps made in this view feed it today. The bot's tap x/y live in phone_runs
-/// Step.args on the runtime but the trail the app reads (RunStep) carries only n, label, ok, map, so
-/// bot taps need that to reach the app first.
+/// that fades. Fed by taps made in this view and by the bot's taps (`watchBotTaps`).
 struct PhoneTapMarker: View {
     let mark: PhoneTapMark?
     @ReducedMotion private var reduceMotion
