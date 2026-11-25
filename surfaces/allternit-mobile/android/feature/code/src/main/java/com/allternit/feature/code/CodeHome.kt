@@ -53,6 +53,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /*
  * Code mode (iOS CodeModeView, CodeOverviewSheet, PhoneCodeSessionsView, CodeRuntimePairingView).
@@ -274,6 +276,7 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
             EmptyState(
                 if (filter == null) "No threads yet" else "Nothing ${filter?.label?.lowercase()}",
                 "Start a thread from the composer and it appears here.",
+                art = EmptyArtKind.Envelope,
             )
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState) {
@@ -291,9 +294,10 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 if (computerSections) item(key = "threads-label") { SectionLabel("Threads") }
                 if (shown.isEmpty()) {
                     item(key = "threads-empty") {
-                        Text(
+                        InlineEmpty(
                             if (filter == null) "No threads yet. Start one from the composer." else "Nothing ${filter?.label?.lowercase()}",
-                            color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeOverviewNoThreads"),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeOverviewNoThreads"),
+                            art = EmptyArtKind.Envelope,
                         )
                     }
                 } else {
