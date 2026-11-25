@@ -22,6 +22,14 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.rememberScrollState
@@ -332,10 +340,27 @@ internal class InboxStore(private val backend: ChatBackend) {
     /** Also how a held message from an outside agent is refused. */
     suspend fun dismiss(item: InboxItem) = act(item, "dismiss")
     suspend fun retry(item: InboxItem) = act(item, "retry")
-    suspend fun snooze(item: InboxItem) = act(item, "snooze", buildJsonObject { put("minutes", 60) })
+    suspend fun snooze(item: InboxItem, minutes: Int = 60) = act(item, "snooze", buildJsonObject { put("minutes", minutes) })
 }
 
 // MARK: - Sheet (iOS InboxSheet)
+
+/** Later choices: label and minutes. Tomorrow = the next 9:00 local (web laterOptions). */
+internal fun inboxLaterOptions(now: java.time.LocalDateTime = java.time.LocalDateTime.now()): List<Pair<String, Int>> {
+    var next = now.toLocalDate().atTime(9, 0)
+    if (!next.isAfter(now)) next = next.plusDays(1)
+    val minutes = maxOf(1L, java.time.Duration.between(now, next).toMinutes()).toInt()
+    return listOf("30 min" to 30, "1 hour" to 60, "3 hours" to 180, "Tomorrow" to minutes)
+}
+
+/** Summaries past this many characters, or with line breaks, are clamped to three lines with "See full". */
+private const val INBOX_CLAMP_CHARS = 150
+
+@Composable
+private fun rememberReducedMotion(): Boolean {
+    val ctx = LocalContext.current
+    return remember { runCatching { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
+}
 
 private val kindWords = mapOf(
     "email_draft" to "Email", "approval" to "Approval", "held_send" to "Held message", "thread" to "Waiting",
@@ -384,6 +409,13 @@ internal fun InboxSheet(
         store.refresh()
         focusedId?.let { id -> store.items.firstOrNull { it.id == id && it.isPhoneAction }?.let { reviewing = it } }
     }
+    // Items that arrive while the sheet is open wait behind "Show N new" so the list does not jump
+    // under the finger. Urgent items and the one a link points at show at once.
+    var known by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(store.hasLoaded) { if (store.hasLoaded && known == null) known = store.items.map { it.id }.toSet() }
+    val knownIds = known
+    val held = if (knownIds == null) emptyList() else store.items.filter { it.id !in knownIds && !it.isCritical && it.id != focusedId }
+    val shownItems = if (held.isEmpty()) store.items else store.items.filterNot { it in held }
     val focusedIsGone = focusedId != null && store.hasLoaded && store.error == null && store.items.none { it.id == focusedId }
 
     fun open(item: InboxItem) {
@@ -458,8 +490,15 @@ internal fun InboxSheet(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).semantics { contentDescription = "That item was already handled" },
                             )
                         }
-                        items(store.items, key = { it.id }) { item ->
-                            InboxSwipeRow(
+                        if (held.isNotEmpty()) item(key = "newPill") {
+                            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                InboxButton(title = "Show ${held.size} new", prominent = true, enabled = true, testTag = "inboxShowNew") {
+                                    known = (known ?: emptySet()) + held.map { it.id }
+                                }
+                            }
+                        }
+                        items(shownItems, key = { it.id }) { item ->
+                            InboxEntry(
                                 item = item,
                                 primaryTitle = if (item.isPhoneAction) "Review" else item.primaryLabel,
                                 store = store,
@@ -468,6 +507,7 @@ internal fun InboxSheet(
                                 onDeny = { scope.launch { if (item.isPeerHeld) store.dismiss(item) else store.deny(item) } },
                                 onSnooze = { scope.launch { store.snooze(item) } },
                                 onDismissItem = { scope.launch { store.dismiss(item) } },
+                                onLater = { minutes -> scope.launch { store.snooze(item, minutes) } },
                             )
                             HorizontalDivider(color = c.borderSubtle, modifier = Modifier.padding(start = 20.dp))
                         }
@@ -483,6 +523,7 @@ internal fun InboxSheet(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InboxRow(
     item: InboxItem,
@@ -490,10 +531,15 @@ private fun InboxRow(
     focused: Boolean,
     onPrimary: () -> Unit,
     onDeny: () -> Unit,
+    onDone: () -> Unit,
+    onLater: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
+    var laterOpen by remember(item.id) { mutableStateOf(false) }
+    var full by remember(item.id) { mutableStateOf(false) }
+    val clampable = item.summary.length > INBOX_CLAMP_CHARS || item.summary.contains('\n')
     val busy = store.busy[item.id] == true
     val label = when {
         item.isPeerHeld -> "Other agent"
@@ -525,7 +571,11 @@ private fun InboxRow(
             )
             Text(inboxAgo(item.at), color = c.textSecondary, fontSize = 11.sp)
         }
-        Text(item.summary, color = c.textPrimary, fontSize = 15.sp)
+        Text(item.summary, color = c.textPrimary, fontSize = 15.sp, maxLines = if (clampable && !full) 3 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("inboxSummary${item.id}"))
+        if (clampable) Text(
+            if (full) "See less" else "See full", color = c.textSecondary, fontSize = 12.sp,
+            modifier = Modifier.clickable(role = Role.Button) { full = !full }.testTag("inboxSeeFull${item.id}").padding(vertical = 2.dp),
+        )
         if (item.isPeerHeld && !item.text.isNullOrEmpty()) {
             Row(Modifier.padding(start = 2.dp)) {
                 Box(Modifier.width(2.dp).heightIn(min = 18.dp).background(c.borderSubtle))
@@ -538,7 +588,7 @@ private fun InboxRow(
             Text("Why: this came from $who$kind.", color = c.textSecondary, fontSize = 13.sp)
         }
         store.failures[item.id]?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp) }
-        Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             InboxButton(
                 title = if (busy) "Working…" else if (item.isPhoneAction) "Review" else item.primaryLabel,
                 prominent = true,
@@ -550,6 +600,15 @@ private fun InboxRow(
             }
             if (item.isPhoneAction || (item.canApprove && item.primaryAction == "approve")) {
                 InboxButton(title = denyLabel, prominent = false, enabled = !busy, testTag = "inboxDeny${item.id}", onClick = onDeny)
+            }
+            InboxButton(title = "Done", prominent = false, enabled = !busy, testTag = "inboxDone${item.id}") { Haptics.perform(view, Haptics.Kind.Tap); onDone() }
+            InboxButton(title = "Later", prominent = false, enabled = !busy, testTag = "inboxLater${item.id}") { laterOpen = !laterOpen }
+        }
+        if (laterOpen) {
+                FlowRow(Modifier.semantics { contentDescription = "Remind me in" }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                inboxLaterOptions().forEach { (label, minutes) ->
+                    InboxButton(title = label, prominent = false, enabled = !busy, testTag = "inboxLater${minutes}${item.id}") { laterOpen = false; onLater(minutes) }
+                }
             }
         }
     }
@@ -573,6 +632,54 @@ private fun InboxButton(title: String, prominent: Boolean, enabled: Boolean, tes
     }
 }
 
+/**
+ * One row with Done: the row collapses over 200 ms, then the item is dismissed; if the runtime
+ * refuses, the store puts it back and the row opens again. Animator scale 0 = no motion.
+ */
+@Composable
+private fun InboxEntry(
+    item: InboxItem,
+    primaryTitle: String,
+    store: InboxStore,
+    focused: Boolean,
+    onPrimary: () -> Unit,
+    onDeny: () -> Unit,
+    onSnooze: () -> Unit,
+    onDismissItem: () -> Unit,
+    onLater: (Int) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val reduced = rememberReducedMotion()
+    var leaving by remember(item.id) { mutableStateOf(false) }
+    val frac by animateFloatAsState(if (leaving) 0f else 1f, tween(if (reduced) 0 else 200), label = "inboxCollapse")
+    Box(
+        Modifier
+            .layout { m, c ->
+                val p = m.measure(c)
+                layout(p.width, (p.height * frac).roundToInt()) { p.place(0, 0) }
+            }
+            .graphicsLayer { alpha = frac; clip = true },
+    ) {
+        InboxSwipeRow(
+            item = item, primaryTitle = primaryTitle, store = store, focused = focused,
+            onPrimary = onPrimary, onDeny = onDeny, onSnooze = onSnooze, onDismissItem = onDismissItem,
+            onDone = {
+                if (!leaving) {
+                    leaving = true
+                    scope.launch {
+                        delay(if (reduced) 0L else 200L)
+                        onDismissItem()
+                        // A refused dismiss re-inserts the item; open the row again so it comes back.
+                        delay(50)
+                        leaving = false
+                    }
+                }
+            },
+            onLater = onLater,
+        )
+    }
+}
+
 private enum class SwipeSlot { Leading, Closed, Trailing }
 
 /**
@@ -589,6 +696,8 @@ private fun InboxSwipeRow(
     onDeny: () -> Unit,
     onSnooze: () -> Unit,
     onDismissItem: () -> Unit,
+    onDone: () -> Unit,
+    onLater: (Int) -> Unit,
 ) {
     val c = AllternitTheme.colors
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -630,6 +739,8 @@ private fun InboxSwipeRow(
             focused = focused,
             onPrimary = onPrimary,
             onDeny = onDeny,
+            onDone = onDone,
+            onLater = onLater,
             modifier = Modifier
                 .offset { IntOffset(offset.roundToInt(), 0) }
                 .anchoredDraggable(state = state, orientation = Orientation.Horizontal, enabled = true, flingBehavior = fling),
