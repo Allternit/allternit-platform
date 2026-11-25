@@ -29,7 +29,7 @@ export class ShareTunnelError extends Error {
   constructor(
     readonly code: ShareTunnelErrorCode,
     message: string,
-    readonly cause?: unknown,
+    override readonly cause?: unknown,
   ) {
     super(message);
     this.name = "ShareTunnelError";

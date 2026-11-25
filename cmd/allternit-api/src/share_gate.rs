@@ -405,15 +405,17 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 /// The share token on the request. `allow_authorization` is false when
 /// `Authorization` carries the visitor's JWT (MCP share with a policy).
+/// The explicit share header wins, so an app's own `Authorization` passes
+/// through untouched when the visitor sends both.
 fn presented_token(headers: &HeaderMap, allow_authorization: bool) -> Option<(String, CredentialSource)> {
+    if let Some(value) = headers.get(SHARE_HEADER).and_then(|v| v.to_str().ok()) {
+        return Some((value.trim().to_string(), CredentialSource::Header));
+    }
     if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).filter(|_| allow_authorization) {
         let value = value.trim();
         if value.len() > 7 && value[..7].eq_ignore_ascii_case("bearer ") {
             return Some((value[7..].trim().to_string(), CredentialSource::Authorization));
         }
-    }
-    if let Some(value) = headers.get(SHARE_HEADER).and_then(|v| v.to_str().ok()) {
-        return Some((value.trim().to_string(), CredentialSource::Header));
     }
     cookie_value(headers, SHARE_COOKIE).map(|v| (v.to_string(), CredentialSource::Cookie))
 }
