@@ -9,7 +9,7 @@
 //!   (mimeType `text/html;profile=mcp-app`).
 //! * `tools/list` adds one `open_<slug>` tool per app (`_meta.ui.resourceUri`)
 //!   and, when at least one app may use them, the mirrored bridge tools
-//!   `app.storage.get|set|delete|list` and `app.ai.complete` (hidden from the
+//!   `app_storage_get|set|delete|list` and `app_ai_complete` (hidden from the
 //!   model: `_meta.ui.visibility = ["app"]`). They let an exported app work in
 //!   a host without the `x-allternit` extension. A mirrored tool returns the
 //!   runtime result in `structuredContent`, or `isError` with `{code}`.
@@ -49,11 +49,12 @@ use serde_json::{json, Value};
 pub const APP_URI_PREFIX: &str = "ui://allternit/apps/";
 pub const MCP_APP_MIME: &str = "text/html;profile=mcp-app";
 pub const OPEN_TOOL_PREFIX: &str = "open_";
-pub const STORAGE_GET: &str = "app.storage.get";
-pub const STORAGE_SET: &str = "app.storage.set";
-pub const STORAGE_DELETE: &str = "app.storage.delete";
-pub const STORAGE_LIST: &str = "app.storage.list";
-pub const AI_COMPLETE: &str = "app.ai.complete";
+// Underscores, not dots: hosts restrict tool names to [a-zA-Z0-9_-]{1,64}.
+pub const STORAGE_GET: &str = "app_storage_get";
+pub const STORAGE_SET: &str = "app_storage_set";
+pub const STORAGE_DELETE: &str = "app_storage_delete";
+pub const STORAGE_LIST: &str = "app_storage_list";
+pub const AI_COMPLETE: &str = "app_ai_complete";
 pub const MIRROR_TOOLS: [&str; 5] = [STORAGE_GET, STORAGE_SET, STORAGE_DELETE, STORAGE_LIST, AI_COMPLETE];
 /// JSON-RPC internal error (not in `mcp_protocol::codes`).
 const INTERNAL_ERROR: i64 = -32603;
@@ -455,7 +456,7 @@ async fn call_mirror(store: &dyn AppsStore, user_id: &str, tool: &str, args: &Va
 }
 
 /// Called by `mcp_edge::serve` for `tools/call` before the Tasks hook.
-/// `Some(reply)` for `open_<slug>` and the mirrored `app.*` tools; `None` relays.
+/// `Some(reply)` for `open_<slug>` and the mirrored `app_*` tools; `None` relays.
 pub async fn intercept_tool_call(store: &dyn AppsStore, user_id: &str, rpc_method: &str, id: &Value, params: &Value) -> Option<Value> {
     if rpc_method != "tools/call" {
         return None;
