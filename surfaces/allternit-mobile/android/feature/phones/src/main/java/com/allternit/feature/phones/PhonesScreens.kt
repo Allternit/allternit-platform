@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -347,7 +348,7 @@ fun PhoneTaskCard(runId: String, backend: ChatBackend, onOpenInbox: () -> Unit, 
             .border(BorderStroke(1.dp, c.borderSubtle), shape)
             .then(if (beam != null) Modifier.drawWithContent {
                 drawContent()
-                androidx.compose.ui.graphics.drawscope.rotate(beam) {
+                rotate(beam) {
                     drawRoundRect(
                         brush = androidx.compose.ui.graphics.Brush.sweepGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, androidx.compose.ui.graphics.Color.Transparent, beamColor.copy(alpha = 0.55f), androidx.compose.ui.graphics.Color.Transparent)),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
