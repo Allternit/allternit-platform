@@ -1,5 +1,6 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.api.gen.AgentModes
 import com.allternit.core.design.MatrixLogo
 import android.content.Context
 import android.content.Intent
@@ -138,33 +139,58 @@ internal object ComposerPlaceholders {
         "Type / for plugins and skills, @ for bots and files",
     )
 
-    fun byMode(tile: DeckMode): List<String> = when (tile.id) {
-        "research" -> listOf("Ask for an in-depth, cited research report", "Compare five competitors with sources", "What does the latest data say about…")
-        "slides" -> listOf("Describe the deck. Audience, length, tone", "Turn a brief into a 10-slide pitch", "Make a workshop deck with exercises")
-        "website" -> listOf("Describe the site you want built", "Landing page for a bakery in Austin", "Rebuild a site from its URL, cleaner")
-        "docs" -> listOf("Describe the document you need", "Write a one-page proposal from these notes")
-        "data" -> listOf("Paste data or describe the sheet you need", "Chart monthly revenue from this CSV")
-        "swarms" -> listOf("Describe the outcome. A team of agents will split it up")
-        "image" -> listOf("Describe the image. Subject, style, format")
-        "video" -> listOf("Describe the clip. Length, shots, mood")
-        else -> agentNoMode
-    }
+    fun byMode(tile: DeckMode): List<String> = listOf(tile.placeholder)
 }
 
-/** The deck's Agent mode list (iOS ChatDeckMode.chat), with the shared deck icons. */
-internal data class DeckMode(val id: String, val label: String, val icon: Int, val color: Color?)
-
-internal val DeckModes = listOf(
-    DeckMode("swarms", "Agent Swarm", DesignR.drawable.deck_swarms, Color(0xFF14B8A6)),
-    DeckMode("research", "Deep Research", DesignR.drawable.deck_research, Color(0xFF60A5FA)),
-    DeckMode("website", "Build", DesignR.drawable.deck_build, null),
-    DeckMode("docs", "Docs", DesignR.drawable.deck_docs, Color(0xFF3B82F6)),
-    DeckMode("data", "Sheets", DesignR.drawable.deck_sheets, Color(0xFF4ADE80)),
-    DeckMode("slides", "Slides", DesignR.drawable.deck_slides, Color(0xFFFBBF24)),
-    DeckMode("image", "Image", DesignR.drawable.deck_image, null),
-    DeckMode("video", "Video", DesignR.drawable.deck_video, Color(0xFFEC4899)),
-    DeckMode("artifact", "Artifact", DesignR.drawable.deck_artifact, null),
+/**
+ * The deck's Agent mode list, read from the generated registry (core/api gen/AgentModes.gen.kt) for the
+ * chat surface: same order, labels, badges and placeholders as iOS and web. Only icon art and accent
+ * colors live here. `wire` is the existing `metadata.agentModeId` (null for kinds the backend has no mode for).
+ */
+internal data class DeckMode(
+    val id: String,
+    val label: String,
+    val icon: Int,
+    val color: Color?,
+    val placeholder: String,
+    val beta: Boolean,
+    val isNew: Boolean,
+    val wire: String?,
 )
+
+private fun deckIcon(id: String): Int = when (id) {
+    "agent" -> DesignR.drawable.deck_auto
+    "swarms" -> DesignR.drawable.deck_swarms
+    "docs" -> DesignR.drawable.deck_docs
+    "sheets" -> DesignR.drawable.deck_sheets
+    "slides" -> DesignR.drawable.deck_slides
+    "pdf" -> DesignR.drawable.deck_pdf
+    "page" -> DesignR.drawable.deck_page
+    "dashboard" -> DesignR.drawable.deck_dashboard
+    "ops" -> DesignR.drawable.deck_ops
+    "design" -> DesignR.drawable.deck_design
+    "image" -> DesignR.drawable.deck_image
+    "video" -> DesignR.drawable.deck_video
+    "motion" -> DesignR.drawable.deck_motion
+    "build" -> DesignR.drawable.deck_build
+    "research" -> DesignR.drawable.deck_research
+    else -> DesignR.drawable.deck_artifact
+}
+
+private fun deckColor(id: String): Color? = when (id) {
+    "swarms" -> Color(0xFF14B8A6)
+    "research" -> Color(0xFF60A5FA)
+    "docs" -> Color(0xFF3B82F6)
+    "sheets" -> Color(0xFF4ADE80)
+    "slides" -> Color(0xFFFBBF24)
+    "video" -> Color(0xFFEC4899)
+    else -> null
+}
+
+/** Every mode the chat surface can run, in registry order. "agent" is the default (no mode armed). */
+internal val DeckModes: List<DeckMode> = AgentModes.modes("chat").map { e ->
+    DeckMode(e.id, e.label, deckIcon(e.id), deckColor(e.id), e.placeholder, e.beta, e.isNew, e.agentMode)
+}
 
 /** Which deck rides under the card (iOS ComposerDeckVariant): Full on Home, Compact in a chat, None on Bots. */
 internal enum class ComposerDeck { None, Compact, Full }
@@ -332,7 +358,7 @@ internal fun Composer(
             modelLabel = models.selectedId?.let { models.chipLabel },
             effort = models.selected?.let { models.level(it) },
             agentMode = armedMode?.label,
-            agentModeId = armedMode?.id,
+            agentModeId = armedMode?.wire,
             onPhone = phoneArmed,
             webSearch = webSearch,
             research = research,
@@ -749,16 +775,20 @@ private fun DeckBand(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                 Text("Agent mode", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-                DeckModes.forEach { m ->
-                    MenuRow(icon = m.icon, title = m.label, checked = armed?.id == m.id, testTag = "deckMode${m.id}") {
-                        menu = false
-                        onPickMode(m)
-                    }
-                }
-                if (armed != null) {
-                    MenuRow(icon = DesignR.drawable.ph_x, title = "Clear mode", testTag = "deckModeOff") {
-                        menu = false
-                        onPickMode(null)
+                // One list, two columns, row by row (R2-deck-mode): the registry order reads left to right.
+                Column(Modifier.width(320.dp).padding(horizontal = 4.dp)) {
+                    DeckModes.chunked(2).forEach { pair ->
+                        Row(Modifier.fillMaxWidth()) {
+                            pair.forEach { m ->
+                                Box(Modifier.weight(1f)) {
+                                    DeckModeCell(m, checked = if (m.id == "agent") armed == null else armed?.id == m.id) {
+                                        menu = false
+                                        onPickMode(if (m.id == "agent") null else m)
+                                    }
+                                }
+                            }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -793,6 +823,47 @@ private fun DeckBand(
         }
         DeckSeparator()
         DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts", onClick = onArtifacts)
+    }
+}
+
+/** One cell of the Agent mode list: icon, label, Default / Beta / New badge, check when armed. */
+@Composable
+private fun DeckModeCell(m: DeckMode, checked: Boolean, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val badge = when {
+        m.id == "agent" -> "Default"
+        m.isNew -> "New"
+        m.beta -> "Beta"
+        else -> null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .testTag("deckMode${m.id}")
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(m.icon), contentDescription = null, tint = m.color ?: c.textPrimary, modifier = Modifier.size(18.dp))
+        Text(m.label, color = c.textPrimary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+        if (badge != null) {
+            val solid = badge == "New"
+            Text(
+                badge,
+                color = if (solid) c.bgPrimary else c.textSecondary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (solid) c.textPrimary else c.bgPanel).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+        if (checked) {
+            Spacer(Modifier.weight(1f))
+            Icon(painterResource(DesignR.drawable.ph_check), contentDescription = "On", tint = c.textPrimary, modifier = Modifier.size(14.dp))
+        }
     }
 }
 

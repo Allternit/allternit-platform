@@ -1,5 +1,6 @@
 package com.allternit.feature.artifacts
 
+import com.allternit.core.api.gen.AgentModes
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -120,7 +121,7 @@ fun FilterLabel(text: String) {
 
 // MARK: - Studio kinds (iOS ArtifactStudioKind, gallery order)
 
-enum class StudioKind(val raw: String, val label: String, val description: String, val emptyTitle: String, val studioHint: String, val modeId: String?, val studioKind: String, val filterKind: String?, val deck: Int) {
+enum class StudioKind(val raw: String, private val fallbackLabel: String, val description: String, val emptyTitle: String, val studioHint: String, val modeId: String?, val studioKind: String, val filterKind: String?, val deck: Int) {
     Docs("docs", "Docs", "A document you write and edit in place, with Allternit drafting alongside.", "Draft a plan, memo or brief with Allternit", "The document appears here as Allternit writes it, and opens in the editor.", "docs", "doc", "doc", DesignR.drawable.deck_docs),
     Sheets("sheets", "Sheets", "A spreadsheet for data, formulas, and charts.", "Paste your data and turn it into a sheet", "The sheet appears here as Allternit builds it, and opens in the editor.", "data", "sheet", "sheet", DesignR.drawable.deck_sheets),
     Slides("slides", "Slides", "A deck you can present, restyle, and export to PowerPoint.", "Paste your ideas and turn them into slides", "The deck appears here as Allternit builds it, and opens in the editor.", "slides", "slides", "slides", DesignR.drawable.deck_slides),
@@ -134,8 +135,17 @@ enum class StudioKind(val raw: String, val label: String, val description: Strin
     Image("image", "Image", "Generate or edit an image from a prompt.", "Describe an image and Allternit will make it", "Each image renders here, and you can refine it or ask for variations.", "image", "image", "image", DesignR.drawable.deck_image),
     Video("video", "Video", "A generated video clip, with the length and format you ask for.", "Describe a clip, its length and format", "The clip renders here when it's ready.", "video", "video", null, DesignR.drawable.deck_video);
 
-    /** GALLERY_TILES `beta`. */
-    val isBeta: Boolean get() = this !in setOf(Docs, Sheets, Slides, Page)
+    /** Label and Beta badge come from the generated registry (AgentModes.gen.kt), the same text iOS and web show. */
+    val label: String get() = AgentModes.mode(raw)?.label ?: fallbackLabel
+    val isBeta: Boolean get() = AgentModes.mode(raw)?.beta ?: false
+
+    companion object {
+        /** Registry order (the mode list order), kinds the registry lacks last. */
+        val ordered: List<StudioKind> by lazy {
+            val order = AgentModes.all.map { it.id }
+            entries.sortedBy { k -> order.indexOf(k.raw).let { if (it < 0) Int.MAX_VALUE else it } }
+        }
+    }
 
     /** "Untitled <noun>" (Deep Research: "Untitled research"). */
     val newTitle: String get() = if (this == Research) "Untitled research" else "Untitled ${ArtifactKinds.noun(studioKind).lowercase()}"
@@ -310,7 +320,7 @@ fun ArtifactsLibraryScreen(
                 searchJob = scope.launch { delay(300); store.load() }
             }
         }
-        val tiles = StudioKind.entries.filter { k -> k.templateKind?.let { store.allows(it) } ?: true }
+        val tiles = StudioKind.ordered.filter { k -> k.templateKind?.let { store.allows(it) } ?: true }
         val columns = if (layout == LibraryLayout.Grid) 2 else 1
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -472,7 +482,7 @@ fun ArtifactsLibraryScreen(
 
     if (newOpen) {
         NewArtifactSheet(
-            tiles = StudioKind.entries.filter { k -> k.templateKind?.let { store.allows(it) } ?: true },
+            tiles = StudioKind.ordered.filter { k -> k.templateKind?.let { store.allows(it) } ?: true },
             signedIn = signedIn,
             onTile = { startSession(it) },
             onConnectors = onConnectors,
