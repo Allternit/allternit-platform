@@ -28,7 +28,9 @@ await share.stop();   // or it stops itself: heartbeat 410 → "killed"/"revoked
 - One OpenTunnel profile per link (profile = subdomain) under `dataDir` (default `~/.allternit/share-tunnel`).
   The first start on a device needs the relay credential; later starts reuse the saved identity.
 - Heartbeat: `POST {cloudApi}/api/v1/share-links/:id/heartbeat` every 60 s. 410 stops and deletes the local
-  identity; a link with `status: "paused"` stops but keeps it; network errors keep serving.
+  identity; a 200 with `status: "paused"` stops with reason `paused` and deletes it too (cloud-api drops the
+  relay tunnel on pause, so resume starts again with a fresh credential from
+  `POST /api/v1/share-links/:id/relay-credential`); network errors keep serving.
 - Bytes are not reported by the client: the OpenTunnel SDK exposes none, and D8 meters only relay-side
   bytes (`connection.closed` analytics → cloud-api `share_link_usage`). `status().connections` is live.
 - Needs Node 22+ (or Bun 1.4+), the SDK's floor.

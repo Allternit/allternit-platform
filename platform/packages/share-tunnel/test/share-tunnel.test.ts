@@ -57,11 +57,11 @@ describe("share tunnel", () => {
     expect(f.tunnel.list()).toEqual([]);
   });
 
-  test("a paused link stops but keeps its tunnel for resume", async () => {
+  test("a paused link stops and drops its identity (cloud-api deleted the relay tunnel)", async () => {
     const f = fakes(() => 200, () => ({ status: "paused" }));
     const share = await f.tunnel.start({ link, port: 3000, admission: "ota1.p.s" });
     await expect(share.stopped).resolves.toBe("paused");
-    expect(f.remove).not.toHaveBeenCalled();
+    expect(f.remove).toHaveBeenCalled();
   });
 
   test("Allternit's own ports are refused before the gate opens", async () => {

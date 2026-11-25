@@ -188,8 +188,9 @@ export function createShareTunnel(options: ShareTunnelOptions): ShareTunnel {
         shares.delete(link.id);
         await connection.close().catch(() => undefined);
         await options.gate.close(gateShare.id).catch(() => undefined);
-        if (reason === "killed" || reason === "revoked" || reason === "not_found") {
-          // The relay tunnel is gone or must go: drop the local identity too.
+        if (reason === "killed" || reason === "revoked" || reason === "not_found" || reason === "paused") {
+          // The relay tunnel is gone or must go (cloud-api drops it on pause, revoke and kill):
+          // drop the local identity too, so a resume starts fresh with a new relay credential.
           await client.tunnel.remove({ profile }).catch(() => undefined);
         }
         await client.dispose().catch(() => undefined);

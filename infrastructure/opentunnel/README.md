@@ -41,15 +41,14 @@ signature = base64url(HMAC-SHA256(ADMISSION_SECRET, "ota1." + payload))     base
 
 ### What cloud-api must add (not in this PR)
 
-- Env `RELAY_ADMISSION_SECRET` (= relay `ADMISSION_SECRET`), `RELAY_ADMIN_URL` (e.g.
-  `https://api.live.allternitusercontent.com`), `RELAY_ADMIN_TOKEN` (= relay `ADMIN_TOKEN`). Keychain/env only.
+- Env: see "Relay env ↔ cloud-api env" below (built in platform #2970).
 - Mint: `POST /api/v1/share-links` for `kind: "live"` returns `relay_credential` (the string above), and
   `POST /api/v1/share-links/:id/relay-credential` → `{ credential, expires_at }` for an active live link
   (410 when revoked or killed, 409 when paused).
-- Kill and revoke: `POST /api/v1/admin/share-links/:id/kill` and owner `DELETE /api/v1/share-links/:id`, for
-  a live link, call `POST {RELAY_ADMIN_URL}/api/admin/tunnel/{subdomain}/delete` with
-  `Authorization: Bearer {RELAY_ADMIN_TOKEN}`; 204 and 404 both mean the tunnel is gone. The host's next
-  heartbeat gets 410 and stops too.
+- Kill, revoke and pause: `POST /api/v1/admin/share-links/:id/kill`, owner `DELETE /api/v1/share-links/:id` and `POST /api/v1/share-links/:id/pause`, for
+  a live link, call `POST {ALLTERNIT_RELAY_ADMIN_URL}/api/admin/tunnel/{subdomain}/delete` with
+  `Authorization: Bearer {ALLTERNIT_RELAY_ADMIN_TOKEN}`; 204 and 404 both mean the tunnel is gone. The host's next
+  heartbeat gets 410 (revoke, kill) or `status: "paused"` (pause) and stops too.
 
 ## Relay env (in addition to the upstream ones, see lane 28's systemd env)
 
@@ -58,6 +57,18 @@ signature = base64url(HMAC-SHA256(ADMISSION_SECRET, "ota1." + payload))     base
 | `ADMISSION_SECRET` | secret, 32+ random bytes; turns admission on |
 | `ADMIN_TOKEN` | secret; enables `/api/admin/*`, including the tunnel delete |
 | `ANALYTICS_URL`, `ANALYTICS_TOKEN` | cloud-api `POST /api/v1/internal/share-links/usage` and its secret (bytes meter, D8) |
+
+## Relay env ↔ cloud-api env
+
+Keychain/env only, never in code. "Same value" rows must hold byte-identical strings on both sides.
+
+| Relay (OpenTunnel) | cloud-api | Rule |
+| --- | --- | --- |
+| `ADMISSION_SECRET` | `ALLTERNIT_RELAY_ADMISSION_SECRET` | Same value. cloud-api signs credentials, the relay verifies. cloud-api unset → live links 503 `relay_not_configured`; relay unset → admission off. |
+| `ADMIN_TOKEN` | `ALLTERNIT_RELAY_ADMIN_TOKEN` | Same value. cloud-api sends it as `Bearer` on the tunnel delete. Unset in cloud-api → no delete; the heartbeat still stops the host. |
+| (relay's public API origin) | `ALLTERNIT_RELAY_ADMIN_URL` | Not a secret: the relay origin, e.g. `https://api.live.allternitusercontent.com`; cloud-api appends `/api/admin/tunnel/<subdomain>/delete`. |
+| `ANALYTICS_TOKEN` | `ALLTERNIT_SHARE_USAGE_SECRET` | Same value, 32+ chars. The relay sends `Bearer`; cloud-api compares in constant time (401 wrong, 503 unset). |
+| `ANALYTICS_URL` | (cloud-api's public origin) | Not a secret: `https://<cloud-api>/api/v1/internal/share-links/usage`. |
 
 ## Analytics the meter reads (upstream, unchanged)
 
