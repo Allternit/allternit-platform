@@ -542,6 +542,10 @@ async fn share_links_pause_and_revoke_drop_the_relay_tunnel_and_survive_a_dead_r
     let pause = format!("/api/v1/share-links/{id}/pause");
     call(&state, "POST", &pause, Value::Null).await;
     assert_eq!(hits.lock().unwrap().clone(), vec![want.clone()], "pause drops the tunnel");
+    // The host learns it is paused from its heartbeat: 200 with status "paused"
+    // (@allternit/share-tunnel stops with reason `paused` on exactly that).
+    let (status, beat) = call(&state, "POST", &format!("/api/v1/share-links/{id}/heartbeat"), Value::Null).await;
+    assert_eq!((status, beat["status"].as_str()), (StatusCode::OK, Some("paused")));
     call(&state, "POST", &pause, json!({ "paused": false })).await;
     assert_eq!(hits.lock().unwrap().len(), 1, "resume does not");
 

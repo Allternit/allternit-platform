@@ -13,7 +13,9 @@
 //!   for the abuse history; a killed link stays killed)
 //! * `POST /api/v1/share-links/:id/pause` `{ paused?: bool }` (default true; false resumes) -> link
 //! * `POST /api/v1/share-links/:id/heartbeat` -> link, `last_seen_at` = now. A revoked
-//!   or killed link answers 410 so the tunnel client stops serving it.
+//!   or killed link answers 410 so the tunnel client stops serving it; a paused one
+//!   answers 200 with `status: "paused"` (the client stops with reason `paused`;
+//!   its relay tunnel was already dropped, so resume needs a fresh credential).
 //! * `POST /api/v1/share-links/:id/relay-credential` -> `{ credential, expires_at }`, a
 //!   fresh relay admission credential for reconnecting an active live link (410
 //!   `killed`|`revoked`, 409 `paused`, 400 `not_live`, 503 `relay_not_configured`).
