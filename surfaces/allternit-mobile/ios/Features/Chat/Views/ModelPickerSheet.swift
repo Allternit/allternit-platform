@@ -227,9 +227,9 @@ struct ModelPickerSheet: View {
                 }
             }
             if let thinking = model.effectiveThinking {
-                ThinkingSliderView(thinking: thinking, value: thinking.level(modelStore.selectedEffort)) { level in
+                ThinkingSliderView(thinking: thinking, value: thinking.level(modelStore.selectedEffort), onChange: { level in
                     modelStore.selectedEffort = level
-                }
+                }, costLine: model.effortCostLine)
                 if thinking.fast {
                     Toggle(isOn: $modelStore.fastMode) {
                         HStack(spacing: 10) {

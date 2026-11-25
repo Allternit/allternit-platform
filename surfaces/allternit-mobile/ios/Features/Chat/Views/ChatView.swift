@@ -1066,10 +1066,11 @@ struct ChatLaunchGreeting: View {
         let name = AuthManager.shared.firstName
         let weekday = now.formatted(.dateTime.weekday(.wide))
         let hour = Calendar.current.component(.hour, from: now)
-        let timeOfDay = hour < 5 ? "Hello, night owl" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
+        let isNight = hour < 5 || hour >= 23
+        let timeOfDay = isNight ? "Hello, night owl" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
         // The night line stands on its own; the others take the first name.
         func withName(_ base: String) -> String {
-            if hour < 5, base == timeOfDay { return base }
+            if isNight, base == timeOfDay { return base }
             return name.map { "\(base), \($0)" } ?? base
         }
         let pool = [
@@ -1090,7 +1091,7 @@ struct ChatLaunchGreeting: View {
     /// Date + time-of-day bucket (night / morning / afternoon / evening).
     static func titleBucket(_ date: Date, calendar: Calendar = .current) -> String {
         let hour = calendar.component(.hour, from: date)
-        let part = hour < 5 ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
+        let part = (hour < 5 || hour >= 23) ? "night" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
         let day = calendar.dateComponents([.year, .month, .day], from: date)
         return "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)-\(part)"
     }
