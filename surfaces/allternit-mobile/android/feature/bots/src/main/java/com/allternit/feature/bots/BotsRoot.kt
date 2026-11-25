@@ -55,6 +55,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -570,7 +571,7 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
                 Text("YOUR TEAM", color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 when (layout) {
                     RosterLayout.List -> Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        entries.forEach { e -> RosterTile(e, selected = (e as? RosterEntry.Bot)?.bot?.id == selectedBotId, onOpen = { open(e) }, onAt = { (e as? RosterEntry.Bot)?.let { toggleTo(it.bot) } }) }
+                        entries.forEach { e -> RosterTile(e, task = (e as? RosterEntry.Bot)?.let { b -> store.threads(b.bot.id).filter { it.group == "working" || it.group == "waiting" }.maxByOrNull { it.lastActivityAt }?.let { it.statusLine?.takeIf { l -> l.isNotEmpty() } ?: it.displayTitle } }, selected = (e as? RosterEntry.Bot)?.bot?.id == selectedBotId, onOpen = { open(e) }, onAt = { (e as? RosterEntry.Bot)?.let { toggleTo(it.bot) } }) }
                         NewBotTile { newBotOpen = true }
                     }
                     RosterLayout.Grid -> Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -714,10 +715,10 @@ private fun RosterFace(e: RosterEntry, size: androidx.compose.ui.unit.Dp) {
 }
 
 @Composable
-private fun RosterTile(e: RosterEntry, selected: Boolean, onOpen: () -> Unit, onAt: () -> Unit) {
+private fun RosterTile(e: RosterEntry, task: String?, selected: Boolean, onOpen: () -> Unit, onAt: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
-    Column(Modifier.width(76.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(Modifier.width(if (task.isNullOrEmpty()) 76.dp else 92.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Box(Modifier.clip(CircleShape).testTag("botsRoster${e.key}").clickable(role = Role.Button, onClickLabel = "Open ${e.name}, ${e.status.word}") { Haptics.perform(view, Haptics.Kind.Tap); onOpen() }.padding(4.dp)) {
             RosterFace(e, 52.dp)
         }
@@ -729,6 +730,7 @@ private fun RosterTile(e: RosterEntry, selected: Boolean, onOpen: () -> Unit, on
             if (e is RosterEntry.Bot) AtButton(selected, e.name, onAt)
         }
         Text(e.status.word, color = e.status.tone(), fontSize = 11.sp)
+        if (!task.isNullOrEmpty()) Text(task, color = c.textTertiary, fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.testTag("botsRosterTask${e.key}"))
     }
 }
 

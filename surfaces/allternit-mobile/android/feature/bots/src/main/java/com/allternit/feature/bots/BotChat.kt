@@ -214,6 +214,14 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
     val endVoice: (Int) -> Unit = { seconds -> vm.appendVoiceSummary(seconds) }
     // Leaving the thread ends the call, as iOS does when the bot's ChatView goes away (the mic is the engine's).
     LaunchedEffect(deck) { if (deck != DeckTab.Thread) voiceHost.end() }
+    // The bot page's Call: go to the thread, then start voice mode with the same mic priming the composer uses.
+    var callRequested by remember { mutableStateOf(false) }
+    val askMic = com.allternit.feature.chat.voice.rememberPrimedPermission(com.allternit.feature.chat.voice.AppPermission.Microphone) { granted ->
+        if (granted) { val (model, effort) = host.currentModel(); voiceHost.start(vm, model, effort, bot = voiceBot) }
+    }
+    LaunchedEffect(callRequested, deck, sessionId) {
+        if (callRequested && deck == DeckTab.Thread && sessionId != null) { callRequested = false; askMic() }
+    }
 
     val deckRow: @Composable () -> Unit = {
         val waiting = store.waitingCount(bot.id)
@@ -323,7 +331,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                         composer(false) { req -> deck = DeckTab.Thread; vm.send(req) }
                     }
                     DeckTab.Bot -> Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }, backend = host.backend) }
+                        Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }, backend = host.backend, onCall = { deck = DeckTab.Thread; if (sessionId == null) scope.launch { resolve() }; callRequested = true }) }
                         deckRow()
                     }
                 }
