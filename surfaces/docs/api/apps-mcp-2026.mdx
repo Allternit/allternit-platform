@@ -1,0 +1,202 @@
+---
+title: Apps and MCP 2026 reference
+description: The app package, permission tiers and consent routes, the x-allternit v2 bridge, MCP Tasks and elicitation, events, skills, Server Cards, handoff and MCP App export.
+---
+
+This page is the developer reference for apps and the 2026 MCP features. For the user view see [Make it an app](/guides/make-it-an-app). For the page runtime itself (storage, AI, sandbox) see [Page runtime API](/api/artifact-runtime).
+
+<Note>
+Several parts ship behind flags that default to off: `apps.shelf`, `apps.install`, `mcp.tasks` and `mcp.skills`. Routes below are in cloud-api unless the heading says otherwise. Errors have the shape `{error, message}`.
+</Note>
+
+## App package
+
+An artifact app is an `artifacts` record with these additive columns.
+
+| Column | Meaning |
+| --- | --- |
+| `app_name`, `app_icon` | Display name and icon. |
+| `app_slug` | 16 characters from `a-z0-9`, letter first, set once, unique. The hosted address is `https://SLUG.allternitusercontent.com`. |
+| `app_pinned_version` | Integer version the app is pinned to. |
+| `app_capability_snapshot` | The capabilities the version declares. Compared with the install's grant. |
+| `app_permission_tier` | `browser`, `app` or `full`. |
+| `app_install_scope` | `private`, `people`, `org` or `link`. |
+| `app_tools`, `app_skill_ref` | The app's own tools, and an optional `skill://` address. |
+
+Vendor apps (an MCP App from a connected server) are rows in `vendor_apps`: owner, connector id, server URL, `ui://` resource, name, icon, tool allow-list and a tier of `browser` or `app` only. We cannot vouch for vendor code, so a vendor app is never `full`. Installs are rows in `app_installs` (kind `artifact` or `vendor`, app ref, pinned version, `granted_tier`, `granted_capabilities`, `pinned`), unique per user, kind and ref.
+
+### Tiers
+
+| Tier | Allows | Limits |
+| --- | --- | --- |
+| `browser` | View and `ui/*` methods. No viewer data. | A link-shared install is allowed. |
+| `app` | Adds storage, AI (billed to the viewer) and the app's own tools. | A signed-in viewer. |
+| `full` | Adds the viewer's connectors, Tasks, Events wake and skill install. | Own and org apps only. `422 full_tier_not_allowed` with a link scope. |
+
+Capability names in `granted_capabilities` and the snapshot are `storage`, `ai`, `tasks`, `events`, `skill` and `connector:CONNECTOR/TOOL`. Docs, Slides and Sheets artifacts cannot be apps: `422 kind_not_installable`.
+
+### App routes
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/v2/artifacts/{id}/app` | The app record, or `{app: null}`. |
+| `PUT /api/v2/artifacts/{id}/app` | Owner only. Body `{name, icon?, tier, install_scope?, tools?, skill_ref?, pinned_version?, export_mcp?}`. Unknown fields are refused. `422 invalid_install_scope`. |
+| `GET /api/v2/public/apps/{slug}` | Public app record. `404` for private apps; `410` when killed; `install` and `install_reason` (`tier_too_high`, `org_only`); `no-store`. |
+| `GET /api/v1/apps` | The shelf: `{yours, servers}`. Rows are `{kind, provenance, tier, installed, pinned, link, slug}` with provenance `you`, `org` or `shared`. |
+| `POST /api/v1/apps/{kind}/{ref}/install` | Body `{granted_tier, pinned?, consent?}`. Returns `{install, needs_consent, requested_tier?, added_capabilities?}`. `403 tier_not_allowed` above the cap. |
+| `DELETE /api/v1/apps/{kind}/{ref}/install` | `204`. |
+| `POST /api/v1/apps/{kind}/{ref}/pin`, `PATCH .../install` | Body `{pinned}`. |
+| `GET`, `POST /api/v1/vendor-apps` | List, and upsert on owner, connector and resource. |
+
+### Consent API
+
+The server stores the grant and asks again only when the tier rises or the snapshot adds a capability (**growth-only consent**). The check runs in `artifact_runtime.rs`, never in the UI alone. The runtime context response carries `app: {tier, granted_tier, needs_consent, requested_tier, added_capabilities}`, or `null` for a plain page.
+
+| Status and code | When |
+| --- | --- |
+| `403 consent_required` | Body has `requested_tier` and `added_capabilities`. Send the install again with `consent: true` after the user approves. |
+| `403 tier_too_low` | Body has `tier` and `required_tier`. |
+| `409 capability_not_declared` | The call needs a capability the snapshot lacks. |
+
+### Handoff
+
+A Desktop window or a launcher opens an app without a workspace session on the app domain, using a one-time token.
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/apps/{slug}/handoff` | Signed in. Returns `201 {token, expires_in: 60, url, open_url}`; `token` starts `aph_` and `open_url` is `url` plus `?handoff=` and the token. |
+| `POST /api/v1/apps/handoff/exchange` | Body `{token}`. Returns `{session, expires_in: 3600, user, artifact_id, slug}`. `401 handoff_invalid`. |
+
+`session` starts `aps_` and is accepted as a Bearer token for that artifact's runtime only: `403 app_session_wrong_app`, `401 app_session_invalid`, `401 app_session_required`. App origins never use a workspace session, and CORS for `*.allternitusercontent.com` is allowed on the exchange and runtime routes only. Tokens are stored as hashes.
+
+### Share links
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/share-links` | `201`. `409 subdomain_taken`, `400 reserved_subdomain`, `410` killed. Live links only: `429 cap_reached` with `{cap: links or bytes, used, limit}`. |
+| `GET /api/v1/share-links` | `{links}`; add `?include_revoked=true`. Each link has `url`. |
+| `DELETE /api/v1/share-links/{id}` | Soft revoke: `{revoked, link}`. A killed link stays killed. |
+| `POST /api/v1/share-links/{id}/pause` | Body `{paused?}`, default `true`. |
+| `POST /api/v1/share-links/{id}/heartbeat` | `410` if revoked or killed. |
+| `POST /api/v1/admin/share-links/{id}/kill`, `.../flag` | Admin. Body `{note?}` or `{flagged?, note?}`. |
+
+Caps for live links are 3 active links and 20 GB a month per account. Hosted links are `https://SUB.allternitusercontent.com`; live links are `https://SUB.live.allternitusercontent.com`. Without `APP_DOMAIN` set, a hosted link falls back to `https://ai.allternit.com/app/SUB` and a live link has no `url`. `auth_mode` is `public`, `signed_in` or `org`.
+
+## The x-allternit v2 bridge
+
+MCP Apps is the one host protocol: `ui/initialize`, `tools/list`, `tools/call`, `resources/*`, `prompts/list`, `ui/open-link` and `ui/download-file`. Allternit adds an extension under `x-allternit`, announced in `ui/initialize` (`ALLTERNIT_EXT_VERSION` is `2`). Which methods are advertised depends on the app's tier; a call below the tier fails with the MCP error `tier_too_low` in `error.data`.
+
+| Extension method | Needs tier |
+| --- | --- |
+| `x-allternit/storage.get`, `.set`, `.delete`, `.list` | `app` |
+| `x-allternit/ai.complete` | `app` |
+| Connector calls | `full`, and they arrive as ordinary `tools/call` |
+
+Runtime errors travel in the MCP error `data` as `{code}`.
+
+### Mirror tools
+
+mcp.allternit.com mirrors the extension as ordinary tools, so an exported app works in a host that does not know the extension. One SDK shim picks the path.
+
+| Extension method | Mirror tool |
+| --- | --- |
+| `x-allternit/storage.get` | `app_storage_get` |
+| `x-allternit/storage.set` | `app_storage_set` |
+| `x-allternit/storage.delete` | `app_storage_delete` |
+| `x-allternit/storage.list` | `app_storage_list` |
+| `x-allternit/ai.complete` | `app_ai_complete` |
+
+A mirror tool returns the runtime result in `structuredContent`, or `isError` with `{code}`. It obeys the same tier as the extension. Older drafts of these tools used dotted names; use the underscore names.
+
+Old pages that post `{allternit: 1}` messages keep working through an adapter in `PageRuntimeFrame.tsx`, and the sandbox proxy script `allternit-ext.js` serves both versions. Stored page code is not rewritten.
+
+## MCP App export
+
+The owner turns on `export_mcp` per app (top level in the `PUT .../app` body; `gizzi app export SLUG --mcp` sets it). The edge then serves the app's `ui://` resource and its tools to other AI clients, and an outside MCP App can be installed here in the same shape. The mirror tools above carry storage and AI.
+
+## MCP Tasks
+
+Long-running tools return a task instead of blocking. Task state lives at the server, in the edge table `mcp_tasks`, and the allternit-api proxy stays stateless.
+
+**On mcp.allternit.com.** These edge tools return a task: `phone_tap`, `phone_type`, `phone_open_app`, `phone_tool`, `phone_task`, `mail_read_otp`, `decide`, `respond`, `agent_send`, `shell.exec`, `http.get`, `http.post` and `inference.execute_routed_turn`. A task needing approval is `waiting` with a link elicitation; accepting re-checks the stored approval. A client opts in by declaring the tasks extension on the request. Tasks belong to an owner (user, client or target).
+
+**Through the proxy.** allternit-api's `POST /mcp/user-proxy` passes tasks through. Task ids it returns are `CONNECTOR_ID:UPSTREAM_TASK_ID`, and these methods are routed to that connector:
+
+| Method | Purpose |
+| --- | --- |
+| `tasks/get` | Current state. |
+| `tasks/update` | Answer the inputs a waiting task asked for. |
+| `tasks/cancel` | Stop the task. |
+| `tasks/result` | Only for callers on the older 2025-11-25 protocol. |
+
+Servers on older protocol versions are not told about tasks at initialize. The Rust client (`mcp/mcp-client`) opts in with `with_tasks()`; `call_tool` returns `ToolOutcome::Complete` or `ToolOutcome::Task`, and `wait_for_task` polls to the end. A task result is accepted only for a `tools/call` that declared the extension.
+
+### Chat events
+
+gizzi publishes `mcp.task` on its event stream with `{sessionID, part}`; the part has `type: "mcp-task"`, `taskId`, `status`, `toolName`, `title`, optional `statusMessage`, `progress`, `elicitation`, `result` and `error`. allternit-api passes these on as `mcp_task`. Cancel with `POST /api/v1/mcp/task/{id}/cancel` (URL-encode the id; it contains a colon). The web card and the terminal row both read these.
+
+## Elicitation forwarding
+
+When an upstream server sends `elicitation/create`, the proxy forwards it to the client and returns the answer.
+
+- A client opts in with `Accept: text/event-stream` plus the elicitation capability, or `_meta["allternit/elicitation"] = true`. The call is then answered as a stream; the elicitation arrives as an event, and the client posts the JSON-RPC response to the same endpoint.
+- Without opt-in, or after the 120 second timeout, the request is declined or cancelled. Older servers that send `elicitation/create` get a decline rather than a hang.
+- In chat the part is `mcp-elicitation` with `mode` `form` or `url`, an `id` of `TASK_ID:KEY`, and `requestedSchema` or `{url, elicitationId}`. Reply with `POST /api/v1/mcp/elicitation/{id}/reply` and body `{action: "accept" | "decline" | "cancel", content?}`.
+- Elicitation from the 2025-11-25 protocol era is not routed to the UI.
+
+## Events and watches
+
+allternit-api polls a server's events while a session is live. Routes under `/api/v1/mcp`:
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /watches` | Body `{server, event, session_id, arguments?}` with `server` a connector id. Returns `{watch_id}`. Idempotent. The lease is 2 hours. |
+| `GET /watches?session_id=` | `{watches: [{watchId, server, event, arguments, sessionId, startedAt, eventCount, lastEventAt}]}`. |
+| `DELETE /watches/{id}` | `204`, or `404`. |
+
+Errors: `404 event_not_found`, `404 connector_not_found`, `422 poll_unsupported`, `422 unsupported`, `429 too_many_watches` (20 per user), `502`. Watches are held in memory. The shape of the upstream `events/poll` request and result is not yet checked against the final spec. Webhook delivery covers the case where no session is live; see [MCP events](/guides/mcp-events).
+
+## Agent Skills over MCP
+
+The edge serves skills as resources with the capability `io.modelcontextprotocol/skills`. Only `SKILL.md` is listed; supporting files are readable by address.
+
+| Address | Who can read |
+| --- | --- |
+| `skill://allternit/NAME/SKILL.md` | Everyone. Built-in skills. |
+| `skill://user/NAME/SKILL.md` | The caller only. |
+| `skill://org/ORG_ID/NAME/SKILL.md` | Members of that organization. |
+
+An unknown address is error `-32002`. Clients consume skills with `McpClient::list_skills` and `read_skill`; `GET /api/v1/mcp/skills` in allternit-api lists them as `[{server, connectorId, uri, name, description}]`. gizzi has `MCP_SKILLS` on by default.
+
+### Cloud skills API
+
+User and org skills are stored in cloud-api (`cloud_skills`). Caps: 256 KB, 40 files and 100 skills per owner.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/v1/skills?orgId=` | Summaries `{id, name, description, orgId, version, sizeBytes, createdAt, updatedAt}`. |
+| `GET /api/v1/skills/{id}` | Summary plus `skillMd` and `files`. |
+| `POST /api/v1/skills` | Body `{skillMd, files?, orgId?}`. `201`. |
+| `PUT /api/v1/skills/{id}` | Body `{skillMd?, files?}`. |
+| `DELETE /api/v1/skills/{id}` | Delete. |
+
+Errors: `invalid_skill_md`, `invalid_skill`, `409 name_taken`, `403 admin_required`, `404 not_found`. Org writes need org admin and fail closed. Erasing an account deletes its skills.
+
+## Server Card
+
+mcp.allternit.com publishes two discovery documents, so other AI apps can find and add it.
+
+| Path | Content |
+| --- | --- |
+| `/.well-known/mcp` | The Server Card: name, endpoint, auth and capabilities, including Tasks and skills. |
+| `/.well-known/ai-catalog.json` | A catalog that points at the card. |
+
+Allternit's connect screen reads other servers' cards the same way: **Add** on a card connects that server.
+
+## Related
+
+- [Make it an app](/guides/make-it-an-app)
+- [Page runtime API](/api/artifact-runtime)
+- [MCP events](/guides/mcp-events)
+- [MCP servers API](/api/mcp-servers)
+- [Relay self-host runbook](/admin/relay-self-host)
