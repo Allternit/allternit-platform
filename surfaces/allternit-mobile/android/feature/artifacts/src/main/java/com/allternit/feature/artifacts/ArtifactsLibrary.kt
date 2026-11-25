@@ -589,7 +589,8 @@ fun ArtifactsLibraryScreen(
                     Text("Done", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium,
                         modifier = Modifier.heightIn(min = 48.dp).clickable { appPage = null }.padding(8.dp).testTag("artifactAppPageDone"))
                 }
-                ArtifactPageWebView(PageSource.Url(if (link.startsWith("/")) ArtifactWeb.ORIGIN + link else link), Modifier.fillMaxSize())
+                val pageUrl = if (link.startsWith("/")) ArtifactWeb.ORIGIN + link else link
+                ArtifactPageWebView(PageSource.Url(pageUrl), Modifier.fillMaxSize(), appHost = android.net.Uri.parse(pageUrl).host)
             }
         }
     }
