@@ -160,7 +160,8 @@ struct ConnectorsListView: View {
                 title: searchText.isEmpty ? "No connectors available" : "No matches",
                 message: searchText.isEmpty
                     ? "Add a connector to link external accounts and services."
-                    : "No connectors match your search."
+                    : "No connectors match your search.",
+                art: searchText.isEmpty ? .sheets : nil
             )
             .frame(maxWidth: .infinity)
         } else {

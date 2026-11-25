@@ -136,7 +136,7 @@ struct GroupsListView: View {
                 .plainGroupRow(top: 0, bottom: 0, side: 0)
         } else if store.groups.isEmpty {
             VStack(spacing: 12) {
-                EmptyBox(icon: "person.3", title: "Group chats", line: "No group chats yet.")
+                EmptyBox(icon: "person.3", title: "Group chats", line: "No group chats yet.", art: .envelope)
                 GlassPill(title: "New group chat", systemImage: "plus") { isCreating = true }
             }
             .plainGroupRow(top: 8, bottom: 8)
