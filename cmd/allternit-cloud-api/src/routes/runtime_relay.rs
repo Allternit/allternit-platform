@@ -1968,7 +1968,16 @@ fn is_allowed_runtime_path(path: &str) -> bool {
         // gizzi-code mirrors its entire route surface under /v1/*, so this one
         // prefix covers BYO-VPS boxes (pty, sessions, events, instance, ...).
         "/v1",
+        // Live-link gates on the runtime's local allternit-api (lane 40):
+        // /shares and /shares/:id/{stop,pause,rotate}. Reached only through
+        // the owner's proxy, which already checks Clerk + runtime ownership.
+        "/shares",
     ];
+    // The host command that opens the tunnel for a web-started share. Exact
+    // path only, never the whole /host prefix.
+    if path == "/host/shares/start" {
+        return true;
+    }
     PREFIXES.iter().any(|prefix| {
         path == *prefix
             || path
@@ -2095,6 +2104,16 @@ mod files_wake_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn share_paths_are_allowed_but_host_prefix_is_not() {
+        assert!(is_allowed_runtime_path("/shares"));
+        assert!(is_allowed_runtime_path("/shares/shr_1/pause"));
+        assert!(is_allowed_runtime_path("/host/shares/start"));
+        assert!(!is_allowed_runtime_path("/host"));
+        assert!(!is_allowed_runtime_path("/host/shares/start/x"));
+        assert!(!is_allowed_runtime_path("/sharesx"));
+    }
+
     #[test]
     fn agents_paths_skip_the_old_desktop_gizzi_mapping() {
         use super::desktop_relay_compat_path as p;
