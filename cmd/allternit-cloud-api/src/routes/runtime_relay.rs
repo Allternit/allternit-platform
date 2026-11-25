@@ -1968,7 +1968,16 @@ fn is_allowed_runtime_path(path: &str) -> bool {
         // gizzi-code mirrors its entire route surface under /v1/*, so this one
         // prefix covers BYO-VPS boxes (pty, sessions, events, instance, ...).
         "/v1",
+        // Live-link gates on the runtime's local allternit-api (lane 40):
+        // /shares and /shares/:id/{stop,pause,rotate}. Reached only through
+        // the owner's proxy, which already checks Clerk + runtime ownership.
+        "/shares",
     ];
+    // The host command that opens the tunnel for a web-started share. Exact
+    // path only, never the whole /host prefix.
+    if path == "/host/shares/start" || is_host_share_command(path) {
+        return true;
+    }
     PREFIXES.iter().any(|prefix| {
         path == *prefix
             || path
@@ -1976,6 +1985,23 @@ fn is_allowed_runtime_path(path: &str) -> bool {
                 .map(|suffix| suffix.starts_with('/') || suffix.starts_with('?'))
                 .unwrap_or(false)
     })
+}
+
+/// Host commands on one live link: `/host/shares/<share_link_id>/{resume,pause,stop}`.
+/// The id is a single segment of `[A-Za-z0-9_-]` (<= 64), so nothing else under
+/// /host is reachable.
+fn is_host_share_command(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/host/shares/") else {
+        return false;
+    };
+    let mut parts = rest.split('/');
+    let (Some(id), Some(action), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    !id.is_empty()
+        && id.len() <= 64
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && matches!(action, "resume" | "pause" | "stop")
 }
 
 fn required_capability(path: &str, method: &str) -> &'static str {
@@ -2100,6 +2126,23 @@ mod tests {
         assert!(super::is_allowed_runtime_path("/api/v1/mcp/elicitation/t1%3Ak/reply"));
         assert!(super::is_allowed_runtime_path("/api/v1/mcp/task/c%3Aup1/cancel"));
         assert_eq!(super::required_capability("/api/v1/mcp/task/c%3Aup1/cancel", "POST"), "runtime:execute");
+    }
+
+    #[test]
+    fn share_paths_are_allowed_but_host_prefix_is_not() {
+        assert!(super::is_allowed_runtime_path("/shares"));
+        assert!(super::is_allowed_runtime_path("/shares/shr_1/pause"));
+        assert!(super::is_allowed_runtime_path("/host/shares/start"));
+        assert!(!is_allowed_runtime_path("/host"));
+        assert!(!is_allowed_runtime_path("/host/shares/start/x"));
+        assert!(super::is_allowed_runtime_path("/host/shares/shr_1/resume"));
+        assert!(super::is_allowed_runtime_path("/host/shares/shr_1/pause"));
+        assert!(super::is_allowed_runtime_path("/host/shares/shr_1/stop"));
+        assert!(!is_allowed_runtime_path("/host/shares/shr_1/rotate"));
+        assert!(!is_allowed_runtime_path("/host/shares/../resume"));
+        assert!(!is_allowed_runtime_path("/host/shares/a/b/resume"));
+        assert!(!is_allowed_runtime_path("/host/shares//resume"));
+        assert!(!is_allowed_runtime_path("/sharesx"));
     }
 
     #[test]
