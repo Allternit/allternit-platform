@@ -36,6 +36,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -262,22 +266,55 @@ internal fun LaunchGreeting(showMark: Boolean = true) {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
     val rise = remember { androidx.compose.animation.core.Animatable(if (reduced) 1f else 0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(Unit) { rise.animateTo(1f, com.allternit.core.design.Motion.standardSpring()) }
+    // Polish 6.7: a neutral wash (fillNeutral, never tan) rises and fades once on open; opacity only.
+    val wash = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!reduced) {
+            wash.animateTo(1f, androidx.compose.animation.core.tween(500))
+            wash.animateTo(0f, androidx.compose.animation.core.tween(700))
+        }
+    }
+    // Night line from 22:00 to 04:59 (iOS pool's "Up late" slot).
+    val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
+    val line = if (hour >= 22 || hour < 5) "Hello, night owl" else "What are we working on?"
+    // The greeting recenters when the keyboard resizes the feed: chase the jump with a spring
+    // so it glides (about 0.4 s) instead of snapping.
+    val glide = remember { androidx.compose.animation.core.Animatable(0f) }
+    var lastY by remember { androidx.compose.runtime.mutableFloatStateOf(Float.NaN) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .drawBehind {
+                if (wash.value > 0f) drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.fillNeutral, Color.Transparent)),
+                    alpha = wash.value,
+                )
+            }
+            .onPlaced { coords ->
+                val y = coords.positionInParent().y
+                if (!lastY.isNaN() && !reduced && kotlin.math.abs(y - lastY) > 1f) {
+                    val delta = lastY - y
+                    lastY = y
+                    scope.launch {
+                        glide.snapTo(glide.value + delta)
+                        glide.animateTo(0f, com.allternit.core.design.Motion.standardSpring())
+                    }
+                } else lastY = y
+            }
             .padding(horizontal = 24.dp)
             .padding(bottom = 24.dp)
             .graphicsLayer {
                 alpha = rise.value.coerceIn(0f, 1f)
-                translationY = (1f - rise.value) * 8.dp.toPx()
+                translationY = (1f - rise.value) * 8.dp.toPx() + glide.value
             },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (showMark) AProtocolMark(height = 22.dp, modifier = Modifier.testTag("homeMark"))
         Text(
-            text = "What are we working on?",
+            text = line,
             color = c.textPrimary,
             lineHeight = 39.sp,
             fontFamily = AllternitSerif,
