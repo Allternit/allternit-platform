@@ -76,6 +76,7 @@ internal fun ChatPage(
     /** Artifact mode + Send inside a chat starts a new artifact session, never converts this thread (D5). */
     onStartArtifact: ((DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit)? = null,
     onPickPdf: (() -> Unit)? = null,
+    onOpenArtifactId: ((String) -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -198,6 +199,7 @@ internal fun ChatPage(
                     onNewItem = onNewChat,
                     onStartArtifact = onStartArtifact,
                     onPickPdf = onPickPdf,
+                    onOpenArtifactId = onOpenArtifactId,
                 )
             },
             modifier = Modifier.weight(1f),

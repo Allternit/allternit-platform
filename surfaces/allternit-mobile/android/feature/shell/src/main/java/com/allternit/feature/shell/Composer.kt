@@ -241,6 +241,8 @@ internal fun Composer(
     onStartArtifact: ((DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit)? = null,
     /** Picking PDF in the mode list opens the file picker (as on the Artifacts page); null hides the PDF mode. */
     onPickPdf: (() -> Unit)? = null,
+    /** The deck Artifacts menu's Open: that artifact opens in the library (null falls back to the library list). */
+    onOpenArtifactId: ((String) -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -368,9 +370,11 @@ internal fun Composer(
             return
         }
         Haptics.perform(view, Haptics.Kind.Tap)
+        // An attached artifact rides as a reference line in the text (it is not a file to upload).
+        val artifactRefs = attachments.filter { it.kind == "artifact" }.joinToString("") { "\n[Attached artifact: ${it.name} (id ${it.uri})]" }
         val draft = ComposerDraft(
-            text = text.trim(),
-            attachments = attachments.toList(),
+            text = text.trim() + artifactRefs,
+            attachments = attachments.filter { it.kind != "artifact" },
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
             effort = models.selected?.let { models.level(it) },
@@ -573,6 +577,8 @@ internal fun Composer(
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
+                onAttachArtifact = { id, title -> if (attachments.none { it.kind == "artifact" && it.uri == id }) attachments += ComposerAttachment(title, id, "artifact") },
+                onOpenArtifact = { id -> onOpenArtifactId?.invoke(id) ?: onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
     }
@@ -778,12 +784,15 @@ private fun DeckBand(
     onAt: () -> Unit,
     onPlugins: () -> Unit,
     onArtifacts: () -> Unit,
+    onAttachArtifact: (id: String, title: String) -> Unit,
+    onOpenArtifact: (id: String) -> Unit,
     /** PDF opens a file picker; hidden when the host cannot provide one. */
     showPdf: Boolean,
 ) {
     val c = AllternitTheme.colors
     var menu by remember { mutableStateOf(false) }
     var plugins by remember { mutableStateOf(false) }
+    var artifactsMenu by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val border = c.borderSubtle
     Row(
@@ -858,7 +867,75 @@ private fun DeckBand(
             }
         }
         DeckSeparator()
-        DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts", onClick = onArtifacts)
+        Box {
+            DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts") { artifactsMenu = true }
+            DeckArtifactsMenu(artifactsMenu, { artifactsMenu = false }, onAttachArtifact, onOpenArtifact, onArtifacts)
+        }
+    }
+}
+
+/** Where the deck's Pinned artifacts live on this phone (artifact ids; the card menu's Pin writes it). */
+private const val DeckPinsKey = "deck-pinned-artifacts"
+
+/**
+ * The deck Artifacts menu (R2-deck-artifacts, R3-recent; iOS ComposerDeck): Pinned, then Recent (3), each row
+ * with Attach and Open, footer "Open Artifacts". Nothing creates here, and plans never appear.
+ */
+@Composable
+private fun DeckArtifactsMenu(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onAttach: (String, String) -> Unit,
+    onOpen: (String) -> Unit,
+    onOpenAll: () -> Unit,
+) {
+    val c = AllternitTheme.colors
+    val context = LocalContext.current
+    var items by remember { mutableStateOf<List<com.allternit.feature.artifacts.ArtifactSummary>?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        failed = false
+        when (val r = com.allternit.feature.artifacts.ArtifactsV2Client.list("mine", null, null, null, false)) {
+            is com.allternit.core.api.ApiResult.Ok -> items = r.value.items.filter { it.kind != "plan" }
+            else -> { failed = true; if (items == null) items = emptyList() }
+        }
+    }
+    val pinIds = remember(open) {
+        context.getSharedPreferences("allternit_shell", Context.MODE_PRIVATE).getString(DeckPinsKey, "").orEmpty().split(',').filter { it.isNotEmpty() }.toSet()
+    }
+    val all = items.orEmpty()
+    val pinned = all.filter { it.id in pinIds }
+    val recent = all.filter { it.id !in pinIds }.sortedByDescending { it.updatedAt }.take(3)
+    DropdownMenu(expanded = open, onDismissRequest = onDismiss, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.width(300.dp).testTag("deckArtifactsMenu")) {
+            @Composable
+            fun Rows(title: String, rows: List<com.allternit.feature.artifacts.ArtifactSummary>, tag: String) {
+                if (rows.isEmpty()) return
+                Text(title, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+                rows.forEach { a ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(painterResource(com.allternit.feature.artifacts.ArtifactKinds.icon(a.kind)), contentDescription = null, modifier = Modifier.padding(start = 12.dp).size(20.dp), tint = androidx.compose.ui.graphics.Color.Unspecified)
+                        Text(a.title.ifBlank { "Untitled" }, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Attach").clickable(role = Role.Button, onClickLabel = "Attach ${a.title}") { onDismiss(); onAttach(a.id, a.title.ifBlank { "Untitled" }) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Attach", color = c.textPrimary, fontSize = 13.sp)
+                        }
+                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Open").clickable(role = Role.Button, onClickLabel = "Open ${a.title}") { onDismiss(); onOpen(a.id) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Open", color = c.textSecondary, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+            Rows("Pinned", pinned, "deckPinned")
+            Rows("Recent", recent, "deckRecent")
+            if (pinned.isEmpty() && recent.isEmpty()) {
+                Text(
+                    if (items == null) "Loading…" else if (failed) "Couldn't load your artifacts." else "Nothing here yet. Your artifacts show up here.",
+                    color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+            }
+            MenuRow(icon = null, title = "Open Artifacts", testTag = "deckOpenArtifacts") { onDismiss(); onOpenAll() }
+        }
     }
 }
 

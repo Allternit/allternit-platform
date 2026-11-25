@@ -66,8 +66,8 @@ data class StudioSession(
 object ArtifactStudioLauncher {
     private const val PREFS = "allternit_artifact_studio"
 
-    /** [itCan]: the composer's "It can" choices (connectors / storage / ai), kept with the session and named in its prompt. */
-    suspend fun launch(context: Context, kind: StudioKind, itCan: Map<String, Boolean> = emptyMap()): Result<StudioSession> {
+    /** [sessionKind]: the metadata kind when it differs from the studio kind (`app` runs as Build). [itCan]: the composer's "It can" choices (connectors / storage / ai), kept with the session and named in its prompt. */
+    suspend fun launch(context: Context, kind: StudioKind, itCan: Map<String, Boolean> = emptyMap(), sessionKind: String? = null): Result<StudioSession> {
         val title = kind.newTitle
         var artifactId: String? = null
         if (kind in setOf(StudioKind.Docs, StudioKind.Sheets, StudioKind.Slides)) {
@@ -89,7 +89,8 @@ object ArtifactStudioLauncher {
         LibraryNet.send("PATCH", "agent-sessions/${LibraryNet.escape(sessionId)}", buildJsonObject {
             putJsonObject("metadata") {
                 putJsonObject("artifactSession") {
-                    put("kind", kind.raw); put("title", title)
+                    // App mode runs the Build studio but records kind `app`, as web and iOS do.
+                    put("kind", sessionKind ?: kind.raw); put("title", title)
                     artifactId?.let { put("artifactId", it) }
                     designProjectId?.let { put("designProjectId", it) }
                 }

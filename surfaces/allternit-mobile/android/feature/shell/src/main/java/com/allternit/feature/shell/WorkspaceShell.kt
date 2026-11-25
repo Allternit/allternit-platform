@@ -428,7 +428,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val startArtifact: (DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit = { mode, draft, itCan ->
         val kind = com.allternit.feature.artifacts.StudioKind.forMode(mode.id)
         scope.launch {
-            val launched = kind?.let { com.allternit.feature.artifacts.ArtifactStudioLauncher.launch(context, it, itCan) }
+            val launched = kind?.let { com.allternit.feature.artifacts.ArtifactStudioLauncher.launch(context, it, itCan, sessionKind = mode.id.takeIf { m -> m == "app" }) }
             val session = launched?.getOrNull()
             if (session == null) {
                 android.widget.Toast.makeText(context, "Couldn't start a ${mode.label.lowercase()} session. ${launched?.exceptionOrNull()?.message.orEmpty()}".trim(), android.widget.Toast.LENGTH_LONG).show()
@@ -452,6 +452,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         }
     }
     val onPickPdf: () -> Unit = { pickPdf.launch(arrayOf("application/pdf")) }
+    // The deck Artifacts menu's Open: that artifact in the library.
+    val openArtifactId: (String) -> Unit = { id -> libraryStudio = null; libraryOpenId = id; libraryNonce++; page = ShellPage.Section(libraryRow) }
     // The studio's Chat pane: the shell's one chat, on the studio's session (iOS ArtifactStudioView).
     val studioChat: @Composable (String) -> Unit = { sid ->
         LaunchedEffect(sid) { chat.loadSession(sid) }
@@ -635,6 +637,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             },
                             onStartArtifact = startArtifact,
                             onPickPdf = onPickPdf,
+                            onOpenArtifactId = openArtifactId,
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             // The microphone permission was asked on the home composer; the chat starts voice mode.
                             onVoiceMode = {
@@ -679,6 +682,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             playGamesAnytime = mode == ShellMode.Code,
                             onStartArtifact = startArtifact,
                             onPickPdf = onPickPdf,
+                            onOpenArtifactId = openArtifactId,
                             onOpenArtifact = { a ->
                                 page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
                             },
