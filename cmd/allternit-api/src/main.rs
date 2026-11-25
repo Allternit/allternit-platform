@@ -1240,6 +1240,8 @@ async fn main() {
         .merge(allternit_api::marketplace_routes::router())
         .merge(allternit_api::commerce_routes::router())
         .merge(admin_mcp_tunnel_router())
+        // Live-link share gates: GET|POST /shares, /shares/:id{,/stop,/pause,/rotate}.
+        .merge(allternit_api::share_routes::router())
         .merge(outcome_rubric_router())
         .merge(federation_router())
         .merge(quickstart_router())
@@ -1743,6 +1745,7 @@ async fn main() {
         info!("  - Terminal:       POST /terminal/*");
         info!("  - Webhooks:       POST /webhooks/clerk/*");
         info!("  - LLM Gateway:    POST /v1/chat/completions, GET /v1/models (Bearer ak-...)");
+        info!("  - Shares:         GET|POST /shares (live-link gates on loopback)");
         Some(listener)
     } else {
         info!("ALLTERNIT_ROLE=control: data-plane listener disabled (no /v1 proxy, main port not bound)");

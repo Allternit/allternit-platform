@@ -342,6 +342,9 @@ pub mod commerce_routes;
 pub mod marketplace_routes;
 pub mod me_routes;
 pub mod setup_routes;
+/// Live-link share gate (loopback listener per share) and its `/shares` routes.
+pub mod share_gate;
+pub mod share_routes;
 /// Self-hosted Agents Server (the `allternit-agents-server` binary). Never
 /// mounted by the main `allternit-api` router.
 pub mod selfhost;
