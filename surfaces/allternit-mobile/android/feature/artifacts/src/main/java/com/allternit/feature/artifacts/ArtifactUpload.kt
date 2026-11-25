@@ -153,16 +153,44 @@ internal object ArtifactUploads {
         }
 }
 
+/** The deck's artifact modes in registry order (docs ... research), the one list the "+ New" sheet and the empty library share. */
+internal fun newArtifactModes(allows: (String) -> Boolean): List<com.allternit.core.api.gen.AgentModeEntry> =
+    com.allternit.core.api.gen.AgentModes.modes("chat").filter { it.artifact }
+        .filter { e -> (StudioKind.forMode(e.id)?.templateKind ?: e.libraryKind)?.let(allows) ?: true }
+
+/** The art for a mode tile or row: the deck's own drawable. */
+internal fun modeDeckArt(id: String): Int = when (id) {
+    "pdf" -> DesignR.drawable.deck_pdf
+    "app" -> DesignR.drawable.deck_app
+    else -> StudioKind.forMode(id)?.deck ?: DesignR.drawable.deck_artifact
+}
+
+/** Opens the system PDF picker and uploads the pick as a PDF artifact (the PDF mode, which has no chat session). */
+@Composable
+internal fun rememberPdfPicker(
+    scope: kotlinx.coroutines.CoroutineScope,
+    onUploading: (String) -> Unit,
+    onUploaded: (Result<String>) -> Unit,
+): () -> Unit {
+    val context = LocalContext.current
+    val pdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
+        if (u != null) {
+            onUploading("Uploading ${displayName(context, u) ?: "PDF"}…")
+            scope.launch { onUploaded(ArtifactUploads.pdf(context, u)) }
+        }
+    }
+    return { pdf.launch(arrayOf("application/pdf")) }
+}
+
 /**
- * iOS "New artifact" (the floating button's menu, as a sheet so it is reached by tap): Make
- * something new (the studio tiles), Upload (PDF, Image, Video) and Start from your connected tools.
+ * iOS "New artifact" (the "+ New" button's sheet, reached by tap): the mode list, same list and order as the
+ * composer deck (Artifacts redesign 6.4), then Upload (Image, Video). PDF is a mode row that opens the picker.
  */
 @Composable
 internal fun NewArtifactSheet(
-    tiles: List<StudioKind>,
+    modes: List<com.allternit.core.api.gen.AgentModeEntry>,
     signedIn: Boolean,
-    onTile: (StudioKind) -> Unit,
-    onConnectors: () -> Unit,
+    onMode: (com.allternit.core.api.gen.AgentModeEntry) -> Unit,
     onUploading: (String) -> Unit,
     onUploaded: (Result<String>) -> Unit,
     onDismiss: () -> Unit,
@@ -173,19 +201,14 @@ internal fun NewArtifactSheet(
     val ownScope = rememberCoroutineScope()
     val scope = scope ?: ownScope
     fun run(name: String, block: suspend () -> Result<String>) { onUploading("Uploading $name…"); scope.launch { onUploaded(block()) } }
-    val pdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) run(displayName(context, u) ?: "PDF") { ArtifactUploads.pdf(context, u) } }
     val image = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u -> if (u != null) run("image") { ArtifactUploads.image(context, u, signedIn) } }
     val video = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u -> if (u != null) run(displayName(context, u) ?: "video") { ArtifactUploads.video(context, u, signedIn) } }
     LibrarySheet("New artifact", "newArtifactSheet", onDismiss = onDismiss, leading = LibrarySheetAction("Cancel", onClick = onDismiss)) {
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterLabel("Make something new")
-            tiles.forEach { k -> LibraryRowButton(k.label, k.deck, "newArtifact${k.raw}") { onDismiss(); onTile(k) } }
+            modes.forEach { m -> LibraryRowButton(m.label, modeDeckArt(m.id), "newArtifact${m.id}") { onDismiss(); onMode(m) } }
             FilterLabel("Upload")
-            LibraryRowButton("PDF", DesignR.drawable.ph_upload_simple, "artifactsUploadPdf") { pdf.launch(arrayOf("application/pdf")) }
             LibraryRowButton("Image", DesignR.drawable.ph_upload_simple, "artifactsUploadImage") { image.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
             LibraryRowButton("Video", DesignR.drawable.ph_upload_simple, "artifactsUploadVideo") { video.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
-            FilterLabel("Start from your connected tools")
-            LibraryRowButton("Connect your tools", DesignR.drawable.ph_plugs_connected, "newArtifactConnectors") { onDismiss(); onConnectors() }
         }
     }
 }

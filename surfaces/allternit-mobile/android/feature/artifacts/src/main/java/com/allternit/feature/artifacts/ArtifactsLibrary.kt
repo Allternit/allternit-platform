@@ -229,7 +229,7 @@ class ArtifactLibraryStore {
 
 /**
  * The Artifacts section (iOS ArtifactsLibraryView): the round ☰ header with the search and filter
- * pill, "Artifacts", Make something new (the studio tiles), Your artifacts in List / Grid / Deck,
+ * pill, "Artifacts" with "+ New" (the mode list sheet), Your artifacts in List / Grid / Deck,
  * and every empty, offline, signed-out and error state with the iOS copy. A card opens the V2
  * artifact view; its ⋯ (and a long press, like the iOS context menu) opens Archive / Delete.
  * [studioChat] is the chat pane the studio shows for its session (the shell's chat screen).
@@ -264,6 +264,10 @@ fun ArtifactsLibraryScreen(
     var newOpen by remember { mutableStateOf(false) }
 
     fun reload() { scope.launch { store.load() } }
+    val pdfPicker = rememberPdfPicker(
+        scope, onUploading = { store.notice = it },
+        onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
+    )
 
     LaunchedEffect(signedIn) {
         if (signedIn) {
@@ -285,28 +289,20 @@ fun ArtifactsLibraryScreen(
         return
     }
 
-    fun startSession(kind: StudioKind) {
+    fun startSession(kind: StudioKind, sessionKind: String? = null) {
         if (launching != null) return
         launching = kind
         scope.launch {
-            val r = ArtifactStudioLauncher.launch(context, kind)
+            val r = ArtifactStudioLauncher.launch(context, kind, sessionKind = sessionKind)
             launching = null
             r.onSuccess { studio = it }.onFailure { store.notice = "Couldn't start a ${ArtifactKinds.noun(kind.studioKind).lowercase()} session. ${it.message ?: ""}".trim() }
         }
     }
 
-    fun launch(kind: StudioKind) {
-        if (launching != null) return
-        // A tile with a library kind toggles that filter (iOS ArtifactTileFilter; tap again clears).
-        // Build, Deep Research, Ops and Video have none, so they start a session; while a kind
-        // filter is on, the first row ("New <Tile>") starts that kind's session.
-        val fk = kind.filterKind
-        if (fk != null) {
-            store.kind = if (store.kind == fk) null else fk
-            reload()
-            return
-        }
-        startSession(kind)
+    // One list for "+ New" and the empty library: the deck's modes. PDF picks a file; the rest start a session.
+    fun launchMode(e: com.allternit.core.api.gen.AgentModeEntry) {
+        if (e.launchType == com.allternit.core.api.gen.AgentModeLaunchType.PICK) { pdfPicker(); return }
+        StudioKind.forMode(e.id)?.let { startSession(it, sessionKind = e.id.takeIf { m -> m == "app" }) }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -325,7 +321,7 @@ fun ArtifactsLibraryScreen(
                 searchJob = scope.launch { delay(300); store.load() }
             }
         }
-        val tiles = StudioKind.ordered.filter { k -> k.templateKind?.let { store.allows(it) } ?: true }
+        val modes = newArtifactModes(store.allows)
         val columns = if (layout == LibraryLayout.Grid) 2 else 1
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -337,41 +333,21 @@ fun ArtifactsLibraryScreen(
         ) {
             val full: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
             item(key = "title", span = full) {
-                TabPage(
-                    description = "Docs, sheets, slides and pages you can edit, share and export.",
-                    modifier = Modifier.bleed(14.dp),
-                    title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Artifacts" }) },
-                ) {}
-            }
-            item(key = "make", span = full) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Make something new", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        Text("${tiles.size} types", color = c.textTertiary, fontSize = 12.sp)
-                    }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(tiles, key = { it.raw }) { k ->
-                            StudioTile(k, selected = store.kind != null && store.kind == k.filterKind, busy = launching == k) { launch(k) }
-                        }
-                    }
+                Box(Modifier.fillMaxWidth()) {
+                    TabPage(
+                        description = "Docs, sheets, slides and pages you can edit, share and export.",
+                        modifier = Modifier.bleed(14.dp),
+                        title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Artifacts" }) },
+                    ) {}
+                    // R2-C: "+ New" sits on the title line and opens the mode list sheet.
+                    LibraryNewPill("New artifact", "artifactsNew", Modifier.align(Alignment.TopEnd).padding(top = 4.dp)) { newOpen = true }
                 }
             }
-            item(key = "tools", span = full) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Or start from your connected tools", color = c.textTertiary, fontSize = 12.sp)
-                    GlassPill(onClick = onConnectors, modifier = Modifier.testTag("artifactsConnectTools"), height = 38.dp) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
-                            Text("Connect your tools", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    if (ArtifactOfficeHooks.documents != null) {
-                        GlassPill(onClick = { officeOpen = true }, modifier = Modifier.testTag("artifactsOfficeDocuments"), height = 38.dp) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
-                                Text("Allternit Office", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
+            if (ArtifactOfficeHooks.documents != null) item(key = "office", span = full) {
+                GlassPill(onClick = { officeOpen = true }, modifier = Modifier.testTag("artifactsOfficeDocuments"), height = 38.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
+                        Text("Allternit Office", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -425,7 +401,7 @@ fun ArtifactsLibraryScreen(
                     val k = store.kind
                     when {
                         k != null && store.query.isBlank() && store.owner == ArtifactLibraryStore.Owner.All && store.show == ArtifactLibraryStore.Show.Saved ->
-                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap the ${ArtifactKinds.label(k)} tile above to make one.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
+                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap + New to make one.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
                                 Icon(painterResource(ArtifactKinds.icon(k)), null, tint = c.textSecondary)
                             }
                         store.show == ArtifactLibraryStore.Show.Archive && !store.filteredBeyondArchive() ->
@@ -436,8 +412,16 @@ fun ArtifactsLibraryScreen(
                             FriendlyState(FriendlyStyle.Empty, "Nothing matches", "Try another filter or search.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
-                        else ->
-                            EmptyBox("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"), art = com.allternit.core.design.EmptyArtKind.Sheets, actionLabel = "New artifact", onAction = { newOpen = true })
+                        else -> Column(Modifier.testTag("artifactsEmpty"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Text("Nothing here yet", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            Text("Pick what you want to make. It opens in the composer.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            modes.chunked(2).forEach { pair ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    pair.forEach { e -> ModeTile(e, busy = launching == StudioKind.forMode(e.id), modifier = Modifier.weight(1f)) { launchMode(e) } }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
@@ -478,19 +462,15 @@ fun ArtifactsLibraryScreen(
         },
     )
     }
-
-    // iOS: the floating "New artifact" capsule (its menu is a sheet here, reached by tap).
-    LibraryNewButton("New artifact", "artifactsNew", Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)) { newOpen = true }
     }
 
     ArtifactsIntroHost(signedIn)
 
     if (newOpen) {
         NewArtifactSheet(
-            tiles = StudioKind.ordered.filter { k -> k.templateKind?.let { store.allows(it) } ?: true },
+            modes = newArtifactModes(store.allows),
             signedIn = signedIn,
-            onTile = { startSession(it) },
-            onConnectors = onConnectors,
+            onMode = { launchMode(it) },
             onUploading = { store.notice = it },
             onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
             onDismiss = { newOpen = false },
@@ -553,9 +533,9 @@ private fun filterSummary(s: ArtifactLibraryStore): String = listOfNotNull(
     s.query.takeIf { it.isNotBlank() }?.let { "“$it”" },
 ).joinToString(" · ")
 
-/** A Make something new card: art on the neutral fill with a soft inner edge. Shrinks a little on tap, with a light haptic. */
+/** A mode tile for the empty library (R2-C-empty): the deck art on the neutral fill, the label under it, Beta in the corner. */
 @Composable
-private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: () -> Unit) {
+private fun ModeTile(e: com.allternit.core.api.gen.AgentModeEntry, busy: Boolean, modifier: Modifier = Modifier, onTap: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val source = remember { MutableInteractionSource() }
@@ -563,33 +543,23 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
     val s by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.49f, stiffness = 600f), label = "tilePress")
     val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier.width(136.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(shape)
-            .testTag("artifactsTile${k.raw}")
-            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = k.description) {
+        modifier.graphicsLayer { scaleX = s; scaleY = s }.clip(shape)
+            .testTag("artifactsTile${e.id}")
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = "New ${e.label}") {
                 PolishHaptic.perform(view, PolishHaptic.Kind.Light); onTap()
             }
-            .semantics { contentDescription = "New ${k.label}" },
+            .semantics { contentDescription = "New ${e.label}" },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth().height(95.dp).clip(shape).background(PolishGlass.track())
-                .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) c.textPrimary else PolishGlass.border()), shape),
+            Modifier.fillMaxWidth().height(95.dp).clip(shape).background(PolishGlass.track()).border(BorderStroke(1.dp, PolishGlass.border()), shape),
             contentAlignment = Alignment.Center,
         ) {
-            when (k) {
-                StudioKind.Docs, StudioKind.Sheets, StudioKind.Slides ->
-                    ArtifactMiniThumb(k.studioKind.let { if (it == "slides") "slide" else it }, Modifier.width(52.dp).height(66.dp))
-                else -> androidx.compose.foundation.Image(painterResource(k.deck), null, Modifier.fillMaxSize().padding(3.dp))
-            }
-            androidx.compose.foundation.Image(
-                painterResource(ArtifactKinds.icon(k.studioKind)), contentDescription = null,
-                modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(16.dp).clip(RoundedCornerShape(4.dp)),
-            )
-            if (k.isBeta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
+            androidx.compose.foundation.Image(painterResource(modeDeckArt(e.id)), null, Modifier.fillMaxSize().padding(3.dp))
+            if (e.beta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
             if (busy) Text("Starting…", color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(6.dp))
         }
-        Text(k.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        Text(k.description, color = c.textSecondary, fontSize = 11.5.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(e.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 

@@ -370,11 +370,9 @@ internal fun Composer(
             return
         }
         Haptics.perform(view, Haptics.Kind.Tap)
-        // An attached artifact rides as a reference line in the text (it is not a file to upload).
-        val artifactRefs = attachments.filter { it.kind == "artifact" }.joinToString("") { "\n[Attached artifact: ${it.name} (id ${it.uri})]" }
         val draft = ComposerDraft(
-            text = text.trim() + artifactRefs,
-            attachments = attachments.filter { it.kind != "artifact" },
+            text = text.trim(),
+            attachments = attachments.toList(),
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
             effort = models.selected?.let { models.level(it) },
@@ -577,7 +575,8 @@ internal fun Composer(
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
-                onAttachArtifact = { id, title -> if (attachments.none { it.kind == "artifact" && it.uri == id }) attachments += ComposerAttachment(title, id, "artifact") },
+                // Attach rides as an @-mention, like a plugin (iOS ComposerDeck.attach, web mention chip).
+                onAttachArtifact = { _, title -> "@$title ".let { tag -> if (!text.contains(tag)) text = tag + text } },
                 onOpenArtifact = { id -> onOpenArtifactId?.invoke(id) ?: onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
@@ -874,8 +873,7 @@ private fun DeckBand(
     }
 }
 
-/** Where the deck's Pinned artifacts live on this phone (artifact ids; the card menu's Pin writes it). */
-private const val DeckPinsKey = "deck-pinned-artifacts"
+private data class DeckRow(val id: String, val kind: String, val title: String)
 
 /**
  * The deck Artifacts menu (R2-deck-artifacts, R3-recent; iOS ComposerDeck): Pinned, then Recent (3), each row
@@ -901,16 +899,18 @@ private fun DeckArtifactsMenu(
             else -> { failed = true; if (items == null) items = emptyList() }
         }
     }
-    val pinIds = remember(open) {
-        context.getSharedPreferences("allternit_shell", Context.MODE_PRIVATE).getString(DeckPinsKey, "").orEmpty().split(',').filter { it.isNotEmpty() }.toSet()
-    }
+    // Pins live on the runtime (GET/PUT deck-pins), this phone's copy as the fallback; the card menu pins and unpins.
+    LaunchedEffect(open) { if (open) com.allternit.feature.artifacts.DeckPins.load(context) }
+    val pins = com.allternit.feature.artifacts.DeckPins.pins
     val all = items.orEmpty()
-    val pinned = all.filter { it.id in pinIds }
-    val recent = all.filter { it.id !in pinIds }.sortedByDescending { it.updatedAt }.take(3)
+    val pinIds = pins.map { it.id }.toSet()
+    // Pinned rows keep pin order (newest first); a pin whose artifact is off the first page still shows from its own record.
+    val pinned = pins.map { p -> all.firstOrNull { it.id == p.id }?.let { DeckRow(it.id, it.kind, it.title) } ?: DeckRow(p.id, p.kind, p.title) }
+    val recent = all.filter { it.id !in pinIds }.sortedByDescending { it.updatedAt }.take(3).map { DeckRow(it.id, it.kind, it.title) }
     DropdownMenu(expanded = open, onDismissRequest = onDismiss, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.width(300.dp).testTag("deckArtifactsMenu")) {
             @Composable
-            fun Rows(title: String, rows: List<com.allternit.feature.artifacts.ArtifactSummary>, tag: String) {
+            fun Rows(title: String, rows: List<DeckRow>, tag: String) {
                 if (rows.isEmpty()) return
                 Text(title, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
                 rows.forEach { a ->

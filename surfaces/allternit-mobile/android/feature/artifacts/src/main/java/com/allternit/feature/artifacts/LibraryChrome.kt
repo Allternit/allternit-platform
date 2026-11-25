@@ -207,6 +207,22 @@ fun LibraryNewButton(label: String, testTag: String, modifier: Modifier = Modifi
     }
 }
 
+/** The solid dark "+ New" pill beside the Artifacts title (R2-C). Opens the mode list sheet. */
+@Composable
+fun LibraryNewPill(label: String, testTag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    Row(
+        modifier.heightIn(min = 44.dp).clip(CircleShape).background(c.textPrimary).testTag(testTag)
+            .clickable(role = Role.Button, onClickLabel = label) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
+            .padding(horizontal = 20.dp).semantics { contentDescription = label },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.bgPrimary, modifier = Modifier.size(16.dp))
+        Text("New", color = c.bgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
 /** A 44dp round icon button (iOS PhoneIconButton). */
 @Composable
 fun LibraryIconButton(icon: Int, label: String, testTag: String? = null, tint: Color? = null, iconSize: Int = 22, enabled: Boolean = true, onClick: () -> Unit) {
