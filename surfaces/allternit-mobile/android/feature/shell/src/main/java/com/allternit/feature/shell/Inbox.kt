@@ -463,6 +463,7 @@ internal fun InboxSheet(
                     title = if (focusedIsGone) "Already handled" else "You're all caught up",
                     message = "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
                     modifier = Modifier.align(Alignment.Center).padding(20.dp).testTag("inboxEmpty"),
+                    art = com.allternit.core.design.EmptyArtKind.Bell,
                 ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_bell_slash), contentDescription = null, tint = c.textSecondary) }
                 else -> PullToRefreshBox(
                     isRefreshing = refreshing,

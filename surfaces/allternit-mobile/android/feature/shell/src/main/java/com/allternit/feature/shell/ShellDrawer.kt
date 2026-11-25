@@ -410,13 +410,8 @@ private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew:
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).border(1.dp, c.borderSubtle, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
-        }
-        Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 20.dp))
+        com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Envelope)
+        Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 12.dp))
         Text(message, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
         Row(
             modifier = Modifier

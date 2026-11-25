@@ -136,7 +136,7 @@ private val CodeGreetings = listOf(
  * thread's Panes, and threads in the Code sessions view (the checklist in the header), as on iOS.
  */
 @Composable
-fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
+fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onNewSession: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
     var folder by remember { mutableStateOf<CodeResult<CodeFolder>?>(null) }
     val greeting = remember { CodeGreetings.random() }
@@ -151,6 +151,7 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
             }
         }
         Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 24.dp)) {
+            com.allternit.core.design.GizziWalk(Modifier.padding(bottom = 8.dp))
             Text(
                 greeting,
                 color = c.textPrimary,
@@ -168,6 +169,7 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
                 lineHeight = 20.sp,
                 modifier = Modifier.padding(top = 8.dp).testTag("codeEmpty"),
             )
+            if (onNewSession != null) com.allternit.core.design.EmptyPill("New session", Modifier.padding(top = 16.dp).testTag("codeNewSession"), onNewSession)
             Row(
                 Modifier
                     .padding(top = 24.dp)
