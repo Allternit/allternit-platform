@@ -64,7 +64,7 @@ pub trait SkillStore: Send + Sync {
 }
 
 /// The store for backends with no database (the default `EdgeBackend::skills`).
-/// Production uses `cloud_skills::PgSkillStore` (migration 162).
+/// Production uses `cloud_skills::PgSkillStore` (migration 163).
 pub struct NoCloudStore;
 
 #[async_trait::async_trait]

@@ -1,5 +1,5 @@
 //! Cloud skills (lane 47b): the checks, then CRUD scoping and the MCP edge
-//! store against a test schema with migration 162. No network.
+//! store against a test schema with migration 163. No network.
 
 use axum::http::StatusCode;
 use http_body_util::BodyExt;
@@ -62,7 +62,7 @@ fn org_members_read_and_only_admins_write() {
 
 async fn setup() -> Arc<ApiState> {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
-    let sql = include_str!("../../migrations_pg/162_cloud_skills.sql").replace("public.", "");
+    let sql = include_str!("../../migrations_pg/163_cloud_skills.sql").replace("public.", "");
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration");
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration twice");
     sqlx::query("DELETE FROM cloud_skills").execute(&state.db).await.unwrap();

@@ -2,7 +2,7 @@
 //!
 //! mcp.allternit.com serves these as `skill://user/<name>/SKILL.md` and
 //! `skill://org/<org_id>/<name>/SKILL.md` (`mcp_edge_skills`, via
-//! `ProdBackend::skills` in `mcp_edge.rs`). Table: `cloud_skills` (migration 162).
+//! `ProdBackend::skills` in `mcp_edge.rs`). Table: `cloud_skills` (migration 163).
 //!
 //! Routes (signed in; every error body is `{ error, message }`):
 //!

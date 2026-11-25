@@ -1,7 +1,7 @@
--- 162: cloud store for user and org Agent Skills (plan v3 lane 47b).
+-- 163: cloud store for user and org Agent Skills (plan v3 lane 47b).
 --
 -- mcp.allternit.com serves skill://user/... and skill://org/<org_id>/... from
--- this table (routes/mcp_edge.rs, ProdBackend::skills). 161 is in #2921.
+-- this table (routes/mcp_edge.rs, ProdBackend::skills). 161 is in #2921, 162 is app_handoff (#2943).
 --
 -- Exactly one of owner_user_id / owner_org_id is set. name is the SKILL.md
 -- frontmatter `name` (a slug), unique per owner. skill_md is the whole
