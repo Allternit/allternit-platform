@@ -1418,7 +1418,8 @@ const allternitDesktopAPI = {
   locale: localeAPI,
   menuBar: menuBarAPI,
   startup: startupAPI,
-  tray: trayAPI,
+  // Windows/Linux only: macOS keeps the app in the Dock when windows close, so the setting would do nothing there.
+  ...(process.platform === "darwin" ? {} : { tray: trayAPI }),
   mcp: mcpAPI,
   research: researchAPI,
   worker: workerAPI,

@@ -801,7 +801,8 @@ export interface AllternitDesktopAPI {
   locale: LocaleAPI;
   menuBar: MenuBarAPI;
   startup: StartupAPI;
-  tray: {
+  /** Windows/Linux only (absent on macOS). */
+  tray?: {
     getKeepRunning(): Promise<boolean>;
     setKeepRunning(enabled: boolean): Promise<boolean>;
     onKeepRunningChanged(cb: (enabled: boolean) => void): () => void;
