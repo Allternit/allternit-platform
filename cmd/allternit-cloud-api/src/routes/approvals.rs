@@ -1,6 +1,13 @@
 //! Approval System API Routes
 //!
 //! Human-in-the-loop endpoints for approving autonomous run actions.
+//!
+//! `GET /api/v1/approvals?approver=me` (Island bar + Team map, lane 14) is a
+//! separate read: the pending asks the caller must answer, from two stores:
+//! `platform_approvals` rows routed to them (`approver_user_id`, migration
+//! 165) and `meeting_tool_approvals` they can resolve (`user_id` = the session
+//! owner, migration 130). Without `approver` the list is the run approvals
+//! (`approval_requests`) exactly as before.
 
 use axum::{
     extract::{Extension, Path, Query, State},
@@ -9,8 +16,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,6 +34,8 @@ pub struct ListApprovalsQuery {
     pub run_id: Option<String>,
     pub status: Option<ApprovalStatus>,
     pub limit: Option<i64>,
+    /// `me`: the pending asks routed to the caller (see the module docs).
+    pub approver: Option<String>,
 }
 
 // ============================================================================
@@ -51,8 +61,20 @@ pub fn router() -> Router<Arc<ApiState>> {
 /// List approval requests with optional filtering
 pub async fn list_approvals(
     State(state): State<Arc<ApiState>>,
+    auth_context: Option<Extension<AuthContext>>,
     Query(query): Query<ListApprovalsQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<axum::response::Response, ApiError> {
+    if let Some(approver) = query.approver.as_deref() {
+        if approver != "me" {
+            return Err(ApiError::BadRequest("approver must be 'me'.".to_string()));
+        }
+        let Some(Extension(auth)) = auth_context else {
+            return Err(ApiError::Unauthorized("Sign in to list your approvals.".to_string()));
+        };
+        let limit = query.limit.unwrap_or(50).clamp(1, 100);
+        let asks = routed_asks(&state.db, &auth.user.user_id, limit).await?;
+        return Ok((StatusCode::OK, Json(json!({ "object": "list", "data": asks }))).into_response());
+    }
     let limit = query.limit.unwrap_or(50).min(100);
 
     let approvals = if let Some(run_id) = query.run_id {
@@ -146,7 +168,135 @@ pub async fn list_approvals(
         .map_err(ApiError::DatabaseError)?
     };
 
-    Ok((StatusCode::OK, Json(approvals)))
+    Ok((StatusCode::OK, Json(approvals)).into_response())
+}
+
+// ============================================================================
+// Routed asks (`?approver=me`)
+// ============================================================================
+
+#[derive(sqlx::FromRow)]
+struct RoutedPlatformRow {
+    id: String,
+    project_id: String,
+    source: String,
+    source_ref: String,
+    account_id: Option<String>,
+    kind: String,
+    proposed_action: Value,
+    approver_user_id: String,
+    rule_id: Option<String>,
+    actor_ref: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct RoutedMeetingRow {
+    id: Uuid,
+    session_id: Uuid,
+    user_id: String,
+    tool: String,
+    args_summary: String,
+    asked_by: Option<String>,
+    requested_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+}
+
+fn rfc3339(at: DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// The pending, unexpired asks `user_id` must answer, newest first, at most
+/// `limit`. Each item:
+/// `{ id: "<store>:<id>", store: "platform"|"meeting", store_id, title,
+///    summary, actor, approver_user_id, rule_id, tool, state: "pending",
+///    created_at, expires_at, resolve, source }`.
+/// `resolve` is the store's own resolve route for a signed-in person
+/// (`{method, path, decisions}`; send `{"decision": <one of decisions>}`); platform
+/// rows have none here (`null`): a twin row is decided on its runtime with
+/// `source.source_ref`, a computer row through the Platform API.
+async fn routed_asks(db: &sqlx::PgPool, user_id: &str, limit: i64) -> Result<Vec<Value>, ApiError> {
+    let platform: Vec<RoutedPlatformRow> = sqlx::query_as(
+        "SELECT id, project_id, source, source_ref, account_id, kind, proposed_action, approver_user_id, \
+                rule_id, actor_ref, expires_at, created_at \
+           FROM platform_approvals \
+          WHERE approver_user_id = $1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > NOW()) \
+          ORDER BY created_at DESC, id DESC LIMIT $2",
+    )
+    .bind(user_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+    let meeting: Vec<RoutedMeetingRow> = sqlx::query_as(
+        "SELECT id, session_id, user_id, tool, args_summary, asked_by, requested_at, expires_at \
+           FROM meeting_tool_approvals \
+          WHERE user_id = $1 AND status = 'pending' AND expires_at > NOW() \
+          ORDER BY requested_at DESC, id DESC LIMIT $2",
+    )
+    .bind(user_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    let mut asks: Vec<(DateTime<Utc>, Value)> = Vec::with_capacity(platform.len() + meeting.len());
+    for r in platform {
+        let summary = r.proposed_action.get("summary").and_then(Value::as_str).map(str::to_string);
+        let tool = r.proposed_action.get("tool").and_then(Value::as_str).map(str::to_string);
+        asks.push((
+            r.created_at,
+            json!({
+                "id": format!("platform:{}", r.id),
+                "store": "platform",
+                "store_id": r.id,
+                "title": r.kind,
+                "summary": summary,
+                "actor": r.actor_ref,
+                "approver_user_id": r.approver_user_id,
+                "rule_id": r.rule_id,
+                "tool": tool,
+                "state": "pending",
+                "created_at": rfc3339(r.created_at),
+                "expires_at": r.expires_at.map(rfc3339),
+                "resolve": Value::Null,
+                "source": {
+                    "kind": r.source, "source_ref": r.source_ref, "project_id": r.project_id,
+                    "account_id": r.account_id, "proposed_action": r.proposed_action,
+                },
+            }),
+        ));
+    }
+    for r in meeting {
+        asks.push((
+            r.requested_at,
+            json!({
+                "id": format!("meeting:{}", r.id),
+                "store": "meeting",
+                "store_id": r.id.to_string(),
+                "title": r.tool,
+                "summary": r.args_summary,
+                // Speaker label from the call (not authenticated).
+                "actor": r.asked_by,
+                "approver_user_id": r.user_id,
+                "rule_id": Value::Null,
+                "tool": r.tool,
+                "state": "pending",
+                "created_at": rfc3339(r.requested_at),
+                "expires_at": rfc3339(r.expires_at),
+                "resolve": {
+                    "method": "POST",
+                    "path": format!("/api/v1/meeting-sessions/{}/approvals/{}", r.session_id, r.id),
+                    "decisions": ["approve", "deny"],
+                },
+                "source": { "kind": "meeting", "session_id": r.session_id.to_string() },
+            }),
+        ));
+    }
+    asks.sort_by(|a, b| b.0.cmp(&a.0));
+    asks.truncate(limit as usize);
+    Ok(asks.into_iter().map(|(_, v)| v).collect())
 }
 
 /// Get a single approval request by ID
@@ -554,3 +704,7 @@ pub async fn cancel_request(
 
     Ok((StatusCode::OK, Json(approval)))
 }
+
+#[cfg(test)]
+#[path = "approvals_routed_tests.rs"]
+mod approvals_routed_tests;

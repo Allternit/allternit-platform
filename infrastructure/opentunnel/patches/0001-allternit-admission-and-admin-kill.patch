@@ -218,21 +218,54 @@ index 0000000..9de3c14
 +        assert_eq!(request.extensions().get::<Credential>().unwrap().0, "ota1.x.y");
 +    }
 +}
+diff --git a/crates/opentunnel-server/src/config.rs b/crates/opentunnel-server/src/config.rs
+index 7a613c7..b9b19cb 100644
+--- a/crates/opentunnel-server/src/config.rs
++++ b/crates/opentunnel-server/src/config.rs
+@@ -20,6 +20,12 @@ pub struct Config {
+     #[arg(long, env = "HTTP_LISTEN", default_value = "0.0.0.0:8080")]
+     pub http_listen: String,
+ 
++    /// Allternit patch: where `/api/admin/*` is served, e.g. `100.83.199.24:18080` (Tailscale) or
++    /// `127.0.0.1:18080`. Admin answers only here (still behind `ADMIN_TOKEN`) and is 404 on every other
++    /// listener; unset or `off` means no admin endpoints at all.
++    #[arg(long, env = "ADMIN_LISTEN")]
++    pub admin_listen: Option<String>,
++
+     #[arg(long, env = "HTTP_MODE", value_enum, default_value = "redirect")]
+     pub http_mode: HttpMode,
+ 
 diff --git a/crates/opentunnel-server/src/http.rs b/crates/opentunnel-server/src/http.rs
-index 3d0830d..bad33c6 100644
+index 3d0830d..efce256 100644
 --- a/crates/opentunnel-server/src/http.rs
 +++ b/crates/opentunnel-server/src/http.rs
-@@ -304,7 +304,8 @@ async fn payload(request: Request<Incoming>) -> Result<Value, Response<Body>> {
+@@ -304,7 +304,14 @@ async fn payload(request: Request<Incoming>) -> Result<Value, Response<Body>> {
  }
  
  impl App {
 -    pub async fn handle(self: Arc<Self>, request: Request<Incoming>) -> Response<Body> {
-+    pub async fn handle(self: Arc<Self>, mut request: Request<Incoming>) -> Response<Body> {
++    /// `admin_listener` is true only for connections on the `ADMIN_LISTEN` socket: that listener serves
++    /// `/api/admin/*` and `/health` and nothing else; every other listener answers 404 for `/api/admin/*`.
++    pub async fn handle(
++        self: Arc<Self>,
++        mut request: Request<Incoming>,
++        admin_listener: bool,
++    ) -> Response<Body> {
 +        crate::admission::strip_prefix(&mut request);
          let path = request.uri().path().to_owned();
          if path == "/health" {
              return json_response(StatusCode::OK, &json!({ "ok": true }));
-@@ -464,6 +465,28 @@ impl App {
+@@ -314,6 +321,9 @@ impl App {
+         {
+             return self.upgrade(percent_decode(id), request).await;
+         }
++        if path.starts_with("/api/admin/") != admin_listener {
++            return response(StatusCode::NOT_FOUND);
++        }
+         if let Some(rest) = path.strip_prefix("/api/admin/")
+             && let Some(admin) = &self.admin
+         {
+@@ -464,6 +474,28 @@ impl App {
      async fn create(&self, request: Request<Incoming>) -> Response<Body> {
          let client = analytics::client(user_agent(request.headers()));
          let source = request.extensions().get::<Source>().copied();
@@ -261,7 +294,7 @@ index 3d0830d..bad33c6 100644
          let address = match (self.service.limits(), source) {
              (Some(limits), Some(Source(source))) => {
                  Some(limits.proxies.client(source.ip(), request.headers()))
-@@ -511,11 +534,14 @@ impl App {
+@@ -511,11 +543,14 @@ impl App {
                  }
              }
          }
@@ -277,6 +310,29 @@ index 3d0830d..bad33c6 100644
                  for (key, value) in client.fields() {
                      event[key] = value;
                  }
+@@ -665,7 +700,12 @@ fn connect_path(path: &str) -> Option<&str> {
+ }
+ 
+ /// Serves HTTP/1.1 and HTTP/2 on one connection, with upgrades for the bridge.
+-pub async fn serve_connection<I>(app: Arc<App>, io: I, source: std::net::SocketAddr)
++pub async fn serve_connection<I>(
++    app: Arc<App>,
++    io: I,
++    source: std::net::SocketAddr,
++    admin_listener: bool,
++)
+ where
+     I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+ {
+@@ -684,7 +724,7 @@ where
+         async move {
+             let http1 = request.version() < hyper::Version::HTTP_2;
+             let draining = app.shutdown.draining.clone();
+-            let mut response = Box::pin(app.handle(request)).await;
++            let mut response = Box::pin(app.handle(request, admin_listener)).await;
+             // While draining, an HTTP/1.1 connection serves one request; an upgrade keeps its own header.
+             if http1
+                 && draining.is_cancelled()
 diff --git a/crates/opentunnel-server/src/lib.rs b/crates/opentunnel-server/src/lib.rs
 index 0d75aad..8e9a15e 100644
 --- a/crates/opentunnel-server/src/lib.rs
@@ -289,6 +345,88 @@ index 0d75aad..8e9a15e 100644
  pub mod admin;
  pub mod analytics;
  pub mod bridge;
+diff --git a/crates/opentunnel-server/src/server.rs b/crates/opentunnel-server/src/server.rs
+index fe87c20..d9de37c 100644
+--- a/crates/opentunnel-server/src/server.rs
++++ b/crates/opentunnel-server/src/server.rs
+@@ -363,7 +363,7 @@ impl Server {
+                 }
+             };
+             crate::metrics::api_handshake("ok");
+-            Box::pin(http::serve_connection(self.app.clone(), tls, accepted.peer)).await;
++            Box::pin(http::serve_connection(self.app.clone(), tls, accepted.peer, false)).await;
+             return;
+         }
+         http::count(&self.app.stats.tunnel_connections);
+@@ -450,13 +450,32 @@ impl Server {
+             let mode = self.config.http_mode;
+             tokio::spawn(async move {
+                 match mode {
+-                    HttpMode::Serve => http::serve_connection(app, stream, peer).await,
++                    HttpMode::Serve => http::serve_connection(app, stream, peer, false).await,
+                     HttpMode::Redirect => http::serve_redirect(domain, stream).await,
+                 }
+             });
+         }
+     }
+ 
++    /// Allternit patch: serves only `/api/admin/*` (and `/health`) on the `ADMIN_LISTEN` socket.
++    pub async fn serve_admin(self: Arc<Self>, listener: TcpListener) -> Result<()> {
++        let mut errors = AcceptErrors::new("admin accept failed");
++        loop {
++            let (stream, peer) = match listener.accept().await {
++                Ok(accepted) => accepted,
++                Err(error) => {
++                    errors.failed(error).await;
++                    continue;
++                }
++            };
++            net::tune(&stream);
++            let app = self.app.clone();
++            tokio::spawn(async move {
++                http::serve_connection(app, stream, peer, true).await;
++            });
++        }
++    }
++
+     /// Binds the listeners, runs until SIGTERM or Ctrl-C, then tells bridges to reconnect.
+     pub async fn run(self) -> Result<()> {
+         let tls_listener = net::listen(self.config.tls_listen)
+@@ -472,6 +491,16 @@ impl Server {
+                 Some(listener)
+             }
+         };
++        let admin_listener = match self.config.admin_listen.as_deref() {
++            None | Some("" | "off") => None,
++            Some(address) => {
++                let address: SocketAddr = address.parse().context("ADMIN_LISTEN")?;
++                let listener =
++                    net::listen(address).with_context(|| format!("binding {address}"))?;
++                info!(%address, "listening for admin");
++                Some(listener)
++            }
++        };
+         let internal_listener = self.bind_internal().await?;
+         // Bound as configured (every interface on Fly): Fly's scraper does not reach the 6PN address. Nothing in
+         // the metrics is secret or per tenant.
+@@ -485,6 +514,7 @@ impl Server {
+         let self_jobs = server.jobs.clone();
+         let tls = tokio::spawn(server.clone().serve_tls(tls_listener));
+         let http = http_listener.map(|listener| tokio::spawn(server.clone().serve_http(listener)));
++        let admin = admin_listener.map(|listener| tokio::spawn(server.clone().serve_admin(listener)));
+         let internal =
+             internal_listener.map(|listener| tokio::spawn(server.clone().serve_internal(listener)));
+         shutdown_signal().await;
+@@ -516,6 +546,9 @@ impl Server {
+         if let Some(http) = http {
+             http.abort();
+         }
++        if let Some(admin) = admin {
++            admin.abort();
++        }
+         let open = server.app.shutdown.open_connections();
+         if !server.app.shutdown.close(CLOSE_TIMEOUT).await {
+             warn!(open, "HTTP connections still open at shutdown");
 diff --git a/crates/opentunnel-server/src/service.rs b/crates/opentunnel-server/src/service.rs
 index db9fd78..2964ce9 100644
 --- a/crates/opentunnel-server/src/service.rs
@@ -319,3 +457,112 @@ index db9fd78..2964ce9 100644
              return Ok(Lookup::Unauthorized);
          }
          for bridge in &state.bridges {
+diff --git a/crates/opentunnel-server/tests/clients.rs b/crates/opentunnel-server/tests/clients.rs
+index 838052d..39e4713 100644
+--- a/crates/opentunnel-server/tests/clients.rs
++++ b/crates/opentunnel-server/tests/clients.rs
+@@ -304,7 +304,7 @@ async fn serves_a_tunnel_migrated_from_the_worker() {
+     });
+     let http = reqwest::Client::new();
+     let imported: serde_json::Value = http
+-        .post(format!("{}/api/admin/import", server.api))
++        .post(format!("{}/api/admin/import", server.admin))
+         .bearer_auth("admin-secret")
+         .json(&export)
+         .send()
+@@ -346,7 +346,7 @@ async fn serves_a_tunnel_migrated_from_the_worker() {
+ 
+     // Importing again does not overwrite what this server has changed since.
+     let again: serde_json::Value = http
+-        .post(format!("{}/api/admin/import", server.api))
++        .post(format!("{}/api/admin/import", server.admin))
+         .bearer_auth("admin-secret")
+         .json(&export)
+         .send()
+diff --git a/crates/opentunnel-server/tests/cluster.rs b/crates/opentunnel-server/tests/cluster.rs
+index 12687df..c8dd2ab 100644
+--- a/crates/opentunnel-server/tests/cluster.rs
++++ b/crates/opentunnel-server/tests/cluster.rs
+@@ -68,7 +68,7 @@ async fn connected(tunnel: &opentunnel::Tunnel) {
+ 
+ async fn stats(server: &TestServer) -> serde_json::Value {
+     reqwest::Client::new()
+-        .post(format!("{}/api/admin/stats", server.api))
++        .post(format!("{}/api/admin/stats", server.admin))
+         .bearer_auth("admin-secret")
+         .send()
+         .await
+@@ -503,7 +503,7 @@ async fn runs_each_job_once_across_machines() {
+         })
+         .collect();
+     let imported: serde_json::Value = reqwest::Client::new()
+-        .post(format!("{}/api/admin/import", a.api))
++        .post(format!("{}/api/admin/import", a.admin))
+         .bearer_auth("admin-secret")
+         .json(&serde_json::json!({ "version": 1, "records": records }))
+         .send()
+diff --git a/crates/opentunnel-server/tests/common/mod.rs b/crates/opentunnel-server/tests/common/mod.rs
+index bd353b4..ccd2319 100644
+--- a/crates/opentunnel-server/tests/common/mod.rs
++++ b/crates/opentunnel-server/tests/common/mod.rs
+@@ -70,6 +70,8 @@ pub struct TestServer {
+     pub dir: PathBuf,
+     /// Plain HTTP serving the whole app, for the clients' `OPENTUNNEL_API`.
+     pub api: String,
++    /// Allternit patch: the admin listener, the only place `/api/admin/*` answers.
++    pub admin: String,
+     pub http: SocketAddr,
+     pub tls: SocketAddr,
+     pub server: Arc<Server>,
+@@ -117,6 +119,12 @@ impl TestServer {
+         tasks.push(tokio::spawn(async move {
+             let _ = serving.serve_http(http_listener).await;
+         }));
++        let admin_listener = reusable("127.0.0.1:0".parse().unwrap());
++        let admin = admin_listener.local_addr().unwrap();
++        let serving = server.clone();
++        tasks.push(tokio::spawn(async move {
++            let _ = serving.serve_admin(admin_listener).await;
++        }));
+         let serving = server.clone();
+         tasks.push(tokio::spawn(async move {
+             let _ = serving.serve_tls(tls_listener).await;
+@@ -131,6 +139,7 @@ impl TestServer {
+         Some(Self {
+             dir: dir.to_owned(),
+             api: format!("http://{http}"),
++            admin: format!("http://{admin}"),
+             http,
+             tls,
+             server,
+diff --git a/crates/opentunnel-server/tests/migration.rs b/crates/opentunnel-server/tests/migration.rs
+index 2b020de..f38f338 100644
+--- a/crates/opentunnel-server/tests/migration.rs
++++ b/crates/opentunnel-server/tests/migration.rs
+@@ -43,7 +43,7 @@ fn record(id: &str, extra: Value) -> Value {
+ 
+ async fn import(server: &TestServer, records: Vec<Value>) -> Value {
+     reqwest::Client::new()
+-        .post(format!("{}/api/admin/import", server.api))
++        .post(format!("{}/api/admin/import", server.admin))
+         .bearer_auth("admin-secret")
+         .json(&json!({ "version": 1, "records": records }))
+         .send()
+@@ -199,7 +199,7 @@ async fn exports_every_record_in_pages() {
+         .collect();
+     assert_eq!(import(&server, records).await["inserted"], count);
+     let response = reqwest::Client::new()
+-        .post(format!("{}/api/admin/export", server.api))
++        .post(format!("{}/api/admin/export", server.admin))
+         .bearer_auth("admin-secret")
+         .send()
+         .await
+@@ -220,7 +220,7 @@ async fn exports_every_record_in_pages() {
+         .collect();
+     assert_eq!(ids, expected);
+     let again: Value = reqwest::Client::new()
+-        .post(format!("{}/api/admin/import", server.api))
++        .post(format!("{}/api/admin/import", server.admin))
+         .bearer_auth("admin-secret")
+         .body(text)
+         .header("content-type", "application/json")

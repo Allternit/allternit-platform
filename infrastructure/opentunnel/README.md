@@ -18,9 +18,12 @@ Upstream `POST /api/tunnel` is open to anyone and has no operator delete. The pa
    TunnelNotFoundError` if there is no live tunnel with that ID. Treat 404 as already done.
 3. The `tunnel.created` analytics event gains `share_link_id`.
 
-Files touched upstream: new `src/admission.rs` (with unit tests), `http.rs` (strip the prefix, check on
-create, tunnel ID from the credential), `service.rs` (`kill` = `remove` without the tunnel token),
-`admin.rs` (the delete path), `lib.rs`.
+Files touched upstream (`crates/opentunnel-server/`): new `src/admission.rs` (with unit tests), `http.rs`
+(strip the prefix, check on create, tunnel ID from the credential; `/api/admin/*` answers 404 on the
+public listeners), `server.rs` (the separate `ADMIN_LISTEN` listener: admin + `/health` only),
+`config.rs` (`ADMIN_LISTEN`; unset = admin off), `service.rs` (`kill` = `remove` without the tunnel
+token), `admin.rs` (the delete path), `lib.rs`, and the upstream tests (`tests/clients.rs`,
+`tests/cluster.rs`, `tests/common/mod.rs`, `tests/migration.rs`).
 
 ### Admission credential (cloud-api mints it; relay only verifies, no network call)
 
@@ -55,7 +58,8 @@ signature = base64url(HMAC-SHA256(ADMISSION_SECRET, "ota1." + payload))     base
 | Var | Meaning |
 | --- | --- |
 | `ADMISSION_SECRET` | secret, 32+ random bytes; turns admission on |
-| `ADMIN_TOKEN` | secret; enables `/api/admin/*`, including the tunnel delete |
+| `ADMIN_TOKEN` | secret; enables `/api/admin/*`, including the tunnel delete (bearer is checked on the admin listener too) |
+| `ADMIN_LISTEN` | where `/api/admin/*` is served, e.g. `100.83.199.24:18080` (Tailscale) or `127.0.0.1:18080`. Admin is 404 on the public TLS/HTTP listeners; unset or `off` = no admin at all. Must differ from `HTTP_LISTEN` |
 | `ANALYTICS_URL`, `ANALYTICS_TOKEN` | cloud-api `POST /api/v1/internal/share-links/usage` and its secret (bytes meter, D8) |
 
 ## Relay env ↔ cloud-api env
@@ -66,7 +70,7 @@ Keychain/env only, never in code. "Same value" rows must hold byte-identical str
 | --- | --- | --- |
 | `ADMISSION_SECRET` | `ALLTERNIT_RELAY_ADMISSION_SECRET` | Same value. cloud-api signs credentials, the relay verifies. cloud-api unset → live links 503 `relay_not_configured`; relay unset → admission off. |
 | `ADMIN_TOKEN` | `ALLTERNIT_RELAY_ADMIN_TOKEN` | Same value. cloud-api sends it as `Bearer` on the tunnel delete. Unset in cloud-api → no delete; the heartbeat still stops the host. |
-| (relay's public API origin) | `ALLTERNIT_RELAY_ADMIN_URL` | Not a secret: the relay origin, e.g. `https://api.live.allternitusercontent.com`; cloud-api appends `/api/admin/tunnel/<subdomain>/delete`. |
+| `ADMIN_LISTEN` (admin listener, not public) | `ALLTERNIT_RELAY_ADMIN_URL` | Not a secret: the admin listener origin, e.g. `http://100.83.199.24:18080`; cloud-api appends `/api/admin/tunnel/<subdomain>/delete`. Never the public origin (it answers 404). |
 | `ANALYTICS_TOKEN` | `ALLTERNIT_SHARE_USAGE_SECRET` | Same value, 32+ chars. The relay sends `Bearer`; cloud-api compares in constant time (401 wrong, 503 unset). |
 | `ANALYTICS_URL` | (cloud-api's public origin) | Not a secret: `https://<cloud-api>/api/v1/internal/share-links/usage`. |
 
