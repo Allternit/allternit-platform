@@ -16,6 +16,8 @@ struct FriendlyStateView: View {
     let message: String
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    /// Line art in place of the icon tile (empty style only). Nil keeps the tile.
+    var art: EmptyArtKind? = nil
 
     /// What actually shows: error text made calm, and a compute-gate refusal
     /// turned into the no-computer empty state (contract C5).
@@ -38,16 +40,20 @@ struct FriendlyStateView: View {
     var body: some View {
         let shown = self.shown
         VStack(spacing: 16) {
-            Image(systemName: shown.icon)
-                .font(.system(size: 28, weight: .medium))
-                .foregroundColor(foregroundColor)
-                .frame(width: 64, height: 64)
-                .background(backgroundColor)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusLG, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.radiusLG, style: .continuous)
-                        .stroke(borderColor, lineWidth: 1)
-                )
+            if let art, effectiveStyle == .empty {
+                EmptyArt(kind: art)
+            } else {
+                Image(systemName: shown.icon)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(foregroundColor)
+                    .frame(width: 64, height: 64)
+                    .background(backgroundColor)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radiusLG, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.radiusLG, style: .continuous)
+                            .stroke(borderColor, lineWidth: 1)
+                    )
+            }
 
             Text(shown.title)
                 .font(.system(.title3, design: .serif))

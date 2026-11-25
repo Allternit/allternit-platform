@@ -691,7 +691,8 @@ struct AgentHubView: View {
             action: {
                 Haptics.light()
                 isTemplateSheetPresented = true
-            }
+            },
+            art: .envelope
         )
     }
 

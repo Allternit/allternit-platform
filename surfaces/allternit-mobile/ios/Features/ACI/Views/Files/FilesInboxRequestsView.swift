@@ -13,7 +13,8 @@ struct FilesInboxRequestsView: View {
         List {
             if model.pendingTasks.isEmpty {
                 FriendlyStateView(style: .empty, icon: "checkmark.shield", title: "Nothing waits for you",
-                                  message: "Files dropped in Inbox show here until you approve or reject them.")
+                                  message: "Files dropped in Inbox show here until you approve or reject them.",
+                                  art: .bell)
                     .listRowBackground(Color.clear)
             } else {
                 Section {
