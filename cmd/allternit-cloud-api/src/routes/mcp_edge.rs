@@ -331,6 +331,10 @@ pub trait EdgeBackend: Send + Sync {
     async fn org_consent(&self, _user_id: &str, _client: &str, _target: &str) -> Result<bool, String> {
         Ok(false)
     }
+    /// User and org skills served as `skill://` resources (`mcp_edge_skills`).
+    fn skills(&self) -> &dyn super::mcp_edge_skills::SkillStore {
+        &super::mcp_edge_skills::NoCloudStore
+    }
     /// `(owner, key id)` when `token` is a live `allternit-bot` CLI key (`abk_…`) for exactly this vendor bot.
     async fn verify_cli_key(&self, _token: &str, _vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         Ok(None)
@@ -582,6 +586,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     // versions, capabilities and instructions without waking the computer.
     if rpc_method == "server/discover" {
         if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+            let reply = if target != Target::Connectors { super::mcp_edge_skills::advertise_value(reply) } else { reply };
             return rpc_reply(&era, reply);
         }
     }
@@ -638,12 +643,17 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     }
 
     // Seams for later lanes (all answer `None` today, so nothing changes):
-    // tasks (44/45), apps (46) and skills (47).
+    // tasks (44/45), apps (46) and skills (47). Skills are per caller and
+    // never on the connector gateway.
+    let skill_caller = super::mcp_edge_skills::SkillCaller::of(&caller.user_id, &caller.client);
     let hooked = if rpc_method == "tools/call" {
         super::mcp_edge_tasks::intercept_tool_call(rpc_method, &id, &request["params"])
     } else if rpc_method == "resources/list" || rpc_method == "resources/read" {
-        super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"])
-            .or_else(|| super::mcp_edge_skills::intercept_resources(rpc_method, &id, &request["params"]))
+        match super::mcp_edge_apps::intercept_resources(rpc_method, &id, &request["params"]) {
+            Some(reply) => Some(reply),
+            None if target != Target::Connectors => super::mcp_edge_skills::intercept_resources(backend.skills(), &skill_caller, rpc_method, &id, &request["params"]).await,
+            None => None,
+        }
     } else {
         None
     };
@@ -660,7 +670,12 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::RuntimeTooOld => rpc_error(id, RUNTIME_TOO_OLD_MESSAGE),
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
-            let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { advertise_events(reply) } else { reply };
+            let reply = if rpc_method == "initialize" && status == 200 && target != Target::Connectors { super::mcp_edge_skills::advertise(advertise_events(reply)) } else { reply };
+            let reply = if rpc_method == "resources/list" && status == 200 && target != Target::Connectors {
+                super::mcp_edge_skills::with_skills(reply, backend.skills(), &skill_caller, &request["params"]).await
+            } else {
+                reply
+            };
             let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
