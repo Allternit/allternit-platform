@@ -142,7 +142,7 @@ internal fun DevicePairingPage(host: SettingsHost, back: () -> Unit) {
         LoadView(load, reload, "load your devices") { body ->
             val devices = body.listUnder("devices", "items")
             if (devices.isEmpty()) {
-                com.allternit.core.design.FriendlyState(com.allternit.core.design.FriendlyStyle.Empty, "No paired devices", "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.", art = com.allternit.core.design.EmptyArtKind.ConnectScene, panel = true, icon = {})
+                StateBox("No paired devices", "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.", null, null, com.allternit.core.design.EmptyArtKind.ConnectScene)
             } else SCard {
                 devices.forEachIndexed { i, d ->
                     val id = d.str("id") ?: return@forEachIndexed

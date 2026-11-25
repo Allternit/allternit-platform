@@ -99,7 +99,7 @@ internal fun ResourcePage(spec: ResourceSpec, back: () -> Unit, footer: (@Compos
         SNote(spec.note)
         LoadView(load, reload, "load ${spec.title.lowercase()}") { body ->
             val rows = body.listUnder(*spec.listKeys.toTypedArray())
-            if (rows.isEmpty()) com.allternit.core.design.FriendlyState(com.allternit.core.design.FriendlyStyle.Empty, "Nothing here yet", spec.empty, art = com.allternit.core.design.EmptyArtKind.Sheets, panel = true, icon = {}) else SCard {
+            if (rows.isEmpty()) StateBox("Nothing here yet", spec.empty, null, null, com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, item ->
                     val id = item.first(spec.idKeys) ?: "$i"
                     if (i > 0) SDivider()
@@ -347,7 +347,7 @@ private fun ResourcePicker(spec: ResourceSpec, back: () -> Unit, onPick: (JsonOb
         SNote(spec.note)
         LoadView(load, reload, "load your computers") { body ->
             val rows = body.listUnder(*spec.listKeys.toTypedArray())
-            if (rows.isEmpty()) com.allternit.core.design.FriendlyState(com.allternit.core.design.FriendlyStyle.Empty, "Nothing here yet", spec.empty, art = com.allternit.core.design.EmptyArtKind.Sheets, panel = true, icon = {}) else SCard {
+            if (rows.isEmpty()) StateBox("Nothing here yet", spec.empty, null, null, com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                 rows.forEachIndexed { i, item ->
                     if (i > 0) SDivider()
                     SRow(item.first(spec.titleKeys) ?: "Computer", "${spec.tag}_${item.id()}", detail = spec.detailKeys.mapNotNull { item.str(it) }.joinToString(" · ").ifBlank { null }, onClick = { onPick(item) })
