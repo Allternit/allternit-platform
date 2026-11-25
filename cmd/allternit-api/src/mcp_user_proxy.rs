@@ -528,7 +528,7 @@ fn server_spec_for(era: &mcp_protocol::Era) -> mcp_protocol::ServerSpec {
 // ─── permission modes ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionMode {
+pub(crate) enum PermissionMode {
     AlwaysAsk,
     AskBeforeChanges,
     AskBeforeImportantChanges,
@@ -536,7 +536,7 @@ enum PermissionMode {
 
 impl PermissionMode {
     /// Unknown strings fall back to the default, never to a looser mode.
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "always_ask" => Self::AlwaysAsk,
             "ask_before_important_changes" => Self::AskBeforeImportantChanges,
@@ -554,7 +554,7 @@ fn is_important_tool(tool: &Value) -> bool {
 
 /// Mirrors the web host's `requiresConfirmation`. Missing annotations mean "not
 /// read-only", i.e. a change.
-fn requires_confirmation(mode: PermissionMode, tool: &Value) -> bool {
+pub(crate) fn requires_confirmation(mode: PermissionMode, tool: &Value) -> bool {
     let read_only = tool["annotations"]["readOnlyHint"] == json!(true);
     match mode {
         PermissionMode::AlwaysAsk => true,
@@ -591,7 +591,7 @@ fn confirmation_message(connector: &str, tool_name: &str, mode: PermissionMode, 
 /// Permission mode per connector id for `user_id`'s installs. When a connector has
 /// several installs the newest wins (the order the web host reads them in). A
 /// connector with no install, or an unreadable table, gets the default mode.
-async fn load_install_modes(state: &Arc<AppState>, user_id: &str) -> std::collections::HashMap<String, PermissionMode> {
+pub(crate) async fn load_install_modes(state: &Arc<AppState>, user_id: &str) -> std::collections::HashMap<String, PermissionMode> {
     let db = state.db.clone();
     let uid = user_id.to_string();
     let loaded = tokio::task::spawn_blocking(move || {
@@ -611,7 +611,7 @@ async fn load_install_modes(state: &Arc<AppState>, user_id: &str) -> std::collec
     modes
 }
 
-fn mode_for(modes: &std::collections::HashMap<String, PermissionMode>, connector: &Connector) -> PermissionMode {
+pub(crate) fn mode_for(modes: &std::collections::HashMap<String, PermissionMode>, connector: &Connector) -> PermissionMode {
     modes.get(&connector.id).copied().unwrap_or(PermissionMode::AskBeforeChanges)
 }
 

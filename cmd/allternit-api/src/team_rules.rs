@@ -522,6 +522,65 @@ pub fn gate_call(conn: &Connection, call: &GateCall<'_>) -> rusqlite::Result<Dec
 }
 
 /// `_meta["allternit/approvalId"]`: a string or an array of strings.
+/// What `gate_call` would decide for a call, read only: no ask is opened and no
+/// approval is spent. The Island bar's review card (`bar_routes.rs`, lane 15)
+/// shows this before the person presses Run; the run itself still goes through
+/// `gate_call` in the proxy.
+#[derive(Debug, Clone)]
+pub struct Preview {
+    /// The bot's live level. `None` for a person acting as themself, or for a
+    /// bot whose owner never set levels (today's behaviour).
+    pub level: Option<GrantLevel>,
+    /// `Some(DenyNoGrant | DenyReadOnly)` when the level refuses the call.
+    pub denied: Option<Decision>,
+    /// Every matching rule with its resolved approver, in candidate order.
+    pub matches: Vec<(ApprovalRule, String)>,
+}
+
+/// Read-only twin of `gate_call` steps 1-2 plus approver resolution (same
+/// helpers, same order). `user_id` is the confirming user, as in `GateCall`.
+#[allow(clippy::too_many_arguments)]
+pub fn preview_call(
+    conn: &Connection,
+    user_id: &str,
+    bot_id: Option<&str>,
+    app_kind: AppKind,
+    app_ref: &str,
+    tool: &str,
+    tool_read_only: bool,
+    args: &Value,
+) -> rusqlite::Result<Preview> {
+    let actor = resolve_actor(conn, user_id, bot_id)?;
+    let mut level = None;
+    let mut denied = None;
+    if let Some(bot) = bot_id {
+        if levels_in_use(conn, &actor.person_user_id)? {
+            match team_store::get_live_grant(conn, BotKind::Agent, bot, app_kind, app_ref)? {
+                None => denied = Some(Decision::DenyNoGrant),
+                Some(g) => {
+                    if g.level == GrantLevel::Browser && !tool_read_only {
+                        denied = Some(Decision::DenyReadOnly);
+                    }
+                    level = Some(g.level);
+                }
+            }
+        }
+    }
+    let rule_actor = RuleActor {
+        org_id: actor.org_id.as_deref(),
+        person_user_id: &actor.person_user_id,
+        bot: bot_id.map(|b| (BotKind::Agent, b)),
+    };
+    let mut matches = Vec::new();
+    for rule in team_store::list_rules_for_call(conn, &rule_actor, app_kind, app_ref, tool)? {
+        if rule_matches(&rule, args) {
+            let approver = resolve_approver(conn, &rule, &actor)?;
+            matches.push((rule, approver));
+        }
+    }
+    Ok(Preview { level, denied, matches })
+}
+
 pub fn approval_ids_from_meta(meta: &Value) -> Vec<String> {
     match &meta[APPROVAL_ID_META_KEY] {
         Value::String(s) if !s.trim().is_empty() => vec![s.trim().to_string()],
