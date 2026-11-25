@@ -878,7 +878,7 @@ struct ChatContentView: View {
         let can = ItCanStore.shared.choices(for: launch.mode.entry)
         Task {
             do {
-                startedStudio = try await ArtifactStudioLauncher.shared.launch(launch.kind, can: can, firstMessage: text)
+                startedStudio = try await ArtifactStudioLauncher.shared.launch(launch.kind, can: can, firstMessage: text, recordKind: launch.mode.entry.id == "app" ? "app" : nil)
                 inputText = ""
             } catch is CancellationError {
                 return

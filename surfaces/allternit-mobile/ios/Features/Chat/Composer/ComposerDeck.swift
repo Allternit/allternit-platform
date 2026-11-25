@@ -185,7 +185,7 @@ struct ComposerDeckBand: View {
             .environmentObject(AuthManager.shared)
         }
         .sheet(isPresented: $isArtifactsPresented) {
-            DeckArtifactsSheet(onAllArtifacts: onAllArtifacts)
+            DeckArtifactsSheet(onAllArtifacts: onAllArtifacts, onAttach: attach)
                 .environmentObject(modeStore)
         }
     }
@@ -331,6 +331,14 @@ struct ComposerDeckBand: View {
         .buttonStyle(.plain)
     }
 
+    /// Attach on a Recent artifact: it rides in the message as an @-mention,
+    /// like a plugin (the web deck's Attach).
+    private func attach(_ artifact: ArtifactV2Summary) {
+        let tag = "@\(artifact.title) "
+        guard !inputText.contains(tag) else { return }
+        inputText = tag + inputText
+    }
+
     private func mention(_ plugin: DeckPlugin) {
         let tag = "@\(plugin.name) "
         guard !inputText.contains(tag) else { return }
@@ -398,6 +406,8 @@ struct ComposerTopDeckTray<Content: View>: View {
 /// three most recent, and a way into the Artifacts library.
 struct DeckArtifactsSheet: View {
     var onAllArtifacts: (() -> Void)? = nil
+    /// Attach on a Recent card puts the artifact in the message.
+    var onAttach: ((ArtifactV2Summary) -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @Environment(\.dismiss) private var dismiss
@@ -451,7 +461,7 @@ struct DeckArtifactsSheet: View {
                         }
                     }) {
                         HStack(spacing: 6) {
-                            Text("All artifacts")
+                            Text("Open Artifacts")
                             Image(systemName: "arrow.right")
                                 .font(.system(size: 12))
                         }
@@ -498,13 +508,41 @@ struct DeckArtifactsSheet: View {
         case .loaded(let items):
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(items) { artifact in
-                    Button(action: { openArtifact = artifact }) {
-                        card(artifact)
+                    VStack(spacing: 0) {
+                        Button(action: { openArtifact = artifact }) {
+                            card(artifact)
+                        }
+                        .buttonStyle(.plain)
+                        HStack(spacing: 8) {
+                            if onAttach != nil {
+                                actionButton("Attach", icon: "paperclip") {
+                                    onAttach?(artifact)
+                                    dismiss()
+                                }
+                            }
+                            actionButton("Open", icon: "arrow.up.right") { openArtifact = artifact }
+                        }
+                        .padding(.top, 6)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+
+    private func actionButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(label)
+            }
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundColor(Color("TextSecondary"))
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(Color("FillNeutral"))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func statusLine(_ text: String) -> some View {
@@ -559,7 +597,9 @@ struct DeckArtifactsSheet: View {
     private func load() async {
         do {
             let page = try await ArtifactsV2Client.shared.list(ArtifactV2ListQuery(limit: 20))
+            // Plans are listed in Plans, never in the deck.
             let latest = page.items
+                .filter { $0.kind != "plan" }
                 .sorted { ($0.updatedDate ?? .distantPast) > ($1.updatedDate ?? .distantPast) }
                 .prefix(3)
             state = .loaded(Array(latest))

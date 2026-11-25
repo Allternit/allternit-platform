@@ -363,7 +363,7 @@ final class ArtifactStudioLauncher: ObservableObject {
     /// `can` is the "It can" choices ticked in the composer; `firstMessage` is
     /// the text Send carried: held for the studio, which sends it once its chat
     /// is up (start, then send: the create call takes no first message).
-    func launch(_ kind: ArtifactStudioKind, can: ItCanChoices? = nil, firstMessage: String? = nil) async throws -> ArtifactStudioSession {
+    func launch(_ kind: ArtifactStudioKind, can: ItCanChoices? = nil, firstMessage: String? = nil, recordKind: String? = nil) async throws -> ArtifactStudioSession {
         guard launching == nil else { throw CancellationError() }
         launching = kind
         defer { launching = nil }
@@ -401,7 +401,7 @@ final class ArtifactStudioLauncher: ObservableObject {
         try? await APIClient.shared.patch(
             path: "agent-sessions/\(Self.escape(session.id))",
             body: SessionBindingPatch(metadata: .init(artifactSession: .init(
-                kind: kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId
+                kind: recordKind ?? kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId
             )))
         )
         return started
@@ -513,7 +513,7 @@ final class ArtifactStudioLauncher: ObservableObject {
         }
         // Any kind with a binding opens its session. Kinds with no file yet (an
         // Image or Page that hasn't made anything) show their pane until it does.
-        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind) else {
+        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind == "app" ? "build" : binding.kind) else {
             // "data" and "website" also start dashboards and pages, which have no file to lose.
             if let lost = titled ?? (moded == .docs || moded == .slides ? moded : nil) { return .unlinked(noun: lost.noun.lowercased()) }
             knownPlain.insert(id)
