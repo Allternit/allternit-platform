@@ -43,11 +43,13 @@ final class DecisionsStore: ObservableObject {
     /// inbox item, so the server cannot snooze or dismiss it and the deck offers neither.
     func dismiss(_ approval: FactoryApprovalsClient.Approval) async throws {
         try await InboxClient.shared.dismiss("factory:\(approval.id)")
+        resolvedApprovals.insert(approval.id)
         approvals.removeAll { $0.id == approval.id }
     }
 
     func snooze(_ approval: FactoryApprovalsClient.Approval, minutes: Int) async throws {
         try await InboxClient.shared.snooze("factory:\(approval.id)", minutes: minutes)
+        resolvedApprovals.insert(approval.id)
         approvals.removeAll { $0.id == approval.id }
     }
 
@@ -120,15 +122,7 @@ final class DecisionsStore: ObservableObject {
             guard started == generation else { return }
             let listed = Set(pending.map(\.id))
             resolvedApprovals = resolvedApprovals.intersection(listed)
-            var open = pending.filter { !resolvedApprovals.contains($0.id) }
-            // Dismissed or snoozed in the inbox (here or on another device): leave the deck too.
-            // When the inbox is not reachable, show every pending approval.
-            if let needsYou = try? await InboxClient.shared.list() {
-                let ids = Set(needsYou.map(\.id))
-                open = open.filter { ids.contains("factory:\($0.id)") }
-            }
-            guard started == generation else { return }
-            approvals = open
+            approvals = pending.filter { !resolvedApprovals.contains($0.id) }
             approvalsError = nil
         } catch {
             guard started == generation else { return }
