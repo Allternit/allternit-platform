@@ -286,7 +286,7 @@ private fun NoTasksBox(type: TaskType?, query: String?, onNew: (() -> Unit)?) {
     EmptyBox(
         title, line, Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
         onClick = if (query == null) onNew else null,
-        art = com.allternit.core.design.EmptyArtKind.Bell.let { bell -> if (query != null) com.allternit.core.design.EmptyArtKind.Search else bell },
+        art = if (query != null) com.allternit.core.design.EmptyArtKind.Search else com.allternit.core.design.EmptyArtKind.Bell,
     )
 }
 
