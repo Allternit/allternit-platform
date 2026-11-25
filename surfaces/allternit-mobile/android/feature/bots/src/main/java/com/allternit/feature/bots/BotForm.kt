@@ -465,7 +465,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
                             AgentPicker()
                             if (brainMissing) ErrorLine("Pick a brain to create this bot", Modifier.padding(0.dp))
                             Label("Gizzi knowledge")
-                            if (knowledgeBrains.isEmpty()) Note("No Gizzi knowledge brains found. The bot uses its brain alone.")
+                            if (knowledgeBrains.isEmpty()) com.allternit.core.design.InlineEmpty("No Gizzi knowledge brains found. The bot uses its brain alone.", art = com.allternit.core.design.EmptyArtKind.Search)
                             else PillRow(listOf("" to "Platform model") + knowledgeBrains, (listOf("" to "Platform model") + knowledgeBrains).first { it.first == knowledgeBrainId }, { it.second }, { "botFormKnowledge${it.first}" }) { knowledgeBrainId = it.first }
                             Text(if (advancedOpen) "▾ Advanced" else "▸ Advanced", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clickable { advancedOpen = !advancedOpen }.testTag("botFormAdvanced"))
                             if (advancedOpen) {
@@ -585,7 +585,7 @@ private fun ModelPickerSheet(host: BotsHost?, title: String, currentId: String?,
             when {
                 loading -> LibrarySpinner("Loading models")
                 error != null && models.isEmpty() -> Text(error ?: "", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(20.dp))
-                models.isEmpty() -> Text("No models yet. Connect a model provider in Settings.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(20.dp))
+                models.isEmpty() -> com.allternit.core.design.InlineEmpty("No models yet. Connect a model provider in Settings.", Modifier.padding(horizontal = 20.dp), art = com.allternit.core.design.EmptyArtKind.Model)
                 else -> models.groupBy { it.provider }.forEach { (prov, list) ->
                     SectionHeader(prov)
                     RowGroup {

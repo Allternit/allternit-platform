@@ -353,7 +353,7 @@ fun AgentRunTreeSheet(steps: List<ToolCallRecord>, sessionId: String?, isStreami
                 if (tree.children.isEmpty()) {
                     Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!loaded) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = c.textSecondary); Text("Loading agents…", color = c.textSecondary, fontSize = 14.sp) }
-                        else Text(if (isStreaming) "No agents started yet." else "This reply didn't hand work to other agents.", color = c.textSecondary, fontSize = 14.sp)
+                        else com.allternit.core.design.InlineEmpty(if (isStreaming) "No agents started yet." else "This reply didn't hand work to other agents.", art = com.allternit.core.design.EmptyArtKind.Gizzi)
                     }
                 } else {
                     RunCard(tree, true, now, null, null, false, null)

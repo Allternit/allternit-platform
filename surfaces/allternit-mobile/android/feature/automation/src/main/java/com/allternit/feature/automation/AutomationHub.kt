@@ -286,7 +286,7 @@ private fun NoTasksBox(type: TaskType?, query: String?, onNew: (() -> Unit)?) {
     EmptyBox(
         title, line, Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
         onClick = if (query == null) onNew else null,
-        icon = { Icon(painterResource(DesignR.drawable.ph_clock), null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) },
+        art = com.allternit.core.design.EmptyArtKind.Bell.let { bell -> if (query != null) com.allternit.core.design.EmptyArtKind.Search else bell },
     )
 }
 
