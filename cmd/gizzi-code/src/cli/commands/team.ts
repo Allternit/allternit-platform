@@ -8,7 +8,8 @@
  *   gizzi team rules [list|add|rm]        approval rules (add: --app --tool --field --op --value --approver)
  *   gizzi team grant <bot> <app> <browser|app|full>
  *
- * Backed by allternit-cloud-api GET /api/v1/team/roster and POST /api/v1/team/send.
+ * list/send: allternit-cloud-api /api/v1/team/roster and /api/v1/team/send.
+ * map/asks/rules/grant: runtime api (local allternit-api, else the cloud relay), see runtime-client.ts.
  */
 import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
@@ -16,6 +17,7 @@ import { UI } from "@/cli/ui"
 import { EOL } from "os"
 import { formatRoster, formatTeamMap, formatAsks, formatRules, teamErrorMessage, type Roster, type TeamMap, type AskRow, type RuleRow } from "@/cli/commands/team-format"
 import { Flag } from "@/runtime/context/flag/flag"
+import { runtimeJson, setComputer } from "@/cli/commands/runtime-client"
 
 const API_BASE = Flag.GIZZI_PLATFORM_API_URL.replace(/\/+$/, "")
 
@@ -59,6 +61,10 @@ async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, 
   }
   return (await res.json()) as T
 }
+
+/** Team routes live on the runtime api (local, else cloud relay), not cloud-api. */
+const rt = <T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown) =>
+  runtimeJson<T>(method, path, body, (status, code, msg) => teamErrorMessage(status, code, msg ?? `HTTP ${status}`))
 
 /** "kind:ref" or an app name seen in the team map's grants. */
 function resolveApp(map: TeamMap, app: string): { kind: string; ref: string } {
@@ -108,7 +114,7 @@ const TeamMapCommand = cmd({
   describe: "the team tree: people, their bots and sub-bots, asks and waiting jobs",
   builder: (y: Argv) => y.option("json", { type: "boolean", describe: "print raw JSON" }),
   async handler(args) {
-    const m = await call<TeamMap>("GET", "/api/v1/team/map")
+    const m = await rt<TeamMap>("GET", "/api/v1/team/map")
     UI.println(args.json ? JSON.stringify(m, null, 2) : formatTeamMap(m).join(EOL))
   },
 })
@@ -123,7 +129,7 @@ const TeamAsksCommand = cmd({
       .option("json", { type: "boolean", describe: "print raw JSON" })
       .conflicts("approve", "decline"),
   async handler(args) {
-    const r = await call<{ asks: AskRow[]; partial?: string[] }>("GET", "/api/v1/team/approvals?role=approver&state=pending")
+    const r = await rt<{ asks: AskRow[]; partial?: string[] }>("GET", "/api/v1/team/approvals?role=approver&state=pending")
     const id = (args.approve ?? args.decline) as string | undefined
     if (!id) {
       UI.println(args.json ? JSON.stringify(r, null, 2) : formatAsks(r.asks, r.partial).join(EOL))
@@ -156,25 +162,25 @@ const TeamRulesCommand = cmd({
   async handler(args) {
     const action = String(args.action ?? "list")
     if (action === "list") {
-      const r = await call<{ rules: RuleRow[] }>("GET", "/api/v1/team/rules")
+      const r = await rt<{ rules: RuleRow[] }>("GET", "/api/v1/team/rules")
       UI.println(args.json ? JSON.stringify(r, null, 2) : formatRules(r.rules).join(EOL))
       return
     }
     if (action === "rm") {
       if (!args.id) throw new Error("Usage: gizzi team rules rm <id>")
-      await call("DELETE", `/api/v1/team/rules/${encodeURIComponent(String(args.id))}`)
+      await rt("DELETE", `/api/v1/team/rules/${encodeURIComponent(String(args.id))}`)
       UI.println(`Removed rule ${args.id}`)
       return
     }
     if (action !== "add") throw new Error("Usage: gizzi team rules [list|add|rm]")
     if (!args.op || !args.approver) throw new Error("Usage: gizzi team rules add --op <always|gt|gte|eq|in> --approver <owner|manager|user_id> [--app --tool --field --value --bot]")
-    const map = args.app || args.bot ? await call<TeamMap>("GET", "/api/v1/team/map") : null
+    const map = args.app || args.bot ? await rt<TeamMap>("GET", "/api/v1/team/map") : null
     const app = args.app ? resolveApp(map!, String(args.app)) : null
     const bot = args.bot ? resolveBot(map!, String(args.bot)) : null
     const raw = args.value as string | undefined
     const value = raw === undefined ? undefined : args.op === "in" ? raw.split(",") : raw !== "" && !isNaN(Number(raw)) ? Number(raw) : raw
     const approver = String(args.approver)
-    const r = await call<{ rule: RuleRow }>("POST", "/api/v1/team/rules", {
+    const r = await rt<{ rule: RuleRow }>("POST", "/api/v1/team/rules", {
       scope_kind: bot ? "bot" : "org",
       scope_ref: bot ? `${bot.kind === "vendor" ? "v" : "b"}:${bot.id}` : undefined,
       app_kind: app?.kind,
@@ -199,10 +205,10 @@ const TeamGrantCommand = cmd({
       .positional("app", { type: "string", demandOption: true, describe: "app name or kind:ref" })
       .positional("level", { type: "string", choices: ["browser", "app", "full"], demandOption: true }),
   async handler(args) {
-    const map = await call<TeamMap>("GET", "/api/v1/team/map")
+    const map = await rt<TeamMap>("GET", "/api/v1/team/map")
     const bot = resolveBot(map, String(args.bot))
     const app = resolveApp(map, String(args.app))
-    const r = await call<{ grant: { level: string; app?: { name: string } } }>("PUT", "/api/v1/team/grants", {
+    const r = await rt<{ grant: { level: string; app?: { name: string } } }>("PUT", "/api/v1/team/grants", {
       bot_kind: bot.kind,
       bot_id: bot.id,
       app_kind: app.kind,
@@ -218,6 +224,8 @@ export const TeamCommand = cmd({
   describe: "your organization's roster: teammates' live sessions",
   builder: (y: Argv) =>
     y
+      .option("computer", { type: "string", describe: "which online computer to use for map/asks/rules/grant when more than one is connected" })
+      .middleware((a: any) => setComputer(a.computer))
       .command(TeamListCommand)
       .command(TeamSendCommand)
       .command(TeamMapCommand)
