@@ -160,6 +160,22 @@ struct TeamWhoCanUseHost: View {
     @StateObject private var store = TeamMapStore()
 
     var body: some View {
-        TeamWhoCanUseSheet(app: app, store: store)
+        // The Connectors list knows a connector by its catalog id ("stripe");
+        // the team map keys apps by the MCP connector id ("mcp_stripe"). Like
+        // web (#1314 whoRefs), use the app as the map knows it.
+        TeamWhoCanUseSheet(app: Self.resolve(app, in: store.map), store: store)
+            .id(Self.resolve(app, in: store.map).id)
+    }
+
+    /// The map's own ref for `app`: same ref, `mcp_<ref>`, or the same name
+    /// (case-insensitive) among the map's grants of that kind. Unchanged when
+    /// the map is not loaded or nothing matches (the sheet then shows nobody).
+    static func resolve(_ app: TeamAppRef, in map: TeamMap?) -> TeamAppRef {
+        guard let map else { return app }
+        let known = map.grants.map(\.app).filter { $0.kind == app.kind }
+        if let hit = known.first(where: { $0.ref == app.ref || $0.ref == "mcp_\(app.ref)" }) { return hit }
+        if let name = app.name?.lowercased(),
+           let hit = known.first(where: { $0.name?.lowercased() == name }) { return hit }
+        return app
     }
 }
