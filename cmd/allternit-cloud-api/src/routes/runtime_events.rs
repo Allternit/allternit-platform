@@ -42,6 +42,11 @@
 //! ([`notifications::ingest_snapshot`]), then plans the Live Activity and widget pushes
 //! ([`super::live_activity::on_snapshot`]).
 //!
+//! **`bar_job.changed`** is not an event either: its `data` (`jobId`, `title`, `appName`, `state`,
+//! `approverUserId`, `approverName`, `requesterUserId`, `botName`, `amount`, `receipt`, `error`,
+//! and for the approver `inboxId`, `question`, `contentHash`, `approveInline`, `private`) plans the
+//! bar job Live Activity push for this runtime's owner ([`super::live_activity::on_bar_job`]).
+//!
 //! Cloud sets `runtimeId` in every event's `data` (the authenticated runtime,
 //! whatever the body said).
 //!
@@ -87,6 +92,8 @@ pub const MAX_EVENTS: usize = 100;
 pub const MAX_DATA_BYTES: usize = 250 * 1024;
 /// The forwarded type that carries the runtime's status, not an event.
 pub const STATUS_SNAPSHOT: &str = "status.snapshot";
+/// An Island bar job changed state. Not stored: planned as a Live Activity push ([`super::live_activity::on_bar_job`]).
+pub const BAR_JOB_CHANGED: &str = "bar_job.changed";
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route(PATH, post(ingest_route))
@@ -250,6 +257,18 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
                     results.push(json!({ "id": ev.id, "status": "accepted" }));
                 }
             }
+            continue;
+        }
+        if ev.kind == BAR_JOB_CHANGED {
+            // Not a stored event: the job's Live Activity push, for this runtime's owner.
+            if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
+                rejected += 1;
+                results.push(json!({ "id": ev.id, "status": "too_large" }));
+                continue;
+            }
+            tokio::spawn(super::live_activity::on_bar_job(db.clone(), user_id.to_string(), runtime_id.to_string(), data));
+            accepted += 1;
+            results.push(json!({ "id": ev.id, "status": "accepted" }));
             continue;
         }
         let Some(name) = allternit_events::from_runtime(&ev.kind, &data) else {

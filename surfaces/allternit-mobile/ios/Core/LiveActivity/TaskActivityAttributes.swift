@@ -9,8 +9,10 @@ import Foundation
 ///
 /// Wording follows the Island bar contract, section 5 (handoffs/
 /// island-bar-team-map-2026-11-25/CONTRACT.md). The activity is updated by the
-/// app process only: cloud-api's `routes/live_activity.rs` knows the Bot and
-/// Loop attribute types, not this one, so no push tokens are registered.
+/// app process while it runs, and by cloud-api push (`routes/live_activity.rs`,
+/// `bar_job.changed`) otherwise: push-to-start opens it, the update token
+/// (`activityKey` = `jobId`) updates and ends it. The ContentState keys below
+/// are the push payload's `content-state` keys exactly.
 struct TaskActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         /// Contract `JobState`: working, waiting_approval, input_required,
