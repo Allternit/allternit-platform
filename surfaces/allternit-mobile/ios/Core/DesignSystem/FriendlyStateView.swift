@@ -10,14 +10,17 @@ struct FriendlyStateView: View {
         case offline
     }
 
-    let style: Style
-    let icon: String
+    var style: Style = .empty
+    var icon: String = "tray"
     let title: String
-    let message: String
+    var message: String = ""
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
     /// Line art in place of the icon tile (empty style only). Nil keeps the tile.
     var art: EmptyArtKind? = nil
+    /// Art size: full 96 pt, or `.panel` (64 pt) inside a card or list section.
+    var size: EmptyArtSize = .full
+    var paper: Color = Color("BgPrimary")
 
     /// What actually shows: error text made calm, and a compute-gate refusal
     /// turned into the no-computer empty state (contract C5).
@@ -41,7 +44,7 @@ struct FriendlyStateView: View {
         let shown = self.shown
         VStack(spacing: 16) {
             if let art, effectiveStyle == .empty {
-                EmptyArt(kind: art)
+                EmptyArt(kind: art, size: size, paper: paper)
             } else {
                 Image(systemName: shown.icon)
                     .font(.system(size: 28, weight: .medium))
@@ -61,11 +64,13 @@ struct FriendlyStateView: View {
                 .foregroundColor(Color("TextPrimary"))
                 .multilineTextAlignment(.center)
 
-            Text(shown.message)
-                .font(.subheadline)
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+            if !shown.message.isEmpty {
+                Text(shown.message)
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
 
             if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
@@ -125,12 +130,15 @@ struct FriendlyInlineStateView: View {
         case offline
     }
 
-    let style: Style
-    let icon: String
+    var style: Style = .empty
+    var icon: String = "tray"
     let title: String
-    let message: String
+    var message: String = ""
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    /// Line art (36 pt) beside the line, in place of the icon tile (empty style only).
+    var art: EmptyArtKind? = nil
+    var paper: Color = Color("BgPrimary")
 
     /// Same calm presentation as `FriendlyStateView.shown`.
     private var shown: CalmStateText {
@@ -150,22 +158,28 @@ struct FriendlyInlineStateView: View {
         let shown = self.shown
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(systemName: shown.icon)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(foregroundColor)
-                    .frame(width: 36, height: 36)
-                    .background(backgroundColor)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
+                if let art, effectiveStyle == .empty {
+                    EmptyArt(kind: art, size: .inline, paper: paper)
+                } else {
+                    Image(systemName: shown.icon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(foregroundColor)
+                        .frame(width: 36, height: 36)
+                        .background(backgroundColor)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
+                }
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(shown.title)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
 
-                    Text(shown.message)
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(3)
+                    if !shown.message.isEmpty {
+                        Text(shown.message)
+                            .font(.subheadline)
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(3)
+                    }
                 }
 
                 Spacer(minLength: 0)

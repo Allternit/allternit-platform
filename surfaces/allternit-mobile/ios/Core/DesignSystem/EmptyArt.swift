@@ -95,7 +95,7 @@ struct EmptyArt: View {
         case .gizzi:
             GizziWalk(size: (size * 0.75).rounded(), box: size)
         case .connectScene:
-            ConnectScene(state: .asleep)
+            ConnectScene(state: .asleep, width: Self.width(kind, size: size))
         case .search, .model:
             EmptyArtGizziScene(kind: kind, size: size, paper: paper)
         default:
@@ -298,7 +298,8 @@ private struct EmptyArtPainter {
         l.translateBy(x: origin.x, y: origin.y)
         l.translateBy(x: tx, y: ty)
         if rot != 0 { l.rotate(by: .degrees(rot)) }
-        l.scaleBy(x: sx, y: sy)
+        // A still frame can ask for scale 0; keep the transform invertible.
+        l.scaleBy(x: max(abs(sx), 0.0001) * (sx < 0 ? -1 : 1), y: max(abs(sy), 0.0001) * (sy < 0 ? -1 : 1))
         l.translateBy(x: -origin.x, y: -origin.y)
         draw(l)
     }
