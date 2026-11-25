@@ -502,7 +502,10 @@ fun CodeProjectDetailScreen(initial: LibraryProject, store: ProjectsLibraryStore
                 }
                 Text("Sessions", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 if (store.loading && sessions.isEmpty()) LibrarySpinner("Loading sessions")
-                else if (sessions.isEmpty()) Text("No sessions yet. Start one to work on this project.", color = c.textSecondary, fontSize = 14.sp)
+                else if (sessions.isEmpty()) Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Sheets, size = 72.dp)
+                    Text("No sessions yet. Start one to work on this project.", color = c.textSecondary, fontSize = 14.sp)
+                }
                 sessions.forEach { s ->
                     Row(
                         Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp)).testTag("codeProjectSession${s.id}").clickable { nav.openSession(s.id, "code") }.padding(horizontal = 8.dp),

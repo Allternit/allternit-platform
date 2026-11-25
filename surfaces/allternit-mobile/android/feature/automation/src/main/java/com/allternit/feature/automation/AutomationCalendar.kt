@@ -77,7 +77,7 @@ internal fun AutomationCalendar(store: AutomationStore, tasks: List<AutoTask>, o
     Column(Modifier.fillMaxSize().testTag("automationCalendar")) {
         PillRow(CalMode.entries, mode, { it.label }, { "automationCal${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { mode = it }
         if (tasks.isEmpty()) {
-            EmptyState("Nothing scheduled", "Schedule a task and its runs show up here.", Modifier.padding(horizontal = 20.dp), "New task") { onNewAt(CronWords.DEFAULT_CRON) }
+            EmptyState("Nothing scheduled", "Schedule a task and its runs show up here.", Modifier.padding(horizontal = 20.dp), "New task", art = com.allternit.core.design.EmptyArtKind.Bell) { onNewAt(CronWords.DEFAULT_CRON) }
             return
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {

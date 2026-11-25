@@ -220,7 +220,10 @@ internal fun BotThreadsPanel(store: BotModeStore, threads: List<BotThread>, botI
             Text(greeting, color = c.textPrimary, fontSize = 22.sp, fontFamily = AllternitSerif)
             Text(waitingLine(rows.count { it.group == "waiting" }), color = c.textSecondary, fontSize = 13.sp)
         }
-        if (rows.isEmpty()) Text("No threads yet. Start one from the composer.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
+        if (rows.isEmpty()) Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Envelope)
+            Text("No threads yet. Start one from the composer.", color = c.textSecondary, fontSize = 14.sp)
+        }
         val grouped = rows.groupBy { it.group }
         BotThreadGroup.entries.forEach { g ->
             val items = grouped[g.raw].orEmpty()

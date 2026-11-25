@@ -114,7 +114,7 @@ internal fun AgentHubScreen(host: BotsHost, store: BotModeStore, nav: BotNavigat
                     }
                     HubTab.Sessions -> {
                         val list = sessions
-                        if (!ListState(list == null && sessionsError == null, sessionsError, list.isNullOrEmpty(), "Couldn't load bot sessions", "No bot sessions yet. Start a bot to see its runs here.") {
+                        if (!ListState(list == null && sessionsError == null, sessionsError, list.isNullOrEmpty(), "Couldn't load bot sessions", "No bot sessions yet. Start a bot to see its runs here.", com.allternit.core.design.EmptyArtKind.Envelope) {
                                 sessions = null; sessionsError = null; sessionsReload++
                             } && list != null) {
                             SectionHeader("Bot sessions")

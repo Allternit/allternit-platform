@@ -444,7 +444,7 @@ fun MeetingLiveScreen(sessionId: String, meeting: Meeting?, onBack: () -> Unit, 
                     val listState = rememberLazyListState()
                     LaunchedEffect(live.transcript.size) { if (live.transcript.isNotEmpty()) listState.animateScrollToItem(live.transcript.size - 1) }
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (live.transcript.isEmpty()) item { PanelEmpty(if (live.status == GizziStatus.Live) "The transcript shows here as people talk." else "No transcript yet.") }
+                        if (live.transcript.isEmpty()) item { PanelEmpty(if (live.status == GizziStatus.Live) "The transcript shows here as people talk." else "No transcript yet.", com.allternit.core.design.EmptyArtKind.Envelope) }
                         items(live.transcript, key = { it.seq }) { s ->
                             Column(Modifier.padding(top = 4.dp)) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -457,11 +457,11 @@ fun MeetingLiveScreen(sessionId: String, meeting: Meeting?, onBack: () -> Unit, 
                     }
                 }
                 1 -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (live.artifacts.isEmpty()) PanelEmpty("Docs, slides and canvases Gizzi makes in the call show here.")
+                    if (live.artifacts.isEmpty()) PanelEmpty("Docs, slides and canvases Gizzi makes in the call show here.", com.allternit.core.design.EmptyArtKind.Sheets)
                     live.artifacts.forEach { a -> ArtifactRow(a) { openUrl(context, a.url) } }
                 }
                 else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (live.approvals.isEmpty()) PanelEmpty("When someone asks Gizzi to use one of your tools, you approve it here. Names in a call aren't verified.")
+                    if (live.approvals.isEmpty()) PanelEmpty("When someone asks Gizzi to use one of your tools, you approve it here. Names in a call aren't verified.", com.allternit.core.design.EmptyArtKind.Bell)
                     live.approvals.forEach { a ->
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(AllternitRadii.MD)).border(1.dp, c.borderSubtle, RoundedCornerShape(AllternitRadii.MD)).padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -669,7 +669,12 @@ private fun ArtifactRow(a: MeetingArtifact, onOpen: () -> Unit) {
 
 @Composable private fun Divider() = Box(Modifier.fillMaxWidth().padding(start = 14.dp).height(1.dp).background(AllternitTheme.colors.borderSubtle))
 
-@Composable private fun PanelEmpty(text: String) = Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 24.dp))
+@Composable private fun PanelEmpty(text: String, art: com.allternit.core.design.EmptyArtKind? = null) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (art != null) com.allternit.core.design.EmptyArt(art, size = 72.dp)
+        Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 24.dp))
+    }
+}
 
 @Composable private fun BulletRow(text: String, detail: String?) {
     val c = AllternitTheme.colors

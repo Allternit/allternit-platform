@@ -141,7 +141,7 @@ internal fun AgentActivityListScreen(backend: ChatBackend, nav: BotNavigator) {
         }
     }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-            if (!ListState(loading, error?.let { com.allternit.core.design.FriendlyErrorMessage.from(it) }, threads.isEmpty(), "Couldn't load agent activity", "No agent activity yet. Threads show up here as agents send mail through the Factory.") { scope.launch { load() } }) {
+            if (!ListState(loading, error?.let { com.allternit.core.design.FriendlyErrorMessage.from(it) }, threads.isEmpty(), "Couldn't load agent activity", "No agent activity yet. Threads show up here as agents send mail through the Factory.", com.allternit.core.design.EmptyArtKind.Bell) { scope.launch { load() } }) {
                 LibrarySearchField(search, "Search threads", "agentActivitySearch", Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { search = it }
                 if (visible.isEmpty()) Text("No threads match.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
                 visible.forEach { t ->
@@ -375,7 +375,7 @@ internal fun DecisionsScreen(host: BotsHost, store: BotModeStore, nav: BotNaviga
             } else aError?.let { ErrorRetry(it) { scope.launch { refreshApprovals() } } }
             if (items.isEmpty() && approvals.isEmpty() && qError == null) {
                 if (loaded) Column(Modifier.fillMaxWidth().padding(vertical = 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("✓", color = c.textTertiary, fontSize = 28.sp)
+                    com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Bell)
                     Text("Nothing is waiting for you.", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.testTag("decisionsEmpty"))
                     Text("When an agent asks a question or a Factory step needs approval, it shows here.", color = c.textSecondary, fontSize = 13.sp)
                 } else LibrarySpinner("Loading decisions")
