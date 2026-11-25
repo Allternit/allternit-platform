@@ -57,6 +57,9 @@ use crate::{auth, ApiState};
 // Page runtime (storage, consents, AI) and the org "Shared outside" list.
 #[path = "artifact_runtime.rs"]
 pub(crate) mod artifact_runtime;
+// App-origin sessions (D15): one-time handoff -> per-app session.
+#[path = "app_handoff.rs"]
+pub mod app_handoff;
 // Motion cloud render (jobs, queue, MP4 download).
 #[path = "artifact_render.rs"]
 mod artifact_render;
@@ -69,6 +72,8 @@ const MAX_TITLE_CHARS: usize = 300;
 const MAX_ICON_CHARS: usize = 32;
 const MAX_JSON_FIELD_BYTES: usize = 16 * 1024;
 const MAX_ALLOWED_EXTERNAL: usize = 1000;
+/// Artifact kinds `put_app` refuses (F5): Docs, Sheets, Slides.
+const OFFICE_KINDS: [&str; 3] = ["doc", "sheet", "slides"];
 const DEFAULT_PUBLIC_BASE_URL: &str = "https://ai.allternit.com/a";
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -106,6 +111,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         )
         .merge(artifact_runtime::routes())
         .merge(artifact_render::routes())
+        .merge(app_handoff::routes())
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +203,9 @@ pub(crate) fn ts(at: DateTime<Utc>) -> String {
 }
 
 pub(crate) async fn caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller> {
+    // D15: an app origin (<slug>.allternitusercontent.com) never acts with a
+    // workspace session; it uses an app session (app_handoff) or nothing.
+    app_handoff::refuse_app_origin(headers)?;
     // Tests stand in for Clerk sessions (org, role, email) with this header;
     // compiled out of every non-test build.
     #[cfg(test)]
@@ -1431,6 +1440,14 @@ async fn put_app(
     let req: AppRequest = parse_json(&body)?;
     let (row, access) = load_with_access(&state.db, &id, &caller).await?;
     require(access, Access::Owner, "Making an artifact an app")?;
+    // F5 (contract freeze 2026-11-24): Office documents are not installable
+    // as apps for now, the same as Claude. The UI hides the action too.
+    if OFFICE_KINDS.contains(&row.kind.as_str()) {
+        return Err(ArtifactError::unprocessable(
+            "kind_not_installable",
+            "Docs, Slides and Sheets can't be made into apps yet.",
+        ));
+    }
 
     let name = check_app_name(&req.name)?;
     let icon = req.icon.as_deref().map(check_icon).transpose()?;
