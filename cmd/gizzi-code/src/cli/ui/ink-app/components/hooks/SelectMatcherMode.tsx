@@ -11,6 +11,7 @@ import { type HookSource, hookSourceInlineDisplayString, type IndividualHookConf
 import { plural } from '../../utils/stringUtils';
 import { Select } from '../CustomSelect/select';
 import { Dialog } from '../design-system/Dialog';
+import { EmptyLine } from '../EmptyLine'
 type MatcherWithSource = {
   matcher: string;
   sources: HookSource[];
@@ -47,7 +48,7 @@ export function SelectMatcherMode({
   const matchersWithSources = t1;
   if (matchersForSelectedEvent.length === 0) {
     const t2 = `${selectedEvent} - Matchers`;
-    const t3 = <Box flexDirection="column" gap={1}><Text dimColor={true}>No hooks configured for this event.</Text><Text dimColor={true}>To add hooks, edit settings.json directly or ask Gizzi.</Text></Box>;
+    const t3 = <Box flexDirection="column" gap={1}><EmptyLine>No hooks configured for this event.</EmptyLine><Text dimColor={true}>To add hooks, edit settings.json directly or ask Gizzi.</Text></Box>;
 
     const t4 = <Dialog title={t2} subtitle={eventDescription} onCancel={onCancel} inputGuide={_temp2}>{t3}</Dialog>;
 

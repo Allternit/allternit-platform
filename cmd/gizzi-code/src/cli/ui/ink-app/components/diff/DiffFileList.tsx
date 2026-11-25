@@ -5,6 +5,7 @@ import { useTerminalSize } from '../../hooks/useTerminalSize';
 import { Box, Text } from '../../ink';
 import { truncateStartToWidth } from '../../utils/format';
 import { plural } from '../../utils/stringUtils';
+import { EmptyLine } from '../EmptyLine'
 const MAX_VISIBLE_FILES = 5;
 type Props = {
   files: DiffFile[];
@@ -46,7 +47,7 @@ export function DiffFileList({
     endIndex
   } = t1;
   if (files.length === 0) {
-    const t2 = <Text dimColor={true}>No changed files</Text>;
+    const t2 = <EmptyLine>No changed files</EmptyLine>;
 
     return t2;
   }

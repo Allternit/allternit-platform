@@ -10,6 +10,7 @@ import { count } from '../../utils/array';
 import { Dialog } from '../design-system/Dialog';
 import { Divider } from '../design-system/Divider';
 import { getAgentSourceDisplayName } from './utils';
+import { EmptyLine } from '../EmptyLine'
 type Props = {
   source: SettingSource | 'all' | 'built-in' | 'plugin';
   agents: ResolvedAgent[];
@@ -161,7 +162,7 @@ export function AgentsList({
     if (hasNoAgents) {
       const t23 = onCreateNew && <Box>{renderCreateNewOption()}</Box>;
 
-      const t24 = <Text dimColor={true}>No agents found. Create specialized subagents that Gizzi can delegate to.</Text>;
+      const t24 = <EmptyLine>No agents found. Create specialized subagents that Gizzi can delegate to.</EmptyLine>;
       const t25 = <Text dimColor={true}>Each subagent has its own context window, custom system prompt, and specific tools.</Text>;
       const t26 = <Text dimColor={true}>Try creating: Code Reviewer, Code Simplifier, Security Reviewer, Tech Lead, or UX Reviewer.</Text>;
 

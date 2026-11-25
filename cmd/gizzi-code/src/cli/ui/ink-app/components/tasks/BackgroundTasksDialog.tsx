@@ -36,6 +36,7 @@ import { DreamDetailDialog } from './DreamDetailDialog';
 import { InProcessTeammateDetailDialog } from './InProcessTeammateDetailDialog';
 import { RemoteSessionDetailDialog } from './RemoteSessionDetailDialog';
 import { ShellDetailDialog } from './ShellDetailDialog';
+import { EmptyLine } from '../EmptyLine'
 type ViewState = {
   mode: 'list';
 } | {
@@ -373,7 +374,7 @@ export function BackgroundTasksDialog({
   }
   return <Box flexDirection="column" tabIndex={0} autoFocus onKeyDown={handleKeyDown}>
       <Dialog title="Background tasks" subtitle={<>{subtitle}</>} onCancel={handleCancel} color="background" inputGuide={renderInputGuide}>
-        {allSelectableItems.length === 0 ? <Text dimColor>No tasks currently running</Text> : <Box flexDirection="column">
+        {allSelectableItems.length === 0 ? <EmptyLine>No tasks currently running</EmptyLine> : <Box flexDirection="column">
             {teammateTasks.length > 0 && <Box flexDirection="column">
                 {(bashTasks.length > 0 || remoteSessions.length > 0 || agentTasks.length > 0) && <Text dimColor>
                     <Text bold>{'  '}Agents</Text> (

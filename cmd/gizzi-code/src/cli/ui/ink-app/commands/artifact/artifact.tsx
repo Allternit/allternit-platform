@@ -24,6 +24,7 @@ import {
 } from '../../keybindings/useKeybinding.js'
 import type { LocalJSXCommandOnDone } from '../../types/command.js'
 import { openFileInExternalEditor } from '../../utils/editor.js'
+import { EmptyLine } from '../../components/EmptyLine'
 
 interface ArtifactViewerProps {
   onDone: LocalJSXCommandOnDone
@@ -100,7 +101,7 @@ export function ArtifactViewer({ onDone }: ArtifactViewerProps) {
     return (
       <Pane>
         <Box flexDirection="column" gap={1}>
-          <Text color="warning">No artifacts yet.</Text>
+          <EmptyLine>No artifacts yet.</EmptyLine>
           <Text dimColor>
             {`Artifacts live in ${displayRoot}/ — publish one with \`gizzi html-artifact publish --input <file.json>\`, or drop a markdown file in that directory.`}
           </Text>
