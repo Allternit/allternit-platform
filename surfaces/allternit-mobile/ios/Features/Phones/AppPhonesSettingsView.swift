@@ -100,9 +100,7 @@ struct AppPhonesSettingsView: View {
                 Button("Try again") { Task { await loadRuntimes() } }
                     .font(.subheadline)
             } else if desktops.isEmpty {
-                Text("No Desktop is paired with your account yet. Open Allternit Desktop and sign in, then pull to refresh.")
-                    .font(.subheadline)
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No Desktop is paired with your account yet. Open Allternit Desktop and sign in, then pull to refresh.", art: .connectScene)
             } else {
                 ForEach(desktops) { runtime in
                     Button(action: { phone.pair(with: runtime, name: trimmedName) }) {

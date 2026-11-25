@@ -187,11 +187,11 @@ struct StudioJobsSection: View {
         case .noComputer:
             FriendlyInlineStateView(
                 style: .empty,
-                icon: "desktopcomputer",
                 title: "No computer paired",
                 message: "Training jobs run on a computer. Pair one in Computers.",
                 actionTitle: "Pair a computer",
-                action: { isConnectSheetPresented = true }
+                action: { isConnectSheetPresented = true },
+                art: .connectScene
             )
         case .offline:
             FriendlyInlineStateView(
@@ -320,9 +320,7 @@ struct StudioJobDetailView: View {
                 }
                 Section("Log") {
                     if tail.lines.isEmpty {
-                        Text("No log lines yet.")
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextSecondary"))
+                        FriendlyInlineStateView(title: "No log lines yet.", art: .log)
                     } else {
                         ForEach(tail.lines) { line in
                             Text(line.message)

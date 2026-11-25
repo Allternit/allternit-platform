@@ -221,9 +221,10 @@ struct FreeweightsCatalogView: View {
             .padding(.top, 20)
         } else if store.hasLoaded && ids.isEmpty {
             FriendlyInlineStateView(
-                style: .empty, icon: "magnifyingglass",
+                style: .empty,
                 title: store.query.isEmpty ? "Nothing here yet" : "No models match \u{201C}\(store.query)\u{201D}",
-                message: store.filter == .fits ? "Try Everything, or a family name like qwen, gemma or smollm." : "Try a family name like qwen, gemma or deepseek.")
+                message: store.filter == .fits ? "Try Everything, or a family name like qwen, gemma or smollm." : "Try a family name like qwen, gemma or deepseek.",
+                art: .sheets)
             .padding(.top, 20)
         } else {
             budgetLine
@@ -479,13 +480,11 @@ struct OnThisIPhoneView: View {
     private var downloadedSection: some View {
         Section {
             if rt.installs.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("No models on this iPhone yet").font(.system(size: 15, weight: .medium)).foregroundColor(Color("TextPrimary"))
-                    Text("Pick one that fits in the catalog. It downloads in the background and then runs here, even offline.")
-                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
-                    Button("Browse models that fit", action: onBrowse).font(.system(size: 15, weight: .semibold))
-                }
-                .padding(.vertical, 4)
+                FriendlyStateView(
+                    title: "No models on this iPhone yet",
+                    message: "Pick one that fits in the catalog. It downloads in the background and then runs here, even offline.",
+                    actionTitle: "Browse models that fit", action: onBrowse,
+                    art: .model, size: .panel)
             } else {
                 ForEach(rt.installs) { i in
                     HStack(spacing: 10) {
