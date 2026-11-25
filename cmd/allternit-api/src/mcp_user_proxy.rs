@@ -22,6 +22,17 @@
 //! lives in JSON-RPC `_meta` — a channel the model does not write; it only
 //! supplies `arguments`. The flag is never forwarded to the connector.
 //!
+//! Team map (`team_rules.rs`) runs first, before the install mode: a bot whose
+//! owner set levels needs a live grant on the connector (`browser` = read-only
+//! tools only), and an approval rule that matches the call routes it to its
+//! approver. When that approver is someone else, the call is refused with
+//! `owner_approval_required {rule_id, rule_text, approver, approval_id}` and a
+//! routed `cowork_approvals` row is opened; it runs only when
+//! `_meta["allternit/approvalId"]` names a row the approver approved for the
+//! same tool and arguments (`allternit/approved` alone never counts). The actor
+//! is the token's user, or the bot whose session this is (the session's
+//! `isBot` tag); edge callers act as the owner.
+//!
 //! The proxy token is an HMAC-signed `{uid, sid, exp}` — never the user's Clerk
 //! token — and is honoured only together with a matching `X-Allternit-Session`
 //! header. Connector credentials, the proxy token and tool arguments are never
@@ -417,15 +428,27 @@ pub(crate) async fn dispatch_rpc_with(
                 },
                 RpcCaller::Edge => CallOptions::default(),
             };
-            let result = call_tool(state, &connectors, &modes, &name, arguments, gate, allow_private, opts).await;
+            // Team rule gate (team_rules.rs): who acts, and the approvals this call carries.
+            let team = TeamCall {
+                user_id: user_id.to_string(),
+                bot_id: match caller {
+                    RpcCaller::Turn { session_id } => session_bot(state, session_id).await,
+                    RpcCaller::Edge => None,
+                },
+                approval_ids: crate::team_rules::approval_ids_from_meta(&params["_meta"]),
+                job_id: crate::team_rules::job_id_from_meta(&params["_meta"]),
+            };
+            let result = call_tool(state, &connectors, &modes, &name, arguments, gate, allow_private, opts, team).await;
             let outcome = if result.is_ok() { "ok" } else { "error" };
             let payload = match result {
                 Ok(v) => rpc_result(&id, v),
+                // A held call with a body of its own (`owner_approval_required`).
+                Err(CallError { err, data: Some(data) }) => rpc_error(&id, -32001, &err.message, Some(data)),
                 // Outside apps show `error.message`: the plain reason, not the bare code.
-                Err(e) if edge && e.code == "confirmation_required" => {
+                Err(CallError { err: e, .. }) if edge && e.code == "confirmation_required" => {
                     rpc_error(&id, -32001, &e.message, Some(json!({ "code": e.code, "message": e.message })))
                 }
-                Err(e) => rpc_from_apps_error(&id, &e),
+                Err(CallError { err: e, .. }) => rpc_from_apps_error(&id, &e),
             };
             (payload, Some(name), outcome)
         }
@@ -665,6 +688,7 @@ async fn list_tools(
     json!({ "tools": tools })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn call_tool(
     state: &Arc<AppState>,
     connectors: &[Connector],
@@ -674,7 +698,8 @@ async fn call_tool(
     gate: Gate,
     allow_private: bool,
     opts: CallOptions,
-) -> Result<Value, AppsError> {
+    team: TeamCall,
+) -> Result<Value, CallError> {
     let (connector, tool_name) = resolve_namespaced(connectors, namespaced_name).ok_or_else(|| {
         AppsError::new(StatusCode::NOT_FOUND, "tool_not_found", format!("unknown tool '{namespaced_name}'"))
     })?;
@@ -682,7 +707,7 @@ async fn call_tool(
     let connector_name = connector.name.clone();
     let connector_id = connector.id.clone();
     let mode = mode_for(modes, connector);
-    with_session(state, connector, allow_private, |client| async move {
+    let session = with_session(state, connector, allow_private, |client| async move {
         // Declared per caller, not per connection: a task only comes back when gizzi asked for
         // one, and the upstream is asked on gizzi's behalf (with its own stored credentials).
         let tasks = opts.tasks;
@@ -691,7 +716,7 @@ async fn call_tool(
             Some(bridge) => client.with_server_request_handler(Arc::new(GizziElicitation { bridge })),
             None => client,
         };
-        let result = async {
+        let result: Result<Value, CallError> = async {
             // Visibility is only knowable from the connector's own list: app-only
             // tools are not callable by the model, whatever name it asks for.
             let tools = list_all_tools(&client).await?;
@@ -706,9 +731,18 @@ async fn call_tool(
                     StatusCode::FORBIDDEN,
                     "tool_not_visible_to_model",
                     format!("tool '{tool_name}' is not callable by the model"),
-                ));
+                )
+                .into());
             }
-            if !matches!(gate, Gate::Turn { approved: true }) && requires_confirmation(mode, tool) {
+            let approved = matches!(gate, Gate::Turn { approved: true });
+            let needs_confirmation = !approved && requires_confirmation(mode, tool);
+            // Team map (levels, then rules) before the install mode. Rules only add asks.
+            let read_only = tool["annotations"]["readOnlyHint"] == json!(true);
+            let decision =
+                team_gate(state, &team, &connector_id, &connector_name, &tool_name, read_only, &arguments, approved, needs_confirmation)
+                    .await?;
+            team_refusal(decision, gate, &connector_name, &tool_name, &team)?;
+            if needs_confirmation {
                 return Err(AppsError::new(
                     StatusCode::FORBIDDEN,
                     "confirmation_required",
@@ -717,14 +751,15 @@ async fn call_tool(
                     } else {
                         format!("tool '{tool_name}' needs the user's approval for this call")
                     },
-                ));
+                )
+                .into());
             }
             let params = json!({ "name": tool_name, "arguments": arguments });
             if !tasks {
-                return client.request("tools/call", Some(params)).await.map_err(upstream_error);
+                return client.request("tools/call", Some(params)).await.map_err(|e| upstream_error(e).into());
             }
             match client.call_tool_raw(params).await.map_err(upstream_error)? {
-                ToolOutcome::Complete(result) => Ok(result),
+                ToolOutcome::Complete(result) => Ok::<Value, CallError>(result),
                 ToolOutcome::Task(task) => {
                     let mut created = serde_json::to_value(&task).map_err(|e| AppsError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", e.to_string()))?;
                     namespace_task_id(&mut created, &connector_id);
@@ -733,9 +768,162 @@ async fn call_tool(
             }
         }
         .await;
-        (client, result)
+        (client, Ok(result))
+    })
+    .await;
+    match session {
+        Ok(result) => result,
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// A refused `tools/call`. `data` replaces the JSON-RPC error's default
+/// `{code, message}` when the refusal carries more (`owner_approval_required`).
+pub(crate) struct CallError {
+    err: AppsError,
+    data: Option<Value>,
+}
+
+impl From<AppsError> for CallError {
+    fn from(err: AppsError) -> Self {
+        CallError { err, data: None }
+    }
+}
+
+/// Who a `tools/call` is for, for the team rule gate.
+#[derive(Debug, Clone, Default)]
+struct TeamCall {
+    /// The confirming user: the turn's user (proxy token) or the edge's owner.
+    user_id: String,
+    /// The bot whose turn this is (`agents.id`), from the session's bot tag.
+    bot_id: Option<String>,
+    /// `_meta["allternit/approvalId"]`.
+    approval_ids: Vec<String>,
+    /// `_meta["allternit/jobId"]`.
+    job_id: Option<String>,
+}
+
+/// The bot a chat turn's session belongs to (the app's `isBot` session tag, the
+/// same lookup the agent-chat bridge uses for the bot marker). `None` = the
+/// person acting as themself.
+async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
+    let db = state.db.clone();
+    let sid = session_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        crate::agent_session_routes::session_bot_marker(&db, &sid)
+            .and_then(|marker| marker["id"].as_str().map(str::to_string))
+            .filter(|id| !id.is_empty())
     })
     .await
+    .ok()
+    .flatten()
+}
+
+/// Run the team rule gate for one call. A store that cannot be read refuses
+/// the call (fail closed).
+#[allow(clippy::too_many_arguments)]
+async fn team_gate(
+    state: &Arc<AppState>,
+    team: &TeamCall,
+    connector_id: &str,
+    connector_name: &str,
+    tool_name: &str,
+    read_only: bool,
+    arguments: &Value,
+    self_confirmed: bool,
+    held_for_confirmation: bool,
+) -> Result<crate::team_rules::Decision, AppsError> {
+    let db = state.db.clone();
+    let (team, connector_id, connector_name, tool_name, arguments) =
+        (team.clone(), connector_id.to_string(), connector_name.to_string(), tool_name.to_string(), arguments.clone());
+    let decided = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        crate::team_rules::gate_call(
+            &conn,
+            &crate::team_rules::GateCall {
+                user_id: &team.user_id,
+                bot_id: team.bot_id.as_deref(),
+                app_kind: crate::team_store::AppKind::Connector,
+                app_ref: &connector_id,
+                app_name: &connector_name,
+                tool: &tool_name,
+                tool_read_only: read_only,
+                args: &arguments,
+                approval_ids: &team.approval_ids,
+                job_id: team.job_id.as_deref(),
+                self_confirmed,
+                held_for_confirmation,
+            },
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await;
+    match decided {
+        Ok(Ok(d)) => Ok(d),
+        Ok(Err(e)) => {
+            warn!(error = %e, "mcp user proxy: team rules could not be read; call refused");
+            Err(AppsError::new(StatusCode::SERVICE_UNAVAILABLE, "team_rules_unavailable", "approval rules could not be checked; try again"))
+        }
+        Err(_) => Err(AppsError::new(StatusCode::SERVICE_UNAVAILABLE, "team_rules_unavailable", "approval rules could not be checked; try again")),
+    }
+}
+
+/// `Ok` = the gate lets the call go on; otherwise the refusal, in the shape the caller shows.
+fn team_refusal(
+    decision: crate::team_rules::Decision,
+    gate: Gate,
+    connector_name: &str,
+    tool_name: &str,
+    team: &TeamCall,
+) -> Result<(), CallError> {
+    use crate::team_rules::Decision;
+    match decision {
+        Decision::Allow => Ok(()),
+        Decision::DenyNoGrant => Err(AppsError::new(
+            StatusCode::FORBIDDEN,
+            "no_grant",
+            format!("This bot has no access to {connector_name}. Its owner can give it a level on the Team map."),
+        )
+        .into()),
+        Decision::DenyReadOnly => Err(AppsError::new(
+            StatusCode::FORBIDDEN,
+            "level_read_only",
+            format!("This bot can only read from {connector_name} (Browser level), and '{tool_name}' makes changes."),
+        )
+        .into()),
+        // "You approve": the same refusal as the install mode's, so gizzi's own
+        // approval flow asks the person and retries with `allternit/approved`.
+        Decision::NeedsSelf { rule_text, .. } => Err(AppsError::new(
+            StatusCode::FORBIDDEN,
+            "confirmation_required",
+            if matches!(gate, Gate::Edge) {
+                format!("A rule asks you to approve '{tool_name}' in {connector_name} ({rule_text}). Run it from Allternit, where you can approve it.")
+            } else {
+                format!("tool '{tool_name}' needs the user's approval for this call ({rule_text})")
+            },
+        )
+        .into()),
+        Decision::NeedsOwner { rule, rule_text, approver_user_id, approver_name, approval_id } => {
+            let message = format!(
+                "'{tool_name}' in {connector_name} needs approval from {} first ({rule_text}). Ask {approval_id} is waiting for them; call again with _meta[\"{}\"] = \"{approval_id}\" once it is approved.",
+                approver_name.as_deref().unwrap_or("its approver"),
+                crate::team_rules::APPROVAL_ID_META_KEY,
+            );
+            let mut data = json!({
+                "code": "owner_approval_required",
+                "status": 403,
+                "message": message,
+                "rule_id": rule.id,
+                "rule_text": rule_text,
+                "approver": { "user_id": approver_user_id, "name": approver_name },
+                "approval_id": approval_id,
+            });
+            if let Some(job) = &team.job_id {
+                data["job_id"] = json!(job);
+            }
+            Err(CallError { err: AppsError::new(StatusCode::FORBIDDEN, "owner_approval_required", message), data: Some(data) })
+        }
+    }
 }
 
 // ─── tasks (SEP-2663) ────────────────────────────────────────────────────────
@@ -1792,6 +1980,146 @@ mod e2e {
         assert_eq!(crate::token_crypto::open(&secret), "later-secret");
         // and the connector still works
         assert!(tool_names(&rpc(&state, "user-1", "tools/list", json!({})).await).contains(&"dash-server__plain".to_string()));
+    }
+
+    // ── Team rule gate (team_rules.rs, lane 11) ──────────────────────────────
+
+    use crate::team_rules::APPROVAL_ID_META_KEY;
+    use crate::team_store::{AppKind, ApproverKind, BotKind, GrantLevel, RuleInput, RuleOp, ScopeKind};
+
+    /// user-1 is a member of an org owned by `boss`.
+    fn team_org(state: &Arc<AppState>) {
+        let conn = state.db.connect().unwrap();
+        conn.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES ('org-t', 'Org')", []).unwrap();
+        for (u, role) in [("boss", "owner"), ("user-1", "member")] {
+            conn.execute("INSERT OR IGNORE INTO users (id, email, name) VALUES (?1, ?1 || '@x.test', ?1)", params![u]).unwrap();
+            conn.execute("UPDATE users SET organization_id = 'org-t' WHERE id = ?1", params![u]).unwrap();
+            conn.execute(
+                "INSERT INTO organization_members (id, organization_id, user_id, role) VALUES (?1, 'org-t', ?2, ?3)",
+                params![format!("m-{u}"), u, role],
+            )
+            .unwrap();
+        }
+    }
+
+    /// "show_dashboard on conn-1 always needs the owner's approval" (the org owner, for a person).
+    fn team_rule(state: &Arc<AppState>, tool: &str) {
+        let conn = state.db.connect().unwrap();
+        crate::team_store::create_rule(
+            &conn,
+            &RuleInput {
+                org_id: Some("org-t".into()),
+                owner_user_id: "boss".into(),
+                scope_kind: ScopeKind::Org,
+                scope_ref: None,
+                app_kind: Some(AppKind::Connector),
+                app_ref: Some("conn-1".into()),
+                tool: tool.into(),
+                field: None,
+                op: RuleOp::Always,
+                value: None,
+                unit_label: None,
+                approver_kind: ApproverKind::Owner,
+                approver_user_id: None,
+                enabled: true,
+            },
+            "boss",
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn team_rule_match_returns_owner_approval_required_and_only_the_approvers_approval_for_the_same_args_runs_it() {
+        let (state, server, _) = fixture().await;
+        team_org(&state);
+        team_rule(&state, "show_dashboard");
+        let name = "dash-server__show_dashboard";
+
+        // The user's own approval flag is not enough when a rule matches (D8).
+        let held = rpc(&state, "user-1", "tools/call", approved(name, json!({ "range": "7d" }))).await;
+        let data = &held["error"]["data"];
+        assert_eq!(data["code"], "owner_approval_required", "{held}");
+        assert_eq!(data["approver"]["user_id"], "boss");
+        assert!(data["rule_text"].as_str().unwrap().contains("show_dashboard"), "{data}");
+        assert!(data["rule_id"].as_str().unwrap().starts_with("arl_"));
+        let approval_id = data["approval_id"].as_str().unwrap().to_string();
+        {
+            let conn = state.db.connect().unwrap();
+            let routed = crate::team_store::get_routed_approval(&conn, &approval_id).unwrap().unwrap();
+            assert_eq!(routed.user_id.as_deref(), Some("user-1"));
+            assert_eq!(routed.routing.approver_user_id.as_deref(), Some("boss"));
+            assert_eq!(routed.source, crate::team_rules::ROUTED_SOURCE);
+        }
+        // The edge is held the same way, on the same pending ask.
+        let edge = edge_rpc(&state, "user-1", "tools/call", json!({ "name": name, "arguments": { "range": "7d" } })).await;
+        assert_eq!(edge["error"]["data"]["code"], "owner_approval_required");
+        assert_eq!(edge["error"]["data"]["approval_id"], approval_id.as_str());
+
+        let with_id = |args: Value| json!({ "name": name, "arguments": args, "_meta": { APPROVED_META_KEY: true, APPROVAL_ID_META_KEY: approval_id } });
+        // Named but not approved yet: still held.
+        let pending = rpc(&state, "user-1", "tools/call", with_id(json!({ "range": "7d" }))).await;
+        assert_eq!(pending["error"]["data"]["code"], "owner_approval_required");
+        assert!(server.called_tools().is_empty());
+
+        // The approver approves (the decide route's write).
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute("UPDATE cowork_approvals SET dismissed = 1, decision = 'approved' WHERE id = ?1", params![approval_id])
+            .unwrap();
+        // Changed arguments: not covered, a new ask.
+        let changed = rpc(&state, "user-1", "tools/call", with_id(json!({ "range": "30d" }))).await;
+        assert_eq!(changed["error"]["data"]["code"], "owner_approval_required");
+        assert_ne!(changed["error"]["data"]["approval_id"], approval_id.as_str());
+        assert!(server.called_tools().is_empty());
+        // Same arguments: runs, once.
+        let ok = rpc(&state, "user-1", "tools/call", with_id(json!({ "range": "7d" }))).await;
+        assert_eq!(ok["result"]["structuredContent"]["tool"], "show_dashboard", "{ok}");
+        assert_eq!(server.called_tools(), ["show_dashboard"]);
+        let again = rpc(&state, "user-1", "tools/call", with_id(json!({ "range": "7d" }))).await;
+        assert_eq!(again["error"]["data"]["code"], "owner_approval_required");
+
+        // A tool no rule names keeps today's behaviour.
+        let ro = rpc(&state, "user-1", "tools/call", json!({ "name": "dash-server__model_only" })).await;
+        assert!(ro.get("result").is_some(), "{ro}");
+    }
+
+    #[tokio::test]
+    async fn team_bot_with_no_grant_is_refused_once_its_owner_uses_levels() {
+        let (state, server, _) = fixture().await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot-1', 'user-1', 'B', 'm', 'p', 1, '{}')",
+                [],
+            )
+            .unwrap();
+        }
+        // The chat turn's session (`ses_1`, see `claims`) is the bot's.
+        state.db.set_session_metadata("ses_1", &json!({ "isBot": true, "agentId": "bot-1" })).unwrap();
+        let read = "dash-server__model_only";
+        // No level set by the owner yet: today's behaviour.
+        assert!(rpc(&state, "user-1", "tools/call", json!({ "name": read })).await.get("result").is_some());
+
+        let conn = state.db.connect().unwrap();
+        crate::team_store::upsert_grant(&conn, BotKind::Agent, "bot-1", AppKind::Connector, "other", GrantLevel::Full, "user-1").unwrap();
+        let refused = rpc(&state, "user-1", "tools/call", json!({ "name": read })).await;
+        assert_eq!(refused["error"]["data"]["code"], "no_grant", "{refused}");
+
+        // Browser level: read-only tools only, even with the user's approval.
+        crate::team_store::upsert_grant(&conn, BotKind::Agent, "bot-1", AppKind::Connector, "conn-1", GrantLevel::Browser, "user-1").unwrap();
+        assert!(rpc(&state, "user-1", "tools/call", json!({ "name": read })).await.get("result").is_some());
+        let write = rpc(&state, "user-1", "tools/call", approved("dash-server__plain", json!({}))).await;
+        assert_eq!(write["error"]["data"]["code"], "level_read_only", "{write}");
+        assert_eq!(server.called_tools(), ["model_only", "model_only"], "the refused calls never reached the connector");
+
+        // The person acting as themself (a session that is not the bot's) has no level check.
+        crate::team_store::revoke_grant(&conn, BotKind::Agent, "bot-1", AppKind::Connector, "conn-1").unwrap();
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": approved("dash-server__plain", json!({})) });
+        let person = ProxyClaims { user_id: "user-1".into(), session_id: "ses_person".into(), expires_at: i64::MAX };
+        let ran = handle_rpc(&state, &person, &body, true).await.unwrap();
+        assert!(ran.get("result").is_some(), "{ran}");
     }
 }
 
