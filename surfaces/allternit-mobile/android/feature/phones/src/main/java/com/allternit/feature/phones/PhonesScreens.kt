@@ -52,6 +52,7 @@ import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.bots.BotAvatar
+import com.allternit.feature.bots.BotPresence
 import com.allternit.feature.chat.ChatBackend
 import com.allternit.feature.computer.AciApi
 import com.allternit.feature.computer.AciDevice
@@ -106,7 +107,7 @@ fun PhonesSheet(host: PhonesHost, onDismiss: () -> Unit) {
                         Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = "${e.bot.name}'s phone") { onDismiss(); host.openBotPhone(e.bot.id) }.testTag("phonesRow${e.bot.id}").padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        BotAvatar(e.bot, 30.dp)
+                        BotPresence(e.bot, 30.dp)
                         Text(e.bot.name, color = c.textPrimary, fontSize = 16.sp, maxLines = 1, modifier = Modifier.weight(1f))
                         if (e.unread > 0) Text(if (e.unread > 99) "99+" else "${e.unread}", color = androidx.compose.ui.graphics.Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clip(CircleShape).background(AllternitStatic.StatusError).padding(horizontal = 7.dp, vertical = 2.dp))
                         Icon(painterResource(DesignR.drawable.ph_arrow_right), null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
