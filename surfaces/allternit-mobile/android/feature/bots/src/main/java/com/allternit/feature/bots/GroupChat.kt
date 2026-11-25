@@ -628,7 +628,8 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
 @Composable
 private fun GroupScrubRail(store: BotModeStore, members: List<GroupMember>, modifier: Modifier = Modifier) {
     val c = AllternitTheme.colors
-    val reduce = remember(LocalContext.current) { android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    val ctx = LocalContext.current
+    val reduce = remember(ctx) { android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val slot = 34.dp
     val slotPx = with(density) { slot.toPx() }

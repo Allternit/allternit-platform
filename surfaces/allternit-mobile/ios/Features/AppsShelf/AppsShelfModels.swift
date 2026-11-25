@@ -208,7 +208,7 @@ final class AppsShelfClient: @unchecked Sendable {
     /// Vendor apps have no handoff.
     func openLink(for row: AppsShelfRow) async -> String? {
         if row.kind.lowercased().contains("vendor") { return row.link }
-        if let minted = await api.handoffURL(slug: row.slug), AppsShelfLinks.openURL(for: minted) != nil { return minted }
+        if let minted = await handoffURL(slug: row.slug), AppsShelfLinks.openURL(for: minted) != nil { return minted }
         return row.link
     }
 
@@ -278,6 +278,9 @@ final class AppsShelfModel: ObservableObject {
 
     private let api: AppsShelfClient
     init(api: AppsShelfClient = .shared) { self.api = api }
+
+    /// The URL Open loads (a one-time handoff for hosted apps, else the plain link).
+    func openLink(for row: AppsShelfRow) async -> String? { await api.openLink(for: row) }
 
     func refresh() async {
         do {

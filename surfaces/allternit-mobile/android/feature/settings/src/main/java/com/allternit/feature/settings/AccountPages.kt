@@ -119,12 +119,12 @@ internal fun DeleteAccountPage(host: SettingsHost, back: () -> Unit, onGone: () 
     val confirmed = confirm.trim() == "DELETE"
     SPage("Delete account", tag = "settingsDeleteAccount", onBack = if (deleting || deleted) null else back) {
         if (deleted) {
-            StateBox("Your account is deleted", "You've been signed out. Thanks for trying Allternit.", "Done") {
+            StateBox("Your account is deleted", "You've been signed out. Thanks for trying Allternit.", "Done", onAction = {
                 scope.launch {
                     AllternitAuth.signOut()
                     onGone()
                 }
-            }
+            })
         } else {
             SLabel("What happens")
             SCard {
