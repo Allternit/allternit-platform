@@ -214,12 +214,15 @@ pub struct BarJob {
     pub finished_at: Option<String>,
     /// Joined from the app's own table (connector name); not a column.
     pub app_name: Option<String>,
+    /// Joined from `agents` (the bot's display name); not a column.
+    pub bot_name: Option<String>,
 }
 
 const JOB_COLS: &str = "j.id, j.user_id, j.bot_id, j.app_kind, j.app_ref, j.tool, j.args_json, j.level, j.rule_id, \
      j.approver_user_id, j.approval_id, j.task_id, j.session_id, j.state, j.result_json, j.error, j.created_at, \
-     j.updated_at, j.started_at, j.finished_at, c.name";
-const JOB_FROM: &str = "bar_jobs j LEFT JOIN mcp_connectors c ON j.app_kind = 'connector' AND c.id = j.app_ref";
+     j.updated_at, j.started_at, j.finished_at, c.name, a.name";
+const JOB_FROM: &str = "bar_jobs j LEFT JOIN mcp_connectors c ON j.app_kind = 'connector' AND c.id = j.app_ref \
+     LEFT JOIN agents a ON a.id = j.bot_id";
 
 fn bad_col(idx: usize, s: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, format!("unexpected value {s:?}").into())
@@ -253,6 +256,7 @@ fn job_from_row(r: &Row<'_>) -> rusqlite::Result<BarJob> {
         started_at: r.get(18)?,
         finished_at: r.get(19)?,
         app_name: r.get(20)?,
+        bot_name: r.get(21)?,
     })
 }
 
@@ -262,6 +266,8 @@ pub fn job_json(job: &BarJob) -> Value {
         "id": job.id,
         "user_id": job.user_id,
         "bot_id": job.bot_id,
+        // Added round 3: the bot as the bar shows it (null for a person's own job).
+        "bot": job_bot(job),
         "app": { "kind": job.app_kind.as_str(), "ref": job.app_ref, "name": job.app_name },
         "tool": job.tool,
         "title": crate::mcp_server_routes::tool_label(&job.tool),
@@ -1143,6 +1149,39 @@ fn announce(job: &BarJob) {
     let _ = job_events_tx().send(bar_job_event(job));
 }
 
+/// `{id, name}` for the job's bot; `null` when the person ran it themselves.
+fn job_bot(job: &BarJob) -> Value {
+    match job.bot_id.as_deref() {
+        Some(id) => json!({ "id": id, "name": job.bot_name }),
+        None => Value::Null,
+    }
+}
+
+/// Past-tense receipt for a finished job: "Refund payment" + "\u{20ac}320" ->
+/// "Refunded \u{20ac}320". Same verb map as iOS `BarReceiptWording`; an unknown
+/// leading verb falls back to "Done: <label>". Running and waiting states keep
+/// the present wording (they never call this).
+pub fn past_tense_receipt(label: &str, amount: Option<&str>) -> String {
+    let mut words = label.split_whitespace();
+    let first = words.next().unwrap_or("");
+    let verb = match first.to_lowercase().as_str() {
+        "refund" => "Refunded",
+        "create" => "Created",
+        "send" => "Sent",
+        "cancel" => "Cancelled",
+        "update" => "Updated",
+        "delete" => "Deleted",
+        "charge" => "Charged",
+        _ => return format!("Done: {label}"),
+    };
+    let rest = words.collect::<Vec<_>>().join(" ").to_lowercase();
+    match amount {
+        Some(a) => format!("{verb} {a}"),
+        None if rest.is_empty() => verb.to_string(),
+        None => format!("{verb} {rest}"),
+    }
+}
+
 // ── bar_job.changed (Live Activity push) ─────────────────────────────────────
 
 /// Short money text for the compact Live Activity slot ("€320"), from the
@@ -1181,10 +1220,11 @@ pub fn job_changed_payload(conn: &Connection, job: &BarJob, for_user: &str) -> V
     });
     let m = p.as_object_mut().expect("object");
     if let Some(bot) = job.bot_id.as_deref() {
-        let name: Option<String> = conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot], |r| r.get(0)).ok();
-        if let Some(n) = name {
+        let name: Option<String> = job.bot_name.clone().or_else(|| conn.query_row("SELECT name FROM agents WHERE id = ?1", params![bot], |r| r.get(0)).ok());
+        if let Some(n) = &name {
             m.insert("botName".into(), json!(n));
         }
+        m.insert("bot".into(), json!({ "id": bot, "name": name }));
     }
     if let Some(a) = job.approver_user_id.as_deref() {
         if let Ok(Some(n)) = display_name(conn, a) {
@@ -1193,10 +1233,7 @@ pub fn job_changed_payload(conn: &Connection, job: &BarJob, for_user: &str) -> V
     }
     match job.state {
         JobState::Completed => {
-            let receipt = match &amount {
-                Some(a) => format!("{title} {a}"),
-                None => format!("{title} done"),
-            };
+            let receipt = past_tense_receipt(&title, amount.as_deref());
             m.insert("receipt".into(), json!(receipt));
         }
         JobState::Failed => {
@@ -1956,6 +1993,15 @@ mod tests {
     use super::*;
     use crate::db::DbHandle;
     use crate::team_store::{self, ApproverKind, RuleInput, RuleOp, ScopeKind};
+
+    #[test]
+    fn receipts_read_in_the_past_tense() {
+        assert_eq!(past_tense_receipt("Refund payment", Some("\u{20ac}320")), "Refunded \u{20ac}320");
+        assert_eq!(past_tense_receipt("Create invoice", None), "Created invoice");
+        assert_eq!(past_tense_receipt("Cancel subscription", None), "Cancelled subscription");
+        assert_eq!(past_tense_receipt("Charge customer", Some("$5")), "Charged $5");
+        assert_eq!(past_tense_receipt("Archive thread", None), "Done: Archive thread");
+    }
 
     fn db() -> Connection {
         DbHandle::new_memory().expect("migrated db").connect().expect("connect")

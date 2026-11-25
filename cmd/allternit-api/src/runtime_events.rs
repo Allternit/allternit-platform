@@ -66,7 +66,7 @@ const DATA_KEYS: &[&str] = &[
     "itemId", "kind", "severity", "actionUrl",
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
-    "attentionId", "botName",
+    "attentionId", "botName", "bot",
     // `bar_job.changed` (Island bar Live Activity): see `bar_routes::job_changed_payload`.
     "jobId", "appName", "approverUserId", "approverName", "requesterUserId", "amount", "receipt", "error", "question", "private",
     // The agent session whose turn raised an approval (`gateway_runner::create_approval`):
