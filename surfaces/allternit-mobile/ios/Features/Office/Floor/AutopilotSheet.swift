@@ -148,9 +148,7 @@ struct AutopilotSheet: View {
             Section {
                 let rules = draft?.rules ?? []
                 if rules.isEmpty {
-                    Text("No rules yet. Every need asks you first.")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
+                    FriendlyInlineStateView(title: "No rules yet. Every need asks you first.", art: .sheets)
                 }
                 ForEach(rules) { rule in
                     Button { editing = rule } label: { ruleRow(rule) }

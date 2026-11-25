@@ -466,11 +466,15 @@ private struct TileLabel: View {
     }
 }
 
-private struct EmptyNote: View {
+private struct EmptyStateNote: View {
     let text: String
-    init(_ text: String) { self.text = text }
+    var art: EmptyArtKind?
+    init(_ text: String, art: EmptyArtKind? = nil) { self.text = text; self.art = art }
     var body: some View {
-        Text(text).font(.system(size: 13)).opacity(0.8).fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 8) {
+            if let art { EmptyArt(kind: art, size: .inline) }
+            Text(text).font(.system(size: 13)).opacity(0.8).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -527,7 +531,7 @@ private struct DatesList: View {
     let data: ProjectBoardData
     var body: some View {
         if data.deadlines.isEmpty {
-            EmptyNote("No deadlines on the status page yet.")
+            EmptyStateNote("No deadlines on the status page yet.", art: .calendar)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(data.deadlines.prefix(5)) { d in
@@ -546,7 +550,7 @@ private struct StreamList: View {
     let limit: Int
     var body: some View {
         if data.stream.isEmpty {
-            EmptyNote("Changes show here as work happens.")
+            EmptyStateNote("Changes show here as work happens.")
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(data.stream.prefix(limit)) { e in
@@ -574,7 +578,7 @@ private struct TeamList: View {
     let data: ProjectBoardData
     var body: some View {
         if data.people.isEmpty {
-            EmptyNote("No bots on this project yet.")
+            EmptyStateNote("No bots on this project yet.", art: .gizzi)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(data.people.prefix(5)) { p in
@@ -602,7 +606,7 @@ private struct MadeList: View {
     let data: ProjectBoardData
     var body: some View {
         if data.made.isEmpty {
-            EmptyNote("Files and things made in this project show here.")
+            EmptyStateNote("Files and things made in this project show here.")
         } else {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(data.made.prefix(4)) { m in
@@ -799,7 +803,7 @@ struct ProjectDashboardView: View {
                 Text("\(days == 1 ? "day" : "days") to \(shortDate(data.nextDeadline?.date))").font(.system(size: 13, weight: .semibold))
             } else {
                 TileLabel(text: "Countdown")
-                EmptyNote("No dated deadline yet. Add one on the status page.")
+                EmptyStateNote("No dated deadline yet. Add one on the status page.", art: .calendar)
             }
         }
     }
@@ -830,7 +834,7 @@ struct ProjectDashboardView: View {
                         Tile(slot: palette.plain, minHeight: 170) {
                             TileLabel(text: "Progress")
                             if data.total == 0 {
-                                EmptyNote("Progress shows here once this project has work.")
+                                EmptyStateNote("Progress shows here once this project has work.")
                             } else {
                                 ProgressRing(done: data.done, total: data.total, accent: palette.set.accent, size: 112)
                                     .frame(maxWidth: .infinity)
@@ -920,13 +924,13 @@ struct ProjectDashboardView: View {
                         Text(d.text).font(.system(size: 20, weight: .bold)).fixedSize(horizontal: false, vertical: true)
                         PillButton(title: d.open == nil ? "Status page" : "Open", slot: palette.slot(1)) { (d.open ?? openStatus)?() }
                     } else {
-                        EmptyNote("Nothing is waiting on you.")
+                        EmptyStateNote("Nothing is waiting on you.", art: .bell)
                     }
                 }
             }
             if on(.team) {
                 scoreColumn(palette.slot(3), "\(running.count)", "working") {
-                    if running.isEmpty { EmptyNote("Nothing is running.") }
+                    if running.isEmpty { EmptyStateNote("Nothing is running.", art: .gizzi) }
                     ForEach(running.prefix(5)) { w in
                         VStack(alignment: .leading, spacing: 0) {
                             if let owner = w.owner { Text(owner).font(.system(size: 14, weight: .bold)) }
@@ -1001,7 +1005,7 @@ struct ProjectDashboardView: View {
                     Text(shortDate(end))
                 }
                 .font(.system(size: 12)).opacity(0.75)
-                if data.work.isEmpty { EmptyNote("Work shows on the runway once this project has some.") }
+                if data.work.isEmpty { EmptyStateNote("Work shows on the runway once this project has some.") }
                 ForEach(Array(data.work.prefix(10).enumerated()), id: \.element.id) { i, w in
                     VStack(alignment: .leading, spacing: 3) {
                         (Text(w.owner.map { "\($0) " } ?? "").bold() + Text(w.title)).font(.system(size: 12)).lineLimit(1)
@@ -1074,7 +1078,7 @@ struct ProjectDashboardView: View {
         VStack(spacing: 12) {
             banner
             if data.people.isEmpty {
-                Tile(slot: palette.plain) { EmptyNote("Bots show here once this project has a team.") }
+                Tile(slot: palette.plain) { EmptyStateNote("Bots show here once this project has a team.") }
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 12) {
                     ForEach(Array(data.people.enumerated()), id: \.element.id) { i, p in
@@ -1155,7 +1159,7 @@ struct ProjectDashboardView: View {
         VStack(spacing: 12) {
             banner
             if data.made.isEmpty {
-                Tile(slot: palette.plain) { EmptyNote("Files and things made in this project show here.") }
+                Tile(slot: palette.plain) { EmptyStateNote("Files and things made in this project show here.") }
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], spacing: 12) {
                     ForEach(Array(data.made.prefix(12).enumerated()), id: \.element.id) { i, m in

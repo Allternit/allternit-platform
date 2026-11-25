@@ -31,7 +31,7 @@ struct ProjectPadView: View {
     var body: some View {
         let pad = store.pad
         if pad.tiles.isEmpty {
-            PadEmptyNote(text: canEdit ? "No tiles yet. Choose Edit to add some." : "No tiles yet.")
+            EmptyStatePadNote(text: canEdit ? "No tiles yet. Choose Edit to add some." : "No tiles yet.", art: .sheets)
         } else {
             PadFlowLayout(columns: columns, spacing: 12) {
                 ForEach(Array(pad.tiles.enumerated()), id: \.offset) { _, tile in
@@ -147,14 +147,18 @@ private struct PadFlowLayout: Layout {
 
 // MARK: - Shared parts
 
-private struct PadEmptyNote: View {
+private struct EmptyStatePadNote: View {
     let text: String
+    var art: EmptyArtKind? = nil
     var body: some View {
-        Text(text)
-            .font(.footnote)
-            .foregroundColor(Color("TextTertiary"))
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 8) {
+            if let art { EmptyArt(kind: art, size: .inline) }
+            Text(text)
+                .font(.footnote)
+                .foregroundColor(Color("TextTertiary"))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -273,7 +277,7 @@ private struct PadNotesTile: View {
     var body: some View {
         if !canEdit {
             if notes.isEmpty {
-                PadEmptyNote(text: "No notes yet.")
+                EmptyStatePadNote(text: "No notes yet.", art: .sheets)
             } else {
                 Text(notes)
                     .font(.subheadline)
@@ -360,7 +364,7 @@ private struct PadLinksTile: View {
         }
         VStack(alignment: .leading, spacing: 4) {
             if shown.isEmpty {
-                PadEmptyNote(text: canEdit ? "No links yet. Add the sites this project uses." : "No links yet.")
+                EmptyStatePadNote(text: canEdit ? "No links yet. Add the sites this project uses." : "No links yet.", art: .sheets)
             }
             ForEach(shown, id: \.0) { index, link, url in
                 HStack(spacing: 4) {
@@ -442,7 +446,7 @@ private struct PadChecklistTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             if items.isEmpty {
-                PadEmptyNote(text: "Nothing on the list yet.")
+                EmptyStatePadNote(text: "Nothing on the list yet.", art: .sheets)
             } else {
                 Text("\(items.filter(\.done).count) of \(items.count) done")
                     .font(.caption).foregroundColor(Color("TextTertiary"))
@@ -524,7 +528,7 @@ private struct PadActionsTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if actions.isEmpty {
-                PadEmptyNote(text: canEdit ? "No quick actions yet. Add a button that opens a thread or a link." : "No quick actions yet.")
+                EmptyStatePadNote(text: canEdit ? "No quick actions yet. Add a button that opens a thread or a link." : "No quick actions yet.", art: .envelope)
             }
             ForEach(actions) { action in
                 HStack(spacing: 4) {
@@ -646,7 +650,7 @@ private struct PadThreadsTile: View {
 
     var body: some View {
         if threads.isEmpty {
-            PadEmptyNote(text: "No threads yet.")
+            EmptyStatePadNote(text: "No threads yet.", art: .envelope)
         } else {
             let sorted = threads.sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }.prefix(limit)
             VStack(alignment: .leading, spacing: 0) {
@@ -698,25 +702,25 @@ struct ProjectPadListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            group("Needs you", icon: "hand.raised", rows: needs, empty: "Nothing needs you")
+            group("Needs you", icon: "hand.raised", rows: needs, empty: "Nothing needs you", art: .bell)
             group("Threads", icon: "bubble.left",
                   rows: threads.sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
                     .map { Row(id: "thread-\($0.id)", name: $0.title, meta: padRelative($0.at), open: $0.open) },
-                  empty: "No threads yet")
+                  empty: "No threads yet", art: .envelope)
             group("Files", icon: "doc",
                   rows: data.made.map { Row(id: "file-\($0.id)", name: $0.name, meta: $0.kind, open: $0.open) },
-                  empty: "No files yet")
+                  empty: "No files yet", art: .sheets)
         }
     }
 
-    private func group(_ title: String, icon: String, rows: [Row], empty: String) -> some View {
+    private func group(_ title: String, icon: String, rows: [Row], empty: String, art: EmptyArtKind) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.footnote.weight(.semibold))
                 .foregroundColor(Color("TextSecondary"))
                 .accessibilityAddTraits(.isHeader)
             if rows.isEmpty {
-                PadEmptyNote(text: empty).padding(.vertical, 8)
+                EmptyStatePadNote(text: empty, art: art).padding(.vertical, 8)
             } else {
                 ForEach(rows) { row in
                     Button { row.open?() } label: {

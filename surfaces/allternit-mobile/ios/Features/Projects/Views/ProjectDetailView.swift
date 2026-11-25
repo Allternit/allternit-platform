@@ -739,9 +739,9 @@ struct ProjectDetailView: View {
             } else if files.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "folder",
                     title: "No files yet",
-                    message: "Add files to give every chat in this project the same context."
+                    message: "Add files to give every chat in this project the same context.",
+                    art: .sheets
                 )
             } else {
                 VStack(spacing: 8) {
@@ -827,9 +827,9 @@ struct ProjectDetailView: View {
             if chats.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "bubble.left",
                     title: "No threads yet",
-                    message: "Start one from the composer."
+                    message: "Start one from the composer.",
+                    art: .envelope
                 )
             } else {
                 VStack(spacing: 8) {
