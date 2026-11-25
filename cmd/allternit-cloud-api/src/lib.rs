@@ -618,6 +618,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Account projects (migration 149): Clerk session or a paired
         // runtime's signed request; never gated on compute.
         .merge(routes::account_projects::routes())
+        // Routed approvals for the runtime device token / Clerk session
+        // (lane 14b); `/api/v1/approvals` itself stays API-token only.
+        .merge(routes::approvals::routed_routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console

@@ -8,10 +8,16 @@
 //! 165) and `meeting_tool_approvals` they can resolve (`user_id` = the session
 //! owner, migration 130). Without `approver` the list is the run approvals
 //! (`approval_requests`) exactly as before.
+//!
+//! `GET /api/v1/approvals/routed` (lane 14b) is the same routed list for a
+//! caller `auth_middleware` rejects: a paired runtime's signed request
+//! (`x-allternit-runtime-*`, acts as the runtime's owner) or a Clerk session.
+//! It self-authenticates (mounted in the public block of `lib.rs`, like
+//! `account_projects::routes()`); API tokens are not accepted here.
 
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -52,6 +58,45 @@ pub fn router() -> Router<Arc<ApiState>> {
         .route("/api/v1/approvals/:id/approve", post(approve_request))
         .route("/api/v1/approvals/:id/deny", post(deny_request))
         .route("/api/v1/approvals/:id/cancel", post(cancel_request))
+}
+
+/// Self-authenticating routed list for the runtime (and Clerk sessions).
+pub fn routed_routes() -> Router<Arc<ApiState>> {
+    Router::new().route("/api/v1/approvals/routed", get(list_routed))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RoutedQuery {
+    pub limit: Option<i64>,
+}
+
+/// Who is calling the routed list: a runtime's signed request (its owner), else
+/// a Clerk session. The runtime signs the path without its query string.
+async fn routed_caller(state: &ApiState, headers: &HeaderMap, method: &Method, uri: &Uri) -> Result<String, ApiError> {
+    if headers.contains_key(crate::routes::runtime_events::RUNTIME_ID_HEADER) {
+        return match crate::routes::runtime_events::authenticate_runtime(&state.db, headers, method.as_str(), uri.path(), b"", Utc::now().timestamp()).await {
+            Ok((user, _runtime)) => Ok(user),
+            Err(_) => Err(ApiError::Unauthorized("Runtime signature rejected.".to_string())),
+        };
+    }
+    crate::routes::connections::session_user(state, headers).await
+}
+
+/// `GET /api/v1/approvals/routed?limit=` -> `{object:"list", data:[…]}`, the
+/// same items as `?approver=me`, for the runtime device token or a Clerk session.
+pub async fn list_routed(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Query(query): Query<RoutedQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    let user_id = routed_caller(&state, &headers, &method, &uri).await?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let asks = routed_asks(&state.db, &user_id, limit).await?;
+    let mut response = (StatusCode::OK, Json(json!({ "object": "list", "data": asks }))).into_response();
+    response.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-store"));
+    Ok(response)
 }
 
 // ============================================================================
