@@ -33,6 +33,16 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
     /// Retired Cloud alias (server `hidden`): still runs for a saved choice but
     /// is not offered in the picker.
     let isHidden: Bool
+    /// USD per 1M tokens in / out (server `pricing`; nil when not served).
+    var inputPer1mUsd: Double? = nil
+    var outputPer1mUsd: Double? = nil
+
+    /// The effort cost line, only when both prices are known.
+    var effortCostLine: String? {
+        guard let i = inputPer1mUsd, let o = outputPer1mUsd else { return nil }
+        func fmt(_ v: Double) -> String { v < 1 ? String(format: "$%.2f", v) : String(format: "$%g", v) }
+        return "Higher effort uses more tokens. \(fmt(i)) in, \(fmt(o)) out per 1M tokens."
+    }
 
     /// The bare model id ("claude-sonnet-4.6" out of
     /// "anthropic/claude-sonnet-4.6") — the composer pill's compact label.
@@ -49,6 +59,12 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
         case isDefault = "default"
         case rank
         case isHidden = "hidden"
+        case pricing
+    }
+
+    private struct Pricing: Decodable {
+        let input_per_1m_usd: Double?
+        let output_per_1m_usd: Double?
     }
 
     init(id: String, name: String, provider: String, description: String? = nil, tier: Tier? = nil, supportsEffort: Bool = false, thinking: ModelThinking? = nil, isDefault: Bool = false, rank: Int? = nil, isHidden: Bool = false) {
@@ -76,6 +92,9 @@ struct RuntimeModel: Decodable, Sendable, Identifiable, Equatable {
         rank = try? container.decodeIfPresent(Int.self, forKey: .rank)
         isHidden = (try? container.decodeIfPresent(Bool.self, forKey: .isHidden)) ?? false
         supportsEffort = (try container.decodeIfPresent(Bool.self, forKey: .supportsEffort) ?? false) || thinking != nil
+        let pricing = try? container.decodeIfPresent(Pricing.self, forKey: .pricing)
+        inputPer1mUsd = pricing?.input_per_1m_usd
+        outputPer1mUsd = pricing?.output_per_1m_usd
     }
 
     /// The levels to offer: the model's own, or the legacy four for an older
