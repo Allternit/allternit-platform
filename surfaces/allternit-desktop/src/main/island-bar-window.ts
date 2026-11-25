@@ -13,6 +13,8 @@ import { BrowserWindow, screen, type BrowserWindowConstructorOptions, type Recta
 
 /** The ai route the bar window loads. Lane 30 mounts BarWindowPage here. */
 export const ISLAND_BAR_ROUTE = '/bar';
+/** The ai route the pill window loads (island-pill-window.ts). Lane 30 mounts PillWindowPage here. */
+export const ISLAND_PILL_ROUTE = '/bar/pill';
 /** Mockup A-desktop-bar.jsx: a 660 px card near the top of the screen. */
 export const ISLAND_BAR_WIDTH = 660;
 export const ISLAND_BAR_MIN_HEIGHT = 56;
@@ -20,8 +22,42 @@ export const ISLAND_BAR_MAX_HEIGHT = 560;
 /** Until the page reports its height (`island-bar:set-height`). */
 export const ISLAND_BAR_INITIAL_HEIGHT = 360;
 
-export function islandBarUrl(platformUrl: string): string {
-  return new URL(ISLAND_BAR_ROUTE, platformUrl).toString();
+export function islandBarUrl(platformUrl: string, query?: URLSearchParams | null): string {
+  const url = new URL(ISLAND_BAR_ROUTE, platformUrl);
+  if (query) for (const [key, value] of query) url.searchParams.append(key, value);
+  return url.toString();
+}
+
+const BAR_QUERY_KEY = /^(app|tool|v\.[A-Za-z0-9_.-]{1,64})$/;
+const BAR_QUERY_MAX_KEYS = 24;
+const BAR_QUERY_MAX_VALUE = 500;
+
+/**
+ * The query an `allternit://bar?…` link may pass on to the bar page: `app`
+ * (the app chip), `tool`, and `v.<field>` (a blank's value). Anything else is
+ * dropped; values are capped. Null when nothing is left (a plain toggle).
+ */
+export function islandBarDeepLinkQuery(link: string): URLSearchParams | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(link);
+  } catch {
+    return null;
+  }
+  const out = new URLSearchParams();
+  let count = 0;
+  for (const [key, value] of parsed.searchParams) {
+    if (count >= BAR_QUERY_MAX_KEYS) break;
+    if (!BAR_QUERY_KEY.test(key) || out.has(key)) continue;
+    out.set(key, value.slice(0, BAR_QUERY_MAX_VALUE));
+    count += 1;
+  }
+  return count ? out : null;
+}
+
+/** `allternit://bar`, `allternit://bar/`, `allternit://bar?…` (and `allternit-dev://` in dev builds). */
+export function isIslandBarDeepLink(link: string): boolean {
+  return /^allternit(-dev)?:\/\/bar\/?(\?|#|$)/.test(link);
 }
 
 /** Centered, 16% down the work area (at least 48 px), never wider than the display. */
@@ -110,7 +146,8 @@ export interface IslandBarWindowDeps {
 }
 
 export interface IslandBarWindow {
-  open: () => void;
+  /** `query` (from `islandBarDeepLinkQuery`) reloads the page with those blanks filled. */
+  open: (query?: URLSearchParams | null) => void;
   hide: () => void;
   toggle: () => void;
   isOpen: () => boolean;
@@ -132,7 +169,7 @@ export function createIslandBarWindow(deps: IslandBarWindowDeps): IslandBarWindo
     return screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   }
 
-  function ensure(): BrowserWindow {
+  function ensure(query?: URLSearchParams | null): BrowserWindow {
     if (alive()) return win!;
     const next = new BrowserWindow(floatingPanelWindowOptions({
       isMac: deps.isMac,
@@ -170,20 +207,22 @@ export function createIslandBarWindow(deps: IslandBarWindowDeps): IslandBarWindo
       hide();
     });
     next.on('closed', () => { if (win === next) win = null; });
-    void next.loadURL(islandBarUrl(deps.platformUrl()));
+    void next.loadURL(islandBarUrl(deps.platformUrl(), query));
     return next;
   }
 
-  function open(): void {
+  function open(query?: URLSearchParams | null): void {
     if (!deps.mayOpen()) {
       deps.log.info('[IslandBar] Not opening before pairing');
       return;
     }
-    const w = ensure();
-    // The app may have switched platform origins since the page loaded.
-    const want = new URL(islandBarUrl(deps.platformUrl()));
+    const fresh = !alive();
+    const w = ensure(query);
+    // The app may have switched platform origins since the page loaded; a
+    // deep link with a query loads the page with those values.
+    const want = new URL(islandBarUrl(deps.platformUrl(), query));
     const current = w.webContents.getURL();
-    if (current && new URL(current).origin !== want.origin) void w.loadURL(want.toString());
+    if (!fresh && (query || (current && new URL(current).origin !== want.origin))) void w.loadURL(want.toString());
     if (!w.isVisible()) w.setBounds(islandBarBounds(cursorWorkArea(), height));
     w.show();
     w.focus();

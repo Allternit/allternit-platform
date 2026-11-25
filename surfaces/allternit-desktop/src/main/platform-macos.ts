@@ -5,7 +5,7 @@
  * auto-launch via Login Items, and native notifications.
  */
 
-import { app, Tray, Menu, Notification, nativeImage, type NativeImage } from 'electron';
+import { app, Tray, Menu, Notification, nativeImage, type NativeImage, type Rectangle } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import log from 'electron-log';
@@ -110,6 +110,37 @@ export function cleanupMacOSPlatform(): void {
     tray.destroy();
     tray = null;
   }
+}
+
+// ── Island pill placement (program "Island bar + Team map", lane 29) ────
+
+/**
+ * Menu bar height assumed when the menu bar auto-hides (workArea starts at
+ * the very top). 38 pt clears the notch on notched MacBooks.
+ */
+const MAC_AUTOHIDE_MENU_BAR = 38;
+/** Gap between the bottom of the menu bar (and the notch inside it) and the pill. */
+const MAC_PILL_GAP = 6;
+
+/**
+ * The pill sits top-centre of the display, just under the menu bar. The notch
+ * is centred on the full display (`bounds`), so the pill is too, and it hangs
+ * under the notch on notched Macs. All Spaces and full-screen apps come from
+ * `pinAboveEverything` (island-bar-window.ts).
+ */
+export function macIslandPillBounds(
+  display: { bounds: Rectangle; workArea: Rectangle },
+  size: { width: number; height: number },
+): Rectangle {
+  const { bounds, workArea } = display;
+  const width = Math.max(1, Math.min(size.width, bounds.width - 32));
+  const menuBar = workArea.y > bounds.y ? workArea.y - bounds.y : MAC_AUTOHIDE_MENU_BAR;
+  return {
+    x: Math.round(bounds.x + (bounds.width - width) / 2),
+    y: Math.round(bounds.y + menuBar + MAC_PILL_GAP),
+    width: Math.round(width),
+    height: Math.round(Math.min(size.height, bounds.height - menuBar)),
+  };
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
