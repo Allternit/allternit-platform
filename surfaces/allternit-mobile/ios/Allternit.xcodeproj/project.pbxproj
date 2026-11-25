@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A1C0DE0A11CE0000000B001 /* TaskActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1C0DE0A11CE0000000A001 /* TaskActivityAttributes.swift */; };
+		5A1C0DE0A11CE0000000B002 /* TaskActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1C0DE0A11CE0000000A001 /* TaskActivityAttributes.swift */; };
+		5A1C0DE0A11CE0000000B003 /* TaskLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1C0DE0A11CE0000000A002 /* TaskLiveActivity.swift */; };
 		003C9CE96A759EB1EC94861D /* BYOCStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E833C0D51467E65C4A3040EC /* BYOCStore.swift */; };
 		00798A3522A4D670733D87BA /* BrainGitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EF8244489CC0664EF5D30B3 /* BrainGitClient.swift */; };
 		0079E98776F0118F9A4104B4 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879AEECFFCCDD7AD3D79A2CA /* AppGroupStore.swift */; };
@@ -1095,6 +1098,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5A1C0DE0A11CE0000000A001 /* TaskActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskActivityAttributes.swift; sourceTree = "<group>"; };
+		5A1C0DE0A11CE0000000A002 /* TaskLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskLiveActivity.swift; sourceTree = "<group>"; };
 		0024821EF27E7A461509D10C /* MeetingActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityAttributes.swift; sourceTree = "<group>"; };
 		016D2B4BBA74B1288077A913 /* WorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStore.swift; sourceTree = "<group>"; };
 		01952C2C099D7536A35E0A3D /* OnYourComputer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnYourComputer.swift; sourceTree = "<group>"; };
@@ -2178,6 +2183,7 @@
 				7F7AE935FE249DCDD6341E1F /* MeetingLiveActivity.swift */,
 				A7E02EBDAD27261BA0319ABA /* StatusWidget.swift */,
 				232A7BD685A8D110370BCAEB /* StatusWidgetFaces.swift */,
+				5A1C0DE0A11CE0000000A002 /* TaskLiveActivity.swift */,
 			);
 			path = AllternitWidgets;
 			sourceTree = "<group>";
@@ -2257,6 +2263,7 @@
 				6705087F95CB65F4CAFDBB53 /* BotActivityAttributes.swift */,
 				6878E4CDD256FFFAF91E6A26 /* LoopActivityAttributes.swift */,
 				0024821EF27E7A461509D10C /* MeetingActivityAttributes.swift */,
+				5A1C0DE0A11CE0000000A001 /* TaskActivityAttributes.swift */,
 			);
 			path = LiveActivity;
 			sourceTree = "<group>";
@@ -4393,6 +4400,8 @@
 				642083C70209DC0EE027D151 /* LoopLiveActivity.swift in Sources */,
 				F00131759CD4521F9597F248 /* MeetingActivityAttributes.swift in Sources */,
 				02A152326BC9E062D7EE32F5 /* MeetingLiveActivity.swift in Sources */,
+				5A1C0DE0A11CE0000000B001 /* TaskActivityAttributes.swift in Sources */,
+				5A1C0DE0A11CE0000000B003 /* TaskLiveActivity.swift in Sources */,
 				10E1005C77AD3A55B98ED231 /* MemoryScheduleIntents.swift in Sources */,
 				4A6DA03235EB395C90F12CB0 /* OutboxStore.swift in Sources */,
 				ABFD376B9FD8AAFD33C91973 /* PauseControlIntent.swift in Sources */,
@@ -4947,6 +4956,7 @@
 				16FA39F7A6F891652E3E533E /* MeetYourBotsView.swift in Sources */,
 				6AACF4881D0D2E96AD7036E7 /* MeetYourBotsVisuals.swift in Sources */,
 				E30B8D109D276E916D30400A /* MeetingActivityAttributes.swift in Sources */,
+				5A1C0DE0A11CE0000000B002 /* TaskActivityAttributes.swift in Sources */,
 				91346686E6F787A159FD6DB7 /* MeetingLiveSession.swift in Sources */,
 				4F9DA15479936996A1C1FCB4 /* MeetingLiveView.swift in Sources */,
 				AF3C77B491FCE7D0D82A6134 /* MeetingRecapView.swift in Sources */,

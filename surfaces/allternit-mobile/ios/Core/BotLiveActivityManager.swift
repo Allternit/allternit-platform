@@ -36,6 +36,9 @@ final class BotLiveActivityManager {
     /// Activity ids whose token and state streams are being watched.
     private var observed: Set<String> = []
     private var installed = false
+    /// Bar job activities by job id (`TaskActivityAttributes`). App-process
+    /// only: cloud-api has no push route for this attributes type.
+    private var taskActivities: [String: Activity<TaskActivityAttributes>] = [:]
 
     private init() {}
 
@@ -56,6 +59,10 @@ final class BotLiveActivityManager {
         installed = true
         for existing in Activity<BotActivityAttributes>.activities {
             adopt(id: existing.id)
+        }
+        for existing in Activity<TaskActivityAttributes>.activities
+        where existing.activityState == .active || existing.activityState == .stale {
+            taskActivities[existing.attributes.jobId] = existing
         }
         Task { await Self.watchNewActivities() }
         if #available(iOS 17.2, *) {
@@ -262,11 +269,119 @@ final class BotLiveActivityManager {
         return activity != nil
     }
 
+    // MARK: - Bar job (TaskActivityAttributes)
+
+    /// One bar job state, as the app learns it from a `bar_job` event or a
+    /// `GET /bar/jobs` fetch (CONTRACT.md section 5 `JobState`).
+    struct BarJobSnapshot: Sendable {
+        var jobId: String
+        var title: String
+        var appName: String
+        var state: String
+        var approverName: String? = nil
+        var botName: String? = nil
+        var amount: String? = nil
+        var receipt: String? = nil
+        var error: String? = nil
+        var isOwner: Bool = false
+        var question: String? = nil
+        var inboxId: String? = nil
+        var runtimeId: String? = nil
+        var contentHash: String? = nil
+        var approveInline: Bool? = nil
+    }
+
+    /// Final state stays on the Lock Screen about four hours (ActivityKit
+    /// dismissal policy), then goes.
+    nonisolated static let barJobFinalDwell: TimeInterval = 4 * 60 * 60
+
+    /// Call for every `bar_job` event (and after a jobs fetch). Starts the
+    /// activity when a job enters `waiting_approval` or `working`, updates it
+    /// on every later state, and ends it on completed / failed / cancelled.
+    func syncBarJob(_ job: BarJobSnapshot) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let content = Self.taskContentState(for: job)
+        if let existing = taskActivities[job.jobId] {
+            let id = existing.id
+            if content.isTerminal {
+                taskActivities.removeValue(forKey: job.jobId)
+                Task {
+                    await Self.liveTask(id)?.end(
+                        ActivityContent(state: content, staleDate: nil),
+                        dismissalPolicy: .after(.now.addingTimeInterval(Self.barJobFinalDwell))
+                    )
+                }
+            } else if existing.content.state != content {
+                Task { await Self.liveTask(id)?.update(ActivityContent(state: content, staleDate: nil)) }
+            }
+            return
+        }
+        // Only these two states open an activity; a job first seen finished,
+        // in review or needing input does not.
+        guard job.state == "waiting_approval" || job.state == "working" else { return }
+        let attributes = TaskActivityAttributes(jobId: job.jobId, title: job.title, appName: job.appName)
+        do {
+            taskActivities[job.jobId] = try Activity.request(
+                attributes: attributes,
+                content: ActivityContent(state: content, staleDate: nil)
+            )
+        } catch {
+            // Live Activities off in Settings or the concurrent limit: nothing to recover.
+            Self.log.notice("bar job activity request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The job is gone (deleted, signed out of its team): end it now.
+    func endBarJob(jobId: String) {
+        guard let existing = taskActivities.removeValue(forKey: jobId) else { return }
+        let id = existing.id
+        Task { await Self.liveTask(id)?.end(nil, dismissalPolicy: .immediate) }
+    }
+
+    static func taskContentState(for job: BarJobSnapshot) -> TaskActivityAttributes.ContentState {
+        var state = TaskActivityAttributes.ContentState(state: job.state)
+        state.approverName = job.approverName
+        state.botName = job.botName
+        state.amount = job.amount
+        state.receipt = job.receipt
+        state.error = job.error
+        state.isOwner = job.isOwner
+        // The question survives only while the job waits on approval, so a
+        // stale Approve button never outlives its item.
+        if job.state == "waiting_approval" {
+            state.question = job.question
+            state.inboxId = job.inboxId
+            state.runtimeId = job.runtimeId
+            state.contentHash = job.contentHash
+            state.approveInline = job.approveInline
+        }
+        return state
+    }
+
+    private nonisolated static func liveTask(_ id: String) -> Activity<TaskActivityAttributes>? {
+        Activity<TaskActivityAttributes>.activities.first { $0.id == id }
+    }
+
+    /// Approve / Deny on a bar job went through: show it running at once.
+    private func didResolveBarJob(inboxId: String) {
+        for (_, activity) in taskActivities where activity.content.state.inboxId == inboxId {
+            var state = activity.content.state
+            state.state = "working"
+            state.question = nil
+            state.inboxId = nil
+            state.contentHash = nil
+            state.approveInline = nil
+            let id = activity.id
+            Task { await Self.liveTask(id)?.update(ActivityContent(state: state, staleDate: nil)) }
+        }
+    }
+
     // MARK: - After an action
 
     /// Approve / Deny went through: drop the question at once instead of
     /// waiting for the server's next push.
     func didResolve(inboxId: String) {
+        didResolveBarJob(inboxId: inboxId)
         guard let activity, activity.content.state.inboxId == inboxId else { return }
         var state = activity.content.state
         state.question = nil
@@ -303,6 +418,13 @@ final class BotLiveActivityManager {
     private func endAllNow() {
         activity = nil
         startedLocally = false
+        taskActivities.removeAll()
+        let taskIds = Activity<TaskActivityAttributes>.activities.map(\.id)
+        Task {
+            for id in taskIds {
+                await Self.liveTask(id)?.end(nil, dismissalPolicy: .immediate)
+            }
+        }
         let ids = Activity<BotActivityAttributes>.activities.map(\.id)
         Task {
             for id in ids {
