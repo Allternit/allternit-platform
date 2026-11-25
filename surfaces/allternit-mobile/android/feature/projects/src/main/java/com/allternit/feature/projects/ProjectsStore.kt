@@ -89,10 +89,10 @@ class ProjectsLibraryStore(private val context: Context) {
         val rCowork = cowork.await(); val rBots = bots.await(); val rWs = workspaces.await(); val rSessions = linked.await()
         val errors = mutableListOf<String>()
         fun note(r: ApiResult<*>, what: String) {
-            if (r !is ApiResult.Ok && !(r is ApiResult.HttpError && r.status == 404)) errors += "Couldn't load $what. " + (if (r is ApiResult.HttpError && (r.status == 401 || r.status == 403)) r.friendly("load $what") else "Check the connection and try again.")
+            if (r !is ApiResult.Ok && !(r is ApiResult.HttpError && (r.status == 404 || com.allternit.core.api.NoComputerRule.isGate(r)))) errors += "Couldn't load $what. " + (if (r is ApiResult.HttpError && (r.status == 401 || r.status == 403)) r.friendly("load $what") else "Check the connection and try again.")
         }
         note(rCowork, "projects"); note(rBots, "bot projects"); note(rWs, "code and design projects")
-        noComputer = listOf(rCowork, rWs).any { it is ApiResult.HttpError && (it.status == 503 || com.allternit.core.api.NoComputerRule.isGate(it)) }
+        noComputer = listOf(rCowork, rBots, rWs).any { it is ApiResult.HttpError && (it.status == 503 || com.allternit.core.api.NoComputerRule.isGate(it)) }
 
         val sessionRows = (rSessions as? ApiResult.Ok)?.value.listUnder("sessions").mapNotNull { o ->
             val id = o.str("id") ?: return@mapNotNull null
