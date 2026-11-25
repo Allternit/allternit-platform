@@ -265,6 +265,8 @@ fun ArtifactsLibraryScreen(
     var appRows by remember { mutableStateOf<List<AppShelfRow>>(emptyList()) }
     var appsReload by remember { mutableStateOf(0) }
     var installFor by remember { mutableStateOf<InstallRequest?>(null) }
+    var makeAppFor by remember { mutableStateOf<ArtifactSummary?>(null) }
+    var appPage by remember { mutableStateOf<Pair<String, String>?>(null) }
     val appIds = remember(appRows) { appRows.mapNotNull { it.artifactId }.toSet() }
     val pins = DeckPins.pins
 
@@ -376,7 +378,7 @@ fun ArtifactsLibraryScreen(
                                 artifacts = store.items, onMakeApp = ::makeApp, onRows = { appRows = it }, reloadKey = appsReload,
                                 onOpen = { app ->
                                     val id = app.artifactId
-                                    if (id != null) openId = id else app.link?.let { openExternal(context, it) }
+                                    if (id != null) openId = id else app.link?.let { appPage = it to app.name }
                                 },
                             )
                         }
@@ -553,7 +555,7 @@ fun ArtifactsLibraryScreen(
                             store.notice = "App link copied."
                         }
                     } else {
-                        LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "artifactActionMakeApp") { actionsFor = null; openId = a.id }
+                        LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "artifactActionMakeApp") { actionsFor = null; makeAppFor = a }
                     }
                 }
                 LibraryRowButton(if (pinned) "Unpin" else "Pin", if (pinned) DesignR.drawable.ph_push_pin_slash else DesignR.drawable.ph_push_pin, "artifactActionPin") {
@@ -570,6 +572,24 @@ fun ArtifactsLibraryScreen(
                     actionsFor = null
                     scope.launch { store.delete(a) }
                 }
+            }
+        }
+    }
+
+    makeAppFor?.let { a ->
+        MakeAppSheet(a, onDismiss = { makeAppFor = null }, onChanged = { appsReload++ }, onNotice = { store.notice = it })
+    }
+
+    // An app opens inside Allternit, never in Chrome (Artifacts redesign 6.8).
+    appPage?.let { (link, name) ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = { appPage = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            Column(Modifier.fillMaxSize().background(c.bgPrimary).testTag("artifactAppPage")) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("Done", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.heightIn(min = 48.dp).clickable { appPage = null }.padding(8.dp).testTag("artifactAppPageDone"))
+                }
+                ArtifactPageWebView(PageSource.Url(if (link.startsWith("/")) ArtifactWeb.ORIGIN + link else link), Modifier.fillMaxSize())
             }
         }
     }

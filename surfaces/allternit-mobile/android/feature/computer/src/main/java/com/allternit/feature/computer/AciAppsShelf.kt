@@ -319,10 +319,22 @@ private fun ShelfSection(title: String, rows: List<ShelfRow>, empty: String, mod
                                 if (!AppShortcuts.pin(context, row)) model.notice = "This launcher can’t add shortcuts to the home screen."
                             }
                         }
+                        AppsShelfLinks.openUrl(row.link)?.let { url ->
+                            ShelfPill("Copy app link", "Copy ${row.name} link", enabled = !busy) {
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("App link", url))
+                                model.notice = "App link copied."
+                            }
+                        }
                         ShelfPill("Remove", "Remove ${row.name}", enabled = !busy) { scope.launch { model.uninstall(row) } }
                     } else {
                         ShelfPill("Install", "Install ${row.name}", filled = true, enabled = !busy) { model.requestInstall(row) }
                         if (row.link != null) ShelfPill("Open", "Open ${row.name}", enabled = !busy) { onOpen(row) }
+                        AppsShelfLinks.openUrl(row.link)?.let { url ->
+                            ShelfPill("Copy app link", "Copy ${row.name} link", enabled = !busy) {
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("App link", url))
+                                model.notice = "App link copied."
+                            }
+                        }
                     }
                 }
             }

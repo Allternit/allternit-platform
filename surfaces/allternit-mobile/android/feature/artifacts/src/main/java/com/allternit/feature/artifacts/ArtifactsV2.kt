@@ -188,6 +188,15 @@ object ArtifactsV2Client {
 
     suspend fun delete(id: String): ApiResult<JsonElement> = call("DELETE", "artifacts/${LibraryNet.escape(id)}")
 
+    /** `GET api/v2/artifacts/:id/app` -> `{app}`; 404 when the artifact is not an app yet. */
+    suspend fun app(id: String): ApiResult<JsonElement> = call("GET", "artifacts/${LibraryNet.escape(id)}/app")
+
+    /** `PUT api/v2/artifacts/:id/app {name, icon, tier, install_scope}` (web `createMakeAppApi.put`): Make it an app. */
+    suspend fun putApp(id: String, name: String, tier: String, installScope: String): ApiResult<JsonElement> =
+        call("PUT", "artifacts/${LibraryNet.escape(id)}/app", buildJsonObject {
+            put("name", name); put("icon", kotlinx.serialization.json.JsonNull); put("tier", tier); put("install_scope", installScope)
+        })
+
     /** `GET api/v2/org/artifact-settings` → which creation tiles the org allows (iOS allows(kind:)). */
     suspend fun allowedKinds(): (String) -> Boolean {
         val r = call("GET", "org/artifact-settings")
