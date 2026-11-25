@@ -212,9 +212,9 @@ struct AgentActivityDetailView: View {
             } else if messages.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "bubble.left",
                     title: "No messages yet",
-                    message: "Messages from this thread will appear here."
+                    message: "Messages from this thread will appear here.",
+                    art: .envelope
                 )
             } else {
                 VStack(spacing: 8) {

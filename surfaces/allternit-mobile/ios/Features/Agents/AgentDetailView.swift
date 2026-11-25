@@ -877,9 +877,9 @@ struct AgentDetailView: View {
             } else {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "clock",
                     title: "No recent activity",
-                    message: ""
+                    message: "",
+                    art: .log
                 )
             }
         } header: {

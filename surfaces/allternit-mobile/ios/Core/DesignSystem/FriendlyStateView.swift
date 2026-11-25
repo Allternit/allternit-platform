@@ -343,11 +343,11 @@ final class ComputeReadState: ObservableObject {
     VStack(spacing: 24) {
         FriendlyStateView(
             style: .empty,
-            icon: "cpu",
             title: "No agents yet",
             message: "Create an agent from a template to get started.",
             actionTitle: "New from template",
-            action: {}
+            action: {},
+            art: .gizzi
         )
         FriendlyStateView(
             style: .offline,

@@ -290,7 +290,7 @@ struct ACIConsoleSpaceView: View {
         case .ready(let list):
             let items = list.filter { $0.suggestedAction?.type == "space.clean" }
             if items.isEmpty {
-                consoleNote("Nothing to clean right now.")
+                FriendlyInlineStateView(title: "Nothing to clean right now.", art: .archive)
             } else {
                 ForEach(items) { item in
                     consoleCard {
