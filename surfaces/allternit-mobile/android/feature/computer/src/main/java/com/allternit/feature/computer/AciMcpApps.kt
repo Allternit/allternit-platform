@@ -228,7 +228,9 @@ internal fun AciMcpAppsView(host: AciHost) {
     val model = remember(host.backend) { McpAppsModel(host.backend) }
     var tab by remember { mutableStateOf(McpTab.Installed) }
     // The Apps tab (shelf + share list) only exists behind the local flag `apps.shelf` (iOS AppsShelfFlag).
-    val tabs = remember(context) { if (FeatureFlags.isOn(context, FeatureFlags.APPS_SHELF)) McpTab.entries else McpTab.entries.filter { it != McpTab.Shelf } }
+    // One list, not two tabs (UI feedback 11-25 D1): the shelf shows under the installed MCP apps.
+    val shelfOn = remember(context) { FeatureFlags.isOn(context, FeatureFlags.APPS_SHELF) }
+    val tabs = remember { McpTab.entries.filter { it != McpTab.Shelf } }
     var query by remember { mutableStateOf("") }
     var addOpen by remember { mutableStateOf(false) }
     var miniOpen by remember { mutableStateOf(false) }
@@ -287,6 +289,10 @@ internal fun AciMcpAppsView(host: AciHost) {
                                 }
                             }
                         }
+                    }
+                    if (shelfOn) {
+                        Text("Apps", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp))
+                        AciAppsShelf()
                     }
                 }
                 tab == McpTab.Discover -> {

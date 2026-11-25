@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -61,6 +62,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
@@ -619,10 +621,13 @@ fun TerminalScreen(store: CodeTerminalStore, backend: ChatBackend, onBack: () ->
             (target as? TermTarget.Shell)?.let { t ->
                 // A terminal the computer already had keeps running there; only its tab closes.
                 val owned = store.tiles.getOrNull(t.index)?.saved?.owned != false
-                StripButton(DesignR.drawable.ph_x, if (owned) "Close shell" else "Close tab", "codeTerminalClose") {
+                val closeTile = {
                     store.closeTile(t.index)
                     target = TermTarget.Shell(store.selected)
                 }
+                // Ending a shell is a hold, never a tap or a dialog; closing a tab only hides it.
+                if (owned) HoldStripButton(DesignR.drawable.ph_x, "Hold to end shell", "codeTerminalClose", closeTile)
+                else StripButton(DesignR.drawable.ph_x, "Close tab", "codeTerminalClose", closeTile)
             }
         }
         when (val t = target) {
@@ -649,6 +654,33 @@ private fun StripButton(icon: Int, label: String, tag: String, onClick: () -> Un
         Modifier.size(44.dp).testTag(tag).clickable(onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(painterResource(icon), label, tint = TerminalColors.foreground, modifier = Modifier.size(20.dp)) }
+}
+
+/** A strip icon that acts only after a 0.8 s hold; a ring fills while held. Screen readers get a plain activate. */
+@Composable
+private fun HoldStripButton(icon: Int, label: String, tag: String, onHeld: () -> Unit) {
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    Box(
+        Modifier.size(44.dp).testTag(tag)
+            .semantics { onClick(label = label) { onHeld(); true } }
+            .pointerInput(Unit) {
+                androidx.compose.foundation.gestures.detectTapGestures(onPress = {
+                    val hold = scope.launch {
+                        progress.animateTo(1f, androidx.compose.animation.core.tween(800, easing = androidx.compose.animation.core.LinearEasing))
+                        onHeld()
+                        progress.snapTo(0f)
+                    }
+                    tryAwaitRelease()
+                    hold.cancel()
+                    scope.launch { progress.animateTo(0f, androidx.compose.animation.core.tween(150)) }
+                })
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(36.dp).background(com.allternit.core.design.AllternitStatic.StatusError.copy(alpha = 0.5f * progress.value), androidx.compose.foundation.shape.CircleShape))
+        Icon(painterResource(icon), label, tint = TerminalColors.foreground, modifier = Modifier.size(20.dp))
+    }
 }
 
 @Composable

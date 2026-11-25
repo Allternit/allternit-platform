@@ -84,7 +84,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var detail by remember { mutableStateOf<AciDevice?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     // Account flag `computers_console` (iOS AccountFlagsClient): off = today's screen, unchanged.
-    var consoleOn by remember { mutableStateOf(false) }
+    var consoleOn by remember { mutableStateOf(host.signedIn) }
     LaunchedEffect(host.signedIn) { consoleOn = host.signedIn && AciApi.consoleFlag() }
     val workflowRuntime = devices?.firstOrNull { it.isOnline } ?: devices?.firstOrNull()
 
