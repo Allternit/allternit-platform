@@ -120,6 +120,17 @@ private fun KeysSheet(only: String?, store: ConnectionsStore, onConnected: (Stri
     val providers = only?.let { listOfNotNull(ConnectionsCatalog.keyProvider(it)) } ?: ConnectionsCatalog.keyProviders
     var expanded by remember { mutableStateOf(only) }
     SheetTitle(if (only == null) "An API key" else "${providers.firstOrNull()?.name ?: "API"} key")
+    // Real state only: one provider's own row, or "any row" when the sheet lists them all.
+    val rows = providers.map { store.row(it.id).state }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        ConnectScene(
+            when {
+                ConnState.Connecting in rows -> ConnectSceneState.Connecting
+                ConnState.On in rows -> ConnectSceneState.Connected
+                else -> ConnectSceneState.Asleep
+            },
+        )
+    }
     SheetNote("Open the key page, copy a key, then come back and paste it. We check it with the vendor before it's saved, and it works on any device.")
     providers.forEach { p ->
         KeyRow(p, store, expanded == p.id, onToggle = { expanded = if (expanded == p.id) null else p.id }, onConnected = onConnected)
@@ -352,6 +363,13 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
             SheetNote("Chats you send on this model are billed to your Claude organization, not to Allternit credits. ${ConnectionsCatalog.CLAUDE_ORG_NOTE} Allternit never sees your password.")
         }
     }
+    // Connecting = the sheet's waiting phase (opened the vendor / checking the code), not the per-poll row flag.
+    val sceneState = when {
+        phase == LoginPhase.Done || store.row(id).state == ConnState.On -> ConnectSceneState.Connected
+        phase is LoginPhase.Vendor && (opened || submitting) -> ConnectSceneState.Connecting
+        else -> ConnectSceneState.Asleep
+    }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ConnectScene(sceneState) }
     when (val p = phase) {
         LoginPhase.Starting -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = c.sub)
