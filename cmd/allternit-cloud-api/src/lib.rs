@@ -64,7 +64,8 @@ pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> b
         || (routes::freeweights::FREEWEIGHTS_CORS_ORIGINS.contains(&origin)
             && routes::freeweights::is_freeweights_cors_path(path))
         // D15: hosted app origins (`https://<slug>.allternitusercontent.com`, or
-        // `APP_DOMAIN`) reach only the handoff exchange and the page runtime.
+        // `APP_DOMAIN`) reach only the handoff exchange, the page runtime and the
+        // public app record + content.
         || (routes::artifacts_v2::app_handoff::is_app_origin(origin)
             && routes::artifacts_v2::app_handoff::is_app_cors_path(path))
 }

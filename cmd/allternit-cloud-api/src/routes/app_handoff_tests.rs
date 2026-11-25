@@ -205,6 +205,65 @@ async fn office_kinds_are_not_installable() {
     }
 }
 
+async fn content(router: &Router, slug: &str, session: Option<&str>) -> (StatusCode, Value) {
+    let auth = session.map(|s| format!("Bearer {s}"));
+    let mut extra = vec![("origin", APP_ORIGIN)];
+    if let Some(auth) = auth.as_deref() {
+        extra.push(("authorization", auth));
+    }
+    send(router, "GET", &format!("/api/v2/public/apps/{slug}/content"), None, &extra, None).await
+}
+
+/// Not private, so the public routes serve it (the sharing route is lane 7's).
+async fn make_visible(db: &PgPool, id: &str, tier: &str, scope: &str) {
+    sqlx::query("UPDATE artifacts SET visibility = 'link', app_permission_tier = $2, app_install_scope = $3 WHERE id = $1")
+        .bind(id)
+        .bind(tier)
+        .bind(scope)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn public_browser_app_content_is_open() {
+    let (router, db) = setup().await;
+    let owner = who("user_h6");
+    let (id, slug) = app(&router, &owner).await;
+    make_visible(&db, &id, "browser", "link").await;
+    let (status, body) = content(&router, &slug, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["body"].as_str(), Some("<h1>hi</h1>"));
+    assert_eq!(body["slug"].as_str(), Some(slug.as_str()));
+    // Anonymous: no artifact id.
+    assert!(body.get("artifact_id").is_none(), "{body}");
+    // The public record never carries it either.
+    let (_, record) = send(&router, "GET", &format!("/api/v2/public/apps/{slug}"), None, &[], None).await;
+    assert!(record.get("artifact_id").is_none(), "{record}");
+}
+
+#[tokio::test]
+async fn app_tier_content_needs_this_apps_session() {
+    let (router, db) = setup().await;
+    let owner = who("user_h7");
+    let (id_a, slug_a) = app(&router, &owner).await;
+    let (id_b, slug_b) = app(&router, &owner).await;
+    make_visible(&db, &id_a, "app", "link").await;
+    make_visible(&db, &id_b, "app", "link").await;
+
+    let (status, body) = content(&router, &slug_a, None).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("app_session_required")), "{body}");
+
+    let (_, ex) = exchange(&router, &mint(&router, &owner, &slug_a).await).await;
+    let session = ex["session"].as_str().unwrap().to_string();
+    let (status, body) = content(&router, &slug_a, Some(&session)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artifact_id"].as_str(), Some(id_a.as_str()));
+
+    let (status, body) = content(&router, &slug_b, Some(&session)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("app_session_wrong_app")), "{body}");
+}
+
 #[test]
 fn app_origins_and_cors_paths() {
     assert!(is_app_origin(APP_ORIGIN));
@@ -215,6 +274,7 @@ fn app_origins_and_cors_paths() {
     assert!(!is_app_origin("https://ai.allternit.com"));
     assert!(is_app_cors_path(EXCHANGE_PATH));
     assert!(is_app_cors_path("/api/v2/artifact-runtime/art_1/storage/k"));
+    assert!(is_app_cors_path("/api/v2/public/apps/abc/content"));
     assert!(!is_app_cors_path("/api/v2/artifacts/art_1"));
     assert!(!is_app_cors_path("/api/v1/apps/abc/handoff"));
 }

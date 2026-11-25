@@ -24,8 +24,13 @@
 //! or unknown -> 401 `app_session_invalid`. A request from an app origin
 //! without an app session -> 401 `app_session_required`.
 //!
+//! `GET /api/v2/public/apps/:slug/content` (artifacts_v2) serves the app's
+//! page: public for a `browser` app shared by link, else it needs this app's
+//! `aps_` session (401 `app_session_required`, 403 `app_session_wrong_app`).
+//! It returns `artifact_id` only to an authorized caller.
+//!
 //! CORS: [`is_app_origin`] + [`is_app_cors_path`] let app origins reach the
-//! exchange and runtime routes only (see `cors_origin_allowed` in lib.rs).
+//! exchange, runtime and public app routes only (see `cors_origin_allowed`).
 
 use std::sync::Arc;
 
@@ -55,6 +60,8 @@ pub const SESSION_TTL_SECS: i64 = 3600;
 pub const DEFAULT_APP_DOMAIN: &str = "allternitusercontent.com";
 pub const EXCHANGE_PATH: &str = "/api/v1/apps/handoff/exchange";
 const RUNTIME_PREFIX: &str = "/api/v2/artifact-runtime/";
+/// The public app record and its content (`/api/v2/public/apps/:slug[/content]`).
+const PUBLIC_APPS_PREFIX: &str = "/api/v2/public/apps/";
 const HANDOFF_PREFIX: &str = "aph_";
 const SESSION_PREFIX: &str = "aps_";
 
@@ -93,7 +100,7 @@ pub fn is_app_origin(origin: &str) -> bool {
 
 /// The only routes an app origin may call cross-origin.
 pub fn is_app_cors_path(path: &str) -> bool {
-    path == EXCHANGE_PATH || path.starts_with(RUNTIME_PREFIX)
+    path == EXCHANGE_PATH || path.starts_with(RUNTIME_PREFIX) || path.starts_with(PUBLIC_APPS_PREFIX)
 }
 
 pub(crate) fn from_app_origin(headers: &HeaderMap) -> bool {
