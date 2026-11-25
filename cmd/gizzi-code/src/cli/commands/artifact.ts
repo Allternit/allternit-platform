@@ -46,8 +46,9 @@ export const ArtifactListCommand = cmd({
       .option("type", { type: "string", describe: "filter by MIME type, e.g. text/html" })
       .option("project", { type: "string", describe: "filter by design project id" })
       .option("q", { type: "string", describe: "free-text search over title/prompt" })
-      .option("limit", { type: "number", describe: "max results (default 50, cap 100)" }),
-  handler: async (args: { type?: string; project?: string; q?: string; limit?: number }) => {
+      .option("limit", { type: "number", describe: "max results (default 50, cap 100)" })
+      .option("plans", { type: "boolean", default: false, describe: "include plans saved by plan_exit (left out by default)" }),
+  handler: async (args: { type?: string; project?: string; q?: string; limit?: number; plans?: boolean }) => {
     const config = await getAllternitApiConfigWithDeviceToken()
     const res = await listApiContentArtifacts(config, {
       ...(args.type ? { type: args.type } : {}),
@@ -55,7 +56,9 @@ export const ArtifactListCommand = cmd({
       ...(args.q ? { q: args.q } : {}),
       ...(args.limit != null ? { limit: args.limit } : {}),
     })
-    const artifacts = res.artifacts ?? []
+    // Plans (one per chat, id art_plan_<session>) are left out unless --plans.
+    const isPlan = (a: { id: string; kind?: string }) => a.kind === "plan" || a.id.startsWith("art_plan_")
+    const artifacts = (res.artifacts ?? []).filter((a) => args.plans || !isPlan(a))
     if (artifacts.length === 0) {
       process.stdout.write("No content artifacts found.\n")
     }
