@@ -458,7 +458,7 @@ struct RunStrip: View {
                     .accessibilityLabel(Self.label(run.status))
             }
             if runs.isEmpty {
-                Text("No runs yet").font(.caption2).foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No runs yet", art: .bell)
             }
         }
     }

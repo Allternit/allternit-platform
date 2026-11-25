@@ -9,14 +9,19 @@ import SwiftUI
 struct AutomationGraphEmptyState: View {
     let title: String
     let message: String
+    var art: EmptyArtKind? = nil
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "calendar")
-                .font(.system(size: 24, weight: .light))
-                .foregroundColor(Color("TextTertiary"))
+            if let art {
+                EmptyArt(kind: art, size: .panel)
+            } else {
+                Image(systemName: "calendar")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundColor(Color("TextTertiary"))
+            }
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
@@ -401,6 +406,7 @@ struct AutomationRoutinesGraph: View {
                 AutomationGraphEmptyState(
                     title: "No routines yet",
                     message: "A bot's routines run on their own and post in its main thread.",
+                    art: .bell,
                     actionTitle: "New routine",
                     action: onNew
                 )

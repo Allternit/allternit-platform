@@ -532,7 +532,7 @@ struct AutomationTasksPhoneView: View {
     }
 
     private func emptyState(title: String, message: String) -> some View {
-        EmptyBox(icon: "clock", title: title, line: message)
+        EmptyBox(title: title, line: message, art: .bell)
     }
 
     // MARK: - Actions
@@ -1124,9 +1124,7 @@ private struct RoutineRunHistorySection: View {
     var body: some View {
         AutomationRunHistoryBlock {
             if runs.isEmpty {
-                Text("No runs recorded yet.")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No runs recorded yet.", art: .bell)
             } else {
                 VStack(spacing: 8) {
                     ForEach(runs.prefix(20)) { run in
@@ -1167,9 +1165,7 @@ private struct LoopRunHistorySection: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 16)
             } else if runs.isEmpty {
                 if error == nil {
-                    Text("No runs recorded yet.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color("TextSecondary"))
+                    FriendlyInlineStateView(title: "No runs recorded yet.", art: .bell)
                 }
             } else {
                 VStack(spacing: 8) {

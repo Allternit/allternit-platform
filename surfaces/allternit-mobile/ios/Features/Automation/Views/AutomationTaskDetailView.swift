@@ -195,9 +195,9 @@ struct AutomationTaskDetailView: View {
             } else if runs.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "play.circle",
                     title: "No runs yet",
-                    message: "Runs for this task will appear here."
+                    message: "Runs for this task will appear here.",
+                    art: .bell
                 )
             } else {
                 VStack(spacing: 8) {

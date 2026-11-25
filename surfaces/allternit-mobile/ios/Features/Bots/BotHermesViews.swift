@@ -153,9 +153,10 @@ struct BotUsagePage: View {
                 let rows = usageRows(summary)
                 if rows.isEmpty {
                     FriendlyInlineStateView(
-                        style: .empty, icon: "chart.bar",
+                        style: .empty,
                         title: "No usage yet",
-                        message: "\(bot.botDisplayName) has not been used in the last 30 days."
+                        message: "\(bot.botDisplayName) has not been used in the last 30 days.",
+                        art: .coins
                     )
                 } else {
                     Section {

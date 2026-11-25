@@ -436,9 +436,7 @@ struct BotMemoryView: View {
                     FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load memory",
                                       message: error, actionTitle: "Retry", action: { Task { await load() } })
                 } else if filtered.isEmpty {
-                    Text(memories.isEmpty ? "Nothing remembered yet." : "No matches.")
-                        .font(.footnote)
-                        .foregroundColor(Color("TextSecondary"))
+                    FriendlyInlineStateView(title: memories.isEmpty ? "Nothing remembered yet." : "No matches.", art: .memory)
                 } else {
                     ForEach(filtered) { memory in
                         VStack(alignment: .leading, spacing: 3) {
@@ -515,9 +513,7 @@ struct BotChannelsView: View {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load channels",
                                   message: error, actionTitle: "Retry", action: { Task { await load() } })
             } else if channels.isEmpty {
-                Text("No messaging connections yet.")
-                    .font(.footnote)
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No messaging connections yet.", art: .network)
             } else {
                 ForEach(channels) { channel in
                     Toggle(isOn: Binding(
