@@ -93,6 +93,7 @@ import { exportHermesRouting } from './hermes-routing-bridge.js';
 import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager.js';
 
 import { tunnelManager } from './tunnel-manager.js';
+import { ShareManager, DEFAULT_RELAY_API, type ShareStartRequest } from './share-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
 import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
 import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTINGS_SCRIPT } from './window-chrome.js';
@@ -3337,6 +3338,39 @@ async function handoffInFlightToCloud(): Promise<void> {
   }
 }
 
+// Live links hosted by this computer (D5). The gate is allternit-api on loopback, so shares stop
+// before it does on quit. A quit always ends them: the process that serves them is gone.
+const shareManager = new ShareManager({
+  isEnabled: () => featureFlagManager.get<boolean>('share.live') === true,
+  cloudApi: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+  relayApi: () => process.env.ALLTERNIT_SHARE_RELAY_API || DEFAULT_RELAY_API,
+  getClerkToken: () => authManager.getClerkToken(),
+  getRuntimeDeviceId: () => authManager.getSessionSnapshot()?.runtimeId ?? null,
+  gateBaseUrl: () => backendManager.getUrl(),
+  gateUserId: () => authManager.getSessionSnapshot()?.userId ?? 'desktop-local',
+  getDesktopAccessToken: () => backendManager.getDesktopAccessToken(),
+  // D7: every Desktop service port is refused, not only allternit-api and gizzi.
+  extraDeniedPorts: Object.values(PORTS) as readonly number[],
+  emit: (event) => broadcastToMainWindows('shares:event', event),
+});
+authManager.setRelayHostHandler((method, path, body) => {
+  if (method !== 'POST') return Promise.resolve(null);
+  if (path === '/host/shares/start') return shareManager.handleHostStart(body);
+  const command = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(path);
+  return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
+});
+featureFlagManager.onChange((key, value) => {
+  if (key === 'share.live' && value !== true) void shareManager.disable();
+});
+
+handleGuarded('shares:start', (_event, request: ShareStartRequest) => shareManager.start(request));
+handleGuarded('shares:list', () => shareManager.list());
+handleGuarded('shares:pause', (_event, id: string) => shareManager.pause(String(id)));
+handleGuarded('shares:resume', (_event, id: string) => shareManager.resume(String(id)));
+handleGuarded('shares:stop', (_event, id: string) => shareManager.stop(String(id)));
+handleGuarded('shares:rotate', (_event, id: string) => shareManager.rotate(String(id)));
+handleGuarded('shares:status', () => ({ enabled: featureFlagManager.get<boolean>('share.live') === true }));
+
 // Electron does not await before-quit, so an async handler that awaits
 // before reaping lets the process exit with gizzi-code still running
 // (spawned detached, reparented to launchd). Hold the first quit, run the
@@ -3398,6 +3432,8 @@ async function shutdownAllServices(): Promise<void> {
   featureFlagManager.destroy();
   mcpHostManager.shutdown();
   await workerBus.shutdown();
+  // Before stopBackend: the share gate lives in allternit-api.
+  await shareManager.stopAll().catch((err) => log.warn('[Main] live links stop on quit failed', err));
   tunnelManager.stop();
   await backendManager.stopBackend();
   await localEngineManager.stop();

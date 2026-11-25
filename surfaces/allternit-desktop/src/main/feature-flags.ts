@@ -32,6 +32,8 @@ export const FLAG_DEFINITIONS: Record<string, FlagDefinition> = {
   'feature.workspace-dnd': { type: 'boolean', default: true  },
   // Installed apps get their own launcher + window (plan v3 lane 38).
   'apps.install':          { type: 'boolean', default: false },
+  // Live links hosted by this computer (share-manager.ts, D5). Off until the relay is live.
+  'share.live':            { type: 'boolean', default: false },
 };
 
 type ChangeHandler = (key: string, value: FlagValue) => void;
