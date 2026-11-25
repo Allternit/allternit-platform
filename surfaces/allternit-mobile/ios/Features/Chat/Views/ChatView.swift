@@ -377,6 +377,8 @@ struct ChatContentView: View {
                     // conversation itself is already in the thread.
                     viewModel.appendVoiceSummary(durationSeconds: durationSeconds)
                 })
+                // Clear: the stage fades in round the travelling orb, over this chat.
+                .presentationBackground(.clear)
             }
         }
         .onDisappear {
@@ -712,12 +714,16 @@ struct ChatContentView: View {
                 editingBanner
             }
 
-            // Quick voice bar while a voice conversation runs.
-            if voiceHost.presentation == .bar, let voiceModel = voiceHost.viewModel {
+            // Quick voice bar while a voice conversation runs. It keeps its
+            // place (hidden) under full voice, where the orb travels to and from.
+            if voiceHost.presentation != .none, let voiceModel = voiceHost.viewModel {
                 VoiceQuickBar(
                     viewModel: voiceModel,
                     bot: chatBot,
-                    onExpand: { voiceHost.presentation = .full },
+                    host: voiceHost,
+                    docked: voiceHost.presentation == .bar,
+                    // No system slide: the orb travels up from the bar (VoiceModeView).
+                    onExpand: { voiceHost.present(.full) },
                     onEnd: {
                         if let seconds = voiceHost.end() {
                             viewModel.appendVoiceSummary(durationSeconds: seconds)

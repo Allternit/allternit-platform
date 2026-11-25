@@ -45,7 +45,13 @@ struct VoiceSpeakerView<Face: View>: View {
     }
     private var light: Color { colors?.first ?? botColor ?? Color(hex: "#8C8E94") }
     /// The Ring is a flat circle bigger than the face: the face stands in it.
-    private var faceDy: CGFloat { drawn == .ring && !compact ? (size * 0.15).rounded() : 0 }
+    private var faceDy: CGFloat { Self.faceDy(style: drawn, size: size, compact: compact) }
+
+    /// How far below the look's centre the face sits (the orb travel lines
+    /// the full-screen face up with the bar's face).
+    static func faceDy(style: SpeakerStyle, size: CGFloat, compact: Bool) -> CGFloat {
+        style == .ring && !compact ? (size * 0.15).rounded() : 0
+    }
 
     private var ringState: VoiceState {
         if muted { return .idle }
@@ -154,6 +160,43 @@ struct VoiceSpeakerView<Face: View>: View {
                     .compositingGroup()
             }
         }
+    }
+}
+
+/// A new voice call's first orb (SCOPE-B1 clip 3, 0.25–2.5 s): it grows from
+/// a dot with a small overshoot and deepens from pale to its full colour,
+/// while the look keeps following the voice level inside it. Runs once, on the
+/// orb on screen while the host's grow is pending. Reduce Motion: a fade.
+struct VoiceOrbGrow: ViewModifier {
+    let host: VoiceHost?
+    @ReducedMotion private var reduceMotion
+    @State private var grown = false
+    @State private var deep = false
+
+    /// Small until the grow runs; only while the host's grow is pending.
+    private var pending: Bool { host?.growPending ?? false }
+
+    func body(content: Content) -> some View {
+        let dot = pending && !grown
+        let pale = pending && !deep
+        return content
+            .scaleEffect(dot && !reduceMotion ? 0.06 : 1)
+            .opacity(dot ? 0 : 1)
+            .saturation(pale && !reduceMotion ? 0.25 : 1)
+            .onAppear {
+                guard pending else { return }
+                // Keep `pending` true through this change so the values animate from the dot.
+                if reduceMotion {
+                    withAnimation(.easeOut(duration: 0.2)) { grown = true; deep = true } completion: {
+                        host?.finishGrow()
+                    }
+                    return
+                }
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.68).delay(0.1)) { grown = true }
+                withAnimation(.easeOut(duration: 1.5).delay(0.5)) { deep = true } completion: {
+                    host?.finishGrow()
+                }
+            }
     }
 }
 
