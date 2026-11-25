@@ -32,6 +32,14 @@
 //! `content` JSON (`kind: "team_rule"`, `argsHash`, `claimedAt` while a call
 //! holds it, `usedAt` once spent), so no column is added; `rule_id`, `bot_id`,
 //! `job_id` and `approver_user_id` use the V294 columns.
+//!
+//! The stored `arguments` are for the approver to read, so secret values
+//! (`format: password` / `writeOnly` in the tool's input schema, or a secret
+//! name such as password, token, key, pin, cvv, card number) are stored as
+//! [`MASK`] ([`redact_args`]). `argsHash` is always over the real arguments,
+//! so the approval still binds to the exact call. Nothing reads `arguments`
+//! back to run a call: the retry carries its own arguments and is matched by
+//! `argsHash`.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -57,6 +65,8 @@ pub const ASK_TTL_HOURS: i64 = 24;
 /// A claimed approval whose call never settled it is free again after this.
 /// Longer than any proxied call (25 s, or an elicitation the person answers).
 pub const CLAIM_TTL_MINUTES: i64 = 15;
+/// What a secret argument value is stored as in the ask's `content`.
+pub const MASK: &str = "••••";
 
 /// One proxied tool call, as the gate sees it.
 #[derive(Debug, Clone)]
@@ -75,6 +85,9 @@ pub struct GateCall<'a> {
     /// The tool is marked `readOnlyHint: true`.
     pub tool_read_only: bool,
     pub args: &'a Value,
+    /// The tool's `inputSchema`, when known: marks secret fields
+    /// (`format: password`, `writeOnly`) for [`redact_args`].
+    pub input_schema: Option<&'a Value>,
     /// From `_meta["allternit/approvalId"]`.
     pub approval_ids: &'a [String],
     /// From `_meta["allternit/jobId"]`.
@@ -308,6 +321,99 @@ pub fn args_hash(app_kind: AppKind, app_ref: &str, tool: &str, args: &Value) -> 
     hex::encode(h.finalize())
 }
 
+// ── Secret arguments ─────────────────────────────────────────────────────────
+//
+// TODO(train dedupe): the secret-field rules below are a copy of
+// `bar_blanks::is_secret_field` / `name_words` / `single_alternative` (lane 15,
+// #2990). Once both are on main, keep one copy and call it from both.
+
+/// `anyOf` / `oneOf` with exactly one non-null alternative: that alternative.
+fn single_alternative(prop: &Value) -> Option<&Value> {
+    let alts = prop.get("anyOf").or_else(|| prop.get("oneOf"))?.as_array()?;
+    let mut live = alts.iter().filter(|a| a["type"] != "null");
+    let one = live.next()?;
+    live.next().is_none().then_some(one)
+}
+
+/// `cardNumber`, `card_number`, `Card-Number` → `["card", "number"]`.
+fn name_words(key: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for c in key.chars() {
+        if !c.is_alphanumeric() {
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            prev_lower = false;
+            continue;
+        }
+        if c.is_uppercase() && prev_lower && !cur.is_empty() {
+            words.push(std::mem::take(&mut cur));
+        }
+        prev_lower = c.is_lowercase() || c.is_ascii_digit();
+        cur.extend(c.to_lowercase());
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// Secret by schema (`format: password`, `writeOnly: true`) or by name
+/// (password, token, secret, key, otp, pin, cvv, card number, and kin). `pin`
+/// and `key` count only as whole words, so `pinned` or `keyword` do not.
+/// Same rules as `bar_blanks::is_secret_field`.
+pub fn is_secret_field(key: &str, prop: &Value) -> bool {
+    let view = single_alternative(prop).unwrap_or(prop);
+    if [prop, view].iter().any(|p| p["format"] == "password" || p["writeOnly"] == true) {
+        return true;
+    }
+    const WORDS: &[&str] = &[
+        "password", "passwd", "passcode", "pwd", "token", "secret", "key", "apikey", "otp", "pin", "cvv", "cvc", "ssn",
+        "credential", "credentials",
+    ];
+    const INSIDE: &[&str] = &["password", "passwd", "secret", "token", "apikey", "cardnumber", "creditcard", "privatekey"];
+    let words = name_words(key);
+    if words.iter().any(|w| WORDS.contains(&w.as_str())) {
+        return true;
+    }
+    if words.windows(2).any(|w| w[0] == "card" && matches!(w[1].as_str(), "number" | "num" | "no")) {
+        return true;
+    }
+    let joined = words.concat();
+    INSIDE.iter().any(|s| joined.contains(s)) || joined.ends_with("otp") || joined.ends_with("cvv")
+}
+
+/// The arguments as the approver may see them: every secret field's value
+/// (at any depth, in objects and arrays) replaced by [`MASK`]. `schema` is the
+/// tool's `inputSchema` (or the sub-schema at this level); without one, names
+/// alone decide. A null value stays null (nothing to hide). Never hash this:
+/// `argsHash` is over the real arguments.
+pub fn redact_args(args: &Value, schema: Option<&Value>) -> Value {
+    let schema = schema.map(|s| single_alternative(s).unwrap_or(s));
+    match args {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| {
+                    let prop = schema.and_then(|s| {
+                        s.get("properties")
+                            .and_then(|p| p.get(k))
+                            .or_else(|| s.get("additionalProperties").filter(|a| a.is_object()))
+                    });
+                    let masked = !v.is_null() && is_secret_field(k, prop.unwrap_or(&Value::Null));
+                    (k.clone(), if masked { Value::String(MASK.to_string()) } else { redact_args(v, prop) })
+                })
+                .collect(),
+        ),
+        Value::Array(items) => {
+            let item_schema = schema.and_then(|s| s.get("items")).filter(|i| i.is_object());
+            Value::Array(items.iter().map(|v| redact_args(v, item_schema)).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 // ── Routed asks ──────────────────────────────────────────────────────────────
 
 /// The first of `ids` that `approver` approved for exactly this call and that
@@ -385,7 +491,8 @@ fn open_ask(
         "jobId": call.job_id,
         "app": { "kind": call.app_kind.as_str(), "ref": call.app_ref, "name": call.app_name },
         "tool": call.tool,
-        "arguments": call.args,
+        // Secrets masked for the approver; `hash` is over the real arguments.
+        "arguments": redact_args(call.args, call.input_schema),
         "argsHash": hash,
         "expiresAt": expires_at,
     });
@@ -701,6 +808,7 @@ mod tests {
             tool: "pay",
             tool_read_only: false,
             args,
+            input_schema: None,
             approval_ids: ids,
             job_id: None,
             self_confirmed: false,
@@ -832,5 +940,77 @@ mod tests {
         // Revoking keeps the owner "in use": the bot stays refused (no fall back to open).
         team_store::revoke_grant(&conn, BotKind::Agent, "bot-a", AppKind::Connector, "conn-1").unwrap();
         assert_eq!(gate_call(&conn, &read).unwrap(), Decision::DenyNoGrant);
+    }
+
+    /// Regression (lane 11c): a routed ask stored the call's arguments in plain
+    /// text, secrets included, in `cowork_approvals.content`.
+    #[test]
+    fn a_routed_ask_stores_secrets_masked_and_still_binds_to_the_real_args() {
+        let conn = db();
+        seed(&conn);
+        add_rule(&conn, ApproverKind::Manager, Some("amount"), RuleOp::Gt, Some(json!(100)));
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "amount": { "type": "number" },
+                "passphrase": { "type": "string", "format": "password" },
+                "card": { "type": "object", "properties": { "cardNumber": { "type": "string" }, "brand": { "type": "string" } } }
+            }
+        });
+        let real = json!({
+            "amount": 500,
+            "passphrase": "hunter2",
+            "password": "pa55",
+            "card": { "cardNumber": "4242424242424242", "brand": "visa" },
+            "memo": "rent"
+        });
+        let mut first = call("ann", None, &real, &[]);
+        first.input_schema = Some(&schema);
+        let Decision::NeedsOwner { approval_id, .. } = gate_call(&conn, &first).unwrap() else {
+            panic!("expected an ask")
+        };
+
+        let raw: String =
+            conn.query_row("SELECT content FROM cowork_approvals WHERE id = ?1", params![approval_id], |r| r.get(0)).unwrap();
+        for secret in ["hunter2", "pa55", "4242424242424242"] {
+            assert!(!raw.contains(secret), "secret {secret} stored in plain text: {raw}");
+        }
+        let content: Value = serde_json::from_str(&raw).unwrap();
+        let shown = &content["arguments"];
+        assert_eq!(shown["passphrase"], MASK, "format: password");
+        assert_eq!(shown["password"], MASK, "secret name, no schema entry");
+        assert_eq!(shown["card"]["cardNumber"], MASK, "nested card number");
+        // What is being approved stays readable.
+        assert_eq!(shown["amount"], 500);
+        assert_eq!(shown["card"]["brand"], "visa");
+        assert_eq!(shown["memo"], "rent");
+        // The hash is over the real arguments, not the masked ones.
+        assert_eq!(content["argsHash"], args_hash(AppKind::Connector, "conn-1", "pay", &real));
+        assert_ne!(content["argsHash"], args_hash(AppKind::Connector, "conn-1", "pay", shown));
+
+        conn.execute("UPDATE cowork_approvals SET dismissed = 1, decision = 'approved' WHERE id = ?1", params![approval_id])
+            .unwrap();
+        let ids = vec![approval_id.clone()];
+        // The masked arguments do not pass; the same real arguments do.
+        assert!(matches!(gate_call(&conn, &call("ann", None, shown, &ids)).unwrap(), Decision::NeedsOwner { .. }));
+        let mut again = call("ann", None, &real, &ids);
+        again.input_schema = Some(&schema);
+        assert_eq!(gate_call(&conn, &again).unwrap(), Decision::AllowClaimed(ids.clone()));
+    }
+
+    #[test]
+    fn secret_names_match_whole_words_and_schema_marks() {
+        for k in ["password", "apiKey", "api_key", "access_token", "otp", "pin", "cvv", "card_number", "clientSecret"] {
+            assert!(is_secret_field(k, &Value::Null), "{k}");
+        }
+        for k in ["pinned", "keyword", "amount", "monkey", "to"] {
+            assert!(!is_secret_field(k, &Value::Null), "{k}");
+        }
+        assert!(is_secret_field("value", &json!({ "writeOnly": true })));
+        assert!(is_secret_field("value", &json!({ "anyOf": [{ "type": "string", "format": "password" }, { "type": "null" }] })));
+        // Arrays follow `items`; nulls stay null.
+        let schema = json!({ "properties": { "logins": { "items": { "properties": { "code": { "format": "password" } } } } } });
+        let out = redact_args(&json!({ "logins": [{ "code": "1", "user": "a" }], "token": null }), Some(&schema));
+        assert_eq!(out, json!({ "logins": [{ "code": MASK, "user": "a" }], "token": null }));
     }
 }
