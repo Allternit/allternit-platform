@@ -111,11 +111,15 @@ describe.skipIf(!run)("relay admission + share tunnel (local opentunnel-server)"
     expect(share.url).toBe(`https://${name}.${env.OPENTUNNEL_TEST_DOMAIN ?? "opentunnel.test"}`);
     expect(await visit(new URL(share.url).hostname)).toContain("hello from the shared app");
 
-    if (env.OPENTUNNEL_TEST_ADMIN_TOKEN) {
+    if (env.OPENTUNNEL_TEST_ADMIN_TOKEN && env.OPENTUNNEL_TEST_ADMIN_API) {
+      const adminApi = env.OPENTUNNEL_TEST_ADMIN_API;
       const admin = { authorization: `Bearer ${env.OPENTUNNEL_TEST_ADMIN_TOKEN}` };
-      const kill = await fetch(`${API}/api/admin/tunnel/${name}/delete`, { method: "POST", headers: admin });
+      // Admin answers only on the admin listener; the public origin gives 404 even with the token.
+      const publicTry = await fetch(`${API}/api/admin/tunnel/${name}/delete`, { method: "POST", headers: admin });
+      expect(publicTry.status).toBe(404);
+      const kill = await fetch(`${adminApi}/api/admin/tunnel/${name}/delete`, { method: "POST", headers: admin });
       expect(kill.status).toBe(204);
-      const again = await fetch(`${API}/api/admin/tunnel/${name}/delete`, { method: "POST", headers: admin });
+      const again = await fetch(`${adminApi}/api/admin/tunnel/${name}/delete`, { method: "POST", headers: admin });
       expect(again.status).toBe(404);
     }
     heartbeat = { status: 410, body: { error: "killed" } };

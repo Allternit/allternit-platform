@@ -23,7 +23,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyou
 echo ok > "$work/site/index.html"
 secret="test-admission-$(openssl rand -hex 8)"
 admin="test-admin-$(openssl rand -hex 8)"
-env OPENTUNNEL_DOMAIN=opentunnel.test TLS_LISTEN=127.0.0.1:18443 HTTP_LISTEN=127.0.0.1:18080 HTTP_MODE=serve \
+env OPENTUNNEL_DOMAIN=opentunnel.test TLS_LISTEN=127.0.0.1:18443 HTTP_LISTEN=127.0.0.1:18080 HTTP_MODE=serve ADMIN_LISTEN=127.0.0.1:18081 \
   DATABASE_URL=mysql://root:opentunnel@127.0.0.1:13306/opentunnel TLS_CERT_FILE="$work/cert.pem" \
   TLS_KEY_FILE="$work/key.pem" WEBSITE_DIR="$work/site" ISSUER=local LOCAL_CA_FILE="$work/ca.pem" \
   TRUSTED_PROXY_RANGES=off MESH_DNS=off ADMISSION_SECRET="$secret" ADMIN_TOKEN="$admin" RUST_LOG=warn \
@@ -40,4 +40,5 @@ export OPENTUNNEL_TEST_DOMAIN=opentunnel.test
 export OPENTUNNEL_TEST_CA_FILE=$work/ca.pem
 export OPENTUNNEL_TEST_ADMISSION_SECRET=$secret
 export OPENTUNNEL_TEST_ADMIN_TOKEN=$admin
+export OPENTUNNEL_TEST_ADMIN_API=http://127.0.0.1:18081
 VARS
