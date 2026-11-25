@@ -167,15 +167,27 @@ struct MemorySettingsView: View {
                 Divider().background(Color("BorderSubtle")).padding(.leading, 20)
 
                 if filtered.isEmpty {
-                    FriendlyStateView(
-                        style: .empty,
-                        icon: searchText.isEmpty ? "brain" : "magnifyingglass",
-                        title: searchText.isEmpty ? "No memories yet" : "No matches",
-                        message: searchText.isEmpty
-                            ? "Memories Allternit learns from your chats will appear here."
-                            : "No memories match your search."
-                    )
-                    .frame(maxWidth: .infinity)
+                    if searchText.isEmpty {
+                        FriendlyStateView(
+                            style: .empty,
+                            icon: "brain",
+                            title: "No memories yet",
+                            message: "Memories Allternit learns from your chats will appear here.",
+                            art: .memory,
+                            size: .panel
+                        )
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        FriendlyStateView(
+                            style: .empty,
+                            icon: "magnifyingglass",
+                            title: "No matches",
+                            message: "No memories match your search.",
+                            art: .search,
+                            size: .panel
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
                 } else {
                     LazyVStack(spacing: 0) {
                         ForEach(filtered) { document in
@@ -644,6 +656,7 @@ private struct MemoryItemsSection: View {
                     .font(.caption).foregroundColor(Theme.statusError)
             }
             if rows.isEmpty {
+                if !search.isEmpty { EmptyArt(kind: .search, size: EmptyArtSize.inline.points) }
                 Text(search.isEmpty ? "Nothing remembered yet. Memories from your chats and your twin appear here."
                                     : "No memories match your search.")
                     .font(.footnote).foregroundColor(Color("TextSecondary"))

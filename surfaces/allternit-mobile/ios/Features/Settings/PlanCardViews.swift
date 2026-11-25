@@ -225,6 +225,7 @@ struct AccountUsageCardsView: View {
                         .accessibilityLabel("Loading connected accounts")
                 } else {
                     UsageCard {
+                        EmptyArt(kind: .coins, size: EmptyArtSize.inline.points)
                         UsageNote(text: "No connected account reports usage. Subscriptions and API keys you connect show their limits here.")
                     }
                 }

@@ -417,6 +417,7 @@ private struct ConnMoreStates: View {
         case .ready:
             if model.items.isEmpty {
                 let trimmed = query.trimmingCharacters(in: .whitespaces)
+                EmptyArt(kind: .sheets, size: EmptyArtSize.inline.points)
                 Text(trimmed.isEmpty ? "Nothing more to add right now." : "Nothing matches “\(trimmed)”.")
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))

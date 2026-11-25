@@ -155,7 +155,8 @@ struct DevicePairingView: View {
                     style: .empty,
                     icon: "laptopcomputer",
                     title: "No paired devices",
-                    message: "Install Allternit Desktop or run `gizzi pair` on a computer to connect it."
+                    message: "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.",
+                    art: .connectScene
                 )
             } else {
                 ForEach(deviceGroups, id: \.latest.id) { group in
