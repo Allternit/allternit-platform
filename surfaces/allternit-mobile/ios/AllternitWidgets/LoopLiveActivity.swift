@@ -94,6 +94,8 @@ private struct LockScreenView: View {
                 Text("\(context.state.iterationsCompleted) of \(context.state.maxIterations) iterations · \(context.state.state.capitalized)")
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
+                LiveMarkerLine(progress: progress, start: "0", end: "\(context.state.maxIterations)",
+                               tint: LoopLiveActivityWidget.statusColor(context.state.state))
             }
 
             Spacer(minLength: 0)
