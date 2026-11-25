@@ -171,8 +171,7 @@ struct DecisionsDeckView: View {
             if showsEmptyState, items.isEmpty, approvals.isEmpty, store.questionsError == nil {
                 if store.hasLoaded {
                     VStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.title2)
+                        EmptyArt(kind: .bell)
                         Text("Nothing is waiting for you.")
                             .font(.subheadline)
                         Text("When an agent asks a question or a Factory step needs approval, it shows here.")

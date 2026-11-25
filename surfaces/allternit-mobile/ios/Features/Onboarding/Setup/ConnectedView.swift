@@ -411,9 +411,8 @@ struct SetupChecklistCard: View {
 
     private func rowView(_ row: SetupCheckRow) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: row.status == .ready ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 18))
-                .foregroundStyle(row.status == .ready ? SetupPalette.ok : SetupPalette.lineDash)
+            BadgePop(shape: .seal, earned: row.status == .ready, size: 22,
+                     earnedLabel: "Ready", notEarnedLabel: "Not ready")
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.title + (row.required ? "" : " (optional)"))
                     .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(SetupPalette.ink)

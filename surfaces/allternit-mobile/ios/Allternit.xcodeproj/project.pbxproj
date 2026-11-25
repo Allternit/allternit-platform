@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F76D64E7787D857CA421E255 /* BadgePop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B8779CA8D738FEEC194CC1 /* BadgePop.swift */; };
+		631F3687B73E7836274DAD18 /* EmptyArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57805FF8DC575D3F138B5797 /* EmptyArt.swift */; };
 		003C9CE96A759EB1EC94861D /* BYOCStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E833C0D51467E65C4A3040EC /* BYOCStore.swift */; };
 		00798A3522A4D670733D87BA /* BrainGitClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EF8244489CC0664EF5D30B3 /* BrainGitClient.swift */; };
 		0079E98776F0118F9A4104B4 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879AEECFFCCDD7AD3D79A2CA /* AppGroupStore.swift */; };
@@ -1086,6 +1088,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		14B8779CA8D738FEEC194CC1 /* BadgePop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgePop.swift; sourceTree = "<group>"; };
+		57805FF8DC575D3F138B5797 /* EmptyArt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyArt.swift; sourceTree = "<group>"; };
 		0024821EF27E7A461509D10C /* MeetingActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActivityAttributes.swift; sourceTree = "<group>"; };
 		016D2B4BBA74B1288077A913 /* WorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStore.swift; sourceTree = "<group>"; };
 		01952C2C099D7536A35E0A3D /* OnYourComputer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnYourComputer.swift; sourceTree = "<group>"; };
@@ -2842,6 +2846,8 @@
 				91A76E6C9CF44F70823C8F0D /* PolishControls.swift */,
 				FA248096E3EFD1C0F6B359B7 /* PolishTokens.swift */,
 				D71E9B45F5D6F57046B40046 /* ThinkingOrb.swift */,
+				14B8779CA8D738FEEC194CC1 /* BadgePop.swift */,
+				57805FF8DC575D3F138B5797 /* EmptyArt.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -5153,6 +5159,8 @@
 				E0DC0E1E8A05B5F96AD473F6 /* TerminalServiceClient.swift in Sources */,
 				FA39A9D1C72C62138B55E2D5 /* TerminalSessionView.swift in Sources */,
 				683F2944F5F17551266D58E1 /* ThinkingOrb.swift in Sources */,
+				F76D64E7787D857CA421E255 /* BadgePop.swift in Sources */,
+				631F3687B73E7836274DAD18 /* EmptyArt.swift in Sources */,
 				CD1454C6B44C44395DC2F23E /* ThinkingSliderView.swift in Sources */,
 				93C6789B18079E7BA58BA1E9 /* ThreadShareClient.swift in Sources */,
 				5F3BDE940C355E66EB28C582 /* ThreadShareSheet.swift in Sources */,
