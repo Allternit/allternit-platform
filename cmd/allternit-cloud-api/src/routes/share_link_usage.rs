@@ -7,16 +7,27 @@
 //! equal env `ALLTERNIT_SHARE_USAGE_SECRET` (32+ chars, constant-time compare);
 //! no secret configured = 503, wrong = 401. No user session.
 //!
-//! UNVERIFIED event shape (OpenTunnel v0.6.2's real payload is not in this
-//! repo; check against the relay's first real post before the train ships):
-//! one event or `{ "events": [ ... ] }` (max 500), each
-//! `{ id?, tunnel_id?, hostname, bytes_in?, bytes_out?, bytes?, window_start?, at? }`.
-//! `hostname` is `<name>.live.<APP_DOMAIN>`; its first label is the link's
-//! `subdomain`. bytes = `bytes`, else `bytes_in + bytes_out`. The idempotency key
-//! is `id`, else `<tunnel_id or hostname>:<window_start or at>`; an event with
-//! neither is skipped. `at`/`window_start` (RFC 3339) picks the UTC month, else now.
+//! The relay also authenticates as `Authorization: Bearer <secret>`, which is
+//! what OpenTunnel sends (set its `ANALYTICS_TOKEN` to the same secret).
 //!
-//! Answer `{ accepted, duplicate, unmatched }`. A replayed event counts once.
+//! What OpenTunnel v0.6.2 really posts (`crates/opentunnel-server/src/analytics.rs`
+//! :65-153, `relay.rs`:278-310): a JSON array (up to 200, flushed every 2 s,
+//! never retried) of `{ source: "opentunnel", type, timestamp (ISO, ms),
+//! payload: { schema_version: 1, region?, tunnel_id, ... } }`. Bytes come only
+//! in `type: "connection.closed"` (`bytes_in`, `bytes_out`, `duration_ms`,
+//! `outcome`), one event per visitor connection. The tunnel ID is the link's
+//! `subdomain` (relay admission patch, `infra/opentunnel/patches/0001`). Other
+//! relay event types are counted as `ignored`.
+//!
+//! Also accepted (tests, manual backfill): one event or `{ "events": [ ... ] }`
+//! (max 500), each `{ id?, tunnel_id?, hostname?, bytes_in?, bytes_out?, bytes?,
+//! window_start?, at? }`. `hostname` is `<name>.live.<APP_DOMAIN>`; its first
+//! label is the link's `subdomain`, else `tunnel_id` is. bytes = `bytes`, else
+//! `bytes_in + bytes_out`. The idempotency key is `id`, else `<tunnel_id or
+//! hostname>:<window_start or at>`; relay events key on tunnel, timestamp,
+//! duration and bytes. `at`/`window_start`/`timestamp` picks the UTC month.
+//!
+//! Answer `{ accepted, duplicate, unmatched, ignored }`. A replayed event counts once.
 //! Only live links are metered; an unknown hostname is `unmatched`.
 
 use axum::{
@@ -64,8 +75,40 @@ struct Event {
     period: String,
 }
 
+/// An OpenTunnel envelope `{ source: "opentunnel", type, timestamp, payload }`.
+fn relay_envelope(v: &Value) -> Option<(&str, &Value)> {
+    if v.get("source").and_then(Value::as_str) != Some("opentunnel") {
+        return None;
+    }
+    Some((v.get("type").and_then(Value::as_str).unwrap_or_default(), v.get("payload")?))
+}
+
+/// A relay event that carries no bytes (tunnel.created, bridge.connected, ...).
+fn ignored_relay_event(v: &Value) -> bool {
+    relay_envelope(v).is_some_and(|(kind, _)| kind != "connection.closed")
+}
+
 fn parse_event(v: &Value) -> Option<Event> {
-    let hostname = v.get("hostname").and_then(Value::as_str)?.trim().to_ascii_lowercase();
+    if let Some((_, payload)) = relay_envelope(v) {
+        let tunnel = payload.get("tunnel_id").and_then(Value::as_str)?.trim().to_ascii_lowercase();
+        let timestamp = v.get("timestamp").and_then(Value::as_str)?.trim();
+        let n = |k: &str| payload.get(k).and_then(Value::as_i64).filter(|b| *b >= 0).unwrap_or(0);
+        let period = DateTime::parse_from_rfc3339(timestamp)
+            .map(|t| period_of(t.with_timezone(&Utc)))
+            .unwrap_or_else(|_| current_period());
+        return (!tunnel.is_empty()).then(|| Event {
+            key: format!("ot:{tunnel}:{timestamp}:{}:{}:{}", n("duration_ms"), n("bytes_in"), n("bytes_out")),
+            subdomain: tunnel.clone(),
+            bytes: n("bytes_in").saturating_add(n("bytes_out")),
+            period,
+        });
+    }
+    let hostname = v
+        .get("hostname")
+        .and_then(Value::as_str)
+        .or_else(|| v.get("tunnel_id").and_then(Value::as_str))?
+        .trim()
+        .to_ascii_lowercase();
     let subdomain = hostname.split('.').next().filter(|s| !s.is_empty())?.to_string();
     let n = |k: &str| v.get(k).and_then(Value::as_i64).filter(|b| *b >= 0);
     let bytes = n("bytes").or_else(|| match (n("bytes_in"), n("bytes_out")) {
@@ -90,19 +133,27 @@ async fn receive(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(bo
     if expected.len() < 32 {
         return fail(StatusCode::SERVICE_UNAVAILABLE, "not_configured", "Usage metering is not configured on this deployment.");
     }
-    let given = headers.get(SECRET_HEADER).and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")));
+    let given = headers.get(SECRET_HEADER).and_then(|v| v.to_str().ok()).or(bearer).unwrap_or_default();
     if !constant_time_eq(&expected, given) {
         return fail(StatusCode::UNAUTHORIZED, "unauthorized", "Invalid usage credential.");
     }
-    let items: Vec<Value> = match body.get("events").and_then(Value::as_array) {
-        Some(a) => a.clone(),
-        None => vec![body],
+    let items: Vec<Value> = match (body.as_array(), body.get("events").and_then(Value::as_array)) {
+        (Some(a), _) | (None, Some(a)) => a.clone(),
+        (None, None) => vec![body],
     };
     if items.len() > MAX_EVENTS {
         return fail(StatusCode::BAD_REQUEST, "too_many_events", "Send up to 500 events per request.");
     }
-    let (mut accepted, mut duplicate, mut unmatched) = (0, 0, 0);
+    let (mut accepted, mut duplicate, mut unmatched, mut ignored) = (0, 0, 0, 0);
     for item in &items {
+        if ignored_relay_event(item) {
+            ignored += 1;
+            continue;
+        }
         let Some(ev) = parse_event(item) else {
             unmatched += 1;
             continue;
@@ -117,7 +168,7 @@ async fn receive(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(bo
             }
         }
     }
-    Json(json!({ "accepted": accepted, "duplicate": duplicate, "unmatched": unmatched })).into_response()
+    Json(json!({ "accepted": accepted, "duplicate": duplicate, "unmatched": unmatched, "ignored": ignored })).into_response()
 }
 
 enum Outcome {

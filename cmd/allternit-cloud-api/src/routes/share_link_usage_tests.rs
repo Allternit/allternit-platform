@@ -34,6 +34,18 @@ async fn post_usage(state: &Arc<ApiState>, secret: Option<&str>, body: Value) ->
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
+async fn post_relay_batch(state: &Arc<ApiState>, secret: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/internal/share-links/usage")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {secret}"));
+    let res = routes().with_state(state.clone()).oneshot(req.body(axum::body::Body::from(body.to_string())).unwrap()).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
 async fn create_live(state: &Arc<ApiState>, device: &str, name: &str) -> (StatusCode, Value) {
     let body = json!({ "kind": "live", "subject": "mcp", "runtime_device_id": device, "subdomain": name }).to_string();
     let res = crate::routes::share_links::routes()
@@ -79,6 +91,14 @@ async fn usage_events_move_a_links_bytes_once_and_over_20_gb_blocks_new_live_lin
     let w = json!({ "tunnel_id": "t1", "window_start": "2999-01-01T00:00:00Z", "hostname": host, "bytes": 50 });
     post_usage(&state, Some(SECRET), w.clone()).await;
     assert_eq!(post_usage(&state, Some(SECRET), w).await.1["duplicate"], 1);
+    // OpenTunnel v0.6.2's real post: a bare array of envelopes, bearer auth; only connection.closed has bytes.
+    let closed = json!({ "source": "opentunnel", "type": "connection.closed", "timestamp": "2999-02-01T00:00:01.000Z",
+        "payload": { "schema_version": 1, "tunnel_id": name, "outcome": "closed", "duration_ms": 12, "bytes_in": 3, "bytes_out": 4 } });
+    let created = json!({ "source": "opentunnel", "type": "tunnel.created", "timestamp": "2999-02-01T00:00:00.000Z",
+        "payload": { "schema_version": 1, "tunnel_id": name } });
+    let (status, out) = post_relay_batch(&state, SECRET, json!([created, closed.clone(), closed])).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!((out["accepted"].as_i64(), out["duplicate"].as_i64(), out["ignored"].as_i64()), (Some(1), Some(1), Some(1)), "{out}");
 
     let (month, total): (i64, i64) = sqlx::query_as(
         "SELECT (SELECT bytes_month FROM share_links WHERE id = $1), \
@@ -89,7 +109,7 @@ async fn usage_events_move_a_links_bytes_once_and_over_20_gb_blocks_new_live_lin
     .await
     .unwrap();
     assert_eq!(month, 1000, "link bytes moved by exactly one event");
-    assert_eq!(total, 1050, "the future-month window is kept apart from this month");
+    assert_eq!(total, 1057, "future-month events (window + relay) are kept apart from this month");
 
     // Over 20 GB this month: a new live link is refused with cap_reached bytes.
     let big = json!({ "id": "evt_big", "hostname": host, "bytes": MAX_LIVE_BYTES_MONTH });
