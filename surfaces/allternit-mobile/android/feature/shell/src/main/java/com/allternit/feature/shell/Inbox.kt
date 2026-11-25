@@ -463,13 +463,22 @@ internal fun InboxSheet(
                     onAction = { scope.launch { store.refresh() } },
                     modifier = Modifier.align(Alignment.Center).padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_warning), contentDescription = null, tint = c.textSecondary) }
-                store.items.isEmpty() -> FriendlyState(
-                    style = FriendlyStyle.Empty,
-                    title = if (focusedIsGone) "Already handled" else "You're all caught up",
-                    message = "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
-                    modifier = Modifier.align(Alignment.Center).padding(20.dp).testTag("inboxEmpty"),
-                    art = com.allternit.core.design.EmptyArtKind.Bell,
-                ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_bell_slash), contentDescription = null, tint = c.textSecondary) }
+                store.items.isEmpty() -> {
+                    // Team approvals live on the runtime's team store, not in the inbox list,
+                    // so they still show when the inbox itself is empty.
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                        if (teamMapOn) com.allternit.feature.bots.TeamAsksSection(reloadKey = refreshing)
+                        Box(Modifier.fillMaxWidth().weight(1f)) {
+                            FriendlyState(
+                                style = FriendlyStyle.Empty,
+                                title = if (focusedIsGone) "Already handled" else "You're all caught up",
+                                message = "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
+                                modifier = Modifier.align(Alignment.Center).padding(20.dp).testTag("inboxEmpty"),
+                                art = com.allternit.core.design.EmptyArtKind.Bell,
+                            ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_bell_slash), contentDescription = null, tint = c.textSecondary) }
+                        }
+                    }
+                }
                 else -> PullToRefreshBox(
                     isRefreshing = refreshing,
                     onRefresh = {
