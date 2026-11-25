@@ -50,7 +50,7 @@ struct ArtifactCardPreview: View {
                 let loaded = await store.preview(for: summary)
                 preview = loaded
                 // No byte progress exists for a thumbnail, so band field, then cells bloom.
-                if case .image(let image)? = loaded, !reduceMotion {
+                if case .image(let image) = loaded, !reduceMotion {
                     revealing = image
                     try? await Task.sleep(nanoseconds: 800_000_000)
                     revealing = nil
