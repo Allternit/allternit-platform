@@ -443,6 +443,7 @@ struct CodeSessionPanel: View {
     @StateObject private var environmentStore = EnvironmentStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @AppStorage(CodePermissionMode.storageKey) private var permissionRaw = CodePermissionMode.manual.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var context: SessionContextBreakdown? = nil
     @State private var prs: [LinkedPullRequest] = []
@@ -519,13 +520,31 @@ struct CodeSessionPanel: View {
                 } else {
                     ForEach(prs) { pr in
                         Link(destination: URL(string: pr.url) ?? URL(string: "https://github.com")!) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(pr.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                                Text("\(pr.repo) #\(pr.number) · \(pr.state.capitalized)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(prTone(pr.state))
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(pr.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                                    Spacer(minLength: 4)
+                                    prPill(pr.state)
+                                }
+                                HStack(spacing: 8) {
+                                    Text("\(pr.repo) #\(pr.number)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(Color("TextSecondary"))
+                                        .strikethrough(pr.state == "merged", color: Color("TextTertiary"))
+                                    if let add = pr.additions, let del = pr.deletions {
+                                        Text("+\(add)").font(.system(size: 11, design: .monospaced)).foregroundColor(Theme.statusSuccess)
+                                        Text("-\(del)").font(.system(size: 11, design: .monospaced)).foregroundColor(Theme.statusError)
+                                    }
+                                }
+                                if let line = prLine(pr.state) {
+                                    Label(line.text, systemImage: line.symbol)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(prTone(pr.state))
+                                }
                             }
+                            .padding(.vertical, 2)
                         }
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -750,7 +769,9 @@ struct CodeSessionPanel: View {
         Group {
             switch status {
             case .completed: Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
-            case .inProgress: Image(systemName: "circle.dotted.circle").foregroundColor(Color("AccentPrimary"))
+            case .inProgress:
+                Image(systemName: "circle.dotted.circle").foregroundColor(Color("AccentPrimary"))
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
             case .failed: Image(systemName: "xmark.circle.fill").foregroundColor(Theme.statusError)
             case .pending: Image(systemName: "circle").foregroundColor(Color("TextTertiary"))
             }
@@ -778,6 +799,28 @@ struct CodeSessionPanel: View {
         case "open": return Theme.statusSuccess
         case "closed": return Theme.statusError
         default: return Color("TextTertiary")
+        }
+    }
+
+    /// The status pill: tinted capsule, purple when merged, orange on conflict.
+    private func prPill(_ state: String) -> some View {
+        let tone = prTone(state)
+        return Text(state == "conflict" ? "Conflict" : state.capitalized)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundColor(tone)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tone.opacity(0.14)))
+    }
+
+    /// One plain line under the row for the states that need it.
+    private func prLine(_ state: String) -> (symbol: String, text: String)? {
+        switch state {
+        case "conflict": return ("exclamationmark.triangle.fill", "Conflicts with main. Resolve them before merging.")
+        case "merged": return ("arrow.triangle.merge", "Merged into main")
+        case "closed": return ("xmark.circle", "Closed without merging")
+        case "draft": return ("pencil", "Draft")
+        default: return nil
         }
     }
 

@@ -26,6 +26,9 @@ struct BotsDrawerRail: View {
     @State private var isNewProjectPresented = false
     @State private var newProjectName = ""
     @State private var railError: String?
+    /// Index in `promoted` under the finger while scrubbing the promoted row (nil = not scrubbing).
+    @State private var scrubIndex: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let maxPromoted = 3
 
@@ -265,10 +268,27 @@ struct BotsDrawerRail: View {
         let candidates = listBots
         if !promoted.isEmpty || !candidates.isEmpty {
             HStack(alignment: .top, spacing: 4) {
-                ForEach(promoted) { bot in
+                ForEach(Array(promoted.enumerated()), id: \.element.id) { index, bot in
                     VStack(spacing: 4) {
                         Button { onOpenBot(bot.id) } label: {
                             LiveBotStatusAvatar(bot: bot, size: 60, tiled: true)
+                                .scaleEffect(scrubScale(index))
+                                .overlay(alignment: .top) {
+                                    if scrubIndex == index {
+                                        Text(bot.botDisplayName)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(Color("BgPrimary"))
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(Capsule().fill(Color("TextPrimary")))
+                                            .fixedSize()
+                                            .offset(y: -34)
+                                            .transition(.opacity)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
+                                .zIndex(scrubIndex == index ? 1 : 0)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open \(bot.botDisplayName)")
@@ -325,7 +345,31 @@ struct BotsDrawerRail: View {
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
+            // Touch and hold, then slide along the row: the avatar under the finger grows
+            // and names itself. A plain tap still opens the bot.
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.25)
+                    .sequenced(before: DragGesture(minimumDistance: 0))
+                    .onChanged { value in
+                        guard case .second(true, let drag?) = value else { return }
+                        // Items are 84pt wide with 4pt gaps, inside 8pt padding.
+                        let raw = Int(((drag.location.x - 8) / 88).rounded(.down))
+                        let index = min(max(raw, 0), max(promoted.count - 1, 0))
+                        guard promoted.indices.contains(index), index != scrubIndex else { return }
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.8)) { scrubIndex = index }
+                    }
+                    .onEnded { _ in
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) { scrubIndex = nil }
+                    }
+            )
         }
+    }
+
+    /// The focused avatar grows and its neighbours ease down a little.
+    private func scrubScale(_ index: Int) -> CGFloat {
+        guard let focus = scrubIndex else { return 1 }
+        return focus == index ? 1.3 : 0.92
     }
 
     // MARK: - Sections
