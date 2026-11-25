@@ -424,7 +424,8 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
             )
         } else {
             // The block-grid slider (iOS ThinkingSliderView): its level is the effort the chat sends.
-            ThinkingSlider(thinking = thinking, value = models.level(m) ?: thinking.default) { models.chooseEffort(it) }
+            val cost = if (m.inputPer1mUsd != null && m.outputPer1mUsd != null) "Higher effort uses more tokens. $%.2f in, $%.2f out per 1M tokens.".format(m.inputPer1mUsd, m.outputPer1mUsd) else null
+            ThinkingSlider(thinking = thinking, value = models.level(m) ?: thinking.default, costLine = cost) { models.chooseEffort(it) }
         }
     }
 }
