@@ -182,9 +182,13 @@ struct NativeSessionPickerSheet: View {
                               actionTitle: "Retry", action: { Task { await load() } })
                 .listRowBackground(Color.clear)
         } else if filtered.isEmpty {
-            Text(query.isEmpty ? "No CLI sessions found on your computer." : "Nothing matches.")
-                .font(.footnote)
-                .foregroundColor(Color("TextSecondary"))
+            VStack(spacing: 8) {
+                EmptyArt(kind: .search, size: .panel)
+                Text(query.isEmpty ? "No CLI sessions found on your computer." : "Nothing matches.")
+                    .font(.footnote)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .frame(maxWidth: .infinity)
         } else {
             Section {
                 ForEach(filtered) { item in

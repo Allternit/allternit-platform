@@ -53,7 +53,8 @@ struct ShellSearchView: View {
                         style: .empty,
                         icon: "magnifyingglass",
                         title: "No results",
-                        message: "Nothing matches “\(query)”."
+                        message: "Nothing matches “\(query)”.",
+                        art: .search
                     )
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
