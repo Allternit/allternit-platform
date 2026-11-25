@@ -62,7 +62,7 @@ const snake = (s) => s.replace(/([a-z])([A-Z])/g, '$1_$2').replace(/-/g, '_').to
 const jsonLit = (v) => JSON.stringify(v);
 const kt = (v) => JSON.stringify(v).replace(/\$/g, '\\$');
 const sw = (v) => JSON.stringify(v);
-const nul = (v, f) => (v === null || v === undefined ? 'null' : f(v));
+const nul = (v, f, none = 'null') => (v === null || v === undefined ? none : f(v));
 const canOf = (m, k) => (m.can[k] ? (m.can[k].default ? 'on' : 'off') : 'none');
 
 function ts() {
@@ -99,7 +99,7 @@ function swift() {
   o.push('    static let all: [AgentModeEntry] = [');
   for (const m of c.modes) {
     const l = m.launch;
-    o.push(`        AgentModeEntry(id: ${sw(m.id)}, label: ${sw(m.label)}, icon: ${sw(m.icon)}, artifact: ${m.artifact}, beta: ${m.beta}, isNew: ${m.new}, placeholder: ${sw(m.placeholder)}, launchType: .${l.type}, agentMode: ${nul(l.agentMode, sw)}, session: ${nul(l.session, sw)}, pick: ${nul(l.pick, sw)}, libraryKind: ${nul(m.libraryKind, sw)}, surfaces: ${sw(m.surfaces)}, connectors: .${canOf(m, 'connectors')}, storage: .${canOf(m, 'storage')}, ai: .${canOf(m, 'ai')}),`);
+    o.push(`        AgentModeEntry(id: ${sw(m.id)}, label: ${sw(m.label)}, icon: ${sw(m.icon)}, artifact: ${m.artifact}, beta: ${m.beta}, isNew: ${m.new}, placeholder: ${sw(m.placeholder)}, launchType: .${l.type}, agentMode: ${nul(l.agentMode, sw, 'nil')}, session: ${nul(l.session, sw, 'nil')}, pick: ${nul(l.pick, sw, 'nil')}, libraryKind: ${nul(m.libraryKind, sw, 'nil')}, surfaces: ${sw(m.surfaces)}, connectors: .${canOf(m, 'connectors')}, storage: .${canOf(m, 'storage')}, ai: .${canOf(m, 'ai')}),`);
   }
   o.push('    ]', '');
   o.push('    static func mode(id: String) -> AgentModeEntry? {', '        let key = legacyIds[id] ?? id', '        return all.first { $0.id == key }', '    }', '');
