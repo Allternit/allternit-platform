@@ -92,6 +92,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/mcp", get(agents_endpoint).post(agents_endpoint))
         .route("/.well-known/oauth-protected-resource", get(well_known_agents))
         .route("/.well-known/oauth-protected-resource/*rest", get(well_known_at))
+        .merge(super::mcp_edge_cards::routes())
 }
 
 // ─── configuration and URLs ───────────────────────────────────────────────────
