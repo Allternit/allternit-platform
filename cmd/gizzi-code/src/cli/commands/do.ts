@@ -5,7 +5,7 @@
  *   gizzi do stripe refund_payment --arg order_id=1042 --arg amount=320
  *   gizzi do stripe refund_payment --bot refunds --yes --json
  *
- * Backed by allternit-api /api/v1/bar/* (intent, review, jobs) and the MCP elicitation reply route.
+ * Backed by the runtime api (local allternit-api, else the cloud relay; see runtime-client.ts) /api/v1/bar/* (intent, review, jobs) and the MCP elicitation reply route.
  * `--yes` skips only the "Run it?" confirm. It never skips an owner rule: when the approver is
  * someone else the ask is still sent and this command waits for them.
  */
@@ -14,7 +14,7 @@ import * as prompts from "@clack/prompts"
 import { EOL } from "os"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
-import { Flag } from "@/runtime/context/flag/flag"
+import { RuntimeError, runtimeJson, runtimeSse, setComputer } from "@/cli/commands/runtime-client"
 import {
   errorMessage,
   formatReview,
@@ -26,99 +26,11 @@ import {
   type Review,
 } from "@/cli/commands/do-format"
 
-const API_BASE = (process.env.GIZZI_BAR_API_URL ?? Flag.GIZZI_PLATFORM_API_URL).replace(/\/+$/, "")
-
-class BarError extends Error {
-  constructor(public status: number, public code: string | undefined, message: string, public data?: any) {
-    super(message)
-  }
-}
-
-async function token(): Promise<string | undefined> {
-  if (process.env.ALLTERNIT_API_TOKEN) return process.env.ALLTERNIT_API_TOKEN
-  try {
-    const fs = await import("fs")
-    const path = await import("path")
-    const os = await import("os")
-    const dir = process.env.GIZZI_CONFIG_DIR ?? path.join(os.homedir(), ".config", "gizzi-code")
-    return JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8"))?.accessToken || undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Reads the four error body shapes (contract section 3). */
-function parseError(status: number, raw: string): BarError {
-  let body: any
-  try {
-    body = JSON.parse(raw)
-  } catch {
-    body = undefined
-  }
-  const e = body?.error
-  let code: string | undefined = typeof body?.code === "string" ? body.code : undefined
-  let message: string | undefined
-  if (e && typeof e === "object") {
-    code = e.data?.code ?? e.code ?? code
-    message = typeof e.message === "string" ? e.message : undefined
-  } else if (typeof e === "string") {
-    if (code) message = e
-    else if (/^[a-z_]+$/.test(e)) code = e
-    else message = e
-    if (typeof body?.message === "string") message = body.message
-  }
-  const data = e?.data ?? body?.data ?? body
-  return new BarError(status, code, errorMessage(status, code, message), data)
-}
-
-async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, bot?: string): Promise<T> {
-  const t = await token()
-  if (!t) throw new BarError(401, undefined, "Not signed in. Run `gizzi auth login` first.")
-  let res: Response
-  try {
-    res = await fetch(`${API_BASE}/api/v1${path}`, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${t}`,
-        ...(bot ? { "X-Allternit-Bot": bot } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-  } catch {
-    throw new BarError(0, "no_runtime", errorMessage(0, "no_runtime"))
-  }
-  if (!res.ok) throw parseError(res.status, await res.text().catch(() => ""))
-  return (await res.json()) as T
-}
-
-async function* sse(path: string, signal: AbortSignal): AsyncGenerator<any> {
-  const t = await token()
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
-    headers: { Accept: "text/event-stream", Authorization: `Bearer ${t}` },
-    signal,
-  })
-  if (!res.ok || !res.body) throw parseError(res.status, await res.text().catch(() => ""))
-  const reader = res.body.getReader()
-  const dec = new TextDecoder()
-  let buf = ""
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) return
-    buf += dec.decode(value, { stream: true })
-    let i: number
-    while ((i = buf.search(/\r?\n\r?\n/)) >= 0) {
-      const block = buf.slice(0, i)
-      buf = buf.slice(i).replace(/^\r?\n\r?\n/, "")
-      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n")
-      if (!data) continue
-      try {
-        yield JSON.parse(data)
-      } catch {}
-    }
-  }
-}
+const BarError = RuntimeError
+const friendly = errorMessage
+const call = <T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, bot?: string) =>
+  runtimeJson<T>(method, `/api/v1${path}`, body, friendly, bot ? { "X-Allternit-Bot": bot } : undefined)
+const sse = (path: string, signal: AbortSignal) => runtimeSse(`/api/v1${path}`, signal, friendly)
 
 const ok = <T>(v: T | symbol): T => {
   if (prompts.isCancel(v)) throw new UI.CancelledError()
@@ -249,11 +161,13 @@ export const DoCommand = cmd({
       .positional("tool", { type: "string", describe: "tool name (asked if left out)" })
       .option("arg", { type: "string", array: true, default: [] as string[], describe: "blank value, key=value (repeatable)" })
       .option("bot", { type: "string", describe: "run as this bot id" })
+      .option("computer", { type: "string", describe: "which online computer to use when more than one is connected" })
       .option("yes", { alias: "y", type: "boolean", describe: "skip the confirm; never skips an owner approval" })
       .option("json", { type: "boolean", describe: "print machine-readable events (JSON lines), no prompts"  }),
   async handler(args) {
     const json = !!args.json
     const bot = args.bot as string | undefined
+    setComputer(args.computer as string | undefined)
     const say = (s: string) => (json ? undefined : UI.println(s))
     try {
       const given = parseArgs((args.arg as string[]) ?? [])
@@ -355,7 +269,18 @@ async function follow(initial: BarJob, approver: string | null, json: boolean, b
       }
     }
   } catch (e: any) {
-    if (e?.name !== "AbortError") throw e
+    if (e?.name !== "AbortError") {
+      if (e instanceof RuntimeError && e.code === "no_runtime") throw e
+      // The event stream failed: fall back to reading the job every 1.5 s.
+      if (!json) process.stdout.write("\n(Live updates are not available; checking every 1.5 s.)\n")
+      while (!ac.signal.aborted && !TERMINAL.includes(job.state)) {
+        await new Promise((r) => setTimeout(r, 1500))
+        if (confirming) continue
+        job = (await call<{ job: BarJob }>("GET", `/bar/jobs/${job.id}`, undefined, bot)).job
+        if (json) console.log(JSON.stringify({ type: "bar_job", job }))
+        else render()
+      }
+    }
   } finally {
     clearInterval(timer)
     process.off("SIGINT", onSigint)
