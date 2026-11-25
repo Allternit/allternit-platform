@@ -127,6 +127,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free disk space
+        # Run 45580161585 (1.1.22) died building the x64 DMG with
+        # "hdiutil: convert failed - No space left on device". The job builds
+        # two .app bundles plus DMGs and zips for both arches, so drop the
+        # runner's preinstalled Android SDK and iOS simulator images, which
+        # this job never uses. Xcode itself stays (native helpers need it).
+        shell: bash
+        run: |
+          df -h / | tail -1
+          sudo rm -rf "$HOME/Library/Android" /usr/local/share/android-commandlinetools || true
+          xcrun simctl delete all >/dev/null 2>&1 || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Images /Library/Developer/CoreSimulator/Caches "$HOME/Library/Developer/CoreSimulator" || true
+          df -h / | tail -1
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
