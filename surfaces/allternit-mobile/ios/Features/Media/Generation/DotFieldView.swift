@@ -27,6 +27,8 @@ struct DotFieldView: View {
     var mode: Mode
     /// Dot pitch in points.
     var pitch: CGFloat = 9
+    /// Crop the picture from the top edge instead of the center (cards that show the top of a page).
+    var anchorTop = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -67,7 +69,7 @@ struct DotFieldView: View {
 
     private func makeSampler(_ size: CGSize) -> DotSampler? {
         guard let image, size.width > 1, size.height > 1 else { return nil }
-        return DotSampler(image: image, size: size)
+        return DotSampler(image: image, size: size, anchorTop: anchorTop)
     }
 
     // MARK: - Drawing
@@ -147,7 +149,7 @@ struct DotFieldView: View {
             drawHalftone(&ctx, size: size, fraction: 1, ink: ink)
             var layer = ctx
             layer.opacity = q
-            layer.draw(Image(uiImage: image), in: CGRect(origin: .zero, size: size).aspectFillRect(of: image.size))
+            layer.draw(Image(uiImage: image), in: CGRect(origin: .zero, size: size).aspectFillRect(of: image.size, anchorTop: anchorTop))
         case .cells:
             let p = pitch
             var y = p / 2
@@ -173,7 +175,7 @@ struct DotFieldView: View {
             if q > 0.75 {
                 var layer = ctx
                 layer.opacity = (q - 0.75) * 4
-                layer.draw(Image(uiImage: image), in: CGRect(origin: .zero, size: size).aspectFillRect(of: image.size))
+                layer.draw(Image(uiImage: image), in: CGRect(origin: .zero, size: size).aspectFillRect(of: image.size, anchorTop: anchorTop))
             }
         }
     }
@@ -195,7 +197,7 @@ final class DotSampler {
     private let scaleX: CGFloat, scaleY: CGFloat
     private var data = [UInt8]()
 
-    init?(image: UIImage, size: CGSize) {
+    init?(image: UIImage, size: CGSize, anchorTop: Bool = false) {
         let maxSide: CGFloat = 200
         let k = min(1, maxSide / max(size.width, size.height))
         w = max(1, Int(size.width * k)); h = max(1, Int(size.height * k))
@@ -207,7 +209,7 @@ final class DotSampler {
                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
                   let src = image.cgImage else { return false }
             cg.interpolationQuality = .medium
-            let rect = CGRect(x: 0, y: 0, width: w, height: h).aspectFillRect(of: CGSize(width: src.width, height: src.height))
+            let rect = CGRect(x: 0, y: 0, width: w, height: h).aspectFillRect(of: CGSize(width: src.width, height: src.height), anchorTop: anchorTop)
             cg.draw(src, in: rect)
             return true
         }
@@ -223,10 +225,49 @@ final class DotSampler {
 
 extension CGRect {
     /// This rect grown (centered) so a picture of `source` size covers it.
-    func aspectFillRect(of source: CGSize) -> CGRect {
+    /// `anchorTop` pins the top edge (a thumbnail of the top of a page) instead of centering.
+    func aspectFillRect(of source: CGSize, anchorTop: Bool = false) -> CGRect {
         guard source.width > 0, source.height > 0, width > 0, height > 0 else { return self }
         let s = max(width / source.width, height / source.height)
         let nw = source.width * s, nh = source.height * s
-        return CGRect(x: minX - (nw - width) / 2, y: minY - (nh - height) / 2, width: nw, height: nh)
+        return CGRect(x: minX - (nw - width) / 2, y: anchorTop ? minY : minY - (nh - height) / 2, width: nw, height: nh)
+    }
+}
+
+// MARK: - Loading pane
+
+/// A pane that is waiting on a real load (an app, artifact or site preview, a
+/// thumbnail): the band dot field on the card color, with the caller's own
+/// words on top. Shown while `loading`; when it turns false the field fades out
+/// (no fade under Reduce Motion). The caller keeps the real content underneath.
+struct DotLoadingPane: View {
+    var loading: Bool
+    var label: String? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if loading {
+                ZStack {
+                    Color("FillNeutral")
+                    DotFieldView(mode: .field(.band, amplitude: 0.45))
+                    if let label {
+                        Text(label)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(Color("TextPrimary"))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Color("BgPanel")))
+                            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                    }
+                }
+                .transition(.opacity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label ?? "Loading")
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: loading)
+        .allowsHitTesting(loading)
     }
 }

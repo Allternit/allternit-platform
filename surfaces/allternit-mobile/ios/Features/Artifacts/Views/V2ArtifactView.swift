@@ -357,7 +357,7 @@ struct V2ArtifactView: View {
     @ViewBuilder
     private var content: some View {
         if isLoading {
-            ProgressView("Loading artifact…")
+            DotLoadingPane(loading: true, label: "Loading artifact…")
         } else if error != nil, needsSignIn {
             FriendlyStateView(
                 style: .empty,
