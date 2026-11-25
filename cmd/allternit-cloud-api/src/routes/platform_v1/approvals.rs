@@ -252,14 +252,32 @@ pub struct NewApproval<'a> {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// Owner routing (migration 165) carried by a new row's `proposed_action`:
+/// `approver_user_id` (who must approve), `rule_id` (the approval rule that
+/// routed it) and `actor_ref` (who asked, e.g. `b:<agent_id>`). Each is a
+/// non-empty string of at most 128 characters, else NULL. A row with no
+/// `approver_user_id` is unrouted: today's behavior.
+pub fn routing(proposed_action: &Value) -> [Option<String>; 3] {
+    ["approver_user_id", "rule_id", "actor_ref"].map(|k| {
+        proposed_action
+            .get(k)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && v.len() <= 128)
+            .map(str::to_string)
+    })
+}
+
 /// Insert the mirror row (`ON CONFLICT DO NOTHING`). `Some((row, true))` when
 /// this call created it, `Some((row, false))` when it already existed in the
 /// same project, `None` when `(source, source_ref)` belongs to another project.
+/// Owner routing comes from `proposed_action` ([`routing`]).
 pub async fn insert(db: &PgPool, n: NewApproval<'_>) -> Result<Option<(ApprovalRow, bool)>, sqlx::Error> {
     let resolved = n.status != "pending";
+    let [approver_user_id, rule_id, actor_ref] = routing(&n.proposed_action);
     let created: Option<ApprovalRow> = sqlx::query_as(&format!(
-        "INSERT INTO platform_approvals (id, project_id, source, source_ref, account_id, conversation_id, response_id, kind, proposed_action, status, expires_at, resolved_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CASE WHEN $12 THEN NOW() END) \
+        "INSERT INTO platform_approvals (id, project_id, source, source_ref, account_id, conversation_id, response_id, kind, proposed_action, status, expires_at, resolved_at, approver_user_id, rule_id, actor_ref) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CASE WHEN $12 THEN NOW() END, $13, $14, $15) \
          ON CONFLICT (source, source_ref) DO NOTHING RETURNING {COLS}"
     ))
     .bind(new_id("apr_"))
@@ -274,6 +292,9 @@ pub async fn insert(db: &PgPool, n: NewApproval<'_>) -> Result<Option<(ApprovalR
     .bind(n.status)
     .bind(n.expires_at)
     .bind(resolved)
+    .bind(approver_user_id)
+    .bind(rule_id)
+    .bind(actor_ref)
     .fetch_optional(db)
     .await?;
     if let Some(row) = created {
@@ -662,6 +683,14 @@ mod tests {
         assert!(serde_json::from_value::<DecideBody>(json!({ "decision": "deny", "reason": "no" })).is_ok());
         assert!(serde_json::from_value::<DecideBody>(json!({ "decision": "maybe" })).is_err());
         assert!(serde_json::from_value::<DecideBody>(json!({ "decision": "approve", "extra": 1 })).is_err());
+    }
+
+    #[test]
+    fn routing_reads_short_strings_only() {
+        let r = routing(&json!({ "approver_user_id": "user_owner", "rule_id": " arl_1 ", "actor_ref": "" }));
+        assert_eq!(r, [Some("user_owner".to_string()), Some("arl_1".to_string()), None]);
+        assert_eq!(routing(&json!({})), [None, None, None]);
+        assert_eq!(routing(&json!({ "approver_user_id": 7, "rule_id": "x".repeat(129) })), [None, None, None]);
     }
 
     #[test]

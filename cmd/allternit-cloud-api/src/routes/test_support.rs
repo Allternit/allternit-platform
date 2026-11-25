@@ -357,6 +357,7 @@ pub async fn platform_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/114_project_tracing.sql"),
         include_str!("../../migrations_pg/121_platform_items.sql"),
         include_str!("../../migrations_pg/122_platform_approvals.sql"),
+        include_str!("../../migrations_pg/165_approval_owner_routing.sql"),
         include_str!("../../migrations_pg/123_platform_decisions.sql"),
         include_str!("../../migrations_pg/126_key_governance.sql"),
     ] {
