@@ -96,7 +96,7 @@ const Export = cmd({
       const app = await findApp(args.slug)
       if (app.kind !== "artifact") fail(new Error("Only your own artifact apps can be exported."))
       const cur = (await cloud<{ app: Record<string, any> }>("GET", `/api/v2/artifacts/${encodeURIComponent(app.ref)}/app`)).app
-      const snapshot = { ...(cur.snapshot ?? cur.capability_snapshot ?? {}), export_mcp: args.mcp === "on" }
+      // The server stores this in app_capability_snapshot.export_mcp; the PUT body takes it top-level.
       await cloud("PUT", `/api/v2/artifacts/${encodeURIComponent(app.ref)}/app`, {
         name: cur.name ?? app.name,
         ...(cur.icon ? { icon: cur.icon } : {}),
@@ -104,7 +104,7 @@ const Export = cmd({
         ...(cur.install_scope ? { install_scope: cur.install_scope } : {}),
         ...(cur.tools ? { tools: cur.tools } : {}),
         ...(cur.skill_ref ? { skill_ref: cur.skill_ref } : {}),
-        snapshot,
+        export_mcp: args.mcp === "on",
       })
       process.stdout.write(`MCP export is ${args.mcp} for ${app.name}.\n`)
     } catch (e) {
