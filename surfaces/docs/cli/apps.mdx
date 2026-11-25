@@ -1,0 +1,41 @@
+---
+title: "Apps and share links in the terminal"
+description: "gizzi app lists, opens, installs and exports apps made from artifacts, and gizzi share makes and manages share links. The TUI /share links view pauses or stops them."
+---
+
+An app is an artifact with a name, an icon and a permission level. `gizzi app` works with the apps on your shelf, and `gizzi share` makes and manages the links that go with them. Both use your Allternit Cloud sign-in: `ALLTERNIT_API_TOKEN`, or this machine's pairing from `gizzi login`.
+
+## Apps
+
+```bash
+gizzi app list
+gizzi app open notes7
+gizzi app install notes7 --level app
+gizzi app export notes7 --mcp on
+```
+
+- `gizzi app list` prints a table with name, slug, provenance (you, org, server), level (browser, app or full) and whether it is installed. `--json` prints the raw rows.
+- `gizzi app open <slug>` prints the app's address, `https://<slug>.allternitusercontent.com`, and opens it in your browser.
+- `gizzi app install <slug> [--level browser|app|full]` installs the app at that level (default `browser`). If the app needs more than you have allowed, it prints what it asks for and exits with code 2. Run it again with `--yes` to allow it. A level above what the app's owner allows is refused.
+- `gizzi app export <slug> --mcp on|off` turns the app's MCP export on or off. Only your own apps can be exported.
+
+## Share links
+
+```bash
+gizzi share list
+gizzi share notes7
+gizzi share pause shl_123
+gizzi share pause shl_123 --resume
+gizzi share stop shl_123
+```
+
+- `gizzi share list` shows your links (`--all` adds stopped ones).
+- `gizzi share <app-slug>` makes a hosted link for an app and prints its address.
+- `gizzi share stop <id>` revokes a link. `gizzi share pause <id>` pauses it, and `--resume` turns it back on.
+- `gizzi share <port>` is for live links from this computer to a local port. Those are not live yet: it prints "Live links from this computer arrive with the relay (plan lane 39)" and exits with code 2. Nothing is shared.
+
+## In the terminal UI
+
+`/share links` lists your share links. `/share pause <id>`, `/share resume <id>` and `/share stop <id>` change one. `/share` on its own still shares the current conversation as a read-only link, and `/share off` turns that link off.
+
+See also [Files drive in the terminal](/cli/files).

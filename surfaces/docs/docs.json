@@ -496,6 +496,7 @@
               "cli/continue-anywhere",
               "cli/work",
               "cli/files",
+              "cli/apps",
               "cli/tasks",
               "cli/doctor",
               "cli/status",
