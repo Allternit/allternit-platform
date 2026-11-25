@@ -320,3 +320,36 @@ private actor FakeActivityTokenTransport: ActivityTokenTransport {
     func put(_ upload: ActivityTokenUpload) async throws { puts.append(upload) }
     func delete(token: String) async throws { deletes.append(token) }
 }
+
+/// Bar job receipts read past tense (CONTRACT.md section 5). Regression:
+/// the runtime's `bar_job.changed` push sends "<tool label> <amount>", and the
+/// Lock Screen showed "Refund payment €320" (#2999/#3000).
+@MainActor
+final class BarJobReceiptTests: XCTestCase {
+    func testPushedReceipt_readsPastTense() {
+        var state = TaskActivityAttributes.ContentState(state: "completed")
+        state.receipt = "Refund payment €320"
+        XCTAssertEqual(state.stateLine, "Refunded €320")
+        state.receipt = "Refund payment 320 CHF"
+        XCTAssertEqual(state.stateLine, "Refunded 320 CHF")
+        state.receipt = "Create invoice done"
+        XCTAssertEqual(state.stateLine, "Created invoice")
+        state.receipt = "Refunded €320"
+        XCTAssertEqual(state.stateLine, "Refunded €320")
+    }
+
+    /// The SSE wire form (`type`, `session_id`) from `GET /bar/jobs/:id/events`.
+    func testWireBarJobEvent_becomesLiveActivitySnapshot() throws {
+        let line = #"{"type":"bar_job","session_id":"bar:bjb_1","job":{"id":"bjb_1","title":"Refund payment","tool":"refund_payment","app":{"kind":"connector","ref":"mcp_stripe","name":"Stripe"},"args":{"amount":320,"currency":"eur"},"state":"completed","result":null,"error":null}}"#
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        guard case .job(let update)? = IslandBarClient.decode(obj, approverName: "Noah") else {
+            return XCTFail("bar_job event not decoded")
+        }
+        let snap = try XCTUnwrap(update.snapshot)
+        XCTAssertEqual(snap.jobId, "bjb_1")
+        XCTAssertEqual(snap.appName, "Stripe")
+        XCTAssertEqual(snap.amount, "€320")
+        XCTAssertEqual(snap.receipt, "Refunded €320")
+        XCTAssertEqual(BotLiveActivityManager.taskContentState(for: snap).stateLine, "Refunded €320")
+    }
+}

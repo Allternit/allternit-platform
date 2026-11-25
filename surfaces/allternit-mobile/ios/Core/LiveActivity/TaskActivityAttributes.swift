@@ -69,7 +69,7 @@ struct TaskActivityAttributes: ActivityAttributes {
             case "input_required": return "Needs input"
             case "review": return "Review"
             case "completed":
-                if let receipt, !receipt.isEmpty { return receipt }
+                if let receipt, !receipt.isEmpty { return BarReceiptWording.pastTense(receipt: receipt) }
                 return "Completed"
             case "failed":
                 if let error, !error.isEmpty { return "Failed: \(error)" }
@@ -113,4 +113,42 @@ struct TaskActivityAttributes: ActivityAttributes {
     var title: String
     /// The app it runs in ("Stripe").
     var appName: String
+}
+
+/// Past-tense receipt wording for bar jobs (CONTRACT.md section 5: "Refunded
+/// €320", never "Refund payment €320"). Shared by the widget (pushed receipts
+/// arrive as the runtime's `"<tool label> <amount>"`) and the app
+/// (`BarWire.receipt`, the in-app bar), so both read the same.
+enum BarReceiptWording {
+    /// Leading verb of a tool label -> its past tense. nil = not known.
+    static func pastTense(verb: String) -> String? {
+        let known: [String: String] = [
+            "refund": "Refunded", "create": "Created", "send": "Sent", "add": "Added", "update": "Updated",
+            "delete": "Deleted", "remove": "Removed", "cancel": "Cancelled", "list": "Listed", "post": "Posted",
+            "charge": "Charged", "pay": "Paid", "book": "Booked", "schedule": "Scheduled", "close": "Closed",
+            "open": "Opened", "archive": "Archived", "invite": "Invited", "approve": "Approved", "reply": "Replied",
+            "get": "Got", "find": "Found", "search": "Searched", "issue": "Issued", "transfer": "Transferred",
+            "assign": "Assigned", "move": "Moved", "start": "Started", "stop": "Stopped", "run": "Ran",
+        ]
+        return known[verb.lowercased()]
+    }
+
+    /// Rewrites a present-tense receipt into the past tense:
+    /// "Refund payment €320" -> "Refunded €320", "Refund payment 320 CHF" ->
+    /// "Refunded 320 CHF", "Create invoice done" -> "Created invoice".
+    /// A receipt that does not start with a known verb is kept as sent.
+    static func pastTense(receipt: String) -> String {
+        let words = receipt.split(separator: " ").map(String.init)
+        guard let first = words.first, let verb = pastTense(verb: first) else { return receipt }
+        var rest = Array(words.dropFirst())
+        if rest.last?.lowercased() == "done" {
+            rest.removeLast()
+            return rest.isEmpty ? verb : "\(verb) \(rest.joined(separator: " ").lowercased())"
+        }
+        // The amount starts at the first word with a digit or a currency sign.
+        if let i = rest.firstIndex(where: { w in w.contains(where: { $0.isNumber || $0.isCurrencySymbol }) }) {
+            return "\(verb) \(rest[i...].joined(separator: " "))"
+        }
+        return rest.isEmpty ? verb : "\(verb) \(rest.joined(separator: " ").lowercased())"
+    }
 }
