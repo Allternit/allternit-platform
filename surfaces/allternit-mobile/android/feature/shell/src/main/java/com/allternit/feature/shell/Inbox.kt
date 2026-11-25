@@ -123,6 +123,8 @@ internal data class InboxItem(
     val phone: PhoneHold?,
 ) {
     val canApprove: Boolean get() = "approve" in actions
+    /** An approval row (not a phone hold, not another agent's held send): the Team map shows who approves it. */
+    val isApprovalKind: Boolean get() = !isPhoneAction && !isPeerHeld && (kind == "approval" || canApprove)
     val canRetry: Boolean get() = "retry" in actions
     val isPeerHeld: Boolean get() = attentionKind == "peer_held"
     val isCritical: Boolean get() = kind == "attention" && severity == "critical"
@@ -405,6 +407,9 @@ internal fun InboxSheet(
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     var reviewing by remember { mutableStateOf<InboxItem?>(null) }
+    // Team map (flag `team.map`, lane 38): approval rows get "Who approves this" (iOS FabricApprovalsView).
+    val teamMapOn = com.allternit.core.api.FeatureFlags.isOn(LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP)
+    var teamMapOpen by remember { mutableStateOf(false) }
     LaunchedEffect(store) {
         store.refresh()
         focusedId?.let { id -> store.items.firstOrNull { it.id == id && it.isPhoneAction }?.let { reviewing = it } }
@@ -509,6 +514,7 @@ internal fun InboxSheet(
                                 onSnooze = { scope.launch { store.snooze(item) } },
                                 onDismissItem = { scope.launch { store.dismiss(item) } },
                                 onLater = { minutes -> scope.launch { store.snooze(item, minutes) } },
+                                onWhoApproves = if (teamMapOn && item.isApprovalKind) ({ teamMapOpen = true }) else null,
                             )
                             HorizontalDivider(color = c.borderSubtle, modifier = Modifier.padding(start = 20.dp))
                         }
@@ -522,6 +528,7 @@ internal fun InboxSheet(
     reviewing?.let { item ->
         PhoneHoldReviewSheet(item = item, store = store, onClose = { reviewing = null })
     }
+    if (teamMapOpen) com.allternit.feature.bots.TeamMapSheet(onDismiss = { teamMapOpen = false })
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -534,6 +541,7 @@ private fun InboxRow(
     onDeny: () -> Unit,
     onDone: () -> Unit,
     onLater: (Int) -> Unit,
+    onWhoApproves: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = AllternitTheme.colors
@@ -589,6 +597,14 @@ private fun InboxRow(
             Text("Why: this came from $who$kind.", color = c.textSecondary, fontSize = 13.sp)
         }
         store.failures[item.id]?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp) }
+        onWhoApproves?.let { open ->
+            Text(
+                "Who approves this", color = c.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.heightIn(min = 44.dp).clickable(role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); open() }
+                    .semantics { contentDescription = "Who approves this. Opens the approver on the team map" }
+                    .testTag("inboxWhoApproves${item.id}").padding(vertical = 12.dp),
+            )
+        }
         FlowRow(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             InboxButton(
                 title = if (busy) "Working…" else if (item.isPhoneAction) "Review" else item.primaryLabel,
@@ -648,6 +664,7 @@ private fun InboxEntry(
     onSnooze: () -> Unit,
     onDismissItem: () -> Unit,
     onLater: (Int) -> Unit,
+    onWhoApproves: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val reduced = rememberReducedMotion()
@@ -677,6 +694,7 @@ private fun InboxEntry(
                 }
             },
             onLater = onLater,
+            onWhoApproves = onWhoApproves,
         )
     }
 }
@@ -699,6 +717,7 @@ private fun InboxSwipeRow(
     onDismissItem: () -> Unit,
     onDone: () -> Unit,
     onLater: (Int) -> Unit,
+    onWhoApproves: (() -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -742,6 +761,7 @@ private fun InboxSwipeRow(
             onDeny = onDeny,
             onDone = onDone,
             onLater = onLater,
+            onWhoApproves = onWhoApproves,
             modifier = Modifier
                 .offset { IntOffset(offset.roundToInt(), 0) }
                 .anchoredDraggable(state = state, orientation = Orientation.Horizontal, enabled = true, flingBehavior = fling),
