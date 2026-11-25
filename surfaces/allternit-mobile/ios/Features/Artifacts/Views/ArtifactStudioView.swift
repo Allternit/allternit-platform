@@ -117,6 +117,16 @@ struct ArtifactStudioView: View {
             viewModel.editorSystemPrompt = studio.editorSystemPrompt
             // The app's scripted sample workspace has no agent to answer.
             guard !SampleWorkspace.isEnabled else { return }
+            // The text Send carried from the composer: this is "start, then
+            // send". Wait (up to 5 s) for the chat to bind to the new session.
+            if let first = ArtifactStudioLauncher.shared.takeFirstMessage(for: studio.sessionId) {
+                Task { @MainActor in
+                    for _ in 0..<50 where viewModel.currentSessionId != studio.sessionId {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    viewModel.sendMessage(first)
+                }
+            }
             await viewModel.servePaneArtifactRequests(
                 sessionId: studio.sessionId,
                 run: { request in await runAgentRequest(request) },

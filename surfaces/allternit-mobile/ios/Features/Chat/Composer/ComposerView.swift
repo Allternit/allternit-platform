@@ -131,6 +131,13 @@ struct ComposerView: View {
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
 
+    /// The artifact mode Send will start a session for: picked in the deck,
+    /// with the deck showing and this not already an artifact session.
+    private var launchMode: ChatDeckMode? {
+        guard deck != .none, artifactKind == nil, !isTerminal, agentOn else { return nil }
+        return ChatDeckMode.pendingLaunch(tile: agentModeStore.selectedTile(for: mode), surface: mode, bot: chatBot != nil)
+    }
+
     /// Code mode keeps its terminal flavor: `❯` prompt, monospace text.
     private var isTerminal: Bool { mode == .code }
 
@@ -166,6 +173,8 @@ struct ComposerView: View {
         if isTerminal { return "describe the task…" }
         if let placeholderOverride { return placeholderOverride }
         if !isExpanded { return "Type or hold to talk" }
+        // A picked artifact mode says what it will make ("Describe the slides…").
+        if let launchMode { return launchMode.placeholder }
         guard deck == .full else { return "Reply…" }
         let list = ComposerPlaceholders.list(agentMode: agentOn, tile: agentOn ? agentModeStore.selectedTile(for: mode) : nil)
         return list[placeholderIndex % list.count]
@@ -177,6 +186,10 @@ struct ComposerView: View {
 
             if let topDeck {
                 ComposerTopDeckTray { topDeck }
+                    .zIndex(0)
+            } else if let launchMode, DeckLaunch.kind(for: launchMode.entry) != nil, deckBandOpen || forcedDeckOpen {
+                // The "It can" row: only the toggles this kind can honour.
+                ComposerTopDeckTray { ItCanRow(entry: launchMode.entry) }
                     .zIndex(0)
             }
 

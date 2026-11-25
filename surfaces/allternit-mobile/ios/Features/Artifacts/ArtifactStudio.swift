@@ -309,8 +309,17 @@ final class ArtifactStudioLauncher: ObservableObject {
         let startedAt: Date
         var artifactId: String? = nil
         var designProjectId: String? = nil
+        /// The "It can" section ticked when the session started (ItCanRow).
+        var itCan: String? = nil
     }
     @Published private var stored: [String: Stored]
+    /// First messages waiting for their studio's chat (see `launch`).
+    private var pendingFirst: [String: String] = [:]
+
+    /// The first message a launch carried, handed over once.
+    func takeFirstMessage(for sessionId: String) -> String? {
+        pendingFirst.removeValue(forKey: sessionId)
+    }
     /// Session ids already looked up and found not to be editor sessions.
     private var knownPlain: Set<String> = []
 
@@ -327,7 +336,9 @@ final class ArtifactStudioLauncher: ObservableObject {
     func systemPrompt(for sessionId: String?) -> String? {
         guard let sessionId, let s = stored[sessionId] else { return nil }
         // Built fresh, so a session started on an older app gets today's prompt.
-        return ArtifactStudioKind(rawValue: s.kind)?.systemPrompt(title: s.title) ?? s.prompt
+        let base = ArtifactStudioKind(rawValue: s.kind)?.systemPrompt(title: s.title) ?? s.prompt
+        guard let itCan = s.itCan else { return base }
+        return base + "\n\n" + itCan
     }
 
     /// The studio session record for a session id, if it is one.
@@ -349,7 +360,10 @@ final class ArtifactStudioLauncher: ObservableObject {
     /// Creates the agent session (`POST /api/v1/agent-sessions`, Cowork
     /// surface, agent mode, the kind's mode contract) and records its prompt.
     /// One launch at a time, like the web's `launchArtifactType`.
-    func launch(_ kind: ArtifactStudioKind) async throws -> ArtifactStudioSession {
+    /// `can` is the "It can" choices ticked in the composer; `firstMessage` is
+    /// the text Send carried: held for the studio, which sends it once its chat
+    /// is up (start, then send: the create call takes no first message).
+    func launch(_ kind: ArtifactStudioKind, can: ItCanChoices? = nil, firstMessage: String? = nil) async throws -> ArtifactStudioSession {
         guard launching == nil else { throw CancellationError() }
         launching = kind
         defer { launching = nil }
@@ -371,7 +385,9 @@ final class ArtifactStudioLauncher: ObservableObject {
         let started = ArtifactStudioSession(sessionId: session.id, kind: kind, title: title, startedAt: Date(),
                                             artifactId: artifactId, designProjectId: designProjectId)
         stored[session.id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started.startedAt,
-                                    artifactId: artifactId, designProjectId: designProjectId)
+                                    artifactId: artifactId, designProjectId: designProjectId,
+                                    itCan: can.flatMap { c in kind.modeEntry.flatMap { c.promptLine(for: $0) } })
+        if let firstMessage, !firstMessage.isEmpty { pendingFirst[session.id] = firstMessage }
         // Keep the newest 200 so the map can't grow without bound.
         if stored.count > 200 {
             for key in stored.sorted(by: { $0.value.startedAt < $1.value.startedAt }).prefix(stored.count - 200).map(\.key) {

@@ -112,6 +112,8 @@ struct ArtifactsLibraryView: View {
         .fileImporter(isPresented: $importingPDF, allowedContentTypes: [.pdf]) { result in
             if case .success(let url) = result { Task { await uploadPDF(url) } }
         }
+        // The deck's PDF mode lands here: open the file picker straight away.
+        .task { if ItCanStore.shared.takePDFPick() { importingPDF = true } }
         .photosPicker(isPresented: $choosingPhoto, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }

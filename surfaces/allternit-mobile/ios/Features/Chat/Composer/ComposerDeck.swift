@@ -7,8 +7,9 @@ import SwiftUI
 /// to this surface, in the registry's order with its labels and badges. Each
 /// entry maps onto the app's AgentModeTile (which stamps
 /// `metadata.agentModeId`) through its wire id; kinds with no wire id
-/// (Dashboard, Ops sheet, Motion, PDF) ride on the Artifact tile, since the
-/// agent still makes the file.
+/// (Dashboard, Ops sheet, Motion, PDF) keep the Artifact tile only as stored
+/// state: Send starts their own artifact session (DeckLaunch), and PDF opens
+/// the library's file picker.
 struct ChatDeckMode: Identifiable, Equatable {
     let entry: AgentModeEntry
 
@@ -58,6 +59,14 @@ struct ChatDeckMode: Identifiable, Equatable {
         let preferred = tile == .website ? "build" : tile == .artifact ? "agent" : wire
         return all.first { $0.id == preferred && $0.entry.agentMode == wire }
             ?? all.first { $0.entry.agentMode == wire }
+    }
+
+    /// The picked mode when Send should start an artifact session for it
+    /// (nil for Agent, Swarm and a PDF, which opens a file picker instead).
+    static func pendingLaunch(tile: AgentModeTile, surface: AppMode, bot: Bool) -> ChatDeckMode? {
+        guard let m = picked(tile: tile, surface: surface, in: bot ? Self.bot : Self.chat),
+              DeckLaunch.kind(for: m.entry) != nil else { return nil }
+        return m
     }
 
     /// The mode the deck shows as picked: the remembered registry id when it
@@ -272,6 +281,13 @@ struct ComposerDeckBand: View {
 
     private func select(_ mode: ChatDeckMode) {
         Haptics.light()
+        // PDF has nothing to describe: it opens the Artifacts library's file
+        // picker (open a PDF to edit, fill in and sign).
+        if mode.entry.launchType == .pick {
+            ItCanStore.shared.wantsPDFPick = true
+            modeStore.selectBarItem(.artifacts)
+            return
+        }
         DeckModePick.set(mode.id, for: surface)
         agentModeStore.selectTile(mode.tile, for: surface)
         // Picking a mode in the chat's deck turns that mode on for the next send.
