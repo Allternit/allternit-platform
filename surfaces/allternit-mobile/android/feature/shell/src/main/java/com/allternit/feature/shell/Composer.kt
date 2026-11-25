@@ -71,6 +71,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -259,6 +261,16 @@ internal fun Composer(
     var text by rememberSaveable { mutableStateOf("") }
     val attachments = remember { mutableStateListOf<ComposerAttachment>() }
     var focused by remember { mutableStateOf(false) }
+    // Plan Revise / Ask a question (feature/chat ComposerFocusRequests): focus the field and show the
+    // web's prompt until focus leaves.
+    val inputFocus = remember { FocusRequester() }
+    var planNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        com.allternit.feature.chat.ComposerFocusRequests.requests.collect { note ->
+            planNote = note
+            runCatching { inputFocus.requestFocus() }
+        }
+    }
     var deckFolded by remember { mutableStateOf(true) }
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     var agentMode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -284,6 +296,7 @@ internal fun Composer(
 
     val placeholders = when {
         placeholderOverride != null -> listOf(placeholderOverride)
+        planNote != null -> listOf(planNote!!)
         deck != ComposerDeck.Full -> listOf("Reply…")
         agentMode == null -> ComposerPlaceholders.chat
         armedMode != null -> ComposerPlaceholders.byMode(armedMode)
@@ -480,7 +493,8 @@ internal fun Composer(
                         maxLines = if (rest) 1 else 6,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .onFocusChanged { focused = it.isFocused }
+                            .focusRequester(inputFocus)
+                            .onFocusChanged { focused = it.isFocused; if (!it.isFocused) planNote = null }
                             .testTag("composerInput")
                             .semantics { contentDescription = "Message" },
                     )

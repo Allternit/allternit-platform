@@ -103,9 +103,17 @@ fun PlanSheet(plan: PlanDraft, onDismiss: () -> Unit, onAction: (PlanAction, (St
                 CapsuleButton("Revise", enabled = !busy, modifier = Modifier.testTag("planRevise")) { act(PlanAction.Revise) }
                 CapsuleButton("Ask a question", enabled = !busy, modifier = Modifier.testTag("planAsk")) { act(PlanAction.Ask) }
             }
-            Text("Revise and Ask a question keep the plan open. Type your note in the message box.", color = c.textTertiary, fontSize = 12.sp)
+            Text("Revise and Ask a question keep the plan open, then the message box opens for your note.", color = c.textTertiary, fontSize = 12.sp)
             problem?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 12.sp) }
             Box(Modifier.heightIn(min = 16.dp))
         }
     }
+}
+
+/**
+ * Plan Revise / Ask a question: asks the chat composer (feature/shell Composer) to take focus and
+ * show [String] as its prompt while empty (web ChatComposer PLAN_NOTE).
+ */
+object ComposerFocusRequests {
+    val requests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
 }
