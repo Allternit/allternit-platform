@@ -168,6 +168,8 @@ struct ConnectionsSettingsView: View {
                 RuntimesConnectionsSection(layout: layout, query: query)
             }
             if visible.isEmpty && !runtimesMatch {
+                EmptyArt(kind: .sheets, size: EmptyArtSize.inline.points)
+                    .padding(.top, 12)
                 Text(query.isEmpty && status == .all ? "Nothing here yet." : query.isEmpty ? "Nothing is \(status.label.lowercased())." : "Nothing matches “\(query)”.")
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))

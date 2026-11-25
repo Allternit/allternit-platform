@@ -496,7 +496,8 @@ struct PrewarmManagerView: View {
                     style: .empty,
                     icon: "clock.arrow.2.circlepath",
                     title: "No recent activity",
-                    message: "No recent GUI-driven prewarm activity."
+                    message: "No recent GUI-driven prewarm activity.",
+                    art: .log
                 )
                 .padding(.vertical, 8)
             } else {

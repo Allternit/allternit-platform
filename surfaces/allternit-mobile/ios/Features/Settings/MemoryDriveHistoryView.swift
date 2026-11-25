@@ -199,7 +199,8 @@ struct MemoryDriveHistoryView: View {
                         style: .empty,
                         icon: "clock.arrow.circlepath",
                         title: "No history yet",
-                        message: "No changes recorded for this file yet."
+                        message: "No changes recorded for this file yet.",
+                        art: .log
                     )
                 } else {
                     Section {
@@ -436,6 +437,7 @@ struct MemoryDriveDiffView: View {
 
     var body: some View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            EmptyArt(kind: .log, size: EmptyArtSize.inline.points)
             Text(emptyText)
                 .font(.subheadline)
                 .foregroundColor(Color("TextSecondary"))

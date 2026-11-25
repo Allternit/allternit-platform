@@ -398,10 +398,11 @@ struct UsagePageView: View {
                         .font(.system(size: 22, weight: .semibold))
                         .redacted(reason: .placeholder)
                         .accessibilityLabel("Loading your credits")
+                } else if plan.lastError == nil {
+                    EmptyArt(kind: .coins, size: EmptyArtSize.inline.points)
+                    UsageNote(text: "No credit balance yet.")
                 } else {
-                    UsageNote(text: plan.lastError == nil
-                        ? "No credit balance yet."
-                        : "Couldn't load your credits. Pull down to try again.")
+                    UsageNote(text: "Couldn't load your credits. Pull down to try again.")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

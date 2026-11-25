@@ -179,7 +179,8 @@ struct FilesDashboardView: View {
     private var auditList: some View {
         if audit.isEmpty {
             FriendlyStateView(style: .empty, icon: "checkmark.shield", title: "No guest activity",
-                              message: "When someone opens, downloads or uploads through a share, it shows here.")
+                              message: "When someone opens, downloads or uploads through a share, it shows here.",
+                              art: .log, size: .panel)
                 .listRowBackground(Color.clear)
         } else {
             Section {

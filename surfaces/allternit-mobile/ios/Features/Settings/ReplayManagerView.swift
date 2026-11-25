@@ -274,7 +274,8 @@ struct ReplayManagerView: View {
             message: searchText.isEmpty && captureFilter == .all
                 ? "Run tools or workflows with replay enabled to populate this view."
                 : "Clear the filters to inspect the full capture catalog.",
-            art: searchText.isEmpty && captureFilter == .all ? .bell : nil
+            art: .search,
+            size: .panel
         )
         .padding(.vertical, 24)
         .background(Color("BgPanel"))

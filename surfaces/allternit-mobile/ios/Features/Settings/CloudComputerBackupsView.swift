@@ -81,7 +81,8 @@ struct CloudComputerBackupsView: View {
                         style: .empty,
                         icon: "externaldrive.badge.icloud",
                         title: "No cloud computers",
-                        message: "Backups appear here once you have an Allternit cloud computer."
+                        message: "Backups appear here once you have an Allternit cloud computer.",
+                        art: .connectScene
                     )
                 }
             } else {
@@ -147,6 +148,7 @@ private struct ComputerBackupSection: View {
                 }
             } else if let points {
                 if points.isEmpty {
+                    EmptyArt(kind: .sheets, size: EmptyArtSize.inline.points)
                     Text("No restore points yet.")
                         .font(.caption)
                         .foregroundColor(Color("TextSecondary"))
