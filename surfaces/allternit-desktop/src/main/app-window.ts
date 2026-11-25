@@ -2,8 +2,8 @@
  * "Open as app": one BrowserWindow per installed app inside the running
  * Desktop (D18: one Desktop runtime). Used on Windows and Linux, and on
  * macOS when the per-app helper is missing. It loads the app shell route
- * /app/<slug> on the origin the Desktop UI uses, so the signed-in session
- * comes with it. On Windows the window takes the app's own AppUserModelID,
+ * the app link it is given (else /app/<slug> on the origin the Desktop UI
+ * uses), with a one-time handoff token when cloud-api minted one. On Windows the window takes the app's own AppUserModelID,
  * so it groups under the app's Start menu shortcut, not under Allternit.
  */
 import { BrowserWindow, type WebContents } from 'electron';
@@ -25,12 +25,14 @@ export interface AppWindowTarget {
   name?: string | null;
   /** Windows .ico for the taskbar group. */
   iconPath?: string | null;
+  /** Full URL to load (the app link, with ?handoff= when minted). Falls back to <platform>/app/<slug>. */
+  url?: string | null;
 }
 
 const windows = new Map<string, BrowserWindow>();
 
 export function openAppWindow(target: AppWindowTarget, deps: AppWindowDeps): BrowserWindow {
-  const url = appShellUrl(deps.platformUrl(), target.slug);
+  const url = target.url || appShellUrl(deps.platformUrl(), target.slug);
   const existing = windows.get(target.slug);
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore();

@@ -29,6 +29,8 @@ export interface AppInstallRequest {
   tier: AppTier;
   /** Keep a macOS menu bar item so the app runs after its window closes. Only when the app's permissions include it. */
   menuBar?: boolean;
+  /** The app link (https://<slug>.allternitusercontent.com). Stored with the install; main validates it. */
+  url?: string | null;
 }
 
 export type LauncherKind = 'mac-dock' | 'windows-start-menu' | 'linux-desktop-entry';
@@ -43,6 +45,8 @@ export interface InstalledApp {
   launcherPath: string;
   iconPath: string | null;
   installedAt: string;
+  /** The app link opened by the helper / window. Absent on installs from before lane 38b: fall back to /app/<slug>. */
+  url?: string;
 }
 
 export type AppInstallResult =
@@ -431,6 +435,7 @@ export function createAppLaunchers(deps: AppLauncherDeps) {
       else if (deps.platform === 'win32') app = await installWindows(clean, name, icon, reg[clean.slug]);
       else if (deps.platform === 'linux') app = await installLinux(clean, name, icon);
       else return { ok: false, error: 'unsupported_platform', message: `No launchers on ${deps.platform}.` };
+      app.url = appUrl;
       reg[clean.slug] = app;
       await writeRegistry(reg);
       log.info('[AppLaunchers] installed', clean.slug, app.launcherPath);
