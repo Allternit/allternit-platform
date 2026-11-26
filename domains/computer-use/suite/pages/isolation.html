@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Suite window</title>
+<style>body{font:16px -apple-system,sans-serif;margin:24px}input{font-size:16px;width:420px;padding:6px}</style></head>
+<body><h1 id="h">Suite window</h1>
+<p>Each change to the field below is reported to the suite with the window's name.</p>
+<label for="f" id="l">Field</label><br><input id="f" autocomplete="off" spellcheck="false">
+<script>
+// ?w=<name> names the window (title "Suite <name>"); ?pw=1 makes the field a password
+// field that reports to /submit/login (the server keeps only password_ok, never the value).
+const q = new URLSearchParams(location.search);
+const name = q.get("w") || "window";
+const pw = q.get("pw") === "1";
+const f = document.getElementById("f");
+document.title = "Suite " + name;
+document.getElementById("h").textContent = "Suite " + name;
+document.getElementById("l").textContent = name + " field";
+f.setAttribute("aria-label", name + " field");
+if (pw) { f.type = "password"; f.name = "password"; }
+if (q.get("focus") === "1") f.focus();
+let keydowns = 0, chain = Promise.resolve();
+f.addEventListener("keydown", () => { keydowns++; });
+f.addEventListener("input", () => {
+  const body = pw ? {window: name, password: f.value} : {window: name, value: f.value, keydowns};
+  // One post at a time, in order, so the server's last entry is the field's last value.
+  chain = chain.then(() => fetch(pw ? "/submit/login" : "/submit/iso-" + name,
+    {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)})).catch(() => {});
+});
+</script></body></html>

@@ -46,15 +46,16 @@ Every op is a JSON-RPC method on the sidecar's socket.
 | Method | Params | Answer |
 |---|---|---|
 | `read_ui` | `app` (name or bundle id) or `pid` [+ `window_id`]; `query`; `max_elements` (default 200); `since` (a map version); `fresh`; `crops`; `vision` (`auto` / `off` / `only`); `target` (a description to ground); `zoom` (`auto` / `always` / `never`) | `window`, `version`, `engine`, `cached`, `live` (`state` `live` / `degraded` / `off`, `observer`, `reason`), `elements` (or `diff` with `since`), `total`, `degraded`, `source` (`ax` / `vision` / `hybrid`), `source_reason`; with vision `marks` (and `vision_version` when hybrid); with `target` `grounded` |
-| `act` | `id`, `op` (`click`, `double_click`, `right_click`, `set_value`, `type`, `select`, `press` + `key`, `focus`, or `menu` + `path`), `version`, `value` | `status` (`done`, `changed`, `stale`, `stale_version`), the new `version`, `changes` since the planned version, `settled` |
+| `act` | `id`, `op` (`click`, `double_click`, `right_click`, `set_value`, `type`, `select`, `press` + `key`, `focus`, or `menu` + `path`), `version`, `value`; optional `focus` for `set_value`/`type` (`false`: never focus or type, see [Safari](#safari-on-this-mac)) | `status` (`done`, `changed`, `stale`, `stale_version`), the new `version`, `changes` since the planned version, `settled` |
 | `run_batch` | `steps`: each `{act}`, `{menu}`, `{pixel: {tool, args}}` or `{wait}`, with optional `wait_for` (before), `expect` (after) and `timeout_ms`; optional `version` | per-step status and time, `failed_at`, one final `version` and `changes`, `cross_check` |
 | `verify` | `checks`: `id` or `role`/`name`, plus `text`, `value`, `gone`, `enabled` | `ok` and one result per check |
 | `wait` | a window, `timeout_ms`, optional `for` (a check) | whether the window changed, and the changes |
 | `screenshot` | a window, or nothing for the whole desktop | PNG (base64) |
 | `zoom` | a window and `region` `[x1, y1, x2, y2]` | PNG (base64) |
 | `pixel_<tool>` | Cua Driver desktop-scope tools: `click`, `double_click`, `right_click`, `move_cursor`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `get_cursor_position`, `get_screen_size` | Cua Driver's structured reply (on guests, the native engine's equivalent over xdotool / user32) |
+| `safari_window` | `op` `open` (optional `create_profile`, default true) or `close` + the `pid` and `window_id` that `open` returned | `open`: `pid`, `window_id` of a new window in the "Allternit Agent" profile; `close`: `closed`. Errors `profile_missing` (with `data.steps`), `invalid_arguments` (not a window this driver opened). macOS only |
 | `status`, `router` | none | engines and their health, and the live map's watched windows (state, notifications, patches, full walks, idle time); the learned router table |
-| `hello` | none | the capability report a control plane probes before routing: which members and pixel tools this driver serves (`read_ui`, `act`, `run_batch`, `verify`, `screenshot`, `pixel`, `safety_context`, `safety_ocr`), computed from the same capability table the router uses |
+| `hello` | none | the capability report a control plane probes before routing: which members and pixel tools this driver serves (`read_ui`, `act`, `run_batch`, `verify`, `screenshot`, `pixel`, `safety_context`, `safety_ocr`, `safari_window`), computed from the same capability table the router uses |
 
 `run_batch` stops at the first failed step or check and then reads once. After it, the engine that didn't run the steps confirms the last `expect`: on macOS that is arc's freshness check (a fresh, uncached walk), elsewhere Cua's `verify_state`. This catches a batch that "succeeded" without the app reacting.
 
@@ -102,6 +103,41 @@ The driver keeps a **live map** of every window it reads: it subscribes to the O
 - Only one tree walk of a window runs at a time. A reader that waited for another one reuses that walk if it finished in the last 250 ms.
 - Input to a window has one owner at a time. Input to different windows runs side by side.
 - Screen-wide pixel input (`pixel_*`) lands wherever the pointer or focus is, so it excludes all window input while it runs.
+
+## Safari on this Mac
+
+Agent runs on this Mac browse in Safari, because sites turn Chrome automation away. Safari is one process for all of its windows, so the driver treats it specially (`arc_cua/backends/macos_safari.py`).
+
+**Why.** Inside one Safari process, key events go to Safari's key window, whatever window they are addressed to. The 2026-11-26 spike (agent-browser plan, step 1) showed an agent's keys landing in the person's window, and two agents' keys interleaving in a third window. Background key focus is borrowed per process, so it cannot keep two windows of the same app apart. Accessibility value writes (`AXValue`) do stay in their window: they passed with two agents typing at once and with the person typing in another window. They reach the page as a trusted `input` event, but with no `keydown`.
+
+**Text entry.** `act` with `set_value` or `type` on a Safari field:
+
+1. Writes the text as an accessibility value and reads it back. A Safari value is read again after 150 ms, so a page that resets it counts as a rejection.
+2. Focuses the field first only when the agent's window is already Safari's key window, or is Safari's only window. Focusing a web field in another window makes that window key, and the person's typing follows it.
+3. Falls back to real keystrokes only when the page rejects the value. Those keys wait in a queue per Safari process (below).
+
+`act` takes an optional `focus`. With `focus: false`, the field is never focused and nothing is typed: if the page rejects the value, the call fails with `value_rejected`. `use_credential` should pass it, so a secret only ever goes to the field the agent picked. Leave `focus` out for the automatic rule above. `focus: true` keeps the old behaviour (always focus first).
+
+**Key queue.** One sender at a time per Safari process. A batch of up to 16 characters is sent only when both of these hold:
+
+- The person is not using Safari: Safari is not their front app, or they have been idle for more than 3 s. The driver's own posted events also reset the idle clock, so they don't count as the person.
+- The agent's window is Safari's key window. The queue makes it key (`AXMain`), checks it, and sends. Keys are never sent while another Safari window is key.
+
+After the last batch, the previous key window is handed back. If the person comes back to Safari mid-run, their window is handed back at once and the rest waits. Keys that get no safe turn within 30 s fail with `keys_held`, and nothing more is typed.
+
+Background key input for every app now also refuses (`key_window_busy`) when the person's front app is the target app and the target window is not its key window. Before this change, those keys landed in the person's window.
+
+**A window per run.** `safari_window` with `op: "open"` opens a new window from File > New Window > New "Allternit Agent" Window and returns its `pid` and `window_id`. Safari starts in the background if it isn't running. `op: "close"` with that window closes it. The driver closes only windows it opened in this session, and it never touches the person's own windows or profiles. When more than one new window shows up at once, the window that shows the profile name to accessibility is taken; otherwise the open fails rather than guess.
+
+**The "Allternit Agent" profile.** When the profile is missing, `open` tries Safari > Create Profile…, fills in the name, and closes only the windows that step opened. It does not try while the person is using Safari. When it cannot create the profile, it fails with `profile_missing`, and `data` carries `reason` (`not_found`, `person_using_safari`, `no_create_command`, `create_failed`), the profile name and the manual steps. Desktop shows these as a one-time setup card:
+
+1. In Safari, choose Safari > Create Profile… (or Safari > Settings > Profiles > New Profile).
+2. Name it `Allternit Agent` and click Create Profile.
+3. Done. Agent runs open their windows with File > New Window > New "Allternit Agent" Window.
+
+<Warning>
+Not yet checked on a real Mac: creating the profile by script, and whether a profile window shows the profile name to accessibility. The suite tasks `safari-two-agents`, `safari-user-typing` and `safari-password-set-value` (`domains/computer-use/suite/tasks/mac/`) are the live check. Each one passes only when the agent's text is exact and the person's window text is unchanged.
+</Warning>
 
 ## Packaging
 

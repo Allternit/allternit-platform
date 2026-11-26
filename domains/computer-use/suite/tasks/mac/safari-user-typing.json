@@ -1,0 +1,66 @@
+{
+  "id": "safari-user-typing",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "safari_window",
+      "name": "A",
+      "url": "{base_url}/isolation.html?w=A"
+    },
+    {
+      "do": "safari_window",
+      "name": "B",
+      "url": "{base_url}/isolation.html?w=B&focus=1",
+      "key": true
+    },
+    {
+      "do": "user_typing",
+      "window": "B",
+      "text": "user-bravo-abcdefghij",
+      "delay_ms": 1500,
+      "interval_ms": 250
+    }
+  ],
+  "goal": "In Safari, the window titled \"Suite A\" is yours. Put exactly the text below into its \"A field\" with computer_v2 act set_value, targeting that window by its window_id. The person is typing in the window \"Suite B\" right now: do not touch it, and do not bring Safari or any window to the front.",
+  "inputs": {
+    "window": "Suite A",
+    "text": "agent-alpha-0123456789-agent-alpha",
+    "window_id": "{A_window_id}"
+  },
+  "checker": [
+    {
+      "kind": "background_done",
+      "timeout_ms": 30000
+    },
+    {
+      "kind": "form_log",
+      "route": "iso-A",
+      "fields": {
+        "value": "agent-alpha-0123456789-agent-alpha"
+      }
+    },
+    {
+      "kind": "form_log",
+      "route": "iso-B",
+      "fields": {
+        "value": "user-bravo-abcdefghij"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "browser",
+    "isolation",
+    "agent-browser"
+  ],
+  "requires": [
+    "read_ui",
+    "act"
+  ]
+}

@@ -65,6 +65,15 @@ _FIELD_GROUP = 58
 _PSN = ctypes.c_uint8 * 8
 
 
+class KeyWindowBusy(UnsupportedDesktopAction):
+    """Keys for a window of the person's front app, while another of its windows is key.
+
+    Inside one process, key events go to its key window whatever window they are
+    addressed to, so they would land in the person's window. Nothing is sent."""
+
+    code = "key_window_busy"
+
+
 class BackgroundInputUnavailable(RuntimeError):
     """This macOS lacks a call background input needs."""
 
@@ -260,12 +269,23 @@ class _Borrowed:
     target_window: int
 
 
-def _borrow_focus(pid: int, window: int, user_window: Callable[[int], int | None]) -> _Borrowed | None:
+def _borrow_focus(
+    pid: int, window: int, user_window: Callable[[int], int | None], *, keys: bool = False,
+) -> _Borrowed | None:
     user = front_process()
     target = _process_owning(window, pid)
     if user is None or target is None:
         return None
     user_pid = process_pid(user)
+    if keys and user == target and user_window(pid) != window:
+        # The person's front app is the target app. Its key window keeps getting the
+        # keys whatever window they are addressed to (the 2026-11-26 Safari spike),
+        # and there is no other app to hand focus back from. Refuse instead of typing
+        # into the person's window.
+        raise KeyWindowBusy(
+            f"Window {window} is not the key window of the person's front app; "
+            "its keys would land in the person's window"
+        )
     previous = user_window(user_pid) if user_pid is not None and user != target else None
     if user != target:
         _send(focus_record(window, False), user)
@@ -275,7 +295,10 @@ def _borrow_focus(pid: int, window: int, user_window: Callable[[int], int | None
 
 
 def _restore(borrowed: _Borrowed) -> None:
-    """Return key focus to the user's window; otherwise their app silently stops getting keys."""
+    """Return key focus to the user's window; otherwise their app silently stops getting keys.
+
+    Same process: key input only runs when the target window already is the key
+    window (see ``_borrow_focus``), so there is nothing to hand back."""
     if borrowed.user_psn == borrowed.target_psn:
         return
     _send(focus_record(borrowed.target_window, False), borrowed.target_psn)
@@ -284,10 +307,13 @@ def _restore(borrowed: _Borrowed) -> None:
 
 
 @contextmanager
-def borrowed_focus(pid: int, window: int) -> Iterator[None]:
-    """Make ``window`` key inside its app while the user's app stays frontmost and nothing is raised."""
+def borrowed_focus(pid: int, window: int, *, keys: bool = False) -> Iterator[None]:
+    """Make ``window`` key inside its app while the user's app stays frontmost and nothing is raised.
+
+    ``keys``: the batch posts key events, which are refused (KeyWindowBusy) when the
+    person's front app is the target app and ``window`` is not its key window."""
     ensure_available()
-    borrowed = _borrow_focus(pid, window, key_window)
+    borrowed = _borrow_focus(pid, window, key_window, keys=keys)
     if borrowed is None:
         raise UnsupportedDesktopAction("The target window could not take background key focus")
     try:
@@ -460,7 +486,7 @@ def _post_key(pid: int, code: int, flags: int = 0, text: str | None = None) -> N
 
 
 def press(pid: int, window: int, code: int, flags: int = 0) -> None:
-    with borrowed_focus(pid, window):
+    with borrowed_focus(pid, window, keys=True):
         _post_key(pid, code, flags)
         time.sleep(0.03)
 
@@ -471,7 +497,7 @@ def type_text(pid: int, window: int, text: str, *, check: Callable[[], None] | N
     for start in range(0, len(characters), 16):
         if check is not None:
             check()
-        with borrowed_focus(pid, window):
+        with borrowed_focus(pid, window, keys=True):
             for character in characters[start:start + 16]:
                 _post_key(pid, 0, 0, character)
             time.sleep(0.02)

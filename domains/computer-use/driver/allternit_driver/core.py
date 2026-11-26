@@ -513,11 +513,13 @@ class Driver:
         except em.StaleVersion:
             fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id})
             return {"status": "stale_version", "map": fresh, "ms": _ms(start)}
-        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"))
+        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"), focus=_focus_arg(p))
         out["ms"] = _ms(start)
         return out
 
-    def _act_on(self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None) -> dict[str, Any]:
+    def _act_on(
+        self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None, focus: bool | None = None,
+    ) -> dict[str, Any]:
         element = cur.elements.get(eid)
         if element is None:
             raise DriverError("element_gone", f"{eid} is not in version {cur.number}")
@@ -544,9 +546,21 @@ class Driver:
                     # the sidecar on macOS 14 when the app isn't frontmost.
                     # Write the value through accessibility (focus + AXValue,
                     # read back; no SkyLight); a field that refuses it is
-                    # typed into on the Cua engine.
+                    # typed into on the Cua engine. ``focus`` false (use_credential)
+                    # never focuses and never types. Safari fields that refuse
+                    # the value go through the Safari key queue: Safari sends
+                    # keys to its key window whatever window they name.
                     text = "" if value is None else str(value)
-                    if self.arc.write_value(self._snaps[t.key], element.native, text, replace=op == "set_value"):
+                    snap = self._snaps[t.key]
+                    if self.arc.write_value(snap, element.native, text, replace=op == "set_value", focus=focus):
+                        d = Decision(ARC, "map")
+                    elif focus is False:
+                        raise DriverError("value_rejected", "the field rejected the value, and focus:false allows no typing")
+                    elif self.arc.is_safari(t.pid):
+                        try:
+                            self.arc.type_queued(snap, element.native, text, replace=op == "set_value")
+                        except Exception as e:
+                            raise _coded(e) from e
                         d = Decision(ARC, "map")
                     elif self.cua.available:
                         self.cua.act(t.pid, t.window_id, {}, "type", text, None)
@@ -750,7 +764,8 @@ class Driver:
                 elif isinstance(step.get("act"), dict):
                     a = step["act"]
                     cur = wm.current
-                    out = self._act_on(t, cur, str(a.get("id")), str(a.get("op") or "click"), a.get("value"), a.get("key"))
+                    out = self._act_on(t, cur, str(a.get("id")), str(a.get("op") or "click"), a.get("value"), a.get("key"),
+                                       focus=_focus_arg(a))
                     engines_used.add(out["engine"])
                     if out["status"] != "done":
                         raise DriverError(out["status"], f"the window changed before step {i}")
@@ -885,6 +900,26 @@ class Driver:
         return out
 
     # ---- pixels ------------------------------------------------------------------------
+
+    def safari_window(self, p: dict[str, Any]) -> dict[str, Any]:
+        """One agent run's own Safari window (macOS): ``op`` "open" opens a window in
+        the "Allternit Agent" profile and returns its ``pid`` + ``window_id``; "close"
+        with those closes it. Only windows this driver opened can be closed. A missing
+        profile that can't be made by script is ``profile_missing`` (data: reason,
+        profile, steps for Desktop's setup card)."""
+        if not self._arc_ok():
+            raise DriverError("engine_unavailable", "Safari agent windows need the arc engine (macOS)")
+        op = str(p.get("op") or "open")
+        try:
+            out = self.arc.safari_window(op, p.get("pid"), p.get("window_id"),
+                                         create_profile=p.get("create_profile", True) is not False)
+        except ValueError as e:
+            raise DriverError("bad_input", str(e)) from e
+        except Exception as e:
+            raise _coded(e) from e
+        if op == "close" and out.get("closed"):
+            self.arc.forget_window(int(p["pid"]))
+        return out
 
     def screenshot(self, p: dict[str, Any]) -> dict[str, Any]:
         """PNG of a window (app / pid / window_id) or, with none given, the desktop."""
@@ -1028,6 +1063,9 @@ class Driver:
             # rules cover the rest, per the computer-safety docs.
             "safety_context": self.os == "darwin" or self._native_ok(),
             "safety_ocr": self.os == "darwin",
+            # A Safari window per agent run, act's focus option and the Safari
+            # key queue (macOS, arc engine).
+            "safari_window": self._arc_ok(),
         }
         return out
 
@@ -1086,4 +1124,22 @@ def handles_cua_error(e: Exception) -> DriverError:
         return e
     if isinstance(e, CuaError):
         return DriverError(e.code, str(e))
+    return _coded(e)
+
+
+def _coded(e: Exception) -> DriverError:
+    """An arc error keeps its stable code and data (``profile_missing`` with the
+    setup steps, ``keys_held``, ``key_window_busy``); anything else is ``error``."""
+    if isinstance(e, DriverError):
+        return e
+    code = getattr(type(e), "code", None)
+    if isinstance(code, str) and code and type(e).__module__.startswith("arc_cua"):
+        data = getattr(e, "data", None)
+        return DriverError(code, str(e)[:500], data if isinstance(data, dict) else None)
     return DriverError("error", str(e)[:500])
+
+
+def _focus_arg(p: dict[str, Any]) -> bool | None:
+    """``act``'s optional ``focus``: true, false, or absent (the driver decides)."""
+    focus = p.get("focus")
+    return None if focus is None else bool(focus)
