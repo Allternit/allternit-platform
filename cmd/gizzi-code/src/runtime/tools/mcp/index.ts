@@ -797,6 +797,10 @@ export namespace MCP {
     title?: string
     /** The server marked the tool destructive (`annotations.destructiveHint: true`). */
     destructive?: boolean
+    /** The tool's declared `outputSchema`, shown beside its `structuredContent`. */
+    outputSchema?: unknown
+    /** The server lists a `submit_feedback` tool. */
+    canReport?: boolean
   }
 
   /**
@@ -874,6 +878,8 @@ export namespace MCP {
           connectorId: ((mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { id?: string } | undefined)?.id,
           title: mcpTool.title ?? (mcpTool.annotations as { title?: string } | undefined)?.title,
           destructive: (mcpTool.annotations as { destructiveHint?: boolean } | undefined)?.destructiveHint === true,
+          outputSchema: mcpTool.outputSchema,
+          canReport: sortedTools.some((t) => t.name === "submit_feedback"),
         }
       }
     }
