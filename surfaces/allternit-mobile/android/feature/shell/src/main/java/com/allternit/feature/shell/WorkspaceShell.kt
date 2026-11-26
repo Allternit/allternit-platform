@@ -748,6 +748,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     menuButton = shellMenuButton,
                                     openSignIn = { page = ShellPage.Settings },
                                     openChat = ::openSessionId,
+                                    // Team map (flag `team.map`, lane 38): Cowork's header and Fabric approvals open it.
+                                    teamMapSheet = if (com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP))
+                                        ({ focus, dismiss -> com.allternit.feature.bots.TeamMapSheet(focus = focus, onDismiss = dismiss) }) else null,
+                                    teamAsks = if (com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP))
+                                        ({ com.allternit.feature.bots.TeamAsksSection(horizontalPadding = 0.dp) }) else null,
                                 ),
                                 initialTasks = current.row.id == "cowork-tasks",
                             )

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -327,6 +328,9 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
     var confirm by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // "Who can use this" for a connected connector (Team map, flag `team.map`; iOS ConnectorsListView).
+    val teamMapOn = com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP)
+    var whoFor by remember { mutableStateOf<Pair<String, String?>?>(null) }
     fun connect(id: String, key: String?) {
         busy = id; error = null; message = null
         scope.launch {
@@ -356,12 +360,23 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
                 SRow(c.str("name") ?: id, "connector_$id", detail = listOfNotNull(c.str("description"), account).joinToString(" · ").ifBlank { null }, chevron = false, logoName = c.str("name") ?: id, logoId = c.str("logo") ?: id,
                     enabled = busy == null && (connected || c.bool("connectable") != false),
                     onClick = { if (connected) confirm = id else if (c.str("auth_type") == "api_key") keyFor = id else connect(id, null) },
-                    trailing = { androidx.compose.material3.Text(if (busy == id) "..." else if (connected) "Connected" else "Connect", color = com.allternit.core.design.AllternitTheme.colors.textSecondary, fontSize = 14.sp) })
+                    trailing = {
+                        Column(horizontalAlignment = Alignment.End) {
+                            androidx.compose.material3.Text(if (busy == id) "..." else if (connected) "Connected" else "Connect", color = com.allternit.core.design.AllternitTheme.colors.textSecondary, fontSize = 14.sp)
+                            if (connected && teamMapOn) Box(
+                                Modifier.heightIn(min = 44.dp).clickable(role = Role.Button) { whoFor = id to c.str("name") }.testTag("connectorWho_$id"),
+                                contentAlignment = Alignment.CenterEnd,
+                            ) {
+                                androidx.compose.material3.Text("Who can use this", color = com.allternit.core.design.AllternitTheme.colors.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    })
             }
         }
     }
     message?.let { SNote(it) }
     SError(error)
+    whoFor?.let { (id, name) -> com.allternit.feature.bots.TeamWhoCanUseHost("connector", id, name, onDismiss = { whoFor = null }) }
     keyFor?.let { id ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { keyFor = null; apiKey = "" },

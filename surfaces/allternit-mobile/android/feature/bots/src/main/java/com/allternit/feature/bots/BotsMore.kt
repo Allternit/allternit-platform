@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -460,6 +462,9 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
     var deleteOpen by remember { mutableStateOf(false) }
     var favorite by remember { mutableStateOf(project.favorite) }
     var archived by remember { mutableStateOf(project.archived) }
+    // Team map (flag `team.map`, lane 38): each team bot opens its node: levels per app, who it reports to, its rules.
+    val teamMapOn = com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP)
+    var teamMapBot by remember { mutableStateOf<String?>(null) }
     suspend fun load() {
         val m = BotsApi.projectMessages(project.id)
         val t = BotsApi.listProjectThreads(project.id)
@@ -525,6 +530,25 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
                     Text("Add a bot", color = c.textSecondary, fontSize = 12.sp)
                 }
             }
+            if (teamMapOn && bots.isNotEmpty()) {
+                SectionHeader("Levels and rules")
+                Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    bots.forEach { b ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { teamMapBot = b.id }
+                                .then(Modifier.semantics(mergeDescendants = true) { contentDescription = "${b.displayName}: levels and rules on the team map" })
+                                .testTag("botProjectTeamMap${b.id}"),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            BotAvatar(b, 28.dp)
+                            com.allternit.core.design.BotNameText(b.displayName, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                            Text("Team map", color = c.textSecondary, fontSize = 13.sp)
+                            androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
+                        }
+                    }
+                    Text("What each bot may do in each app, and who approves what.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+                }
+            }
             SectionHeader("Threads")
             BotThreadsPanel(store, threads, null, null, onOpen = { nav.openThread(it) }, onReopen = { t ->
                 scope.launch {
@@ -578,6 +602,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
             }
         }
     }
+    teamMapBot?.let { id -> TeamMapSheet(focus = "b:$id", onDismiss = { teamMapBot = null }) }
     if (deleteOpen) ConfirmSheet("Delete \"$title\"?", "Its threads aren't deleted: they stay with their bots, outside any project. This can't be undone.", "Delete", "botProjectDeleteConfirm", onDismiss = { deleteOpen = false }) {
         deleteOpen = false
         scope.launch {

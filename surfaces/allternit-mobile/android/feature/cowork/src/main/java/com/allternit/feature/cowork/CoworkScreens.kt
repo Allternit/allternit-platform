@@ -71,6 +71,13 @@ class CoworkHost(
     val openSignIn: () -> Unit,
     /** Opens a Cowork session's conversation in the shell's chat (iOS ChatContentView on a cowork session). */
     val openChat: (sessionId: String) -> Unit,
+    /**
+     * The Team map sheet (`:feature:bots` TeamMapSheet), given by the shell only while flag `team.map` is on.
+     * [focus] opens a node (`p:<user>`, `b:<bot>`); null opens the whole map. Null here hides every Team map entry.
+     */
+    val teamMapSheet: (@Composable (focus: String?, onDismiss: () -> Unit) -> Unit)? = null,
+    /** The "Team approvals" section (`:feature:bots` TeamAsksSection), given by the shell only while flag `team.map` is on. */
+    val teamAsks: (@Composable () -> Unit)? = null,
 )
 
 private sealed interface CoworkPage {
@@ -102,7 +109,7 @@ fun CoworkRoot(host: CoworkHost, initialTasks: Boolean = false) {
     when (val p = page) {
         CoworkPage.Launchpad -> CoworkLaunchpad(host, api, onOpen = { page = CoworkPage.Session(it) }, onApprovals = { page = CoworkPage.Approvals })
         is CoworkPage.Session -> CoworkSessionScreen(host, api, p.id, onBack = { page = CoworkPage.Launchpad }, onTasks = { tasksOpen = true })
-        CoworkPage.Approvals -> FabricApprovalsScreen(api, onBack = { page = CoworkPage.Launchpad })
+        CoworkPage.Approvals -> FabricApprovalsScreen(api, host.teamMapSheet, host.teamAsks, onBack = { page = CoworkPage.Launchpad })
         is CoworkPage.Task -> Unit
     }
 }
@@ -120,6 +127,7 @@ private fun CoworkLaunchpad(host: CoworkHost, api: CoworkApi, onOpen: (String) -
     var createError by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var attempt by remember { mutableStateOf(0) }
+    var teamMapOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(host.signedIn, attempt) {
         if (!host.signedIn) return@LaunchedEffect
@@ -145,8 +153,10 @@ private fun CoworkLaunchpad(host: CoworkHost, api: CoworkApi, onOpen: (String) -
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("coworkWorkspace")) {
         LibraryHeader(title = "Cowork", onBack = null, leading = host.menuButton, trailing = {
+            if (host.teamMapSheet != null && host.signedIn) LibraryIconButton(DesignR.drawable.ph_tree_structure, "Team map", "coworkTeamMapButton") { teamMapOpen = true }
             LibraryIconButton(DesignR.drawable.ph_arrows_down_up, "Fabric Transport", "coworkFabricButton", onClick = onApprovals)
         })
+        if (teamMapOpen) host.teamMapSheet?.invoke(null) { teamMapOpen = false }
         if (!host.signedIn) {
             FriendlyState(FriendlyStyle.Empty, "Sign in to use Cowork", "Your sessions and tasks live in your account.",
                 Modifier.padding(horizontal = 20.dp), "Sign in", host.openSignIn) { Icon(painterResource(DesignR.drawable.ph_identification_card), null, tint = c.textSecondary) }
@@ -386,7 +396,7 @@ private fun CreateCoworkTaskSheet(defaultAgent: Boolean, onDismiss: () -> Unit, 
 /** iOS FabricApprovalsView: pending approvals with Grant / Deny, then recent runs that open their events. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
+private fun FabricApprovalsScreen(api: CoworkApi, teamMapSheet: (@Composable (String?, () -> Unit) -> Unit)?, teamAsks: (@Composable () -> Unit)?, onBack: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var pending by remember { mutableStateOf<List<Approval>>(emptyList()) }
@@ -396,6 +406,7 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var noComputer by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
+    var teamMapOpen by remember { mutableStateOf(false) }
     suspend fun refresh() {
         loading = true; error = null
         when (val a = api.approvals()) {
@@ -411,6 +422,7 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
         LibraryHeader(title = "Fabric Transport", onBack = onBack, backTag = "fabricBack")
         PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { refresh() } }, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                teamAsks?.invoke()
                 Text("Pending approvals", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 if (pending.isEmpty() && !noComputer && error == null) InlineEmpty("No approvals waiting.", art = EmptyArtKind.Bell)
                 else if (pending.isEmpty()) Text(if (noComputer) "Connect a computer to see approvals." else error.orEmpty(), color = c.textSecondary, fontSize = 13.sp)
@@ -418,6 +430,11 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row { Text(a.capability, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); Text(a.status, color = AllternitStatic.StatusWarning, fontSize = 12.sp) }
                         Text(a.target, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (teamMapSheet != null) Text(
+                            "Who approves this", color = c.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.heightIn(min = 44.dp).clickable(role = Role.Button) { teamMapOpen = true }
+                                .testTag("fabricWhoApproves${a.id}").padding(vertical = 12.dp),
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             for (grant in listOf(true, false)) {
                                 Text(
@@ -431,6 +448,7 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
                         }
                     }
                 }
+                if (teamMapOpen) teamMapSheet?.invoke(null) { teamMapOpen = false }
                 Text("Recent runs", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                 if (runs.isEmpty()) InlineEmpty("No runs yet.", art = EmptyArtKind.Bell)
                 runs.forEach { run ->
