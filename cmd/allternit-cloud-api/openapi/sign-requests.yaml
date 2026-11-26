@@ -188,8 +188,8 @@ components:
       type: object
       required: [error]
       properties:
-        error: { type: string, description: "consent-required, bad-signature, bad-slot, user-session-required, not-found, file-not-found, not-pending, document-changed, expired." }
-        status: { type: string, description: "Current status, on 409 not-pending." }
+        error: { type: string, description: "consent-required, bad-signature, bad-slot, bad-request, user-session-required, not-found, file-not-found, not-pending, not-signed, document-changed, expired. /sign, /decline and /signature accept only an interactive user session (403 user-session-required otherwise). /sent on a request that is not signed is 409 not-signed." }
+        status: { type: string, description: "Current status, on 409 not-pending and not-signed." }
     SignSlot:
       type: object
       description: A signing area in PDF points, origin bottom-left, page 0-based.
