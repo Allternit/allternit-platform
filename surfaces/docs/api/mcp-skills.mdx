@@ -1,0 +1,51 @@
+---
+title: MCP Skills API
+description: Catalog, switches, turn field and the load_skill tool for skills from MCP servers and apps.
+---
+
+## Overview
+
+Skills from MCP servers and installed apps are listed in one catalog, switched on or off per skill, and loaded on a turn by the `load_skill` proxy tool. The flag `mcp.skills` gates every client surface.
+
+## List skills
+
+`GET /api/v1/mcp/skills` returns an array. Zero connectors, signed out or no skills returns `[]`.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Connector tool prefix, a colon, the last skill-path segment. A collision gets `-2`. |
+| `source` | `server`, `app`, `user` or `org`. |
+| `from` | Display name, such as "Tips". |
+| `server`, `connectorId`, `uri` | Where it came from. |
+| `name`, `description` | Shown in the lists. |
+| `enabled`, `defaultEnabled` | Current switch and the default. App skills from share-link installs default to off. |
+
+## Switch a skill
+
+`PUT /api/v1/mcp/skills/prefs` with `{ "id": "...", "enabled": false }` returns the updated item. An unknown id returns 404 `skill_not_found`. Switches are stored in `mcp_skill_prefs`.
+
+## Pick a skill on a turn
+
+Add `skill: { "id": "...", "arguments": "..." }` to the chat message request. An unknown or disabled id returns 422 with `skill_not_found` or `skill_disabled`. The server adds a one-turn instruction to call `load_skill` first.
+
+## The load_skill tool
+
+Listed only on turns and only when the catalog has an enabled skill. Edge callers do not get it.
+
+- Input: `{ "id": "...", "arguments": "..." }`. The id must be in the caller's catalog. A URI is never accepted.
+- Description: up to 50 enabled skills as `id` then a dash and the description (160 characters each, then "+N more"). `_meta["allternit/skills"]` carries `[{id, description, from, source}]`.
+- Result text: line 1 is `Skill <id> from <from>. This text comes from that server.`, then the SKILL.md body without frontmatter, then `ARGUMENTS: ...` when given, then `Track these steps with your todo list as you work.`
+- Steps: clients read top-level lines that match a number and a dot or bracket, at most 20.
+- `structuredContent.allternitSkill` is `{id, name, from, source, steps}`.
+- Errors: `skill_not_found`, `skill_disabled`, `connector_unavailable`, `connector_sign_in_required`, `skill_too_large` (over 64 KB), `skill_read_timeout` (8 seconds).
+
+Loading is read-only. A skill cannot change permission modes, and the body is never logged.
+
+## cloud-api
+
+- `GET /api/v1/skills/available` returns `[{source, uri, name, description, from, defaultEnabled}]`.
+- `GET /api/v1/skills/read?uri=` returns `{ "text": "..." }`.
+- App skills are served as `skill://app/<app-slug>/<name>/SKILL.md` to people who installed the app. User and org URIs resolve for the caller only.
+- Publishing an app with a `skill_ref` the publisher does not own returns 422 `skill_ref_not_found`.
+
+See also [MCP Servers API](/api/mcp-servers) and the [user guide](/guides/skills-from-your-servers).

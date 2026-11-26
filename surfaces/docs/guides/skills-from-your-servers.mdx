@@ -1,0 +1,48 @@
+---
+title: Skills from your servers
+description: Use skills that your MCP servers and installed apps ship, in chat and in Gizzi Code.
+---
+
+## What a server skill is
+
+An MCP server or an installed app can ship skills: short instruction files the agent follows for a task. You do not have to copy them anywhere. They come with the server or app.
+
+## Where skills show
+
+- Type `/` in the composer. Server skills sit in the "From your servers" group.
+- On desktop and web, the + menu has a "Server skills" row. On phones, iOS and Android, the + sheet has the same row.
+
+The group and the row are hidden when you have no server skills.
+
+## How the agent loads one
+
+The agent loads a skill on its own when its description matches your request. You can also pick one from `/` and the agent loads it first on that turn.
+
+## What you see while it runs
+
+A "Loaded skill" row appears in the turn, with the skill name and where it came from. If the skill has numbered steps, they show as a checklist and tick off as the agent works. On desktop the checklist is in the Progress pane. On phones, iOS and Android it is a card under the turn.
+
+## Turning skills off
+
+Use the switches in Settings > Skills > From your servers. On phones, open Customize.
+
+## Defaults
+
+- Skills from servers you connected, your own skills and your org's skills are on.
+- Skills from apps you made, or apps your org made, are on.
+- Skills from apps you installed with a share link are off until you turn them on.
+
+## Errors
+
+- "This skill is no longer on the server." The server stopped listing it.
+- "This skill is turned off." Turn it on in Settings.
+- "The server is not available right now." Try again in a moment.
+- "Sign in to the server to use this skill." Reconnect the server.
+- "This skill is too large." Skills over 64 KB are not loaded.
+- "The server took too long to answer." The read stopped after 8 seconds.
+
+## Gizzi Code
+
+In Gizzi Code, a connected server's skills are commands named `/server:skill`. The name says where it came from: "(from the tips app)", "(your skill)" or "(org skill)".
+
+See also the [developer reference](/api/mcp-skills).

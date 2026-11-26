@@ -1,3 +1,4 @@
+import { loadSkillLabel } from "../../../../../runtime/skills/skillLabel";
 import type { ToolUseBlockParam } from '@allternit/gizzi-sdk/providers/allternit/resources/index.mjs';
 import React, { useMemo } from 'react';
 import { useTerminalSize } from './../../hooks/useTerminalSize.ts';
@@ -70,7 +71,7 @@ export function AssistantToolUseMessage({
     return {
       tool,
       input,
-      userFacingToolName: tool.userFacingName(data),
+      userFacingToolName: loadSkillLabel(param.name, data as { id?: unknown } | undefined) ?? tool.userFacingName(data),
       userFacingToolNameBackgroundColor: tool.userFacingNameBackgroundColor?.(data),
       isTransparentWrapper: tool.isTransparentWrapper?.() ?? false
     };
