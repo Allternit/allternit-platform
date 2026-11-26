@@ -299,6 +299,7 @@ struct GroupChatView: View {
     @State private var isRunning = false
     @State private var runError: String? = nil
     @State private var tail = TailFollow()
+    @ReducedMotion private var reducedMotion
     @State private var isAddingMembers = false
     /// The members have flown off the stage into the header pill.
     @State private var docked = false
@@ -414,8 +415,7 @@ struct GroupChatView: View {
     }
 
     private func log(_ group: BotGroupChat) -> some View {
-        let reducedMotion = UIAccessibility.isReduceMotionEnabled
-        return ScrollViewReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if group.log.isEmpty && docked {
