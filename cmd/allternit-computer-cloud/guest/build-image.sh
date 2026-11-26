@@ -223,6 +223,9 @@ export ACCESSIBILITY_ENABLED=1
 xfce4-session >/var/log/allternit-desktop/xfce.log 2>&1 &
 
 # Share the display over VNC (password = allternit for the MVP).
+# This is the user's screen (:0). Each agent's browser runs on its own
+# display (:10 and up, `allternit-agent-display start <agent_id>`), with its
+# own x11vnc on 5900+N for that run's live view.
 x11vnc -display :0 -rfbport 5900 -forever -shared -passwd allternit \
   >/var/log/allternit-desktop/x11vnc.log 2>&1 &
 
@@ -264,7 +267,8 @@ if [ -d "${DRIVER_SRC_DIR}/allternit_driver" ]; then
     incus exec "${BUILD_CONTAINER}" -- mkdir -p /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
     incus file push --quiet -r "${DRIVER_SRC_DIR}/allternit_driver" "${BUILD_CONTAINER}/tmp/allternit-driver-pkg/"
     incus file push --quiet -r "${DRIVER_SRC_DIR}/packaging/guest/linux" "${BUILD_CONTAINER}/tmp/allternit-driver-packaging/"
-    incus exec "${BUILD_CONTAINER}" -- bash /tmp/allternit-driver-packaging/linux/install-driver.sh /tmp/allternit-driver-pkg
+    incus exec "${BUILD_CONTAINER}" --env ALLTERNIT_EXTENSION_UPDATE_URL="${ALLTERNIT_EXTENSION_UPDATE_URL:-}" -- \
+        bash /tmp/allternit-driver-packaging/linux/install-driver.sh /tmp/allternit-driver-pkg
     incus exec "${BUILD_CONTAINER}" -- rm -rf /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
 else
     echo "ERROR: DRIVER_SRC_DIR ${DRIVER_SRC_DIR} has no allternit_driver package" >&2
