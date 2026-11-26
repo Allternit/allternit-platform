@@ -806,3 +806,32 @@ async fn plan_status_patch_is_owner_only_and_plan_only() {
     let (_, one) = call(&router, "GET", plan_path, &owner, None).await;
     assert_eq!(one["plan"]["status"], json!("done"));
 }
+
+#[tokio::test]
+async fn artifacts_v2_counts_match_the_list_per_kind() {
+    let (router, _db) = setup().await;
+    let owner = who("counts_owner", Some("org_counts"), None);
+    let viewer = who("counts_viewer", Some("org_counts"), None);
+    create(&router, &owner, "doc", "First doc").await;
+    create(&router, &owner, "doc", "Second doc").await;
+    let shared = create(&router, &owner, "sheet", "Shared sheet").await;
+    let (status, _) = share(&router, &owner, &shared, "org", json!([])).await;
+    assert_eq!(status, StatusCode::OK);
+
+    for (caller, scope) in [(&owner, "all"), (&owner, "mine"), (&viewer, "all"), (&viewer, "shared"), (&viewer, "mine")] {
+        let (status, counts) = call(&router, "GET", &format!("/api/v1/artifacts/counts?scope={scope}"), caller, None).await;
+        assert_eq!(status, StatusCode::OK, "{counts}");
+        let (_, list) = call(&router, "GET", &format!("/api/v2/artifacts?scope={scope}&limit=100"), caller, None).await;
+        let items = list["items"].as_array().unwrap();
+        let mut by_kind: std::collections::BTreeMap<String, i64> = Default::default();
+        for item in items {
+            *by_kind.entry(item["kind"].as_str().unwrap().to_string()).or_default() += 1;
+        }
+        assert_eq!(counts["total"], json!(items.len()), "{scope}: {counts}");
+        assert_eq!(counts["byKind"], json!(by_kind), "{scope}: {counts}");
+    }
+    let (_, viewer_counts) = call(&router, "GET", "/api/v1/artifacts/counts?scope=shared", &viewer, None).await;
+    assert_eq!(viewer_counts, json!({ "total": 1, "byKind": { "sheet": 1 } }));
+    let (status, _) = call(&router, "GET", "/api/v1/artifacts/counts?scope=everyone", &owner, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

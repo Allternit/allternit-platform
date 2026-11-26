@@ -488,13 +488,15 @@ pub async fn set_quiet_hours(db: &PgPool, user: &str, q: &QuietHours) -> Result<
 /// Whether `user` is in quiet hours now. A read error (for example before migration 102) is "not quiet",
 /// so pushes keep working.
 pub async fn is_quiet(db: &PgPool, user: &str) -> bool {
-    match quiet_hours(db, user).await {
+    let in_quiet_hours = match quiet_hours(db, user).await {
         Ok(q) => q.active_at(Utc::now()),
         Err(error) => {
             tracing::debug!("notifications: reading quiet hours failed: {error}");
             false
         }
-    }
+    };
+    // Do not disturb, Away and Autopilot are quiet too (routes::me_status).
+    in_quiet_hours || crate::routes::me_status::holds_pushes(db, user).await
 }
 
 /// True when an in-app call ring for `user` should stay silent now (quiet hours with calls off).
@@ -509,11 +511,20 @@ pub async fn ring_held(db: &PgPool, user: &str) -> bool {
 /// instead of sending it and return true. `event_id` is the backbone event for the sink (held once,
 /// however often it's looked at); `None` for a direct push. The caller then doesn't send.
 pub async fn hold_if_quiet(db: &PgPool, user: &str, event: &str, msg: &PushMessage, level: Level, severity: Option<&str>, event_id: Option<&str>) -> bool {
-    let holds = match quiet_hours(db, user).await {
-        Ok(q) => q.holds_at(level, Utc::now()),
+    let quiet = match quiet_hours(db, user).await {
+        Ok(q) => Some(q),
         Err(error) => {
             tracing::debug!("notifications: reading quiet hours failed: {error}");
-            false
+            None
+        }
+    };
+    let holds = match &quiet {
+        Some(q) if q.holds_at(level, Utc::now()) => true,
+        // A status that holds pushes (dnd, away, autopilot) holds below the same let-through level
+        // as quiet hours; nothing saved lets urgent through.
+        _ => {
+            let let_through = quiet.as_ref().map_or_else(|| QuietHours::default().let_through, |q| q.let_through);
+            let_through.is_none_or(|min| level < min) && crate::routes::me_status::holds_pushes(db, user).await
         }
     };
     if !holds {
@@ -716,7 +727,9 @@ async fn summarize_at(db: &PgPool, transport: &dyn PushTransport, vapid: &Vapid,
     let users: Vec<String> = sqlx::query_scalar("SELECT DISTINCT user_id FROM notification_held WHERE summarized_at IS NULL LIMIT 500").fetch_all(db).await?;
     let mut sent = 0;
     for user in users {
-        if quiet_hours(db, &user).await?.active_at(now) {
+        // Still quiet: in quiet hours, or a status that holds pushes. The summary goes out on the first
+        // run after both are over (status back to online), so no separate trigger is needed.
+        if quiet_hours(db, &user).await?.active_at(now) || crate::routes::me_status::holds_pushes(db, &user).await {
             continue;
         }
         let items: Vec<HeldItem> = sqlx::query_as("UPDATE notification_held SET summarized_at = now() WHERE user_id = $1 AND summarized_at IS NULL RETURNING event_type, tag, severity").bind(&user).fetch_all(db).await?;

@@ -146,6 +146,16 @@ GET /api/v2/artifacts?scope=all&kind=page&q=plan&origin=chat&limit=50&cursor=...
 
 Returns `{ "items": [ArtifactSummary], "next_cursor": string | null }`, newest `updated_at` first.
 
+## Counts
+
+`GET /api/v1/artifacts/counts?scope=all|mine|shared` (default `all`) answers how many artifacts of each kind the caller sees:
+
+```json
+{ "total": 12, "byKind": { "doc": 7, "sheet": 4, "plan": 1, "dashboard": 1 } }
+```
+
+The counts use the same visibility rules as [List artifacts](#list-artifacts): owned rows (unless `scope=shared`), and rows shared with the caller or their organization (unless `scope=mine`). Rows the caller archived from their library are not counted. Plans appear in `byKind` but not in `total`, because the default list leaves plans out. Any other `scope` is a `400`.
+
 ## Create an artifact
 
 ```http
