@@ -21,6 +21,7 @@ import { LookupTool } from "@/runtime/tools/builtins/lookup"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
+import { RequestSignatureTool } from "@/runtime/tools/builtins/request-signature"
 import { WaitAgentsTool } from "@/runtime/tools/builtins/wait-agents"
 import { AgentControlTool } from "@/runtime/tools/builtins/agent-control"
 import { ToolSearchTool } from "@/runtime/tools/builtins/tool-search"
@@ -293,6 +294,8 @@ export namespace ToolRegistry {
       // A question that doesn't stop the turn; the answer starts a new one.
       // Every client, not bot-gated (routines, workers and subagents ask too).
       AskUserLaterTool,
+      // Asks the user to sign a PDF (non-blocking; the agent can never sign): every client.
+      RequestSignatureTool,
       // A short in-turn wait that wakes on the user's next message: every client, not bot-gated.
       SleepTool,
       // Folders outside the project for this session: every client, not
