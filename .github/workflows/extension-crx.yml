@@ -13,7 +13,7 @@ name: Package extension (CRX)
 # Secret (Settings -> Secrets -> Actions):
 #   ALLTERNIT_EXTENSION_PRIVATE_KEY  PEM private key (PKCS#8 or PKCS#1) whose public half is the
 #                                    `key` in wxt.config.ts, i.e. the key behind id
-#                                    chheieepkpbhkiimdmbdjmnhcooclpok. The job fails if it does not match.
+#                                    hkillgnnhkokmjcjjpolpnecmdnilhod. The job fails if it does not match.
 #   (Not ALLTERNIT_EXTENSION_KEY: wxt.config.ts reads that name as the PUBLIC key.)
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ concurrency:
 
 env:
   EXT_DIR: surfaces/allternit-extensions/allternit-extension
-  EXT_ID: chheieepkpbhkiimdmbdjmnhcooclpok
+  EXT_ID: hkillgnnhkokmjcjjpolpnecmdnilhod
   # Where the files get served from (R2 bucket allternit-runtime, public as runtime.allternit.com)
   BASE_URL: https://runtime.allternit.com/chrome-extension
 

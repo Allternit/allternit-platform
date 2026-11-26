@@ -20,7 +20,7 @@ import { isEnvTruthy } from '../envUtils.js'
 import { sideQuery } from '../sideQuery.js'
 import { getAllSocketPaths, getSecureSocketPath } from './common.js'
 
-const EXTENSION_DOWNLOAD_URL = 'https://chromewebstore.google.com/detail/chheieepkpbhkiimdmbdjmnhcooclpok'
+const EXTENSION_DOWNLOAD_URL = 'https://chromewebstore.google.com/detail/hkillgnnhkokmjcjjpolpnecmdnilhod'
 const BUG_REPORT_URL =
   'https://github.com/Allternit/desktop/issues'
 

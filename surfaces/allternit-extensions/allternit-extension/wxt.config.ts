@@ -14,7 +14,7 @@ mkdirSync(chromeProfile, { recursive: true })
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const stableExtensionKey =
   process.env.ALLTERNIT_EXTENSION_KEY ||
-  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl+yHcREi6ng3diYTzYcAUPZwteD2XR8loc3+jCIbrU/+BJrg7BTcAZuXnOlmMj4i6S4FoK3qP/cdRoaPhudlYZD84L2QHDviihkX5lQG8Cmj+FhvANOZlj8+AKpRBOmLMX6pkBjdVMJJp2C4Qr/rq1LNgTu7yZPn43HjsJ2bcqDzJxyI5gGvN1yGl92JtIqDeH5HgVmKYbWMO+ODlnY2hbYS4Nytk+66jemTj+IOZNQHBkFe7owok49QkdRoy85qf08vQfHpplJyVRRB5wfCQcYiYrj1KH9NN+XbJXrCxzheJ8eSXuioBKf+NC3ON6zseUzFWs9VnsZhu08lcMZvNwIDAQAB'
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvha6YaRIJfHgEURtE2+5O/WgDNrE2VysLDd0UZN/5LPcFLYVHmTYwV2w1mNiG7tKfVQRy9Y31aOdHHBbXq44jNOP8JoJVR91ZxKMqFFj7JrrPJZLbSceHB6tnE3sTU+sY0Xhi+JUVuLYHmGstL+pPydyhW6BON42NmHh7LBnhXU6p3HaCRqR3Km7wJpeNjknIKUhP9K7GcKPJeTaBuFbz+z+dPSavQS1VyJvKdHMClY8/GwWRFcxTw5r85+IqFrO1SATWlGySFPaJYKLO5ElkYNMaLHJnl+VoogvnOYKegUjaoFswrfXk6SHfOzExn0rjbINYcYmM8Fwn4kqMF7/cwIDAQAB'
 
 export default defineConfig({
   srcDir: 'src',

@@ -72,7 +72,7 @@ com.allternit.desktop
 
 ### Register the host
 
-Chrome native messaging manifests require exact extension origins; wildcards are not allowed.
+Chrome native messaging manifests require exact extension origins; wildcards are not allowed. The installer always lists both Allternit extension ids in `allowed_origins`: `hkillgnnhkokmjcjjpolpnecmdnilhod` (current) and `chheieepkpbhkiimdmbdjmnhcooclpok` (previous, so an old unpacked extension keeps working). `--extension-id` and `ALLTERNIT_EXTENSION_ID` add more.
 
 ```bash
 # From the workspace root
@@ -142,7 +142,7 @@ Cloud computers run their own Chrome for the agent browser, and the agent needs 
 | Piece | Where | What it does |
 |---|---|---|
 | Workflow | `.github/workflows/extension-crx.yml` | Builds the extension with WXT, packs a CRX3 signed with the stable extension key, writes `update.xml` (gupdate format: app id, `codebase`, `version`). Runs on manual dispatch and on a tag `extension/v<version>` (the tag must match `package.json`). Never deploys. |
-| Packer | `scripts/pack-crx3.mjs` | Dependency-free CRX3 writer. Prints the extension id the key gives; the workflow fails if it is not `chheieepkpbhkiimdmbdjmnhcooclpok`. |
+| Packer | `scripts/pack-crx3.mjs` | Dependency-free CRX3 writer. Prints the extension id the key gives; the workflow fails if it is not `hkillgnnhkokmjcjjpolpnecmdnilhod`. |
 | Host | `https://runtime.allternit.com/chrome-extension/` | The R2 bucket `allternit-runtime` (the same one that serves Desktop runtime files, see [Owned downloads](/operations/owned-downloads)). Holds `update.xml` and `allternit-extension-<version>.crx`. |
 | Policy | `install-browser-policy.sh` (Linux guest image) | Writes `/etc/opt/chrome/policies/managed/allternit.json` with `ExtensionSettings` set to `force_installed` for the extension id and `update_url` set to the `update.xml` above. |
 
@@ -157,7 +157,7 @@ The default update URL is `https://runtime.allternit.com/chrome-extension/update
 
 ### The signing key
 
-The extension id comes from the public `key` field in `wxt.config.ts`. A CRX is accepted for that id only if it is signed with the matching **private** key. The private key is not in the repository. It must be added as the Actions secret **`ALLTERNIT_EXTENSION_PRIVATE_KEY`** (PEM). The workflow packs the CRX, derives the id from the key and fails if it differs, so a wrong key can never produce a published file. If the original private key is lost, the id cannot be kept: a new key means a new id, a new `key` in `wxt.config.ts`, and an updated id in the policy and in Gizzi Code. Do not use the secret name `ALLTERNIT_EXTENSION_KEY`; `wxt.config.ts` reads that name as the public key.
+The extension id comes from the public `key` field in `wxt.config.ts`. A CRX is accepted for that id only if it is signed with the matching **private** key. The private key is not in the repository. It must be added as the Actions secret **`ALLTERNIT_EXTENSION_PRIVATE_KEY`** (PEM). The workflow packs the CRX, derives the id from the key and fails if it differs, so a wrong key can never produce a published file. The original private key was lost, so on 2026-11-26 the extension moved to a new key and the new id `hkillgnnhkokmjcjjpolpnecmdnilhod`. The cloud policy, the CRX workflow and Gizzi Code use the new id; Desktop and Gizzi Code native host manifests accept both the new id and the old `chheieepkpbhkiimdmbdjmnhcooclpok`. The new private key lives in the macOS Keychain (service `allternit-extension-signing`) and in the Actions secret. Do not use the secret name `ALLTERNIT_EXTENSION_KEY`; `wxt.config.ts` reads that name as the public key.
 
 ### Windows cloud computers
 

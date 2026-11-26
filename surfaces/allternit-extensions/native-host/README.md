@@ -15,7 +15,7 @@ The extension is a surface for the same computer-use/browser-use protocol used b
 
 ## Register the host
 
-Chrome native messaging manifests require exact extension origins. Wildcards are not valid for `allowed_origins`.
+Chrome native messaging manifests require exact extension origins. The installer always allows both Allternit extension ids (`hkillgnnhkokmjcjjpolpnecmdnilhod`, and the old `chheieepkpbhkiimdmbdjmnhcooclpok`); `--extension-id` / `ALLTERNIT_EXTENSION_ID` add more. Wildcards are not valid for `allowed_origins`.
 
 ```bash
 ALLTERNIT_EXTENSION_ID=<32-character-chrome-extension-id> pnpm --filter @allternit/desktop-native-host register
