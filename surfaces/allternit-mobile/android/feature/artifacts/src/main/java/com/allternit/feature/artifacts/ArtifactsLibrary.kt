@@ -107,10 +107,37 @@ enum class LibraryLayout(val raw: String, val label: String) {
     }
 }
 
-/** iOS OverviewLayoutSwitch: three pills, the overview's layout ids (`overviewLayout<raw>`). */
+/**
+ * iOS OverviewLayoutSwitch: ONE icon button that shows the NEXT view (List -> Grid -> Deck -> List)
+ * and cycles on tap with a haptic tick. Tag `overviewLayoutCycle`; contentDescription "Show as grid".
+ */
 @Composable
-fun LibraryLayoutSwitch(selected: LibraryLayout, onPick: (LibraryLayout) -> Unit) {
-    PillRow(LibraryLayout.entries, selected, { it.label }, { "overviewLayout${it.raw}" }, onPick = onPick)
+fun <T> LayoutCycleButton(options: List<T>, selected: T, label: (T) -> String, onPick: (T) -> Unit, modifier: Modifier = Modifier, tag: String = "overviewLayoutCycle") {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val i = options.indexOf(selected)
+    val next = options[(i + 1) % options.size]
+    val icon = when (label(next).lowercase()) {
+        "grid" -> DesignR.drawable.ph_squares_four
+        "deck" -> DesignR.drawable.ph_columns
+        else -> DesignR.drawable.ph_list
+    }
+    Box(
+        modifier.size(44.dp).testTag(tag)
+            .clickable(role = Role.Button) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onPick(next)
+            }
+            .semantics { contentDescription = "Show as ${label(next).lowercase()}" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(icon), null, tint = AllternitTheme.colors.textSecondary, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** The shared overview layout button for the three LibraryLayout views. */
+@Composable
+fun LibraryLayoutButton(selected: LibraryLayout, onPick: (LibraryLayout) -> Unit, modifier: Modifier = Modifier) {
+    LayoutCycleButton(LibraryLayout.entries, selected, { it.label }, onPick, modifier)
 }
 
 /** A section label in a filter sheet. */
@@ -520,7 +547,7 @@ fun ArtifactsLibraryScreen(
         LibrarySheet("Filter", "artifactsFilterSheet", onDismiss = { filterOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { filterOpen = false; reload() }) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
                 FilterLabel("Layout")
-                LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
+                LibraryLayoutButton(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
                 FilterLabel("Show")
                 PillRow(ArtifactLibraryStore.Show.entries, store.show, { if (it == ArtifactLibraryStore.Show.Saved) "Saved work" else "Archive" }, { "artifactsShow${it.name}" }) { store.show = it }
                 FilterLabel("Kind")

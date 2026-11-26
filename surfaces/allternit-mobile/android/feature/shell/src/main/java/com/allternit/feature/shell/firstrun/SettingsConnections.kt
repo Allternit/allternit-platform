@@ -31,7 +31,7 @@ import com.allternit.feature.artifacts.FilterLabel
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibraryLayout
-import com.allternit.feature.artifacts.LibraryLayoutSwitch
+import com.allternit.feature.artifacts.LibraryLayoutButton
 import com.allternit.feature.artifacts.LibrarySearchField
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
@@ -375,7 +375,7 @@ internal fun ConnectionsSettingsScreen(
     if (menuOpen) {
         LibrarySheet("Connections", "connectionsMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {
             Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
-                Box(Modifier.padding(horizontal = 8.dp)) { LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) } }
+                Box(Modifier.padding(horizontal = 8.dp)) { LibraryLayoutButton(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) } }
                 FilterLabel("Show")
                 for (s in ConnStatus.entries) {
                     MenuRow(null, "${s.label} ${counts[s] ?: 0}", checked = status == s, testTag = "connectionsStatus${s.name}") { status = s; menuOpen = false }

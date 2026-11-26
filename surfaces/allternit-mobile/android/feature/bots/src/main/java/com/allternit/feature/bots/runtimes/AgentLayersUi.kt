@@ -69,7 +69,7 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.feature.artifacts.LibraryLayout
-import com.allternit.feature.artifacts.LibraryLayoutSwitch
+import com.allternit.feature.artifacts.LibraryLayoutButton
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.bots.BotAvatar
@@ -128,7 +128,7 @@ fun AgentLayersPicker(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SearchField(query, onQuery, Modifier.weight(1f))
         }
-        LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
+        LibraryLayoutButton(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
 
         // The rail: Runtime, Brain, Bot, then the control layer line.
         Column(Modifier.fillMaxWidth()) {
