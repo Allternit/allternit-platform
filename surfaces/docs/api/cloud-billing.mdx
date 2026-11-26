@@ -135,6 +135,59 @@ Web, Desktop and the phone web app can take payment without leaving Allternit. i
 
 Any other `ui_mode` value is rejected (`422` from request parsing). An embedded session has a `return_url` and `redirect_on_completion` of `if_required`, and no success or cancel URL. The customer is always the signed-in account's own Stripe customer; a `customer` field in the body is ignored.
 
+### Change, cancel and resume a plan
+
+These routes change a card-paid (Stripe) plan inside the app. They need a Clerk session or a `billing` scoped API token. No request names a customer or subscription; both come from the session, and a subscription that is not the caller's answers `404` like a missing one.
+
+| Method | Path | Body | What it does |
+|--------|------|------|--------------|
+| POST | `/api/v1/billing/subscription/preview` | `{ "plan_id": "super" }` | Prices the change without making it. |
+| POST | `/api/v1/billing/subscription/change` | `{ "plan_id": "super", "proration_date": 1764172800 }` | Upgrades now with prorations, or schedules a downgrade for the period end. |
+| POST | `/api/v1/billing/subscription/cancel` | none | Cancels at the end of the period. |
+| POST | `/api/v1/billing/subscription/resume` | none | Undoes a cancel before the period ends. |
+
+Preview reply:
+
+```json
+{
+  "plan_id": "super",
+  "amount_due_usd": 42.17,
+  "currency": "usd",
+  "proration_date": 1764172800,
+  "next_invoice_at": "2026-12-26T15:00:00Z",
+  "effective": "now"
+}
+```
+
+`amount_due_usd` is the next invoice with prorations included. `effective` is `now` for an upgrade and `period_end` for a downgrade. Send `proration_date` back to `/change` so the charge matches the preview; one older than an hour answers `409 preview_expired`.
+
+`/change`, `/cancel` and `/resume` reply with the plan as it stands:
+
+```json
+{
+  "plan_id": "plus",
+  "label": "Plus",
+  "status": "active",
+  "cancel_at_period_end": false,
+  "current_period_end": "2026-12-26T15:00:00Z",
+  "pending_plan_id": null,
+  "pending_at": null,
+  "effective": "period_end"
+}
+```
+
+A downgrade fills `pending_plan_id` and `pending_at`; the current plan stays until then. Choosing the current plan while a downgrade is pending undoes it. Cancel drops a pending downgrade first.
+
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `unknown_plan` | The plan id does not exist. |
+| 404 | `no_subscription` | Free, or not the caller's. |
+| 409 | `billed_by_store` | The plan is billed by Apple or Google; the body carries `manage_url`. Change it in that store. |
+| 409 | `already_on_plan` | The plan is the current one and no downgrade is pending. |
+| 409 | `preview_expired` | `proration_date` is older than an hour. Preview again. |
+| 502 | `billing_upstream_error` | Stripe failed. |
+| 503 | `billing_not_configured` | Stripe key or plan price is not set. |
+
 ### Payment methods
 
 | Method | Path | Notes |

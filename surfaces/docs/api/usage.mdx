@@ -129,7 +129,7 @@ The limits are USD of Cloud inference spend. The month limit equals the plan's m
 | Max | 9.17 | 36.67 | 110.00 |
 | Ultra | 18.33 | 73.33 | 220.00 |
 
-A Free account has no plan and no limits.
+A Free account has no plan and no limits. Admin accounts are exempt: no window is enforced for them. Only an `active` or `trialing` Plus, Max or Ultra plan is limited.
 
 ### When a window is used up
 
@@ -150,7 +150,7 @@ The refusal is skipped when the account has turned on `carry_past_windows` and i
 | GET | `/api/v1/me/usage/settings` | none | `{ "carry_past_windows": false }` |
 | PUT | `/api/v1/me/usage/settings` | `{ "carry_past_windows": true }` | `{ "carry_past_windows": true }` |
 
-`carry_past_windows` is stored on `user_credits` (migration 168) and is `false` until the person turns it on. Off: the 5-hour and 7-day windows are hard stops until they reset. On: work continues past a window and is billed from the credit balance. The Usage page switch saves this value. `PUT` answers `409` ("Add usage credits first.") for an account with no credits row.
+`carry_past_windows` is stored on `user_credits` (migration 168) and is `false` until the person turns it on. Off: the 5-hour and 7-day windows are hard stops until they reset. On: work continues past a window and is billed from the credit balance. The Usage page switch saves this value. `GET` reads `false` for an account with no credits row. `PUT` answers `409` ("Add usage credits first.") for an account with no credits row.
 
 ## Error codes
 
