@@ -1,15 +1,22 @@
-package com.allternit.feature.shell.firstrun
+package com.allternit.core.design
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -29,21 +37,43 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 // PLAN-v2 step 2.16. Port of handoffs/ui-polish-2026-11-24/reference/ConnectScene.reference.tsx
 // (viewBox 0 0 120 72, stroke 1.5, round caps). Driven ONLY by the real connection state; no timer of its own.
+// Moved from :feature:shell (firstrun) to core/design by empty-art-v2 (PLAN decision 7) so feature modules can use it
+// as the "computer / connection" empty state (EmptyArtKind.ConnectScene = this scene, asleep).
 
-internal enum class ConnectSceneState { Asleep, Connecting, Connected }
+enum class ConnectSceneState { Asleep, Connecting, Connected }
+
+/** The check badge green (was SetupColors.ok in the first-run palette). */
+private val ConnectCheck = Color(0xFF22A06B)
 
 private val EaseOut = CubicBezierEasing(.16f, 1f, .3f, 1f)
 private val EaseInOut = CubicBezierEasing(.65f, 0f, .35f, 1f)
 
+/**
+ * The Connect scene: Gizzi, two cables and the device. [width] unspecified = the first-run Connect sheet layout (fills the
+ * sheet width, at most 240 dp); empty states pass round(size * 1.67), capped at the container width. [ink] and [paper]
+ * default to the theme text and background; the first-run sheet passes its setup palette. [still] = the still frame.
+ */
 @Composable
-internal fun ConnectScene(state: ConnectSceneState, modifier: Modifier = Modifier) {
-    val c = setupColors
-    val reduced = reducedMotion()
+fun ConnectScene(
+    state: ConnectSceneState,
+    modifier: Modifier = Modifier,
+    width: Dp = Dp.Unspecified,
+    ink: Color = Color.Unspecified,
+    paper: Color = Color.Unspecified,
+    check: Color = ConnectCheck,
+    still: Boolean = false,
+) {
+    val theme = AllternitTheme.colors
+    val inkColor = if (ink.isSpecified) ink else theme.textPrimary
+    val paperColor = if (paper.isSpecified) paper else theme.bgPrimary
+    val reduced = rememberDotReducedMotion() || still
     fun <T> spec(ms: Int, delay: Int = 0, easing: androidx.compose.animation.core.Easing = EaseOut) =
         if (reduced) snap<T>() else tween<T>(ms, delay, easing)
 
@@ -66,13 +96,14 @@ internal fun ConnectScene(state: ConnectSceneState, modifier: Modifier = Modifie
             screen.animateTo(1f, tween(400, easing = EaseOut))
         } else screen.snapTo(1f)
     }
-    val zClock = if (state == ConnectSceneState.Asleep) loopClock(2.4f, "csZLoop") else 0f
-    val runClock = if (state == ConnectSceneState.Connecting) loopClock(1.2f, "csRun") else 0f
+    val zClock = if (state == ConnectSceneState.Asleep) loopClock(2.4f, "csZLoop", reduced) else 0f
+    val runClock = if (state == ConnectSceneState.Connecting) loopClock(1.2f, "csRun", reduced) else 0f
 
-    Box(modifier.fillMaxWidth().widthIn(max = 240.dp).aspectRatio(120f / 72f).clearAndSetSemantics { }) {
+    val box = if (width == Dp.Unspecified) modifier.fillMaxWidth().widthIn(max = 240.dp) else modifier.widthIn(max = width).fillMaxWidth()
+    Box(box.aspectRatio(120f / 72f).clearAndSetSemantics { }) {
         Canvas(Modifier.fillMaxWidth().aspectRatio(120f / 72f)) {
             val s = size.width / 120f
-            val ink = c.ink
+            val ink = inkColor
             val sw = Stroke(width = 1.5f * s, cap = StrokeCap.Round, join = StrokeJoin.Round)
             fun p(x: Float, y: Float) = Offset(x * s, y * s)
 
@@ -110,7 +141,7 @@ internal fun ConnectScene(state: ConnectSceneState, modifier: Modifier = Modifie
             cable(44f, 40f, .6f)
 
             // Device
-            val paper = c.bg
+            val paper = paperColor
             drawRoundRect(paper, p(78f, 18f), Size(36 * s, 30 * s), CornerRadius(4 * s))
             drawRoundRect(ink, p(78f, 18f), Size(36 * s, 30 * s), CornerRadius(4 * s), style = sw)
             drawRoundRect(ink.copy(alpha = screen.value), p(82f, 22f), Size(28 * s, 18 * s), CornerRadius(2 * s), style = sw)
@@ -131,7 +162,7 @@ internal fun ConnectScene(state: ConnectSceneState, modifier: Modifier = Modifie
                     drawCircle(paper.copy(alpha = badge), 9 * s, p(96f, 33f))
                     drawCircle(ink.copy(alpha = badge), 9 * s, p(96f, 33f), style = sw)
                     val tick = Path().apply { moveTo(91.5f * s, 33 * s); relativeLineTo(3 * s, 3.2f * s); relativeLineTo(6.5f * s, -6.8f * s) }
-                    drawPath(tick, c.ok.copy(alpha = badge), style = sw)
+                    drawPath(tick, check.copy(alpha = badge), style = sw)
                 }
             }
         }
@@ -146,8 +177,20 @@ private fun BoxGizzi(alpha: Float) {
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(120f / 72f)) {
         val w = maxWidth
         val sprite = 44.dp * (w / 240.dp).coerceAtMost(1f)
-        Box(Modifier.offset(x = w * (24f / 120f) - sprite / 2, y = w * (38f / 120f) - sprite / 2).alpha(alpha)) { SetupGizzi(sprite) }
+        Box(Modifier.offset(x = w * (24f / 120f) - sprite / 2, y = w * (38f / 120f) - sprite / 2).alpha(alpha)) {
+            Image(painter = painterResource(R.drawable.gizzi_mascot), contentDescription = null, modifier = Modifier.size(sprite))
+        }
     }
+}
+
+/** A looping 0..[period] seconds clock (holds 0 under reduce motion); was loopClock in firstrun/SetupArt. */
+@Composable
+private fun loopClock(period: Float, label: String, reduced: Boolean): Float {
+    if (reduced) return 0f
+    val t by rememberInfiniteTransition(label = label).animateFloat(
+        0f, period, infiniteRepeatable(tween((period * 1000).toInt(), easing = LinearEasing), RepeatMode.Restart), label = "t",
+    )
+    return t
 }
 
 private fun DrawScope.translateStroke(path: Path, dx: Float, dy: Float, color: Color, style: Stroke) {
