@@ -234,7 +234,7 @@ function RuntimeGizziUsagePage(): React.ReactNode {
         />
       ) : !organization ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={SourceCodeIcon} size={32} />}
+          art="sheets"
           title="No organization selected"
           caption="Gizzi Code usage is aggregated per organization. Select or create an organization to see it."
           ctaLabel="Organizations"

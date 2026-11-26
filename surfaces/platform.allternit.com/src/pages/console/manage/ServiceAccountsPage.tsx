@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  ShieldUserIcon,
   AlertCircleIcon,
   CheckIcon,
   CopyIcon,
@@ -383,7 +382,7 @@ export function ServiceAccountsPage(): React.ReactNode {
             <SkeletonRow lines={4} />
           ) : filtered.length === 0 ? (
             <EmptyState
-              icon={<HugeiconsIcon icon={ShieldUserIcon} size={32} />}
+              art="search"
               title={search ? "No service accounts match" : "No service accounts yet"}
               caption={
                 search

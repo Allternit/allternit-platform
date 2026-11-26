@@ -276,7 +276,8 @@ function RuntimeCostPage(): React.ReactNode {
 
           {breakdown.length === 0 ? (
             <EmptyState
-              icon={<HugeiconsIcon icon={DollarIcon} size={32} />}
+              art="coins"
+              size="panel"
               title="No cost data"
               caption={`No hosted runtime spend recorded for ${month}. Start a hosted runtime and its cost will appear here.`}
             />

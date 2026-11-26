@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Key01Icon,
   AlertCircleIcon,
   CheckIcon,
   CopyIcon,
@@ -331,7 +330,7 @@ export function GatewayKeysPanel(): React.ReactNode {
         <SkeletonRow lines={4} />
       ) : keys.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={Key01Icon} size={32} />}
+          art="key"
           title="No gateway keys yet"
           caption="Gateway keys are ak-… tokens your applications use to call models through the Allternit LLM gateway."
           ctaLabel="Create gateway key"

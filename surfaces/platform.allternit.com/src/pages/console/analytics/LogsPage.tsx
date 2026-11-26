@@ -4,7 +4,6 @@ import {
   AlertCircleIcon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  DocumentValidationIcon,
 } from "@hugeicons/core-free-icons";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -204,7 +203,7 @@ function RuntimeLogsPage(): React.ReactNode {
         <SkeletonRow lines={8} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={DocumentValidationIcon} size={32} />}
+          art="search"
           title="No logs found"
           caption={
             search || statusFilter || tagFilter
@@ -641,7 +640,7 @@ function CloudLogsPage(): React.ReactNode {
       ) : rows.length === 0 ? (
         !error && (
           <EmptyState
-            icon={<HugeiconsIcon icon={DocumentValidationIcon} size={32} />}
+            art="search"
             title="No billed requests found"
             caption={
               model || client
