@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { ScriptSandbox } from "@/runtime/services/mcp/script-sandbox"
-import { McpScript } from "@/runtime/tools/builtins/mcp-script"
+import { McpScriptShared as McpScript } from "@/runtime/tools/builtins/mcp-script-shared"
 import { MCPTool } from "@/cli/ui/ink-app/tools/MCPTool/MCPTool"
 import { bridgeMcpTools, shouldOfferMcpScript } from "@/cli/ui/ink-app/tools/MCPScriptTool/bridge"
 import type { Tool, ToolUseContext } from "@/cli/ui/ink-app/Tool"

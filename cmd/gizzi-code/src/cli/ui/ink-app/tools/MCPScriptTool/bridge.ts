@@ -11,7 +11,7 @@
  * rejects inside the script.
  */
 import type { ScriptSandbox } from '@/runtime/services/mcp/script-sandbox'
-import { McpScript } from '@/runtime/tools/builtins/mcp-script'
+import { McpScriptShared as McpScript } from '@/runtime/tools/builtins/mcp-script-shared'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
   resolveHookPermissionDecision,
@@ -51,11 +51,8 @@ export function labelOf(tool: Tool): { server: string; tool: string } {
 export function declarationsFor(tools: Tools): string {
   return McpScript.declarations(
     mcpToolsOf(tools).map(t => ({
-      key: t.name,
       ...labelOf(t),
-      description: undefined,
       inputSchema: t.inputJSONSchema,
-      call: async () => undefined,
     })),
   )
 }

@@ -13,7 +13,7 @@
  */
 import { z } from 'zod/v4'
 import { ScriptSandbox } from '@/runtime/services/mcp/script-sandbox'
-import { McpScript } from '@/runtime/tools/builtins/mcp-script'
+import { McpScriptShared as McpScript } from '@/runtime/tools/builtins/mcp-script-shared'
 import DESCRIPTION from '@/runtime/tools/builtins/mcp-script.txt'
 import * as React from 'react'
 import { Text } from '../../ink.js'
