@@ -454,6 +454,7 @@ pub fn v1_router() -> Router<Arc<AppState>> {
         .route("/voice/stt/stream", post(proxy_voice_stt_stream))
         .route("/cli-tools", get(list_cli_tools_stub))
         .route("/cli-tools/installed", get(list_cli_tools_stub))
+        .merge(crate::team_routes::team_router())
 }
 
 async fn health() -> impl IntoResponse {

@@ -154,6 +154,7 @@ pub mod spend_limits;
 pub mod autonomy;
 pub mod task_grants;
 pub mod team_store;
+pub mod team_routes;
 pub mod channel_tools;
 pub mod templates_routes;
 pub mod memory_curation;
