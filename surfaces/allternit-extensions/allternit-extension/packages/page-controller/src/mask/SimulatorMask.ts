@@ -11,6 +11,10 @@ export class SimulatorMask {
 	motion: Motion | null = null
 
 	#cursor = document.createElement('div')
+	#label = document.createElement('div')
+	#reducedMotion =
+		typeof window.matchMedia === 'function' &&
+		window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 	#currentCursorX = 0
 	#currentCursorY = 0
@@ -25,6 +29,7 @@ export class SimulatorMask {
 		this.wrapper.setAttribute('data-page-agent-ignore', 'true')
 
 		try {
+			if (this.#reducedMotion) throw new Error('reduced motion: overlay animation skipped')
 			const motion = new Motion({
 				mode: isPageDark() ? 'dark' : 'light',
 				styles: { position: 'absolute', inset: '0' },
@@ -102,12 +107,26 @@ export class SimulatorMask {
 		borderLayer.className = cursorStyles.cursorBorder
 		this.#cursor.appendChild(borderLayer)
 
+		// Label next to the cursor: bot name and, when known, the current step
+		this.#label.className = cursorStyles.cursorLabel
+		this.#label.setAttribute('aria-hidden', 'true')
+		this.#label.textContent = 'Allternit'
+		this.#cursor.appendChild(this.#label)
+
 		this.wrapper.appendChild(this.#cursor)
 	}
 
+	/** Set the text next to the cursor. Empty text falls back to "Allternit". */
+	setLabel(text: string) {
+		const next = (text || '').trim().slice(0, 80) || 'Allternit'
+		if (this.#label.textContent !== next) this.#label.textContent = next
+	}
+
 	#moveCursorToTarget() {
-		const newX = this.#currentCursorX + (this.#targetCursorX - this.#currentCursorX) * 0.2
-		const newY = this.#currentCursorY + (this.#targetCursorY - this.#currentCursorY) * 0.2
+		// Reduced motion: jump straight to the target instead of easing
+		const ease = this.#reducedMotion ? 1 : 0.2
+		const newX = this.#currentCursorX + (this.#targetCursorX - this.#currentCursorX) * ease
+		const newY = this.#currentCursorY + (this.#targetCursorY - this.#currentCursorY) * ease
 
 		const xDistance = Math.abs(newX - this.#targetCursorX)
 		if (xDistance > 0) {

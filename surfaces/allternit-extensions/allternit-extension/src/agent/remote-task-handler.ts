@@ -10,6 +10,13 @@
  *   { id, type: 'execute_task', payload: { task: string }, timestamp }
  *   { id, type: 'stop_task', payload: {}, timestamp }
  *   { id, type: 'get_status', payload: {}, timestamp }
+ *   { id, type: 'resume_task', payload: { handoffId: string, approved: boolean }, timestamp }
+ *       Answers a `needs_you` pause. approved=true continues, approved=false stops the task.
+ *
+ *   execute_task payload also takes `botName?: string` (tab group title and cursor label,
+ *   default "Allternit"). The task runs in its own unfocused Chrome window with its tabs in
+ *   one orange tab group titled "<bot> · working"; the window closes when the task ends
+ *   unless the person took it over.
  *
  * ── Outbound events (extension → Desktop) ────────────────────────────────────
  *   { id, type: 'status',   payload: { status: AgentStatus }, timestamp }
@@ -18,6 +25,9 @@
  *   { id, type: 'done',     payload: { success: boolean; data: string }, timestamp }
  *   { id, type: 'error',    payload: { message: string }, timestamp }
  *   { id, type: 'pong',     payload: {}, timestamp }
+ *   { id, type: 'needs_you', payload: { kind: 'login' | 'two_factor' | 'captcha' | 'block_page'
+ *                                        | 'rate_limited', url, domain, handoffId }, timestamp }
+ *       The agent is paused on this page until `resume_task` arrives.
  *
  * Native host name: com.allternit.desktop
  */
@@ -25,7 +35,13 @@
 import type { AgentActivity, AgentStatus, HistoricalEvent } from '@page-agent/core'
 import type { LLMConfig } from '@page-agent/llms'
 
-import { MultiPageAgent } from './MultiPageAgent'
+import {
+  createHandoff,
+  resolveHandoff,
+} from '@/browser-agent/safety/handoff'
+
+import { MultiPageAgent, type NeedsYouInfo } from './MultiPageAgent'
+import type { TabsController } from './TabsController'
 import { DEMO_CONFIG, migrateLegacyEndpoint } from './constants'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -60,6 +76,8 @@ class RemoteTaskHandler {
   private reconnectDelay = RECONNECT_DELAY_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private active = false
+  /** Pending needs_you pauses: handoffId → resolver (true = continue, false = stop). */
+  private pendingHandoffs = new Map<string, (approved: boolean) => void>()
   private platformStateListeners = new Set<(state: PlatformTaskState) => void>()
 
   /** Call once from background to begin managing the remote connection. */
@@ -100,6 +118,19 @@ class RemoteTaskHandler {
   onPlatformTaskState(listener: (state: PlatformTaskState) => void): () => void {
     this.platformStateListeners.add(listener)
     return () => this.platformStateListeners.delete(listener)
+  }
+
+  /**
+   * Answer a needs_you pause (from Desktop's resume_task or the side panel bar).
+   * Returns false when no such pause is waiting.
+   */
+  async resumeTask(handoffId: string, approved: boolean): Promise<boolean> {
+    const waiting = this.pendingHandoffs.get(handoffId)
+    await resolveHandoff(handoffId, approved).catch(() => null)
+    if (!waiting) return false
+    this.pendingHandoffs.delete(handoffId)
+    waiting(approved)
+    return true
   }
 
   // ── Private ────────────────────────────────────────────────────────────────
@@ -175,6 +206,12 @@ class RemoteTaskHandler {
         break
       case 'get_status':
         this._send({ type: 'status', payload: { status: this.agent?.status ?? 'idle' } })
+        break
+      case 'resume_task':
+        void this.resumeTask(
+          String(msg.payload?.handoffId ?? ''),
+          msg.payload?.approved === true,
+        )
         break
       case 'configure':
         this._onConfigure(msg)
@@ -255,6 +292,8 @@ class RemoteTaskHandler {
   }
 
   private _onStopTask(): void {
+    // A paused agent must wake up to stop.
+    for (const id of Array.from(this.pendingHandoffs.keys())) void this.resumeTask(id, false)
     this.agent?.stop()
     this._send({ type: 'status', payload: { status: 'idle' } })
   }
@@ -275,7 +314,16 @@ class RemoteTaskHandler {
     // Build a fresh agent for this task
     await this._destroyAgent()
     const agentConfig = await this._loadConfig()
-    const agent = new MultiPageAgent(agentConfig)
+    const botName =
+      typeof msg.payload?.botName === 'string' && msg.payload.botName.trim()
+        ? msg.payload.botName.trim()
+        : 'Allternit'
+    const agent = new MultiPageAgent({
+      ...agentConfig,
+      ownWindow: true,
+      botName,
+      onNeedsYou: (info, tabs) => this._needsYou(info, tabs),
+    })
     this.agent = agent
 
     // Wire event listeners
@@ -293,7 +341,13 @@ class RemoteTaskHandler {
     agent.addEventListener('activity', (e: Event) => {
       const activity = (e as CustomEvent).detail as AgentActivity
       this._send({ type: 'activity', payload: activity as unknown as Record<string, unknown> })
+      // Step text next to the cursor
+      const step = describeStep(activity)
+      if (step) {
+        void agent.remotePageController.setMaskLabel(`${botName} · ${step}`)
+      }
     })
+    void agent.remotePageController.setMaskLabel(botName)
 
     // Execute and stream final result
     try {
@@ -304,7 +358,40 @@ class RemoteTaskHandler {
       })
     } catch (err) {
       this._send({ type: 'error', payload: { message: String(err) } })
+    } finally {
+      // Close the agent's window unless the person took it over.
+      await agent.tabsController.closeOwnWindow().catch(() => undefined)
     }
+  }
+
+  /** Pause on a page that needs the person: record a handoff, tell Desktop, wait. */
+  private async _needsYou(info: NeedsYouInfo, tabs: TabsController): Promise<boolean> {
+    const handoff = await createHandoff(`needs_you:${info.kind}`, info.reason, {
+      kind: info.kind,
+      url: info.url,
+      domain: info.domain,
+    })
+    const answer = new Promise<boolean>((resolve) => {
+      this.pendingHandoffs.set(handoff.id, resolve)
+    })
+    this._send({
+      type: 'needs_you',
+      payload: { kind: info.kind, url: info.url, domain: info.domain, handoffId: handoff.id },
+    })
+    // Bring the agent's window forward so the person can act on the page.
+    await tabs.focusAgentWindow().catch(() => undefined)
+
+    const approved = await answer
+    if (approved && info.kind === 'login') {
+      // Vault autofill runs only now, after the person approved.
+      await tabs.approveAutofillForCurrentTab().catch(() => undefined)
+      if (tabs.currentTabId != null) {
+        await chrome.tabs
+          .sendMessage(tabs.currentTabId, { type: 'AUTOFILL_RESCAN' })
+          .catch(() => undefined)
+      }
+    }
+    return approved
   }
 
   private async _destroyAgent(): Promise<void> {
@@ -351,6 +438,19 @@ class RemoteTaskHandler {
         ? { system: advancedConfig.systemInstruction }
         : undefined,
     }
+  }
+}
+
+function describeStep(activity: AgentActivity): string {
+  switch (activity.type) {
+    case 'thinking':
+      return 'Thinking'
+    case 'executing':
+      return activity.tool.replace(/_/g, ' ')
+    case 'retrying':
+      return 'Trying again'
+    default:
+      return ''
   }
 }
 

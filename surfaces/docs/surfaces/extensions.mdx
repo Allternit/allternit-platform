@@ -22,6 +22,43 @@ A unified Chrome extension built with [WXT](https://wxt.dev/). It exposes Allter
 - **Assist only.** The page agent reads and explains. Page text is data: it never follows orders written inside a page, it says what a page asks for, and its answer cites what it read.
 - **Native messaging** — The extension talks to the `native-host` bridge to forward actions to the local Allternit Desktop bridge on TCP `127.0.0.1:3011`.
 
+### Agent window and cursor
+
+When Allternit Desktop sends the extension a task (`execute_task`), the agent works in its own Chrome window instead of your active tab.
+
+- The window opens without taking focus, so it does not interrupt what you are doing.
+- Its tabs sit in one tab group named "&lt;bot&gt; · working" in orange. The bot name comes from the `botName` field of the task, and defaults to "Allternit".
+- A cursor moves on the page as the agent acts, with a small label next to it showing the bot name and the current step. If your system asks for reduced motion, the cursor jumps instead of gliding and the page overlay animation is turned off.
+- When the task ends, the window closes. If you clicked into the agent window yourself, it stays open for you.
+
+### When the agent needs you
+
+The agent pauses and asks for you when the page in front of it is one of these:
+
+| Kind | What the agent saw |
+|---|---|
+| `login` | A visible password field or sign-in form |
+| `two_factor` | A prompt for a verification code |
+| `captcha` | A reCAPTCHA, hCaptcha or Turnstile challenge |
+| `block_page` | An "access denied" or "checking your browser" page |
+| `rate_limited` | A "too many requests" page |
+
+The agent never types a password itself. It pauses, the agent window comes to the front, and the side panel shows "Gizzi needs you" with Continue and Stop. Vault autofill fills a sign-in form only after you approve with Continue.
+
+Messages with Desktop, over the native host:
+
+```json
+// extension to Desktop
+{ "type": "needs_you",
+  "payload": { "kind": "login", "url": "https://example.com/login",
+               "domain": "example.com", "handoffId": "9f1c..." } }
+
+// Desktop to extension
+{ "type": "resume_task", "payload": { "handoffId": "9f1c...", "approved": true } }
+```
+
+`approved: true` continues the task. `approved: false` stops it. A `stop_task` also ends a paused task. If the page still needs you on the next step, the agent pauses again.
+
 ### Development
 
 ```bash

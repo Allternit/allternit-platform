@@ -1,3 +1,5 @@
+import { handleTabControlMessage } from './TabsController.background'
+
 const PREFIX = '[TabsController]'
 
 function debug(...messages: any[]) {
@@ -9,6 +11,17 @@ function sendMessage(message: {
 	action: TabAction
 	payload?: any
 }): Promise<any> {
+	// A service worker does not receive its own runtime messages, so call the
+	// background handler directly when the agent runs there (remote tasks).
+	if (typeof window === 'undefined') {
+		return new Promise((resolve) => {
+			handleTabControlMessage(
+				message as Parameters<typeof handleTabControlMessage>[0],
+				{} as chrome.runtime.MessageSender,
+				resolve
+			)
+		})
+	}
 	return chrome.runtime.sendMessage(message).catch((error) => {
 		console.error(PREFIX, message.action, error)
 		return null
@@ -28,6 +41,12 @@ export class TabsController extends EventTarget {
 	private initialTabId: number | null = null
 	private tabGroupId: number | null = null
 	private task: string = ''
+	private windowId: number | null = null
+
+	/** Remote tasks: work in their own unfocused window, tabs in one orange group. */
+	ownWindow = false
+	/** Bot name used in the tab group title ("<bot> · working"). */
+	botName = 'Allternit'
 
 	constructor() {
 		super()
@@ -92,12 +111,17 @@ export class TabsController extends EventTarget {
 					action: 'update_tab_group',
 					payload: {
 						groupId: this.tabGroupId,
-						properties: { title: `PageAgent(${task})` },
+						properties: { title: this.groupTitle() },
 					},
 				}).catch(() => {
 					// Tab group may have been closed by user — ignore
 				})
 			}
+			return
+		}
+
+		if (this.ownWindow) {
+			await this.initOwnWindow()
 			return
 		}
 
@@ -141,13 +165,69 @@ export class TabsController extends EventTarget {
 		await this.updateCurrentTabId(this.currentTabId)
 	}
 
+	/** Open the agent's own window (not focused) and group its first tab. */
+	private async initOwnWindow() {
+		this.tabs = []
+		this.currentTabId = null
+		this.tabGroupId = null
+		this.initialTabId = null
+
+		const win = await sendMessage({ type: 'TAB_CONTROL', action: 'create_agent_window' })
+		if (!win?.success) {
+			throw new Error(`Failed to open the agent window: ${win?.error}`)
+		}
+		this.windowId = win.windowId as number
+		this.initialTabId = win.tabId as number
+		this.currentTabId = this.initialTabId
+		this.tabs.push({ id: this.initialTabId, isInitial: true, url: 'about:blank', status: 'complete' })
+		await this.createTabGroup([this.initialTabId])
+		await this.updateCurrentTabId(this.currentTabId)
+	}
+
+	/** The title of the agent's tab group. */
+	private groupTitle(): string {
+		return this.ownWindow ? `${this.botName} · working` : `PageAgent(${this.task})`
+	}
+
+	/** Bring the agent window to the front so the person can act (login, captcha). */
+	async focusAgentWindow(): Promise<void> {
+		if (this.windowId == null) return
+		await sendMessage({ type: 'TAB_CONTROL', action: 'focus_agent_window' })
+	}
+
+	/** Let vault autofill run on the current tab (only after the person approved). */
+	async approveAutofillForCurrentTab(): Promise<void> {
+		if (this.currentTabId == null) return
+		await sendMessage({
+			type: 'TAB_CONTROL',
+			action: 'approve_agent_autofill',
+			payload: { tabId: this.currentTabId },
+		})
+	}
+
+	/**
+	 * Task ended: close the agent's window, unless the person took it over.
+	 * Resets state so the next task opens a fresh window.
+	 */
+	async closeOwnWindow(): Promise<{ closed: boolean }> {
+		if (!this.ownWindow || this.windowId == null) return { closed: false }
+		const result = await sendMessage({ type: 'TAB_CONTROL', action: 'close_agent_window' })
+		this.windowId = null
+		this.tabs = []
+		this.currentTabId = null
+		this.tabGroupId = null
+		this.initialTabId = null
+		await chrome.storage.local.set({ currentTabId: null })
+		return { closed: Boolean(result?.closed) }
+	}
+
 	async openNewTab(url: string): Promise<string> {
 		debug('openNewTab', url)
 
 		const result = await sendMessage({
 			type: 'TAB_CONTROL',
 			action: 'open_new_tab',
-			payload: { url },
+			payload: { url, windowId: this.windowId },
 		})
 
 		if (!result.success) {
@@ -244,8 +324,8 @@ export class TabsController extends EventTarget {
 			payload: {
 				groupId: this.tabGroupId,
 				properties: {
-					title: `PageAgent(${this.task})`,
-					color: randomColor(),
+					title: this.groupTitle(),
+					color: this.ownWindow ? 'orange' : randomColor(),
 					collapsed: false,
 				},
 			},
@@ -322,6 +402,10 @@ export type TabAction =
 	| 'add_tab_to_group'
 	| 'close_tab'
 	| 'get_tab_title'
+	| 'create_agent_window'
+	| 'close_agent_window'
+	| 'focus_agent_window'
+	| 'approve_agent_autofill'
 
 interface TabMeta {
 	id: number

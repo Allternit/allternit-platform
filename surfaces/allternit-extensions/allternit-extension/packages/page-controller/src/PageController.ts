@@ -400,6 +400,12 @@ export class PageController extends EventTarget {
 		this.mask?.show()
 	}
 
+	/** Set the label shown next to the agent cursor (bot name and step). */
+	async setMaskLabel(text: string): Promise<void> {
+		await this.maskReady
+		this.mask?.setLabel(text)
+	}
+
 	/**
 	 * Hide the visual mask overlay.
 	 * Only works after mask is setup.

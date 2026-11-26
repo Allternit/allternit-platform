@@ -68,3 +68,25 @@
 		opacity: 0;
 	}
 }
+
+.cursorLabel {
+	position: absolute;
+	left: 28px;
+	top: 18px;
+	max-width: 260px;
+	padding: 3px 9px;
+	border-radius: 999px;
+	background: #f97316;
+	color: #fff;
+	font: 600 12px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cursor.clicking .cursorRipple::after {
+		animation: none;
+	}
+}

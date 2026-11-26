@@ -7,6 +7,7 @@ import { ExtensionSidepanelShell } from '../../../../extension-shared/extension-
 import { ConfigPanel } from './components/ConfigPanel'
 import { HistoryDetail } from './components/HistoryDetail'
 import { HistoryList } from './components/HistoryList'
+import { NeedsYouBar } from './components/NeedsYouBar'
 import { useExtensionSidepanelAdapter } from './useExtensionSidepanelAdapter'
 import { HTMLToFigmaPanel } from '@/html-to-figma/ui/HTMLToFigmaPanel'
 import { CaptureComposer } from '@/html-to-figma/ui/CaptureComposer'
@@ -77,6 +78,9 @@ export default function App() {
 	}
 
 	return (
+		<div className="flex h-full flex-col">
+		<NeedsYouBar />
+		<div className="min-h-0 flex-1">
 		<ExtensionSidepanelShell
 			adapter={adapter}
 			copy={EXTENSION_SIDEPANEL_COPY}
@@ -92,5 +96,7 @@ export default function App() {
 			)}
 			renderComposer={(props) => <ResearchComposer {...props} />}
 		/>
+		</div>
+		</div>
 	)
 }
