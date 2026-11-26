@@ -586,7 +586,7 @@ struct HistorySidebarView: View {
         let filtered = isRecentsFiltered
         let mode = modeStore.shellMode
         return VStack(spacing: 0) {
-            EmptyArt(kind: .envelope, size: 80)
+            EmptyArt(kind: mode == .aci ? .bell : .envelope, size: 80)
             Text(filtered ? "Nothing matches" : Self.emptyTitle(for: mode))
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(Color("TextPrimary"))

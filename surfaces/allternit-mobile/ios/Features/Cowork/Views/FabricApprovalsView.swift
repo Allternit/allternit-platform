@@ -13,9 +13,11 @@ struct FabricApprovalsView: View {
         List {
             Section("Pending approvals") {
                 if store.pending.isEmpty {
-                    Text(store.loadError ?? "No approvals waiting.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if let error = store.loadError {
+                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        FriendlyInlineStateView(title: "No approvals waiting.", art: .bell)
+                    }
                 } else {
                     ForEach(store.pending) { approval in
                         ApprovalRow(approval: approval) { grant in
@@ -26,9 +28,7 @@ struct FabricApprovalsView: View {
             }
             Section("Recent runs") {
                 if store.runs.isEmpty {
-                    Text("No runs yet.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    FriendlyInlineStateView(title: "No runs yet.", art: .bell)
                 } else {
                     ForEach(store.runs) { run in
                         Button {
