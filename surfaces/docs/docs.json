@@ -539,6 +539,7 @@
               "tools/project-status",
               "tools/mdx-graphs",
               "tools/mcp",
+              "tools/code-mode",
               "tools/connectors",
               "tools/settings",
               "tools/computer-use",

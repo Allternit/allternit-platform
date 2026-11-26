@@ -11,6 +11,7 @@ import { deleteClassifierApproval, getClassifierApproval, getYoloClassifierAppro
 import type { buildMessageLookups } from '../../../utils/messages';
 import { MessageResponse } from '../../MessageResponse';
 import { HookProgressMessage } from '../HookProgressMessage';
+import { renderToolResultMessage as renderMcpScriptResult } from '../../../tools/MCPScriptTool/UI';
 type Props = {
   message: NormalizedUserMessage;
   lookups: ReturnType<typeof buildMessageLookups>;
@@ -50,6 +51,24 @@ export function UserToolSuccessMessage({
   React.useEffect(() => {
     deleteClassifierApproval(toolUseID);
   }, [toolUseID]);
+  // Tool-part metadata: the runtime session path puts it on part.state.metadata
+  // (mcp / mcpScript); the in-process MCP client carries it as message.mcpMeta.
+  const metadata = {
+    ...(message.mcpMeta?.structuredContent ? {
+      mcp: {
+        structuredContent: message.mcpMeta.structuredContent
+      }
+    } : {}),
+    ...(message.mcpMeta?.mcpScript ? {
+      mcpScript: message.mcpMeta.mcpScript
+    } : {}),
+    ...(message.metadata ?? {})
+  };
+  if (metadata.mcpScript && (tool?.name ?? lookups.toolUseByToolUseID.get(toolUseID)?.name) === 'mcp_script') {
+    return <Box flexDirection="column" width={width}>{renderMcpScriptResult(metadata.mcpScript, {
+        verbose
+      })}</Box>;
+  }
   if (!message.toolUseResult || !tool) {
     return null;
   }
@@ -70,7 +89,8 @@ export function UserToolSuccessMessage({
     verbose,
     isTranscriptMode,
     isBriefOnly,
-    input: lookups.toolUseByToolUseID.get(toolUseID)?.input
+    input: lookups.toolUseByToolUseID.get(toolUseID)?.input,
+    metadata
   }) ?? null;
 
   // Don't render anything if the tool result message is null
