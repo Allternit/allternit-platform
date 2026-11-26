@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  File01Icon,
   TrashIcon,
   AlertCircleIcon,
 } from "@hugeicons/core-free-icons";
@@ -233,7 +232,7 @@ export function FilesPage(): React.ReactNode {
         <SkeletonRow lines={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={File01Icon} size={32} />}
+          art="search"
           title={search ? "No files match your search" : "No files yet"}
           caption={
             search

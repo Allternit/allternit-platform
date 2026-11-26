@@ -308,7 +308,8 @@ export function FabricPage() {
             </div>
             {chargeEvents.length === 0 ? (
               <EmptyState
-                icon={<Receipt size={32} weight="thin" />}
+                art="coins"
+                size="panel"
                 title="No charge events"
                 caption="Usage events reconciled by the control plane will appear here."
               />

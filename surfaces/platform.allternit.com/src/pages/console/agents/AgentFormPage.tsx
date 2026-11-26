@@ -30,6 +30,7 @@ import {
 } from "@/lib/managed-agents";
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
 import { FormPage } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import {
   ALLTERNIT_RUNTIME,
   DEFAULT_RUNTIME_ID,
@@ -733,7 +734,7 @@ export function AgentFormPage(): React.ReactNode {
       ) : (
         <div className="space-y-3">
           {subagents.length === 0 ? (
-            <p className="m-0 text-[13px] text-[var(--text-secondary)]">No subagents yet.</p>
+            <EmptyInline art="gizzi">No subagents yet.</EmptyInline>
           ) : (
             <div className="divide-y divide-solid divide-[var(--border-subtle)] rounded-xl border border-solid border-[var(--border-subtle)]">
               {subagents.map((sub) => (

@@ -14,6 +14,7 @@ import {
   Stack,
   Warning,
 } from "@phosphor-icons/react";
+import { EmptyState } from "@/components/console-ui/EmptyState";
 import { PublicPageShell } from "@/components/PublicPageShell";
 import { SignInModalButton } from "@/components/SignInModalButton";
 import { fetchLiveModelCatalog, type LiveModelInfo } from "@/lib/model-catalog";
@@ -463,9 +464,12 @@ function ModelTable({ state, retry }: { state: Load<CloudModel[]>; retry: () => 
           <ErrorRow message={`Could not load the model list: ${state.message}`} onRetry={retry} />
         )}
         {state.status === "ready" && rows.length === 0 && (
-          <div className="rounded-xl border border-dashed border-[var(--border-default)] px-4 py-10 text-center text-[13px] text-[var(--text-secondary)]">
-            {models.length === 0 ? "No models are listed right now. Check back soon." : "No models match this search."}
-          </div>
+          <EmptyState
+            art="search"
+            size="panel"
+            className="rounded-xl border border-dashed border-[var(--border-default)]"
+            title={models.length === 0 ? "No models are listed right now. Check back soon." : "No models match this search."}
+          />
         )}
         {state.status === "ready" && rows.length > 0 && (
           <>

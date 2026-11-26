@@ -99,7 +99,7 @@ export function OrganizationAccessPanel({ compact = false }: { compact?: boolean
     if (!fallbackProfile?.organization_id) {
       return (
         <EmptyState
-          icon={<Buildings size={32} weight="thin" />}
+          art="sheets"
           title="No organization yet"
           caption={
             fallbackCreateError ??

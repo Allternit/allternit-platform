@@ -229,7 +229,7 @@ export function DevicesPage() {
         />
       ) : devices.length === 0 ? (
         <EmptyState
-          icon={<Desktop size={32} weight="thin" />}
+          art="connect-scene"
           title="No paired devices"
           caption="Pair a desktop, VPS, or hosted runtime to see it here. Use the pairing code shown in the app."
           ctaLabel="Refresh"
