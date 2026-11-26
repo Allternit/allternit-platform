@@ -108,3 +108,60 @@ describe("mcp_script sandbox", () => {
     expect(d).toContain("create_issue(args: {  }): Promise<unknown>")
   })
 })
+
+describe("mcp_script nested calls", () => {
+  test("two identical calls in one script both run, each with its own call id", async () => {
+    const { tmpdir } = await import("../fixture/fixture")
+    const { Instance } = await import("@/runtime/context/project/instance")
+    const { McpScriptTool } = await import("@/runtime/tools/builtins/mcp-script")
+    const { ToolDedupe } = await import("@/runtime/tools/dedupe")
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const sessionID = "ses_nested_calls"
+        const messageID = "msg_nested_calls"
+        const ran: string[] = []
+        // The same path prompt.ts takes: McpScript.callOptions + McpScript.dedupe around the real ToolDedupe.
+        const entry = (key: string, server: string, tool: string): McpScript.Entry => ({
+          key,
+          server,
+          tool,
+          call: async (args, ctx) => {
+            const opts = McpScript.callOptions(ctx)
+            const result = await McpScript.dedupe(opts, {
+              sessionID,
+              messageID,
+              tool: key,
+              args,
+              run: async () => {
+                ran.push(opts.toolCallId)
+                return { content: [{ type: "text", text: JSON.stringify({ n: ran.length }) }] }
+              },
+            })
+            McpScript.noteRaw(opts, result)
+            return McpScript.takeRaw(opts)
+          },
+        })
+        McpScript.register(sessionID, [entry("gh_status", "github", "get_status"), entry("ln_list", "linear", "list")])
+        const tool = await McpScriptTool.init()
+        const out = await tool.execute(
+          { script: `const a = await github.get_status({ id: 1 }); const b = await github.get_status({ id: 1 }); return [a.n, b.n]` },
+          { sessionID, messageID, callID: "call_script", agent: "build", abort: new AbortController().signal, messages: [], metadata: async () => {}, ask: async () => {} } as any,
+        )
+        expect(out.output).toBe("[1,2]")
+        expect(ran).toEqual(["call_script:1", "call_script:2"])
+        expect(out.metadata.mcpScript.calls).toHaveLength(2)
+
+        // A model call keeps dedupe: the same args in the same step run once.
+        let modelRuns = 0
+        const run = async () => ({ n: ++modelRuns })
+        const opts = { toolCallId: "call_model" }
+        await McpScript.dedupe(opts, { sessionID, messageID: "msg_model", tool: "gh_status", args: { id: 1 }, run })
+        await McpScript.dedupe(opts, { sessionID, messageID: "msg_model", tool: "gh_status", args: { id: 1 }, run })
+        expect(modelRuns).toBe(1)
+        ToolDedupe.reset()
+      },
+    })
+  })
+})

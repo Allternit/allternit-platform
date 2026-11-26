@@ -2,8 +2,12 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/mcp-script.txt"
 import { ScriptSandbox } from "@/runtime/services/mcp/script-sandbox"
+import { McpScriptShared } from "@/runtime/tools/builtins/mcp-script-shared"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Bus } from "@/shared/bus"
+import { ToolDedupe } from "@/runtime/tools/dedupe"
+import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
+import type { ToolCallOptions } from "ai"
 
 /**
  * Code Mode (MCP 2027 step 5): `mcp_script { script }` runs one TypeScript
@@ -14,21 +18,17 @@ import { Bus } from "@/shared/bus"
  * Flag `mcp.codeMode` (default on): set GIZZI_DISABLE_MCP_CODE_MODE=1 to turn it off.
  */
 export namespace McpScript {
-  export const ID = "mcp_script"
-
-  export function enabled(): boolean {
-    const v = process.env.GIZZI_DISABLE_MCP_CODE_MODE?.toLowerCase()
-    return !(v === "1" || v === "true")
-  }
+  export const ID = McpScriptShared.ID
+  export const enabled = McpScriptShared.enabled
+  export const bridgeName = McpScriptShared.bridgeName
+  export const tsType = McpScriptShared.tsType
+  export const declarations = McpScriptShared.declarations
+  export const toJavaScript = McpScriptShared.toJavaScript
+  export const scriptValue = McpScriptShared.scriptValue
 
   /** One MCP tool offered this turn, bound to the session loop's wrapped execute. */
-  export interface Entry {
+  export interface Entry extends McpScriptShared.Declared {
     key: string
-    server: string
-    tool: string
-    description?: string
-    inputSchema?: unknown
-    outputSchema?: unknown
     /** The same call a model MCP tool call takes (gates, approvals, dedupe, dispatcher). */
     call(args: Record<string, unknown>, ctx: Tool.Context): Promise<unknown>
   }
@@ -43,30 +43,6 @@ export namespace McpScript {
     while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string)
   }
 
-  /**
-   * How a tool is named inside a script. App-chat tools reach gizzi through one
-   * proxy server as `<prefix>__<tool>` with `_meta["allternit/connector"]`
-   * (descriptor `connectorId` / `appName`): those become `<connector>.<tool>`,
-   * the connector name slugged to an identifier, else the prefix. A server
-   * connected straight to gizzi stays `<server>.<tool>`. `calls[].server` is this label.
-   */
-  export function bridgeName(
-    descriptor: { serverName: string; originalName: string; appName?: string; connectorId?: string } | undefined,
-    key: string,
-  ): { server: string; tool: string } {
-    if (!descriptor) return { server: key, tool: key }
-    const split = descriptor.originalName.indexOf("__")
-    const proxied = descriptor.connectorId !== undefined || descriptor.appName !== undefined
-    if (!proxied || split <= 0) return { server: descriptor.serverName, tool: descriptor.originalName }
-    const prefix = descriptor.originalName.slice(0, split)
-    const tool = descriptor.originalName.slice(split + 2) || descriptor.originalName
-    const slug = (descriptor.appName ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-    return { server: ScriptSandbox.identifier(slug || prefix), tool }
-  }
-
   // The raw CallToolResult of a bridged call, keyed by the options object the
   // bridge passed in (the wrapped execute returns model-ready output only).
   const raw = new WeakMap<object, unknown>()
@@ -77,6 +53,38 @@ export namespace McpScript {
     const result = raw.get(opts)
     raw.delete(opts)
     return scriptValue(result)
+  }
+
+  /**
+   * Each call a script makes gets its own id, `<script call id>:<n>`, so the
+   * prefix is the parent link. Keyed by it: the running-part metadata update
+   * (finds no part, so the mcp_script part is never written over), the proxy's
+   * one-shot approval (one call can't consume or clear another's) and the
+   * permission ask.
+   */
+  export function nestedCallID(parent: string | undefined, n: number): string {
+    return `${parent ?? ""}:${n}`
+  }
+  /** True when `callID` is a call made from inside the script whose id is `parent`. */
+  export function isNestedOf(callID: string | undefined, parent: string | undefined): boolean {
+    return callID !== undefined && parent !== undefined && callID.startsWith(`${parent}:`)
+  }
+
+  // Options objects of calls made from a script (not by the model).
+  const scripted = new WeakSet<object>()
+  /** The options a bridged call hands the wrapped execute; marked as a script call. */
+  export function callOptions(ctx: Tool.Context): ToolCallOptions {
+    const opts = { toolCallId: ctx.callID ?? "", abortSignal: ctx.abort, messages: [] } as ToolCallOptions
+    scripted.add(opts)
+    return opts
+  }
+  /**
+   * ToolDedupe for model calls only. A script is explicit code: two identical
+   * calls in it (a poll, a retry) both run, and a script call never shares a
+   * model call's promise or gets the "repeated call" reminder.
+   */
+  export function dedupe<T>(opts: object, input: Parameters<typeof ToolDedupe.execute<T>>[0]): Promise<T> {
+    return scripted.has(opts) ? input.run() : ToolDedupe.execute<T>(input)
   }
 
   export function entries(sessionID: string): Entry[] {
@@ -99,96 +107,6 @@ export namespace McpScript {
     register(sessionID, list)
     tool.description = `${tool.description ?? DESCRIPTION}\n\n<declarations>\n${declarations(list)}\n</declarations>`
   }
-
-  // ── typed declarations from JSON Schema ────────────────────────────────────
-  const MAX_DECLARATIONS = 24_000
-
-  export function tsType(schema: unknown, depth = 0): string {
-    if (!schema || typeof schema !== "object" || depth > 5) return "unknown"
-    const s = schema as Record<string, any>
-    if (Array.isArray(s.enum) && s.enum.length) return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ")
-    if ("const" in s) return JSON.stringify(s.const)
-    const union = s.anyOf ?? s.oneOf
-    if (Array.isArray(union) && union.length) return union.map((u: unknown) => tsType(u, depth + 1)).join(" | ")
-    const type = s.type
-    if (Array.isArray(type)) return type.map((t: unknown) => tsType({ ...s, type: t }, depth + 1)).join(" | ")
-    switch (type) {
-      case "string":
-        return "string"
-      case "number":
-      case "integer":
-        return "number"
-      case "boolean":
-        return "boolean"
-      case "null":
-        return "null"
-      case "array":
-        return `Array<${tsType(s.items, depth + 1)}>`
-      case "object":
-      case undefined: {
-        const props = s.properties as Record<string, unknown> | undefined
-        if (!props || typeof props !== "object") return type === "object" ? "Record<string, unknown>" : "unknown"
-        const required = new Set<string>(Array.isArray(s.required) ? s.required : [])
-        const fields = Object.entries(props).map(([name, sub]) => {
-          const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name)
-          return `${key}${required.has(name) ? "" : "?"}: ${tsType(sub, depth + 1)}`
-        })
-        return `{ ${fields.join("; ")} }`
-      }
-      default:
-        return "unknown"
-    }
-  }
-
-  export function declarations(list: Entry[]): string {
-    const byServer = new Map<string, Entry[]>()
-    for (const e of list) {
-      const id = ScriptSandbox.identifier(e.server)
-      byServer.set(id, [...(byServer.get(id) ?? []), e])
-    }
-    let out = ""
-    const skipped: string[] = []
-    for (const [server, items] of byServer) {
-      let block = `declare const ${server}: {\n`
-      for (const e of items) {
-        const doc = (e.description ?? "").replace(/\*\//g, "* /").split("\n")[0]?.slice(0, 200)
-        const line = `${doc ? `  /** ${doc} */\n` : ""}  ${ScriptSandbox.identifier(e.tool)}(args: ${tsType(e.inputSchema)}): Promise<${e.outputSchema ? tsType(e.outputSchema) : "unknown"}>;\n`
-        if (out.length + block.length + line.length > MAX_DECLARATIONS) skipped.push(`${server}.${ScriptSandbox.identifier(e.tool)}`)
-        else block += line
-      }
-      out += `${block}};\n`
-    }
-    if (skipped.length) out += `// Also callable (declarations left out for length): ${skipped.join(", ")}\n`
-    return out.trimEnd()
-  }
-
-  // ── script → JavaScript ────────────────────────────────────────────────────
-  /** Strips TypeScript types. The script is an async function body; `return` gives the result. */
-  export function toJavaScript(script: string): string {
-    const transpiler = new Bun.Transpiler({ loader: "ts", target: "browser" })
-    const wrapped = `globalThis.__mcpScriptBody = async function () {\n${script}\n};`
-    const js = transpiler.transformSync(wrapped)
-    const open = js.indexOf("{")
-    const close = js.lastIndexOf("}")
-    if (open < 0 || close <= open) throw new Error("The script could not be read.")
-    return js.slice(open + 1, close)
-  }
-
-  /** What a bridged call gives the script: structured content, else parsed text, else text. */
-  export function scriptValue(result: unknown): unknown {
-    const r = (result ?? {}) as { structuredContent?: unknown; content?: unknown; isError?: boolean }
-    const texts = Array.isArray(r.content)
-      ? r.content.filter((c: any) => c?.type === "text" && typeof c.text === "string").map((c: any) => c.text as string)
-      : []
-    if (r.isError) throw new Error(texts.join("\n").slice(0, 500) || "The tool returned an error.")
-    if (r.structuredContent !== undefined) return r.structuredContent
-    const text = texts.join("\n")
-    try {
-      return JSON.parse(text)
-    } catch {
-      return text
-    }
-  }
 }
 
 export const McpScriptTool = Tool.define(McpScript.ID, {
@@ -208,7 +126,7 @@ export const McpScriptTool = Tool.define(McpScript.ID, {
     let waitedMs = 0
     const offAsked = Bus.subscribe(PermissionNext.Event.Asked, (event) => {
       const p = event.properties
-      if (p.sessionID === ctx.sessionID && p.tool?.callID === ctx.callID) waiting.set(p.id, Date.now())
+      if (p.sessionID === ctx.sessionID && McpScript.isNestedOf(p.tool?.callID, ctx.callID)) waiting.set(p.id, Date.now())
     })
     const offReplied = Bus.subscribe(PermissionNext.Event.Replied, (event) => {
       const at = waiting.get(event.properties.requestID)
@@ -232,6 +150,7 @@ export const McpScriptTool = Tool.define(McpScript.ID, {
     }
 
     let run: ScriptSandbox.RunResult
+    let n = 0
     try {
       run = await ScriptSandbox.run({
         js,
@@ -240,12 +159,15 @@ export const McpScriptTool = Tool.define(McpScript.ID, {
         bridges: list.map((e) => ({
           server: e.server,
           tool: e.tool,
-          call: (args) => e.call(args, ctx),
+          call: (args) => e.call(args, { ...ctx, callID: McpScript.nestedCallID(ctx.callID, ++n) }),
         })),
       })
     } finally {
       offAsked()
       offReplied()
+      // The inner calls' gate decisions belong to this call's kernel record.
+      for (let i = 1; i <= n; i++)
+        for (const d of KernelTurn.takeGateDecisions(McpScript.nestedCallID(ctx.callID, i))) KernelTurn.noteGateDecision(ctx.callID, d)
     }
 
     const servers = [...new Set(run.calls.map((c) => c.server))]

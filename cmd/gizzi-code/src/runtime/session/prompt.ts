@@ -1935,7 +1935,8 @@ const message = await createUserMessage(input)
 
         let result: CallToolResult & { metadata?: Record<string, unknown> }
         try {
-          result = await ToolDedupe.execute<CallToolResult & { metadata?: Record<string, unknown> }>({
+          // Code Mode calls skip dedupe (McpScript.dedupe); model calls keep it.
+          result = await McpScript.dedupe<CallToolResult & { metadata?: Record<string, unknown> }>(opts, {
             sessionID: ctx.sessionID,
             messageID: ctx.messageID,
             tool: key,
@@ -2033,7 +2034,8 @@ const message = await createUserMessage(input)
         inputSchema: jsonSchemaValue.jsonSchema,
         outputSchema: descriptor?.outputSchema,
         call: async (args, ctx) => {
-          const opts = { toolCallId: ctx.callID ?? "", abortSignal: ctx.abort, messages: [] } as ToolCallOptions
+          // ctx.callID is this call's own `<mcp_script call id>:<n>` (McpScript.nestedCallID).
+          const opts = McpScript.callOptions(ctx)
           await wrapped(args, opts)
           return McpScript.takeRaw(opts)
         },
