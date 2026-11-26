@@ -35,6 +35,9 @@ enum DeepLink: Equatable, Sendable {
     case computers
     /// One computer's console detail (`/computers/<id>`, a `computer_alert` push).
     case computerConsole(String)
+    /// An agent browser run on one computer (`/computers/<id>?run=<run_id>`,
+    /// the `aci.attention` push): the live run view with its gates.
+    case computerRun(computerId: String, runId: String)
     /// Decisions: questions and approvals waiting on you (approval pushes).
     case decisions
     /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
@@ -159,6 +162,7 @@ enum DeepLink: Equatable, Sendable {
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
             if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty, id != "console" {
+                if let run = query["run"] { return .computerRun(computerId: id, runId: run) }
                 return .computerConsole(id)
             }
             return .computers

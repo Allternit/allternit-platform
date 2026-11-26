@@ -24,6 +24,7 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertNil(DeepLink.parse(path: "/"))
         XCTAssertEqual(DeepLink.parse(path: "/computers"), .computers)
         XCTAssertEqual(DeepLink.parse(path: "/computers/inst_7"), .computerConsole("inst_7"))
+        XCTAssertEqual(DeepLink.parse(path: "/computers/inst_7?run=run_9"), .computerRun(computerId: "inst_7", runId: "run_9"))
     }
 
     /// "Do with Allternit" hands over to the in-app bar with this link; the

@@ -112,4 +112,15 @@ final class NotificationActionsTests: XCTestCase {
         XCTAssertNil(DeepLink.forPush(urlPath: "/", event: "agent.run.completed", sessionId: "ses_1"))
         XCTAssertNil(DeepLink.forPush(urlPath: "/", event: "agent.message.sent", sessionId: "  "))
     }
+
+    func testAgentBrowserButtonsMapToTheirCalls() {
+        let data: [String: Any] = ["approval_id": "ap_1", "run_id": "run_1", "computer_id": "cmp_1"]
+        XCTAssertEqual(NotificationActions.aciOperation(category: "ACI_APPROVAL", action: .approve, data: data), .approve(approvalId: "ap_1"))
+        XCTAssertEqual(NotificationActions.aciOperation(category: "ACI_APPROVAL", action: .deny, data: data), .deny(approvalId: "ap_1"))
+        XCTAssertEqual(NotificationActions.aciOperation(category: "ACI_HUMAN", action: .continueRun, data: data), .humanDone(computerId: "cmp_1"))
+        XCTAssertEqual(NotificationActions.aciOperation(category: "ACI_HUMAN", action: .stop, data: data), .stop(runId: "run_1"))
+        // A button that does not belong to the category, or a push with no id, does nothing.
+        XCTAssertNil(NotificationActions.aciOperation(category: "ACI_HUMAN", action: .approve, data: data))
+        XCTAssertNil(NotificationActions.aciOperation(category: "ACI_APPROVAL", action: .approve, data: [:]))
+    }
 }

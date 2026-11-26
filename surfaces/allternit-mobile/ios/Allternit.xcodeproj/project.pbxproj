@@ -110,6 +110,7 @@
 		16FA39F7A6F891652E3E533E /* MeetYourBotsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31906E53E13F148C15E53F18 /* MeetYourBotsView.swift */; };
 		172004D5F72BC6AB34DD4EC0 /* FilesShareFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DED185DEB6F8D4E9AA9890F /* FilesShareFlow.swift */; };
 		172C317EECE0BFF51D00EA6C /* AppsShelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A45C532BC06D975F2467C15 /* AppsShelfView.swift */; };
+		A1C1A9E0B7D24F6E8C3D5A02 /* ACIRunGateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C1A9E0B7D24F6E8C3D5A01 /* ACIRunGateSheet.swift */; };
 		176C7A09EBA19F29D89A74D0 /* ACIHoldButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */; };
 		17D87DFB3EEE39FC4C5A5EA4 /* CodeLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B425580E480D60109FCC8F9 /* CodeLanguage.swift */; };
 		1834CC829C4E4DF29D135C87 /* AgentActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEC6838A5C637D76EED594C /* AgentActivityDetailView.swift */; };
@@ -1836,6 +1837,7 @@
 		C41FA19EB719D2B421490D26 /* ConnectWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectWizardView.swift; sourceTree = "<group>"; };
 		C426D6E835FD06E4486CFFA7 /* LocalVoiceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalVoiceEngine.swift; sourceTree = "<group>"; };
 		C481BFE9D2B27E30D347883F /* FileProviderUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FileProviderUI.framework; path = System/Library/Frameworks/FileProviderUI.framework; sourceTree = SDKROOT; };
+		A1C1A9E0B7D24F6E8C3D5A01 /* ACIRunGateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIRunGateSheet.swift; sourceTree = "<group>"; };
 		C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIHoldButton.swift; sourceTree = "<group>"; };
 		C50BA8075C4FBCA27CA52761 /* McpDirectory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpDirectory.swift; sourceTree = "<group>"; };
 		C5222EE1EE170C34F038CA47 /* AppGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroup.swift; sourceTree = "<group>"; };
@@ -2533,6 +2535,7 @@
 				2B32E0565DA7953C599388DC /* ACIComputersPane.swift */,
 				4776768AC72546905DC10A9B /* ACIConsoleTerminalFiles.swift */,
 				6CD577FADF6DABC75EFEE188 /* ACIExtensionsView.swift */,
+				A1C1A9E0B7D24F6E8C3D5A01 /* ACIRunGateSheet.swift */,
 				C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */,
 				D79BCB48BED6FF8FD50328A5 /* ACIMcpAppsView.swift */,
 				F63B7493C9D1FC2AB9560D6D /* ACINavStore.swift */,
@@ -4669,6 +4672,7 @@
 				0ABC103578A8870EAB8382E1 /* ACIConsoleTerminalFiles.swift in Sources */,
 				BD7F631405D1D2919CF47B8E /* ACIEvent.swift in Sources */,
 				8FC14EF1D85C458EC58EA0CE /* ACIExtensionsView.swift in Sources */,
+				A1C1A9E0B7D24F6E8C3D5A02 /* ACIRunGateSheet.swift in Sources */,
 				176C7A09EBA19F29D89A74D0 /* ACIHoldButton.swift in Sources */,
 				AF8A87A3DFCA30D17D3A2793 /* ACIMcpAppsView.swift in Sources */,
 				BFF219CA3E0AB7C1E54CC77F /* ACINavStore.swift in Sources */,
