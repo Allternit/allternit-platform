@@ -93,6 +93,25 @@ async fn shelf_returns_yours_and_servers() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn shelf_rows_carry_the_installers_granted_tier() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let installed = seed_app(&state.db, json!({ "storage": true })).await;
+    let loose = seed_app(&state.db, json!({ "storage": true })).await;
+    let path = format!("/api/v1/apps/artifact/{installed}/install");
+    let (status, _) = call(&state, "POST", &path, json!({ "granted_tier": "browser" })).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, shelf) = call(&state, "GET", "/api/v1/apps", Value::Null).await;
+    let rows = shelf["yours"].as_array().unwrap();
+    let on = rows.iter().find(|r| r["ref"] == installed).unwrap();
+    assert_eq!(on["granted_tier"], "browser");
+    let off = rows.iter().find(|r| r["ref"] == loose).unwrap();
+    assert!(off["granted_tier"].is_null(), "{off}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn vendor_install_at_full_is_refused() {
     let _g = dev_token_on();
     let state = setup().await;
