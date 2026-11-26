@@ -475,6 +475,9 @@ struct McpSessionWatch: Decodable, Identifiable, Equatable, Sendable {
     let tail: [String]?
     let lineCount: Int?
     let arguments: JSONValue?
+    /// Webhook watches: when the last wake fired (ISO) and why it failed, if it did. Older servers omit both.
+    let lastWokeAt: String?
+    let lastWakeError: String?
 
     var id: String { watchId }
     var resolvedMode: String { mode ?? "poll" }

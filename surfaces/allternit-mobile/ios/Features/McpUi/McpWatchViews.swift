@@ -67,6 +67,16 @@ struct McpWatchStrip: View {
         }
     }
 
+    private func wokeText(_ iso: String?) -> String? {
+        guard let iso, !iso.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return nil }
+        let r = RelativeDateTimeFormatter()
+        r.unitsStyle = .full
+        return "Woke this chat \(r.localizedString(for: d, relativeTo: Date()))"
+    }
+
     private func row(_ w: McpSessionWatch) -> some View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -77,6 +87,14 @@ struct McpWatchStrip: View {
                     Text("Watching \(w.event)").font(.footnote.weight(.medium)).lineLimit(1)
                     Text("\(w.server) · \(note(w)) · \(w.eventCount ?? 0) events")
                         .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                    if w.resolvedMode == "webhook" {
+                        if let woke = wokeText(w.lastWokeAt) {
+                            Text(woke).font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                        }
+                        if let err = w.lastWakeError, !err.isEmpty {
+                            Text(err).font(.caption).foregroundColor(Theme.statusWarning).lineLimit(1).truncationMode(.tail)
+                        }
+                    }
                 }
                 Spacer(minLength: 4)
                 button("Pause") { Task { await pause(w) } }
