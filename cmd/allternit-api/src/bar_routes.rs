@@ -1873,6 +1873,8 @@ pub fn begin_run(conn: &Connection, input: &RunInput<'_>) -> Result<RunStart, Re
             tool: &job.tool,
             tool_read_only: input.tool_read_only,
             args: &job.args,
+            // Masks secret fields in a routed ask (#2993).
+            input_schema: Some(input.input_schema),
             approval_ids: &[],
             job_id: Some(job.id.as_str()),
             // Pressing Run on the review card is the person's own confirmation.
@@ -2416,7 +2418,6 @@ mod tests {
                 unit_label: Some("USD".into()),
                 approver_kind: approver,
                 approver_user_id: None,
-                app_name: None,
                 enabled: true,
             },
             "boss",

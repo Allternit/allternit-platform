@@ -68,7 +68,7 @@ describe("Codex CLI picture engine", () => {
     await provider("file-id")
     const result = await run()
     expect(result).toMatchObject({ status: "definite", code: "unavailable" })
-    expect((result as { error: string }).error).toContain("Update Codex")
+    expect((result as { error: string }).error).toContain("Update the picture engine")
   })
   test("process exit after turn/start is ambiguous", async () => {
     await provider("exit-after-turn")

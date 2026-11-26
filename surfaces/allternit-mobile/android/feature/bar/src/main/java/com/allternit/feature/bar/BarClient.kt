@@ -47,7 +47,7 @@ sealed interface BarEvent {
 }
 
 /**
- * The bar's calls on allternit-api (`/api/v1/bar/*`, CONTRACT section 1), with the ApiClients bearer like Bots mode
+ * The bar's calls on allternit-api (the `/api/v1/bar` routes, CONTRACT section 1), with the ApiClients bearer like Bots mode
  * (LibraryNet). Every throw is a [BarFailure].
  */
 class BarClient(

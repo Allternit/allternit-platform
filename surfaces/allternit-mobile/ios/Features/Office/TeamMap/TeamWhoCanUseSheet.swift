@@ -74,7 +74,7 @@ struct TeamWhoCanUseSheet: View {
                     .accessibilityElement(children: .combine)
                 }
             }
-            Section("Bots") {
+            Section {
                 if access.bots.isEmpty {
                     Text("No bots yet.").font(.footnote).foregroundStyle(Color("TextSecondary"))
                 }
@@ -93,6 +93,8 @@ struct TeamWhoCanUseSheet: View {
                     .frame(minHeight: 44)
                     .accessibilityElement(children: .combine)
                 }
+            } header: {
+                Text("Bots")
             } footer: {
                 if app.kind == "vendor" || appCeiling == "app" {
                     Text("Vendor app: levels stop at App.")

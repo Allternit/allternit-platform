@@ -67,7 +67,7 @@ async function askBlank(b: Blank): Promise<unknown> {
   if (b.type === "boolean") return ok(await prompts.confirm({ message: label }))
   if (isSecret(b)) return ok(await prompts.password({ message: label, mask: "*" }))
   if (b.recent?.length) {
-    const pick = ok(
+    const pick = ok<unknown>(
       await prompts.select({
         message: label,
         options: [...b.recent.slice(0, 5).map((r) => ({ value: r.value, label: r.label })), { value: "__new__", label: "Something else..." }] as any,

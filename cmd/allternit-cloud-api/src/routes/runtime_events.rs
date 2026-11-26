@@ -588,6 +588,7 @@ mod tests {
         let db = test_pool().await;
         crate::routes::test_support::platform_schema(&db).await;
         sqlx::query("INSERT INTO platform_projects (id, owner_user_id, name, env) VALUES ('prj_1', 'user-1', 'Test', 'sandbox')").execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO platform_accounts (id, project_id, name) VALUES ('acct', 'prj_1', 'Acct')").execute(&db).await.unwrap();
         let routed = json!({ "approvalId": "ap-1", "action": "send_email", "approverUserId": "user_boss", "ruleId": "arl_9", "actorRef": "b:agent_7" });
         let (row, created) = twin_approval_row(&db, "prj_1", "acct", "agent_7", &routed).await.unwrap().unwrap();
         assert!(created);

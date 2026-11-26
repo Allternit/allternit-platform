@@ -318,7 +318,7 @@ sealed interface TeamResult<out T> {
     data class Failed(val error: TeamMapError) : TeamResult<Nothing>
 }
 
-/** iOS TeamMapClient: allternit-api `/api/v1/team/*` with the app's bearer, through [LibraryNet]. */
+/** iOS TeamMapClient: allternit-api `/api/v1/team` routes with the app's bearer, through [LibraryNet]. */
 object TeamMapClient {
     private fun <T> wrap(r: ApiResult<JsonElement>, map: (JsonElement) -> T?): TeamResult<T> = when (r) {
         is ApiResult.Ok -> map(r.value)?.let { TeamResult.Ok(it) } ?: TeamResult.Failed(TeamMapError.StoreUnavailable)
