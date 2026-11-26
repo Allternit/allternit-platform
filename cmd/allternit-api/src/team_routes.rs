@@ -585,6 +585,7 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
                 "id": r.id, "text": rule_text(r, &names), "enabled": r.enabled,
                 "scope": { "kind": r.scope_kind.as_str(), "ref": r.scope_ref },
                 "approver": { "kind": r.approver_kind.as_str(), "user_id": r.approver_user_id },
+                "locked": false,
             })
         })
         .collect();
@@ -1399,6 +1400,8 @@ fn rule_json(r: &ApprovalRule, names: &HashMap<String, String>) -> Value {
         "op": r.op.as_str(),
         "value": r.value,
         "unit_label": r.unit_label,
+        // No built-in rules exist: every rule is a stored row the admin can turn off or delete.
+        "locked": false,
         "approver": { "kind": r.approver_kind.as_str(), "user_id": r.approver_user_id },
         "created_by": r.created_by,
         "created_at": r.created_at,

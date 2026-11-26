@@ -1158,6 +1158,32 @@ fn display_name(conn: &Connection, user_id: &str) -> rusqlite::Result<Option<Str
         .flatten())
 }
 
+/// The approver's team role (`organization_members.role`, e.g. "owner", "admin"),
+/// in the rule's org when it has one, else their earliest membership. `None` when unknown.
+fn approver_role(conn: &Connection, user_id: &str, org_id: Option<&str>) -> rusqlite::Result<Option<String>> {
+    let role: Option<String> = match org_id {
+        Some(org) => conn
+            .query_row(
+                "SELECT role FROM organization_members WHERE organization_id = ?1 AND user_id = ?2",
+                params![org, user_id],
+                |r| r.get(0),
+            )
+            .optional()?,
+        None => None,
+    };
+    let role = match role {
+        Some(r) => Some(r),
+        None => conn
+            .query_row(
+                "SELECT role FROM organization_members WHERE user_id = ?1 ORDER BY joined_at LIMIT 1",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .optional()?,
+    };
+    Ok(role.map(|r| r.trim().trim_start_matches("org:").to_ascii_lowercase()).filter(|r| !r.is_empty()))
+}
+
 /// The review card's lines: one per filled blank, in blank order. Secret
 /// values are masked; an enum shows its option label; `details` counts fields.
 fn review_lines(tool: &Value, args: &Value) -> Vec<Value> {
@@ -1283,16 +1309,27 @@ pub fn review_job(conn: &Connection, input: &ReviewInput<'_>) -> Result<Value, R
     .map_err(internal)?;
     let name = display_name(conn, approver).map_err(internal)?;
     let rule = match chosen {
-        Some((r, a)) => json!({ "id": r.id, "text": team_rules::rule_text(conn, r, input.app_name, Some(a.as_str())).map_err(internal)? }),
+        Some((r, a)) => {
+            // An empty unit on a money field takes the currency the tool schema / args name.
+            let mut shown = r.clone();
+            if shown.unit_label.as_deref().map_or(true, |u| u.trim().is_empty()) {
+                shown.unit_label = shown
+                    .field
+                    .as_deref()
+                    .and_then(|f| team_rules::currency_for_field(&input.tool["inputSchema"], input.args, f));
+            }
+            json!({ "id": r.id, "text": team_rules::rule_text(conn, &shown, input.app_name, Some(a.as_str())).map_err(internal)? })
+        }
         None => Value::Null,
     };
+    let role = approver_role(conn, approver, chosen.and_then(|(r, _)| r.org_id.as_deref())).map_err(internal)?;
     Ok(json!({
         "job_id": job_id,
         "state": JobState::Review.as_str(),
         "level": level.map(GrantLevel::as_str),
         "needs_confirmation": needs_confirmation,
         "rule": rule,
-        "approver": { "user_id": approver, "name": name, "is_you": is_you },
+        "approver": { "user_id": approver, "name": name, "is_you": is_you, "role": role },
         "lines": review_lines(input.tool, input.args),
     }))
 }
@@ -2420,7 +2457,7 @@ mod tests {
         seed(&conn);
         let rule = pay_rule(&conn, ApproverKind::Manager);
         let out = review(&conn, "ann", json!({ "amount": 250, "to": "acme", "pin": "1234" })).unwrap();
-        assert_eq!(out["approver"], json!({ "user_id": "mgr", "name": "mgr", "is_you": false }));
+        assert_eq!(out["approver"], json!({ "user_id": "mgr", "name": "mgr", "is_you": false, "role": null }));
         assert_eq!(out["rule"]["id"], json!(rule.id));
         assert!(out["rule"]["text"].as_str().unwrap().contains("over 100 USD"));
         assert_eq!(out["level"], json!("full"));
@@ -2446,7 +2483,7 @@ mod tests {
         seed(&conn);
         pay_rule(&conn, ApproverKind::Owner); // a person's owner = the org owner
         let out = review(&conn, "boss", json!({ "amount": 500, "to": "acme" })).unwrap();
-        assert_eq!(out["approver"], json!({ "user_id": "boss", "name": "boss", "is_you": true }));
+        assert_eq!(out["approver"], json!({ "user_id": "boss", "name": "boss", "is_you": true, "role": null }));
         assert!(out["rule"]["id"].is_string());
         assert_eq!(out["needs_confirmation"], json!(true));
     }

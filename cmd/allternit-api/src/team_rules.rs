@@ -321,6 +321,33 @@ pub fn render_rule(rule: &ApprovalRule, names: &RuleNames<'_>) -> String {
     }
 }
 
+/// The currency code for a money field, or `None` when it cannot be known (no
+/// guessing). Sources, in order: the field's own `x-currency`; a sibling
+/// `currency` argument the caller filled in; a sibling `currency` property that
+/// is `const`, has a one-item `enum`, or a `default`; then the schema's own
+/// `x-currency`. Codes are three letters, returned upper-case ("EUR").
+pub fn currency_for_field(input_schema: &Value, args: &Value, field: &str) -> Option<String> {
+    let code = |v: &Value| -> Option<String> {
+        let c = v.as_str()?.trim();
+        (c.len() == 3 && c.chars().all(|ch| ch.is_ascii_alphabetic())).then(|| c.to_ascii_uppercase())
+    };
+    let props = input_schema.get("properties")?;
+    let prop = props.get(field)?;
+    if let Some(c) = prop.get("x-currency").and_then(code) {
+        return Some(c);
+    }
+    if let Some(c) = args.get("currency").and_then(code) {
+        return Some(c);
+    }
+    if let Some(cur) = props.get("currency") {
+        let single = cur.get("enum").and_then(Value::as_array).filter(|e| e.len() == 1).and_then(|e| code(&e[0]));
+        if let Some(c) = cur.get("const").and_then(code).or(single).or_else(|| cur.get("default").and_then(code)) {
+            return Some(c);
+        }
+    }
+    input_schema.get("x-currency").and_then(code)
+}
+
 /// [`render_rule`] for one call: the scope's and the approver's names are
 /// read from `users` / `agents` (a missing name falls back to the generic word).
 pub fn rule_text(conn: &Connection, rule: &ApprovalRule, app_name: &str, approver_user_id: Option<&str>) -> rusqlite::Result<String> {
@@ -1157,5 +1184,34 @@ mod tests {
         let schema = json!({ "properties": { "logins": { "items": { "properties": { "code": { "format": "password" } } } } } });
         let out = redact_args(&json!({ "logins": [{ "code": "1", "user": "a" }], "token": null }), Some(&schema));
         assert_eq!(out, json!({ "logins": [{ "code": MASK, "user": "a" }], "token": null }));
+    }
+
+    #[test]
+    fn currency_fills_from_schema_hints_and_never_guesses() {
+        let amount = |extra: Value| {
+            let mut p = json!({ "amount": { "type": "number" }, "currency": { "type": "string" } });
+            if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                for (k, v) in e {
+                    o.insert(k.clone(), v.clone());
+                }
+            }
+            json!({ "type": "object", "properties": p })
+        };
+        // The field's own x-currency wins over a different currency argument.
+        let s = amount(json!({ "amount": { "type": "number", "x-currency": "eur" } }));
+        assert_eq!(currency_for_field(&s, &json!({ "currency": "usd" }), "amount").as_deref(), Some("EUR"));
+        // A filled sibling `currency` argument.
+        assert_eq!(currency_for_field(&amount(json!({})), &json!({ "currency": "gbp" }), "amount").as_deref(), Some("GBP"));
+        // A sibling property pinned by const / single enum / default.
+        let s = amount(json!({ "currency": { "type": "string", "enum": ["USD"] } }));
+        assert_eq!(currency_for_field(&s, &json!({}), "amount").as_deref(), Some("USD"));
+        // Nothing names a currency, or the value is not a code: empty.
+        assert_eq!(currency_for_field(&amount(json!({})), &json!({}), "amount"), None);
+        assert_eq!(currency_for_field(&amount(json!({})), &json!({ "currency": "dollars" }), "amount"), None);
+        assert_eq!(currency_for_field(&amount(json!({})), &json!({ "currency": "usd" }), "missing"), None);
+        // The filled unit shows in the one shared sentence.
+        let mut r = rule(RuleOp::Gt, Some("amount"), Some(json!(250)));
+        r.unit_label = currency_for_field(&amount(json!({})), &json!({ "currency": "eur" }), "amount");
+        assert!(render_rule(&r, &RuleNames::default()).contains("amount over 250 EUR"));
     }
 }
