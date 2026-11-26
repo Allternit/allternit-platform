@@ -677,11 +677,14 @@ async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
         .route("/v1/session/:id", get(|Path(id): Path<String>| async move { Json(json!({ "id": id, "time": { "created": 1 } })) }))
         .route(
             "/v1/session/:id/message",
-            post(move |Json(body): Json<Value>| {
+            post(move |Path(sid): Path<String>, Json(body): Json<Value>| {
                 let seen = seen.clone();
                 async move {
+                    if sid == "ses_refused" {
+                        return (StatusCode::BAD_GATEWAY, "runtime refused the turn").into_response();
+                    }
                     seen.lock().unwrap().push(body);
-                    Json(json!({ "info": { "id": "reply-w", "sessionID": "ses_watch", "role": "assistant" }, "parts": [{ "type": "text", "text": "Seen it" }] }))
+                    Json(json!({ "info": { "id": "reply-w", "sessionID": "ses_watch", "role": "assistant" }, "parts": [{ "type": "text", "text": "Seen it" }] })).into_response()
                 }
             }),
         );
@@ -729,6 +732,7 @@ async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
     let view = &list["watches"][0];
     assert_eq!(view["lineCount"], 2, "{view}");
     assert!(view["lastWokeAt"].is_string(), "{view}");
+    assert!(view["lastWakeError"].is_null(), "{view}");
 
     // Stop removes the subscription the watch created.
     let (status, _) = call(&fx, OWNER, "DELETE", &format!("/watches/{id}"), None).await;
@@ -736,5 +740,24 @@ async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
     assert!(fx.server.methods().iter().any(|m| m == "events/unsubscribe"));
     assert!(fx.server.subs().is_empty());
     assert_eq!(fx.cloud.removed().len(), 1);
+
+    // A refused turn: the watch says why in plain words.
+    fx.state.db.set_session_metadata("ses_refused", &json!({ "isBot": true, "agentId": "bot-a" })).unwrap();
+    let (status, body) = call(&fx, OWNER, "POST", "/watches", Some(json!({
+        "server": "conn-1", "event": "email.received", "session_id": "ses_refused", "arguments": { "label": "inbox" }, "delivery": "webhook"
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(fx.server.emit("email.received", "w-3", json!({ "message": "New mail: Refused" })).await, vec![200]);
+    let mut error = Value::Null;
+    for _ in 0..250 {
+        let (_, list) = call(&fx, OWNER, "GET", "/watches?session_id=ses_refused", None).await;
+        error = list["watches"][0]["lastWakeError"].clone();
+        if !error.is_null() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(error.as_str().is_some_and(|e| e.starts_with("Couldn't start: ")), "{error}");
+    assert_eq!(turns.lock().unwrap().len(), 1, "the refused wake ran no turn");
     gizzi.abort();
 }

@@ -1287,6 +1287,9 @@ struct WakeTarget {
     owned_subscription: Option<String>,
     last_wake: Mutex<Option<Instant>>,
     last_woke_at: Mutex<Option<String>>,
+    /// Why the last wake started no turn, in plain words; cleared by the next
+    /// turn that runs.
+    last_wake_error: Mutex<Option<String>>,
 }
 
 /// At most one woken turn per watch per minute; extra events only add lines.
@@ -1366,6 +1369,7 @@ impl WatchEntry {
             "tail": tail,
             "lineCount": total,
             "lastWokeAt": self.wake.as_ref().and_then(|w| w.last_woke_at.lock().ok().and_then(|g| g.clone())),
+            "lastWakeError": self.wake.as_ref().and_then(|w| w.last_wake_error.lock().ok().and_then(|g| g.clone())),
         })
     }
 }
@@ -1496,6 +1500,7 @@ fn register_webhook_watch(user_id: &str, server: &str, event: &str, arguments: V
             owned_subscription,
             last_wake: Mutex::new(None),
             last_woke_at: Mutex::new(None),
+            last_wake_error: Mutex::new(None),
         }),
     };
     if let Ok(mut w) = watches().lock() {
@@ -1555,20 +1560,44 @@ fn wake_text(event: &str, server: &str, line: &str, instruction: Option<&str>) -
 async fn run_wake(state: &Arc<AppState>, wake: Wake) {
     if !session_open(state, &wake.session_id, &wake.bot_id).await {
         debug!(watch = %wake.watch_id, "mcp watch: session closed or gone, line only");
+        set_wake_result(&wake.watch_id, Some("Chat is closed".to_string()), false);
         return;
     }
-    if let Ok(w) = watches().lock() {
-        if let Some(t) = w.get(&wake.watch_id).and_then(|e| e.wake.as_ref()) {
-            if let Ok(mut l) = t.last_woke_at.lock() {
-                *l = Some(now());
-            }
-        }
-    }
+    set_wake_result(&wake.watch_id, None, true);
     let ledger = crate::usage_ledger::LedgerCtx::surface("bot").tenant(None, Some(&wake.owner));
     let turn = crate::usage_ledger::scope(ledger, crate::agent_session_routes::send_bot_turn(&state.db, &wake.session_id, &wake.bot_id, &wake.text)).await;
     if let Err(e) = turn {
         warn!(watch = %wake.watch_id, "mcp watch: woken turn failed: {e}");
+        set_wake_result(&wake.watch_id, Some(wake_error_message(&e)), false);
     }
+}
+
+/// Record a wake's outcome on its watch: `error` (None clears it) and, when a
+/// turn started, `lastWokeAt`.
+fn set_wake_result(watch_id: &str, error: Option<String>, woke: bool) {
+    let Ok(w) = watches().lock() else { return };
+    let Some(t) = w.get(watch_id).and_then(|e| e.wake.as_ref()) else { return };
+    if woke {
+        if let Ok(mut l) = t.last_woke_at.lock() {
+            *l = Some(now());
+        }
+    }
+    if let Ok(mut l) = t.last_wake_error.lock() {
+        *l = error;
+    }
+}
+
+/// A refused or failed woken turn, in plain words for the watch row.
+fn wake_error_message(e: &str) -> String {
+    let lower = e.to_ascii_lowercase();
+    if lower.contains("subscription") || lower.contains("human") {
+        return "This chat's model can't run on its own (subscription model)".to_string();
+    }
+    if lower.contains("ended") || lower.contains("archived") {
+        return "Chat is closed".to_string();
+    }
+    let code = e.split(['(', ')']).nth(1).filter(|c| !c.is_empty() && c.len() <= 40).unwrap_or(e);
+    format!("Couldn't start: {}", code.chars().take(120).collect::<String>())
 }
 
 /// Whether the watched session still takes turns: it still belongs to the

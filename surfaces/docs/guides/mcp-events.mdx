@@ -162,6 +162,7 @@ curl -X DELETE https://api.allternit.com/api/v1/mcp/events/subscriptions/sub_3f2
 | `tail` | The last 3 lines |
 | `lineCount` | Lines seen so far |
 | `lastWokeAt` | When a webhook watch last started a turn in its chat, or `null` |
+| `lastWakeError` | Why the last wake started no turn, in plain words (for example `Chat is closed`, `This chat's model can't run on its own (subscription model)`, `Couldn't start: 502 Bad Gateway`), or `null`. The next turn that runs clears it. |
 
 `GET /api/v1/mcp/watches/:id/lines?after=<n>` returns `{ lines: [{ n, at, text }], next }`. Pass `next` as `after` on the next call. Each watch keeps its last 500 lines. A line is `data.line`, else `data.message`, else `data.text`, else the data as compact JSON, cut to 200 characters. Only the watch's owner can read it.
 
