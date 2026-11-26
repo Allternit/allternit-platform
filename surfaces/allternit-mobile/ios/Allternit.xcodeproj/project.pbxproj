@@ -512,6 +512,7 @@
 		8146D4C88A0E01D132A3FFBE /* ShareOutboxDrainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C82B102712C353C6D94CCC8 /* ShareOutboxDrainer.swift */; };
 		819AC1D939BC82773FF58BE4 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 155758E1014D4AE63687BCED /* libiconv.tbd */; };
 		81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200400EF6B620633834145F4 /* CloudCreditsTests.swift */; };
+		81F18FB031D5C93741915D69 /* AnimatedGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA0EE6F2E68F5F936C2E1EEF /* AnimatedGlyph.swift */; };
 		8237E220A463135A06E24B56 /* ACIComputerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D1A5E7517F9C1AA870667E7 /* ACIComputerDetailView.swift */; };
 		824899C9360AB2B6AE33CE2B /* NotificationActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E286E4C3C02329A40CC05A34 /* NotificationActionsTests.swift */; };
 		825015DB4BD850AD5C79B299 /* SherpaOnnxC.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 6073B8B9BAD568B603F34A49 /* SherpaOnnxC.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -1901,6 +1902,7 @@
 		D958983DC5E7F5C1AAC64891 /* MeetingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingsStore.swift; sourceTree = "<group>"; };
 		D95FF970A4FB1B4176D87F62 /* RoutineScheduleEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineScheduleEditor.swift; sourceTree = "<group>"; };
 		D9CF9E433013A6936BAF0412 /* StatusUpdateRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusUpdateRow.swift; sourceTree = "<group>"; };
+		DA0EE6F2E68F5F936C2E1EEF /* AnimatedGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedGlyph.swift; sourceTree = "<group>"; };
 		DA805C4BABCE1FA5CE5E38E1 /* libgit2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libgit2.xcframework; path = Frameworks/libgit2.xcframework; sourceTree = "<group>"; };
 		DA96AABEE5F2FA1A61A5217C /* VendorGroupTurn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendorGroupTurn.swift; sourceTree = "<group>"; };
 		DB8805AD510ACE2BA8D3054E /* CloudDeployClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDeployClient.swift; sourceTree = "<group>"; };
@@ -2917,6 +2919,7 @@
 		5308CC2C0D21F6B5639F8617 /* DesignSystem */ = {
 			isa = PBXGroup;
 			children = (
+				DA0EE6F2E68F5F936C2E1EEF /* AnimatedGlyph.swift */,
 				E587D332DB32760202E22781 /* BadgePop.swift */,
 				F11BDA4B28B3A68EC875E63D /* BlockGlyphs.swift */,
 				D6DFF6CC79C1B2A38FDB81A6 /* BlockText.swift */,
@@ -4713,6 +4716,7 @@
 				08B6459B667F19EC706241E2 /* AllternitApp.swift in Sources */,
 				6A6559F847A0F8E9E24812F5 /* AllternitShortcuts.swift in Sources */,
 				13C48C1E48BB5F4D542B7373 /* AndroidScreenPairingView.swift in Sources */,
+				81F18FB031D5C93741915D69 /* AnimatedGlyph.swift in Sources */,
 				C0ED6BA695C14EC75AE50AE4 /* AnimatedImageView.swift in Sources */,
 				BCF9944BBF07D76E5BD0BEE9 /* AnnexBDisplayLayer.swift in Sources */,
 				35DE6B279952923EC2B316F4 /* AnswerCardModels.swift in Sources */,
