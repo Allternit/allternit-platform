@@ -38,6 +38,8 @@ dependencies {
     implementation(project(":core:auth"))
     // ChatBackends (uploads, the runtime relay, createSession): the share target sends through them.
     implementation(project(":feature:chat"))
+    // Island bar widget: BarDeepLink, BarJobs, BarFlag (lane 37).
+    implementation(project(":feature:bar"))
     implementation(project(":core:design"))
     implementation(libs.activity.compose)
     implementation(libs.glance.appwidget)
