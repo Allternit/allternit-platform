@@ -340,8 +340,9 @@ struct CodeModeView: View {
     /// The thread's name; a fresh thread shows its launch prompt until the
     /// session names itself.
     private var threadTitle: String {
-        if let activeSessionId, let name = sessions.first(where: { $0.id == activeSessionId })?.name, !name.isEmpty {
-            return name
+        if let activeSessionId, let session = sessions.first(where: { $0.id == activeSessionId }),
+           !AgentSession.isRawDefaultName(session.name) {
+            return session.displayTitle
         }
         if let prompt = thread?.initialPrompt, !prompt.isEmpty {
             return prompt.prefix(1).uppercased() + prompt.dropFirst()

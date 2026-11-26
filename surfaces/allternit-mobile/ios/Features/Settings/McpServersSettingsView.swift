@@ -26,13 +26,8 @@ struct McpServersSettingsView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                Text("MCP servers on your computer. Agents can call their tools when a server is on.")
-                    .font(.footnote)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-
+        // Dot title that docks into the bar on scroll (UI feedback I18).
+        DockingTitleList(title: "MCP servers", description: "MCP servers on your computer. Agents can call their tools when a server is on.") {
             Section {
                 if !authManager.canCallAccountAPIs {
                     SettingsSignedOutView(message: "Sign in to see the MCP servers on your computer.")
@@ -78,9 +73,6 @@ struct McpServersSettingsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
         .navigationTitle("MCP servers")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search servers")
