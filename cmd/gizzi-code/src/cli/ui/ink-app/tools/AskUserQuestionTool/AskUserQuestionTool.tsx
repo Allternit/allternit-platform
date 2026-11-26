@@ -34,7 +34,12 @@ const questionSchema = lazySchema(() => z.object({
   options: z.array(questionOptionSchema()).min(2).max(4).describe(`The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no 'Other' option, that will be provided automatically.`),
   multiSelect: z.boolean().default(false).describe('Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.'),
   risk: z.enum(['low', 'medium', 'high']).optional().describe('Decision trees: how much is at stake in this decision.'),
-  context: z.string().optional().describe('Decision trees: one or two lines of facts the user needs to decide (what happened, what it affects).')
+  context: z.string().optional().describe('Decision trees: one or two lines of facts the user needs to decide (what happened, what it affects).'),
+  plan: z.object({
+    steps: z.array(z.object({ title: z.string(), detail: z.string().optional() })),
+    title: z.string().optional(),
+    artifact: z.object({ id: z.string(), persisted: z.boolean() }).optional()
+  }).optional().describe('A plan shown for approval (plan_exit): title and steps; artifact.persisted means it is saved to the account.')
 }));
 const annotationsSchema = lazySchema(() => {
   const annotationSchema = z.object({

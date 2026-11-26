@@ -110,6 +110,10 @@ function askUserQuestionInput(event: SyncEvent): { questions: unknown[] } | null
       header: String(q.header ?? '').slice(0, 12),
       options: (q.options ?? []).map((o: any) => ({ label: o.label, description: o.description ?? '' })),
       multiSelect: !!q.multiple,
+      // Decision-tree and plan-approval fields ride along so PlanSummary gets the plan.
+      ...(q.risk ? { risk: q.risk } : {}),
+      ...(q.context ? { context: q.context } : {}),
+      ...(q.plan ? { plan: q.plan } : {}),
     })),
   }
   return AskUserQuestionTool.inputSchema.safeParse(input).success ? input : null

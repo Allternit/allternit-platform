@@ -21,6 +21,7 @@ import { getPlanFilePath } from '../../../utils/plans';
 import type { PermissionRequestProps } from '../PermissionRequest';
 import { QuestionView } from './QuestionView';
 import { SubmitQuestionsView } from './SubmitQuestionsView';
+import { PlanSummary } from './PlanSummary';
 import { useMultipleChoiceState } from './use-multiple-choice-state';
 import { expandQuestions, hasFollowUp, mergeAnswers } from './decision-tree';
 const MIN_CONTENT_HEIGHT = 12;
@@ -368,7 +369,7 @@ Questions asked and answers provided:\n${questionsWithAnswers_0}`;
 
     const t25 = id_0 => onRemoveImage(currentQuestion.question, id_0);
 
-    const t26 = <><QuestionView question={currentQuestion} questions={shownQuestions} currentQuestionIndex={currentQuestionIndex} answers={answers} questionStates={questionStates} hideSubmitTab={hideSubmitTab} minContentHeight={globalContentHeight} minContentWidth={globalContentWidth} planFilePath={planFilePath} onUpdateQuestionState={updateQuestionState} onAnswer={handleQuestionAnswer} onTextInputFocus={setTextInputMode} onCancel={handleCancel} onSubmit={nextQuestion} onTabPrev={handleTabPrev} onTabNext={handleTabNext} onRespondToClaude={handleRespondToClaude} onFinishPlanInterview={handleFinishPlanInterview} onImagePaste={t23} pastedContents={t24} onRemoveImage={t25} /></>;
+    const t26 = <>{currentQuestion.plan ? <PlanSummary plan={currentQuestion.plan} keysActive={!isInTextInput} /> : null}<QuestionView question={currentQuestion} questions={shownQuestions} currentQuestionIndex={currentQuestionIndex} answers={answers} questionStates={questionStates} hideSubmitTab={hideSubmitTab} minContentHeight={globalContentHeight} minContentWidth={globalContentWidth} planFilePath={planFilePath} onUpdateQuestionState={updateQuestionState} onAnswer={handleQuestionAnswer} onTextInputFocus={setTextInputMode} onCancel={handleCancel} onSubmit={nextQuestion} onTabPrev={handleTabPrev} onTabNext={handleTabNext} onRespondToClaude={handleRespondToClaude} onFinishPlanInterview={handleFinishPlanInterview} onImagePaste={t23} pastedContents={t24} onRemoveImage={t25} /></>;
 
     return t26;
   }
