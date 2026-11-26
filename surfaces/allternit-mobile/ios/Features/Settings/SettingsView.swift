@@ -262,7 +262,7 @@ struct SettingsView: View {
         case .page(let page, _):
             pageRow(page, title: row.title)
         case .customize:
-            // Customize (skills, connectors, plugins) is its own screen on the phone.
+            // Catalog (skills, connectors, plugins; E8, nav id `customize`) is its own screen on the phone.
             actionRow(row.title, systemImage: "slider.horizontal.3") { isCustomizePresented = true }
         case .openLinks:
             NavigationLink(value: SettingsRoute.openLinks) {

@@ -47,7 +47,7 @@ final class SettingsReachabilityTests: XCTestCase {
         }
         XCTAssertEqual(groups.map(\.0), ["Account", "Assistant", "Bots and computers", "App"])
         XCTAssertEqual(groups[0].1, ["Profile", "Billing", "Usage", "Notifications", "Privacy"])
-        XCTAssertEqual(groups[1].1, ["Customize", "Memory", "Voice and dictation"])
+        XCTAssertEqual(groups[1].1, ["Catalog", "Memory", "Voice and dictation"])
         XCTAssertEqual(groups[2].1, ["Connections", "Computers and devices", "Agent rules"])
         XCTAssertEqual(groups[3].1, ["Open links in", "Haptic feedback", "Reduce motion"])
     }
