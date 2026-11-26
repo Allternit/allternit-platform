@@ -140,15 +140,8 @@ struct AgentActivityListView: View {
                         threadRow(thread)
                     }
                     if visibleThreads.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(Color("TextSecondary"))
-                            Text("No threads match.")
-                                .font(.subheadline)
-                                .foregroundColor(Color("TextSecondary"))
-                        }
-                        .padding(.top, 24)
+                        FriendlyInlineStateView(title: "No threads match.", art: .search)
+                            .padding(.top, 24)
                     }
                 }
                 .padding(.horizontal, 20)

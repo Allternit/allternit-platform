@@ -324,9 +324,7 @@ struct TeachProfileSheet: View {
                             .font(.system(size: 13))
                             .foregroundColor(Color("TextTertiary"))
                     } else if profile.rows.isEmpty {
-                        Text("Nothing here yet. Add the first value.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextTertiary"))
+                        FriendlyInlineStateView(title: "Nothing here yet. Add the first value.", art: .sheets)
                     }
                     ForEach(Array(profile.rows.enumerated()), id: \.element.id) { index, row in
                         rowEditor(index: index, row: row)

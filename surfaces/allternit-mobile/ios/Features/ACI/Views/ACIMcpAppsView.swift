@@ -210,10 +210,15 @@ struct ACIMcpAppsView: View {
                 }
                 if shown.isEmpty {
                     VStack(spacing: 12) {
-                        EmptyBox(icon: "square.grid.2x2",
-                                 title: q.isEmpty ? "No apps connected yet" : "No matches",
-                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.",
-                                 art: q.isEmpty ? .sheets : nil)
+                        if q.isEmpty {
+                            EmptyBox(title: "No apps connected yet",
+                                     line: "Add one and it shows up here.",
+                                     art: .apps)
+                        } else {
+                            EmptyBox(title: "No matches",
+                                     line: "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.",
+                                     art: .search)
+                        }
                         if q.isEmpty {
                             GlassPill(title: "Browse apps") { go(.discover) }
                         }
@@ -384,7 +389,7 @@ struct ACIMcpAppsView: View {
     @ViewBuilder
     private func paged(_ list: [DirectoryEntry], emptyText: String) -> some View {
         if list.isEmpty {
-            EmptyBox(icon: "square.grid.2x2", title: emptyText, line: "Try another category or search.")
+            EmptyBox(title: emptyText, line: "Try another category or search.", art: .sheets)
         } else {
             DirectoryGrid(list: Array(list.prefix(limit)), busy: connect.busy, onOpen: { detail = $0 }, onAdd: add)
             if list.count > limit {

@@ -570,7 +570,7 @@ struct BotBrainPickerSheet: View {
         if registry.status == .loading && !registry.isLoaded {
             skeleton
         } else if runtimeChoices.isEmpty {
-            emptyLine("No runtimes match “\(query)”.")
+            emptyLine("No runtimes match “\(query)”.", art: .search)
         } else {
             choices(runtimeChoices.map { r in
                 if isChat { return chatRuntimeChoice(r) }
@@ -667,10 +667,7 @@ struct BotBrainPickerSheet: View {
             if isChat { modelOptionsRow }
         } else if brains.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("No brains yet. Connect a plan, an API key or a local model.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextSecondary"))
-                    .fixedSize(horizontal: false, vertical: true)
+                FriendlyInlineStateView(title: "No brains yet. Connect a plan, an API key or a local model.", art: .key)
                 NavigationLink {
                     ConnectionsSettingsView()
                 } label: {
@@ -688,7 +685,7 @@ struct BotBrainPickerSheet: View {
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
             if isChat { modelOptionsRow }
         } else if brainChoices.isEmpty {
-            emptyLine("No brains match “\(query)”.")
+            emptyLine("No brains match “\(query)”.", art: .search)
             if isChat { modelOptionsRow }
         } else {
             choices(brainChoices.prefix(48).map { b in
@@ -749,7 +746,7 @@ struct BotBrainPickerSheet: View {
         if hubStore.isLoading && hubStore.agents.isEmpty {
             skeleton
         } else if bots.isEmpty {
-            emptyLine(query.isEmpty ? "No other bots yet." : "No bots match “\(query)”.")
+            emptyLine(query.isEmpty ? "No other bots yet." : "No bots match “\(query)”.", art: query.isEmpty ? .gizzi : .search)
         } else {
             let currentId: String? = { if case .agent(let a) = target { return a.id } else { return nil } }()
             choices(bots.map { a in
@@ -1067,10 +1064,8 @@ struct BotBrainPickerSheet: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func emptyLine(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 13))
-            .foregroundColor(Color("TextSecondary"))
+    private func emptyLine(_ text: String, art: EmptyArtKind) -> some View {
+        FriendlyInlineStateView(title: text, art: art)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
     }
 
