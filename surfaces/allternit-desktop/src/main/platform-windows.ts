@@ -5,7 +5,7 @@
  * auto-launch, native notifications, and firewall helpers.
  */
 
-import { app, Tray, Menu, Notification, nativeImage, BrowserWindow, type NativeImage } from 'electron';
+import { app, Tray, Menu, Notification, nativeImage, BrowserWindow, type NativeImage, type Rectangle } from 'electron';
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -210,4 +210,28 @@ function runRegCommand(args: string): Promise<void> {
       }
     });
   });
+}
+
+// ── Island pill placement (program "Island bar + Team map", lane 29) ────
+
+/** Gap between the top of the work area (a top taskbar ends there) and the pill. */
+const WINDOWS_PILL_GAP = 12;
+
+/**
+ * The pill sits top-centre of the active display's work area (the display
+ * under the cursor, picked by the caller). The window is `skipTaskbar`
+ * (floatingPanelWindowOptions), so it never shows as a taskbar button.
+ */
+export function windowsIslandPillBounds(
+  display: { workArea: Rectangle },
+  size: { width: number; height: number },
+): Rectangle {
+  const { workArea } = display;
+  const width = Math.max(1, Math.min(size.width, workArea.width - 32));
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + WINDOWS_PILL_GAP),
+    width: Math.round(width),
+    height: Math.round(Math.min(size.height, workArea.height - WINDOWS_PILL_GAP)),
+  };
 }

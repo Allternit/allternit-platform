@@ -5,7 +5,7 @@
  * XDG autostart, desktop notifications, and xdg-open integration.
  */
 
-import { app, Tray, Menu, Notification, nativeImage, type NativeImage } from 'electron';
+import { app, Tray, Menu, Notification, nativeImage, type NativeImage, type Rectangle } from 'electron';
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -167,4 +167,35 @@ function resolveDesktopFile(): string | null {
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+// ── Island pill placement (program "Island bar + Team map", lane 29) ────
+
+/**
+ * `window`: a top-centre always-on-top pill window (X11, and XWayland via
+ * `--ozone-platform=x11`). `tray`: native Wayland, where the compositor
+ * ignores client placement and most ignore always-on-top, so the job shows
+ * as a dot in the tray menu with "Open Island bar" instead (PLAN D14).
+ * `backend` is hud-windowing.ts `linuxOzoneBackend()`.
+ */
+export function linuxIslandPillMode(backend: 'wayland' | 'x11'): 'window' | 'tray' {
+  return backend === 'wayland' ? 'tray' : 'window';
+}
+
+/** Gap between the top of the work area (GNOME/KDE top panels end there) and the pill. */
+const LINUX_PILL_GAP = 10;
+
+/** Top-centre of the active display's work area (X11 only; see linuxIslandPillMode). */
+export function linuxIslandPillBounds(
+  display: { workArea: Rectangle },
+  size: { width: number; height: number },
+): Rectangle {
+  const { workArea } = display;
+  const width = Math.max(1, Math.min(size.width, workArea.width - 32));
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + LINUX_PILL_GAP),
+    width: Math.round(width),
+    height: Math.round(Math.min(size.height, workArea.height - LINUX_PILL_GAP)),
+  };
 }

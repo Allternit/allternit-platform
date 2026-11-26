@@ -462,6 +462,17 @@ const islandBarAPI = {
   hide: (): Promise<void> => ipcRenderer.invoke('island-bar:hide'),
   /** Bar window only: fit the window to the page (56–560 px). */
   setHeight: (height: number): Promise<void> => ipcRenderer.invoke('island-bar:set-height', height),
+  /**
+   * Main windows, bar window and pill page: this page's whole current list of
+   * bar jobs (ai BarJobState; `title` is the tray line, ≤60 chars). The pill
+   * window shows while any job is waiting_approval / working / input_required
+   * and hides 4 s after the last one ends. Send `[]` when the page stops following jobs.
+   */
+  reportJobs: (jobs: Array<{ id: string; state: string; title?: string }>): void => {
+    ipcRenderer.send('island-bar:jobs', jobs);
+  },
+  /** Pill page only: fit the pill window to the capsule (120–420 × 32–240 px). */
+  setPillSize: (size: { width: number; height: number }): Promise<void> => ipcRenderer.invoke('island-bar:set-pill-size', size),
   /** Bar window only: the window was just shown; focus the input. */
   onShown: (callback: () => void): (() => void) => {
     const listener = () => callback();

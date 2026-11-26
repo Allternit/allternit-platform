@@ -38,7 +38,7 @@ import {
   mergeHudBounds, parseHudBoundsByDisplay, resizeHudFromBottom, type HudBoundsByDisplay, type HudRect,
 } from './hud-geometry.js';
 import { cursorPointInWindow } from './hud-cursor.js';
-import { hudWindowingView, resolveHudWindowing } from './hud-windowing.js';
+import { hudWindowingView, linuxOzoneBackend, resolveHudWindowing } from './hud-windowing.js';
 import { INACTIVE_GAME_OVERLAY, startHudGameOverlayWatch } from './hud-game-overlay.js';
 import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
@@ -110,7 +110,8 @@ import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
 import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-recorder.js';
 import { createIslandHotkey, type IslandHotkeyStatus } from './island-hotkey.js';
-import { createIslandBarWindow } from './island-bar-window.js';
+import { createIslandBarWindow, isIslandBarDeepLink, islandBarDeepLinkQuery } from './island-bar-window.js';
+import { barJobTrayLabel, createIslandPillWindow } from './island-pill-window.js';
 import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
@@ -2632,9 +2633,23 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Island bar (flag bar.island): live jobs as dot rows, and "Open Island bar"
+  // (the only way in on Linux Wayland without the hotkey, PLAN D14).
+  const islandSection: Electron.MenuItemConstructorOptions[] = featureFlagManager.get<boolean>('bar.island') === true
+    ? [
+        ...islandPill.liveJobs().map((job): Electron.MenuItemConstructorOptions => ({
+          label: barJobTrayLabel(job),
+          click: () => islandBar.open(),
+        })),
+        { label: 'Open Island bar', click: () => islandBar.open() },
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...islandSection,
     ...meetingsSection,
     ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
@@ -2673,6 +2688,10 @@ async function updateTrayMenu(): Promise<void> {
   trayMenu = Menu.buildFromTemplate(template);
   // macOS menu bar: a short word next to the icon while Gizzi is in a call.
   if (process.platform === 'darwin') tray.setTitle(meetingMenuBarTitle(meetingPresence));
+  // Tray dot while a bar job runs or an ask waits: the tooltip on every OS
+  // (the menu rows carry the coloured dot; there is no pill on Linux Wayland).
+  const liveBarJobs = featureFlagManager.get<boolean>('bar.island') === true ? islandPill.liveJobs() : [];
+  tray.setToolTip(liveBarJobs.length ? `Allternit · ${barJobTrayLabel(liveBarJobs[0]!)}` : 'Allternit');
   // macOS: left click is the HUD, so the menu pops up on right-click only.
   if (process.platform !== 'darwin') tray.setContextMenu(trayMenu);
 }
@@ -2737,6 +2756,26 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
   // Platform deep links handled directly by the desktop shell.
   if (url === 'allternit://hud' || url === 'allternit://open/hud') {
     toggleHudWindow();
+    return;
+  }
+
+  // Island bar (flag bar.island): allternit://bar toggles the bar;
+  // allternit://bar?app=stripe&tool=create_refund&v.amount=320 opens it with
+  // those blanks filled (only app, tool and v.<field> pass through). This is
+  // the way in on Linux Wayland, where there is no global hotkey (PLAN D14).
+  if (isIslandBarDeepLink(url)) {
+    if (featureFlagManager.get<boolean>('bar.island') !== true) {
+      log.info('[IslandBar] allternit://bar ignored: flag bar.island is off');
+      return;
+    }
+    // The bar needs the session (pairing check); a cold-start link waits for it.
+    if (!authManagerReady) {
+      earlyProtocolUrl = url;
+      return;
+    }
+    const query = islandBarDeepLinkQuery(url);
+    if (query) islandBar.open(query);
+    else islandBar.toggle();
     return;
   }
 
@@ -4573,6 +4612,20 @@ const islandBar = createIslandBarWindow({
   log,
 });
 
+const islandPill = createIslandPillWindow({
+  isMac,
+  platform: process.platform,
+  linuxBackend: linuxOzoneBackend(process.env, process.argv),
+  preload: join(__dirname, '../preload/index.js'),
+  platformUrl: () => activePlatformUrl,
+  enabled: () => featureFlagManager.get<boolean>('bar.island') === true && mayOpenHud(authManager.hasSession()),
+  guardNavigation: installWillNavigateGuard,
+  openExternal: (url) => { void openExternalAllowlisted(url); },
+  isQuitting: () => (app as unknown as { isQuitting?: boolean }).isQuitting === true,
+  onJobsChanged: () => { void updateTrayMenu(); },
+  log,
+});
+
 const islandHotkey = createIslandHotkey({
   platform: process.platform,
   sessionType: process.env.XDG_SESSION_TYPE,
@@ -4597,7 +4650,9 @@ function syncIslandBarWithFlag(): void {
   else {
     islandHotkey.stop();
     islandBar.hide();
+    islandPill.reset();
   }
+  void updateTrayMenu();
 }
 featureFlagManager.onChange((key) => {
   if (key === 'bar.island' && app.isReady()) syncIslandBarWithFlag();
@@ -4620,6 +4675,20 @@ ipcMain.handle('island-bar:hide', (event) => {
 });
 ipcMain.handle('island-bar:set-height', (event, height: unknown) => {
   if (islandBar.isFrom(event.sender)) islandBar.setHeight(height);
+});
+// Bar jobs for the pill (lane 29). The main process does not hold the bar job
+// stream, so each ai window that follows jobs reports its whole list here:
+// main windows, the bar window and the pill page; top frame only.
+ipcMain.on('island-bar:jobs', (event, jobs: unknown) => {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  const trusted = islandBar.isFrom(event.sender)
+    || islandPill.isFrom(event.sender)
+    || listMainWindows().some((entry) => entry.window.webContents === event.sender);
+  if (!trusted) return;
+  islandPill.report(event.sender, jobs);
+});
+ipcMain.handle('island-bar:set-pill-size', (event, size: unknown) => {
+  islandPill.setSize(event.sender, size);
 });
 
 ipcMain.handle('shell:hud:get-prefs', () => hudPrefs());
