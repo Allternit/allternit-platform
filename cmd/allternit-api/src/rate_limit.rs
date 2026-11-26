@@ -48,6 +48,47 @@ pub const DEFAULT_BOT_DESKTOP_RATE_LIMIT_RPM: i64 = 30;
 static BOT_DESKTOP_RATE_LIMIT_WINDOWS: Lazy<Mutex<HashMap<String, VecDeque<Instant>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Style-preview turns (`stylePreview` on the chat bridge) allowed per user
+/// per hour. Each one is a real model turn.
+pub const STYLE_PREVIEW_PER_HOUR: usize = 20;
+const STYLE_PREVIEW_WINDOW: Duration = Duration::from_secs(3600);
+
+static STYLE_PREVIEW_WINDOWS: Lazy<Mutex<HashMap<String, VecDeque<Instant>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Sliding-window admit: records `now` and returns true while fewer than
+/// `limit` hits fall inside `window`.
+fn sliding_admit(
+    windows: &Mutex<HashMap<String, VecDeque<Instant>>>,
+    scope: &str,
+    limit: usize,
+    window: Duration,
+    now: Instant,
+) -> bool {
+    let mut windows = windows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let hits = windows.entry(scope.to_string()).or_default();
+    while hits.front().map(|t| now.duration_since(*t) > window).unwrap_or(false) {
+        hits.pop_front();
+    }
+    if hits.len() >= limit {
+        return false;
+    }
+    hits.push_back(now);
+    true
+}
+
+/// True while this user is under the hourly style-preview cap (and counts the
+/// turn); false means answer 429.
+pub fn style_preview_allowed(user_id: &str) -> bool {
+    sliding_admit(
+        &STYLE_PREVIEW_WINDOWS,
+        user_id,
+        STYLE_PREVIEW_PER_HOUR,
+        STYLE_PREVIEW_WINDOW,
+        Instant::now(),
+    )
+}
+
 fn rate_limit_response(retry_after_secs: u64) -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,
@@ -311,6 +352,24 @@ fn bot_desktop_compute_retry_after(scope: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn style_preview_cap_admits_twenty_an_hour_per_user() {
+        let windows = Mutex::new(HashMap::new());
+        let start = Instant::now();
+        for i in 0..STYLE_PREVIEW_PER_HOUR {
+            assert!(
+                sliding_admit(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start),
+                "turn {i} should pass"
+            );
+        }
+        assert!(!sliding_admit(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start));
+        // Another user is not affected.
+        assert!(sliding_admit(&windows, "u2", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start));
+        // An hour later the window has emptied.
+        let later = start + STYLE_PREVIEW_WINDOW + Duration::from_secs(1);
+        assert!(sliding_admit(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, later));
+    }
     use crate::auth::AuthUser;
     use axum::{body::Body, routing::get, Router};
     use tower::ServiceExt;

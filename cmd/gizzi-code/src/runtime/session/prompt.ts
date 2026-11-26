@@ -2272,7 +2272,7 @@ const message = await createUserMessage(input)
   const MobileTools = z.object({
     webSearch: z.boolean().optional(),
     research: z.boolean().optional(),
-    toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
+    toolAccess: z.enum(["auto", "on_demand", "always", "none"]).optional(),
     disabledConnectors: z.array(z.string()).optional(),
     computer: z.boolean().optional(),
   })
@@ -2280,7 +2280,8 @@ const message = await createUserMessage(input)
   export interface MobileToolOptions {
     webSearch?: boolean
     research?: boolean
-    toolAccess?: "auto" | "on_demand" | "always"
+    /** "none" gives the turn an empty tool set (the style preview). */
+    toolAccess?: "auto" | "on_demand" | "always" | "none"
     /** Connector ids (open-connector app ids, e.g. "github") the user turned
      * off for this session in the composer's + menu. */
     disabledConnectors?: string[]
@@ -2339,6 +2340,11 @@ const message = await createUserMessage(input)
    * @internal Exported for testing
    */
   export function applyMobileToolGating(tools: Record<string, AITool>, options: MobileToolOptions): void {
+    // `toolAccess: "none"`: the model gets no tools at all for this turn.
+    if (options.toolAccess === "none") {
+      for (const key of Object.keys(tools)) delete tools[key]
+      return
+    }
     if (options.webSearch === false || options.research === false) delete tools["websearch"]
     if (options.research === false) delete tools["task"]
   }
@@ -2349,6 +2355,7 @@ const message = await createUserMessage(input)
    *   auto      -> "auto"              (unattended: auto-allow, no questions)
    *   on_demand -> "default"           (normal ask behavior)
    *   always    -> "bypassPermissions" (allow everything without asking)
+   *   none      -> no override (the turn has no tools, so nothing asks)
    */
   function mobileToolAccessMode(
     toolAccess: MobileToolOptions["toolAccess"],
