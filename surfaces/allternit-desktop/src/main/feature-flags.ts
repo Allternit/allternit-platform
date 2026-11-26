@@ -34,6 +34,8 @@ export const FLAG_DEFINITIONS: Record<string, FlagDefinition> = {
   'apps.install':          { type: 'boolean', default: true  },
   // Live links hosted by this computer (share-manager.ts, D5). On (Eoj 11-25); cloud-api answers "not set up yet" until the relay is configured.
   'share.live':            { type: 'boolean', default: true  },
+  // Island bar global hotkey + window (island-hotkey.ts). Off until the train proves it (PLAN D19); matches ai `bar.island`.
+  'bar.island':            { type: 'boolean', default: false },
 };
 
 type ChangeHandler = (key: string, value: FlagValue) => void;

@@ -109,6 +109,8 @@ import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
 import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-recorder.js';
+import { createIslandHotkey, type IslandHotkeyStatus } from './island-hotkey.js';
+import { createIslandBarWindow } from './island-bar-window.js';
 import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
@@ -857,6 +859,10 @@ interface StoreSchema {
   hudBounds: HudBoundsByDisplay;
   /** Settings → HUD: hide the HUD when it loses focus. Off by default (pinned). */
   hudHideOnBlur?: boolean;
+  /** Settings → Shortcuts: the Island bar key, recorder spelling ("alt+space"). Unset = the default. */
+  islandBarShortcut?: string;
+  /** The picked Island bar key the "pick your shortcut" notice was shown for (island-hotkey.ts). */
+  islandBarNoticeShownFor?: string;
   theme: 'light' | 'dark' | 'system';
   backend: {
     mode: 'bundled' | 'remote' | 'development';
@@ -3259,6 +3265,9 @@ app.whenReady().then(async () => {
   // Global hotkey: ⌘/Ctrl+Shift+R → toggle Teach recording (+ floating record bar)
   registerTeachHotkey();
 
+  // Global hotkey: ⌥Space / Alt+Space → Island bar (flag bar.island; island-hotkey.ts).
+  syncIslandBarWithFlag();
+
   // Fallback global hotkey for users who expect the earlier Alt+Shift+H binding.
   const hudHotkeyFallbackRegistered = globalShortcut.register(HUD_HOTKEY_FALLBACK, onHudHotkey);
   hudHotkeyStatus.set(HUD_HOTKEY_FALLBACK, hudHotkeyFallbackRegistered);
@@ -4549,6 +4558,70 @@ function hudPrefs(): HudPrefs {
     hotkeys: [...hudHotkeyStatus].map(([accelerator, registered]) => ({ accelerator, registered })),
   };
 }
+// ============================================================================
+// Island bar (⌥Space / Alt+Space; program "Island bar + Team map", lane 28)
+// ============================================================================
+
+const islandBar = createIslandBarWindow({
+  isMac,
+  preload: join(__dirname, '../preload/index.js'),
+  platformUrl: () => activePlatformUrl,
+  mayOpen: () => mayOpenHud(authManager.hasSession()),
+  guardNavigation: installWillNavigateGuard,
+  openExternal: (url) => { void openExternalAllowlisted(url); },
+  isQuitting: () => (app as unknown as { isQuitting?: boolean }).isQuitting === true,
+  log,
+});
+
+const islandHotkey = createIslandHotkey({
+  platform: process.platform,
+  sessionType: process.env.XDG_SESSION_TYPE,
+  register: (accelerator, onPress) => globalShortcut.register(accelerator, onPress),
+  unregister: (accelerator) => globalShortcut.unregister(accelerator),
+  readSaved: () => store.get('islandBarShortcut'),
+  save: (shortcut) => { if (shortcut) store.set('islandBarShortcut', shortcut); else store.delete('islandBarShortcut'); },
+  readNoticeShownFor: () => store.get('islandBarNoticeShownFor'),
+  saveNoticeShownFor: (shortcut) => { if (shortcut) store.set('islandBarNoticeShownFor', shortcut); else store.delete('islandBarNoticeShownFor'); },
+  notify: (title, body) => { if (Notification.isSupported()) new Notification({ title, body }).show(); },
+  onPress: () => islandBar.toggle(),
+  onChange: (status: IslandHotkeyStatus) => {
+    log.info('[IslandBar] hotkey', status);
+    broadcastToMainWindows('island-bar:hotkey-changed', status);
+  },
+  log: (message) => log.warn(message),
+});
+
+/** Hold the key only while the Desktop flag `bar.island` is on (default off). */
+function syncIslandBarWithFlag(): void {
+  if (featureFlagManager.get<boolean>('bar.island') === true) islandHotkey.start();
+  else {
+    islandHotkey.stop();
+    islandBar.hide();
+  }
+}
+featureFlagManager.onChange((key) => {
+  if (key === 'bar.island' && app.isReady()) syncIslandBarWithFlag();
+});
+
+ipcMain.handle('island-bar:get-hotkey', () => islandHotkey.status());
+ipcMain.handle('island-bar:set-hotkey', (_event, shortcut: unknown) =>
+  islandHotkey.set(typeof shortcut === 'string' ? shortcut : null));
+ipcMain.handle('island-bar:suspend-hotkey', (_event, suspended: unknown) => {
+  islandHotkey.suspend(suspended === true);
+});
+ipcMain.handle('island-bar:open', () => {
+  if (islandHotkey.status().reason !== 'off') islandBar.open();
+});
+ipcMain.handle('island-bar:toggle', () => {
+  if (islandHotkey.status().reason !== 'off') islandBar.toggle();
+});
+ipcMain.handle('island-bar:hide', (event) => {
+  if (islandBar.isFrom(event.sender)) islandBar.hide();
+});
+ipcMain.handle('island-bar:set-height', (event, height: unknown) => {
+  if (islandBar.isFrom(event.sender)) islandBar.setHeight(height);
+});
+
 ipcMain.handle('shell:hud:get-prefs', () => hudPrefs());
 ipcMain.handle('shell:hud:set-prefs', (_event, prefs: { hideOnBlur?: unknown }) => {
   if (typeof prefs?.hideOnBlur === 'boolean') store.set('hudHideOnBlur', prefs.hideOnBlur);

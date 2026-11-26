@@ -432,6 +432,44 @@ const filesDriveAPI = {
   },
 };
 
+// ─── Island bar (lane 28) ─────────────────────────────────────────────────────
+// Global hotkey + bar window (main/island-hotkey.ts, main/island-bar-window.ts).
+// Shortcuts use the Settings recorder's spelling ("alt+space", "mod+shift+k").
+// Settings → Shortcuts (ai shell-shortcuts.ts) and the bar page (ai /bar) use it.
+
+/** Mirrors main/island-hotkey.ts IslandHotkeyStatus. */
+interface IslandHotkeyStatus {
+  shortcut: string;
+  active: string | null;
+  reason: 'ok' | 'fallback' | 'taken' | 'wayland' | 'off';
+  rejected?: { shortcut: string; why: 'taken' | 'invalid' };
+}
+
+const islandBarAPI = {
+  getHotkey: (): Promise<IslandHotkeyStatus> => ipcRenderer.invoke('island-bar:get-hotkey'),
+  /** `null` restores the default. A key another app holds comes back in `rejected`; the old key stays live. */
+  setHotkey: (shortcut: string | null): Promise<IslandHotkeyStatus> => ipcRenderer.invoke('island-bar:set-hotkey', shortcut),
+  /** Release the key while Settings records a new one (so pressing it does not open the bar). */
+  suspendHotkey: (suspended: boolean): Promise<void> => ipcRenderer.invoke('island-bar:suspend-hotkey', suspended),
+  onHotkeyChanged: (callback: (status: IslandHotkeyStatus) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, status: unknown) => callback(status as IslandHotkeyStatus);
+    ipcRenderer.on('island-bar:hotkey-changed', listener);
+    return () => ipcRenderer.removeListener('island-bar:hotkey-changed', listener);
+  },
+  open: (): Promise<void> => ipcRenderer.invoke('island-bar:open'),
+  toggle: (): Promise<void> => ipcRenderer.invoke('island-bar:toggle'),
+  /** Bar window only: hide after Escape or a run. */
+  hide: (): Promise<void> => ipcRenderer.invoke('island-bar:hide'),
+  /** Bar window only: fit the window to the page (56–560 px). */
+  setHeight: (height: number): Promise<void> => ipcRenderer.invoke('island-bar:set-height', height),
+  /** Bar window only: the window was just shown; focus the input. */
+  onShown: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('island-bar:shown', listener);
+    return () => ipcRenderer.removeListener('island-bar:shown', listener);
+  },
+};
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 interface HudPrefs {
@@ -1431,6 +1469,7 @@ const allternitDesktopAPI = {
   mesh: meshAPI,
   filesDrive: filesDriveAPI,
   shell: shellAPI,
+  islandBar: islandBarAPI,
   office: officeAPI,
   officeAddins: officeAddinsAPI,
   theme: themeAPI,
