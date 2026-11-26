@@ -345,10 +345,10 @@ fun ArtifactsLibraryScreen(
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(52.dp))
         if (searching) {
-            LibrarySearchField(store.query, "Search artifacts", "artifactsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { q ->
+            LibrarySearchField(store.query, "Search artifacts", "artifactsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), onSubmit = { rememberSearch(it) }) { q ->
                 store.query = q
                 searchJob?.cancel()
-                searchJob = scope.launch { delay(300); store.load(); rememberSearch(q) }
+                searchJob = scope.launch { delay(300); store.load() }
             }
             if (store.query.isBlank() && recents.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
