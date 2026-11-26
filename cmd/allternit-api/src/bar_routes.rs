@@ -2458,7 +2458,7 @@ mod tests {
         seed(&conn);
         let rule = pay_rule(&conn, ApproverKind::Manager);
         let out = review(&conn, "ann", json!({ "amount": 250, "to": "acme", "pin": "1234" })).unwrap();
-        assert_eq!(out["approver"], json!({ "user_id": "mgr", "name": "mgr", "is_you": false, "role": null }));
+        assert_eq!(out["approver"], json!({ "user_id": "mgr", "name": "mgr", "is_you": false, "role": "member" }));
         assert_eq!(out["rule"]["id"], json!(rule.id));
         assert!(out["rule"]["text"].as_str().unwrap().contains("over 100 USD"));
         assert_eq!(out["level"], json!("full"));
@@ -2484,7 +2484,7 @@ mod tests {
         seed(&conn);
         pay_rule(&conn, ApproverKind::Owner); // a person's owner = the org owner
         let out = review(&conn, "boss", json!({ "amount": 500, "to": "acme" })).unwrap();
-        assert_eq!(out["approver"], json!({ "user_id": "boss", "name": "boss", "is_you": true, "role": null }));
+        assert_eq!(out["approver"], json!({ "user_id": "boss", "name": "boss", "is_you": true, "role": "owner" }));
         assert!(out["rule"]["id"].is_string());
         assert_eq!(out["needs_confirmation"], json!(true));
     }

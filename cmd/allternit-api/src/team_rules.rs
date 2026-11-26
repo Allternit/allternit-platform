@@ -270,6 +270,14 @@ pub struct RuleNames<'a> {
     pub approver: Option<&'a str>,
 }
 
+/// A tool named inside the rule sentence: `tool_label` without its leading capital
+/// ("Stripe refund payment", not "Stripe Refund payment").
+fn tool_phrase(tool: &str) -> String {
+    let label = crate::mcp_server_routes::tool_label(tool);
+    let mut chars = label.chars();
+    chars.next().map_or(String::new(), |f| f.to_lowercase().chain(chars).collect())
+}
+
 /// The rule as one sentence (D5): the one renderer for the team map, the bar
 /// review card, the ask card and the 403 body. Shape:
 /// `<who> · <app> <tool> · <condition> needs <approver>`, e.g.
@@ -284,9 +292,9 @@ pub fn render_rule(rule: &ApprovalRule, names: &RuleNames<'_>) -> String {
     let app = rule.app_ref.as_deref().map(|r| names.app.unwrap_or(r));
     let what = match (app, rule.tool.as_str()) {
         (Some(a), "*") => format!("any {a} tool"),
-        (Some(a), t) => format!("{a} {}", crate::mcp_server_routes::tool_label(t)),
+        (Some(a), t) => format!("{a} {}", tool_phrase(t)),
         (None, "*") => "any tool".to_string(),
-        (None, t) => crate::mcp_server_routes::tool_label(t),
+        (None, t) => tool_phrase(t),
     };
     let value = match &rule.value {
         Some(Value::String(s)) => s.clone(),

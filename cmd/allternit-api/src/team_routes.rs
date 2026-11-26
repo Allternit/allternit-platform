@@ -1600,7 +1600,7 @@ mod tests {
         let w = jobs.iter().find(|j| j["job_id"] == waiting.as_str()).unwrap();
         assert_eq!(
             (w["actor"].as_str(), w["waiting_on"].as_str(), w["state"].as_str(), w["title"].as_str()),
-            (Some("b:bot1"), Some("p:owner1"), Some("waiting_approval"), Some("refund payment"))
+            (Some("b:bot1"), Some("p:owner1"), Some("waiting_approval"), Some("Refund payment"))
         );
         assert_eq!(w["app"]["name"], "Stripe");
         let m = jobs.iter().find(|j| j["job_id"] == mine.as_str()).unwrap();
