@@ -24,6 +24,7 @@ pub mod billing_auto_topup;
 pub mod billing_checkout;
 pub mod billing_invoices;
 pub mod billing_payment_methods;
+pub mod billing_plan_change;
 pub mod admin_customers;
 pub mod admin_funding;
 pub mod admin_voice_billing;
