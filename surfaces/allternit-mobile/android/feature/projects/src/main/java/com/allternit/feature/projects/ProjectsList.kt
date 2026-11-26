@@ -157,6 +157,15 @@ fun ProjectsListScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     var pendingOpenId by remember { mutableStateOf(initialProjectId) }
     val gridState = rememberLazyGridState()
+    // The floating New project button hides while the list scrolls down and returns on scroll up (UI feedback 11-25 A10).
+    var newHidden by remember { mutableStateOf(false) }
+    LaunchedEffect(gridState) {
+        var last = 0
+        androidx.compose.runtime.snapshotFlow { gridState.firstVisibleItemIndex * 100000 + gridState.firstVisibleItemScrollOffset }.collect { p ->
+            if (p > last + 8) newHidden = true else if (p < last - 8) newHidden = false
+            last = p
+        }
+    }
     val density = LocalDensity.current.density
     val introStore = nav.introStore ?: LocalIntroSeenStore.current
     var introOpen by remember { mutableStateOf(false) }
@@ -313,12 +322,18 @@ fun ProjectsListScreen(
             )
         }
         // iOS ProjectsNewButton: the floating "New project" capsule.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !newHidden,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+        ) {
         GlassPill(
             onClick = {
                 val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
                 if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
             },
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp).testTag("projectsNew"),
+            modifier = Modifier.navigationBarsPadding().padding(bottom = 16.dp).testTag("projectsNew"),
             height = 50.dp,
             contentPadding = PaddingValues(horizontal = 22.dp),
         ) {
@@ -326,6 +341,7 @@ fun ProjectsListScreen(
                 Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
                 Text("New project", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
+        }
         }
         if (introOpen) IntroSheet(
             title = "Keep each job in one place.",

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -157,10 +158,11 @@ private fun BotSummaryTiles(s: BotSummary?) {
 internal fun BotHomeTabsScreen(bot: BotRecord, initial: BotHomeTab, host: BotsHost, store: BotModeStore, nav: BotNavigator) {
     val c = AllternitTheme.colors
     var tab by remember { mutableStateOf(initial) }
-    Column(Modifier.fillMaxSize().statusBarsPadding().testTag("botHomeTabs")) {
+    BotDockFrame { dockContent -> Column(Modifier.fillMaxSize().statusBarsPadding().testTag("botHomeTabs")) {
         LibraryHeader(title = bot.displayName, onBack = nav::back, backTag = "botsBack")
+        Spacer(Modifier.height(48.dp))
         PillRow(BotHomeTab.entries, tab, { it.label }, { "botHomeTab${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { tab = it }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().then(dockContent)) {
             when (tab) {
                 BotHomeTab.Threads -> Column {
                     Row(
@@ -175,7 +177,7 @@ internal fun BotHomeTabsScreen(bot: BotRecord, initial: BotHomeTab, host: BotsHo
                         }
                         Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
                     }
-                    BotThreadsOverview(store, bot.id) { nav.openThread(it) }
+                    BotThreadsOverview(store, bot.id, showTitle = false) { nav.openThread(it) }
                 }
                 BotHomeTab.Artifacts -> BotArtifactsList(bot, host)
                 BotHomeTab.Routines -> BotRoutinesView(bot)
@@ -183,7 +185,7 @@ internal fun BotHomeTabsScreen(bot: BotRecord, initial: BotHomeTab, host: BotsHo
                 BotHomeTab.Config -> AgentDetailView(bot, store, nav)
             }
         }
-    }
+    } }
 }
 
 /** Artifacts the bot made in its chats (iOS BotArtifactsList): the library filtered to the bot's sessions. */

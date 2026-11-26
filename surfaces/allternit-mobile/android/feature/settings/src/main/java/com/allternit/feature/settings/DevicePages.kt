@@ -143,31 +143,36 @@ internal fun DevicePairingPage(host: SettingsHost, back: () -> Unit) {
             val devices = body.listUnder("devices", "items")
             if (devices.isEmpty()) {
                 StateBox("No paired devices", "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.", null, null)
-            } else SCard {
-                devices.forEachIndexed { i, d ->
-                    val id = d.str("id") ?: return@forEachIndexed
-                    if (i > 0) SDivider()
-                    SRow(d.str("name") ?: d.str("device_name") ?: "Device", "device_$id", detail = d.str("public_key_fingerprint")?.let { "Key $it" } ?: d.str("platform"), chevron = false, onClick = { removeId = id },
-                        trailing = { androidx.compose.material3.Text("Remove", color = Danger, fontSize = 14.sp) })
+            } else {
+                // One row per physical device: the same platform + name paired again is folded into "paired N times".
+                val groups = devices.filter { it.str("id") != null }.groupBy { (it.str("platform") ?: "") + "|" + (it.str("name") ?: it.str("device_name") ?: "Device") }.values.toList()
+                SCard {
+                    groups.forEachIndexed { i, g ->
+                        val first = g.first()
+                        val key = first.str("id") ?: return@forEachIndexed
+                        if (i > 0) SDivider()
+                        val name = first.str("name") ?: first.str("device_name") ?: "Device"
+                        val detail = listOfNotNull(first.str("platform"), if (g.size > 1) "paired ${g.size} times" else null).joinToString(" · ").ifEmpty { null }
+                        SRow(name, "device_$key", detail = detail, chevron = false, onClick = { removeId = if (removeId == key) null else key },
+                            trailing = { androidx.compose.material3.Text(if (removeId == key) "Close" else "Remove", color = Danger, fontSize = 14.sp) })
+                        if (removeId == key) {
+                            com.allternit.core.design.HoldButton("Hold to remove", "deviceHold_$key", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), danger = true) {
+                                removeId = null
+                                scope.launch {
+                                    var failed: String? = null
+                                    for (d in g) {
+                                        val id = d.str("id") ?: continue
+                                        val r = Net.send("DELETE", "runtime-devices/${LibraryNet.escape(id)}")
+                                        if (r !is ApiResult.Ok) failed = r.friendly("remove the device")
+                                    }
+                                    if (failed != null) message = failed
+                                    reload()
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
-        removeId?.let { id ->
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { removeId = null },
-                title = { androidx.compose.material3.Text("Remove this device?") },
-                text = { androidx.compose.material3.Text("It stops reaching your Allternit account until you pair it again.") },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        removeId = null
-                        scope.launch {
-                            val r = Net.send("DELETE", "runtime-devices/${LibraryNet.escape(id)}")
-                            if (r is ApiResult.Ok) reload() else message = r.friendly("remove the device")
-                        }
-                    }) { androidx.compose.material3.Text("Remove", color = Danger) }
-                },
-                dismissButton = { androidx.compose.material3.TextButton(onClick = { removeId = null }) { androidx.compose.material3.Text("Cancel") } },
-            )
         }
     }
 }
