@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.23.0 (2026-11-25)
+
+- **`gizzi do`.** Run one tool from a connected app from the terminal, the Island bar's terminal door. It talks to the runtime (local first, then the cloud relay), fills the tool's blanks and shows the review and receipt. The Island bar is off until the `bar.island` flag is on.
+- **`gizzi team`.** `map`, `asks`, `rules` and `grant` show and change who can use which app; `asks --approve|--decline` decides a routed ask.
+- **Direct MCP tool calls.** The engine can call one MCP tool in an explicit session, resolved through your MCP proxy.
+- **Plans are artifacts.** Leaving plan mode saves the plan as an artifact (`art_plan_<session>`). It is marked approved after Yes and done when every todo completes, and the TUI plan prompt has Open in Allternit. `gizzi artifact list` leaves plans out; `--plans` adds them.
+- **Agent modes registry.** The 16 agent modes come from one registry shared with the apps.
+- **Image mode.** The picture engine is picked for you (GIFs too); the engine buttons are gone.
+- **Empty states.** Empty lists show one plain line with the next step.
+- **Sign-in text.** Signed-out and API-key errors say the same plain sign-in message. Memory Drive quarantines entries from another source instead of failing.
+
 ## 2.22.0 (2026-11-25)
 
 - **Apps and live links.** `gizzi app` lists, installs and opens your apps; `gizzi share <port>` starts a live link from this computer, and `/share links` shows your links. Live links need the relay; until it is set up on a deployment, starting one says so.
