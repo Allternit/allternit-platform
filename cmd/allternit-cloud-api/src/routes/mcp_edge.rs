@@ -719,6 +719,11 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     // Only a call that declared Tasks looks the task runtime up.
     let tasks_rt = || (rpc_method == "tools/call" && edge_tasks::declares_tasks(&request["params"])).then(|| backend.tasks()).flatten();
 
+    // `submit_feedback` is answered here for every caller: one log line, nothing relayed.
+    if rpc_method == "tools/call" && request["params"]["name"].as_str() == Some(FEEDBACK_TOOL) {
+        let result = feedback_result(&caller.user_id, &request["params"]["arguments"]);
+        return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, mcp_protocol::rpc_ok(&id, result)));
+    }
     // Phone and mail tools are answered here for a project key, never relayed.
     let edge_key = phone_key.as_ref().or(mail_key.as_ref()).or(model_key.as_ref());
     if let Some(key) = edge_key {
@@ -822,6 +827,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             } else {
                 reply
             };
+            let reply = if rpc_method == "tools/list" && status == 200 { with_feedback_tool(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && phone_key.is_some() { with_phone_tools(reply) } else { reply };
             let reply = if rpc_method == "tools/list" && status == 200 && mail_key.is_some() { with_mail_tools(reply) } else { reply };
             let reply = match model_key.as_ref().filter(|_| rpc_method == "tools/list" && status == 200) {
@@ -875,7 +881,9 @@ confirmation in Allternit is refused here with the setting that allows it; tell 
 fn with_phone_tools(reply: Vec<u8>) -> Vec<u8> {
     let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
     let Some(tools) = v.pointer_mut("/result/tools").and_then(Value::as_array_mut) else { return reply };
+    let at = tools.len();
     tools.extend(crate::routes::platform_v1::phones::mcp_tools());
+    add_output_schemas(&mut tools[at..]);
     serde_json::to_vec(&v).unwrap_or(reply)
 }
 
@@ -929,15 +937,84 @@ fn edge_tools(phones: bool, mail: bool, model: Option<&crate::routes::platform_v
     if let Some(k) = model {
         tools.extend(model_tools_for(k));
     }
+    tools.push(feedback_tool());
+    add_output_schemas(&mut tools);
     tools
 }
+
+// ─── outputSchema + feedback ─── BEGIN
+const FEEDBACK_TOOL: &str = "submit_feedback";
+const FEEDBACK_MAX_CHARS: usize = 500;
+
+/// Every edge tool names its result shape. The edge answers with a JSON
+/// object (`structuredContent`), so the schema is an object; a tool that
+/// already declares its own keeps it.
+fn add_output_schemas(tools: &mut [Value]) {
+    for t in tools {
+        if let Some(o) = t.as_object_mut() {
+            o.entry("outputSchema").or_insert_with(|| json!({ "type": "object", "additionalProperties": true }));
+        }
+    }
+}
+
+fn feedback_tool() -> Value {
+    json!({
+        "name": FEEDBACK_TOOL,
+        "description": "Tell Allternit a tool did not work as expected. Records the tool name and an optional short note.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tool": { "type": "string", "description": "The tool the feedback is about." },
+                "message": { "type": "string", "description": "What went wrong (cut to 500 characters)." }
+            },
+            "required": ["tool"]
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": { "ok": { "type": "boolean" } },
+            "required": ["ok"]
+        }
+    })
+}
+
+/// Log the feedback (user, tool, message cut to 500 characters) and say ok.
+fn feedback_result(user_id: &str, args: &Value) -> Value {
+    let tool = args["tool"].as_str().unwrap_or_default();
+    if tool.is_empty() {
+        return json!({ "content": [{ "type": "text", "text": "tool is required" }], "isError": true });
+    }
+    let message: String = args["message"].as_str().unwrap_or_default().chars().take(FEEDBACK_MAX_CHARS).collect();
+    tracing::info!(user_id = %user_id, tool = %tool, message = %message, "mcp edge: tool feedback");
+    let out = json!({ "ok": true });
+    json!({ "content": [{ "type": "text", "text": out.to_string() }], "structuredContent": out, "isError": false })
+}
+
+/// A relayed `tools/list` answer plus `submit_feedback`.
+fn with_feedback_tool(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
+        Some(tools) if !tools.iter().any(|t| t["name"] == FEEDBACK_TOOL) => {
+            tools.push(feedback_tool());
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        _ => reply,
+    }
+}
+/// The tool names the edge itself serves to any caller of an approval target
+/// (what a connected app may call here); the runtime's own tools are not listed.
+pub fn edge_tool_names(_approval_target: &str) -> Vec<String> {
+    vec![FEEDBACK_TOOL.to_string()]
+}
+// ─── outputSchema + feedback ─── END
 
 /// A relayed `tools/list` answer plus the mail tools.
 fn with_mail_tools(reply: Vec<u8>) -> Vec<u8> {
     let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
     match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
         Some(tools) => {
+            let at = tools.len();
             tools.extend(crate::routes::platform_v1::mailboxes::mcp_tool_defs());
+            add_output_schemas(&mut tools[at..]);
             serde_json::to_vec(&v).unwrap_or(reply)
         }
         None => reply,
@@ -1000,7 +1077,9 @@ fn with_model_tools(reply: Vec<u8>, key: &crate::routes::platform_v1::PlatformCa
     let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
     match v.pointer_mut("/result/tools").and_then(Value::as_array_mut) {
         Some(tools) => {
+            let at = tools.len();
             tools.extend(model_tools_for(key));
+            add_output_schemas(&mut tools[at..]);
             serde_json::to_vec(&v).unwrap_or(reply)
         }
         None => reply,
@@ -1553,6 +1632,24 @@ mod tests {
         assert_eq!(calls.len(), 1, "a phones-only key never reaches the hosted runtime");
         assert_eq!((calls[0].0.as_str(), calls[0].1.as_str(), calls[0].2.as_str()), ("dev", "edge", "phone:phone_tap"), "the owner's phones, as the key");
         assert_eq!(serde_json::from_slice::<Value>(&calls[0].4).unwrap()["x"], 10);
+    }
+
+    #[tokio::test]
+    async fn every_edge_tool_has_an_output_schema_and_feedback_is_logged_not_relayed() {
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["phones"]);
+        let (_, _, b) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        let tools = b["result"]["tools"].as_array().unwrap();
+        assert!(tools.iter().any(|t| t["name"] == "submit_feedback"));
+        for t in tools {
+            assert!(t["outputSchema"].is_object(), "{} has no outputSchema", t["name"]);
+            assert!(t["inputSchema"].is_object());
+        }
+        let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"submit_feedback","arguments":{"tool":"phone_tap","message":"x"}}}"#;
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), call).await;
+        assert_eq!((s, b["result"]["isError"].as_bool(), b["result"]["structuredContent"]["ok"].as_bool()), (StatusCode::OK, Some(false), Some(true)));
+        assert!(f.calls.lock().unwrap().is_empty(), "feedback never reaches a runtime");
+        let long = feedback_result("u", &json!({ "tool": "t", "message": "é".repeat(900) }));
+        assert_eq!(long["structuredContent"]["ok"], true);
     }
 
     #[tokio::test]

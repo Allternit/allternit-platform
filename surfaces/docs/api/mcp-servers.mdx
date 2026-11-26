@@ -285,6 +285,23 @@ A Platform API project key (`alt_live_…` / `alt_test_…`) with the `mail` sco
 
 Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a short page with the server URLs, protocol versions and event catalog.
 
+## Result schemas, feedback and connected apps (mcp.allternit.com)
+
+Every tool the edge itself serves (phone, mail, `decide`, `respond` and `submit_feedback`) lists an `outputSchema` next to its `inputSchema`. When a call returns a JSON object, the result carries it as `structuredContent` and also as text in `content`, so older clients keep working.
+
+`submit_feedback` takes `{ "tool": "<tool name>", "message": "<optional note>" }` and returns `{ "ok": true }`. The edge writes one log line with your user id, the tool and the first 500 characters of the message. It stores nothing else and relays nothing to a computer. It is listed on every `tools/list` answer, so an app can show a "Report a problem" action for it.
+
+`GET /api/v1/mcp/approvals` items have two read fields for the Connected apps list:
+
+| Field | Value |
+| --- | --- |
+| `clientName` | The app's label, or its client id when it has no label. |
+| `tools` | `string[]`: the tool names the edge serves to that app for its target (today `["submit_feedback"]`; the server's own tools are not listed). |
+
+Disconnect an app with `DELETE /api/v1/mcp/approvals/:id` for each of its rows.
+
+The Server Card at `https://mcp.allternit.com/.well-known/mcp` lists the server name, description, the three remote URLs and the OAuth protected-resource metadata.
+
 ## Error codes
 
 JSON-RPC errors are returned with standard JSON-RPC error codes:
