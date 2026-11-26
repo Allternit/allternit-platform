@@ -82,7 +82,7 @@ struct ProjectBoardPane: View {
         summary(board.summary)
         let waves = board.sortedWaves
         if waves.isEmpty {
-            ProjectFactoryEmptyView(title: "No nodes in this campaign yet.", detail: "Nodes show here once a plan is run.")
+            FriendlyStateView(title: "No nodes in this campaign yet.", message: "Nodes show here once a plan is run.", art: .flow, size: .panel)
         } else {
             ForEach(Array(waves.enumerated()), id: \.element.depth) { index, wave in
                 VStack(alignment: .leading, spacing: 8) {
@@ -290,7 +290,7 @@ struct ProjectFlowPane: View {
                         } else if noCampaign {
                             ProjectFactoryEmptyView(title: ProjectFactoryWords.noCampaignTitle, detail: ProjectFactoryWords.noCampaignDetail)
                         } else {
-                            ProjectFactoryEmptyView(title: "No flow yet.", detail: "The flow draws once this campaign has nodes.")
+                            FriendlyStateView(title: "No flow yet.", message: "The flow draws once this campaign has nodes.", art: .flow, size: .panel)
                         }
                     }
                     .padding(16)
@@ -307,7 +307,7 @@ struct ProjectFlowPane: View {
             header(flow)
             ProjectStaleNote(failure: failure).padding(.horizontal, 16)
             if layout.nodes.isEmpty {
-                ProjectFactoryEmptyView(title: "No steps yet.").padding(.horizontal, 16)
+                FriendlyStateView(title: "No steps yet.", art: .log, size: .panel).padding(.horizontal, 16)
                 Spacer(minLength: 0)
             } else if mode == .graph {
                 ProjectGraphCanvas(contentSize: layout.contentSize) { canvasContent(layout) }
@@ -922,9 +922,7 @@ private struct ProjectLaneCard: View {
         VStack(alignment: .leading, spacing: 6) {
             header
             if lane.nodes.isEmpty {
-                Text("Nothing handed over yet.")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "Nothing handed over yet.", art: .bell, paper: Color("BgPanel"))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)

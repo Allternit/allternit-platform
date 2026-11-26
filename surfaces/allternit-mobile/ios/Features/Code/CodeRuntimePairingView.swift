@@ -135,9 +135,9 @@ struct RuntimePairingView: View {
             } else if runtimes.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "server.rack",
                     title: "No runtimes yet",
-                    message: "Pair one with a code below."
+                    message: "Pair one with a code below.",
+                    art: .connectScene
                 )
             } else {
                 VStack(spacing: 0) {

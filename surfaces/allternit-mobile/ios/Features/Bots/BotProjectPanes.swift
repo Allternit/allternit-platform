@@ -317,10 +317,7 @@ struct ProjectThreadGraphSheet: View {
             Group {
                 let laidOut = nodes
                 if laidOut.isEmpty {
-                    Text("No plan yet. Ask Al for something and the threads show here.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextTertiary"))
-                        .multilineTextAlignment(.center)
+                    FriendlyStateView(title: "No plan yet. Ask Al for something and the threads show here.", art: .envelope)
                         .padding(24)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -527,9 +524,7 @@ struct ProjectDelegatePane: View {
         if column == .todo { addRow }
         let list = all[column] ?? []
         if list.isEmpty {
-            Text("Nothing here")
-                .font(.system(size: 12.5))
-                .foregroundColor(Color("TextTertiary"))
+            FriendlyInlineStateView(title: "Nothing here", art: .sheets)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
         }
@@ -1362,15 +1357,7 @@ struct ProjectMemorySheet: View {
                 if isLoading {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if facts.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("No memory yet")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(Color("TextSecondary"))
-                        Text("Facts from this project's chats show here after a few turns.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextTertiary"))
-                            .multilineTextAlignment(.center)
-                    }
+                    FriendlyStateView(title: "No memory yet", message: "Facts from this project's chats show here after a few turns.", art: .memory)
                     .padding(24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -1513,9 +1500,7 @@ struct ProjectStatusSheet: View {
                         .font(.system(size: 14))
                 }
                 if isEmptyPage(status) {
-                    Text("No status yet. Bots fill it on their first task.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
+                    FriendlyInlineStateView(title: "No status yet. Bots fill it on their first task.", art: .bell)
                 }
             }
             if doneProof != nil {
@@ -1586,9 +1571,7 @@ struct ProjectStatusSheet: View {
                         .disabled(saving)
                 }
             } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("Nothing yet.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "Nothing yet.", art: .sheets)
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(text).font(.system(size: 14))
@@ -1621,9 +1604,7 @@ struct ProjectStatusSheet: View {
     private func logSection(_ status: ProjectStatusRecord) -> some View {
         Section("Log") {
             if status.log.isEmpty {
-                Text("No updates yet.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "No updates yet.", art: .sheets)
             }
             ForEach(Array(status.log.prefix(10).enumerated()), id: \.offset) { _, entry in
                 logRow(entry)

@@ -373,19 +373,22 @@ struct DeckArtifactsSheet: View {
                     heading("Pinned")
                     // Pins are made with "Pin to deck" on an open artifact
                     // (web deck-pins); this app has none of its own yet.
-                    (Text("Nothing pinned yet. Open an artifact and choose ")
-                        + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
-                        + Text("."))
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Color("TextSecondary"))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        )
+                    VStack(spacing: 8) {
+                        EmptyArt(kind: .sheets, size: .panel)
+                        (Text("Nothing pinned yet. Open an artifact and choose ")
+                            + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
+                            + Text("."))
+                            .font(.system(size: 12.5))
+                            .foregroundColor(Color("TextSecondary"))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    )
 
                     heading("Recent")
                         .padding(.top, 16)
@@ -443,7 +446,7 @@ struct DeckArtifactsSheet: View {
         case .failed:
             statusLine("Couldn’t load artifacts")
         case .loaded(let items) where items.isEmpty:
-            statusLine("No artifacts yet")
+            FriendlyStateView(title: "No artifacts yet", art: .sheets, size: .panel)
         case .loaded(let items):
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(items) { artifact in
