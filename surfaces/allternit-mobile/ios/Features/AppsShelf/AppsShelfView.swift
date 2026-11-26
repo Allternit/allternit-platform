@@ -312,8 +312,9 @@ struct AppsConsentSheet: View {
 
 // MARK: - Opened app
 
-/// An app's hosted page, full screen.
-private struct AppsOpenedView: View {
+/// An app's hosted page, full screen, inside the app (no Safari hand-off).
+/// Also used by the Artifacts library when an app card is opened.
+struct AppsOpenedView: View {
     let app: AppsShelfView.OpenedApp
     let onClose: () -> Void
     @State private var failed = false

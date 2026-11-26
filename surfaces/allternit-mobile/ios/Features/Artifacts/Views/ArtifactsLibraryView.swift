@@ -13,9 +13,9 @@ private struct IdentifiableString: Identifiable {
 /// The Artifacts section as the phone opens it from the drawer (allternit-ai
 /// src/views/library/ArtifactsView.tsx `phoneChrome`): a round ☰ and filter
 /// (Show · Owner · Kind) on top, the serif "Artifacts" title with the
-/// List · Grid · Deck switch, "Make something new", "Or start from your
-/// connected tools", then "Your artifacts"; a floating search pill and a
-/// round + (New artifact menu) at the bottom. Records are the account's
+/// List · Grid · Deck switch, then "Your artifacts" (empty: the kinds); a
+/// floating search pill and a round + (New artifact: the deck's mode list
+/// sheet) at the bottom. Records are the account's
 /// Artifacts v2 library, the same ones Desktop and the web show.
 struct ArtifactsLibraryView: View {
     @Binding var isSidebarOpen: Bool
@@ -27,14 +27,18 @@ struct ArtifactsLibraryView: View {
     @StateObject private var launcher = ArtifactStudioLauncher.shared
     @AppStorage("allternit-overview-layout:phone:artifacts") private var layoutRaw = LibraryLayout.grid.rawValue
     @State private var openArtifact: ArtifactV2Summary?
+    @State private var openOnShare = false
+    @State private var show: ArtifactShowChip = .all
+    @StateObject private var appsModel = AppsShelfModel()
+    @State private var openedApp: AppsShelfView.OpenedApp?
+    @ObservedObject private var pinsStore = DeckPinsStore.shared
     @State private var studio: ArtifactStudioSession?
     @State private var notice: String?
     @State private var deletingSession: ArtifactStudioSession?
     @State private var showingOfficeDocuments = false
-    @State private var showingConnectors = false
+    @State private var choosingNew = false
     @State private var searchDraft = ""
     @State private var searching = false
-    @State private var tilesShown = false
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
     @State private var choosingPhoto = false
@@ -62,8 +66,6 @@ struct ArtifactsLibraryView: View {
                     PolishedTabPage(title: "Artifacts", chrome: .overlay(barCenter: dock.barCenter),
                                     introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
                         if let notice { noticeBar(notice) }
-                        makeSection
-                        toolsSection
                         yourArtifacts
                     }
                     .scrollDismissesKeyboard(.interactively)
@@ -71,11 +73,10 @@ struct ArtifactsLibraryView: View {
                 }
             }
             // Floating "New artifact": keeps every item the old bar's menu had.
-            Menu {
-                newMenuItems
-            } label: {
+            Button { Haptics.light(); choosingNew = true } label: {
                 NewArtifactPill()
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
             .hidesOnScroll(barHidden)
@@ -83,7 +84,16 @@ struct ArtifactsLibraryView: View {
         .background(Color("BgPrimary").ignoresSafeArea())
         .tracksScrollForHide($barHidden)
         .fullScreenCover(item: $openArtifact) { summary in
-            V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
+            V2ArtifactView(artifactId: summary.id, initialTitle: summary.title, startOnShare: openOnShare)
+        }
+        .fullScreenCover(item: $openedApp) { app in
+            AppsOpenedView(app: app) { openedApp = nil }
+        }
+        .sheet(item: $appsModel.consent) { request in
+            AppsConsentSheet(request: request,
+                             onAllow: { Task { await appsModel.confirmInstall(request) } },
+                             onCancel: { appsModel.consent = nil })
+                .presentationDetents([.medium])
         }
         .alert("Delete this \(deletingSession?.kind.noun.lowercased() ?? "artifact")?", isPresented: Binding(
             get: { deletingSession != nil },
@@ -106,12 +116,18 @@ struct ArtifactsLibraryView: View {
         .sheet(isPresented: $showingOfficeDocuments) {
             OfficeDocumentsView()
         }
-        .sheet(isPresented: $showingConnectors) {
-            ConnectorsListView()
+        .sheet(isPresented: $choosingNew) {
+            ArtifactNewModeSheet(modes: newModes, busy: launcher.launching != nil, onPick: pick,
+                                 onUpload: { kind in
+                                     afterSheet { switch kind { case .image: choosingPhoto = true; case .video: choosingVideo = true } }
+                                 },
+                                 onOffice: { afterSheet { showingOfficeDocuments = true } })
         }
         .fileImporter(isPresented: $importingPDF, allowedContentTypes: [.pdf]) { result in
             if case .success(let url) = result { Task { await uploadPDF(url) } }
         }
+        // The deck's PDF mode lands here: open the file picker straight away.
+        .task { if ItCanStore.shared.takePDFPick() { importingPDF = true } }
         .photosPicker(isPresented: $choosingPhoto, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -152,6 +168,7 @@ struct ArtifactsLibraryView: View {
             }
         }
         #endif
+        .task { await pinsStore.load() }
         .task {
             searchDraft = store.searchText
             if store.phase == .idle || store.artifacts.isEmpty { await store.reload() }
@@ -262,99 +279,45 @@ struct ArtifactsLibraryView: View {
         }
     }
 
-    private var makeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionLabel("Make something new")
-                Spacer()
-                Text("\(tiles.count) types")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(Array(tiles.enumerated()), id: \.element) { index, kind in
-                        Button { tileTapped(kind) } label: { createCard(kind) }
-                            .buttonStyle(ArtifactTilePressStyle())
-                            .accessibilityAddTraits(selectedTile == kind ? .isSelected : [])
-                            // amt2-enter: the row slides in on open, 45 ms apart.
-                            .opacity(tilesShown ? 1 : 0)
-                            .offset(x: tilesShown ? 0 : 28)
-                            .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42).delay(Double(min(index, 6)) * 0.045), value: tilesShown)
-                            .disabled(launcher.launching != nil)
-                            .accessibilityLabel("New \(kind.label)")
-                            .accessibilityHint(kind.description)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            .padding(.horizontal, -14)
-            .onAppear {
-                if ReducedMotion.current { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
-            }
+    /// The deck's mode list (same order), minus kinds the org turned off.
+    private var newModes: [ChatDeckMode] {
+        ArtifactNewModes.list { kind in
+            guard let template = kind.templateKind, let settings = store.orgSettings else { return true }
+            return settings.allows(kind: template)
         }
     }
 
-    private func createCard(_ kind: ArtifactStudioKind) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                ArtifactCreateTileArt(kind: kind)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .padding(3)
-                if launcher.launching == kind {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color("BgPanel").opacity(0.7))
-                        .overlay(ProgressView().controlSize(.small))
-                } else if kind.isBeta {
-                    Text("Beta")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color("BgPanel")))
-                        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
-                        .padding(6)
-                }
-            }
-            .frame(width: 136, height: 95)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
-            // Soft inner edge; the picked tile gets an ink ring.
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(selectedTile == kind ? PolishTokens.ink : PolishTokens.glassBorder, lineWidth: selectedTile == kind ? 2 : 1))
+    /// A row in the + New sheet or the empty library: PDF opens the file
+    /// picker; every other kind starts its artifact session.
+    private func pick(_ mode: ChatDeckMode) {
+        if let kind = DeckLaunch.kind(for: mode.entry) {
+            startMode(kind, mode)
+        } else if mode.entry.pick == "pdf" {
+            afterSheet { importingPDF = true }
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(kind.label)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                Text(kind.description)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+    /// A picker or sheet can't present while the + New sheet is still dismissing.
+    private func afterSheet(_ work: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func startMode(_ kind: ArtifactStudioKind, _ mode: ChatDeckMode) {
+        Haptics.light()
+        let can = ItCanStore.shared.choices(for: mode.entry)
+        Task {
+            do {
+                studio = try await launcher.launch(kind, can: can, recordKind: mode.entry.id == "app" ? "app" : nil)
+            } catch is CancellationError {
+                return
+            } catch {
+                notice = "Couldn't start a \(kind.noun.lowercased()) session. \(FriendlyErrorMessage.from(error.localizedDescription))"
             }
-            .padding(.horizontal, 2)
-            .frame(width: 136, alignment: .leading)
         }
     }
 
     private var selectedTile: ArtifactStudioKind? {
         ArtifactTileFilter.selectedTile(for: store.kind, in: tiles)
-    }
-
-    /// Tap filters to the tile's kind, tap again clears; a tile with no
-    /// matching kind (Build, Deep Research) still creates.
-    private func tileTapped(_ tile: ArtifactStudioKind) {
-        switch ArtifactTileFilter.tap(tile, current: store.kind) {
-        case .noFilter:
-            start(tile)
-        case .filter(let kind):
-            Haptics.light()
-            setKind(kind)
-        case .clear:
-            Haptics.light()
-            setKind(nil)
-        }
     }
 
     private func start(_ kind: ArtifactStudioKind) {
@@ -503,40 +466,6 @@ struct ArtifactsLibraryView: View {
         }
     }
 
-    // MARK: - Connected tools
-
-    private var toolsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Or start from your connected tools")
-            GlassPill(title: "Connect your tools", systemImage: "powerplug") { showingConnectors = true }
-        }
-    }
-
-    // MARK: - New artifact menu
-
-    @ViewBuilder
-    private var newMenuItems: some View {
-        Section("Make something new") {
-            ForEach(tiles) { kind in
-                Button { start(kind) } label: {
-                    Label(kind.isBeta ? "\(kind.label)  Beta" : kind.label, systemImage: kind.systemImage)
-                }
-                .disabled(launcher.launching != nil)
-            }
-        }
-        Section("Upload") {
-            Button { importingPDF = true } label: { Label("PDF", systemImage: "square.and.arrow.up") }
-            Button { choosingPhoto = true } label: { Label("Image", systemImage: "square.and.arrow.up") }
-            Button { choosingVideo = true } label: { Label("Video", systemImage: "square.and.arrow.up") }
-        }
-        Section("Start from your connected tools") {
-            Button { showingConnectors = true } label: { Label("Connect your tools", systemImage: "powerplug") }
-        }
-        Section {
-            Button { showingOfficeDocuments = true } label: { Label("Allternit Office", systemImage: "doc.text") }
-        }
-    }
-
     // MARK: - Your artifacts
 
     private var filterLabel: String? {
@@ -547,7 +476,51 @@ struct ArtifactsLibraryView: View {
 
     private var filtered: Bool { store.kind != nil || !store.searchText.isEmpty || store.scope != .all }
 
-    private var items: [ArtifactV2Summary] { store.artifacts.compactMap(\.summary) }
+    private var allItems: [ArtifactV2Summary] { store.artifacts.compactMap(\.summary) }
+
+    /// Artifact ids that are apps (the apps shelf rows made from an artifact).
+    private var appIds: Set<String> {
+        Set(appsModel.yours.filter { $0.kind == "artifact" }.map(\.slug))
+    }
+
+    /// The Apps chip lists only apps.
+    private var items: [ArtifactV2Summary] {
+        show == .apps ? allItems.filter { appIds.contains($0.id) } : allItems
+    }
+
+    private var appMeta: [String: (updated: Date?, visibility: String)] {
+        Dictionary(allItems.map { ($0.id, (updated: $0.updatedDate, visibility: $0.visibility)) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    private func showChanged(_ chip: ArtifactShowChip) {
+        let scope: ArtifactLibraryStore.Scope = chip == .shared ? .shared : .all
+        guard store.scope != scope else { return }
+        store.scope = scope
+        Task { await store.reload() }
+    }
+
+    private func makeApp() {
+        guard let mode = newModes.first(where: { $0.entry.id == "app" }) else {
+            notice = "Apps are turned off for your organization."
+            return
+        }
+        pick(mode)
+    }
+
+    private func openApp(_ row: AppsShelfRow) {
+        if row.kind == "artifact", let summary = allItems.first(where: { $0.id == row.slug }) {
+            openOnShare = false
+            openArtifact = summary
+            return
+        }
+        Task {
+            if let link = await appsModel.openLink(for: row), let url = AppsShelfLinks.openURL(for: link) {
+                openedApp = AppsShelfView.OpenedApp(url: url, name: row.name)
+            } else {
+                notice = "Couldn’t open \(row.name). Try again."
+            }
+        }
+    }
 
     @ViewBuilder
     private var yourArtifacts: some View {
@@ -567,14 +540,25 @@ struct ArtifactsLibraryView: View {
                     .foregroundColor(Color("TextPrimary"))
                 }
             }
-            sectionLabel("Your artifacts").padding(.bottom, -4)
-            if let tile = selectedTile { newRow(tile) }
-            if !store.archived && !filtered {
+            ArtifactsShowChips(value: $show, onChange: showChanged)
+            if (show == .all || show == .apps) && !store.archived && store.phase != .signedOut {
+                ArtifactAppsRow(model: appsModel, meta: appMeta, busy: launcher.launching != nil,
+                                onMakeApp: makeApp, onOpen: openApp)
+                    .padding(.vertical, 4)
+            }
+            if show != .plans { sectionLabel(show == .apps ? "Apps" : show == .shared ? "Shared with you" : "Your artifacts").padding(.bottom, -4) }
+            if show != .plans, let tile = selectedTile { newRow(tile) }
+            if show != .plans && !store.archived && !filtered {
                 ForEach(launcher.editorSessions) { session in
                     editorSessionRow(session)
                 }
             }
-            if !(items.isEmpty && store.phase == .loaded && !filtered && !store.archived && !launcher.editorSessions.isEmpty) {
+            if show == .plans {
+                PlansListView { summary in
+                    openOnShare = false
+                    openArtifact = summary
+                }
+            } else if !(items.isEmpty && store.phase == .loaded && !filtered && !store.archived && !launcher.editorSessions.isEmpty) {
                 libraryBody
             }
         }
@@ -669,11 +653,7 @@ struct ArtifactsLibraryView: View {
                     .padding(.vertical, 24)
                     .accessibilityAddTraits(.updatesFrequently)
             } else if items.isEmpty, !filtered, !store.archived {
-                EmptyBox(
-                    title: "No artifacts yet",
-                    line: "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
-                    art: .sheets
-                )
+                ArtifactEmptyKinds(modes: newModes, busy: launcher.launching != nil, onPick: pick)
             } else if items.isEmpty {
                 stateMessage(
                     icon: nil,
@@ -682,7 +662,7 @@ struct ArtifactsLibraryView: View {
                         ? "Try another filter or search."
                         : store.archived
                             ? "Archived work stays available here. Restore an artifact to return it to Saved work."
-                            : "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.",
+                            : "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap New artifact.",
                     action: filtered ? ("Clear filters", clearFilters) : nil
                 )
             } else {
@@ -768,10 +748,27 @@ struct ArtifactsLibraryView: View {
             summary: summary,
             layout: layout,
             archived: store.archived,
+            appRow: appsModel.yours.first { $0.kind == "artifact" && $0.slug == summary.id },
+            pinned: pinsStore.isPinned(summary.id),
             onOpen: {
                 Haptics.light()
+                openOnShare = false
                 openArtifact = summary
             },
+            onShare: {
+                openOnShare = true
+                openArtifact = summary
+            },
+            onInstallApp: { if let row = appsModel.yours.first(where: { $0.kind == "artifact" && $0.slug == summary.id }) { appsModel.requestInstall(row) } },
+            onCopyAppLink: {
+                if let link = appsModel.yours.first(where: { $0.kind == "artifact" && $0.slug == summary.id })?.link {
+                    UIPasteboard.general.string = link
+                    notice = "App link copied."
+                } else {
+                    notice = "This app has no link yet."
+                }
+            },
+            onTogglePin: { Task { await pinsStore.toggle(id: summary.id, kind: summary.kind, title: summary.title) } },
             onArchive: { changeArchive(summary) },
             onDelete: { delete(summary) }
         )
@@ -874,17 +871,31 @@ private struct ArtifactLibraryCard: View {
     let summary: ArtifactV2Summary
     let layout: LibraryLayout
     let archived: Bool
+    /// The apps shelf row when this artifact is an app.
+    let appRow: AppsShelfRow?
+    let pinned: Bool
     let onOpen: () -> Void
+    let onShare: () -> Void
+    let onInstallApp: () -> Void
+    let onCopyAppLink: () -> Void
+    let onTogglePin: () -> Void
     let onArchive: () -> Void
     let onDelete: () -> Void
 
     @State private var confirmDelete = false
 
-    private var kindLabel: String { summary.knownKind?.noun ?? summary.kind.capitalized }
+    private var isApp: Bool { appRow != nil }
+
+    private var kindLabel: String { isApp ? "App" : (summary.knownKind?.noun ?? summary.kind.capitalized) }
+
+    /// Kinds that run as a page can become apps; Docs, Sheets and Slides cannot.
+    private var canBecomeApp: Bool { ["page", "dashboard", "ops", "app", "build", "code", "html"].contains(summary.kind) }
 
     private var edited: String {
         guard let date = summary.updatedDate else { return "" }
-        return "Edited \(date.formatted(.relative(presentation: .named)))"
+        let when = date.formatted(.relative(presentation: .named))
+        if isApp { return "Updated \(when) · \(ArtifactAppsRow.visibilityLabel(summary.visibility))" }
+        return "Edited \(when)"
     }
 
     var body: some View {
@@ -911,6 +922,20 @@ private struct ArtifactLibraryCard: View {
 
     @ViewBuilder
     private var menuItems: some View {
+        Button(action: onOpen) { Label("Open", systemImage: "arrow.up.right.square") }
+        if summary.isMine {
+            Button(action: onShare) { Label("Share", systemImage: "square.and.arrow.up") }
+            if isApp {
+                Button(action: onInstallApp) { Label("Install app", systemImage: "arrow.down.circle") }
+                Button(action: onCopyAppLink) { Label("Copy app link", systemImage: "link") }
+            } else if canBecomeApp {
+                Button(action: onShare) { Label("Make it an app", systemImage: "plus.circle") }
+            }
+        }
+        Divider()
+        Button(action: onTogglePin) {
+            Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin")
+        }
         Button(action: onArchive) {
             Label(archived ? "Restore to saved work" : "Archive",
                   systemImage: archived ? "arrow.uturn.backward" : "archivebox")
@@ -1127,7 +1152,7 @@ private struct ArtifactsIntroHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            label("Make something new", trailing: "12 types")
+            label("Everything you make, in one place", trailing: nil)
             HStack(spacing: 7) {
                 ForEach(Array(types.enumerated()), id: \.offset) { i, name in
                     VStack(alignment: .leading, spacing: 3) {
@@ -1141,7 +1166,7 @@ private struct ArtifactsIntroHero: View {
                     }
                 }
             }
-            label("Your artifacts", trailing: nil).padding(.top, 6)
+            label("Recent", trailing: nil).padding(.top, 6)
             HStack(spacing: 7) {
                 ForEach(Array(mine.enumerated()), id: \.offset) { i, item in
                     VStack(alignment: .leading, spacing: 3) {

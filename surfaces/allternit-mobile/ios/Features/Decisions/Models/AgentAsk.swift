@@ -57,6 +57,43 @@ struct AgentQuestionFollowUp: Decodable, Sendable, Equatable, Hashable {
     }
 }
 
+/// A plan awaiting approval (gizzi `plan_exit`, web `Question['plan']`):
+/// the steps, the plan as Markdown, its title and the saved plan artifact.
+struct AgentQuestionPlan: Decodable, Sendable, Equatable, Hashable {
+    struct Step: Decodable, Sendable, Equatable, Hashable {
+        let title: String
+        let detail: String?
+    }
+    struct Artifact: Sendable, Equatable, Hashable {
+        let id: String
+        let version: Int
+        let persisted: Bool
+    }
+    let steps: [Step]
+    let body: String?
+    let title: String?
+    let page: String?
+    let artifact: Artifact?
+
+    private enum CodingKeys: String, CodingKey { case steps, body, title, page, artifact }
+    private struct ArtifactRaw: Decodable { let id: String?; let version: Int?; let persisted: Bool? }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        steps = ((try? c.decodeIfPresent([Step].self, forKey: .steps)) ?? nil)?
+            .filter { !$0.title.trimmingCharacters(in: .whitespaces).isEmpty } ?? []
+        body = try? c.decodeIfPresent(String.self, forKey: .body)
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        let link = ((try? c.decodeIfPresent(String.self, forKey: .page)) ?? nil)
+        page = (link?.hasPrefix("http://") == true || link?.hasPrefix("https://") == true) ? link : nil
+        if let a = (try? c.decodeIfPresent(ArtifactRaw.self, forKey: .artifact)) ?? nil, let id = a.id {
+            artifact = Artifact(id: id, version: a.version ?? 1, persisted: a.persisted == true)
+        } else {
+            artifact = nil
+        }
+    }
+}
+
 /// One question (gizzi `Question.Info`).
 struct AgentQuestionInfo: Decodable, Sendable, Equatable, Hashable {
     let question: String
@@ -70,9 +107,11 @@ struct AgentQuestionInfo: Decodable, Sendable, Equatable, Hashable {
     let risk: String?
     /// Decision tree: the facts behind the question.
     let context: String?
+    /// Plan approval: the plan behind a "run this plan?" question.
+    let plan: AgentQuestionPlan?
 
     private enum CodingKeys: String, CodingKey {
-        case question, header, options, multiple, custom, risk, context
+        case question, header, options, multiple, custom, risk, context, plan
     }
 
     init(from decoder: Decoder) throws {
@@ -85,7 +124,14 @@ struct AgentQuestionInfo: Decodable, Sendable, Equatable, Hashable {
         custom = ((try? c.decodeIfPresent(Bool.self, forKey: .custom)) ?? nil) ?? true
         risk = try? c.decodeIfPresent(String.self, forKey: .risk)
         context = try? c.decodeIfPresent(String.self, forKey: .context)
+        let rawPlan = (try? c.decodeIfPresent(AgentQuestionPlan.self, forKey: .plan)) ?? nil
+        plan = (rawPlan?.steps.isEmpty == false) ? rawPlan : nil
     }
+
+    /// The option that approves a plan: the first that is not "No" (web `answerPlanQuestion`).
+    var planApproveLabel: String? { options.first { $0.label != "No" }?.label }
+    /// The option that keeps planning (Revise, Ask a question).
+    var planKeepLabel: String? { options.first { $0.label == "No" }?.label }
 
     /// gizzi `Question.isTree`: a follow-up exists, or risk/context is set.
     var isTree: Bool {

@@ -2,42 +2,80 @@ import SwiftUI
 
 // MARK: - Deck modes
 
-/// The modes the chat deck's Agent mode ▾ offers (web ModeDock MODE_TABS,
-/// chat surface) with the web's labels, colors and icons, mapped onto the
-/// app's AgentModeTile (which stamps `metadata.agentModeId`).
+/// The modes the chat deck's Agent mode ▾ offers: the generated registry
+/// (Core/AgentModes/AgentModes.gen.swift, from contracts/agent-modes) filtered
+/// to this surface, in the registry's order with its labels and badges. Each
+/// entry maps onto the app's AgentModeTile (which stamps
+/// `metadata.agentModeId`) through its wire id; kinds with no wire id
+/// (Dashboard, Ops sheet, Motion, PDF) keep the Artifact tile only as stored
+/// state: Send starts their own artifact session (DeckLaunch), and PDF opens
+/// the library's file picker.
 struct ChatDeckMode: Identifiable, Equatable {
-    let tile: AgentModeTile
-    let label: String
-    let color: Color
+    let entry: AgentModeEntry
 
-    var id: String { tile.rawValue }
+    var id: String { entry.id }
+    var label: String { entry.label }
+    var tile: AgentModeTile { entry.agentMode.flatMap { AgentModeTile(rawValue: $0) } ?? .artifact }
+    var color: Color {
+        switch tile {
+        case .website, .image, .artifact: return Color("TextPrimary")
+        default: return tile.color
+        }
+    }
     /// The Allternit icon family tile (deck-<kind> in Assets.xcassets).
-    var icon: String { tile.deckIcon ?? "deck-auto" }
+    var icon: String {
+        switch entry.icon {
+        case "app": return "deck-build"
+        default: return "deck-\(entry.icon)"
+        }
+    }
+    /// Placeholder the composer shows once this mode is picked (step 5.2 reads it).
+    var placeholder: String { entry.placeholder }
 
-    static let chat: [ChatDeckMode] = [
-        ChatDeckMode(tile: .swarms, label: "Agent Swarm", color: Color(hex: "#14B8A6")),
-        ChatDeckMode(tile: .research, label: "Deep Research", color: Theme.statusInfo),
-        ChatDeckMode(tile: .website, label: "Build", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .docs, label: "Docs", color: Color(hex: "#3B82F6")),
-        ChatDeckMode(tile: .data, label: "Sheets", color: Theme.statusSuccess),
-        ChatDeckMode(tile: .slides, label: "Slides", color: Theme.statusWarning),
-        ChatDeckMode(tile: .image, label: "Image", color: Color("TextPrimary")),
-        ChatDeckMode(tile: .video, label: "Video", color: Color(hex: "#EC4899")),
-        // Last, as on the web: the agent picks the format.
-        ChatDeckMode(tile: .artifact, label: "Artifact", color: Color("TextPrimary")),
-    ]
-
-    /// A bot's chat (ModeDock `bot`): no Docs/Sheets/Slides, since bot
-    /// threads have no editor pane.
-    static let bot: [ChatDeckMode] = chat.filter {
-        [.swarms, .research, .website, .image, .video, .artifact].contains($0.tile)
+    /// The menu's second line: the Agent row's hint, else the Beta / New badge.
+    var detail: String? {
+        if entry.id == "agent" { return "Let Allternit pick the format" }
+        if entry.beta { return "Beta" }
+        if entry.isNew { return "New" }
+        return nil
     }
 
-    /// The menu's second line (DeckSelectors: only Artifact has one).
-    var detail: String? { tile == .artifact ? "Let Allternit pick the format" : nil }
+    static func == (a: ChatDeckMode, b: ChatDeckMode) -> Bool { a.id == b.id }
 
+    private static func modes(_ surface: String) -> [ChatDeckMode] {
+        AgentModes.modes(for: surface).map(ChatDeckMode.init(entry:))
+    }
+
+    /// The chat's modes (registry surface `chat`).
+    static var chat: [ChatDeckMode] { modes("chat") }
+    /// A bot's chat (registry surface `bot`): no Docs/Sheets/Slides, since bot
+    /// threads have no editor pane.
+    static var bot: [ChatDeckMode] { modes("bot") }
+
+    /// The mode a stored tile stands for (Sites is "Build", not "Page").
     static func forTile(_ tile: AgentModeTile) -> ChatDeckMode? {
-        chat.first { $0.tile == tile }
+        let all = chat
+        let wire = tile.rawValue
+        let preferred = tile == .website ? "build" : tile == .artifact ? "agent" : wire
+        return all.first { $0.id == preferred && $0.entry.agentMode == wire }
+            ?? all.first { $0.entry.agentMode == wire }
+    }
+
+    /// The picked mode when Send should start an artifact session for it
+    /// (nil for Agent, Swarm and a PDF, which opens a file picker instead).
+    static func pendingLaunch(tile: AgentModeTile, surface: AppMode, bot: Bool) -> ChatDeckMode? {
+        guard let m = picked(tile: tile, surface: surface, in: bot ? Self.bot : Self.chat),
+              DeckLaunch.kind(for: m.entry) != nil else { return nil }
+        return m
+    }
+
+    /// The mode the deck shows as picked: the remembered registry id when it
+    /// still matches the stored tile (several kinds share the `website` tile),
+    /// else the tile's own mode.
+    static func picked(tile: AgentModeTile, surface: AppMode, in list: [ChatDeckMode]) -> ChatDeckMode? {
+        if let id = DeckModePick.id(for: surface),
+           let m = list.first(where: { $0.id == id }), m.tile == tile { return m }
+        return list.first { $0.tile == tile && $0.entry.agentMode != nil } ?? forTile(tile)
     }
 }
 
@@ -94,7 +132,8 @@ struct ComposerDeckBand: View {
     /// mode is on.
     private var current: ChatDeckMode? {
         guard agentModeStore.isAgentEnabled(for: surface) else { return nil }
-        return ChatDeckMode.forTile(agentModeStore.selectedTile(for: surface))
+        return ChatDeckMode.picked(tile: agentModeStore.selectedTile(for: surface), surface: surface,
+                                   in: chatBot == nil ? ChatDeckMode.chat : ChatDeckMode.bot)
     }
 
     var body: some View {
@@ -146,7 +185,7 @@ struct ComposerDeckBand: View {
             .environmentObject(AuthManager.shared)
         }
         .sheet(isPresented: $isArtifactsPresented) {
-            DeckArtifactsSheet(onAllArtifacts: onAllArtifacts)
+            DeckArtifactsSheet(onAllArtifacts: onAllArtifacts, onAttach: attach)
                 .environmentObject(modeStore)
         }
     }
@@ -242,6 +281,14 @@ struct ComposerDeckBand: View {
 
     private func select(_ mode: ChatDeckMode) {
         Haptics.light()
+        // PDF has nothing to describe: it opens the Artifacts library's file
+        // picker (open a PDF to edit, fill in and sign).
+        if mode.entry.launchType == .pick {
+            ItCanStore.shared.wantsPDFPick = true
+            modeStore.selectBarItem(.artifacts)
+            return
+        }
+        DeckModePick.set(mode.id, for: surface)
         agentModeStore.selectTile(mode.tile, for: surface)
         // Picking a mode in the chat's deck turns that mode on for the next send.
         if !agentModeStore.isAgentEnabled(for: surface) {
@@ -250,6 +297,7 @@ struct ComposerDeckBand: View {
     }
 
     private func clearMode() {
+        DeckModePick.set(nil, for: surface)
         agentModeStore.setAgentEnabled(false, for: surface)
     }
 
@@ -281,6 +329,12 @@ struct ComposerDeckBand: View {
             trigger(icon: nil, label: "Plugins")
         }
         .buttonStyle(.plain)
+    }
+
+    /// Attach on a Recent artifact: a removable chip in the composer, and on
+    /// Send one `[Attached artifact: ...]` line (the web deck's Attach).
+    private func attach(_ artifact: ArtifactV2Summary) {
+        AttachedArtifactStore.shared.attach(AttachedArtifact(summary: artifact))
     }
 
     private func mention(_ plugin: DeckPlugin) {
@@ -350,6 +404,8 @@ struct ComposerTopDeckTray<Content: View>: View {
 /// three most recent, and a way into the Artifacts library.
 struct DeckArtifactsSheet: View {
     var onAllArtifacts: (() -> Void)? = nil
+    /// Attach on a Recent card puts the artifact in the message.
+    var onAttach: ((ArtifactV2Summary) -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @Environment(\.dismiss) private var dismiss
@@ -357,6 +413,8 @@ struct DeckArtifactsSheet: View {
     private enum LoadState { case loading, loaded([ArtifactV2Summary]), failed }
     @State private var state: LoadState = .loading
     @State private var openArtifact: ArtifactV2Summary? = nil
+    @State private var openPin: DeckPin? = nil
+    @ObservedObject private var pinsStore = DeckPinsStore.shared
 
     private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
@@ -371,24 +429,34 @@ struct DeckArtifactsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     heading("Pinned")
-                    // Pins are made with "Pin to deck" on an open artifact
-                    // (web deck-pins); this app has none of its own yet.
-                    VStack(spacing: 8) {
-                        EmptyArt(kind: .sheets, size: .panel)
-                        (Text("Nothing pinned yet. Open an artifact and choose ")
-                            + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
-                            + Text("."))
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color("TextSecondary"))
-                            .multilineTextAlignment(.center)
+                    // Pins live per user on the runtime (DeckPinsStore, web deck-pins);
+                    // Pin / Unpin is on the artifact card's ⋯ menu.
+                    if pinsStore.pins.isEmpty {
+                        VStack(spacing: 8) {
+                            EmptyArt(kind: .sheets, size: .panel)
+                            (Text("Nothing pinned yet. Open an artifact and choose ")
+                                + Text("Pin to deck").fontWeight(.semibold).foregroundColor(Color("TextPrimary"))
+                                + Text("."))
+                                .font(.system(size: 12.5))
+                                .foregroundColor(Color("TextSecondary"))
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 20)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        )
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(pinsStore.pins) { pin in
+                                Button(action: { openPin = pin }) { pinCard(pin) }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Open \(pin.title)")
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 20)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color("BorderStrong"), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    )
 
                     heading("Recent")
                         .padding(.top, 16)
@@ -403,7 +471,7 @@ struct DeckArtifactsSheet: View {
                         }
                     }) {
                         HStack(spacing: 6) {
-                            Text("All artifacts")
+                            Text("Open Artifacts")
                             Image(systemName: "arrow.right")
                                 .font(.system(size: 12))
                         }
@@ -424,9 +492,41 @@ struct DeckArtifactsSheet: View {
         .presentationCornerRadius(28)
         .presentationDragIndicator(.hidden)
         .task { await load() }
+        .task { await pinsStore.load() }
         .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
         }
+        .fullScreenCover(item: $openPin) { pin in
+            V2ArtifactView(artifactId: pin.id, initialTitle: pin.title)
+        }
+    }
+
+    private func pinCard(_ pin: DeckPin) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                Color("FillNeutral")
+                Image(ArtifactV2Kind.iconAsset(for: pin.kind))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pin.title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Text(ArtifactV2Kind(rawValue: pin.kind)?.noun ?? pin.kind.capitalized)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
     }
 
     private func heading(_ label: String) -> some View {
@@ -450,13 +550,41 @@ struct DeckArtifactsSheet: View {
         case .loaded(let items):
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(items) { artifact in
-                    Button(action: { openArtifact = artifact }) {
-                        card(artifact)
+                    VStack(spacing: 0) {
+                        Button(action: { openArtifact = artifact }) {
+                            card(artifact)
+                        }
+                        .buttonStyle(.plain)
+                        HStack(spacing: 8) {
+                            if onAttach != nil {
+                                actionButton("Attach", icon: "paperclip") {
+                                    onAttach?(artifact)
+                                    dismiss()
+                                }
+                            }
+                            actionButton("Open", icon: "arrow.up.right") { openArtifact = artifact }
+                        }
+                        .padding(.top, 6)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
+    }
+
+    private func actionButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(label)
+            }
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundColor(Color("TextSecondary"))
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(Color("FillNeutral"))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func statusLine(_ text: String) -> some View {
@@ -511,7 +639,9 @@ struct DeckArtifactsSheet: View {
     private func load() async {
         do {
             let page = try await ArtifactsV2Client.shared.list(ArtifactV2ListQuery(limit: 20))
+            // Plans are listed in Plans, never in the deck.
             let latest = page.items
+                .filter { $0.kind != "plan" }
                 .sorted { ($0.updatedDate ?? .distantPast) > ($1.updatedDate ?? .distantPast) }
                 .prefix(3)
             state = .loaded(Array(latest))

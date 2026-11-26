@@ -272,6 +272,9 @@ struct ChatContentView: View {
     var artifactStudio: ArtifactStudioSession? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
+    /// The studio a picked artifact mode just started (Send in the composer).
+    @State private var startedStudio: ArtifactStudioSession?
+    @State private var artifactStartError: String?
     /// The host has a chat ⋯ menu (ChatView), so Run on my phone and Capture
     /// to brain leave the + sheet. Other hosts keep them in the sheet.
     var chatMenuHoldsExtras: Bool = false
@@ -377,6 +380,18 @@ struct ChatContentView: View {
             )
         }
         .voiceHostWiring(voiceHost, chat: viewModel)
+        .fullScreenCover(item: $startedStudio) { session in
+            ArtifactStudioView(studio: session)
+                .id(session.sessionId)
+        }
+        .alert("Couldn't start", isPresented: Binding(
+            get: { artifactStartError != nil },
+            set: { if !$0 { artifactStartError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(artifactStartError ?? "")
+        }
         .fullScreenCover(isPresented: Binding(
             get: { voiceHost.presentation == .full && voiceHost.viewModel != nil },
             set: { if !$0, voiceHost.presentation == .full { voiceHost.presentation = voiceHost.isActive ? .bar : .none } }
@@ -840,6 +855,33 @@ struct ChatContentView: View {
         }
     }
 
+    /// The artifact mode Send starts a session for (D5: also inside a chat that
+    /// already has messages). Not inside an artifact session, nor in Code.
+    private func pendingArtifactLaunch(deck: ComposerDeckVariant) -> (mode: ChatDeckMode, kind: ArtifactStudioKind)? {
+        let surface = modeStore.mode
+        guard deck != .none, artifactStudio == nil, surface != .code,
+              agentModeStore.isAgentEnabled(for: surface),
+              let mode = ChatDeckMode.pendingLaunch(tile: agentModeStore.selectedTile(for: surface), surface: surface, bot: chatBot != nil),
+              let kind = DeckLaunch.kind(for: mode.entry) else { return nil }
+        return (mode, kind)
+    }
+
+    private func startArtifactSession(_ launch: (mode: ChatDeckMode, kind: ArtifactStudioKind)) {
+        let text = inputText
+        let can = ItCanStore.shared.choices(for: launch.mode.entry)
+        Task {
+            do {
+                startedStudio = try await ArtifactStudioLauncher.shared.launch(launch.kind, can: can, firstMessage: text, recordKind: launch.mode.entry.id == "app" ? "app" : nil)
+                inputText = ""
+            } catch is CancellationError {
+                return
+            } catch {
+                // The text stays in the field so nothing typed is lost.
+                artifactStartError = "Couldn't start a \(launch.kind.noun.lowercased()) session. \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+        }
+    }
+
     private func liveComposer(deck: ComposerDeckVariant) -> some View {
         ComposerView(
             inputText: $inputText,
@@ -858,6 +900,12 @@ struct ChatContentView: View {
             // sending (there is no default brain); a bot chat runs on the bot's.
             requiresModelPick: phoneRuns.armed == nil && sessionContext.agentId == nil && (modelStore.selectedModelId ?? "").isEmpty,
             onSend: { attachments in
+                // A picked artifact mode: start its session, then send the text there.
+                if phoneRuns.armed == nil, editingMessageId == nil, attachments.isEmpty,
+                   let launch = pendingArtifactLaunch(deck: deck) {
+                    startArtifactSession(launch)
+                    return
+                }
                 if phoneRuns.armed != nil, editingMessageId == nil {
                     // Armed "On <phone>": the message is the phone task's goal.
                     let goal = inputText

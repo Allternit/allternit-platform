@@ -15,27 +15,17 @@ import Foundation
 enum ArtifactStudioKind: String, CaseIterable, Identifiable, Sendable {
     case docs, sheets, slides, dashboard, ops, motion, design, page, research, build, image, video
 
-    /// The web's gallery order (GALLERY_TILES).
-    static let galleryOrder: [ArtifactStudioKind] = allCases
+    /// The registry's order (AgentModes.gen.swift), artifact kinds only.
+    static let galleryOrder: [ArtifactStudioKind] =
+        AgentModes.all.filter(\.artifact).compactMap { ArtifactStudioKind(rawValue: $0.id) }
+
+    /// This kind's generated registry entry (same id).
+    var modeEntry: AgentModeEntry? { AgentModes.mode(id: rawValue) }
 
     var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .docs: return "Docs"
-        case .sheets: return "Sheets"
-        case .slides: return "Slides"
-        case .design: return "Design"
-        case .ops: return "Ops sheets"
-        case .dashboard: return "Dashboards"
-        case .motion: return "Motion"
-        case .page: return "Page"
-        case .build: return "Build"
-        case .image: return "Image"
-        case .video: return "Video"
-        case .research: return "Deep Research"
-        }
-    }
+    /// The registry's label (generated; one source for every surface).
+    var label: String { modeEntry?.label ?? rawValue.capitalized }
 
     var description: String {
         switch self {
@@ -319,8 +309,17 @@ final class ArtifactStudioLauncher: ObservableObject {
         let startedAt: Date
         var artifactId: String? = nil
         var designProjectId: String? = nil
+        /// The "It can" section ticked when the session started (ItCanRow).
+        var itCan: String? = nil
     }
     @Published private var stored: [String: Stored]
+    /// First messages waiting for their studio's chat (see `launch`).
+    private var pendingFirst: [String: String] = [:]
+
+    /// The first message a launch carried, handed over once.
+    func takeFirstMessage(for sessionId: String) -> String? {
+        pendingFirst.removeValue(forKey: sessionId)
+    }
     /// Session ids already looked up and found not to be editor sessions.
     private var knownPlain: Set<String> = []
 
@@ -337,7 +336,9 @@ final class ArtifactStudioLauncher: ObservableObject {
     func systemPrompt(for sessionId: String?) -> String? {
         guard let sessionId, let s = stored[sessionId] else { return nil }
         // Built fresh, so a session started on an older app gets today's prompt.
-        return ArtifactStudioKind(rawValue: s.kind)?.systemPrompt(title: s.title) ?? s.prompt
+        let base = ArtifactStudioKind(rawValue: s.kind)?.systemPrompt(title: s.title) ?? s.prompt
+        guard let itCan = s.itCan else { return base }
+        return base + "\n\n" + itCan
     }
 
     /// The studio session record for a session id, if it is one.
@@ -359,7 +360,10 @@ final class ArtifactStudioLauncher: ObservableObject {
     /// Creates the agent session (`POST /api/v1/agent-sessions`, Cowork
     /// surface, agent mode, the kind's mode contract) and records its prompt.
     /// One launch at a time, like the web's `launchArtifactType`.
-    func launch(_ kind: ArtifactStudioKind) async throws -> ArtifactStudioSession {
+    /// `can` is the "It can" choices ticked in the composer; `firstMessage` is
+    /// the text Send carried: held for the studio, which sends it once its chat
+    /// is up (start, then send: the create call takes no first message).
+    func launch(_ kind: ArtifactStudioKind, can: ItCanChoices? = nil, firstMessage: String? = nil, recordKind: String? = nil) async throws -> ArtifactStudioSession {
         guard launching == nil else { throw CancellationError() }
         launching = kind
         defer { launching = nil }
@@ -381,7 +385,9 @@ final class ArtifactStudioLauncher: ObservableObject {
         let started = ArtifactStudioSession(sessionId: session.id, kind: kind, title: title, startedAt: Date(),
                                             artifactId: artifactId, designProjectId: designProjectId)
         stored[session.id] = Stored(kind: kind.rawValue, title: title, prompt: kind.systemPrompt(title: title), startedAt: started.startedAt,
-                                    artifactId: artifactId, designProjectId: designProjectId)
+                                    artifactId: artifactId, designProjectId: designProjectId,
+                                    itCan: can.flatMap { c in kind.modeEntry.flatMap { c.promptLine(for: $0) } })
+        if let firstMessage, !firstMessage.isEmpty { pendingFirst[session.id] = firstMessage }
         // Keep the newest 200 so the map can't grow without bound.
         if stored.count > 200 {
             for key in stored.sorted(by: { $0.value.startedAt < $1.value.startedAt }).prefix(stored.count - 200).map(\.key) {
@@ -395,10 +401,21 @@ final class ArtifactStudioLauncher: ObservableObject {
         try? await APIClient.shared.patch(
             path: "agent-sessions/\(Self.escape(session.id))",
             body: SessionBindingPatch(metadata: .init(artifactSession: .init(
-                kind: kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId
+                kind: recordKind ?? kind.rawValue, title: title, artifactId: artifactId, designProjectId: designProjectId,
+                can: Self.binding(can: can, entry: kind.modeEntry)
             )))
         )
         return started
+    }
+
+    /// Only the toggles the kind can honour and the person ticked; nil when none.
+    private static func binding(can: ItCanChoices?, entry: AgentModeEntry?) -> SessionBinding.Can? {
+        guard let can, let entry else { return nil }
+        let storage = entry.storage != .none && can.storage
+        let ai = entry.ai != .none && can.ai
+        let names = entry.connectors != .none && can.connectors ? can.connectorNames : []
+        guard storage || ai || !names.isEmpty else { return nil }
+        return SessionBinding.Can(connectors: names.isEmpty ? nil : names, storage: storage ? true : nil, ai: ai ? true : nil)
     }
 
     private func persist() {
@@ -418,6 +435,16 @@ final class ArtifactStudioLauncher: ObservableObject {
         let title: String?
         let artifactId: String?
         let designProjectId: String?
+        /// The "It can" choices under the web binding's `can` keys
+        /// (artifact-session.ts ArtifactSessionCan). `connectors` holds the
+        /// names ticked in the logo picker; `storage` and `ai` are the toggles.
+        var can: Can? = nil
+
+        struct Can: Codable {
+            var connectors: [String]?
+            var storage: Bool?
+            var ai: Bool?
+        }
     }
 
     private struct SessionBindingPatch: Encodable {
@@ -507,7 +534,7 @@ final class ArtifactStudioLauncher: ObservableObject {
         }
         // Any kind with a binding opens its session. Kinds with no file yet (an
         // Image or Page that hasn't made anything) show their pane until it does.
-        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind) else {
+        guard let binding, let kind = ArtifactStudioKind(rawValue: binding.kind == "app" ? "build" : binding.kind) else {
             // "data" and "website" also start dashboards and pages, which have no file to lose.
             if let lost = titled ?? (moded == .docs || moded == .slides ? moded : nil) { return .unlinked(noun: lost.noun.lowercased()) }
             knownPlain.insert(id)
