@@ -53,6 +53,8 @@ struct BotProjectPage: View {
     private enum PageSheet: Identifiable {
         case customize, padEdit, settings, edit, template, graph, memory, needsYou, addBot, statusPage
         case artifact(ArtifactV2Summary)
+        /// The Team map sheet opened on this bot's node (flag `team.map`).
+        case teamMap(botId: String)
 
         var id: String {
             switch self {
@@ -67,6 +69,7 @@ struct BotProjectPage: View {
             case .addBot: return "addBot"
             case .statusPage: return "statusPage"
             case .artifact(let item): return "artifact-\(item.id)"
+            case .teamMap(let botId): return "teamMap-\(botId)"
             }
         }
     }
@@ -379,10 +382,15 @@ struct BotProjectPage: View {
 
     private var cards: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ProjectTeamCard(context: context, team: team, threads: threads,
-                            onOpenThread: { navigator.openThread($0) },
-                            onOpenPane: { navigator.open(.projectPane(context, $0)) },
-                            onOpenNode: { navigator.open(.projectNode(dagId: $0.dagId, nodeId: $0.nodeId, title: $0.title)) })
+            Group {
+                ProjectTeamCard(context: context, team: team, threads: threads,
+                                onOpenThread: { navigator.openThread($0) },
+                                onOpenPane: { navigator.open(.projectPane(context, $0)) },
+                                onOpenNode: { navigator.open(.projectNode(dagId: $0.dagId, nodeId: $0.nodeId, title: $0.title)) })
+                if TeamMapFlag.isOn, !team.isEmpty {
+                    levelsCard
+                }
+            }
             ProjectCampaignCard(projectId: projectId) { navigator.open(.projectPane(context, $0)) }
             ProjectCard(title: "Delegate") {
                 ProjectTextButton("Open") { navigator.open(.projectPane(context, .delegate)) }
@@ -401,6 +409,37 @@ struct BotProjectPage: View {
             }
             ProjectContextFilesCard(projectId: projectId)
             ProjectFolderCard(projectId: projectId, title: title)
+        }
+    }
+
+    /// Each team bot → its node on the Team map: levels per app, who it reports to, its rules.
+    private var levelsCard: some View {
+        ProjectCard(title: "Levels and rules") {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(team) { bot in
+                    Button { sheet = .teamMap(botId: bot.id) } label: {
+                        HStack(spacing: 10) {
+                            BotAvatarView(bot: bot, size: 28)
+                            Text(bot.botDisplayName)
+                                .font(.subheadline)
+                                .foregroundColor(Color("TextPrimary"))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text("Team map")
+                                .font(.footnote)
+                                .foregroundColor(Color("TextSecondary"))
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundColor(Color("TextTertiary"))
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(bot.botDisplayName): levels and rules on the team map")
+                }
+                ProjectCardNote("What each bot may do in each app, and who approves what.")
+            }
         }
     }
 
@@ -505,6 +544,10 @@ struct BotProjectPage: View {
             V2ArtifactView(artifactId: item.id, initialTitle: item.title) {
                 artifacts.removeAll { $0.id == item.id }
             }
+        case .teamMap(let botId):
+            TeamMapSheet(focus: "b:\(botId)")
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 
