@@ -53,10 +53,16 @@ export function UserToolSuccessMessage({
   }, [toolUseID]);
   // Tool-part metadata: the runtime session path puts it on part.state.metadata
   // (mcp / mcpScript); the in-process MCP client carries it as message.mcpMeta.
-  const metadata = message.metadata ?? {
-    mcp: message.mcpMeta ? {
-      structuredContent: message.mcpMeta.structuredContent
-    } : undefined
+  const metadata = {
+    ...(message.mcpMeta?.structuredContent ? {
+      mcp: {
+        structuredContent: message.mcpMeta.structuredContent
+      }
+    } : {}),
+    ...(message.mcpMeta?.mcpScript ? {
+      mcpScript: message.mcpMeta.mcpScript
+    } : {}),
+    ...(message.metadata ?? {})
   };
   if (metadata.mcpScript && (tool?.name ?? lookups.toolUseByToolUseID.get(toolUseID)?.name) === 'mcp_script') {
     return <Box flexDirection="column" width={width}>{renderMcpScriptResult(metadata.mcpScript, {
