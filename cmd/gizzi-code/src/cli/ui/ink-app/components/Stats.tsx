@@ -23,6 +23,7 @@ import { getTheme, themeColorToAnsi } from '../utils/theme';
 import { Pane } from './design-system/Pane';
 import { Tab, Tabs, useTabHeaderFocus } from './design-system/Tabs';
 import { Spinner } from './Spinner';
+import { EmptyLine } from './EmptyLine'
 function formatPeakDay(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString('en-US', {
@@ -178,7 +179,7 @@ function StatsContent({
     return t7;
   }
   if (allTimeResult.type === "empty") {
-    const t7 = <Box marginTop={1}><Text color="warning">No stats available yet. Start using Gizzi Code!</Text></Box>;
+    const t7 = <Box marginTop={1}><EmptyLine>No stats available yet. Start using Gizzi Code!</EmptyLine></Box>;
 
     return t7;
   }
@@ -618,7 +619,7 @@ function ModelsTab(t0: {
     }
   }, t2);
   if (modelEntries.length === 0) {
-    const t3 = <Box><Text color="subtle">No model usage data available</Text></Box>;
+    const t3 = <Box><EmptyLine>No model usage data available</EmptyLine></Box>;
 
     return t3;
   }

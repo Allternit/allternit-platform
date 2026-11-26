@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -65,7 +66,8 @@ data class StudioSession(
 object ArtifactStudioLauncher {
     private const val PREFS = "allternit_artifact_studio"
 
-    suspend fun launch(context: Context, kind: StudioKind): Result<StudioSession> {
+    /** [sessionKind]: the metadata kind when it differs from the studio kind (`app` runs as Build). [itCan]: the composer's "It can" choices (connectors / storage / ai), kept with the session and named in its prompt. */
+    suspend fun launch(context: Context, kind: StudioKind, itCan: Map<String, Boolean> = emptyMap(), sessionKind: String? = null): Result<StudioSession> {
         val title = kind.newTitle
         var artifactId: String? = null
         if (kind in setOf(StudioKind.Docs, StudioKind.Sheets, StudioKind.Slides)) {
@@ -87,7 +89,8 @@ object ArtifactStudioLauncher {
         LibraryNet.send("PATCH", "agent-sessions/${LibraryNet.escape(sessionId)}", buildJsonObject {
             putJsonObject("metadata") {
                 putJsonObject("artifactSession") {
-                    put("kind", kind.raw); put("title", title)
+                    // App mode runs the Build studio but records kind `app`, as web and iOS do.
+                    put("kind", sessionKind ?: kind.raw); put("title", title)
                     artifactId?.let { put("artifactId", it) }
                     designProjectId?.let { put("designProjectId", it) }
                 }
@@ -95,7 +98,9 @@ object ArtifactStudioLauncher {
         })
         // iOS keeps the session's standing instructions on the device (artifactStudio.sessions.v1).
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(sessionId, buildJsonObject { put("kind", kind.raw); put("title", title); put("startedAt", System.currentTimeMillis()) }.toString())
+            .putString(sessionId, buildJsonObject { put("kind", kind.raw); put("title", title); put("startedAt", System.currentTimeMillis())
+                if (itCan.isNotEmpty()) putJsonObject("itCan") { itCan.forEach { (k, v) -> put(k, v) } }
+            }.toString())
             .apply()
         return Result.success(StudioSession(sessionId, kind, title, artifactId, designProjectId))
     }
@@ -113,10 +118,11 @@ object ArtifactStudioPrompts {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(sessionId, null) ?: return null
         val o = LibraryJson.parse(raw) ?: return null
         val kind = StudioKind.entries.firstOrNull { it.raw == o.str("kind") } ?: return null
-        return build(kind, o.str("title") ?: kind.newTitle)
+        val can = o.child("itCan")?.let { j -> listOf("connectors", "storage", "ai").mapNotNull { k -> (j[k] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull?.let { k to it } }.toMap() }.orEmpty()
+        return build(kind, o.str("title") ?: kind.newTitle, can)
     }
 
-    fun build(kind: StudioKind, title: String): String {
+    fun build(kind: StudioKind, title: String, itCan: Map<String, Boolean> = emptyMap()): String {
         val n = ArtifactKinds.noun(kind.studioKind).lowercase().let { if (kind == StudioKind.Research) "research report" else if (kind == StudioKind.Build) "build" else it }
         val note = when (kind) {
             StudioKind.Image -> "## Artifact session\n\nThis session makes images, starting with \"$title\". Make each one with the media_generate tool; the result lands in the session's Outputs and opens beside this chat. Check the rendered PNG it returns and fix it before you call the image done."
@@ -125,7 +131,15 @@ object ArtifactStudioPrompts {
             StudioKind.Research -> "## Artifact session\n\nThis session makes one $n, titled \"$title\". Deliver it as an artifact the user can open beside this chat."
             else -> "## Artifact session\n\nThis session makes one $n, titled \"$title\". Make it with `artifact_create` (kind \"${kind.studioKind}\"); it opens in the pane beside this chat as soon as it is saved. For every later change, call `artifact_read` then `artifact_update` on that same artifact instead of creating another one, unless the user asks for a new one."
         }
-        return listOfNotNull(modeContract(kind.modeId), note, OWN_TOOLS_NOTE).joinToString("\n\n")
+        return listOfNotNull(modeContract(kind.modeId), note, itCanNote(itCan), OWN_TOOLS_NOTE).joinToString("\n\n")
+    }
+
+    /** The user's "It can" picks for what they are making (connected tools, its own saved data, AI calls while it is open). */
+    private fun itCanNote(itCan: Map<String, Boolean>): String? {
+        if (itCan.isEmpty()) return null
+        fun line(k: String, label: String) = itCan[k]?.let { "- $label: ${if (it) "yes" else "no"}" }
+        val lines = listOfNotNull(line("connectors", "It can use the user's connected tools"), line("storage", "It keeps its own data"), line("ai", "It can ask AI while it is open"))
+        return "## What it can do\n\nThe user chose these for what you make:\n" + lines.joinToString("\n")
     }
 
     private fun modeContract(modeId: String?): String? {

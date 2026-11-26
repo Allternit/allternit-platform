@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Audit01Icon, AlertCircleIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon } from "@hugeicons/core-free-icons";
 import { EmptyState, SkeletonRow, QUIET_BUTTON_CLASS } from "@/components/console-ui";
 import { formatApiError } from "@/lib/api-client";
 import { useProjectContext } from "@/lib/project-context";
@@ -157,7 +157,8 @@ export function AuditLogPage(): React.ReactNode {
           </div>
         ) : events.length === 0 && !error ? (
           <EmptyState
-            icon={<HugeiconsIcon icon={Audit01Icon} size={32} />}
+            art="search"
+            size="panel"
             title={filtered ? "No events match these filters" : "No audit events yet"}
             caption={
               filtered

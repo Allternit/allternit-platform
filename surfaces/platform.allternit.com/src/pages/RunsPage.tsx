@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  RocketIcon,
   PlayIcon,
   PauseIcon,
   Cancel01Icon,
@@ -247,7 +246,9 @@ export function RunsPage() {
       ) : runs.length === 0 ? (
         <div className="rounded-2xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
           <EmptyState
-            icon={<HugeiconsIcon icon={RocketIcon} size={32} />}
+            art="bell"
+            size="panel"
+            paper="var(--bg-secondary)"
             title="No runs yet"
             caption="Create a run to execute an agent workflow on your connected runtimes."
             ctaLabel="Refresh"

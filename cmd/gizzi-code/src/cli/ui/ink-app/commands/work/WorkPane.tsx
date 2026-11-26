@@ -3,6 +3,7 @@ import { BlockTitle } from '../../components/BlockTitle';
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pane } from '../../components/design-system/Pane'
 import { Box, Text, useInput } from '../../ink'
+import { EmptyLine } from '../../components/EmptyLine'
 
 /**
  * Shared shell for the work panes (/decisions, /pr, /projects, /routines):
@@ -90,7 +91,7 @@ export function WorkPane<T>({
       {header}
       {error ? <Text color="warning">{error}</Text> : null}
       {!items && !error ? <Text dimColor>Loading…</Text> : null}
-      {items && items.length === 0 ? <Text dimColor>{empty}</Text> : null}
+      {items && items.length === 0 ? <EmptyLine>{empty}</EmptyLine> : null}
       {items?.map((item, i) => (
         <Box key={i}>
           <Text color={i === at ? 'suggestion' : undefined}>{i === at ? '❯ ' : '  '}</Text>

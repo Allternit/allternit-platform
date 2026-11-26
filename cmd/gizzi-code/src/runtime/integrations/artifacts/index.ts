@@ -38,10 +38,14 @@ export namespace Artifacts {
     diagram: ["text/vnd.mermaid", "image/svg+xml"],
     image: ["text/uri-list"],
     code: ["text/plain"],
+    // Written by plan_exit only (see savePlan); not an artifact_create kind.
+    plan: ["text/markdown"],
   } as const satisfies Record<string, readonly string[]>
 
   export type Kind = keyof typeof FORMATS
-  export const KINDS = Object.keys(FORMATS) as [Kind, ...Kind[]]
+  /** Kinds the model may create with artifact_create: every stored kind except `plan`. */
+  export type ToolKind = Exclude<Kind, "plan">
+  export const KINDS = Object.keys(FORMATS).filter((k) => k !== "plan") as [ToolKind, ...ToolKind[]]
 
   /** What every artifact tool result carries in its metadata (the app renders and persists from it). */
   export interface Payload {
@@ -250,6 +254,8 @@ export namespace Artifacts {
 
   export interface CreateInput {
     kind: Kind
+    /** A fixed id (plans: `art_plan_<session id>`). The server's create by id is idempotent. */
+    id?: string
     title: string
     body: string
     body_format: string
@@ -261,7 +267,7 @@ export namespace Artifacts {
   export async function create(input: CreateInput, abort?: AbortSignal): Promise<Payload> {
     const invalid = validate(input.kind, input.body_format, input.body)
     if (invalid) throw new RejectedError(422, invalid)
-    const id = mintId()
+    const id = input.id ?? mintId()
     const local: Payload = {
       id,
       kind: input.kind,
@@ -358,6 +364,66 @@ export namespace Artifacts {
       throw new NotFoundError(input.id)
     }
     throw new RejectedError(res.status, `The artifact store refused the update: ${errorMessage(res.json, res.status)}`)
+  }
+
+  export const MAX_PLAN_BODY = 100_000
+
+  export function planId(sessionID: string): string {
+    return `art_plan_${sessionID}`
+  }
+
+  /**
+   * Saves a plan as the one plan artifact of this chat (`art_plan_<sessionID>`,
+   * kind plan, Markdown body). A changed body appends a version of the same
+   * artifact; an unchanged body adds nothing. Never throws: offline, no account,
+   * an old server that does not know kind `plan`, or any refusal gives
+   * `persisted: false`, and the caller still carries the body.
+   */
+  export async function savePlan(
+    input: { sessionID: string; title: string; body: string; origin?: Record<string, unknown> },
+    abort?: AbortSignal,
+  ): Promise<Payload> {
+    const id = planId(input.sessionID)
+    const body = input.body.slice(0, MAX_PLAN_BODY)
+    const title = input.title.trim() || "Plan"
+    const local: Payload = {
+      id,
+      kind: "plan",
+      title,
+      version: 1,
+      body,
+      body_format: "text/markdown",
+      meta: {},
+      persisted: false,
+    }
+    try {
+      const existing = await read({ id }, abort).catch((error) => {
+        if (error instanceof NotFoundError) return undefined
+        throw error
+      })
+      if (existing && existing.persisted) {
+        if (existing.body === body) return existing
+        return await update(
+          { id, body, base_version: existing.version, known: { ...existing, kind: "plan", body_format: "text/markdown" } },
+          abort,
+        )
+      }
+      return await create(
+        {
+          kind: "plan",
+          id,
+          title,
+          body,
+          body_format: "text/markdown",
+          origin: { surface: "gizzi", session_id: input.sessionID, ...(input.origin ?? {}) },
+        },
+        abort,
+      )
+    } catch (error) {
+      if (abort?.aborted) throw error
+      log.warn("plan not saved to the account; the question carries it", { id, error: String(error) })
+      return local
+    }
   }
 
   export async function read(

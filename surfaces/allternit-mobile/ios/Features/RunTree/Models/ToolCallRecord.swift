@@ -36,6 +36,9 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     /// The tool part's `metadata` object as raw JSON text (nil when none).
     /// connector_suggest and settings read their cards from it.
     var metadata: String? = nil
+    /// media_generate: the engine picture or GIF (data URL) folded onto this call from an
+    /// assistant file part with source `tool-call://<id>`. The finished card reads it first.
+    var attachedImageURL: String? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {

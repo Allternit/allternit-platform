@@ -16,6 +16,11 @@ pub struct KindSpec {
 }
 
 pub const DOC: &str = "doc";
+/// A chat's plan (D10): one per session, id `art_plan_<session id>`, body =
+/// the plan as Markdown, a revision = a new version. Left out of the default
+/// list (`GET /api/v2/artifacts` without `kind=plan`) so plans never flood
+/// Recent or Everything; status lives in the `plan_status` column (166).
+pub const PLAN: &str = "plan";
 
 pub const KINDS: &[KindSpec] = &[
     KindSpec {
@@ -89,6 +94,11 @@ pub const KINDS: &[KindSpec] = &[
         default_body_format: "application/vnd.allternit.video+json",
         body_formats: &["application/vnd.allternit.video+json"],
     },
+    KindSpec {
+        kind: PLAN,
+        default_body_format: "text/markdown",
+        body_formats: &["text/markdown"],
+    },
 ];
 
 pub fn spec(kind: &str) -> Option<&'static KindSpec> {
@@ -134,7 +144,7 @@ mod tests {
             names,
             [
                 "doc", "sheet", "slides", "design", "dashboard", "ops", "motion", "page", "card",
-                "diagram", "image", "code", "pdf", "video"
+                "diagram", "image", "code", "pdf", "video", "plan"
             ]
         );
         for spec in KINDS {
@@ -142,6 +152,7 @@ mod tests {
             assert!(is_valid_body_format(spec.default_body_format));
         }
         assert_eq!(default_body_format("diagram"), "text/vnd.mermaid");
+        assert_eq!(default_body_format(PLAN), "text/markdown");
         assert_eq!(default_body_format("hologram"), "text/plain");
     }
 

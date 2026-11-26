@@ -86,6 +86,7 @@ struct ComposerView: View {
     /// the + sheet leaves them out (ChatView's Home chat).
     var chatMenuHoldsExtras: Bool = false
     var armedPhoneName: String? = nil
+    @ObservedObject private var attachedStore = AttachedArtifactStore.shared
     var onClearPhone: (() -> Void)? = nil
     /// The computer chip above the card (contract C4). On in every chat,
     /// Bots and bot thread composer.
@@ -106,6 +107,9 @@ struct ComposerView: View {
     @State private var isFocused = false
     @State private var keyboardFocused = false
     @State private var placeholderIndex = 0
+    /// Plan Revise / Ask a question: the prompt the composer shows after it
+    /// takes focus (web ChatComposer PLAN_NOTE). Cleared when focus leaves.
+    @State private var planNotePlaceholder: String? = nil
     // Purchase pages go to the browser via the Open links in rule (step 30).
     @Environment(\.openURL) private var openURL
     /// The In-App Purchase sheet, where the App Store sells plans.
@@ -130,6 +134,13 @@ struct ComposerView: View {
 
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
+
+    /// The artifact mode Send will start a session for: picked in the deck,
+    /// with the deck showing and this not already an artifact session.
+    private var launchMode: ChatDeckMode? {
+        guard deck != .none, artifactKind == nil, !isTerminal, agentOn else { return nil }
+        return ChatDeckMode.pendingLaunch(tile: agentModeStore.selectedTile(for: mode), surface: mode, bot: chatBot != nil)
+    }
 
     /// Code mode keeps its terminal flavor: `❯` prompt, monospace text.
     private var isTerminal: Bool { mode == .code }
@@ -165,7 +176,10 @@ struct ComposerView: View {
     private var placeholder: String {
         if isTerminal { return "describe the task…" }
         if let placeholderOverride { return placeholderOverride }
+        if let planNotePlaceholder { return planNotePlaceholder }
         if !isExpanded { return "Type or hold to talk" }
+        // A picked artifact mode says what it will make ("Describe the slides…").
+        if let launchMode { return launchMode.placeholder }
         guard deck == .full else { return "Reply…" }
         let list = ComposerPlaceholders.list(agentMode: agentOn, tile: agentOn ? agentModeStore.selectedTile(for: mode) : nil)
         return list[placeholderIndex % list.count]
@@ -178,6 +192,19 @@ struct ComposerView: View {
             if let topDeck {
                 ComposerTopDeckTray { topDeck }
                     .zIndex(0)
+            } else if let launchMode, DeckLaunch.kind(for: launchMode.entry) != nil, deckBandOpen || forcedDeckOpen {
+                // The "It can" row: only the toggles this kind can honour.
+                ComposerTopDeckTray { ItCanRow(entry: launchMode.entry) }
+                    .zIndex(0)
+            }
+
+            if let attachedArtifact = attachedStore.attached {
+                HStack {
+                    AttachedArtifactChip(artifact: attachedArtifact) { attachedStore.detach() }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
 
             if let armedPhoneName {
@@ -288,6 +315,9 @@ struct ComposerView: View {
         .sheet(isPresented: $isStoreSheetPresented) {
             StorePurchaseSheet(focus: .plan)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .composerFocusRequest)) { note in
+            planNotePlaceholder = note.userInfo?["placeholder"] as? String
+        }
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usageStore.fetchUsageIfNeeded()
@@ -383,7 +413,7 @@ struct ComposerView: View {
                     placeholder: placeholder,
                     isEnabled: !isUsageLocked,
                     terminal: isTerminal,
-                    onFocusChange: { isFocused = $0; if !$0 { keyboardFocused = false } },
+                    onFocusChange: { isFocused = $0; if !$0 { keyboardFocused = false; planNotePlaceholder = nil } },
                     onKeyboardFocusChange: { keyboardFocused = $0 },
                     singleLineRest: !isExpanded
                 )
@@ -710,6 +740,7 @@ struct ComposerView: View {
         suppressUndoPill = dictation.isRecording
         showsUndoDictation = false
         dictation.stop()
+        inputText = attachedStore.consume(typed: inputText)
         onSend(attachmentStore.attachments)
         attachmentStore.clear()
     }
@@ -909,6 +940,13 @@ struct ComposerTextView: UIViewRepresentable {
             context.coordinator.parent.onKeyboardFocusChange?(focused)
         }
         textView.delegate = context.coordinator
+        // Plan Revise / Ask a question (QuestionCardView) focus the composer.
+        context.coordinator.focusObserver = NotificationCenter.default.addObserver(
+            forName: .composerFocusRequest, object: nil, queue: .main
+        ) { [weak textView] _ in
+            guard let textView, textView.window != nil, textView.isEditable else { return }
+            textView.becomeFirstResponder()
+        }
         textView.font = uiFont
         textView.textColor = uiTextColor
         textView.typingAttributes = [.font: uiFont, .foregroundColor: uiTextColor, .paragraphStyle: paragraph]
@@ -988,8 +1026,13 @@ struct ComposerTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         let placeholderLabel = UILabel()
+        var focusObserver: NSObjectProtocol?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
+
+        deinit {
+            if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
+        }
 
         func updatePlaceholder(_ textView: UITextView) {
             placeholderLabel.isHidden = !textView.text.isEmpty
@@ -1099,4 +1142,10 @@ final class ComposerEditorView: UITextView {
             onKeyboardFocusChange?(false)
         }
     }
+}
+
+extension Notification.Name {
+    /// Focus the chat composer. userInfo["placeholder"]: optional prompt to show
+    /// while it is empty (plan Revise / Ask a question).
+    static let composerFocusRequest = Notification.Name("com.allternit.composerFocusRequest")
 }

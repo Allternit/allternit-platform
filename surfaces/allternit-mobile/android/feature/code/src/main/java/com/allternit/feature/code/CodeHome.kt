@@ -2,6 +2,7 @@ package com.allternit.feature.code
 
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +54,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /*
  * Code mode (iOS CodeModeView, CodeOverviewSheet, PhoneCodeSessionsView, CodeRuntimePairingView).
@@ -142,7 +145,10 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onN
     val greeting = remember { CodeGreetings.random() }
     LaunchedEffect(Unit) { host.reloadSessions() }
     LaunchedEffect(Unit) { folder = CodeApi.folder(host.backend) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("codeHome")) {
+    val homeScroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(homeScroll).testTag("codeHome")) {
+        Spacer(Modifier.height(96.dp))
         if (folder == CodeResult.NoComputer) {
             // iOS ConnectComputerView over the launchpad.
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp).testTag("codeHomeNoComputer"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -186,6 +192,9 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit, onN
                 Text("Show usage", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+    // The block title docks into the bar as the page scrolls (UI feedback 11-25 A4).
+    com.allternit.core.design.DockingBlockTitle("Code", homeScroll, modifier = Modifier.fillMaxSize())
     }
 }
 
@@ -274,6 +283,7 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
             EmptyState(
                 if (filter == null) "No threads yet" else "Nothing ${filter?.label?.lowercase()}",
                 "Start a thread from the composer and it appears here.",
+                art = EmptyArtKind.Envelope,
             )
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState) {
@@ -291,9 +301,10 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 if (computerSections) item(key = "threads-label") { SectionLabel("Threads") }
                 if (shown.isEmpty()) {
                     item(key = "threads-empty") {
-                        Text(
+                        InlineEmpty(
                             if (filter == null) "No threads yet. Start one from the composer." else "Nothing ${filter?.label?.lowercase()}",
-                            color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeOverviewNoThreads"),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeOverviewNoThreads"),
+                            art = EmptyArtKind.Envelope,
                         )
                     }
                 } else {
@@ -329,8 +340,9 @@ private fun ThreadActionsSheet(host: CodeHost, s: CodeSessionRow, onDismiss: () 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 CodePill("Rename", testTag = "codeThreadRename", filled = true, enabled = name.isNotBlank() && name != s.title) { act { CodeApi.rename(s.id, name.trim()) } }
                 if (s.status == CodeSessionStatus.ReadyForReview) CodePill("Mark reviewed", testTag = "codeThreadReviewed") { act { CodeApi.markReviewed(s.id) } }
-                if (s.status != CodeSessionStatus.Archived) CodePill("Archive", testTag = "codeThreadArchive", tint = AllternitStatic.StatusError) { act { CodeApi.archive(s.id) } }
             }
+            // Deleting a thread is a hold, never a dialog (the web ConfirmMorph hold mode).
+            if (s.status != CodeSessionStatus.Archived) com.allternit.core.design.HoldButton("Hold to delete", "codeThreadArchive", danger = true) { act { CodeApi.archive(s.id) } }
             Box(Modifier.padding(bottom = 16.dp))
         }
     }

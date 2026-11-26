@@ -10,7 +10,7 @@ import Foundation
 /// The v2 kinds (artifacts/kinds.rs KINDS). Unknown kinds decode as raw
 /// strings on the models, so a newer server never breaks the list.
 enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
-    case doc, sheet, slides, design, dashboard, ops, motion, page, card, diagram, image, code, pdf, video
+    case doc, sheet, slides, design, dashboard, ops, motion, page, card, diagram, image, code, pdf, video, plan
 
     var id: String { rawValue }
 
@@ -35,6 +35,7 @@ enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
         case .code: return "Code"
         case .pdf: return "PDFs"
         case .video: return "Videos"
+        case .plan: return "Plans"
         }
     }
 
@@ -54,6 +55,7 @@ enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
         case .code: return "Code"
         case .pdf: return "PDF"
         case .video: return "Video"
+        case .plan: return "Plan"
         }
     }
 
@@ -73,6 +75,7 @@ enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
         case .code: return "chevron.left.forwardslash.chevron.right"
         case .pdf: return "doc.richtext"
         case .video: return "video"
+        case .plan: return "list.bullet"
         }
     }
 
@@ -80,7 +83,7 @@ enum ArtifactV2Kind: String, CaseIterable, Sendable, Identifiable {
     /// Assets.xcassets/DeckIcons); unknown kinds use Docs, as on the web.
     static func iconAsset(for kind: String) -> String {
         switch ArtifactV2Kind(rawValue: kind) {
-        case .doc, nil: return "deck-docs"
+        case .doc, .plan, nil: return "deck-docs"
         case .sheet: return "deck-sheets"
         case .slides: return "deck-slides"
         case .design: return "deck-design"
@@ -123,6 +126,10 @@ struct ArtifactV2Origin: Codable, Hashable, Sendable {
     var computerId: String?
     var legacySource: String?
     var legacyId: String?
+    /// Written at save time for plans (the Plans list groups on these).
+    var projectTitle: String?
+    var sessionTitle: String?
+    var chatTitle: String?
 
     init(surface: String? = nil, sessionId: String? = nil) {
         self.surface = surface
@@ -136,7 +143,16 @@ struct ArtifactV2Origin: Codable, Hashable, Sendable {
         case computerId = "computer_id"
         case legacySource = "legacy_source"
         case legacyId = "legacy_id"
+        case projectTitle = "project_title"
+        case sessionTitle = "session_title"
+        case chatTitle = "chat_title"
     }
+}
+
+/// `summary_json.plan` on a plan row.
+struct ArtifactV2PlanInfo: Decodable, Hashable, Sendable {
+    /// open | approved | done; anything else reads as open.
+    let status: String?
 }
 
 /// A list row (`summary_json`).
@@ -155,9 +171,11 @@ struct ArtifactV2Summary: Decodable, Identifiable, Hashable, Sendable {
     let origin: ArtifactV2Origin?
     let runtimeVersion: Int?
     let thumbnailURL: String?
+    /// Plans only: `summary_json.plan` (open | approved | done).
+    var plan: ArtifactV2PlanInfo? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, title, icon, owner, visibility, origin
+        case id, kind, title, icon, owner, visibility, origin, plan
         case updatedAt = "updated_at"
         case currentVersion = "current_version"
         case myAccess = "my_access"

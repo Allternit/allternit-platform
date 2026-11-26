@@ -40,6 +40,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.num
 import com.allternit.feature.artifacts.str
@@ -134,7 +136,7 @@ private fun SnippetsSection(computer: ConsoleComputer) {
     Text("Snippets", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     HostNotReady(snippets, "Snippets aren't available on your account yet.", "", "Loading snippets…")
     (snippets.state as? HostRead.Ok)?.value?.let { list ->
-        if (list.isEmpty()) CNote("No snippets yet. Saved commands show here.") else list.forEach { sn ->
+        if (list.isEmpty()) InlineEmpty("No snippets yet. Saved commands show here.", art = EmptyArtKind.Sheets) else list.forEach { sn ->
             CCard {
                 Text(sn.name, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 sn.description?.takeIf { it.isNotBlank() }?.let { CText(it) }
@@ -211,7 +213,7 @@ private fun SpaceView(computer: ConsoleComputer) {
             HostNotReady(findings, "Clean-ups aren't available for this computer yet.", "Asleep, not woken. Clean-ups show when it is awake.")
             (findings.state as? HostRead.Ok)?.value?.let { all ->
                 val items = consoleCleanups(all)
-                if (items.isEmpty()) CNote("Nothing to clean up right now.") else items.forEach { f ->
+                if (items.isEmpty()) InlineEmpty("Nothing to clean up right now.", art = EmptyArtKind.Archive) else items.forEach { f ->
                     CCard {
                         Text(f.title, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         CText(f.detail)

@@ -93,9 +93,7 @@ struct CustomizeSourcesView: View {
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
                     }
                     if sources.isEmpty {
-                        Text("No sources added yet.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color("TextSecondary"))
+                        FriendlyInlineStateView(title: "No sources added yet.", art: .sheets)
                             .frame(maxWidth: .infinity)
                             .padding(.horizontal, 24)
                             .padding(.vertical, 40)

@@ -25,6 +25,7 @@ struct SessionOverviewView: View {
     @ObservedObject private var projects = ProjectStore.shared
     @ObservedObject private var pins = RailPinsStore.shared
     @State private var select = INITIAL_OVERVIEW_SELECT
+    @State private var barHidden = false
     @State private var optionsOpen = false
     @State private var layoutOpen = false
     @State private var confirmDelete = false
@@ -161,8 +162,10 @@ struct SessionOverviewView: View {
                         wide: .search,
                         onNew: onNew
                     )
+                    .hidesOnScroll(barHidden)
                 }
             }
+            .tracksScrollForHide($barHidden)
         }
         .onChange(of: shown.map(\.id)) { _, ids in
             select = reduceOverviewSelect(select, .visible(ids))
@@ -226,11 +229,14 @@ struct SessionOverviewView: View {
         if !store.hasLoaded && store.isLoading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if shown.isEmpty {
-            Text(query.isEmpty ? emptyText : "Nothing matches “\(query)”.")
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+            VStack(spacing: 8) {
+                EmptyArt(kind: .search, size: .panel)
+                Text(query.isEmpty ? emptyText : "Nothing matches “\(query)”.")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch layout {
@@ -245,6 +251,7 @@ struct SessionOverviewView: View {
                     }
                     .padding(.top, 4)
                     .padding(.bottom, 96)
+                    .reportsScrollOffset()
                 }
             case .grid:
                 ScrollView {
@@ -258,6 +265,7 @@ struct SessionOverviewView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
                     .padding(.bottom, 96)
+                    .reportsScrollOffset()
                 }
             case .deck:
                 ScrollView(.horizontal, showsIndicators: false) {

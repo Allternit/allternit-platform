@@ -904,21 +904,38 @@ export namespace MCP {
     meta?: Record<string, unknown>
     toolCallID?: string
     signal?: AbortSignal
+    /** The user's per-user proxy entry (as a chat turn's `mcpProxy`); registered for this one call only. */
+    mcpProxy?: unknown
     /** Tool map to use instead of the live catalog (tests). */
     catalog?: Record<string, Tool>
   }) {
-    const found = (input.catalog ?? (await tools()))[qualifiedToolName(input.server, input.tool)]
-    if (!found?.execute) return undefined
-    const toolCallId = input.toolCallID ?? `bar_${Date.now().toString(36)}`
-    const result = await runWithStreamContext({ sessionID: input.sessionID }, () =>
-      (found.execute as (a: unknown, o: unknown) => Promise<unknown>)(input.args ?? {}, {
-        toolCallId,
-        abortSignal: input.signal,
-        meta: input.meta,
-        direct: true,
-      }),
-    )
-    return { toolCallID: toolCallId, result }
+    // Same registration a turn makes (prompt.ts), held for this call only: one bar session = one call.
+    const release =
+      input.mcpProxy !== undefined && !McpUserProxy.current(input.sessionID)
+        ? McpUserProxy.register(input.sessionID, input.mcpProxy)
+        : () => {}
+    try {
+      let catalog = input.catalog
+      if (!catalog) {
+        const proxyClient = await McpUserProxy.client(input.sessionID)
+        const proxyEntry = McpUserProxy.current(input.sessionID)
+        catalog = (await toolCatalog(proxyClient && proxyEntry ? { [proxyEntry.server]: proxyClient } : {})).tools
+      }
+      const found = catalog[qualifiedToolName(input.server, input.tool)]
+      if (!found?.execute) return undefined
+      const toolCallId = input.toolCallID ?? `bar_${Date.now().toString(36)}`
+      const result = await runWithStreamContext({ sessionID: input.sessionID }, () =>
+        (found.execute as (a: unknown, o: unknown) => Promise<unknown>)(input.args ?? {}, {
+          toolCallId,
+          abortSignal: input.signal,
+          meta: input.meta,
+          direct: true,
+        }),
+      )
+      return { toolCallID: toolCallId, result }
+    } finally {
+      release()
+    }
   }
 
   function boundedToolName(name: string, identity: string) {

@@ -8,7 +8,10 @@ import { MessageV2 } from "@/runtime/session/message-v2"
 import { Identifier } from "@/shared/id/id"
 import { Provider } from "@/runtime/providers/provider"
 import { Instance } from "@/runtime/context/project/instance"
+import { Artifacts } from "@/runtime/integrations/artifacts"
 import { Todo } from "@/runtime/session/todo"
+import { Pairing } from "@/runtime/services/pairing/pairing"
+import { Log } from "@/shared/util/log"
 import EXIT_DESCRIPTION from "@/runtime/tools/builtins/plan-exit.txt"
 import ENTER_DESCRIPTION from "@/runtime/tools/builtins/plan-enter.txt"
 
@@ -58,9 +61,81 @@ export function stepsFromMarkdown(markdown: string): Question.PlanStep[] {
   return items.length >= 2 ? (Question.readPlan(items.slice(0, Question.MAX_PLAN_STEPS).map((title) => ({ title }))) ?? []) : []
 }
 
+/** The plan's title: its first Markdown heading, else the session title. */
+function planTitle(markdown: string, fallback: string): string {
+  const heading = /^#{1,3}\s+(.+)$/m.exec(markdown)?.[1]?.replace(/[*`]/g, "").trim()
+  return (heading || fallback || "Plan").slice(0, 120)
+}
+
 function sameSteps(a: Question.PlanStep[], b: Question.PlanStep[]) {
   return a.length === b.length && a.every((s, i) => s.title === b[i].title && (s.detail ?? "") === (b[i].detail ?? ""))
 }
+
+const planLog = Log.create({ service: "plan-status" })
+
+/**
+ * Sets a plan artifact's status (`open | approved | done`) with PATCH on the
+ * artifact. Owner-only on the server. Logged on failure, never throws.
+ */
+async function setPlanStatus(sessionID: string, status: "open" | "approved" | "done") {
+  try {
+    if (["1", "true"].includes((process.env.GIZZI_ARTIFACTS_OFFLINE ?? "").toLowerCase())) return
+    const stored = await Pairing.load().catch(() => undefined)
+    const device = Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+    const tokens = [
+      ...new Set([process.env.ALLTERNIT_API_KEY?.trim(), process.env.ALLTERNIT_API_TOKEN?.trim(), device].filter((t): t is string => !!t)),
+    ]
+    for (const token of tokens) {
+      const res = await fetch(`${Artifacts.cloudBase()}/api/v2/artifacts/${encodeURIComponent(Artifacts.planId(sessionID))}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_status: status }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (res.status === 401 || res.status === 403) continue
+      if (!res.ok) planLog.warn("plan status not saved", { sessionID, status, http: res.status })
+      return
+    }
+  } catch (error) {
+    planLog.warn("plan status not saved", { sessionID, status, error: String(error) })
+  }
+}
+
+/**
+ * Restart recovery: the in-memory "done" watch is lost when Gizzi restarts. On the
+ * first todo read or write of a session, if its plan artifact is approved (not done),
+ * re-arm the watch, or PATCH done right away when every todo is already completed.
+ */
+Todo.onFirstTouch((sessionID) => {
+  if (Todo.hasWatch(sessionID)) return
+  void (async () => {
+    try {
+      if (["1", "true"].includes((process.env.GIZZI_ARTIFACTS_OFFLINE ?? "").toLowerCase())) return
+      const stored = await Pairing.load().catch(() => undefined)
+      const device = Pairing.tokenUsable(stored) ? stored.deviceToken : undefined
+      const tokens = [
+        ...new Set([process.env.ALLTERNIT_API_KEY?.trim(), process.env.ALLTERNIT_API_TOKEN?.trim(), device].filter((t): t is string => !!t)),
+      ]
+      for (const token of tokens) {
+        const res = await fetch(`${Artifacts.cloudBase()}/api/v2/artifacts/${encodeURIComponent(Artifacts.planId(sessionID))}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        })
+        if (res.status === 401 || res.status === 403) continue
+        if (!res.ok) return
+        const json: any = await res.json().catch(() => undefined)
+        if (json?.plan_status !== "approved") return
+        if (Todo.hasWatch(sessionID)) return
+        const todos = Todo.get(sessionID)
+        if (todos.length > 0 && todos.every((t) => t.status === "completed")) await setPlanStatus(sessionID, "done")
+        else Todo.watchCompletion(sessionID, () => void setPlanStatus(sessionID, "done"))
+        return
+      }
+    } catch (error) {
+      planLog.warn("plan status restore failed", { sessionID, error: String(error) })
+    }
+  })()
+})
 
 export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
@@ -75,9 +150,25 @@ export const PlanExitTool = Tool.define("plan_exit", {
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
     const given = Question.readPlan(params.steps ?? []) ?? []
-    const proposed = given.length
-      ? given
-      : stepsFromMarkdown(await fs.readFile(Session.plan(session), "utf8").catch(() => ""))
+    const markdown = await fs.readFile(Session.plan(session), "utf8").catch(() => "")
+    const proposed = given.length ? given : stepsFromMarkdown(markdown)
+    // One plan artifact per chat: saved as a new version when the text changed.
+    const body = markdown.trim().slice(0, Question.MAX_PLAN_BODY)
+    const title = planTitle(body, session.title)
+    const saved = body
+      ? await Artifacts.savePlan(
+          {
+            sessionID: ctx.sessionID,
+            title,
+            body,
+            origin: {
+              session_title: session.title,
+              ...(Instance.project.name ? { project_title: Instance.project.name } : {}),
+            },
+          },
+          ctx.abort,
+        )
+      : undefined
     const { answers, plan: editedPlan } = await Question.askWithPlan({
       sessionID: ctx.sessionID,
       questions: [
@@ -85,7 +176,16 @@ export const PlanExitTool = Tool.define("plan_exit", {
           question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
           header: "Build Agent",
           custom: false,
-          ...(proposed.length ? { plan: { steps: proposed } } : {}),
+          ...(proposed.length || saved
+            ? {
+                plan: {
+                  steps: proposed,
+                  ...(saved
+                    ? { body, title, artifact: { id: saved.id, version: saved.version, persisted: saved.persisted } }
+                    : {}),
+                },
+              }
+            : {}),
           options: [
             { label: "Yes", description: "Switch to build agent and start implementing the plan" },
             {
@@ -110,6 +210,13 @@ export const PlanExitTool = Tool.define("plan_exit", {
         sessionID: ctx.sessionID,
         todos: approved.map((s) => ({ content: s.title, status: "pending", priority: "medium" })),
       })
+    }
+
+    // Status follows the answer: Yes -> approved; done once every todo is completed. Offline skips it.
+    if (saved?.persisted) {
+      const sessionID = ctx.sessionID
+      void setPlanStatus(sessionID, "approved")
+      if (approved.length) Todo.watchCompletion(sessionID, () => void setPlanStatus(sessionID, "done"))
     }
 
     const model = await getLastModel(ctx.sessionID)

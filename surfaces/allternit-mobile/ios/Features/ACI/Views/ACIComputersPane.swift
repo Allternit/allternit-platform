@@ -797,7 +797,7 @@ struct ACIConsoleSection: View {
                 ACIPillButton(title: "Try again") { attempt += 1 }
             }
         case .ready(let rows) where rows.isEmpty:
-            note("No computers yet. Add one above and it shows its health here.")
+            FriendlyStateView(title: "No computers yet. Add one above and it shows its health here.", art: .connectScene, size: .panel)
         case .ready(let rows):
             let online = rows.filter(\.isOnline).count
             Text("\(rows.count) computers · \(online) online")
@@ -854,8 +854,7 @@ struct ACIConsoleSection: View {
                         .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
                 }
             } else {
-                Text("No health sample yet")
-                    .font(.system(size: 13)).foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "No health sample yet", art: .chart)
             }
             if let n = c.servicesCount {
                 Text("\(n) services").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
@@ -1453,7 +1452,7 @@ private struct ACIConsoleAccessTab: View {
                 VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
             case .ready(let keys):
                 if keys.isEmpty {
-                    consoleNote("No keys yet. Add one to sign in over SSH.")
+                    FriendlyInlineStateView(title: "No keys yet. Add one to sign in over SSH.", art: .key)
                 } else {
                     ForEach(keys) { key in
                         HStack(spacing: 10) {
@@ -1587,7 +1586,7 @@ private struct ACIConsoleBackupsTab: View {
             case .failed(let m):
                 VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
             case .ready(let list):
-                if list.isEmpty { consoleNote("No backups yet. The first one is made within a day.") }
+                if list.isEmpty { FriendlyInlineStateView(title: "No backups yet. The first one is made within a day.", art: .log) }
                 if !list.isEmpty && !canRestore { consoleNote("Restoring from a backup isn't available for this computer right now.") }
                 ForEach(list) { b in
                     HStack {

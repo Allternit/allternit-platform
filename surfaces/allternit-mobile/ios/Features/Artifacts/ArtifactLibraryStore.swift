@@ -137,6 +137,17 @@ final class ArtifactLibraryStore: ObservableObject {
         nextCursor = page.nextCursor
     }
 
+    // MARK: - Plans
+
+    /// Every plan the person has (`kind=plan`). Plans are never in the
+    /// default list (the server leaves them out), so the Plans chip asks for
+    /// them by kind and keeps them out of `artifacts`.
+    func fetchPlans() async throws -> [ArtifactV2Summary] {
+        var q = ArtifactV2ListQuery(scope: "all", kind: ArtifactV2Kind.plan.rawValue)
+        q.limit = 100
+        return try await client.list(q).items
+    }
+
     // MARK: - Library actions
 
     /// Moves an artifact out of Saved work (per-viewer archive; reversible

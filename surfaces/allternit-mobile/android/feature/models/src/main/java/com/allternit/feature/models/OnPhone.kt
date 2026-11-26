@@ -59,6 +59,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /*
  * Gap run GS-D: "On this phone" (iOS OnThisIPhoneView) and Download on the model page (iOS
@@ -289,7 +291,7 @@ internal fun PhoneBuildsSection(m: FwRow) {
             is FwLoad.Down -> Text(l.reason, color = c.textSecondary, fontSize = 13.sp)
             is FwLoad.Live -> when {
                 ready == false -> Text("Not available on this build.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("modelPhoneUnavailable"))
-                l.value.isEmpty() -> Text("No phone builds for this model yet.", color = c.textSecondary, fontSize = 13.sp)
+                l.value.isEmpty() -> InlineEmpty("No phone builds for this model yet.", art = EmptyArtKind.Phone)
                 else -> l.value.forEach { q ->
                     val key = ModelStore.keyOf(m.id, q.name)
                     val d = active[key]

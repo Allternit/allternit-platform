@@ -82,6 +82,8 @@ import com.allternit.feature.chat.RelayPick
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /** What the shell gives Models: the menu button, sign-in, the chat backend (Benchmark) and "use in chat". */
 class ModelsHost(
@@ -187,7 +189,7 @@ fun ModelsRoot(host: ModelsHost) {
                             when {
                                 loading && catalog.isEmpty() -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }
                                 down != null && catalog.isEmpty() -> FriendlyState(FriendlyStyle.Offline, "Freeweights is not answering", "The catalog couldn't be reached and there is no copy on this phone yet. Check your connection, then try again.", Modifier.padding(top = 20.dp), "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
-                                visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (query.isEmpty()) "Nothing here yet" else "No models match “$query”", "Try Everything, or a family name like qwen, gemma or smollm.", Modifier.padding(top = 20.dp)) { Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary) }
+                                visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (query.isEmpty()) "Nothing here yet" else "No models match “$query”", "Try Everything, or a family name like qwen, gemma or smollm.", Modifier.padding(top = 20.dp), art = EmptyArtKind.Sheets) { }
                                 else -> {
                                     Text("This phone can give a model up to ${sizeText(budget)} of memory.", color = c.textSecondary, fontSize = 12.sp)
                                     when (face) {
@@ -370,7 +372,7 @@ private fun ProvidersSheet(onDismiss: () -> Unit, onBenchmark: () -> Unit) {
             val list = models
             when {
                 list == null -> Text("Loading…", color = c.textSecondary, fontSize = 14.sp)
-                list.isEmpty() -> Text("No models yet. Pick one from the composer once a computer is connected.", color = c.textSecondary, fontSize = 14.sp)
+                list.isEmpty() -> InlineEmpty("No models yet. Pick one from the composer once a computer is connected.", art = EmptyArtKind.ConnectScene)
                 else -> list.take(60).forEach { Text(it.name, color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp)) }
             }
         }

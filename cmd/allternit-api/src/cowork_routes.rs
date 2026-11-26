@@ -2290,7 +2290,7 @@ async fn list_connectors(
 /// exist yet, degrades to the unfiltered select rather than erroring. A
 /// missing table surfaces as a prepare error and is handled by the caller's
 /// is_no_such_table fallback.
-fn prepare_approvals_list_stmt(
+pub(crate) fn prepare_approvals_list_stmt(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<rusqlite::Statement<'_>> {
     conn.prepare(
@@ -2441,6 +2441,13 @@ fn claim_open_approval(
     user_id: &str,
 ) -> rusqlite::Result<usize> {
     write_approval_decision(conn, approval_id, outcome, user_id, true)
+}
+
+/// Withdraw a still-open routed ask as its requester (the Island bar's cancel,
+/// `bar_routes.rs`): closed as dismissed, with `approval.resolved` recorded, the
+/// same write as a requester's own dismiss. `false` when it was already closed.
+pub(crate) fn withdraw_routed_ask(conn: &rusqlite::Connection, approval_id: &str, requester: &str) -> rusqlite::Result<bool> {
+    Ok(claim_open_approval(conn, approval_id, &ApprovalOutcome::Dismissed, requester)? > 0)
 }
 
 /// Owner ledger → the cloud event backbone (`approval.resolved`). A gateway
@@ -2641,6 +2648,8 @@ enum DecideOutcome {
     /// Something other than a person's session tried to decide a
     /// subscription card. Only a person decides those (D16).
     PersonRequired(&'static str),
+    /// A routed (team rule) ask that this caller may not approve.
+    ApproverRequired(&'static str),
     /// Decided; relay `(gizzi request id, reply body)` when it answers a
     /// live runtime ask for the first time, and whether approving it runs a
     /// prepared subscription task.
@@ -2648,6 +2657,78 @@ enum DecideOutcome {
         relay: Option<(String, serde_json::Value)>,
         prepared: bool,
     },
+}
+
+/// Who may decide a `cowork_approvals` row, for rows the team rule gate routed
+/// to an approver (`approver_user_id` set, V294).
+#[derive(Debug, PartialEq)]
+enum RoutedDecider {
+    /// Not a routed row (or a schema before V294): today's rules apply.
+    NotRouted,
+    /// Allowed; read and write the row as its requester.
+    As(String),
+    /// The caller may see the row but not approve it.
+    Refused(&'static str),
+    /// Not the caller's to decide.
+    NotFound,
+}
+
+/// The approver decides; an owner/admin of the requester's org may too; the
+/// requester may only withdraw (reject or dismiss) their own ask, never approve
+/// it. Approving also needs a person's session (`not_person` = false).
+fn routed_decider(
+    conn: &rusqlite::Connection,
+    approval_id: &str,
+    decider: &str,
+    outcome: &ApprovalOutcome,
+    not_person: bool,
+) -> rusqlite::Result<RoutedDecider> {
+    let row: Option<(Option<String>, Option<String>)> = match conn
+        .query_row(
+            "SELECT user_id, approver_user_id FROM cowork_approvals WHERE id = ?1",
+            params![approval_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+    {
+        Ok(row) => row,
+        Err(e) if e.to_string().contains("no such column") || is_no_such_table(&e) => return Ok(RoutedDecider::NotRouted),
+        Err(e) => return Err(e),
+    };
+    let Some((requester, Some(approver))) = row else {
+        return Ok(RoutedDecider::NotRouted);
+    };
+    let approving = matches!(outcome, ApprovalOutcome::Approved);
+    let is_requester = requester.as_deref() == Some(decider);
+    let allowed = if decider == approver {
+        true
+    } else if is_requester {
+        !approving
+    } else {
+        let org: Option<String> = conn
+            .query_row(
+                "SELECT organization_id FROM users WHERE id = ?1",
+                params![requester.as_deref().unwrap_or("")],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        match org {
+            Some(org) => crate::rbac::is_org_admin(conn, &org, decider)?,
+            None => false,
+        }
+    };
+    if !allowed {
+        return Ok(if is_requester {
+            RoutedDecider::Refused("A rule sends this request to someone else to approve. You can withdraw it, not approve it.")
+        } else {
+            RoutedDecider::NotFound
+        });
+    }
+    if approving && not_person {
+        return Ok(RoutedDecider::Refused("Rule approvals are given by a person signed in to Allternit, not by an agent or API token."));
+    }
+    Ok(RoutedDecider::As(requester.unwrap_or_else(|| decider.to_string())))
 }
 
 async fn decide_approval(
@@ -2727,6 +2808,17 @@ async fn decide_approval(
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
+        // Owner routing (V294, team_rules.rs): a routed ask is decided by its
+        // approver or an org owner/admin, and never approved by its requester
+        // (nor by an agent: approving needs a person's session). The row is
+        // then read and written under its requester's id, as every other row.
+        let decider = user_id.clone();
+        let (user_id, routed) = match routed_decider(&conn, &approval_id, &decider, &outcome, not_person.is_some())? {
+            RoutedDecider::NotRouted => (decider.clone(), false),
+            RoutedDecider::As(requester) => (requester, true),
+            RoutedDecider::Refused(detail) => return Ok(DecideOutcome::ApproverRequired(detail)),
+            RoutedDecider::NotFound => return Ok(DecideOutcome::NotFound),
+        };
         // Read the row before deciding: its content carries the gizzi
         // request id we must relay to, and its dismissed flag guarantees a
         // single relay per row (a re-decide must not re-answer the runtime).
@@ -2783,6 +2875,13 @@ async fn decide_approval(
         // mints a human action or runs a prepared task.
         if claim_open_approval(&conn, &approval_id, &outcome, &user_id)? == 0 {
             return Ok(DecideOutcome::Decided { relay: None, prepared: false });
+        }
+        if routed {
+            // Who decided a routed ask, for the record (the gate trusts the route above).
+            let _ = conn.execute(
+                "UPDATE cowork_approvals SET content = json_set(content, '$.decidedBy', ?2) WHERE id = ?1",
+                params![approval_id, decider],
+            );
         }
         // What to relay to the runtime: an approved subscription card mints
         // its human action here, where the person approved it (D16).
@@ -2841,6 +2940,14 @@ async fn decide_approval(
             )
                 .into_response()
         }
+        Ok(Ok(DecideOutcome::ApproverRequired(detail))) => {
+            warn!(approval_id = %id_for_response, "refused a routed approval decision by someone other than its approver");
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "approver_required", "detail": detail})),
+            )
+                .into_response()
+        }
         Ok(Ok(DecideOutcome::TaskRequired)) => (
             StatusCode::CONFLICT,
             Json(json!({"error": "task_required", "detail": "This request came from an older version of Allternit and can't be sent. Reject it, update Allternit, then ask again."})),
@@ -2852,6 +2959,9 @@ async fn decide_approval(
         )
             .into_response(),
         Ok(Ok(DecideOutcome::Decided { relay, prepared })) => {
+            // An Island bar job waiting on this routed ask resumes (approved) or
+            // fails (rejected, withdrawn, too late). No-op for any other row.
+            crate::bar_routes::on_routed_decision(&state, &id_for_response);
             // Relay to the gizzi runtime when this decision answers one of
             // its permission asks. A 4xx means the ask is unanswerable
             // (unknown/expired request id) — surface that to the caller; a
@@ -3682,6 +3792,127 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(!pending("perm_X"));
+    }
+
+    /// Team rule gate (lane 11): a routed ask is approved by its approver (or an
+    /// org owner/admin), never by the requester, and never without a person's
+    /// session. The requester may still withdraw it.
+    #[tokio::test]
+    async fn routed_ask_the_actor_cannot_approve_only_the_approver() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        {
+            let conn = state.db.connect().unwrap();
+            conn.execute("INSERT INTO organizations (id, name) VALUES ('org-r', 'Org')", []).unwrap();
+            for (u, role) in [("boss", "member"), ("asker", "member"), ("admin-1", "admin"), ("other", "member")] {
+                conn.execute(
+                    "INSERT OR IGNORE INTO users (id, email, organization_id) VALUES (?1, ?1 || '@x.test', 'org-r')",
+                    params![u],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO organization_members (id, organization_id, user_id, role) VALUES (?1, 'org-r', ?2, ?3)",
+                    params![format!("m-{u}"), u, role],
+                )
+                .unwrap();
+            }
+            for id in ["apr_rule_1", "apr_rule_2", "apr_rule_3"] {
+                let routing = crate::team_store::ApprovalRouting {
+                    approver_user_id: Some("boss".into()),
+                    rule_id: Some("arl_1".into()),
+                    bot_id: None,
+                    job_id: None,
+                };
+                crate::team_store::insert_routed_approval(
+                    &conn,
+                    &crate::team_store::NewRoutedApproval {
+                        id,
+                        user_id: Some("asker"),
+                        content: r#"{"kind":"team_rule","argsHash":"h"}"#,
+                        source: crate::team_rules::ROUTED_SOURCE,
+                        routing: &routing,
+                    },
+                )
+                .unwrap();
+            }
+        }
+        let app = cowork_router()
+            .layer(Extension(AuthUser {
+                user_id: "asker".into(),
+                email: None,
+                name: None,
+                avatar_url: None,
+                tenant_id: None,
+                organization_id: None,
+                organization_role: None,
+                organization_slug: None,
+            }))
+            .with_state(state.clone());
+        let decide = |user: &'static str, person: bool, id: &'static str, decision: &'static str| {
+            let app = app.clone();
+            let state = state.clone();
+            async move {
+                let mut req = Request::builder()
+                    .method("POST")
+                    .uri("/cowork/approvals")
+                    .header("content-type", "application/json")
+                    .header("x-allternit-user-id", user);
+                if person {
+                    let proof = crate::auth::test_clerk_token(&state.jwks, &state.auth_config.clerk_issuer, user, 60).await;
+                    req = req.header(crate::subscription_routes::HUMAN_PROOF_HEADER, proof);
+                }
+                let body = serde_json::json!({ "actionId": id, "decision": decision });
+                let res = app.oneshot(req.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+                let status = res.status();
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+                (status, serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default())
+            }
+        };
+        let decision = |id: &str| -> (i64, Option<String>) {
+            state
+                .db
+                .connect()
+                .unwrap()
+                .query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = ?1", params![id], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap()
+        };
+
+        // The requester (the actor) cannot approve their own routed ask, even as a person.
+        let (status, body) = decide("asker", true, "apr_rule_1", "approved").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"], "approver_required");
+        assert_eq!(decision("apr_rule_1"), (0, None), "the ask stays open");
+        // Someone unrelated does not even find it.
+        let (status, _) = decide("other", true, "apr_rule_1", "approved").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        // The approver, without a person's session (an agent's token), cannot approve.
+        let (status, body) = decide("boss", false, "apr_rule_1", "approved").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(decision("apr_rule_1"), (0, None));
+
+        // The approver approves.
+        let (status, body) = decide("boss", true, "apr_rule_1", "approved").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(decision("apr_rule_1"), (1, Some("approved".to_string())));
+        let by: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT json_extract(content, '$.decidedBy') FROM cowork_approvals WHERE id = 'apr_rule_1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(by, "boss");
+        // An org admin may decide too; the requester may withdraw their own ask.
+        let (status, body) = decide("admin-1", true, "apr_rule_2", "approved").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = decide("asker", false, "apr_rule_3", "rejected").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(decision("apr_rule_3"), (1, Some("rejected".to_string())));
     }
 
     /// Two concurrent decisions on one card: only one claims it, so only one

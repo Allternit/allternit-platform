@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -237,7 +239,7 @@ internal fun AgentActivityDetailScreen(thread: AgentActivityThread, backend: Cha
                 when {
                     loading && messages.isEmpty() -> LibrarySpinner("Loading messages")
                     error != null -> ListState(false, error, true, "Couldn't load messages", "") { scope.launch { load() } }
-                    messages.isEmpty() -> Text("No messages yet. Messages from this thread will appear here.", color = c.textSecondary, fontSize = 14.sp)
+                    messages.isEmpty() -> ListState(false, null, true, "", "No messages yet. Messages from this thread will appear here.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
                     else -> messages.forEach { m ->
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row { Text(m.str("from_agent") ?: "Agent", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); Text(botTimeRelative(m.str("timestamp")), color = c.textTertiary, fontSize = 11.5.sp) }
@@ -275,7 +277,7 @@ private fun parseQuestionAsk(o: JsonObject): Pair<QuestionAsk, String?>? {
         val q = el as? JsonObject ?: return@mapNotNull null
         QuestionItem(q.str("header"), q.str("question") ?: return@mapNotNull null,
             (q["options"] as? JsonArray)?.mapNotNull { opt -> (opt as? JsonObject)?.str("label") ?: (opt as? JsonPrimitive)?.contentOrNull }.orEmpty(),
-            (q["multiple"] as? JsonPrimitive)?.contentOrNull == "true")
+            (q["multiple"] as? JsonPrimitive)?.contentOrNull == "true", com.allternit.feature.chat.parsePlanDraft(q))
     }.orEmpty()
     if (items.isEmpty()) return null
     val sid = o.str("sessionID") ?: o.str("sessionId") ?: o.str("session_id")
@@ -460,6 +462,9 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
     var deleteOpen by remember { mutableStateOf(false) }
     var favorite by remember { mutableStateOf(project.favorite) }
     var archived by remember { mutableStateOf(project.archived) }
+    // Team map (flag `team.map`, lane 38): each team bot opens its node: levels per app, who it reports to, its rules.
+    val teamMapOn = com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP)
+    var teamMapBot by remember { mutableStateOf<String?>(null) }
     suspend fun load() {
         val m = BotsApi.projectMessages(project.id)
         val t = BotsApi.listProjectThreads(project.id)
@@ -492,7 +497,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
             when {
                 loading -> LibrarySpinner("Loading the project")
                 error != null && messages.isEmpty() && threads.isEmpty() -> ListState(false, error, true, "Couldn't load the project", "") { scope.launch { load() } }
-                messages.isEmpty() -> Text("No messages yet. Tell the coordinator what you need below.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp))
+                messages.isEmpty() -> ListState(false, null, true, "", "No messages yet. Tell the coordinator what you need below.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
                 else -> messages.takeLast(12).forEach { m ->
                     val mine = (m.str("role") ?: m.str("from")) == "user"
                     Text(
@@ -523,6 +528,25 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
                 Column(Modifier.clip(RoundedCornerShape(12.dp)).testTag("botProjectAddBot").clickable { nav.open(BotRoute.Hub) }.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(44.dp).clip(CircleShape).border(1.dp, c.borderStrong, CircleShape), contentAlignment = Alignment.Center) { Text("+", color = c.textSecondary, fontSize = 18.sp) }
                     Text("Add a bot", color = c.textSecondary, fontSize = 12.sp)
+                }
+            }
+            if (teamMapOn && bots.isNotEmpty()) {
+                SectionHeader("Levels and rules")
+                Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    bots.forEach { b ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { teamMapBot = b.id }
+                                .then(Modifier.semantics(mergeDescendants = true) { contentDescription = "${b.displayName}: levels and rules on the team map" })
+                                .testTag("botProjectTeamMap${b.id}"),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            BotAvatar(b, 28.dp)
+                            com.allternit.core.design.BotNameText(b.displayName, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                            Text("Team map", color = c.textSecondary, fontSize = 13.sp)
+                            androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
+                        }
+                    }
+                    Text("What each bot may do in each app, and who approves what.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
                 }
             }
             SectionHeader("Threads")
@@ -578,6 +602,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
             }
         }
     }
+    teamMapBot?.let { id -> TeamMapSheet(focus = "b:$id", onDismiss = { teamMapBot = null }) }
     if (deleteOpen) ConfirmSheet("Delete \"$title\"?", "Its threads aren't deleted: they stay with their bots, outside any project. This can't be undone.", "Delete", "botProjectDeleteConfirm", onDismiss = { deleteOpen = false }) {
         deleteOpen = false
         scope.launch {

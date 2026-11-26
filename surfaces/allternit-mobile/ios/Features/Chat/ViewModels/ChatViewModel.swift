@@ -333,10 +333,17 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // File parts by index, so a reply's `file:msg:<id>:<n>` citation
         // finds its attachment (FileCitationChip).
         CitationAttachments.record(messageId: record.id, parts: parts)
+        var tools = ToolCallRecord.fromHistory(parts)
+        // Engine pictures (`source.uri` = `tool-call://<callID>`) fold onto their call's card, not a chip.
         let artifacts = parts
             .filter { $0.type == "file" }
+            .filter { part in
+                guard let src = part.sourceUri, src.hasPrefix("tool-call://"), let url = part.url, !url.isEmpty,
+                      let i = tools.firstIndex(where: { $0.id == String(src.dropFirst("tool-call://".count)) }) else { return true }
+                tools[i].attachedImageURL = url
+                return false
+            }
             .map { ArtifactRecord(part: $0, messageId: record.id) }
-        let tools = ToolCallRecord.fromHistory(parts)
         // The gateway's `[Tool name]` placeholder lines duplicate the tool chips; drop them.
         let content = tools.isEmpty ? record.content : record.content
             .replacingOccurrences(of: #"(?m)^[ \t]*\[Tool [^\]\n]*\][ \t]*\r?\n?"#, with: "", options: .regularExpression)
@@ -448,6 +455,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                                 browserOrigin = request.sessionId
                                 browserReplyClient = chatClient
                                 pendingBrowserImage = request
+                                autoConfirmBrowserImage()
                             }
                         }
                     case .cursor(let id):
@@ -465,6 +473,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                             browserOrigin = request.sessionId
                             browserReplyClient = chatClient
                             pendingBrowserImage = request
+                            autoConfirmBrowserImage()
                             continue
                         }
                         guard NativePaneRenderer.shared.take(request.requestId) else { continue }
@@ -549,12 +558,16 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// are the composer's staged files — each is uploaded
     /// (`POST /api/v1/uploads`) before the stream starts and referenced from
     /// the agent-chat body; an upload failure fails the send.
-    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false) {
+    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false, imageMode: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, !isCreatingSession else { return }
 
         let userMessageId = UUID().uuidString
         messages.append(MessageRecord(id: userMessageId, role: "user", content: trimmed))
+        // Image or Artifact mode: the raw text rides along as `image_prompt`, and
+        // is what a device browser-image request must start with.
+        let imagePrompt: String? = imageMode && personInitiated && (1...16000).contains(trimmed.utf16.count) ? trimmed : nil
+        if imagePrompt != nil { lastImageModeText = trimmed }
 
         // The UI shows the user's original text; prefixes (web search, style)
         // are injected only into the stream payload (ChatComposer.tsx parity).
@@ -562,7 +575,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // A card's Share location parks the fix in PendingClientLocation, then sends a
         // short message; this send picks it up (once, and only while it is fresh).
         let location = clientLocation ?? PendingClientLocation.take()
-        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location, personInitiated: personInitiated)
+        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location, personInitiated: personInitiated, imagePrompt: imagePrompt)
     }
 
     /// The live voice session, if any (set by VoiceHost); `control` events go to it.
@@ -702,7 +715,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// never-landed rollback removes it along with the placeholder.
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
-    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false) {
+    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil) {
         // A locked Allternit Cloud model (D9): nothing is sent; the text goes
         // back to the composer and the credits sheet opens. The 402 is the backstop.
         if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
@@ -786,7 +799,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     tools: ToolOptionsStore.shared.optionsForSend,
                     workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
                     clientLocation: clientLocation,
-                    personInitiated: personInitiated
+                    personInitiated: personInitiated,
+                    imagePrompt: imagePrompt
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -849,6 +863,23 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     private var browserConsentEpoch = 0
     private var browserOrigin: String?
 
+    /// The raw text of the last Image-mode send in this session. A runtime-issued
+    /// browser-image request is run only when its prompt starts with it.
+    private var lastImageModeText: String?
+
+    /// The send is the confirmation: a runtime's browser-image request runs at once when it
+    /// carries the person's own last Image-mode text, and is refused otherwise.
+    private func autoConfirmBrowserImage() {
+        guard let request = pendingBrowserImage else { return }
+        if let sent = lastImageModeText, let prompt = request.prompt,
+           prompt.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(sent) {
+            confirmBrowserImage()
+        } else {
+            declineBrowserImage()
+        }
+    }
+
+    /// Image mode with no runtime: the picture job starts on this phone with the raw text.
     func requestLocalBrowserImage(_ prompt: String) {
         guard !isStreaming, isChatVisible, pendingBrowserImage == nil, !ACIBrowserImageJob.shared.isBusy else { return }
         let id = "local-" + UUID().uuidString
@@ -870,6 +901,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         browserOrigin = currentSessionId
         browserReplyClient = nil
         pendingBrowserImage = request
+        lastImageModeText = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        autoConfirmBrowserImage()
     }
 
     func declineBrowserImage() {
@@ -1196,6 +1229,18 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         case .artifact(let artifact):
             // Typed artifact frame — no markdown-fence regex. The card
             // appears as soon as the frame arrives.
+            // An engine picture or GIF (`tool-call://<callID>`) goes inside that call's card, not a chip.
+            if let src = artifact.sourceUri, src.hasPrefix("tool-call://"), let url = artifact.url, !url.isEmpty {
+                let callId = String(src.dropFirst("tool-call://".count))
+                var attached = false
+                updateMessage(messageId) { message in
+                    if let i = message.toolCalls.firstIndex(where: { $0.id == callId }) {
+                        message.toolCalls[i].attachedImageURL = url
+                        attached = true
+                    }
+                }
+                if attached { break }
+            }
             let record = ArtifactRecord(agentChat: artifact)
             updateMessage(messageId) { message in
                 message.artifacts.append(record)

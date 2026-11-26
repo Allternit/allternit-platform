@@ -51,6 +51,16 @@ export namespace Question {
         .object({
           steps: z.array(PlanStep),
           page: z.string().optional().describe("Link to the full plan as a page (set by the answer-me plan bridge)"),
+          body: z.string().optional().describe("The plan as Markdown (capped at MAX_PLAN_BODY)"),
+          title: z.string().optional().describe("The plan's title"),
+          artifact: z
+            .object({
+              id: z.string(),
+              version: z.number(),
+              persisted: z.boolean().describe("false = not saved to the account (offline or old server); `body` still carries the plan"),
+            })
+            .optional()
+            .describe("The plan artifact (art_plan_<session id>) this plan was saved as"),
         })
         .optional()
         .describe("Plan approval: steps the person can edit, add, remove and reorder before answering"),
@@ -60,6 +70,7 @@ export namespace Question {
 
   export const MAX_PLAN_STEPS = 50
   export const MAX_PLAN_TEXT = 500
+  export const MAX_PLAN_BODY = 100_000
 
   /** An edited plan from a reply, kept only when it is a valid, bounded step list. */
   export function readPlan(value: unknown): PlanStep[] | undefined {

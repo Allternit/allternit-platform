@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiJson
 import com.allternit.core.api.ApiResult
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.R as DesignR
@@ -293,11 +295,11 @@ fun ProjectPadCard(
         }
         Column(Modifier.fillMaxWidth().background(c.bgPanel).background(folderColor.copy(alpha = 0.05f)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (pad.view == "list") {
-                ListGroup("Needs you", if (data.needsYou == 0) listOf() else listOf("${data.needsYou} waiting"), "Nothing needs you")
-                ListGroup("Threads", data.threads.take(8).map { it.name.ifEmpty { "Untitled" } }, "No threads yet")
-                ListGroup("Files", data.files, "No files yet")
+                ListGroup("Needs you", if (data.needsYou == 0) listOf() else listOf("${data.needsYou} waiting"), "Nothing needs you", art = EmptyArtKind.Bell)
+                ListGroup("Threads", data.threads.take(8).map { it.name.ifEmpty { "Untitled" } }, "No threads yet", art = EmptyArtKind.Envelope)
+                ListGroup("Files", data.files, "No files yet", art = EmptyArtKind.Sheets)
             } else if (pad.tiles.isEmpty()) {
-                Text(if (store.signedOut) "No tiles yet." else "No tiles yet. Choose Edit to add some.", color = c.textSecondary, fontSize = 14.sp)
+                InlineEmpty(if (store.signedOut) "No tiles yet." else "No tiles yet. Choose Edit to add some.", art = EmptyArtKind.Sheets)
             } else {
                 // Phones use 2 columns: S takes 1, M / L / W take the row (iOS PadFlowLayout on a phone).
                 val rows = mutableListOf<List<PadTile>>()
@@ -326,11 +328,11 @@ fun ProjectPadCard(
 }
 
 @Composable
-private fun ListGroup(title: String, rows: List<String>, empty: String) {
+private fun ListGroup(title: String, rows: List<String>, empty: String, art: EmptyArtKind? = null) {
     val c = AllternitTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        if (rows.isEmpty()) Text(empty, color = c.textTertiary, fontSize = 13.sp)
+        if (rows.isEmpty()) InlineEmpty(empty, art = art)
         rows.forEach { Text(it, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }
@@ -355,7 +357,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
             PadTileId.Notes -> {
                 var text by remember(pad.notes) { mutableStateOf(pad.notes) }
                 var job by remember { mutableStateOf<Job?>(null) }
-                if (readOnly) Text(pad.notes.ifEmpty { "No notes yet." }, color = c.textSecondary, fontSize = 14.sp)
+                if (readOnly) { if (pad.notes.isEmpty()) InlineEmpty("No notes yet.", art = EmptyArtKind.Sheets) else Text(pad.notes, color = c.textSecondary, fontSize = 14.sp) }
                 else {
                     Box(Modifier.fillMaxWidth().heightIn(min = 88.dp).clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(10.dp)) {
                         if (text.isEmpty()) Text("No notes yet. Write anything this project should remember.", color = c.textTertiary, fontSize = 14.sp)
@@ -369,7 +371,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
                 }
             }
             PadTileId.Links -> {
-                if (pad.links.isEmpty()) Text("No links yet. Add the sites this project uses.", color = c.textSecondary, fontSize = 13.sp)
+                if (pad.links.isEmpty()) InlineEmpty("No links yet. Add the sites this project uses.", art = EmptyArtKind.Sheets)
                 pad.links.forEachIndexed { i, l ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(l.title, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -382,7 +384,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
             PadTileId.Checklist -> {
                 val done = pad.checklist.count { it.done }
                 Text("$done of ${pad.checklist.size} done", color = c.textTertiary, fontSize = 12.sp)
-                if (pad.checklist.isEmpty()) Text("Nothing on the list yet.", color = c.textSecondary, fontSize = 13.sp)
+                if (pad.checklist.isEmpty()) InlineEmpty("Nothing on the list yet.", art = EmptyArtKind.Sheets)
                 pad.checklist.forEach { item ->
                     Row(
                         Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(enabled = !readOnly) {
@@ -400,7 +402,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
                 }
             }
             PadTileId.Actions -> {
-                if (pad.actions.isEmpty()) Text("No quick actions yet. Add a button that opens a thread or a link.", color = c.textSecondary, fontSize = 13.sp)
+                if (pad.actions.isEmpty()) InlineEmpty("No quick actions yet. Add a button that opens a thread or a link.", art = EmptyArtKind.Envelope)
                 pad.actions.forEach { a ->
                     Text(
                         a.label, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -415,7 +417,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
             }
             PadTileId.Threads -> {
                 val shown = data.threads.sortedByDescending { it.updatedAt }.take(if (tile.size == PadSize.L) 8 else 4)
-                if (shown.isEmpty()) Text("No threads yet.", color = c.textSecondary, fontSize = 13.sp)
+                if (shown.isEmpty()) InlineEmpty("No threads yet.", art = EmptyArtKind.Envelope)
                 shown.forEach { s ->
                     Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable { onOpenThread(s.id) }, verticalAlignment = Alignment.CenterVertically) {
                         Text(s.name.ifEmpty { "Untitled" }, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

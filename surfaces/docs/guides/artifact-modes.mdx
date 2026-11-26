@@ -5,23 +5,46 @@ description: Choose a deliverable format, work in an editor pane, and inspect ge
 
 Artifact modes tell the agent what deliverable to create and which capabilities it needs. Choose a mode in the workspace, describe the result, and inspect the output in its artifact or editor pane. A completion message alone is not the deliverable.
 
-## Choose the format
+## One list of modes
 
-Where the inline mode selector appears, its tabs stay on one horizontally scrollable row. The selected mode uses neutral glass with no accent color. Keyboard focus remains visible; reduced transparency and increased contrast use a solid selection surface.
+**Agent mode** in the composer deck is the only launcher. The Artifacts page uses the same list, so a kind has the same name, icon and order everywhere. There are 16 modes:
 
 | Mode | Expected result |
 | --- | --- |
-| Artifact | The agent chooses a useful format and explains that choice briefly before creating it. |
-| Build | A runnable website or app artifact. The agent looks at it at phone, tablet and laptop widths with `artifact_check` and fixes what it finds before it finishes. |
+| Agent (auto) | The agent chooses a useful format and says briefly why. A stored choice of the old "Artifact" mode reads as Agent (auto). |
+| Agent Swarm | A coordinated run with named roles, ownership, and a synthesized deliverable. |
 | Docs | An editable structured document. |
 | Sheets | An editable spreadsheet with typed data and formulas where needed. |
 | Slides | An editable presentation. |
-| Deep Research | A structured research report with sources and citations. |
-| Image | A generated image checked against the request. |
-| Video | A playable video with the requested duration and format. |
 | PDF | An editable PDF, opened in the PDF editor pane. |
-| Code | Real file changes and runnable code, with appropriate verification. |
-| Agent Swarm | A coordinated run with named roles, ownership, and a synthesized deliverable. |
+| Page | A web page, previewed live. |
+| Dashboard | A live dashboard that reads your connected tools. |
+| Ops sheet | A working sheet tied to your tools and its own data. |
+| Design | An editable design. |
+| Image | A generated image checked against the request. Also makes GIFs. |
+| Video | A playable video with the requested duration and format. |
+| Motion | A motion piece with a timeline. |
+| App | An app made from scratch: a Page that keeps its own data and can ask AI while open. |
+| Build | A runnable website or app artifact. The agent looks at it at phone, tablet and laptop widths with `artifact_check` and fixes what it finds before it finishes. |
+| Deep Research | A structured research report with sources and citations. |
+
+Beta badges stay on the modes that carry them. A surface shows only the modes it can run, so a bot thread shows fewer than 16 (see below).
+
+## Pick a mode, then send
+
+Picking an artifact mode only sets state. The deck shows the mode in place of the word Agent mode, the composer placeholder changes (for Slides, "Describe the slides…"), and an **It can** row appears above the deck tray. Nothing runs until you send. Send starts a new artifact session with your text as its first message. This is also true inside a chat that already has messages: the new session opens beside it and the chat is left as it was.
+
+## It can
+
+The **It can** row holds the toggles the picked kind can honour. A toggle that would do nothing is not shown.
+
+| Toggle | What it does | Shown for |
+| --- | --- | --- |
+| Use my tools | The artifact can read your connected tools. | Every kind |
+| Keep its own data | The artifact keeps data of its own. | Page, Dashboard, Ops sheet, App, Build |
+| Ask AI while open | The artifact can call AI while someone has it open. | Page, Dashboard, Ops sheet, App, Build |
+
+Defaults depend on the kind: **Use my tools** is on for Dashboard, Ops sheet and Deep Research; **Keep its own data** is on for Ops sheet and App; **Ask AI while open** is on for App and Dashboard. Your choices go with the session and are saved on the artifact when it is made. **Make it an app** stays a separate later step on an existing artifact; the App mode is how you start an app from scratch.
 
 A missing tool, provider, or editor capability can block a mode. Choose an available runtime/provider or connect the required capability, then retry. The mode contract requires real output and tool evidence instead of simulated success.
 
@@ -37,7 +60,7 @@ Videos open in the embedded FilmCraft editor: the footage is referenced from All
 
 ## Studio panes
 
-Every tile under **Make something new** on the Artifacts page (and the rail's **+** menu) opens an artifact session: the chat on the left and the artifact's pane on the right. Docs, Sheets, Slides and Design open their editor. **Dashboards**, **Motion**, **Page**, **Build**, **Image**, **Video** and **Deep Research** open a studio pane, which goes through three states:
+Every mode you pick from **Agent mode**, from **+ New** on the Artifacts page, or from the rail's **+** menu opens an artifact session: the chat on the left and the artifact's pane on the right. Docs, Sheets, Slides and Design open their editor. **Dashboard**, **Motion**, **Page**, **App**, **Build**, **Image**, **Video** and **Deep Research** open a studio pane, which goes through three states:
 
 1. **Before anything is made**, the pane says what the session makes and how it works. Describe what you want in the chat.
 2. **While the agent works on it**, the pane shows a card shaped like the result (an image, a 16:9 clip, a dashboard grid, a browser page, a motion timeline, a report) with a moving fill. Under the card are the agent's current thought, how long it has been working, and its latest tool steps, so a long render never looks stalled. Images and videos use a frame the shape of the requested size (square or 16:9 when none was given) with small squares pulsing out from the middle until the result arrives; with reduced motion turned on, the squares stay still.

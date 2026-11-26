@@ -302,11 +302,13 @@ export function ComputeBillingPanel() {
               )}
 
               {runtimes.length === 0 && entitlement?.canCreateHostedRuntime && !showCreate && (
-                <div className="rounded-lg border border-dashed border-[var(--border-subtle)] px-3 py-4 text-center mb-3">
-                  <Cloud size={22} weight="thin" className="mx-auto text-[var(--text-tertiary)] mb-1.5" />
-                  <div className="text-[11px] font-medium text-[var(--text-primary)]">No managed runtime yet</div>
-                  <div className="text-[10px] text-[var(--text-tertiary)] mt-1">Create one within this plan's memory, hour, and instance limits.</div>
-                </div>
+                <EmptyState
+                  art="connect-scene"
+                  size="panel"
+                  className="rounded-lg border border-dashed border-[var(--border-subtle)] mb-3"
+                  title="No managed runtime yet"
+                  caption="Create one within this plan's memory, hour, and instance limits."
+                />
               )}
 
               {runtimes.length > 0 && (

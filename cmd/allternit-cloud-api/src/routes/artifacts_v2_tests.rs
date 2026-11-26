@@ -1,6 +1,6 @@
 //! Route tests for the artifacts v2 API (contract §3). Each test gets its
-//! own Postgres schema (routes::test_support) with migrations 085, 109 and
-//! 161 applied.
+//! own Postgres schema (routes::test_support) with migrations 085, 109, 161
+//! and 166 applied.
 //! Clerk-session callers (org, role, email) are stood in for by the
 //! test-only `x-test-caller` header; API-token and device-token callers go
 //! through the real resolvers.
@@ -23,6 +23,8 @@ async fn setup() -> (Router, PgPool) {
         .execute(&state.db).await.expect("109 applies");
     sqlx::raw_sql(include_str!("../../migrations_pg/161_apps_mcp_2026.sql"))
         .execute(&state.db).await.expect("161 applies");
+    sqlx::raw_sql(include_str!("../../migrations_pg/166_plan_artifacts.sql"))
+        .execute(&state.db).await.expect("166 applies");
     let db = state.db.clone();
     (routes().with_state(state), db)
 }
@@ -682,4 +684,125 @@ async fn put_app_accepts_export_mcp_and_keeps_it_when_omitted() {
     let (status, _) = call(&router, "PUT", &app_path, &owner,
         Some(json!({"name": "Exports", "tier": "app", "snapshot": {"export_mcp": true}}))).await;
     assert!(status.is_client_error(), "unknown fields stay refused");
+}
+
+async fn create_plan(router: &Router, caller: &Value, session: &str, body: &str) -> (StatusCode, Value) {
+    call(
+        router,
+        "POST",
+        "/api/v2/artifacts",
+        caller,
+        Some(json!({
+            "id": format!("art_plan_{session}"),
+            "kind": "plan",
+            "title": "Q4 launch plan",
+            "origin": {"surface": "gizzi", "session_id": session},
+            "body": body,
+        })),
+    )
+    .await
+}
+
+fn item_ids(list: &Value) -> Vec<String> {
+    list["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()
+}
+
+#[tokio::test]
+async fn plans_stay_out_of_the_default_list_and_keep_one_row_per_chat() {
+    let (router, _db) = setup().await;
+    let owner = who("u_plan_owner", Some("org_plan"), None);
+    let doc = create(&router, &owner, "doc", "Q4 launch notes").await;
+
+    let (status, plan) = create_plan(&router, &owner, "ses_1", "# Q4 launch\n\n1. Ship it").await;
+    assert_eq!(status, StatusCode::CREATED, "{plan}");
+    let plan_id = "art_plan_ses_1";
+    assert_eq!(plan["id"], json!(plan_id));
+    assert_eq!(plan["version"]["body_format"], json!("text/markdown"), "plans default to Markdown");
+    assert_eq!(plan["plan"]["status"], json!("open"), "a new plan reads as open");
+
+    // D11: the default list (and a title search, and an org member's list)
+    // never shows a plan; kind=plan does.
+    let (_, all) = call(&router, "GET", "/api/v2/artifacts", &owner, None).await;
+    assert_eq!(item_ids(&all), vec![doc.clone()]);
+    assert!(all["items"][0].get("plan").is_none(), "only plan rows carry plan: {all}");
+    let (_, searched) = call(&router, "GET", "/api/v2/artifacts?q=Q4", &owner, None).await;
+    assert_eq!(item_ids(&searched), vec![doc.clone()]);
+    let (_, plans) = call(&router, "GET", "/api/v2/artifacts?kind=plan", &owner, None).await;
+    assert_eq!(item_ids(&plans), vec![plan_id.to_string()]);
+    assert_eq!(plans["items"][0]["plan"]["status"], json!("open"));
+
+    // One plan per chat: a second create with the same id returns the first
+    // row unchanged, and a revision is a new version of that row.
+    let (status, again) = create_plan(&router, &owner, "ses_1", "# Q4 launch\n\n1. Ship it\n2. Tell people").await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["id"], json!(plan_id));
+    assert_eq!(again["current_version"], json!(1));
+    let (status, _) = call(
+        &router,
+        "POST",
+        &format!("/api/v2/artifacts/{plan_id}/versions"),
+        &owner,
+        Some(json!({"base_version": 1, "body": "# Q4 launch\n\n1. Ship it\n2. Tell people", "author": "assistant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, plans) = call(&router, "GET", "/api/v2/artifacts?kind=plan", &owner, None).await;
+    assert_eq!(item_ids(&plans), vec![plan_id.to_string()], "a revision adds a version, not a row");
+    assert_eq!(plans["items"][0]["current_version"], json!(2));
+    let (_, all) = call(&router, "GET", "/api/v2/artifacts", &owner, None).await;
+    assert_eq!(item_ids(&all), vec![doc], "a revised plan still stays out of the default list");
+
+    // A plan is not installable as an app.
+    let (status, got) = call(
+        &router,
+        "PUT",
+        &format!("/api/v2/artifacts/{plan_id}/app"),
+        &owner,
+        Some(json!({"name": "Plan", "tier": "browser"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{got}");
+    assert_eq!(got["error"], "kind_not_installable", "{got}");
+}
+
+#[tokio::test]
+async fn plan_status_patch_is_owner_only_and_plan_only() {
+    let (router, _db) = setup().await;
+    let owner = who("u_plan_owner2", None, None);
+    let editor = who("u_plan_editor", None, None);
+    let outsider = who("u_plan_outsider", None, None);
+    let (status, _) = create_plan(&router, &owner, "ses_2", "1. Do the thing").await;
+    assert_eq!(status, StatusCode::CREATED);
+    let plan_path = "/api/v2/artifacts/art_plan_ses_2";
+    let (status, _) = share(&router, &owner, "art_plan_ses_2", "people", json!([{"principal_type": "user", "principal_id": "u_plan_editor", "level": "edit"}])).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let approve = json!({"plan_status": "approved"});
+    let (status, _) = call(&router, "PATCH", plan_path, &editor, Some(approve.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "only the owner sets a plan's status");
+    let (status, _) = call(&router, "PATCH", plan_path, &outsider, Some(approve.clone())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, got) = call(&router, "PATCH", plan_path, &owner, Some(approve)).await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    assert_eq!(got["plan"]["status"], json!("approved"));
+    assert_eq!(got["current_version"], json!(1), "a status change is not a new version");
+
+    let (status, got) = call(&router, "PATCH", plan_path, &owner, Some(json!({"plan_status": "finished"}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{got}");
+    assert_eq!(got["error"], "invalid_plan_status");
+    let (status, got) = call(&router, "PATCH", plan_path, &owner, Some(json!({"plan_status": null}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{got}");
+
+    let doc = create(&router, &owner, "doc", "Not a plan").await;
+    let (status, got) = call(&router, "PATCH", &format!("/api/v2/artifacts/{doc}"), &owner, Some(json!({"plan_status": "done"}))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{got}");
+    assert_eq!(got["error"], "not_a_plan");
+
+    let (status, got) = call(&router, "PATCH", plan_path, &owner, Some(json!({"plan_status": "done"}))).await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    let (_, plans) = call(&router, "GET", "/api/v2/artifacts?kind=plan", &owner, None).await;
+    assert_eq!(plans["items"][0]["plan"]["status"], json!("done"));
+    let (_, one) = call(&router, "GET", plan_path, &owner, None).await;
+    assert_eq!(one["plan"]["status"], json!("done"));
 }

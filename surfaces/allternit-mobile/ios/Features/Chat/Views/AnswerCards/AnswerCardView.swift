@@ -368,9 +368,7 @@ struct PlacesAnswerCard: View {
                 .foregroundColor(Color("TextSecondary"))
 
             if data.places.isEmpty {
-                Text("No places found.")
-                    .font(.subheadline)
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No places found.", art: .search)
             }
             VStack(spacing: 0) {
                 ForEach(Array(data.places.enumerated()), id: \.offset) { index, place in

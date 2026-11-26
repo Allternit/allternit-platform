@@ -255,11 +255,13 @@ object AciApi {
         }
     }
 
-    /** Account flag `computers_console`: `GET {cloud}/api/v1/me/flags`, on when the key is present and not null (iOS AccountFlagsClient). */
+    /** Account flag `computers_console`: `GET {cloud}/api/v1/me/flags`, on unless explicitly off. */
     suspend fun consoleFlag(): Boolean {
         val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/me/flags").build()
         val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonElement.serializer())
-        return ((r as? ApiResult.Ok)?.value as? JsonObject)?.get("computers_console").let { it != null && it !is JsonNull }
+        // On by default (UI feedback 11-25 E2): only an explicit false/"off" hides the console; a missing key or a failed read shows it.
+        val v = ((r as? ApiResult.Ok)?.value as? JsonObject)?.get("computers_console")
+        return !(v is kotlinx.serialization.json.JsonPrimitive && v !is JsonNull && (v.content == "false" || v.content == "off"))
     }
 
     /**

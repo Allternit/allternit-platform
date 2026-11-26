@@ -268,13 +268,14 @@ internal fun AciAppsShelf() {
         }
     }
     stopping?.let { link ->
-        AlertDialog(
-            onDismissRequest = { stopping = null },
-            title = { Text("Stop this link?") },
-            text = { Text("Anyone with the link loses access. You can make a new one later.") },
-            confirmButton = { TextButton({ stopping = null; scope.launch { model.revoke(link) } }) { Text("Stop link") } },
-            dismissButton = { TextButton({ stopping = null }) { Text("Keep it") } },
-        )
+        // Ending a link is a hold, never a dialog (UI feedback 11-25).
+        ModalBottomSheet(onDismissRequest = { stopping = null }, containerColor = c.bgPrimary) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Stop this link?", color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("Anyone with the link loses access. You can make a new one later.", color = c.textSecondary, fontSize = 14.sp)
+                com.allternit.core.design.HoldButton("Hold to stop link", "aciAppsStopLink", danger = true) { stopping = null; scope.launch { model.revoke(link) } }
+            }
+        }
     }
     opened?.let { (url, name) ->
         Dialog(onDismissRequest = { opened = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -318,10 +319,22 @@ private fun ShelfSection(title: String, rows: List<ShelfRow>, empty: String, mod
                                 if (!AppShortcuts.pin(context, row)) model.notice = "This launcher can’t add shortcuts to the home screen."
                             }
                         }
+                        AppsShelfLinks.openUrl(row.link)?.let { url ->
+                            ShelfPill("Copy app link", "Copy ${row.name} link", enabled = !busy) {
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("App link", url))
+                                model.notice = "App link copied."
+                            }
+                        }
                         ShelfPill("Remove", "Remove ${row.name}", enabled = !busy) { scope.launch { model.uninstall(row) } }
                     } else {
                         ShelfPill("Install", "Install ${row.name}", filled = true, enabled = !busy) { model.requestInstall(row) }
                         if (row.link != null) ShelfPill("Open", "Open ${row.name}", enabled = !busy) { onOpen(row) }
+                        AppsShelfLinks.openUrl(row.link)?.let { url ->
+                            ShelfPill("Copy app link", "Copy ${row.name} link", enabled = !busy) {
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("App link", url))
+                                model.notice = "App link copied."
+                            }
+                        }
                     }
                 }
             }

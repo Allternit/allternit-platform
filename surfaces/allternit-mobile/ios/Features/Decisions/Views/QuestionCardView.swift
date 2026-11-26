@@ -27,6 +27,7 @@ struct QuestionCardView: View {
     @State private var isSending = false
     @State private var sendError: String? = nil
     @State private var sentLabel: String? = nil
+    @State private var showPlan = false
     @FocusState private var textFocused: Bool
 
     private var questions: [AgentQuestionInfo] { request.questions }
@@ -71,6 +72,12 @@ struct QuestionCardView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(agentName.map { "\($0) asks" } ?? "Agent question")
+        .sheet(isPresented: $showPlan) {
+            if let plan = current.plan {
+                PlanSheetView(plan: plan, agentName: agentName, isSending: isSending, error: sendError,
+                              onAction: answerPlan, onClose: { showPlan = false })
+            }
+        }
     }
 
     // MARK: - Header
@@ -116,6 +123,74 @@ struct QuestionCardView: View {
         }
     }
 
+    /// Plan question: title, step count, "Open plan". Approve / Revise / Ask
+    /// live in the sheet (web plan bar).
+    private func planCard(_ plan: AgentQuestionPlan) -> some View {
+        let n = plan.steps.count
+        let t = plan.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return HStack(spacing: 10) {
+            Image(systemName: "list.number")
+                .foregroundColor(Color("TextSecondary"))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(t.isEmpty ? "Untitled plan" : t)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(2)
+                Text("Plan · \(n) \(n == 1 ? "step" : "steps")")
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            Spacer(minLength: 0)
+            Button("Open plan") { showPlan = true }
+                .buttonStyle(QuestionCardButtonStyle(kind: .primary))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPrimary"))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    private func answerPlan(_ action: PlanSheetView.Action) {
+        let label = action == .approve ? current.planApproveLabel : current.planKeepLabel
+        guard let label else {
+            sendError = "This plan can't be answered here. Open the chat."
+            return
+        }
+        let answers = questions.indices.map { i in
+            AgentAsksClient.ReplyAnswer(questionIndex: i, answer: .one(i == index ? label : ""))
+        }
+        isSending = true
+        sendError = nil
+        Task {
+            do {
+                try await store.answer(request, answers: answers)
+                showPlan = false
+                withAnimation(.easeOut(duration: 0.2)) {
+                    switch action {
+                    case .approve: sentLabel = agentName.map { "Approved. \($0) is running the plan" } ?? "Approved. Running the plan"
+                    case .revise: sentLabel = "Sent back for changes"
+                    case .ask: sentLabel = "Plan kept open"
+                    }
+                }
+                // Revise / Ask: focus the composer with the web's prompt
+                // (ChatComposer PLAN_NOTE), after the plan sheet has closed.
+                if action != .approve {
+                    let note = action == .revise ? "What should change in the plan?" : "Ask about the plan…"
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    NotificationCenter.default.post(name: .composerFocusRequest, object: nil, userInfo: ["placeholder": note])
+                }
+                Haptics.success()
+                isSending = false
+                onResolved()
+            } catch {
+                isSending = false
+                sendError = "Couldn't send your answer. \(FriendlyErrorMessage.from(error.localizedDescription))"
+                Haptics.error()
+            }
+        }
+    }
+
     private func riskBadge(_ risk: String) -> some View {
         Text(risk.capitalized + " risk")
             .font(.caption2.weight(.semibold))
@@ -130,14 +205,15 @@ struct QuestionCardView: View {
     @ViewBuilder
     private var questionBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(current.options.enumerated()), id: \.offset) { optionIndex, option in
+            if let plan = current.plan { planCard(plan) }
+            ForEach(Array(current.plan == nil ? current.options.enumerated().map { $0 } : []), id: \.offset) { optionIndex, option in
                 optionRow(option, at: optionIndex)
                 if current.isTree, draft.selected.first == optionIndex, let followUp = option.then {
                     followUpBlock(followUp)
                 }
             }
 
-            if current.options.isEmpty || current.custom {
+            if current.plan == nil && (current.options.isEmpty || current.custom) {
                 TextField(current.options.isEmpty ? "Type your answer…" : "Something else…", text: textBinding, axis: .vertical)
                     .lineLimit(1...4)
                     .font(.subheadline)
@@ -284,6 +360,7 @@ struct QuestionCardView: View {
             Button(request.isAsync ? "Dismiss" : "Skip") { skipCurrent() }
                 .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
                 .disabled(isSending)
+            if current.plan == nil {
             Button {
                 advance()
             } label: {
@@ -295,6 +372,7 @@ struct QuestionCardView: View {
             }
             .buttonStyle(QuestionCardButtonStyle(kind: .primary))
             .disabled(isSending || !hasAnswer)
+            }
         }
     }
 

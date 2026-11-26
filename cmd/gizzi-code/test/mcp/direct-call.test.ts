@@ -73,4 +73,37 @@ describe("MCP.callDirect (Island bar run path)", () => {
       release()
     }
   }, 60_000)
+
+  test("a call carrying mcpProxy resolves the tool from the user proxy, uses toolCallID as task id, and releases the proxy", async () => {
+    const fake = fakeServer()
+    servers.push(fake.server)
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tasks: Array<{ taskId: string; status: string }> = []
+        const unsub = Bus.subscribe(McpTaskStream.TaskEvent, (e) =>
+          tasks.push({ taskId: (e.properties.part as any).taskId, status: e.properties.part.status }),
+        )
+        const out = await MCP.callDirect({
+          sessionID: "bar:job-2",
+          server: "allternit-connectors",
+          tool: "app__ping",
+          args: { n: 2 },
+          toolCallID: "bar_job-2",
+          mcpProxy: { server: "allternit-connectors", url: fake.url, sessionId: "bar:job-2", token: "t" },
+        })
+        await new Promise((r) => setTimeout(r, 50))
+        unsub()
+        expect(out?.toolCallID).toBe("bar_job-2")
+        expect(out?.result).toMatchObject({ content: [{ text: "pong" }] })
+        expect(tasks).toEqual([
+          { taskId: "direct:bar_job-2", status: "working" },
+          { taskId: "direct:bar_job-2", status: "completed" },
+        ])
+        expect(fake.calls[0]).toMatchObject({ name: "app__ping", arguments: { n: 2 } })
+        expect(McpUserProxy.current("bar:job-2")).toBeUndefined()
+      },
+    })
+  }, 60_000)
 })

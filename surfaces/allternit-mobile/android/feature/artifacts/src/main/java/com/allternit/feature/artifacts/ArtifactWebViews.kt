@@ -231,9 +231,13 @@ sealed interface PageSource {
 /**
  * iOS ArtifactPageWebView. Tapped links open outside. Unlike iOS (which only cancelled tapped
  * links), every later main-frame navigation is refused, so a script or form cannot move the view.
+ *
+ * [appHost] (an installed app's page, Artifacts redesign 6.8): the app may navigate and redirect
+ * within its own https host, so its own links and sign-in redirects work; a tapped link to any
+ * other host opens outside, and an untapped jump to another host is refused.
  */
 @Composable
-fun ArtifactPageWebView(source: PageSource, modifier: Modifier = Modifier) {
+fun ArtifactPageWebView(source: PageSource, modifier: Modifier = Modifier, appHost: String? = null) {
     val context = LocalContext.current
     // A remote page shows the dot band until the real page-finished event; inline html is instant, so it gets no field.
     var pageLoading by remember(source) { mutableStateOf(source is PageSource.Url) }
@@ -248,6 +252,8 @@ fun ArtifactPageWebView(source: PageSource, modifier: Modifier = Modifier) {
                     override fun onPageFinished(view: WebView, url: String?) { settled = true; pageLoading = false }
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         if (!request.isForMainFrame) return false
+                        if (appHost != null && request.url.scheme?.lowercase() == "https" &&
+                            request.url.host.equals(appHost, ignoreCase = true)) return false
                         if (!settled && !request.hasGesture()) return false
                         val scheme = request.url.scheme?.lowercase()
                         if (request.hasGesture() && scheme in externalSchemes) openExternal(context, request.url.toString())

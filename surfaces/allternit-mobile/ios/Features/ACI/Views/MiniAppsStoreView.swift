@@ -165,11 +165,11 @@ struct MiniAppsStoreView: View {
     private var emptyState: some View {
         FriendlyStateView(
             style: .empty,
-            icon: searchText.isEmpty ? "app.window" : "magnifyingglass",
             title: "No mini apps found",
             message: searchText.isEmpty
                 ? "Browse connectors, runtimes, and tools."
-                : "No mini apps match your search."
+                : "No mini apps match your search.",
+            art: .search
         )
     }
 

@@ -41,6 +41,7 @@ import com.allternit.core.api.ApiJson
 import com.allternit.core.api.ApiResult
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
@@ -124,6 +125,7 @@ internal fun ShellSearchScreen(
                 style = FriendlyStyle.Empty,
                 title = "No results",
                 message = "Nothing matches “$query”.",
+                art = EmptyArtKind.Search,
                 modifier = Modifier.padding(20.dp).testTag("shellSearchEmpty"),
             ) { Icon(painterResource(DesignR.drawable.ph_magnifying_glass), contentDescription = null, tint = c.textSecondary) }
             else -> LazyColumn(Modifier.fillMaxSize()) {

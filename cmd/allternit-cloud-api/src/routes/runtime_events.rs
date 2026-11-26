@@ -42,6 +42,11 @@
 //! ([`notifications::ingest_snapshot`]), then plans the Live Activity and widget pushes
 //! ([`super::live_activity::on_snapshot`]).
 //!
+//! **`bar_job.changed`** is not an event either: its `data` (`jobId`, `title`, `appName`, `state`,
+//! `approverUserId`, `approverName`, `requesterUserId`, `botName`, `amount`, `receipt`, `error`,
+//! and for the approver `inboxId`, `question`, `contentHash`, `approveInline`, `private`) plans the
+//! bar job Live Activity push for this runtime's owner ([`super::live_activity::on_bar_job`]).
+//!
 //! Cloud sets `runtimeId` in every event's `data` (the authenticated runtime,
 //! whatever the body said).
 //!
@@ -78,8 +83,8 @@ use crate::ApiState;
 
 pub const PATH: &str = "/api/v1/runtime/events";
 pub const RUNTIME_ID_HEADER: &str = "x-allternit-runtime-id";
-const SIG_HEADER: &str = "x-allternit-runtime-sig";
-const TS_HEADER: &str = "x-allternit-runtime-ts";
+pub(crate) const SIG_HEADER: &str = "x-allternit-runtime-sig";
+pub(crate) const TS_HEADER: &str = "x-allternit-runtime-ts";
 pub const MAX_SKEW_SECS: i64 = 300;
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENTS: usize = 100;
@@ -87,6 +92,8 @@ pub const MAX_EVENTS: usize = 100;
 pub const MAX_DATA_BYTES: usize = 250 * 1024;
 /// The forwarded type that carries the runtime's status, not an event.
 pub const STATUS_SNAPSHOT: &str = "status.snapshot";
+/// An Island bar job changed state. Not stored: planned as a Live Activity push ([`super::live_activity::on_bar_job`]).
+pub const BAR_JOB_CHANGED: &str = "bar_job.changed";
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route(PATH, post(ingest_route))
@@ -252,6 +259,18 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
             }
             continue;
         }
+        if ev.kind == BAR_JOB_CHANGED {
+            // Not a stored event: the job's Live Activity push, for this runtime's owner.
+            if serde_json::to_vec(&data).map(|b| b.len()).unwrap_or(usize::MAX) > MAX_DATA_BYTES {
+                rejected += 1;
+                results.push(json!({ "id": ev.id, "status": "too_large" }));
+                continue;
+            }
+            tokio::spawn(super::live_activity::on_bar_job(db.clone(), user_id.to_string(), runtime_id.to_string(), data));
+            accepted += 1;
+            results.push(json!({ "id": ev.id, "status": "accepted" }));
+            continue;
+        }
         let Some(name) = allternit_events::from_runtime(&ev.kind, &data) else {
             ignored += 1;
             results.push(json!({ "id": ev.id, "status": "ignored" }));
@@ -380,6 +399,8 @@ async fn twin_approval_row(
             proposed_action: json!({
                 "action": action, "authority": data.get("authority"), "agent_id": agent,
                 "thread_id": data.get("thread_id"), "remote_ref": data.get("remoteRef"), "summary": data.get("summary"),
+                // Routing (lane 14): `platform_v1::approvals::routing` reads these snake_case keys.
+                "approver_user_id": data.get("approverUserId"), "rule_id": data.get("ruleId"), "actor_ref": data.get("actorRef"),
             }),
             status: "pending",
             // The event's deadline, or none: twin approvals don't expire on their own.
@@ -560,5 +581,24 @@ mod tests {
         // Idempotency is per runtime: another runtime's e1 is its own event.
         let other = ingest(&db, "user-1", "rt-2", batch[..1].to_vec()).await.unwrap();
         assert_eq!(other["results"][0]["status"], "accepted");
+    }
+
+    #[tokio::test]
+    async fn a_twin_approval_requested_event_carries_its_routing_into_the_row() {
+        let db = test_pool().await;
+        crate::routes::test_support::platform_schema(&db).await;
+        sqlx::query("INSERT INTO platform_projects (id, owner_user_id, name, env) VALUES ('prj_1', 'user-1', 'Test', 'sandbox')").execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO platform_accounts (id, project_id, name) VALUES ('acct', 'prj_1', 'Acct')").execute(&db).await.unwrap();
+        let routed = json!({ "approvalId": "ap-1", "action": "send_email", "approverUserId": "user_boss", "ruleId": "arl_9", "actorRef": "b:agent_7" });
+        let (row, created) = twin_approval_row(&db, "prj_1", "acct", "agent_7", &routed).await.unwrap().unwrap();
+        assert!(created);
+        assert_eq!((row.proposed_action["approver_user_id"].as_str(), row.proposed_action["rule_id"].as_str()), (Some("user_boss"), Some("arl_9")));
+        let stored: (Option<String>, Option<String>, Option<String>) =
+            sqlx::query_as("SELECT approver_user_id, rule_id, actor_ref FROM platform_approvals WHERE source_ref = 'ap-1'").fetch_one(&db).await.unwrap();
+        assert_eq!(stored, (Some("user_boss".into()), Some("arl_9".into()), Some("b:agent_7".into())));
+        // An event with no routing stays unrouted (today's behavior).
+        twin_approval_row(&db, "prj_1", "acct", "agent_7", &json!({ "approvalId": "ap-2", "action": "x" })).await.unwrap().unwrap();
+        let unrouted: Option<String> = sqlx::query_scalar("SELECT approver_user_id FROM platform_approvals WHERE source_ref = 'ap-2'").fetch_one(&db).await.unwrap();
+        assert_eq!(unrouted, None);
     }
 }

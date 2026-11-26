@@ -516,7 +516,7 @@ private struct BotFormSheet: View {
             if model.brainsLoading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 40)
             } else if model.knowledgeBrains.isEmpty {
-                note("No Gizzi knowledge brains found. The bot uses the brain picked above.")
+                FriendlyInlineStateView(title: "No Gizzi knowledge brains found. The bot uses the brain picked above.", art: .search)
             } else {
                 menuRow(value: model.knowledgeBrains.first { $0.id == model.knowledgeBrainId }?.label ?? "Platform model") {
                     Button("Platform model") { model.knowledgeBrainId = "" }
@@ -695,7 +695,7 @@ private struct BotFormSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             label("Owns")
             if model.owns.isEmpty {
-                note("Nothing yet. Add what this bot is responsible for.")
+                FriendlyInlineStateView(title: "Nothing yet. Add what this bot is responsible for.", art: .gizzi)
             } else {
                 chips(model.owns) { item in model.owns.removeAll { $0 == item } }
             }

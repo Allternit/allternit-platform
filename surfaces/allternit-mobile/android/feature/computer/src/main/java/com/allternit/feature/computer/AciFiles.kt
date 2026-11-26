@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.list
@@ -251,9 +252,9 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActi
                     val e = error
                     val list = roots
                     when {
-                        e != null && list == null -> AciStateCard(if (e.gate) "No computer is connected" else "Couldn’t load Files", e.message, "Retry", { scope.launch { load() } })
+                        e != null && list == null -> AciStateCard(if (e.gate) "No computer is connected" else "Couldn’t load Files", e.message, "Retry", { scope.launch { load() } }, art = if (e.gate) EmptyArtKind.ConnectScene else null)
                         list == null -> AciStateCard("Loading Files…", "Reading this computer’s folders.")
-                        list.isEmpty() -> AciStateCard("No folders yet", "This computer hasn’t shared any folders with Files.")
+                        list.isEmpty() -> AciStateCard("No folders yet", "This computer hasn’t shared any folders with Files.", art = EmptyArtKind.Sheets)
                         else -> {
                             AciListRow("Inbox requests", "Files dropped in Inbox that wait for you", if (pendingCount > 0) "$pendingCount" else null, "filesInboxRequestsRow", onInbox)
                             list.filter { r -> diskRoots.none { it.path == r.pathHint } }.forEach { r -> AciListRow(r.name, r.kind.replaceFirstChar { it.uppercase() }, null, "filesRoot-${r.id}") { onRoot(r) } }

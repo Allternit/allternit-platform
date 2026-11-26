@@ -74,7 +74,7 @@ internal class LocalImageStore(context: Context, account: String) {
         return result.distinctBy { it.id }
     }
     fun message(row: JSONObject, liveCall: String? = null): MessageRecord {
-        val payload = row.optJSONObject("result") ?: BrowserImageJob.error("ambiguous_submission", "This request was interrupted. Check ChatGPT before making another image; it will not be sent again.")
+        val payload = row.optJSONObject("result") ?: BrowserImageJob.error("ambiguous_submission", "This request was interrupted. Check the browser before making another image; it will not be sent again.")
         val running = !row.has("result") && row.getString("call") == liveCall
         val call = ToolCallRecord(row.getString("call"), "media_generate", if (running) ToolState.Running else if (payload.optBoolean("ok")) ToolState.Done else ToolState.Failed,
             output = payload.toString(), browserImageResult = payload.toString(), error = payload.optString("error").takeIf { !running && it.isNotBlank() },

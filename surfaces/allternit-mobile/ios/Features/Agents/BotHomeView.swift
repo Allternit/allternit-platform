@@ -652,9 +652,7 @@ struct BotHomeView: View {
             }
 
             if agent.connectorBindings.isEmpty {
-                Text("No connectors bound yet. Connect apps so this bot can act on your behalf.")
-                    .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No connectors bound yet. Connect apps so this bot can act on your behalf.", art: .apps)
             } else {
                 FlowLayout(spacing: 8) {
                     ForEach(agent.connectorBindings) { binding in

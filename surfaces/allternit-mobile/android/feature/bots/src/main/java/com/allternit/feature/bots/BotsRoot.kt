@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -822,10 +823,38 @@ private fun RosterCard(e: RosterEntry, store: BotModeStore, deck: Boolean, selec
 
 /** A pushed screen's frame: a back header, then the content (iOS navigation bar on pushed screens). */
 @Composable
-internal fun BotScreen(title: String, nav: BotNavigator, subtitle: String? = null, testTag: String, trailing: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
+internal fun BotScreen(title: String, nav: BotNavigator, subtitle: String? = null, testTag: String, trailing: @Composable () -> Unit = {}, dock: Boolean = false, content: @Composable () -> Unit) {
+    if (dock) {
+        BotDockFrame { dockContent -> Column(Modifier.fillMaxSize().statusBarsPadding().testTag(testTag)) {
+            LibraryHeader(title = title, subtitle = subtitle, onBack = nav::back, backTag = "botsBack", trailing = trailing)
+            Box(Modifier.weight(1f).fillMaxWidth().then(dockContent).padding(top = 48.dp)) { content() }
+        } }
+        return
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag(testTag)) {
         LibraryHeader(title = title, subtitle = subtitle, onBack = nav::back, backTag = "botsBack", trailing = trailing)
         Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+    }
+}
+
+/**
+ * Docking title for a pushed Bots screen (UI feedback 11-25 A4/A6). The content scrolls however it likes (lazy list or
+ * column), so the page offset is read from the scroll the content consumes (nested scroll), in dp.
+ */
+@Composable
+internal fun BotDockFrame(body: @Composable (Modifier) -> Unit) {
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val y = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val connection = androidx.compose.runtime.remember(density) {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                y.floatValue = (y.floatValue - consumed.y / density).coerceAtLeast(0f)
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+    com.allternit.core.design.ProvideDockScroll({ y.floatValue }) {
+        body(Modifier.nestedScroll(connection))
     }
 }
 
@@ -848,13 +877,13 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
     }
     when (route) {
         is BotRoute.Chat -> withBot(route.botId) { BotChatSessionScreen(it, route.sessionId, host, store, nav, newThread = route.newThread) }
-        is BotRoute.Page -> withBot(route.botId) { b -> BotScreen(b.displayName, nav, testTag = "botPageScreen") { BotPageView(b, store, nav, backend = host.backend) } }
-        is BotRoute.Threads -> BotScreen(route.botId?.let { store.bot(it)?.displayName } ?: "Threads", nav, testTag = "botThreadsScreen") {
-            BotThreadsOverview(store, route.botId) { nav.openThread(it) }
+        is BotRoute.Page -> withBot(route.botId) { b -> BotScreen(b.displayName, nav, testTag = "botPageScreen", dock = true) { BotPageView(b, store, nav, backend = host.backend) } }
+        is BotRoute.Threads -> BotScreen("Threads", nav, subtitle = route.botId?.let { store.bot(it)?.displayName }, testTag = "botThreadsScreen", dock = true) {
+            BotThreadsOverview(store, route.botId, showTitle = false) { nav.openThread(it) }
         }
         is BotRoute.Project -> BotProjectPage(route.project, host, store, nav)
         is BotRoute.ProjectThread -> BotProjectThreadPage(route.thread, store, nav)
-        is BotRoute.Tasks -> withBot(route.botId) { b -> BotScreen("Tasks", nav, testTag = "botTasksScreen") { BotThreadTasks(store, b, null) { nav.openThread(it) } } }
+        is BotRoute.Tasks -> withBot(route.botId) { b -> BotScreen("Tasks", nav, subtitle = b.displayName, testTag = "botTasksScreen", dock = true) { BotThreadTasks(store, b, null, showTitle = false) { nav.openThread(it) } } }
         is BotRoute.Channels -> withBot(route.botId) { b -> BotScreen("Channels", nav, testTag = "botChannelsScreen") { BotChannelsView(b) } }
         is BotRoute.Computer -> withBot(route.botId) { b -> BotComputerScreen(b, nav) }
         is BotRoute.Stage -> withBot(route.botId) { BotLiveStageScreen(it, host, store, nav) }

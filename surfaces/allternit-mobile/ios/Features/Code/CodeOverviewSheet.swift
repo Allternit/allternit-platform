@@ -68,6 +68,8 @@ struct CodeSessionsOverview: View {
     let onClose: () -> Void
     let onOpenSession: (AgentSession) -> Void
     let onArchive: (AgentSession) -> Void
+    /// Hold-to-delete on archived sessions; nil hides it.
+    var onDelete: ((AgentSession) -> Void)? = nil
     let onStart: (String) -> Void
     let onRefresh: () async -> Void
     /// Opens a terminal on the computer by its session id (and title) in
@@ -211,11 +213,7 @@ struct CodeSessionsOverview: View {
                 Section {
                     if items.isEmpty {
                         VStack(spacing: 12) {
-                            GizziWalk()
-                            Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
-                                .font(.system(size: 13))
-                                .foregroundColor(Color("TextSecondary"))
-                                .multilineTextAlignment(.center)
+                            FriendlyStateView(title: q.isEmpty ? filter.emptyText : "No code sessions match.", art: .search, size: .panel)
                             if q.isEmpty {
                                 Button {
                                     Haptics.light()
@@ -487,24 +485,7 @@ struct CodeSessionsOverview: View {
     private var computersSection: some View {
         Section {
             if relay.devices.isEmpty {
-                Button(action: { sheet = .connect }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "desktopcomputer")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color("TextSecondary"))
-                            .frame(width: 24)
-                        Text("No computers yet")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color("TextSecondary"))
-                        Spacer()
-                        Text("Connect")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color("TextPrimary"))
-                    }
-                    .frame(minHeight: 48)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                FriendlyInlineStateView(title: "No computers yet", actionTitle: "Connect", action: { sheet = .connect }, art: .connectScene)
                 .plainCodeRow()
             } else {
                 ForEach(relay.devices) { device in
@@ -565,7 +546,18 @@ struct CodeSessionsOverview: View {
 
     // MARK: Sessions
 
+    @ViewBuilder
     private func sessionRow(_ session: AgentSession) -> some View {
+        sessionRowBody(session)
+        if status(session) == .archived, let onDelete {
+            ACIHoldButton(title: "Hold to delete", danger: true) { onDelete(session) }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .plainCodeRow()
+        }
+    }
+
+    private func sessionRowBody(_ session: AgentSession) -> some View {
         let s = status(session)
         let unread = shellSessions.isUnread(session) && s != .working
         return Button(action: { onOpenSession(session) }) {
@@ -760,14 +752,7 @@ struct CodeDeviceSheet: View {
                 .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             if here.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: 18))
-                        .foregroundColor(Color("TextTertiary"))
-                    Text("No active sessions on this computer")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                }
+                FriendlyStateView(title: "No active sessions on this computer", art: .connectScene, size: .panel)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             } else {

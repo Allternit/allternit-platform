@@ -7,6 +7,7 @@ import { Dialog } from '../../components/design-system/Dialog.js';
 import { SelectMulti } from '../../components/CustomSelect/SelectMulti.js';
 import { getAttributionTexts } from '../../utils/attribution.js';
 import type { LocalJSXCommandCall } from '../../types/command.js';
+import { EmptyLine } from '../../components/EmptyLine'
 
 type Props = {
   onDone(): void;
@@ -72,7 +73,7 @@ export function CommitDialog({ onDone }: Props) {
   if (files.length === 0) {
     return (
       <Dialog title="Git Commit" color="info" onCancel={onDone}>
-        <Text>No modified files to commit.</Text>
+        <EmptyLine>No modified files to commit.</EmptyLine>
       </Dialog>
     );
   }

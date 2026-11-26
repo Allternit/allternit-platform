@@ -27,6 +27,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -418,6 +419,41 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             },
         )
     }
+    // Artifacts redesign 6.2: the composer's artifact mode + Send starts that kind's artifact session
+    // (start, then send the text as its first message), and the library opens straight into it.
+    var libraryStudio by remember { mutableStateOf<com.allternit.feature.artifacts.StudioSession?>(null) }
+    var libraryOpenId by remember { mutableStateOf<String?>(null) }
+    var libraryNonce by remember { mutableIntStateOf(0) }
+    val libraryRow = RailRow("artifacts-library", "Artifacts", DesignR.drawable.ph_file_text)
+    val startArtifact: (DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit = { mode, draft, itCan ->
+        val kind = com.allternit.feature.artifacts.StudioKind.forMode(mode.id)
+        scope.launch {
+            val launched = kind?.let { com.allternit.feature.artifacts.ArtifactStudioLauncher.launch(context, it, itCan, sessionKind = mode.id.takeIf { m -> m == "app" }) }
+            val session = launched?.getOrNull()
+            if (session == null) {
+                android.widget.Toast.makeText(context, "Couldn't start a ${mode.label.lowercase()} session. ${launched?.exceptionOrNull()?.message.orEmpty()}".trim(), android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                chat.loadSession(session.sessionId)
+                androidx.compose.runtime.snapshotFlow { chat.isLoadingHistory }.first { !it }
+                chat.send(draft.toChatRequest())
+                libraryOpenId = null
+                libraryStudio = session
+                libraryNonce++
+                page = ShellPage.Section(libraryRow)
+            }
+        }
+    }
+    // PDF: the same file picker as the Artifacts page (OpenDocument, application/pdf), then the upload opens in the library.
+    val pickPdf = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            com.allternit.feature.artifacts.uploadPdfToLibrary(context, uri)
+                .onSuccess { id -> libraryStudio = null; libraryOpenId = id; libraryNonce++; page = ShellPage.Section(libraryRow) }
+                .onFailure { android.widget.Toast.makeText(context, it.message ?: "Couldn't upload that PDF.", android.widget.Toast.LENGTH_LONG).show() }
+        }
+    }
+    val onPickPdf: () -> Unit = { pickPdf.launch(arrayOf("application/pdf")) }
+    // The deck Artifacts menu's Open: that artifact in the library.
+    val openArtifactId: (String) -> Unit = { id -> libraryStudio = null; libraryOpenId = id; libraryNonce++; page = ShellPage.Section(libraryRow) }
     // The studio's Chat pane: the shell's one chat, on the studio's session (iOS ArtifactStudioView).
     val studioChat: @Composable (String) -> Unit = { sid ->
         LaunchedEffect(sid) { chat.loadSession(sid) }
@@ -599,6 +635,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     }
                                 }
                             },
+                            onStartArtifact = startArtifact,
+                            onPickPdf = onPickPdf,
+                            onOpenArtifactId = openArtifactId,
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             // The microphone permission was asked on the home composer; the chat starts voice mode.
                             onVoiceMode = {
@@ -641,6 +680,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             startVoice = voiceOnOpen,
                             onVoiceStarted = { voiceOnOpen = false },
                             playGamesAnytime = mode == ShellMode.Code,
+                            onStartArtifact = startArtifact,
+                            onPickPdf = onPickPdf,
+                            onOpenArtifactId = openArtifactId,
                             onOpenArtifact = { a ->
                                 page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
                             },
@@ -652,14 +694,16 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 leading = shellMenuButton,
                                 nav = projectsNav,
                             )
-                            "artifacts-library" -> ArtifactsLibraryScreen(
+                            "artifacts-library" -> androidx.compose.runtime.key(libraryNonce) { ArtifactsLibraryScreen(
+                                initialArtifactId = libraryOpenId,
+                                initialStudio = libraryStudio,
                                 signedIn = account != null,
                                 leading = shellMenuButton,
                                 studioChat = studioChat,
                                 onOpenChat = ::openSessionId,
                                 onConnectors = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
                                 onSignIn = { page = ShellPage.Settings },
-                            )
+                            ) }
                             // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
                             "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
                             // Wave F3: the drawer's ACI rail opens that ACI view (iOS ACINavStore.open).
@@ -704,6 +748,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     menuButton = shellMenuButton,
                                     openSignIn = { page = ShellPage.Settings },
                                     openChat = ::openSessionId,
+                                    // Team map (flag `team.map`, lane 38): Cowork's header and Fabric approvals open it.
+                                    teamMapSheet = if (com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP))
+                                        ({ focus, dismiss -> com.allternit.feature.bots.TeamMapSheet(focus = focus, onDismiss = dismiss) }) else null,
+                                    teamAsks = if (com.allternit.core.api.FeatureFlags.isOn(androidx.compose.ui.platform.LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP))
+                                        ({ com.allternit.feature.bots.TeamAsksSection(horizontalPadding = 0.dp) }) else null,
                                 ),
                                 initialTasks = current.row.id == "cowork-tasks",
                             )

@@ -14,12 +14,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.allternit.core.api.ApiResult
 import com.allternit.feature.artifacts.LibraryNet
+import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.listUnder
 import com.allternit.feature.artifacts.num
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -36,6 +38,7 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
     val (stats, reloadStats) = rememberLoad("stats") { Net.get("memory/stats").toLoad("load memory") }
     val (facts, reloadFacts) = rememberLoad("facts") { Net.get("memory/v2/facts").toLoad("load your memories") }
     val (docs, reloadDocs) = rememberLoad("docs") { Net.get("memory/documents").toLoad("load your documents") }
+    val (sleep, reloadSleep) = rememberLoad("sleep") { Net.get("memory/sleep/status").toLoad("load Sleep") }
     var forget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     SPage("Memory", tag = "settingsMemory", onBack = back) {
@@ -56,7 +59,17 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
                     val id = f.str("id") ?: return@forEachIndexed
                     val text = f.str("text") ?: f.str("content") ?: f.str("fact") ?: id
                     if (i > 0) SDivider()
-                    SRow(text, "memory_fact_$id", detail = f.str("source"), chevron = false, onClick = { forget = id to text })
+                    SRow(text, "memory_fact_$id", detail = f.str("source"), chevron = false, onClick = { forget = if (forget?.first == id) null else id to text })
+                    if (forget?.first == id) {
+                        // Forgetting is a hold, never a dialog.
+                        com.allternit.core.design.HoldButton("Hold to forget", "memoryForgetHold_$id", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), danger = true) {
+                            forget = null
+                            scope.launch {
+                                val r = Net.send("DELETE", "memory/v2/facts/${LibraryNet.escape(id)}")
+                                if (r is ApiResult.Ok) { error = null; reloadFacts() } else error = r.friendly("forget that memory")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -72,26 +85,29 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
                 }
             }
         }
+        // Sleep: GET memory/sleep/status, PUT memory/sleep/settings (the web SleepSection's "Sleep when idle" switch).
+        SLabel("Sleep")
+        LoadView(sleep, reloadSleep, "load Sleep") { body ->
+            val o = body.obj
+            val on = o.bool("enabled") == true && ((o?.get("stages") as? JsonObject).bool("orchestrator") == true)
+            val open = o.num("open_disputes")?.toLong() ?: 0L
+            SCard {
+                SToggleRow("Sleep when idle", "memory_sleep_toggle", on, detail = if (on) "Tidies and links your memories while you are away." else "Off. Memories are kept as they are.",
+                    onChange = { v ->
+                        scope.launch {
+                            val r = Net.send("PUT", "memory/sleep/settings", buildJsonObject {
+                                put("enabled", v)
+                                if (v) put("stages", buildJsonObject { put("orchestrator", true) })
+                            })
+                            if (r is ApiResult.Ok) { error = null; reloadSleep() } else error = r.friendly("change Sleep")
+                        }
+                    })
+            }
+            if (open > 0) SNote("$open ${if (open == 1L) "conflict" else "conflicts"} waiting for you.")
+        }
         SLabel("Memory drive")
         SCard {
             SRow("Memory drive", "memory_drive_row", detail = "The files your bots keep, with every change saved.", onClick = { push("memory-drive") })
-        }
-        forget?.let { (id, text) ->
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { forget = null },
-                title = { androidx.compose.material3.Text("Forget this?") },
-                text = { androidx.compose.material3.Text("Allternit forgets “$text”.") },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        forget = null
-                        scope.launch {
-                            val r = Net.send("DELETE", "memory/v2/facts/${LibraryNet.escape(id)}")
-                            if (r is ApiResult.Ok) { error = null; reloadFacts() } else error = r.friendly("forget that memory")
-                        }
-                    }) { androidx.compose.material3.Text("Forget", color = Danger) }
-                },
-                dismissButton = { androidx.compose.material3.TextButton(onClick = { forget = null }) { androidx.compose.material3.Text("Cancel") } },
-            )
         }
     }
 }
@@ -142,6 +158,8 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
             SLabel("Files")
             LoadView(tree, reloadTree, "load the files") { body ->
                 val rows = body.listUnder("files", "entries", "tree", "items").filter { (it.str("type") ?: "file") != "dir" && (it.str("type") ?: "file") != "directory" }
+                val skipped = (body.obj["skipped_entries"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
+                if (skipped > 0) SNote("$skipped ${if (skipped == 1) "entry was" else "entries were"} skipped because ${if (skipped == 1) "it" else "they"} could not be read. The rest of your drive is synced.")
                 if (rows.isEmpty()) SNote("No files yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                     rows.forEachIndexed { i, f ->
                         val path = f.str("path") ?: f.str("name") ?: return@forEachIndexed

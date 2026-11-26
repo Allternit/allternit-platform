@@ -38,6 +38,8 @@ import SwiftUI
 struct V2ArtifactView: View {
     let artifactId: String
     var initialTitle: String? = nil
+    /// Open the Share panel as soon as the record loads (the library card's Share).
+    var startOnShare = false
     /// Called after an archive or delete so the caller can drop the row.
     var onRemoved: (() -> Void)? = nil
 
@@ -155,6 +157,7 @@ struct V2ArtifactView: View {
         .task {
             await load()
             await loadOpenThreads()
+            if startOnShare, artifact != nil { shareTab = .share; showingShare = true }
             #if DEBUG
             // `-calm-artifact-comments` / `-calm-artifact-share` (DEBUG only).
             if artifact != nil, CalmArtifactLaunch.on(LaunchArgument.calmArtifactComments) { showingComments = true }
@@ -642,7 +645,7 @@ private struct SheetGridView: View {
 
     var body: some View {
         if grid.rows.isEmpty && grid.columns.isEmpty {
-            FriendlyStateView(style: .empty, icon: "tablecells", title: "No rows yet", message: "This sheet is empty.")
+            FriendlyStateView(style: .empty, title: "No rows yet", message: "This sheet is empty.", art: .chart)
         } else {
             ScrollView([.horizontal, .vertical]) {
                 Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
@@ -821,19 +824,28 @@ private struct ArtifactImageView: View {
                 if fit == .fill {
                     // Fill: cover the viewer edge to edge, cropping the overflow.
                     GeometryReader { proxy in
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
+                        if image.isAnimatedPicture {
+                            AnimatedImageView(image: image, fill: true)
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                        } else {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .clipped()
+                        }
                     }
                 } else {
                     ScrollView {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
-                            .padding(16)
+                        Group {
+                            if image.isAnimatedPicture {
+                                AnimatedImageView(image: image)
+                            } else {
+                                Image(uiImage: image).resizable().scaledToFit()
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
+                        .padding(16)
                     }
                 }
             } else if failed {
@@ -845,7 +857,7 @@ private struct ArtifactImageView: View {
         .task {
             do {
                 let data = try await ArtifactMediaLoader.data(for: urlString) { p in Task { @MainActor in progress = p } }
-                if let decoded = UIImage(data: data) {
+                if let decoded = AnimatedImageView.decode(data) {
                     // The halftone poster crossfades into the real picture (instant with Reduce Motion).
                     if !reduceMotion, progress != nil {
                         revealing = decoded

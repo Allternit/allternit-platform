@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChatsCircle, CircleNotch, Key, PencilSimple, Plus, Robot, Trash, X } from "@phosphor-icons/react";
+import { ChatsCircle, CircleNotch, Key, PencilSimple, Plus, Trash, X } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
 import {
   AGENT_TOOLS,
@@ -17,6 +17,7 @@ import {
   type V1Client,
   type V1ModelKey,
 } from "@/lib/platform-v1";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import { Badge, EmptyState, MonoChip, SectionHeading, SkeletonRow } from "@/components/console-ui";
 import { DESTRUCTIVE_BUTTON_CLASS, QUIET_BUTTON_CLASS, SETTINGS_SELECT_CLASS } from "@/components/console-ui/buttonStyles";
 import { cn } from "@/lib/utils";
@@ -123,7 +124,8 @@ function AgentsBody({ client }: { client: V1Client }) {
           </div>
         ) : agents.length === 0 ? (
           <EmptyState
-            icon={<Robot size={32} aria-hidden />}
+            art="gizzi"
+            size="panel"
             title="No agents yet"
             caption="Create an agent for one of your customer accounts. It gets an AI greeting, a stock voice and the tools you allow."
             ctaLabel="New agent"
@@ -402,7 +404,7 @@ function ModelKeys({ client }: { client: V1Client }) {
             <SkeletonRow />
           </div>
         ) : keys.length === 0 ? (
-          <p className="m-0 px-4 py-4 text-[13px] text-[var(--text-secondary)]">No model keys. Agents use the Allternit model.</p>
+          <EmptyInline art="key" className="px-4 py-4">No model keys. Agents use the Allternit model.</EmptyInline>
         ) : (
           <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
             {keys.map((k) => (

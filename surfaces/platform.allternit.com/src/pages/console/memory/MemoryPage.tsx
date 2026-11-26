@@ -494,11 +494,21 @@ export function MemoryStorePage(): React.ReactNode {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-2">
           {displayed.length === 0 ? (
-            <p className="rounded-xl border border-solid border-[var(--border-subtle)] p-4 text-[13px] text-[var(--text-tertiary)]">
-              {searchResults !== null
-                ? "Nothing matches the search."
-                : "No entries in this namespace yet — create one below or let an agent write one."}
-            </p>
+            searchResults !== null ? (
+              <EmptyState
+                art="search"
+                size="panel"
+                className="rounded-xl border border-solid border-[var(--border-subtle)]"
+                title="Nothing matches the search."
+              />
+            ) : (
+              <EmptyState
+                art="gizzi"
+                size="panel"
+                className="rounded-xl border border-solid border-[var(--border-subtle)]"
+                title="No entries in this namespace yet — create one below or let an agent write one."
+              />
+            )
           ) : (
             displayed.map((entry) => (
               <button

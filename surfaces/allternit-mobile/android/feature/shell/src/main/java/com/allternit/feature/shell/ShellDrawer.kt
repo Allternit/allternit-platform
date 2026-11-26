@@ -163,9 +163,16 @@ internal fun ShellDrawer(
                         )
                     }
                     recents.isEmpty() -> item(key = "recents-empty") {
-                        DrawerEmpty(
-                            title = if (filtered) "Nothing matches" else mode.emptyTitle,
-                            message = if (filtered) "Try another filter." else mode.emptyMessage,
+                        if (filtered) EmptyStateDrawer(
+                            title = "Nothing matches",
+                            message = "Try another filter.",
+                            art = com.allternit.core.design.EmptyArtKind.Search,
+                            newLabel = mode.newLabel,
+                            onNew = onNew,
+                        ) else EmptyStateDrawer(
+                            title = mode.emptyTitle,
+                            message = mode.emptyMessage,
+                            art = com.allternit.core.design.EmptyArtKind.Envelope,
                             newLabel = mode.newLabel,
                             onNew = onNew,
                         )
@@ -404,13 +411,13 @@ private fun InlineError(title: String, message: String, onRetry: () -> Unit) {
 
 /** The Arc empty state: icon tile, title, line, and the mode's New button (iOS emptyState). */
 @Composable
-private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew: () -> Unit) {
+private fun EmptyStateDrawer(title: String, message: String, newLabel: String, onNew: () -> Unit, art: com.allternit.core.design.EmptyArtKind) {
     val c = AllternitTheme.colors
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        com.allternit.core.design.EmptyArt(com.allternit.core.design.EmptyArtKind.Envelope)
+        com.allternit.core.design.EmptyArt(art)
         Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 12.dp))
         Text(message, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
         Row(

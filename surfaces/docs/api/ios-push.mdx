@@ -160,6 +160,8 @@ After a changed [status snapshot](/api/notifications#status-snapshots-and-revoke
 | `la_start` | `BotActivityAttributes` | (none) | Push-to-start of the bot activity (iOS 17.2+) |
 | `la_update` | `BotActivityAttributes` | `summary` | Updates and end of the running bot activity |
 | `la_update` | `LoopActivityAttributes` | the `loopId` | Updates and end of one loop activity (the app starts loops itself) |
+| `la_start` | `TaskActivityAttributes` | none | Push-to-start of a bar job activity (iOS 17.2+) |
+| `la_update` | `TaskActivityAttributes` | the `jobId` | Updates and end of one bar job activity |
 | `widget` | (none) | (none) | Widget pushes (iOS 26) |
 
 **Bot activity content state** (`BotActivityAttributes.ContentState`). The six fields the app has, always: `status`, `activityLabel`, `pendingApprovalsCount`, `activeBotsCount`, `attentionBotsCount`, `displayName` (the focus bot's name). Optional, left out when absent: `botId`, `step`, `progress` (0 to 1), `othersCount` (other active bots), `question`, `inboxId`, `runtimeId`, `sessionId`, `contentHash`, `approveInline`. No `Date` values. The focus is the snapshot `focus` that matters most across runtimes: an approval, then a question, then a blocked or failed bot, then work.
@@ -196,6 +198,8 @@ Needs approval, private: the same with `"question":"Needs your approval"`, no `c
 - `start` and `update` carry `stale-date` one hour ahead (the runtime only sends a snapshot when something changes). A [Focus filter](/api/notifications#focus-filter) that mutes the focus bot drops the alert's `sound`.
 
 **Loop activities** (`LoopActivityAttributes.ContentState`: `iterationsCompleted`, `maxIterations`, `state`) follow `snapshot.loops` by `loopId`: `update` (priority 5, 15 seconds apart) on a change, `end` when the loop's `state` is no longer `running`, `pending`, `starting` or `paused`, or when the loop is gone from snapshots that all carry `loops` (ended as `stopped`). A snapshot without `loops` (the runtime's loop poll failed) ends nothing.
+
+**Bar job activities** (`TaskActivityAttributes.ContentState`: `state` and `isOwner` always; `approverName`, `botName`, `amount`, `receipt`, `error`; for the approver while the job waits, `inboxId` and, when the ask may be answered inline, `question`, `contentHash`, `approveInline`, `runtimeId`) follow the runtime's `bar_job.changed` event, sent for the requester and the approver. `start` (priority 10, with an alert for the approver) when a job is `waiting_approval` or `working` and the phone has no update token for the `jobId` yet; `update` on every later state; `end` on `completed`, `failed` or `cancelled` (kept four hours) and, for the approver, as soon as the job stops waiting.
 
 **Throttle state.** Each "last sent" time is the later of an in-memory map (every attempt) and the token row's `last_ok_at` (every push APNs accepted). After a restart the database times still hold the start, update and widget limits; only a coalesced update waiting for its window is lost, and the next snapshot carries the newer state. Each push logs one line, `live activity push: liveactivity <event> to <token row> (device …, <attributes>) priority=… alert=… bytes=…`, never the text.
 

@@ -66,7 +66,9 @@ const DATA_KEYS: &[&str] = &[
     "itemId", "kind", "severity", "actionUrl",
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
-    "attentionId", "botName",
+    "attentionId", "botName", "bot",
+    // `bar_job.changed` (Island bar Live Activity): see `bar_routes::job_changed_payload`.
+    "jobId", "appName", "approverUserId", "approverName", "requesterUserId", "amount", "receipt", "error", "question", "private",
     // The agent session whose turn raised an approval (`gateway_runner::create_approval`):
     // cloud-api links the approval to that turn's Platform API response.
     "session_id",
@@ -624,6 +626,32 @@ mod tests {
                 assert!(registry.contains(w), "{w}");
             }
         }
+    }
+
+    /// `bar_job.changed` (Island bar Live Activity) forwards its allowlisted keys under its own type.
+    #[test]
+    fn a_bar_job_change_forwards_its_job_keys() {
+        let row = LedgerRow {
+            rowid: 3,
+            id: "u-bar".into(),
+            event_type: "bar_job.changed".into(),
+            bot_id: None,
+            bot_name: None,
+            thread_id: None,
+            thread_title: None,
+            payload: json!({ "jobId": "j1", "title": "Refund payment", "appName": "Stripe", "state": "waiting_approval",
+                "requesterUserId": "u1", "approverUserId": "u2", "approverName": "Noah", "amount": "\u{20ac}320",
+                "inboxId": "approval:ap1", "contentHash": "ab12", "approveInline": true, "question": "Refund 320?", "secret": "x" }),
+            occurred_at: "2026-11-25T10:00:00Z".into(),
+            bot_avatar: None,
+        };
+        let ev = envelope(SOURCE_USER, &row).unwrap();
+        assert_eq!(ev["type"], "bar_job.changed");
+        assert_eq!(ev["id"], "rt:ue:u-bar");
+        for (k, v) in [("jobId", "j1"), ("appName", "Stripe"), ("state", "waiting_approval"), ("approverUserId", "u2"), ("approverName", "Noah"), ("inboxId", "approval:ap1"), ("question", "Refund 320?")] {
+            assert_eq!(ev["data"][k], v, "{k}");
+        }
+        assert!(ev["data"].get("secret").is_none());
     }
 
     #[test]

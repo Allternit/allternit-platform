@@ -76,7 +76,7 @@ internal fun waitingLine(n: Int) = when (n) {
  * layout switch, then the open threads (not resolved, not the main chat) as cards. Polls every 15 s.
  */
 @Composable
-internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: String = "Threads", modifier: Modifier = Modifier, onOpen: (BotThread) -> Unit) {
+internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: String = "Threads", modifier: Modifier = Modifier, showTitle: Boolean = true, onOpen: (BotThread) -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -101,7 +101,7 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
         item {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = AllternitSerif)
+                    if (showTitle) Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = AllternitSerif)
                     Text(waitingLine(waiting), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("botThreadsWaiting"))
                 }
                 LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search threads", "botThreadsSearch") { searching = !searching }
@@ -112,7 +112,8 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
         if (cards.isEmpty()) item {
             val err = store.threadsError
             if (err != null && !store.isLoadingThreads) ListState(false, err, true, "Couldn't load threads", "") { scope.launch { store.refreshThreads() } }
-            else Text(if (store.isLoadingThreads) "Loading threads…" else "No open threads. Start one from the composer.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp))
+            else if (store.isLoadingThreads) Text("Loading threads…", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp))
+            else ListState(false, null, true, "", "No open threads. Start one from the composer.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
         } else if (layout == RosterLayout.List) items(cards, key = { it.id }) { t ->
             BotThreadCard(t, store, showsBot = botId == null, compact = true) { onOpen(t) }
         } else items(cards.chunked(2), key = { it.first().id }) { pair ->
@@ -258,7 +259,14 @@ internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionI
     LaunchedEffect(Unit) { store.refreshThreads() }
     val rows = store.threads.filter { it.botId == bot.id && !it.incognito && it.group != "resolved" && it.todo.isNotEmpty() }
         .sortedWith(compareByDescending<BotThread> { it.currentSessionId != null && it.currentSessionId == currentSessionId }.then(BotThread.order))
-    LazyColumn(Modifier.fillMaxSize().testTag("botTasks"), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("botTasks"), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+        // Same title spot and count line as Threads (UI feedback 11-25 C2).
+        item {
+            Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (showTitle) Text("Tasks", color = c.textPrimary, fontSize = 26.sp, fontFamily = AllternitSerif)
+                Text(waitingLine(store.waitingCount(bot.id)), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("botTasksWaiting"))
+            }
+        }
         if (rows.isEmpty()) item {
             ListState(store.isLoadingThreads, store.threadsError, true, "Couldn't load tasks", "No tasks yet. When ${bot.displayName} plans work in a thread, its steps show here.", com.allternit.core.design.EmptyArtKind.Bell) { scope.launch { store.refreshThreads() } }
         }

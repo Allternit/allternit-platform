@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -79,6 +80,9 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.FriendlyState
+import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 import kotlin.math.roundToInt
@@ -170,6 +174,16 @@ internal fun SessionOverviewScreen(
         ShellMode.Code -> "New thread"
         ShellMode.Aci -> "New session"
         else -> "New chat"
+    }
+    // The floating New bar hides while the list scrolls down and returns on scroll up (UI feedback 11-25 A10).
+    var barHidden by remember { mutableStateOf(false) }
+    val barScroll = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (consumed.y < -6f) barHidden = true else if (consumed.y > 6f) barHidden = false
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
     }
     val layout = if (selecting) OverviewLayout.List else OverviewLayout.entries.firstOrNull { it.raw == layoutRaw } ?: OverviewLayout.Grid
     val editable = mode != ShellMode.Aci && !selecting && viewFilter != OverviewView.Archived
@@ -370,16 +384,30 @@ internal fun SessionOverviewScreen(
             letterSpacing = 0.72.sp,
             modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
         )
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(barScroll)) {
             when {
                 !store.hasLoaded && store.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
-                shown.isEmpty() -> Text(
-                    if (query.isEmpty()) emptyText else "Nothing matches “$query”.",
-                    color = c.textSecondary,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
+                shown.isEmpty() && query.isNotEmpty() -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = "Nothing matches “$query”.",
+                    message = "",
+                    art = EmptyArtKind.Search,
                     modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
-                )
+                ) {}
+                shown.isEmpty() && viewFilter == OverviewView.Archived -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = emptyText,
+                    message = "",
+                    art = EmptyArtKind.Archive,
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
+                ) {}
+                shown.isEmpty() -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = emptyText,
+                    message = "",
+                    art = EmptyArtKind.Sheets,
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp).testTag("overviewEmpty"),
+                ) {}
                 layout == OverviewLayout.List -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp)) {
                     items(shown, key = { it.id }) { s ->
                         OverviewListRow(
@@ -444,14 +472,21 @@ internal fun SessionOverviewScreen(
                     BarButton("Delete", DesignR.drawable.ph_trash, none, destructive = true) { confirmDelete = true }
                 }
             } else {
-                OverviewFloatingBar(
-                    query = query,
-                    placeholder = "Search ${title.lowercase()}",
-                    newLabel = newLabel,
-                    onQuery = { query = it },
-                    onNew = onNew,
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !barHidden,
                     modifier = Modifier.align(Alignment.BottomCenter),
-                )
+                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+                ) {
+                    OverviewFloatingBar(
+                        query = query,
+                        placeholder = "Search ${title.lowercase()}",
+                        newLabel = newLabel,
+                        onQuery = { query = it },
+                        onNew = onNew,
+                        modifier = Modifier,
+                    )
+                }
             }
         }
     }

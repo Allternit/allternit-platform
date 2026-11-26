@@ -753,6 +753,12 @@
       "label": "cli-catalog.json (runtime registry)",
       "kind": "module",
       "path": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json"
+    },
+    {
+      "id": "external:codex-cli-images",
+      "label": "Codex CLI image generation",
+      "kind": "external",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts"
     }
   ],
   "edges": [
@@ -942,6 +948,16 @@
       "kind": "HTTP /api/v1/computers/:id/toolset",
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/tools/computer-toolset/executor-client.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
+      "kind": "HTTP /api/v2/artifacts plan artifacts (plan_exit creates art_plan_<session> with kind plan; PATCH plan_status open|approved|done; GET ?kind=plan lists them, the default list leaves them out)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/plan.ts",
+        "allternit/docs/design/artifacts-v2.md"
       ]
     },
     {
@@ -2030,9 +2046,9 @@
       "evidence": [
         "allternit/cmd/allternit-computer-cloud/guest/install-pane-engine.sh",
         "allternit/.github/workflows/desktop-image.yml"
-        ]
-      },
-      {
+      ]
+    },
+    {
       "source": "allternit/cmd/allternit-cloud-api",
       "target": "allternit/cmd/allternit-node",
       "kind": "runtime relay WebSocket (request/response_start/response_chunk/response_end envelopes): every /terminal/* and /api/v1/node/* request for a runtime whose connection is allternit-node; terminal streams are SSE chunks ending after the exit event",
@@ -2048,6 +2064,15 @@
       "evidence": [
         "allternit/cmd/allternit-node/src/engine.rs",
         "allternit/cmd/allternit-node/src/handlers.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "external:codex-cli-images",
+      "kind": "spawns installed Codex CLI app-server over stdio as the first engine of the Image mode resolver (Codex, then device ChatGPT browser, then code); bounded imageGeneration results, ChatGPT sign-in only",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"
       ]
     }
   ]

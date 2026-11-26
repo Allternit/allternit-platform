@@ -99,7 +99,8 @@ export function VaultsPage(): React.ReactNode {
       primaryAction={{ label: "+ New vault", onClick: () => setShowCreate((v) => !v) }}
       emptyState={
         <EmptyState
-          icon={<HugeiconsIcon icon={LockIcon} size={32} />}
+          art="search"
+          size="panel"
           title={search ? "No vaults match your search" : "No vaults yet"}
           caption={
             search

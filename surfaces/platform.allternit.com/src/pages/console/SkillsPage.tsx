@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  SparklesIcon,
   AlertCircleIcon,
   PlayIcon,
   TrashIcon,
@@ -270,7 +269,7 @@ export function SkillsPage(): React.ReactNode {
         <SkeletonRow lines={5} />
       ) : skills.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={SparklesIcon} size={32} />}
+          art="search"
           title={search ? "No skills match your search" : "No skills yet"}
           caption={
             search

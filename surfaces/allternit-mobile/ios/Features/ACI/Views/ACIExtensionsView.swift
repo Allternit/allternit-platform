@@ -109,8 +109,9 @@ struct ACIExtensionsView: View {
         } else if filtered.isEmpty {
             let filteredOut = !query.isEmpty || category != nil
             VStack(spacing: 16) {
-                EmptyBox(icon: "puzzlepiece.extension", title: "No extensions found",
-                         line: filteredOut ? "Try adjusting your filters or search query." : "Install ACI extensions to give your agent new capabilities.")
+                EmptyBox(title: "No extensions found",
+                         line: filteredOut ? "Try adjusting your filters or search query." : "Install ACI extensions to give your agent new capabilities.",
+                         art: .search)
                 GlassPill(title: filteredOut ? "Clear filters" : "Browse marketplace") {
                     if filteredOut {
                         query = ""

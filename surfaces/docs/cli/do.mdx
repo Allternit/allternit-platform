@@ -1,0 +1,31 @@
+---
+title: "gizzi do"
+description: "Run one tool from an app through the Island bar from the terminal, with review, approval and a receipt."
+---
+
+`gizzi do` is the [Island bar](/guides/island-bar) in the terminal. It picks an app and tool, asks for the blanks, shows the review, runs the job and prints a receipt.
+
+```bash
+gizzi do stripe refund_payment --arg order_id=1042 --arg amount=320
+gizzi do stripe refund_payment --bot refunds --yes --json
+gizzi do
+```
+
+With no app or tool, it asks you to pick them.
+
+## Options
+
+| Option | Meaning |
+| --- | --- |
+| `[app] [tool]` | The app and tool. Asked for when left out. |
+| `--arg key=value` | A blank value. Repeat for more. A required blank you leave out is asked for, or is an error with `--json`. |
+| `--bot <id>` | Run as that bot. Without it you are the actor. |
+| `--computer <id>` | Which online computer to use when more than one is connected. |
+| `--yes`, `-y` | Skip the "Run it?" confirm. |
+| `--json` | Print events as JSON lines and never prompt. Needs both app and tool. |
+
+`--yes` never skips an owner rule. If a rule needs someone to approve, the command says who and waits. Press Ctrl-C to cancel the job.
+
+The command uses the runtime on your connected computer. The address is `GIZZI_BAR_API_URL`, else `GIZZI_PLATFORM_API_URL`.
+
+See also [the API](/api/island-bar#bar-routes).

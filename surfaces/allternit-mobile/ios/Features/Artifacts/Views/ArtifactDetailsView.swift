@@ -294,9 +294,9 @@ struct ArtifactDetailsView: View {
             if text.isEmpty {
                 FriendlyStateView(
                     style: .empty,
-                    icon: "doc.text",
                     title: "This artifact is empty",
-                    message: "Nothing was captured for this artifact."
+                    message: "Nothing was captured for this artifact.",
+                    art: .sheets
                 )
             } else if selectedTab == 0 && artifact.isPreviewable {
                 // Sandboxed execution preview (custom scheme + CSP, no network).

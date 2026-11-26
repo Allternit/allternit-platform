@@ -59,6 +59,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /** One preview line in a hub section (a chat, a project, a bot). [dot] is the status dot. */
 internal data class HubItem(
@@ -180,8 +182,12 @@ private fun HubPanel(
         // Rows: fixed height so the sheet never changes size under the finger.
         Column(Modifier.fillMaxWidth().height((ModeHubSpec.OPEN_ITEMS * ModeHubSpec.ROW_HEIGHT_DP).dp)) {
             if (items.isEmpty()) {
-                Box(Modifier.fillMaxWidth().height(ModeHubSpec.ROW_HEIGHT_DP.dp).padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
-                    Text(if (section.id in setOf("recents", "sessions", "main-bot", "bots", "groups", "bot-projects")) "Nothing here yet" else section.more, color = c.textTertiary, fontSize = 12.5.sp)
+                if (section.id in setOf("recents", "sessions", "main-bot", "bots", "groups", "bot-projects")) {
+                    InlineEmpty(text = "Nothing here yet", art = EmptyArtKind.Sheets, modifier = Modifier.padding(horizontal = 9.dp))
+                } else {
+                    Box(Modifier.fillMaxWidth().height(ModeHubSpec.ROW_HEIGHT_DP.dp).padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
+                        Text(section.more, color = c.textTertiary, fontSize = 12.5.sp)
+                    }
                 }
             } else {
                 items.take(ModeHubSpec.OPEN_ITEMS).forEach { item ->

@@ -26,6 +26,7 @@ import {
   sendSessionEvents,
 } from "@/lib/managed-agents";
 import { MonoChip, Badge, SkeletonCard } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 
 type Tab = "events" | "turns" | "threads" | "outputs";
 
@@ -392,11 +393,11 @@ export function SessionDetailPage(): React.ReactNode {
             <p className="text-[12px] text-[var(--text-tertiary)]">Stream idle — waiting for events.</p>
           )}
           {events.length === 0 ? (
-            <p className="text-[13px] text-[var(--text-tertiary)]">
+            <EmptyInline art="log">
               {archived
                 ? "This session is archived — it can no longer accept events, but its history still streams below."
                 : "No events yet. Send a message or wait for the agent to act — events stream here in real time."}
-            </p>
+            </EmptyInline>
           ) : (
             <ol className="max-h-[480px] space-y-1 overflow-y-auto rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3 font-mono text-[12px]">
               {events.map((event, index) => (

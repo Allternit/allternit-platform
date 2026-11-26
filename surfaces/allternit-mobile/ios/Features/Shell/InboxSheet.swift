@@ -133,7 +133,8 @@ struct InboxSheet: View {
                 style: .empty,
                 icon: "bell.slash",
                 title: focusedIsGone ? NotificationStrings.alreadyHandled : "You're all caught up",
-                message: "Approvals, held messages, missed calls, unanswered people and anything that failed show up here."
+                message: "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
+                art: .bell
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

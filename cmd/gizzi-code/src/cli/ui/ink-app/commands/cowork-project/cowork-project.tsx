@@ -5,6 +5,7 @@ import { BlockTitle } from '../../components/BlockTitle'
 import { Dialog } from '../../components/design-system/Dialog'
 import type { LocalJSXCommandCall } from '../../types/command'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
+import { EmptyLine } from '../../components/EmptyLine'
 
 const API_BASE = ALLTERNIT_GATEWAY_BASE
 
@@ -237,7 +238,7 @@ export function CoworkProjectCommandWrapper({
     <Dialog title={<BlockTitle title="PROJECTS" />} onCancel={() => onDone()}>
       <Box flexDirection="column">
         {projects.length === 0 ? (
-          <Text dimColor>No Cowork projects found.</Text>
+          <EmptyLine>No Cowork projects found.</EmptyLine>
         ) : (
           projects.map((project, index) => (
             <Box key={project.id}>

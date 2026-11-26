@@ -293,7 +293,7 @@ private fun LayerHeader(layer: AgentLayer, value: String, locked: Boolean, expan
 internal fun ChoiceLayout(choices: List<LayerChoice>, layout: LibraryLayout, label: String, botFace: @Composable (com.allternit.feature.bots.BotRecord, Dp) -> Unit, onPick: (LayerChoice) -> Unit) {
     val c = AllternitTheme.colors
     if (choices.isEmpty()) {
-        Text("Nothing matches.", color = c.textTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+        com.allternit.core.design.InlineEmpty("Nothing matches.", art = com.allternit.core.design.EmptyArtKind.Search)
         return
     }
     when (layout) {

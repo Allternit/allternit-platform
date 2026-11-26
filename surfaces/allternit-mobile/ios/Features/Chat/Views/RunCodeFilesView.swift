@@ -37,15 +37,25 @@ struct RunCodeFilesView: View {
 private struct UploadImageView: View {
     let file: RunCodeResult.File
     @State private var image: UIImage?
+    @State private var originalData: Data?
     @State private var failed = false
     @State private var showsFull = false
+
+    /// A GIF plays (still under Reduce Motion); anything else is a plain image.
+    @ViewBuilder
+    private func pictureView(_ image: UIImage) -> some View {
+        if image.isAnimatedPicture {
+            AnimatedImageView(image: image)
+        } else {
+            Image(uiImage: image).resizable().scaledToFit()
+        }
+    }
 
     var body: some View {
         Group {
             if let image {
                 Button { showsFull = true } label: {
-                    Image(uiImage: image)
-                        .resizable().scaledToFit()
+                    pictureView(image)
                         .frame(maxHeight: 320)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
@@ -61,14 +71,15 @@ private struct UploadImageView: View {
         .task(id: file.uploadId) {
             guard image == nil else { return }
             if let data = try? await UploadFetcher.data(uploadId: file.uploadId),
-               let decoded = UIImage(data: data) {
+               let decoded = AnimatedImageView.decode(data) {
                 image = decoded
+                originalData = data
             } else {
                 failed = true
             }
         }
         .fullScreenCover(isPresented: $showsFull) {
-            if let image { UploadImageFullScreen(image: image, file: file) }
+            if let image { UploadImageFullScreen(image: image, file: file, originalData: originalData) }
         }
     }
 }
@@ -76,14 +87,19 @@ private struct UploadImageView: View {
 private struct UploadImageFullScreen: View {
     let image: UIImage
     let file: RunCodeResult.File
+    /// The bytes as fetched: share sends these, so a GIF keeps its type and frames.
+    var originalData: Data? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var shared: SharedArtifactFile?
 
     var body: some View {
         NavigationStack {
             ScrollView([.horizontal, .vertical]) {
-                Image(uiImage: image).resizable().scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Group {
+                    if image.isAnimatedPicture { AnimatedImageView(image: image) }
+                    else { Image(uiImage: image).resizable().scaledToFit() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle(file.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -91,7 +107,7 @@ private struct UploadImageFullScreen: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        if let data = image.pngData() ?? image.jpegData(compressionQuality: 0.95),
+                        if let data = originalData ?? image.pngData() ?? image.jpegData(compressionQuality: 0.95),
                            let url = try? ArtifactFileShare.write(data, suggestedName: file.name, mimeType: file.mediaType) {
                             shared = SharedArtifactFile(url: url)
                         }

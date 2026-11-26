@@ -80,7 +80,7 @@ struct CodePaneSheet: View {
             if let sessionId {
                 SessionDiffListView(sessionId: sessionId, instanceStore: instanceStore)
             } else {
-                titled { CodePaneEmpty(text: "No changes yet. Edits the session makes show up here.") }
+                titled { CodePaneEmpty(text: "No changes yet. Edits the session makes show up here.", art: .gizzi) }
             }
         case .browser:
             if let ptyId = terminals.livePtyId {
@@ -135,8 +135,14 @@ struct CodePaneSheet: View {
 /// A pane's empty or error line (the desktop panes' centred tertiary copy).
 struct CodePaneEmpty: View {
     let text: String
+    var art: EmptyArtKind? = nil
 
     var body: some View {
+        if let art {
+            EmptyBox(title: text, message: "", art: art, size: .panel)
+                .padding(.horizontal, 28)
+                .padding(.top, 48)
+        } else {
         Text(text)
             .font(.system(size: 13))
             .lineSpacing(3)
@@ -145,6 +151,7 @@ struct CodePaneEmpty: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
             .padding(.top, 48)
+        }
     }
 }
 
@@ -162,13 +169,13 @@ struct CodeTranscriptPane: View {
     var body: some View {
         Group {
             if sessionId == nil {
-                CodePaneEmpty(text: "No session selected.")
+                CodePaneEmpty(text: "No session selected.", art: .gizzi)
             } else if !loaded {
                 ProgressView().padding(.top, 48)
             } else if let error, messages.isEmpty {
                 CodePaneEmpty(text: "Couldn't load the transcript: \(error)")
             } else if messages.isEmpty {
-                CodePaneEmpty(text: "No messages in this session yet.")
+                CodePaneEmpty(text: "No messages in this session yet.", art: .envelope)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -217,7 +224,7 @@ struct CodeBackgroundTasksPane: View {
     var body: some View {
         Group {
             if sessionId == nil {
-                CodePaneEmpty(text: "No background tasks yet. Shells and subagents the session starts show up here.")
+                CodePaneEmpty(text: "No background tasks yet. Shells and subagents the session starts show up here.", art: .bell)
             } else if !loaded {
                 Text("Loading tasks…")
                     .font(.system(size: 12))
@@ -225,7 +232,8 @@ struct CodeBackgroundTasksPane: View {
                     .padding(.top, 24)
             } else if tasks.isEmpty {
                 CodePaneEmpty(text: error.map { "Couldn't load tasks: \($0)" }
-                              ?? "No background tasks yet. Shells and subagents the session starts show up here.")
+                              ?? "No background tasks yet. Shells and subagents the session starts show up here.",
+                              art: .bell)
             } else {
                 List(tasks) { task in row(task) }
                     .listStyle(.plain)
@@ -396,7 +404,7 @@ struct CodeMapPane: View {
                 }
                 .listStyle(.insetGrouped)
             } else if let message {
-                CodePaneEmpty(text: message)
+                CodePaneEmpty(text: message, art: message == "No files in the code map yet." ? .sheets : nil)
             } else {
                 ProgressView().padding(.top, 48)
             }
@@ -514,9 +522,7 @@ struct CodeSessionPanel: View {
             }
             Section("Pull requests") {
                 if prs.isEmpty {
-                    Text("No pull requests yet.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextTertiary"))
+                    FriendlyInlineStateView(title: "No pull requests yet.", art: .bell)
                 } else {
                     ForEach(prs) { pr in
                         Link(destination: URL(string: pr.url) ?? URL(string: "https://github.com")!) {

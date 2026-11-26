@@ -64,7 +64,7 @@ function ConversationsBody({ client }: { client: V1Client }) {
   if (agents.length === 0) {
     return (
       <div className={CARD_CLASS}>
-        <EmptyState icon={<ChatsCircle size={32} aria-hidden />} title="No agents yet" caption="Conversations appear here once you create an agent and send it a message." />
+        <EmptyState art="gizzi" size="panel" title="No agents yet" caption="Conversations appear here once you create an agent and send it a message." />
       </div>
     );
   }
@@ -214,7 +214,7 @@ function ConversationView({ client, id, onBack }: { client: V1Client; id: string
           <SkeletonRow lines={3} />
         </div>
       ) : messages.length === 0 ? (
-        <p className="m-0 p-6 text-center text-[13px] text-[var(--text-secondary)]">No messages yet.</p>
+        <EmptyState art="envelope" size="panel" title="No messages yet." />
       ) : (
         <ol className="m-0 list-none space-y-3 p-4">
           {messages.map((m) => (

@@ -38,13 +38,14 @@ import {
   mergeHudBounds, parseHudBoundsByDisplay, resizeHudFromBottom, type HudBoundsByDisplay, type HudRect,
 } from './hud-geometry.js';
 import { cursorPointInWindow } from './hud-cursor.js';
-import { hudWindowingView, resolveHudWindowing } from './hud-windowing.js';
+import { hudWindowingView, linuxOzoneBackend, resolveHudWindowing } from './hud-windowing.js';
 import { INACTIVE_GAME_OVERLAY, startHudGameOverlayWatch } from './hud-game-overlay.js';
 import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
+import { isArtifactLink, artifactLinkTarget } from './artifact-link.js';
 import { isAppLink, appSlugFromLink, appShellUrl, resolveAppUrl, trustedAppUrl, requestAppHandoff } from './app-link.js';
 import { createAppLaunchers, isValidAppSlug, type AppInstallRequest } from './app-launchers.js';
 import { openAppWindow, closeAppWindow } from './app-window.js';
@@ -108,6 +109,9 @@ import { createStartupWindow } from './startup-window.js';
 import { notebookManager } from './notebook-manager.js';
 import { voiceManager } from './voice-manager.js';
 import { installTeachRecorder, registerTeachHotkey, abortTeach } from './teach-recorder.js';
+import { createIslandHotkey, type IslandHotkeyStatus } from './island-hotkey.js';
+import { createIslandBarWindow, isIslandBarDeepLink, islandBarDeepLinkQuery } from './island-bar-window.js';
+import { barJobTrayLabel, createIslandPillWindow } from './island-pill-window.js';
 import { onWebRequest } from './web-request-hub.js';
 import { PLATFORM_MANIFEST, shouldUpdateBackend } from './manifest.js';
 import { runtimePackages, runtimeResource } from './runtime-home.js';
@@ -856,6 +860,10 @@ interface StoreSchema {
   hudBounds: HudBoundsByDisplay;
   /** Settings → HUD: hide the HUD when it loses focus. Off by default (pinned). */
   hudHideOnBlur?: boolean;
+  /** Settings → Shortcuts: the Island bar key, recorder spelling ("alt+space"). Unset = the default. */
+  islandBarShortcut?: string;
+  /** The picked Island bar key the "pick your shortcut" notice was shown for (island-hotkey.ts). */
+  islandBarNoticeShownFor?: string;
   theme: 'light' | 'dark' | 'system';
   backend: {
     mode: 'bundled' | 'remote' | 'development';
@@ -2625,9 +2633,23 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Island bar (flag bar.island): live jobs as dot rows, and "Open Island bar"
+  // (the only way in on Linux Wayland without the hotkey, PLAN D14).
+  const islandSection: Electron.MenuItemConstructorOptions[] = featureFlagManager.get<boolean>('bar.island') === true
+    ? [
+        ...islandPill.liveJobs().map((job): Electron.MenuItemConstructorOptions => ({
+          label: barJobTrayLabel(job),
+          click: () => islandBar.open(),
+        })),
+        { label: 'Open Island bar', click: () => islandBar.open() },
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...islandSection,
     ...meetingsSection,
     ...systemSection,
     { label: `${statusIcon} ${status.running ? 'Running' : 'Stopped'}`, enabled: false },
@@ -2666,6 +2688,10 @@ async function updateTrayMenu(): Promise<void> {
   trayMenu = Menu.buildFromTemplate(template);
   // macOS menu bar: a short word next to the icon while Gizzi is in a call.
   if (process.platform === 'darwin') tray.setTitle(meetingMenuBarTitle(meetingPresence));
+  // Tray dot while a bar job runs or an ask waits: the tooltip on every OS
+  // (the menu rows carry the coloured dot; there is no pill on Linux Wayland).
+  const liveBarJobs = featureFlagManager.get<boolean>('bar.island') === true ? islandPill.liveJobs() : [];
+  tray.setToolTip(liveBarJobs.length ? `Allternit · ${barJobTrayLabel(liveBarJobs[0]!)}` : 'Allternit');
   // macOS: left click is the HUD, so the menu pops up on right-click only.
   if (process.platform !== 'darwin') tray.setContextMenu(trayMenu);
 }
@@ -2733,6 +2759,26 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     return;
   }
 
+  // Island bar (flag bar.island): allternit://bar toggles the bar;
+  // allternit://bar?app=stripe&tool=create_refund&v.amount=320 opens it with
+  // those blanks filled (only app, tool and v.<field> pass through). This is
+  // the way in on Linux Wayland, where there is no global hotkey (PLAN D14).
+  if (isIslandBarDeepLink(url)) {
+    if (featureFlagManager.get<boolean>('bar.island') !== true) {
+      log.info('[IslandBar] allternit://bar ignored: flag bar.island is off');
+      return;
+    }
+    // The bar needs the session (pairing check); a cold-start link waits for it.
+    if (!authManagerReady) {
+      earlyProtocolUrl = url;
+      return;
+    }
+    const query = islandBarDeepLinkQuery(url);
+    if (query) islandBar.open(query);
+    else islandBar.toggle();
+    return;
+  }
+
   // A:// Studio (Design mode) deep link from gizzi-code's `/design` command:
   // allternit://design?prompt=... (allternit-dev:// in dev builds). Opens the
   // design window at /design, carrying the prompt into the studio composer.
@@ -2780,6 +2826,23 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     const target = modelLinkTarget(activePlatformUrl, url);
     if (!target) {
       log.warn('[Main] rejected model link');
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
+    void mainWindow.loadURL(target);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  // allternit://artifact/<id> (a plan or page link from Gizzi, a phone, a
+  // share): focus the main window and load /?artifact=<id>. Bad ids are
+  // dropped; see artifact-link.ts.
+  if (isArtifactLink(url)) {
+    const target = artifactLinkTarget(activePlatformUrl, url);
+    if (!target) {
+      log.warn('[Main] rejected artifact link');
       return;
     }
     if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
@@ -3240,6 +3303,9 @@ app.whenReady().then(async () => {
 
   // Global hotkey: ⌘/Ctrl+Shift+R → toggle Teach recording (+ floating record bar)
   registerTeachHotkey();
+
+  // Global hotkey: ⌥Space / Alt+Space → Island bar (flag bar.island; island-hotkey.ts).
+  syncIslandBarWithFlag();
 
   // Fallback global hotkey for users who expect the earlier Alt+Shift+H binding.
   const hudHotkeyFallbackRegistered = globalShortcut.register(HUD_HOTKEY_FALLBACK, onHudHotkey);
@@ -4531,6 +4597,100 @@ function hudPrefs(): HudPrefs {
     hotkeys: [...hudHotkeyStatus].map(([accelerator, registered]) => ({ accelerator, registered })),
   };
 }
+// ============================================================================
+// Island bar (⌥Space / Alt+Space; program "Island bar + Team map", lane 28)
+// ============================================================================
+
+const islandBar = createIslandBarWindow({
+  isMac,
+  preload: join(__dirname, '../preload/index.js'),
+  platformUrl: () => activePlatformUrl,
+  mayOpen: () => mayOpenHud(authManager.hasSession()),
+  guardNavigation: installWillNavigateGuard,
+  openExternal: (url) => { void openExternalAllowlisted(url); },
+  isQuitting: () => (app as unknown as { isQuitting?: boolean }).isQuitting === true,
+  log,
+});
+
+const islandPill = createIslandPillWindow({
+  isMac,
+  platform: process.platform,
+  linuxBackend: linuxOzoneBackend(process.env, process.argv),
+  preload: join(__dirname, '../preload/index.js'),
+  platformUrl: () => activePlatformUrl,
+  enabled: () => featureFlagManager.get<boolean>('bar.island') === true && mayOpenHud(authManager.hasSession()),
+  guardNavigation: installWillNavigateGuard,
+  openExternal: (url) => { void openExternalAllowlisted(url); },
+  isQuitting: () => (app as unknown as { isQuitting?: boolean }).isQuitting === true,
+  onJobsChanged: () => { void updateTrayMenu(); },
+  log,
+});
+
+const islandHotkey = createIslandHotkey({
+  platform: process.platform,
+  sessionType: process.env.XDG_SESSION_TYPE,
+  register: (accelerator, onPress) => globalShortcut.register(accelerator, onPress),
+  unregister: (accelerator) => globalShortcut.unregister(accelerator),
+  readSaved: () => store.get('islandBarShortcut'),
+  save: (shortcut) => { if (shortcut) store.set('islandBarShortcut', shortcut); else store.delete('islandBarShortcut'); },
+  readNoticeShownFor: () => store.get('islandBarNoticeShownFor'),
+  saveNoticeShownFor: (shortcut) => { if (shortcut) store.set('islandBarNoticeShownFor', shortcut); else store.delete('islandBarNoticeShownFor'); },
+  notify: (title, body) => { if (Notification.isSupported()) new Notification({ title, body }).show(); },
+  onPress: () => islandBar.toggle(),
+  onChange: (status: IslandHotkeyStatus) => {
+    log.info('[IslandBar] hotkey', status);
+    broadcastToMainWindows('island-bar:hotkey-changed', status);
+  },
+  log: (message) => log.warn(message),
+});
+
+/** Hold the key only while the Desktop flag `bar.island` is on (default off). */
+function syncIslandBarWithFlag(): void {
+  if (featureFlagManager.get<boolean>('bar.island') === true) islandHotkey.start();
+  else {
+    islandHotkey.stop();
+    islandBar.hide();
+    islandPill.reset();
+  }
+  void updateTrayMenu();
+}
+featureFlagManager.onChange((key) => {
+  if (key === 'bar.island' && app.isReady()) syncIslandBarWithFlag();
+});
+
+ipcMain.handle('island-bar:get-hotkey', () => islandHotkey.status());
+ipcMain.handle('island-bar:set-hotkey', (_event, shortcut: unknown) =>
+  islandHotkey.set(typeof shortcut === 'string' ? shortcut : null));
+ipcMain.handle('island-bar:suspend-hotkey', (_event, suspended: unknown) => {
+  islandHotkey.suspend(suspended === true);
+});
+ipcMain.handle('island-bar:open', () => {
+  if (islandHotkey.status().reason !== 'off') islandBar.open();
+});
+ipcMain.handle('island-bar:toggle', () => {
+  if (islandHotkey.status().reason !== 'off') islandBar.toggle();
+});
+ipcMain.handle('island-bar:hide', (event) => {
+  if (islandBar.isFrom(event.sender)) islandBar.hide();
+});
+ipcMain.handle('island-bar:set-height', (event, height: unknown) => {
+  if (islandBar.isFrom(event.sender)) islandBar.setHeight(height);
+});
+// Bar jobs for the pill (lane 29). The main process does not hold the bar job
+// stream, so each ai window that follows jobs reports its whole list here:
+// main windows, the bar window and the pill page; top frame only.
+ipcMain.on('island-bar:jobs', (event, jobs: unknown) => {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  const trusted = islandBar.isFrom(event.sender)
+    || islandPill.isFrom(event.sender)
+    || listMainWindows().some((entry) => entry.window.webContents === event.sender);
+  if (!trusted) return;
+  islandPill.report(event.sender, jobs);
+});
+ipcMain.handle('island-bar:set-pill-size', (event, size: unknown) => {
+  islandPill.setSize(event.sender, size);
+});
+
 ipcMain.handle('shell:hud:get-prefs', () => hudPrefs());
 ipcMain.handle('shell:hud:set-prefs', (_event, prefs: { hideOnBlur?: unknown }) => {
   if (typeof prefs?.hideOnBlur === 'boolean') store.set('hudHideOnBlur', prefs.hideOnBlur);

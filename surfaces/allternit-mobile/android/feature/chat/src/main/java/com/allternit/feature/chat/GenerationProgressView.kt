@@ -472,6 +472,7 @@ internal fun MediaGenerateCard(
                 info = ChatErrorInfo.make(call.error, lane = if (lane == GenerationLane.Motion) ChatErrorInfo.Lane.Motion else ChatErrorInfo.Lane.Picture).let { if (call.browserImageResult != null) it.copy(action = null) else it },
                 lane = lane, aspect = GenerationProgressDetail.aspect(call), onChooseModel = onChooseModel, onConnect = onConnect, onRetry = onRetry,
             )
+            if (needsPictureSignIn(call)) CapsuleButton("Sign in to ChatGPT", primary = true) { BrowserImageJob.active?.signIn() }
         }
         call.state == ToolState.Done -> RevealedImageResult(call, store)
         else -> Unit
@@ -562,13 +563,22 @@ internal fun RunningStrip(modifier: Modifier = Modifier, store: GenerationProgre
 }
 
 
+/** A failed picture result with code sign_in_needed (or legacy signed_out): the one place the engine is named. */
+private fun needsPictureSignIn(call: ToolCallRecord): Boolean = runCatching {
+    val code = org.json.JSONObject((call.browserImageResult ?: call.output).orEmpty()).optString("code")
+    code == "sign_in_needed" || code == "signed_out"
+}.getOrDefault(false)
+
 /** Decodes a finished picture for the reveal; null when it is missing, too big, or not an image. */
 private fun revealBitmap(call: ToolCallRecord): Bitmap? = runCatching {
-    val result = org.json.JSONObject((call.browserImageResult ?: call.output).orEmpty())
-    if (!result.optBoolean("ok")) return null
-    val source = result.optString("localImage").ifBlank { result.optString("image") }
+    val attached = call.attachedImageUrl
+    val source = if (attached != null) attached else {
+        val result = org.json.JSONObject((call.browserImageResult ?: call.output).orEmpty())
+        if (!result.optBoolean("ok")) return null
+        result.optString("localImage").ifBlank { result.optString("image") }
+    }
     if (source.length > 12 * 1024 * 1024) return null
-    val bytes = if (source.startsWith("data:image/png;base64,")) Base64.decode(source.substringAfter(','), Base64.DEFAULT) else LocalImageStore.readImage(source)
+    val bytes = if (source.startsWith("data:image/png;base64,") || source.startsWith("data:image/gif;base64,")) Base64.decode(source.substringAfter(','), Base64.DEFAULT) else LocalImageStore.readImage(source)
     if (bytes == null || bytes.size > 8 * 1024 * 1024) return null
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)

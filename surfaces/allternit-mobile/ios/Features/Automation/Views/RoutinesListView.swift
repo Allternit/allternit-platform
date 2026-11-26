@@ -216,9 +216,9 @@ struct RoutinesListView: View {
                     if visibleRoutines.isEmpty {
                         FriendlyInlineStateView(
                             style: .empty,
-                            icon: "magnifyingglass",
                             title: "No matches",
-                            message: "No routines match."
+                            message: "No routines match.",
+                            art: .search
                         )
                         .padding(.top, 24)
                     }

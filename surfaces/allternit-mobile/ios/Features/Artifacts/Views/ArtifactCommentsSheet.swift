@@ -110,19 +110,13 @@ struct ArtifactCommentsSheet: View {
             ProgressView("Loading comments…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if ArtifactCommentRules.visibleThreads(threads, showResolved: showResolved).isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "bubble.left")
-                    .font(.system(size: 22))
-                Text(threads.isEmpty ? "No comments yet" : "No open comments")
-                    .font(.subheadline)
-                if !mayComment {
-                    Text("Only people who can comment can add one.")
-                        .font(.footnote)
-                }
-            }
-            .foregroundColor(Color("TextSecondary"))
+            FriendlyStateView(
+                title: threads.isEmpty ? "No comments yet" : "No open comments",
+                message: mayComment ? "" : "Only people who can comment can add one.",
+                art: .envelope,
+                size: .panel
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityElement(children: .combine)
         } else {
             ScrollView {
                 LazyVStack(spacing: 12) {

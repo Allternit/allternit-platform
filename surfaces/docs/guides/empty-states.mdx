@@ -14,6 +14,12 @@ A screen with nothing in it does not show a blank page. It shows a small line dr
 | **Envelope** | Chats in the phone drawer, a bot's threads, and Meetings with no calls coming up |
 | **Coins** | Billing transactions and the usage ledger |
 | **Gizzi walking** | Code sessions, the bot picker and bot rail with no bots, and computers |
+| **Search, with Gizzi beside it** | A search or filter that finds nothing |
+| **Model, with Gizzi beside it** | A model list with nothing to pick yet |
+| **Phone, key, log, apps, memory, chart, people, archive, flow, network, calendar** | The matching screens: linked phones, API keys, logs, app lists, memory, usage charts, members, archived items, flows and iterations, connections, and calendars |
+| **Connect scene (Gizzi asleep)** | A screen that needs a computer and has none |
+
+There are 19 drawings in all: 17 line drawings, the Gizzi mascot, and the Connect scene. The line drawings are sheets, bell, envelope, coins, search, phone, log, key, apps, memory, model, chart, people, archive, flow, network and calendar. Search and model draw Gizzi beside the line drawing. The Connect scene is always shown asleep, because "no computer" means nothing is connecting yet.
 
 The drawing is one colour, the text colour, so it works in light and dark. With reduced motion it is a still picture.
 
@@ -28,7 +34,7 @@ A button shows only where the action already existed on that screen.
 - **Bot rail with no bots:** **Create a bot**.
 - **Computers:** **Open settings**.
 
-A search with no match, and an error, keep a plain text look with no drawing. The words on every screen are the same as before.
+An error keeps a plain text look with no drawing. The words on every screen are the same as before.
 
 ## Where it works
 
@@ -65,6 +71,84 @@ The Artifacts library keeps its **New artifact** button inside the block, and th
 
 When a step is finished, a grey badge turns to colour: one colour fills in, a ring settles and the mark draws. You see it on a connected app and on completed milestones. It plays once. With reduced motion it shows the final badge.
 
+## Sizes
+
+The same drawing comes in three sizes. The size follows what is empty, not how important it is.
+
+| Treatment | Art size | Use it for |
+| --- | --- | --- |
+| Full | 96 | A whole pane or view with nothing in it |
+| Panel | 64 | A block inside a list, card, tab or dropdown |
+| Inline | 36 | A single muted line in a row or section |
+
+The art is decoration. Screen readers skip it and read only the headline, the line of help and the button. With reduced motion (the system setting on web, Reduce Motion on iPhone, animator scale 0 on Android) the drawing shows its still frame.
+
 ## For developers
 
-See [Shared UI art](/dev/shared-art).
+Use the shared component for the screen you are on. Pass a kind, never draw art by hand, and keep the copy and actions of the block you replace. The wrapper picks the size.
+
+### Web
+
+Web, Desktop, the phone layout and the m.allternit.com app share one set. Import from `@/components/polish`.
+
+```tsx
+// full
+<EmptyState art="sheets" title="No artifacts yet" description="..." action={...} />
+// panel: art 64
+<EmptyBlock kind="bell" size={64} title="Nothing is waiting on you." description="..." />
+// inline: art 36 plus the line
+<EmptyInline kind="log">No logs yet</EmptyInline>
+```
+
+The kind type is `EmptyKind`, which is the 17 line kinds, `gizzi`, and `connect-scene`.
+
+### Console
+
+The Console (platform.allternit.com) has its own copy in `console-ui/empty-art.tsx`. The mascot loads lazily.
+
+```tsx
+<EmptyState art="key" title="No API keys yet" />
+<EmptyState art="coins" size="panel" title="No charge events" />
+<EmptyInline art="log">No logs yet</EmptyInline>
+```
+
+### iPhone
+
+```swift
+EmptyBox(title: "No bots yet", message: "...", art: .gizzi)
+FriendlyStateView(title: "No models on this iPhone yet", art: .model)
+FriendlyInlineStateView(title: "No iterations yet", art: .flow)
+```
+
+Pass `size: .panel` (64 pt) inside a card or list section. The inline view is 36 pt. Use `.connectScene` for the Connect scene. The art view is hidden from accessibility.
+
+### Android
+
+```kotlin
+EmptyBox(title = "No computer yet", art = EmptyArtKind.ConnectScene)
+FriendlyState(title = "...", art = EmptyArtKind.Bell)
+ListState(emptyTitle = "...", art = EmptyArtKind.Log)
+InlineEmpty(text = "No phones linked yet.", art = EmptyArtKind.Phone)
+```
+
+The inline form is 36 dp. The art clears its semantics so TalkBack skips it.
+
+### Gizzi Code
+
+The terminal has no `art` prop and no animation.
+
+```tsx
+<EmptyLine>No artifacts yet.</EmptyLine>
+```
+
+It shows a static pixel Gizzi beside the copy, and text only on narrow terminals.
+
+### The paper prop
+
+`paper` is optional on every surface. Set it only when the empty block sits on a filled card, so the solid parts of the art match the card. On web it sets `--ea-bg`, for example `paper="var(--some-surface)"`. On iPhone and Android pass a `Color`. Never add a new colour; the default is the page background.
+
+### When not to add art
+
+Skip anything that is not a screen with nothing in it: tool results a model reads, thrown errors, validation messages, dialog text and log lines. These get no art. When the copy reaches the screen through a prop such as `emptyMessage`, add the art once in the component that renders it.
+
+See also [Shared UI art](/dev/shared-art).

@@ -44,6 +44,10 @@ dependencies {
     implementation(project(":feature:chat"))
     // Wave I2: the status snapshot behind the ongoing "live run" notification.
     implementation(project(":feature:system"))
+    // Island bar job notification: BarJobs, BarDeepLink, BarWording, BarFlag (lane 37).
+    implementation(project(":feature:bar"))
+    // BarWidget().updateAll when the bar job changes.
+    implementation(libs.glance.appwidget)
     implementation(libs.firebase.messaging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

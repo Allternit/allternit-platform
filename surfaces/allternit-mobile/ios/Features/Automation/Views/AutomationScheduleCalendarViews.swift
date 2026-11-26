@@ -94,9 +94,7 @@ private struct UpcomingCard<Content: View>: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 4)
             if isEmpty {
-                Text("Nothing in the next two weeks.")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "Nothing in the next two weeks.", art: .calendar)
                     .padding(.horizontal, 6)
                     .padding(.bottom, 4)
             } else {
@@ -796,9 +794,7 @@ struct AutomationRoutineDetailsSheet: View {
     private func history(_ r: AutomationRoutine) -> some View {
         let runs = Array((r.recentRuns ?? []).prefix(10))
         if runs.isEmpty {
-            Text("No runs yet.")
-                .font(.system(size: 12))
-                .foregroundColor(Color("TextTertiary"))
+            FriendlyInlineStateView(title: "No runs yet.", art: .bell)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(runs) { run in

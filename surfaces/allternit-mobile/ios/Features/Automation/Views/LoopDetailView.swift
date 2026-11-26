@@ -228,9 +228,9 @@ struct LoopDetailView: View {
             if liveLoop.iterationLog.isEmpty {
                 FriendlyInlineStateView(
                     style: .empty,
-                    icon: "arrow.2.circlepath",
                     title: "No iterations yet",
-                    message: "Loop iterations will appear here as they run."
+                    message: "Loop iterations will appear here as they run.",
+                    art: .flow
                 )
             } else {
                 VStack(spacing: 8) {

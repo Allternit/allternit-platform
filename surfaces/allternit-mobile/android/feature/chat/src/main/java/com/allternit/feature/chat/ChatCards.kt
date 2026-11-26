@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -70,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.R as DesignR
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -269,6 +272,27 @@ fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Un
     if (ask.closed) return
     val picks = remember(ask.id) { mutableStateListOf<Set<String>>().apply { repeat(ask.questions.size) { add(emptySet()) } } }
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
+    val planAt = ask.questions.indexOfFirst { it.plan != null }
+    if (planAt >= 0) {
+        // A plan question draws a plan card; the sheet answers it (Approve = Yes, Revise / Ask = No).
+        val q = ask.questions[planAt]
+        var open by remember(ask.id) { mutableStateOf(false) }
+        // Revise / Ask: once the answer lands the card (and its sheet) leaves, and the composer
+        // takes focus with the web's prompt (ChatComposer PLAN_NOTE). A failed answer clears it.
+        var pendingNote by remember(ask.id) { mutableStateOf<String?>(null) }
+        DisposableEffect(ask.id) { onDispose { pendingNote?.let { ComposerFocusRequests.requests.tryEmit(it) } } }
+        PlanCard(q.plan!!) { open = true }
+        if (open) PlanSheet(q.plan, onDismiss = { open = false }) { action, onError ->
+            val label = planReplyLabel(q.options, action)
+            pendingNote = when (action) {
+                PlanAction.Approve -> null
+                PlanAction.Revise -> "What should change in the plan?"
+                PlanAction.Ask -> "Ask about the plan…"
+            }
+            onAnswer(ask.questions.indices.map { if (it == planAt) listOfNotNull(label) else emptyList() }) { pendingNote = null; onError(it) }
+        }
+        return
+    }
     CardChrome {
         CardHeader(com.allternit.core.design.R.drawable.ph_question, "Your agent is asking")
         ask.questions.forEachIndexed { index, q ->
@@ -556,6 +580,7 @@ private val imageCache = android.util.LruCache<String, ImageBitmap>(24)
 @Composable
 internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = null, modifier: Modifier, contentScale: ContentScale = ContentScale.Fit, description: String? = null, onFail: (() -> Unit)? = null) {
     var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(imageCache.get(url)) }
+    var gif by remember(url) { mutableStateOf<ByteArray?>(null) }
     LaunchedEffect(url) {
         if (bitmap != null) return@LaunchedEffect
         val loaded = withContext(Dispatchers.IO) {
@@ -563,6 +588,7 @@ internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = 
                 client.newCall(request ?: Request.Builder().url(url).build()).execute().use { resp ->
                     if (!resp.isSuccessful) return@use null
                     val bytes = resp.body?.bytes() ?: return@use null
+                    if (com.allternit.core.design.isGif(bytes) && bytes.size <= 8 * 1024 * 1024) gif = bytes
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                 }
             }.getOrNull()
@@ -575,7 +601,10 @@ internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = 
         }
     }
     val b = bitmap
-    if (b != null) {
+    val g = gif
+    if (b != null && g != null) {
+        com.allternit.core.design.AnimatedGif(g, modifier, description)
+    } else if (b != null) {
         Image(b, contentDescription = description, modifier = modifier, contentScale = contentScale)
     } else {
         Box(modifier.background(AllternitTheme.colors.fillNeutral), contentAlignment = Alignment.Center) {
@@ -758,7 +787,7 @@ internal fun AnswerCard(card: JsonObject, fallbackText: String?, backend: ChatBa
                 val places = data.arr("places").mapNotNull { it as? JsonObject }
                 val sub = listOfNotNull(data.str("query"), data.str("near")?.let { "near $it" }).joinToString(" · ")
                 if (sub.isNotEmpty()) Text(sub, color = c.textSecondary, fontSize = 12.sp)
-                if (places.isEmpty()) Text("No places found.", color = c.textSecondary, fontSize = 13.sp)
+                if (places.isEmpty()) InlineEmpty("No places found.", art = EmptyArtKind.Search)
                 places.forEach { p ->
                     val lat = p.double("lat")
                     val lon = p.double("lon")

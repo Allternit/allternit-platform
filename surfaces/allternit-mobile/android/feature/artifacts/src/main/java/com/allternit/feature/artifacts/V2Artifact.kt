@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
@@ -196,6 +197,11 @@ fun V2ArtifactScreen(
     var legacyOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var makeAppOpen by remember { mutableStateOf(false) }
+    var installReq by remember { mutableStateOf<InstallRequest?>(null) }
+    var appLink by remember(artifactId) { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var openComments by remember { mutableIntStateOf(0) }
     BackHandler(enabled = !editing, onBack = onClose)
@@ -296,7 +302,11 @@ fun V2ArtifactScreen(
     if (moreOpen && ready != null) {
         LibrarySheet(ready.title, "v2ArtifactMoreSheet", onDismiss = { moreOpen = false }) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LibraryRowButton("Share", DesignR.drawable.ph_upload_simple, "v2ArtifactShare") { moreOpen = false; shareLink(context, ready) }
+                LibraryRowButton("Share", DesignR.drawable.ph_upload_simple, "v2ArtifactShare") {
+                    moreOpen = false
+                    // An app-capable artifact opens the share sheet (Install app, Copy app link); others go straight to the chooser.
+                    if (canMakeAppHere(ready.summary)) shareOpen = true else shareLink(context, ready)
+                }
                 val session = ready.summary.origin?.sessionId
                 val surface = ready.summary.origin?.surface
                 if (session != null && (surface == null || surface == "chat" || surface == "cowork")) {
@@ -317,6 +327,51 @@ fun V2ArtifactScreen(
                 }
                 if (ready.summary.isMine) LibraryRowButton("Delete", DesignR.drawable.ph_trash, "v2ArtifactDelete", destructive = true) { moreOpen = false; confirmDelete = true }
             }
+        }
+    }
+
+    // The app link and whether this artifact is already an app (404 = not yet); only for the owner of an app-capable kind.
+    androidx.compose.runtime.LaunchedEffect(ready?.id, makeAppOpen) {
+        val a = ready?.summary ?: return@LaunchedEffect
+        if (!canMakeAppHere(a)) return@LaunchedEffect
+        appLink = (ArtifactsV2Client.app(a.id) as? ApiResult.Ok)?.let { savedAppFrom(a.id, it.value)?.link }
+    }
+    if (shareOpen && ready != null) {
+        LibrarySheet("Share", "v2ArtifactShareSheet", onDismiss = { shareOpen = false }) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LibraryRowButton("Share link", DesignR.drawable.ph_upload_simple, "v2ArtifactShareLink") { shareOpen = false; shareLink(context, ready) }
+                if (appLink != null) {
+                    LibraryRowButton("Install app", DesignR.drawable.ph_download_simple, "v2ArtifactInstallApp") { shareOpen = false; installReq = InstallRequest(ready.summary, InstallTier.App) }
+                    LibraryRowButton("Copy app link", DesignR.drawable.ph_link_simple, "v2ArtifactCopyAppLink") {
+                        shareOpen = false
+                        copyText(context, "App link", appLink.orEmpty())
+                        notice = "App link copied."
+                    }
+                } else {
+                    LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "v2ArtifactMakeApp") { shareOpen = false; makeAppOpen = true }
+                }
+            }
+        }
+    }
+    if (makeAppOpen && ready != null) {
+        MakeAppSheet(ready.summary, onDismiss = { makeAppOpen = false }, onChanged = { }, onNotice = { notice = it })
+    }
+    installReq?.let { req ->
+        LibrarySheet("Install ${req.artifact.title}?", "v2ArtifactInstallConsent", onDismiss = { installReq = null }) {
+            InstallConsent(
+                request = req,
+                onTier = { installReq = req.copy(tier = it) },
+                onCancel = { installReq = null },
+                onInstall = {
+                    installReq = null
+                    scope.launch {
+                        try {
+                            val again = installArtifactApp(req)
+                            if (again != null) installReq = again else notice = "${req.artifact.title} installed."
+                        } catch (e: IllegalStateException) { actionError = e.message }
+                    }
+                },
+            )
         }
     }
 
@@ -345,6 +400,9 @@ fun V2ArtifactScreen(
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
+    }
+    notice?.let { msg ->
+        AlertDialog(onDismissRequest = { notice = null }, title = { Text(msg) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } })
     }
     actionError?.let { msg ->
         AlertDialog(
@@ -405,7 +463,7 @@ private fun ArtifactBody(a: ArtifactV2, dark: Boolean) {
 private fun SheetGrid(rows: List<List<String>>) {
     val c = AllternitTheme.colors
     if (rows.isEmpty() || rows.all { it.isEmpty() }) {
-        FriendlyState(FriendlyStyle.Empty, "No rows yet", "This sheet is empty.") { Icon(painterResource(DesignR.drawable.deck_sheets), null, tint = c.textSecondary) }
+        FriendlyState(FriendlyStyle.Empty, "No rows yet", "This sheet is empty.", art = EmptyArtKind.Chart)
         return
     }
     val cols = rows.maxOf { it.size }
@@ -539,6 +597,11 @@ private fun ByteLoadedImage(a: ArtifactV2) {
                 Modifier.fillMaxSize().testTag("v2ImageReveal"),
                 onRevealed = { revealed = true },
             )
+        } else if (l.url.startsWith("data:image/gif;base64,")) {
+            // GIF: play it with ImageDecoder + AnimatedImageDrawable (first frame below API 28).
+            val gifBytes = remember(l.url) { runCatching { android.util.Base64.decode(l.url.substringAfter(','), android.util.Base64.DEFAULT) }.getOrNull() }
+            if (gifBytes != null) com.allternit.core.design.AnimatedGif(gifBytes, Modifier.fillMaxSize(), "Animated image")
+            else ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
         } else ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
         else -> Unit
     }

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   AlertCircleIcon,
-  ComputerIcon,
   ArrowRight01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -162,7 +161,8 @@ export function SessionsPage(): React.ReactNode {
       pagination={{ page, totalPages, onPage: setPage }}
       emptyState={
         <EmptyState
-          icon={<HugeiconsIcon icon={ComputerIcon} size={32} />}
+          art="search"
+          size="panel"
           title={search || statusFilter || agentFilter ? "No sessions match your filters" : "No sessions yet"}
           caption={
             search || statusFilter || agentFilter

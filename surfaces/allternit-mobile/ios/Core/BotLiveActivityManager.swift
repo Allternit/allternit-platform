@@ -24,6 +24,9 @@ final class BotLiveActivityManager {
 
     /// cloud-api `BOT_ATTRIBUTES` / `BOT_ACTIVITY_KEY` (the attributes' `mode`).
     nonisolated static let attributesType = "BotActivityAttributes"
+    /// Bar job activities (`TaskActivityAttributes`): the update token's
+    /// `activityKey` is the job id; one push-to-start token per device.
+    nonisolated static let taskAttributesType = "TaskActivityAttributes"
     nonisolated static let activityKey = "summary"
 
     private static let log = Logger(subsystem: "com.allternit.mobile", category: "live-activity")
@@ -36,6 +39,11 @@ final class BotLiveActivityManager {
     /// Activity ids whose token and state streams are being watched.
     private var observed: Set<String> = []
     private var installed = false
+    /// Bar job activities by job id (`TaskActivityAttributes`), requested with
+    /// `pushType: .token`; cloud-api updates and ends them by push.
+    private var taskActivities: [String: Activity<TaskActivityAttributes>] = [:]
+    /// Task activity ids whose token and state streams are being watched.
+    private var observedTasks: Set<String> = []
 
     private init() {}
 
@@ -57,9 +65,15 @@ final class BotLiveActivityManager {
         for existing in Activity<BotActivityAttributes>.activities {
             adopt(id: existing.id)
         }
+        for existing in Activity<TaskActivityAttributes>.activities
+        where existing.activityState == .active || existing.activityState == .stale {
+            adoptTask(existing)
+        }
         Task { await Self.watchNewActivities() }
+        Task { await Self.watchNewTaskActivities() }
         if #available(iOS 17.2, *) {
             Task { await Self.watchPushToStartTokens() }
+            Task { await Self.watchTaskPushToStartTokens() }
         }
     }
 
@@ -105,6 +119,38 @@ final class BotLiveActivityManager {
     private nonisolated static func watchPushToStartTokens() async {
         for await token in Activity<BotActivityAttributes>.pushToStartTokenUpdates {
             await ActivityTokenRegistry.shared.update(kind: .laStart, attributesType: attributesType, activityKey: nil, token: token)
+        }
+    }
+
+    /// Push-to-start for bar jobs: cloud-api opens the activity when a job
+    /// enters `waiting_approval` or `working` (CONTRACT.md section 5).
+    @available(iOS 17.2, *)
+    private nonisolated static func watchTaskPushToStartTokens() async {
+        for await token in Activity<TaskActivityAttributes>.pushToStartTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laStart, attributesType: taskAttributesType, activityKey: nil, token: token)
+        }
+    }
+
+    /// A bar job activity started by a push (not by `syncBarJob`): track it
+    /// and upload its update token.
+    private nonisolated static func watchNewTaskActivities() async {
+        for await new in Activity<TaskActivityAttributes>.activityUpdates {
+            await BotLiveActivityManager.shared.adoptTask(new)
+        }
+    }
+
+    private nonisolated static func watchTaskTokens(id: String, jobId: String) async {
+        guard let tracked = liveTask(id) else { return }
+        for await token in tracked.pushTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laUpdate, attributesType: taskAttributesType, activityKey: jobId, token: token)
+        }
+    }
+
+    private nonisolated static func watchTaskState(id: String, jobId: String) async {
+        guard let tracked = liveTask(id) else { return }
+        for await state in tracked.activityStateUpdates where state == .ended || state == .dismissed {
+            await BotLiveActivityManager.shared.didEndTask(jobId: jobId, id: id)
+            return
         }
     }
 
@@ -262,11 +308,141 @@ final class BotLiveActivityManager {
         return activity != nil
     }
 
+    // MARK: - Bar job (TaskActivityAttributes)
+
+    /// One bar job state, as the app learns it from a `bar_job` event or a
+    /// `GET /bar/jobs` fetch (CONTRACT.md section 5 `JobState`).
+    struct BarJobSnapshot: Sendable {
+        var jobId: String
+        var title: String
+        var appName: String
+        var state: String
+        var approverName: String? = nil
+        var botName: String? = nil
+        var amount: String? = nil
+        var receipt: String? = nil
+        var error: String? = nil
+        var isOwner: Bool = false
+        var question: String? = nil
+        var inboxId: String? = nil
+        var runtimeId: String? = nil
+        var contentHash: String? = nil
+        var approveInline: Bool? = nil
+    }
+
+    /// Final state stays on the Lock Screen about four hours (ActivityKit
+    /// dismissal policy), then goes.
+    nonisolated static let barJobFinalDwell: TimeInterval = 4 * 60 * 60
+
+    /// Call for every `bar_job` event (and after a jobs fetch). Starts the
+    /// activity when a job enters `waiting_approval` or `working`, updates it
+    /// on every later state, and ends it on completed / failed / cancelled.
+    func syncBarJob(_ job: BarJobSnapshot) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let content = Self.taskContentState(for: job)
+        if let existing = taskActivities[job.jobId] {
+            let id = existing.id
+            if content.isTerminal {
+                taskActivities.removeValue(forKey: job.jobId)
+                Task {
+                    await Self.liveTask(id)?.end(
+                        ActivityContent(state: content, staleDate: nil),
+                        dismissalPolicy: .after(.now.addingTimeInterval(Self.barJobFinalDwell))
+                    )
+                }
+            } else if existing.content.state != content {
+                Task { await Self.liveTask(id)?.update(ActivityContent(state: content, staleDate: nil)) }
+            }
+            return
+        }
+        // Only these two states open an activity; a job first seen finished,
+        // in review or needing input does not.
+        guard job.state == "waiting_approval" || job.state == "working" else { return }
+        let attributes = TaskActivityAttributes(jobId: job.jobId, title: job.title, appName: job.appName)
+        do {
+            let started = try Activity.request(
+                attributes: attributes,
+                content: ActivityContent(state: content, staleDate: nil),
+                pushType: .token
+            )
+            adoptTask(started)
+        } catch {
+            // Live Activities off in Settings or the concurrent limit: nothing to recover.
+            Self.log.notice("bar job activity request failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Track a bar job activity (started here or by a push) and upload its
+    /// update token, keyed by job id. Once per activity.
+    fileprivate func adoptTask(_ activity: Activity<TaskActivityAttributes>) {
+        let jobId = activity.attributes.jobId
+        if let known = taskActivities[jobId], known.id == activity.id, observedTasks.contains(activity.id) { return }
+        taskActivities[jobId] = activity
+        guard observedTasks.insert(activity.id).inserted else { return }
+        let id = activity.id
+        Task { await Self.watchTaskTokens(id: id, jobId: jobId) }
+        Task { await Self.watchTaskState(id: id, jobId: jobId) }
+    }
+
+    /// The activity ended (by us, by a pushed `end`, or the user dismissed it):
+    /// its update token is spent.
+    fileprivate func didEndTask(jobId: String, id: String) async {
+        _ = observedTasks.remove(id)
+        if taskActivities[jobId]?.id == id { taskActivities.removeValue(forKey: jobId) }
+        await ActivityTokenRegistry.shared.remove(kind: .laUpdate, attributesType: Self.taskAttributesType, activityKey: jobId)
+    }
+
+    /// The job is gone (deleted, signed out of its team): end it now.
+    func endBarJob(jobId: String) {
+        guard let existing = taskActivities.removeValue(forKey: jobId) else { return }
+        let id = existing.id
+        Task { await Self.liveTask(id)?.end(nil, dismissalPolicy: .immediate) }
+    }
+
+    static func taskContentState(for job: BarJobSnapshot) -> TaskActivityAttributes.ContentState {
+        var state = TaskActivityAttributes.ContentState(state: job.state)
+        state.approverName = job.approverName
+        state.botName = job.botName
+        state.amount = job.amount
+        state.receipt = job.receipt
+        state.error = job.error
+        state.isOwner = job.isOwner
+        // The question survives only while the job waits on approval, so a
+        // stale Approve button never outlives its item.
+        if job.state == "waiting_approval" {
+            state.question = job.question
+            state.inboxId = job.inboxId
+            state.runtimeId = job.runtimeId
+            state.contentHash = job.contentHash
+            state.approveInline = job.approveInline
+        }
+        return state
+    }
+
+    private nonisolated static func liveTask(_ id: String) -> Activity<TaskActivityAttributes>? {
+        Activity<TaskActivityAttributes>.activities.first { $0.id == id }
+    }
+
+    /// Approve / Deny on a bar job went through: show it running at once.
+    private func didResolveBarJob(inboxId: String) {
+        for (_, activity) in taskActivities where activity.content.state.inboxId == inboxId {
+            var state = activity.content.state
+            state.state = "working"
+            state.question = nil
+            state.inboxId = nil
+            state.contentHash = nil
+            state.approveInline = nil
+            let id = activity.id
+            Task { await Self.liveTask(id)?.update(ActivityContent(state: state, staleDate: nil)) }
+        }
+    }
+
     // MARK: - After an action
 
     /// Approve / Deny went through: drop the question at once instead of
     /// waiting for the server's next push.
     func didResolve(inboxId: String) {
+        didResolveBarJob(inboxId: inboxId)
         guard let activity, activity.content.state.inboxId == inboxId else { return }
         var state = activity.content.state
         state.question = nil
@@ -303,6 +479,14 @@ final class BotLiveActivityManager {
     private func endAllNow() {
         activity = nil
         startedLocally = false
+        taskActivities.removeAll()
+        observedTasks.removeAll()
+        let taskIds = Activity<TaskActivityAttributes>.activities.map(\.id)
+        Task {
+            for id in taskIds {
+                await Self.liveTask(id)?.end(nil, dismissalPolicy: .immediate)
+            }
+        }
         let ids = Activity<BotActivityAttributes>.activities.map(\.id)
         Task {
             for id in ids {

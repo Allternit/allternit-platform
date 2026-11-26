@@ -70,6 +70,7 @@ object AllternitPush {
         PushNotifications.ensureChannels(app)
         if (!started.compareAndSet(false, true)) return
         AllternitAuth.addSignOutHook { willSignOut(app) }
+        BarJobNotification.start(app)
         scope.launch {
             // Sign-in and account switch: post the token for the account now active (cloud moves it).
             AllternitAuth.state.collect { state -> if (state is AuthState.SignedIn) registerIfAuthorized(app) }

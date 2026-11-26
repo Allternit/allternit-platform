@@ -55,7 +55,6 @@ struct DevicePairingView: View {
     @State private var presence: [String: RuntimePresenceRow] = [:]
     @State private var isLoadingDevices = false
     @State private var devicesError: String? = nil
-    @State private var removeTarget: RuntimeDeviceSummary? = nil
 
     var body: some View {
         List {
@@ -69,18 +68,6 @@ struct DevicePairingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadDevices() }
         .refreshable { await loadDevices() }
-        .confirmationDialog(
-            "Remove \(removeTarget?.name ?? "device")?",
-            isPresented: Binding(get: { removeTarget != nil }, set: { if !$0 { removeTarget = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Remove", role: .destructive) {
-                if let target = removeTarget { Task { await revoke(target) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("It stops reaching your Allternit account until you pair it again.")
-        }
     }
 
     // MARK: - Approve
@@ -168,11 +155,12 @@ struct DevicePairingView: View {
                     style: .empty,
                     icon: "laptopcomputer",
                     title: "No paired devices",
-                    message: "Install Allternit Desktop or run `gizzi pair` on a computer to connect it."
+                    message: "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.",
+                    art: .connectScene
                 )
             } else {
-                ForEach(devices) { device in
-                    deviceRow(device)
+                ForEach(deviceGroups, id: \.latest.id) { group in
+                    deviceRow(group.latest, pairedCount: group.all.count, all: group.all)
                 }
             }
         } header: {
@@ -180,9 +168,23 @@ struct DevicePairingView: View {
         }
     }
 
-    private func deviceRow(_ device: RuntimeDeviceSummary) -> some View {
+    /// One row per physical device: pairings with the same platform and name
+    /// fold into one row (newest first), "paired N times".
+    private var deviceGroups: [(latest: RuntimeDeviceSummary, all: [RuntimeDeviceSummary])] {
+        var order: [String] = []
+        var byKey: [String: [RuntimeDeviceSummary]] = [:]
+        for device in devices.sorted(by: { $0.createdAt > $1.createdAt }) {
+            let key = "\(device.platform ?? "")|\(device.name.lowercased())"
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(device)
+        }
+        return order.compactMap { key in byKey[key].map { (latest: $0[0], all: $0) } }
+    }
+
+    private func deviceRow(_ device: RuntimeDeviceSummary, pairedCount: Int, all: [RuntimeDeviceSummary]) -> some View {
         let state = presenceLabel(for: device)
-        return HStack(spacing: 12) {
+        return VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 12) {
             Image(systemName: device.runtimeType.contains("ios") ? "iphone" : "laptopcomputer")
                 .foregroundColor(Color("TextSecondary"))
                 .frame(width: 24)
@@ -190,7 +192,7 @@ struct DevicePairingView: View {
                 Text(device.name)
                     .font(.subheadline)
                     .foregroundColor(Color("TextPrimary"))
-                Text([device.platform, device.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " · "))
+                Text([device.platform, device.version.map { "v\($0)" }, pairedCount > 1 ? "paired \(pairedCount) times" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
             }
@@ -201,12 +203,11 @@ struct DevicePairingView: View {
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
             }
-            Button(action: { removeTarget = device }) {
-                Image(systemName: "xmark.circle")
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove \(device.name)")
+        }
+        // Remove is hold-to-confirm (never a dialog); it removes every pairing of this device.
+        ACIHoldButton(title: "Hold to remove", danger: true) {
+            Task { for d in all { await revoke(d) } }
+        }
         }
     }
 
@@ -286,7 +287,6 @@ struct DevicePairingView: View {
 
     @MainActor
     private func revoke(_ device: RuntimeDeviceSummary) async {
-        removeTarget = nil
         do {
             try await APIClient.shared.delete(path: "runtime-devices/\(Self.escape(device.id))")
             devices.removeAll { $0.id == device.id }

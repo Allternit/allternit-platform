@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Tag01Icon, AlertCircleIcon, InformationCircleIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, InformationCircleIcon } from "@hugeicons/core-free-icons";
 import { formatApiError } from "@/lib/api-client";
 import {
   TAG_RESOURCE_TYPES,
@@ -242,7 +242,7 @@ export function TagsPage(): React.ReactNode {
         <SkeletonRow lines={4} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={<HugeiconsIcon icon={Tag01Icon} size={32} />}
+          art="search"
           title={search ? "No tags match" : "No tags yet"}
           caption={
             search

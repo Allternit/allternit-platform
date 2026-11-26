@@ -164,7 +164,8 @@ struct CoworkWorkspaceView: View {
                     style: .empty,
                     icon: "bubble.left.and.bubble.right",
                     title: "No sessions yet",
-                    message: "Start your first Cowork session above."
+                    message: "Start your first Cowork session above.",
+                    art: .gizzi
                 )
             } else {
                 LazyVStack(spacing: 8) {

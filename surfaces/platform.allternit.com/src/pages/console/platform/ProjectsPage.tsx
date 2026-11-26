@@ -117,7 +117,8 @@ export function PlatformProjectsPage() {
       ) : state.projects.length === 0 ? (
         <div className={CARD_CLASS}>
           <EmptyState
-            icon={<Cube size={32} aria-hidden />}
+            art="sheets"
+            size="panel"
             title="No projects yet"
             caption="Start with a sandbox project. It uses test keys and its usage is not charged; a card is still needed before billable calls."
             ctaLabel="New project"

@@ -102,7 +102,7 @@ internal fun AgentHubScreen(host: BotsHost, store: BotModeStore, nav: BotNavigat
                         if (!ListState(store.agentsLoading, store.agentsError, store.agents.isEmpty(), "Couldn't load agents", "Agents and bots run tasks on your behalf — create one from a template to get started.") { scope.launch { store.refreshAgents() } }) {
                             val crew = agents.filter { !it.isBot }
                             val bots = agents.filter { it.isBot }
-                            if (crew.isEmpty() && bots.isEmpty()) Text("No agents or bots match your search.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
+                            if (crew.isEmpty() && bots.isEmpty()) com.allternit.core.design.InlineEmpty("No agents or bots match your search.", Modifier.padding(horizontal = 20.dp), art = com.allternit.core.design.EmptyArtKind.Search)
                             if (crew.isNotEmpty()) { SectionHeader("Crew"); AgentGroup(crew, store, nav) { pendingDelete = it } }
                             SectionHeader("Templates")
                             RowGroup {
@@ -358,7 +358,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
                     }
                     list == null -> LibrarySpinner("Loading tasks")
                     list.isEmpty() -> {
-                        Text("No tasks yet", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        com.allternit.core.design.InlineEmpty("No tasks yet", art = com.allternit.core.design.EmptyArtKind.Bell)
                         Text("Delegate a task to this bot and it will run in its workspace or sandbox.", color = c.textSecondary, fontSize = 13.sp)
                         Pill("Run First Task", "botHomeRunFirst", icon = DesignR.drawable.ph_play_fill) { runOpen = true }
                     }
@@ -474,7 +474,7 @@ internal fun MarketplaceScreen(nav: BotNavigator) {
     BotScreen("Marketplace", nav, testTag = "marketplace") {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(bottom = 24.dp)) {
             LibrarySearchField(query, "Search the marketplace", "marketplaceSearch", Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { query = it }
-            if (!ListState(loading, error, listings.isEmpty(), "Couldn't load agents", "No published agents or bots yet. Check back later or publish your own from the workspace.") { scope.launch { load() } }) {
+            if (!ListState(loading, error, listings.isEmpty(), "Couldn't load agents", "No published agents or bots yet. Check back later or publish your own from the workspace.", art = com.allternit.core.design.EmptyArtKind.Gizzi) { scope.launch { load() } }) {
                 listings.forEach { l ->
                     Column(
                         Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.fillNeutral)

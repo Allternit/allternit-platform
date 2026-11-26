@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Scales } from "@phosphor-icons/react";
+import { ArrowLeft } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
 import type { V1Client } from "@/lib/platform-v1";
 import {
@@ -76,7 +76,8 @@ function DecisionsBody({ client }: { client: V1Client }) {
     return (
       <div className={CARD_CLASS}>
         <EmptyState
-          icon={<Scales size={32} aria-hidden />}
+          art="bell"
+          size="panel"
           title="No decisions yet"
           caption="Decisions you make with POST /v1/decisions show up here."
         />

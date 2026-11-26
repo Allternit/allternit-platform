@@ -20,6 +20,8 @@ struct ConnectorsListView: View {
     @State private var isLoading = false
     @State private var loadError: String? = nil
     @State private var searchText = ""
+    /// "Who can use this" for a connected connector (team map flag on).
+    @State private var whoCanUse: TeamAppRef? = nil
 
     /// Set while a connect/disconnect call for that id is in flight, so its
     /// row shows a spinner instead of the action button.
@@ -78,6 +80,7 @@ struct ConnectorsListView: View {
                 }
             }
             .task { await loadConnectors() }
+            .sheet(item: $whoCanUse) { app in TeamWhoCanUseHost(app: app) }
             .sheet(item: $authorizationURL) { item in
                 SafariView(url: item.url)
                     .onDisappear { Task { await loadConnectors() } }
@@ -154,16 +157,25 @@ struct ConnectorsListView: View {
             )
             .frame(maxWidth: .infinity)
         } else if filtered.isEmpty {
-            FriendlyStateView(
-                style: .empty,
-                icon: searchText.isEmpty ? "puzzlepiece.extension" : "magnifyingglass",
-                title: searchText.isEmpty ? "No connectors available" : "No matches",
-                message: searchText.isEmpty
-                    ? "Add a connector to link external accounts and services."
-                    : "No connectors match your search.",
-                art: searchText.isEmpty ? .sheets : nil
-            )
-            .frame(maxWidth: .infinity)
+            if searchText.isEmpty {
+                FriendlyStateView(
+                    style: .empty,
+                    icon: "puzzlepiece.extension",
+                    title: "No connectors available",
+                    message: "Add a connector to link external accounts and services.",
+                    art: .apps
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                FriendlyStateView(
+                    style: .empty,
+                    icon: "magnifyingglass",
+                    title: "No matches",
+                    message: "No connectors match your search.",
+                    art: .search
+                )
+                .frame(maxWidth: .infinity)
+            }
         } else {
             LazyVStack(spacing: 0) {
                 ForEach(filtered) { connector in
@@ -198,7 +210,17 @@ struct ConnectorsListView: View {
 
             Spacer(minLength: 8)
 
-            actionButton(connector)
+            VStack(alignment: .trailing, spacing: 4) {
+                actionButton(connector)
+                if connector.isConnected && TeamMapFlag.isOn {
+                    Button("Who can use this") {
+                        whoCanUse = TeamAppRef(kind: "connector", ref: connector.id, name: connector.name)
+                    }
+                    .font(.caption)
+                    .frame(minHeight: 44)
+                    .buttonStyle(.borderless)
+                }
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

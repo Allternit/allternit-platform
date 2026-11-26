@@ -1,5 +1,8 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.api.gen.AgentModeEntry
+import com.allternit.core.api.gen.AgentModeLaunchType
+import com.allternit.core.api.gen.AgentModes
 import com.allternit.core.design.MatrixLogo
 import android.content.Context
 import android.content.Intent
@@ -68,6 +71,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -103,7 +108,14 @@ internal data class ComposerAttachment(
     val kind: String,
     val bytes: ByteArray? = null,
     val mediaType: String? = null,
+    /** Kind "artifact" only: the artifact's id and kind. The chat sends it as a text line, not an upload (web attachedArtifactLine). */
+    val artifactId: String? = null,
+    val artifactKind: String? = null,
 )
+
+/** The line that carries an attached artifact in the message text (web `attachedArtifactLine`, same text so the agent can tell two same-titled artifacts apart). */
+internal fun attachedArtifactLine(id: String, title: String, kind: String?): String =
+    "[Attached artifact: $title \u2192 artifact $id${if (kind.isNullOrBlank()) "" else " ($kind)"}.]"
 
 /** What a send hands to the chat (step 8 sends it; the stub shows it). */
 internal data class ComposerDraft(
@@ -138,33 +150,67 @@ internal object ComposerPlaceholders {
         "Type / for plugins and skills, @ for bots and files",
     )
 
-    fun byMode(tile: DeckMode): List<String> = when (tile.id) {
-        "research" -> listOf("Ask for an in-depth, cited research report", "Compare five competitors with sources", "What does the latest data say about…")
-        "slides" -> listOf("Describe the deck. Audience, length, tone", "Turn a brief into a 10-slide pitch", "Make a workshop deck with exercises")
-        "website" -> listOf("Describe the site you want built", "Landing page for a bakery in Austin", "Rebuild a site from its URL, cleaner")
-        "docs" -> listOf("Describe the document you need", "Write a one-page proposal from these notes")
-        "data" -> listOf("Paste data or describe the sheet you need", "Chart monthly revenue from this CSV")
-        "swarms" -> listOf("Describe the outcome. A team of agents will split it up")
-        "image" -> listOf("Describe the image. Subject, style, format")
-        "video" -> listOf("Describe the clip. Length, shots, mood")
-        else -> agentNoMode
-    }
+    fun byMode(tile: DeckMode): List<String> = listOf(tile.placeholder)
 }
 
-/** The deck's Agent mode list (iOS ChatDeckMode.chat), with the shared deck icons. */
-internal data class DeckMode(val id: String, val label: String, val icon: Int, val color: Color?)
+/**
+ * The deck's Agent mode list, read from the generated registry (core/api gen/AgentModes.gen.kt) for the
+ * chat surface: same order, labels, badges and placeholders as iOS and web. Only icon art and accent
+ * colors live here. `wire` is the existing `metadata.agentModeId` (null for kinds the backend has no mode for).
+ */
+internal data class DeckMode(
+    val id: String,
+    val label: String,
+    val icon: Int,
+    val color: Color?,
+    val placeholder: String,
+    val beta: Boolean,
+    val isNew: Boolean,
+    val wire: String?,
+    /** The registry entry: launch type and the "It can" defaults. */
+    val entry: AgentModeEntry,
+) {
+    /** An artifact kind that starts an artifact session on Send (Docs, Sheets, Page, Dashboard, App, Build ...). */
+    val startsSession: Boolean get() = entry.artifact && entry.launchType == AgentModeLaunchType.SESSION
 
-internal val DeckModes = listOf(
-    DeckMode("swarms", "Agent Swarm", DesignR.drawable.deck_swarms, Color(0xFF14B8A6)),
-    DeckMode("research", "Deep Research", DesignR.drawable.deck_research, Color(0xFF60A5FA)),
-    DeckMode("website", "Build", DesignR.drawable.deck_build, null),
-    DeckMode("docs", "Docs", DesignR.drawable.deck_docs, Color(0xFF3B82F6)),
-    DeckMode("data", "Sheets", DesignR.drawable.deck_sheets, Color(0xFF4ADE80)),
-    DeckMode("slides", "Slides", DesignR.drawable.deck_slides, Color(0xFFFBBF24)),
-    DeckMode("image", "Image", DesignR.drawable.deck_image, null),
-    DeckMode("video", "Video", DesignR.drawable.deck_video, Color(0xFFEC4899)),
-    DeckMode("artifact", "Artifact", DesignR.drawable.deck_artifact, null),
-)
+    /** PDF: picking it opens the file picker instead of arming a mode. */
+    val picksFile: Boolean get() = entry.launchType == AgentModeLaunchType.PICK
+}
+
+private fun deckIcon(id: String): Int = when (id) {
+    "agent" -> DesignR.drawable.deck_auto
+    "swarms" -> DesignR.drawable.deck_swarms
+    "docs" -> DesignR.drawable.deck_docs
+    "sheets" -> DesignR.drawable.deck_sheets
+    "slides" -> DesignR.drawable.deck_slides
+    "pdf" -> DesignR.drawable.deck_pdf
+    "app" -> DesignR.drawable.deck_app
+    "page" -> DesignR.drawable.deck_page
+    "dashboard" -> DesignR.drawable.deck_dashboard
+    "ops" -> DesignR.drawable.deck_ops
+    "design" -> DesignR.drawable.deck_design
+    "image" -> DesignR.drawable.deck_image
+    "video" -> DesignR.drawable.deck_video
+    "motion" -> DesignR.drawable.deck_motion
+    "build" -> DesignR.drawable.deck_build
+    "research" -> DesignR.drawable.deck_research
+    else -> DesignR.drawable.deck_artifact
+}
+
+private fun deckColor(id: String): Color? = when (id) {
+    "swarms" -> Color(0xFF14B8A6)
+    "research" -> Color(0xFF60A5FA)
+    "docs" -> Color(0xFF3B82F6)
+    "sheets" -> Color(0xFF4ADE80)
+    "slides" -> Color(0xFFFBBF24)
+    "video" -> Color(0xFFEC4899)
+    else -> null
+}
+
+/** Every mode the chat surface can run, in registry order. "agent" is the default (no mode armed). */
+internal val DeckModes: List<DeckMode> = AgentModes.modes("chat").map { e ->
+    DeckMode(e.id, e.label, deckIcon(e.id), deckColor(e.id), e.placeholder, e.beta, e.isNew, e.agentMode, e)
+}
 
 /** Which deck rides under the card (iOS ComposerDeckVariant): Full on Home, Compact in a chat, None on Bots. */
 internal enum class ComposerDeck { None, Compact, Full }
@@ -200,6 +246,12 @@ internal fun Composer(
     agentChips: (@Composable (iconOnly: Boolean) -> Unit)? = null,
     sessionOpen: Boolean = deck == ComposerDeck.Compact,
     onNewItem: (() -> Unit)? = null,
+    /** Send with an artifact mode picked starts that kind's artifact session with the text as its first message (D5); null sends as a normal turn. */
+    onStartArtifact: ((DeckMode, ComposerDraft, Map<String, Boolean>) -> Unit)? = null,
+    /** Picking PDF in the mode list opens the file picker (as on the Artifacts page); null hides the PDF mode. */
+    onPickPdf: (() -> Unit)? = null,
+    /** The deck Artifacts menu's Open: that artifact opens in the library (null falls back to the library list). */
+    onOpenArtifactId: ((String) -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -209,9 +261,21 @@ internal fun Composer(
     var text by rememberSaveable { mutableStateOf("") }
     val attachments = remember { mutableStateListOf<ComposerAttachment>() }
     var focused by remember { mutableStateOf(false) }
+    // Plan Revise / Ask a question (feature/chat ComposerFocusRequests): focus the field and show the
+    // web's prompt until focus leaves.
+    val inputFocus = remember { FocusRequester() }
+    var planNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        com.allternit.feature.chat.ComposerFocusRequests.requests.collect { note ->
+            planNote = note
+            runCatching { inputFocus.requestFocus() }
+        }
+    }
     var deckFolded by remember { mutableStateOf(true) }
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     var agentMode by rememberSaveable { mutableStateOf<String?>(null) }
+    // The picked kind's "It can" choices (registry defaults); a new pick resets them.
+    var itCan by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var plusOpen by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
     var placeholderIndex by remember { mutableIntStateOf(0) }
@@ -232,6 +296,7 @@ internal fun Composer(
 
     val placeholders = when {
         placeholderOverride != null -> listOf(placeholderOverride)
+        planNote != null -> listOf(planNote!!)
         deck != ComposerDeck.Full -> listOf("Reply…")
         agentMode == null -> ComposerPlaceholders.chat
         armedMode != null -> ComposerPlaceholders.byMode(armedMode)
@@ -325,21 +390,32 @@ internal fun Composer(
             return
         }
         Haptics.perform(view, Haptics.Kind.Tap)
+        // Attached artifacts ride as one text line each (web); every other attachment still uploads.
+        val artifactLines = attachments.filter { it.kind == "artifact" && it.artifactId != null }
+            .joinToString("\n") { attachedArtifactLine(it.artifactId.orEmpty(), it.name, it.artifactKind) }
         val draft = ComposerDraft(
-            text = text.trim(),
-            attachments = attachments.toList(),
+            text = if (artifactLines.isEmpty()) text.trim() else text.trim() + "\n\n" + artifactLines,
+            attachments = attachments.filter { it.kind != "artifact" },
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
             effort = models.selected?.let { models.level(it) },
             agentMode = armedMode?.label,
-            agentModeId = armedMode?.id,
+            agentModeId = armedMode?.wire,
             onPhone = phoneArmed,
             webSearch = webSearch,
             research = research,
         )
         text = ""
         attachments.clear()
-        onSend(draft)
+        val start = onStartArtifact
+        if (armedMode != null && armedMode.startsSession && start != null) {
+            val choices = itCan
+            agentMode = null
+            itCan = emptyMap()
+            start(armedMode, draft, choices)
+        } else {
+            onSend(draft)
+        }
     }
 
     Column(
@@ -417,7 +493,8 @@ internal fun Composer(
                         maxLines = if (rest) 1 else 6,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .onFocusChanged { focused = it.isFocused }
+                            .focusRequester(inputFocus)
+                            .onFocusChanged { focused = it.isFocused; if (!it.isFocused) planNote = null }
                             .testTag("composerInput")
                             .semantics { contentDescription = "Message" },
                     )
@@ -500,6 +577,9 @@ internal fun Composer(
             }
         }
         // Tools changes in place; reduced motion never animates the composer's height.
+        if (armedMode != null && armedMode.startsSession && onStartArtifact != null && itCan.isNotEmpty()) {
+            ItCanRow(itCan, onToggle = { k -> Haptics.perform(view, Haptics.Kind.Tap); itCan = itCan + (k to (itCan[k] != true)) }, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 2.dp))
+        }
         if (deckOpen) {
             DeckBand(
                 onHide = { setDeckFolded(true) },
@@ -507,12 +587,25 @@ internal fun Composer(
                 onMention = { tag -> if (!text.contains(tag)) text = tag + text },
                 onAt = { text += if (text.isEmpty() || text.endsWith(" ")) "@" else " @" },
                 armed = armedMode,
+                showPdf = onPickPdf != null,
                 onPickMode = { m ->
                     Haptics.perform(view, Haptics.Kind.Tap)
-                    agentMode = m?.id
+                    if (m != null && m.picksFile) {
+                        onPickPdf?.invoke()
+                    } else {
+                        agentMode = m?.id
+                        itCan = if (m != null && m.startsSession) m.itCanDefaults() else emptyMap()
+                    }
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
+                // Attach stages a removable chip; Send appends the "[Attached artifact: ...]" line (web artifact-launch.store).
+                onAttachArtifact = { id, title, kind ->
+                    if (attachments.none { it.kind == "artifact" && it.artifactId == id }) {
+                        attachments += ComposerAttachment(title, null, "artifact", artifactId = id, artifactKind = kind)
+                    }
+                },
+                onOpenArtifact = { id -> onOpenArtifactId?.invoke(id) ?: onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
     }
@@ -680,6 +773,7 @@ internal fun AttachmentChip(a: ComposerAttachment, onRemove: (() -> Unit)?) {
         val icon = when (a.kind) {
             "photo", "camera" -> com.allternit.core.design.R.drawable.ph_image
             "github" -> com.allternit.core.design.R.drawable.ph_link
+            "artifact" -> com.allternit.feature.artifacts.ArtifactKinds.icon(a.artifactKind.orEmpty())
             else -> com.allternit.core.design.R.drawable.ph_file_text
         }
         Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
@@ -718,10 +812,15 @@ private fun DeckBand(
     onAt: () -> Unit,
     onPlugins: () -> Unit,
     onArtifacts: () -> Unit,
+    onAttachArtifact: (id: String, title: String, kind: String) -> Unit,
+    onOpenArtifact: (id: String) -> Unit,
+    /** PDF opens a file picker; hidden when the host cannot provide one. */
+    showPdf: Boolean,
 ) {
     val c = AllternitTheme.colors
     var menu by remember { mutableStateOf(false) }
     var plugins by remember { mutableStateOf(false) }
+    var artifactsMenu by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val border = c.borderSubtle
     Row(
@@ -749,16 +848,20 @@ private fun DeckBand(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                 Text("Agent mode", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-                DeckModes.forEach { m ->
-                    MenuRow(icon = m.icon, title = m.label, checked = armed?.id == m.id, testTag = "deckMode${m.id}") {
-                        menu = false
-                        onPickMode(m)
-                    }
-                }
-                if (armed != null) {
-                    MenuRow(icon = DesignR.drawable.ph_x, title = "Clear mode", testTag = "deckModeOff") {
-                        menu = false
-                        onPickMode(null)
+                // One list, two columns, row by row (R2-deck-mode): the registry order reads left to right.
+                Column(Modifier.width(320.dp).padding(horizontal = 4.dp)) {
+                    DeckModes.filter { !it.picksFile || showPdf }.chunked(2).forEach { pair ->
+                        Row(Modifier.fillMaxWidth()) {
+                            pair.forEach { m ->
+                                Box(Modifier.weight(1f)) {
+                                    DeckModeCell(m, checked = if (m.id == "agent") armed == null else armed?.id == m.id) {
+                                        menu = false
+                                        onPickMode(if (m.id == "agent") null else m)
+                                    }
+                                }
+                            }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -792,7 +895,117 @@ private fun DeckBand(
             }
         }
         DeckSeparator()
-        DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts", onClick = onArtifacts)
+        Box {
+            DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts") { artifactsMenu = true }
+            DeckArtifactsMenu(artifactsMenu, { artifactsMenu = false }, onAttachArtifact, onOpenArtifact, onArtifacts)
+        }
+    }
+}
+
+private data class DeckRow(val id: String, val kind: String, val title: String)
+
+/**
+ * The deck Artifacts menu (R2-deck-artifacts, R3-recent; iOS ComposerDeck): Pinned, then Recent (3), each row
+ * with Attach and Open, footer "Open Artifacts". Nothing creates here, and plans never appear.
+ */
+@Composable
+private fun DeckArtifactsMenu(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onAttach: (String, String, String) -> Unit,
+    onOpen: (String) -> Unit,
+    onOpenAll: () -> Unit,
+) {
+    val c = AllternitTheme.colors
+    val context = LocalContext.current
+    var items by remember { mutableStateOf<List<com.allternit.feature.artifacts.ArtifactSummary>?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        failed = false
+        when (val r = com.allternit.feature.artifacts.ArtifactsV2Client.list("mine", null, null, null, false)) {
+            is com.allternit.core.api.ApiResult.Ok -> items = r.value.items.filter { it.kind != "plan" }
+            else -> { failed = true; if (items == null) items = emptyList() }
+        }
+    }
+    // Pins live on the runtime (GET/PUT deck-pins), this phone's copy as the fallback; the card menu pins and unpins.
+    LaunchedEffect(open) { if (open) com.allternit.feature.artifacts.DeckPins.load(context) }
+    val pins = com.allternit.feature.artifacts.DeckPins.pins
+    val all = items.orEmpty()
+    val pinIds = pins.map { it.id }.toSet()
+    // Pinned rows keep pin order (newest first); a pin whose artifact is off the first page still shows from its own record.
+    val pinned = pins.map { p -> all.firstOrNull { it.id == p.id }?.let { DeckRow(it.id, it.kind, it.title) } ?: DeckRow(p.id, p.kind, p.title) }
+    val recent = all.filter { it.id !in pinIds }.sortedByDescending { it.updatedAt }.take(3).map { DeckRow(it.id, it.kind, it.title) }
+    DropdownMenu(expanded = open, onDismissRequest = onDismiss, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.width(300.dp).testTag("deckArtifactsMenu")) {
+            @Composable
+            fun Rows(title: String, rows: List<DeckRow>, tag: String) {
+                if (rows.isEmpty()) return
+                Text(title, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+                rows.forEach { a ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(painterResource(com.allternit.feature.artifacts.ArtifactKinds.icon(a.kind)), contentDescription = null, modifier = Modifier.padding(start = 12.dp).size(20.dp), tint = androidx.compose.ui.graphics.Color.Unspecified)
+                        Text(a.title.ifBlank { "Untitled" }, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Attach").clickable(role = Role.Button, onClickLabel = "Attach ${a.title}") { onDismiss(); onAttach(a.id, a.title.ifBlank { "Untitled" }, a.kind) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Attach", color = c.textPrimary, fontSize = 13.sp)
+                        }
+                        Box(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(8.dp)).testTag("${tag}Open").clickable(role = Role.Button, onClickLabel = "Open ${a.title}") { onDismiss(); onOpen(a.id) }.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Open", color = c.textSecondary, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+            Rows("Pinned", pinned, "deckPinned")
+            Rows("Recent", recent, "deckRecent")
+            if (pinned.isEmpty() && recent.isEmpty()) {
+                Text(
+                    if (items == null) "Loading…" else if (failed) "Couldn't load your artifacts." else "Nothing here yet. Your artifacts show up here.",
+                    color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+            }
+            MenuRow(icon = null, title = "Open Artifacts", testTag = "deckOpenArtifacts") { onDismiss(); onOpenAll() }
+        }
+    }
+}
+
+/** One cell of the Agent mode list: icon, label, Default / Beta / New badge, check when armed. */
+@Composable
+private fun DeckModeCell(m: DeckMode, checked: Boolean, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val badge = when {
+        m.id == "agent" -> "Default"
+        m.isNew -> "New"
+        m.beta -> "Beta"
+        else -> null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .testTag("deckMode${m.id}")
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(m.icon), contentDescription = null, tint = m.color ?: c.textPrimary, modifier = Modifier.size(18.dp))
+        Text(m.label, color = c.textPrimary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+        if (badge != null) {
+            val solid = badge == "New"
+            Text(
+                badge,
+                color = if (solid) c.bgPrimary else c.textSecondary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (solid) c.textPrimary else c.bgPanel).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+        if (checked) {
+            Spacer(Modifier.weight(1f))
+            Icon(painterResource(DesignR.drawable.ph_check), contentDescription = "On", tint = c.textPrimary, modifier = Modifier.size(14.dp))
+        }
     }
 }
 

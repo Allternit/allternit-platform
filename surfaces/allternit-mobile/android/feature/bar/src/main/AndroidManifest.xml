@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Island bar (lane 36): translucent over whatever is behind it (the app, or the home screen from the lane 37
+             widget). Not exported: allternit://bar links reach it through MainActivity's allternit filter
+             (readSystemLink), and in-app entries use BarDeepLink.intent. -->
+        <activity
+            android:name="com.allternit.feature.bar.BarActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.allternit.bar"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:windowSoftInputMode="adjustResize" />
+    </application>
+</manifest>

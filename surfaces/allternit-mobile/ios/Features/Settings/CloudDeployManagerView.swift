@@ -202,7 +202,9 @@ struct CloudDeployManagerView: View {
             title: "No deployments yet",
             message: "Provision a new cloud instance to run Allternit.",
             actionTitle: "New Deployment",
-            action: { isCreateSheetPresented = true }
+            action: { isCreateSheetPresented = true },
+            art: .log,
+            size: .panel
         )
         .padding(.vertical, 24)
         .background(Color("BgPanel"))

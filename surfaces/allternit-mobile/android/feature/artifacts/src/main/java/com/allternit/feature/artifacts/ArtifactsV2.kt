@@ -27,6 +27,9 @@ data class ArtifactOrigin(
     /** `origin.legacy_source` ("sectioned" for Office records imported from the old store) and `legacy_id` (that record's id). */
     val legacySource: String? = null,
     val legacyId: String? = null,
+    /** Plans: the project and chat the plan was saved from (`origin.project_title`, `session_title` / `chat_title`). */
+    val projectTitle: String? = null,
+    val sessionTitle: String? = null,
 )
 
 /** One row of `GET api/v2/artifacts` (iOS ArtifactV2Summary). */
@@ -41,6 +44,8 @@ data class ArtifactSummary(
     val myAccess: String,
     val origin: ArtifactOrigin?,
     val thumbnailUrl: String?,
+    /** `plan.status` on a `plan` artifact: open, approved or done. */
+    val planStatus: String? = null,
 ) {
     val isMine: Boolean get() = myAccess == "owner"
 }
@@ -183,6 +188,15 @@ object ArtifactsV2Client {
 
     suspend fun delete(id: String): ApiResult<JsonElement> = call("DELETE", "artifacts/${LibraryNet.escape(id)}")
 
+    /** `GET api/v2/artifacts/:id/app` -> `{app}`; 404 when the artifact is not an app yet. */
+    suspend fun app(id: String): ApiResult<JsonElement> = call("GET", "artifacts/${LibraryNet.escape(id)}/app")
+
+    /** `PUT api/v2/artifacts/:id/app {name, icon, tier, install_scope}` (web `createMakeAppApi.put`): Make it an app. */
+    suspend fun putApp(id: String, name: String, tier: String, installScope: String): ApiResult<JsonElement> =
+        call("PUT", "artifacts/${LibraryNet.escape(id)}/app", buildJsonObject {
+            put("name", name); put("icon", kotlinx.serialization.json.JsonNull); put("tier", tier); put("install_scope", installScope)
+        })
+
     /** `GET api/v2/org/artifact-settings` → which creation tiles the org allows (iOS allows(kind:)). */
     suspend fun allowedKinds(): (String) -> Boolean {
         val r = call("GET", "org/artifact-settings")
@@ -220,8 +234,9 @@ object ArtifactsV2Client {
             currentVersion = o.num("current_version")?.toInt() ?: 1,
             visibility = o.str("visibility") ?: "private",
             myAccess = o.str("my_access") ?: "view",
-            origin = origin?.let { ArtifactOrigin(it.str("surface"), it.str("session_id"), it.str("message_id"), it.str("legacy_source"), it.str("legacy_id")) },
+            origin = origin?.let { ArtifactOrigin(it.str("surface"), it.str("session_id"), it.str("message_id"), it.str("legacy_source"), it.str("legacy_id"), it.str("project_title"), it.str("session_title") ?: it.str("chat_title")) },
             thumbnailUrl = o.str("thumbnail_url"),
+            planStatus = o.child("plan").str("status"),
         )
     }
 
