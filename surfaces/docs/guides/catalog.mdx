@@ -1,15 +1,34 @@
 ---
-title: Customize
-description: The Skills, Connectors and Plugins directory, its section heroes, and the A://TERNIT OFFICIAL shelf of items Allternit makes itself.
+title: Catalog
+description: The Catalog of connectors, skills and plugins, how its hover screen preview, Interactive filter and Skills tab work, and the A://TERNIT OFFICIAL shelf.
 ---
 
-**Customize** is where you choose what your chats and bots can use: **Skills**, **Connectors** and **Plugins**, plus MCP servers, commands, CLI tools and webhooks under **More**. Each section has **Yours** (what you turned on) and **Discover** (what you can add).
+The **Catalog** is where you choose what your chats and bots can use: **Connectors**, **Skills** and **Plugins**, plus MCP servers, commands, CLI tools and webhooks under **More**. It was called Customize; the old address `/guides/customize` still opens this page. **Settings › Catalog** shows what you have installed (Active and Not active) and has **Browse the Catalog** to open the full Catalog.
 
 In Gizzi Code, `/customize` shows the same shelves and adds items the same way. See [Customize in the terminal](/cli/customize).
 
-## Discover
+## Browse
 
-Discover opens with the section's hero: an ink panel led by the section lockup, such as **A://TERNIT SKILLS**, then one featured item with **Add** and **View**. Connectors' hero is a set of curated collections you can page through.
+Use the **List / Grid** button at the top right to change how the Catalog is laid out. It is the same one-button switch as everywhere else; see [One view button](/architecture/view-switch).
+
+- **Search** finds a connector by name, category or description.
+- **Interactive** keeps only connectors that draw a screen inside the chat, such as a calendar, a map or a chart you can click. Turn it off to see all of them.
+- **Categories** narrow the list to one kind of connector. Sort by popular, new or trending.
+- **Hover preview**: rest the pointer on a connector's tile and a card shows a picture of the screen it draws in chat. On a phone there is no hover; open the connector's page to see the same picture.
+
+The Catalog lists every connector that has a public server address. Each tile shows the maker's logo; a connector with no usable logo shows its first letter.
+
+## Item pages
+
+Click a tile to open its page. A connector's page shows its description, who makes it, its screen preview, example prompts and **Connect**. Where a connector's tools are known, they are listed.
+
+## Skills tab
+
+**Skills** lists skills you can add. Skills that belong to an app show that app's logo. Allternit's own skills are on the **A://TERNIT OFFICIAL** shelf, described below. Open a skill to read its description and the start of its SKILL.md, then **Add**.
+
+## A://TERNIT OFFICIAL and directories
+
+Each section opens with its hero: an ink panel led by the section lockup, such as **A://TERNIT SKILLS**, then one featured item with **Add** and **View**. Connectors' hero is a set of curated collections you can page through.
 
 Below the hero:
 
@@ -19,7 +38,7 @@ Below the hero:
 
 In **Connectors**, **Messaging** lists Telegram, Email, Phone number, Discord, Slack, Microsoft Teams and WhatsApp as the same cards as every other connector. A card opens the channel's page: **Connect** (or **Connect another**), and under **Your connections**, who can message each connection and which bot answers new chats there.
 
-## Item pages
+## Skill and plugin pages
 
 Click any card, official cover or the hero's **View** to open the item's page before you add it. A directory skill's page shows its description, who makes it, its version and source, and the start of its SKILL.md. **Contents** lists every file in the skill, read from its source (bundled with Allternit, or the GitHub commit it would install), with Markdown shown rendered or as source. **Add** installs it from the page. After you add a skill, its page is the installed copy, with versions, **Download** and **Copy link**.
 

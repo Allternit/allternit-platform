@@ -93,19 +93,22 @@ Query parameters (all optional):
 
 | Parameter | Meaning |
 |---|---|
-| `group` | One of `brains`, `computers`, `phones`, `tools`, `voice`, `apps`, `channels`. Omitted: every group, in that order. Anything else is `400`. |
+| `group` | One of `brains`, `computers`, `phones`, `tools`, `voice`, `apps`, `channels`, `skills`. Omitted: every group, in that order. Anything else is `400`. |
 | `q` | Search text. Trimmed, lowercased and cut to 64 characters. Matches rank: name starts with `q`, then name contains `q`, then category or blurb contains `q`. Ties sort by name. |
 | `limit` | Entries per page. Default `24`, clamped to `0`–`60`. `limit=0` returns only `total` and `counts`, with `entries: []`. |
 | `cursor` | The `next_cursor` of the previous page. Treat it as opaque. |
+| `category` | Version 2. Keep entries with this category (an entry's category or one of its pack categories). Trimmed, lowercased. An empty value counts as absent. |
+| `interactive` | Version 2. `true` or `1` keeps only entries that show an interactive screen in chat. Anything else is no filter. |
+| `sort` | Version 2. `popular`, `new` or `trending`. Applied within a group, after the `q` rank. Any other value is `400 bad_sort`. |
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "group": "apps",
   "q": "air",
   "total": 37,
   "next_cursor": "24",
-  "counts": { "brains": 0, "computers": 0, "phones": 0, "tools": 0, "voice": 0, "apps": 37, "channels": 0 },
+  "counts": { "brains": 0, "computers": 0, "phones": 0, "tools": 0, "voice": 0, "apps": 37, "skills": 0, "channels": 0 },
   "entries": [{
     "id": "airtable",
     "group": "apps",
@@ -137,12 +140,46 @@ Query parameters (all optional):
 
 The catalog never lists an id the page already shows as a row (Gmail, Google Drive, Slack, GitHub, Notion, Telegram, WhatsApp, Discord, the coding tools and so on), and `catalog` is a reserved connection id. Clients also hide entries whose first way they can't run and entries already on the page. An entry connected from More is promoted into its group's main list as a normal row. If the call fails, clients hide the More tiles.
 
+### Catalog version 2
+
+The reply's `version` is `2`. Every addition is optional, so a client that ignores them still parses.
+
+New fields on an entry (left out when empty, except the three flags):
+
+| Field | Meaning |
+|---|---|
+| `tier` | The pack's tier for the connector, such as `partner` or `verified`. |
+| `listed_at` | The date the connector was listed. |
+| `server_url` | The connector's public server address. Every listed connector has one. |
+| `author`, `author_url` | Who makes it. |
+| `categories` | Its categories, lowercase. |
+| `interactive` | `true` when the connector draws an interactive screen in the chat. Always present. |
+| `screen_pack` | The id of the screen pack the Catalog uses for its hover preview. |
+| `is_new`, `trending`, `popularity` | Flags and a rank for the `new`, `trending` and `popular` sorts. `is_new` and `trending` are always present. |
+| `icon_url`, `icon_source` | The logo and where it came from (`favicon` and so on). `icon_url` is `null` or absent when the client should draw a monogram. |
+| `app_id` | Skills only: the id of the app whose logo the skill shows. |
+
+**Skills group.** `group=skills` lists skills that belong to an app, one entry per skill, each with `app_id`. A skill whose `app_id` matches no app is dropped. The group is empty until cloud skills can be installed; the Catalog's Skills tab also lists Allternit's own installable skills from the app.
+
+**Filters.** `category`, `interactive` and `sort` (table above) apply on top of `group` and `q`. `counts` and `total` follow the filters, so a tab's badge matches what it lists.
+
+### GET /api/v1/connections/catalog/:id
+
+One entry, for the Catalog's detail page.
+
+```json
+{ "version": 2, "entry": { "id": "alpha", "group": "apps", "name": "Alpha", "interactive": true, "server_url": "https://mcp.alpha.test/mcp" } }
+```
+
+An unknown id answers `404 {"error": "not_found"}`. Auth and the `X-Allternit-Route: cloud` header are the same as for the list.
+
 Errors:
 
 | Status | Body | When |
 |---|---|---|
-| `400` | `{"error": "unknown_group"}` | `group` is not one of the seven groups |
+| `400` | `{"error": "unknown_group"}` | `group` is not one of the eight groups |
 | `400` | `{"error": "bad_cursor"}` | `cursor` is not a value this endpoint gave out |
+| `400` | `{"error": "bad_sort"}` | `sort` is not `popular`, `new` or `trending` |
 | `401` | | No session |
 | `403` | | A platform API key or another API token |
 

@@ -1,6 +1,6 @@
 ---
 title: Sidebar layout
-description: Shared desktop sidebar controls and phone drawer readability.
+description: The one quiet row every sidebar list shares, its hover disclosure and status glyphs, plus desktop sidebar controls and phone drawer readability.
 ---
 
 ## Source ownership
@@ -13,6 +13,19 @@ All paths below are relative to the allternit-ai repository.
 - `src/shell/RecentsPanel.tsx` owns the named expand button, visible New action and secondary-actions popover. Home, Browser, Code and pinned sections share it.
 - `src/shell/ShellRail.tsx` keeps existing navigation and session actions, renders two-line conversation titles, and separates account name from plan.
 - `src/fabric-session/phone/phone.css` defines the two-line `phone-recent-title` class used by `PhoneDrawer.tsx` and `src/shell/rail/CodeSessionPhoneList.tsx`.
+
+## The quiet row
+
+Every list in the sidebar uses one row, `RailRow` in `src/shell/rail/RailRow.tsx`, in every mode: Home and Browser recents, Code recents, Bots threads, group chats, project threads and the phone drawer. Do not draw a second row style.
+
+- At rest the row is one line: the title, and a status glyph on the right (an unread or working dot, an offline computer, a warning, or the type icon).
+- On hover or keyboard focus the row opens to show the last line and the time it was last used, and the more menu takes the glyph's place.
+- Touch has no hover. On a phone the time sits on the title line and the glyph stays visible next to it; the menu button is always shown at the larger touch size.
+- A caller passes the title, glyph, time, last line and menu. `railMenuButtonClass` lines the menu button up with the glyph slot.
+
+Remote Control state is one of the glyphs. A session that is remote controlled carries `rc` (`connected`, `reconnecting`, `offline` or `off`, with a since-time) and the row shows it in the glyph slot. The state comes from the Remote Control feed on the Remote Control routes; the row never calls the server itself.
+
+The section headers are in sentence case with a trailing chevron (**Recents**, not RECENTS).
 
 ## Interaction contracts
 

@@ -1,0 +1,59 @@
+---
+title: Settings, usage and billing
+description: See how much of your Allternit Cloud limits you have used, pay without leaving the app, and what the credits carry-over switch does.
+---
+
+**Settings › Usage** and **Settings › Billing** are where you check what you have used and pay for more. Both work the same on Desktop, the web app and the phone layout. On iPhone and Android the app buys through the store; see below.
+
+## Usage
+
+Usage starts with a pace line, for example "On pace to use the 5-hour limit in 2 hours". Under it are three bars:
+
+| Bar | What it measures |
+| --- | --- |
+| **5-hour** | Allternit Cloud spend over the last 5 hours. |
+| **7-day** | Spend over the last 7 days. |
+| **This month** | Spend this calendar month against your plan's monthly credits. |
+
+Each bar shows what you have used, the limit, and when it resets. Computer time has its own hour allowance and is not counted in these bars. Your connected accounts, such as a ChatGPT or Claude sign-in, are listed below the bars; their usage comes from those accounts, not from Allternit Cloud.
+
+If you have no plan, the bars show no limit.
+
+### Limits
+
+Paid plans have a 5-hour and a 7-day limit, so one long run cannot use up a whole month at once. The limits are USD of Cloud model spend:
+
+| Plan | 5-hour | 7-day | Month |
+| --- | --- | --- | --- |
+| Plus | $1.83 | $7.33 | $22 |
+| Max | $9.17 | $36.67 | $110 |
+| Ultra | $18.33 | $73.33 | $220 |
+
+When you reach the 5-hour or 7-day limit, chat shows a notice with the time it resets instead of an error. You can wait, or use the carry-over switch below.
+
+### Usage credits carry-over
+
+The **Usage credits** switch is off by default.
+
+- **Off**: the 5-hour and 7-day limits stop you until they reset, even if you have credits.
+- **On**: when you reach a limit, you keep working and the cost comes out of your credit balance.
+
+Credits you have bought never expire when the switch is off; the switch only decides whether they can be used past a limit. You need a credit balance to turn it on.
+
+## Billing
+
+Billing is inside the app. You never leave Allternit to pay.
+
+- **Plan**: choose or change a plan. A payment sheet opens in the app, with card or Link.
+- **Credits**: buy a pack. The same sheet opens.
+- **Payment methods**: your saved cards. One is the **Default** (it pays for your plan and packs). You can add a **Backup** card; it is never charged on its own. To remove the default card, make another one the default first.
+- **Auto top-up**: add a card and the app buys credits for you when the balance runs low. See [Cloud billing](/api/cloud-billing#auto-top-up) for the exact rules.
+- **Invoices**: every invoice with its date, total and status, and a PDF link.
+
+## iPhone and Android
+
+The iPhone and Android apps follow the store rules. Plans and credits are bought through Apple In-App Purchase or Google Play Billing, with the store's price, and the credits are the same as on the web. Card and invoice management is on the web app. Usage looks the same everywhere.
+
+## For developers
+
+The routes behind these pages are in [Usage API](/api/usage#your-usage-windows) and [Cloud billing](/api/cloud-billing#paying-inside-the-app). See also the [usage dashboard](/guides/usage-dashboard) for cost and tokens per model and bot.

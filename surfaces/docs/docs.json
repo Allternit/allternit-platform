@@ -88,6 +88,7 @@
               "guides/plan-approval",
               "guides/glance-lines",
               "architecture/sidebar-layout",
+              "architecture/view-switch",
               "architecture/phone-shell-behaviour",
               "guides/meet-your-bots",
               "guides/morning-brief",
@@ -100,6 +101,7 @@
               "guides/app-deployments",
               "guides/bot-routines",
               "guides/usage-dashboard",
+              "guides/usage-and-billing",
               "guides/switch-accounts",
               "guides/phone-settings",
               "guides/desktop-settings",
@@ -176,7 +178,7 @@
               "guides/android-live-view",
               "guides/cloud-phones",
               "guides/bot-voice-on-linked-phone",
-              "guides/customize",
+              "guides/catalog",
               "guides/connectors",
               "guides/app-screens",
               "guides/connectors-in-other-apps",
@@ -1232,6 +1234,10 @@
     }
   },
   "redirects": [
+    {
+      "source": "/guides/customize",
+      "destination": "/guides/catalog"
+    },
     {
       "source": "/guides/cowork-session-panel",
       "destination": "/guides/chat-sessions"
