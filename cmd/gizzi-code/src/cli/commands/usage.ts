@@ -51,6 +51,52 @@ function fmtCost(n: number): string {
   return `$${(n || 0).toFixed(4)}`
 }
 
+type UsageWindow = {
+  id: string
+  label?: string
+  used_usd?: number
+  limit_usd?: number | null
+  resets_at?: string
+}
+type UsagePace = { window_id?: string; runs_out_at?: string | null }
+
+function fmtWhen(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  return new Date(t).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })
+}
+
+/** Pace line plus the 5h / 7d / month rows from GET /api/v1/me/usage (snake_case). Older servers send neither: print nothing. */
+export function renderWindows(body: { windows?: UsageWindow[]; pace?: UsagePace }): string[] {
+  const out: string[] = []
+  const windows = Array.isArray(body.windows) ? body.windows : []
+  const resetOf = (id?: string) => windows.find((w) => w.id === id)?.resets_at
+  if (body.pace?.runs_out_at) {
+    const reset = resetOf(body.pace.window_id)
+    out.push(`At this pace you run out ${fmtWhen(body.pace.runs_out_at)}${reset ? `, before ${fmtWhen(reset)}` : ""}.`)
+  }
+  for (const w of windows) {
+    const limit = typeof w.limit_usd === "number" ? `of ${fmtCost(w.limit_usd)}` : "no limit"
+    const resets = w.resets_at ? ` · resets ${fmtWhen(w.resets_at)}` : ""
+    out.push(`${(w.label ?? w.id).padEnd(8)}${fmtCost(w.used_usd ?? 0)} ${limit}${resets}`)
+  }
+  if (out.length) out.push("")
+  return out
+}
+
+async function fetchWindows(token: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${cloudOrigin()}/api/v1/me/usage`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "X-Allternit-Client": `gizzi-code/${Installation.VERSION}` },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!res.ok) return []
+    return renderWindows((await res.json()) as { windows?: UsageWindow[]; pace?: UsagePace })
+  } catch {
+    return []
+  }
+}
+
 function table(rows: string[][], header: string[]): string {
   const all = [header, ...rows]
   const widths = header.map((_, i) => Math.max(...all.map((r) => r[i].length)))
@@ -119,6 +165,8 @@ export const UsageCommand = cmd({
     const rows = body.rows ?? []
 
     // Storage line only (no perks): Freeweights upload storage, from the public limits route.
+    const windowLines = args.json ? [] : await fetchWindows(token)
+    if (windowLines.length) UI.println(windowLines.join(EOL))
     const storage = args.json ? undefined : storageLine(await fetchLimits(freeweightsKey()))
 
     if (args.json) {

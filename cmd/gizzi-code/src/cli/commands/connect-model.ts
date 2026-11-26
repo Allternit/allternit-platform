@@ -204,6 +204,12 @@ export type CatalogEntry = {
   available?: boolean
   unavailable_reason?: string | null
   fallbacks?: string[]
+  // catalog v2 (optional: older servers omit them)
+  tier?: string
+  interactive?: boolean
+  author?: string
+  server_url?: string
+  categories?: string[]
 }
 export type CatalogResponse = {
   version: number
@@ -224,7 +230,9 @@ export function renderCatalog(res: CatalogResponse): string[] {
     out.push(GROUP_TITLE[g])
     for (const x of items) {
       const status = x.available === false ? x.unavailable_reason || "Runs on a computer." : "Not connected"
-      out.push(`  ${x.name.padEnd(30)}${[x.blurb, status].filter(Boolean).join(" · ")}`)
+      const verified = x.tier === "partner" || x.tier === "anthropic" ? " [verified]" : ""
+      const live = x.interactive ? " [interactive]" : ""
+      out.push(`  ${(x.name + verified + live).padEnd(30)}${[x.blurb, status].filter(Boolean).join(" · ")}`)
     }
     out.push("")
   }
