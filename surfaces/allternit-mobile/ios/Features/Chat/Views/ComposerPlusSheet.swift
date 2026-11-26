@@ -309,6 +309,14 @@ struct ComposerPlusSheet: View {
                 }
                 PlusDivider()
                 PlusRow(icon: "scribble.variable", title: "Sketch") { isSketchPresented = true }
+                if IslandBarFlag.isOn {
+                    PlusDivider()
+                    // The island bar (Features/IslandBar): run one tool of a connected app.
+                    PlusRow(icon: "bolt", title: "Do with an app", testId: "plusSheetIslandBar") {
+                        dismiss()
+                        NotificationCenter.default.post(name: .islandBarOpen, object: nil)
+                    }
+                }
             }
 
             // Group 2: how and where this chat runs.

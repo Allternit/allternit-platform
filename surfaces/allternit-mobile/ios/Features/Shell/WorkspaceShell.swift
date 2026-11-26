@@ -207,6 +207,9 @@ struct MainWorkspaceView: View {
         }
         // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
         .modifier(DeepLinkHost())
+        // The in-app island bar (Features/IslandBar): pill at the top of the
+        // app, `allternit://bar`, "Do with Allternit". No rail tab.
+        .islandBar()
         // Allternit calls: ring polling + the incoming / live call screens.
         .modifier(InappCallHost())
         .modifier(MeetYourBotsHost())

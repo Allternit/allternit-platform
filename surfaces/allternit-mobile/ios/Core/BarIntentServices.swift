@@ -79,12 +79,17 @@ extension IntentServices: BarIntentServicing {
             job = try await BarWire.call(api, "POST", "bar/jobs/\(id)/run", noReplyIsNoComputer: true)["job"]
                 as? [String: Any] ?? [:]
         } catch let gate as BarWire.Gate {
+            // The gate answers without the job: read it once so the Live
+            // Activity opens on "Waiting on <approver>".
+            if let waiting = try? await BarWire.call(api, "GET", "bar/jobs/\(id)")["job"] as? [String: Any] {
+                await BarWire.syncLiveActivity(waiting, approverName: gate.approverName)
+            }
             return .waitingApproval(approverName: gate.approverName)
         }
         let deadline = Date().addingTimeInterval(wait)
         while true {
-            // TODO(#2996): once BotLiveActivityManager.syncBarJob is on main, call it
-            // here with `job` so the Live Activity follows the run (lane 33).
+            // The Live Activity follows the run (lane 33, `syncBarJob`).
+            await BarWire.syncLiveActivity(job, approverName: nil)
             if let outcome = BarWire.outcome(job) { return outcome }
             guard Date() < deadline else { return .working }
             try? await Task.sleep(for: .milliseconds(1500))
@@ -240,22 +245,12 @@ enum BarWire {
         let amount = (structured?["amount"] as? NSNumber) ?? (args?["amount"] as? NSNumber)
         let currency = (structured?["currency"] as? String) ?? (args?["currency"] as? String)
         let words = title.split(separator: " ").map(String.init)
-        guard let verb = words.first.flatMap(pastTense) else { return "\(title): done" }
+        guard let verb = words.first.flatMap(BarReceiptWording.pastTense(verb:)) else { return "\(title): done" }
         if let amount {
             return "\(verb) \(money(amount.doubleValue, currency: currency))"
         }
         let rest = words.dropFirst().joined(separator: " ")
         return rest.isEmpty ? verb : "\(verb) \(rest.lowercased())"
-    }
-
-    private static func pastTense(_ verb: String) -> String? {
-        let known: [String: String] = [
-            "refund": "Refunded", "create": "Created", "send": "Sent", "add": "Added", "update": "Updated",
-            "delete": "Deleted", "remove": "Removed", "cancel": "Cancelled", "list": "Listed", "post": "Posted",
-            "charge": "Charged", "pay": "Paid", "book": "Booked", "schedule": "Scheduled", "close": "Closed",
-            "open": "Opened", "archive": "Archived", "invite": "Invited", "approve": "Approved", "reply": "Replied",
-        ]
-        return known[verb.lowercased()]
     }
 
     private static func money(_ value: Double, currency: String?) -> String {
@@ -267,5 +262,58 @@ enum BarWire {
         f.currencyCode = code
         f.maximumFractionDigits = value.rounded() == value ? 0 : 2
         return f.string(from: NSNumber(value: value)) ?? "\(value) \(code)"
+    }
+
+    // MARK: Live Activity
+
+    /// Short money text for the compact slot ("€320"), from `args.amount`
+    /// and `args.currency`. Same rule as the runtime's `short_amount`.
+    static func shortAmount(_ job: [String: Any]) -> String? {
+        let args = job["args"] as? [String: Any]
+        let n: String
+        switch args?["amount"] {
+        case let v as NSNumber where CFGetTypeID(v) != CFBooleanGetTypeID(): n = v.stringValue
+        case let v as String where !v.trimmingCharacters(in: .whitespaces).isEmpty: n = v.trimmingCharacters(in: .whitespaces)
+        default: return nil
+        }
+        switch (args?["currency"] as? String ?? "").uppercased() {
+        case "EUR": return "\u{20AC}\(n)"
+        case "USD": return "$\(n)"
+        case "GBP": return "\u{00A3}\(n)"
+        case "": return n
+        case let code: return "\(n) \(code)"
+        }
+    }
+
+    /// A `Job` object (`bar_job` event, `GET /bar/jobs/:id`, `{job}`) as the
+    /// Live Activity snapshot. nil without an id or state. `approverName`
+    /// comes from the review card or the gate (the job carries only the id).
+    static func snapshot(_ job: [String: Any], approverName: String?, botName: String? = nil)
+        -> BotLiveActivityManager.BarJobSnapshot? {
+        guard let jobId = job["id"] as? String, !jobId.isEmpty,
+              let state = job["state"] as? String, !state.isEmpty else { return nil }
+        let app = job["app"] as? [String: Any]
+        let title = (job["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (job["tool"] as? String ?? "")
+        // CONTRACT section 8: a vendor job's app name can be null.
+        let appName = (app?["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? (app?["ref"] as? String) ?? title
+        var snap = BotLiveActivityManager.BarJobSnapshot(jobId: jobId, title: title, appName: appName, state: state)
+        snap.approverName = approverName
+        snap.botName = botName
+        snap.amount = shortAmount(job)
+        switch state {
+        case "completed": snap.receipt = receipt(job)
+        case "failed":
+            let err = job["error"]
+            snap.error = (err as? String) ?? ((err as? [String: Any])?["message"] as? String)
+        default: break
+        }
+        return snap
+    }
+
+    /// `syncBarJob` for one job object, from any actor.
+    static func syncLiveActivity(_ job: [String: Any], approverName: String?, botName: String? = nil) async {
+        guard let snap = snapshot(job, approverName: approverName, botName: botName) else { return }
+        await MainActor.run { BotLiveActivityManager.shared.syncBarJob(snap) }
     }
 }

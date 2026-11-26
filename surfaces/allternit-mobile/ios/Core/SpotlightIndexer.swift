@@ -6,8 +6,10 @@ import UniformTypeIdentifiers
 @available(iOS 18.0, *) extension BotEntity: IndexedEntity {}
 @available(iOS 18.0, *) extension ConversationEntity: IndexedEntity {}
 @available(iOS 18.0, *) extension RoutineEntity: IndexedEntity {}
+@available(iOS 18.0, *) extension ConnectionEntity: IndexedEntity {}
 
-/// Spotlight index for bots, conversations and routines (plan I4f).
+/// Spotlight index for bots, conversations, routines and connections (bar
+/// apps, `ConnectionEntity`; a tap opens the in-app bar on that app) (plan I4f).
 ///
 /// Every item's unique identifier is an `allternit://` URL, so a tap
 /// (`CSSearchableItemActionType`, handled in `AllternitApp`) goes through
@@ -20,6 +22,7 @@ enum SpotlightIndexer {
     private static let botDomain = "com.allternit.mobile.bots"
     private static let conversationDomain = "com.allternit.mobile.conversations"
     private static let routineDomain = "com.allternit.mobile.routines"
+    private static let connectionDomain = "com.allternit.mobile.connections"
     private static let maxConversations = 50
     private static var refreshing = false
 
@@ -32,15 +35,17 @@ enum SpotlightIndexer {
         async let bots = try? await svc.listBots()
         async let conversations = try? await svc.listConversations(matching: nil)
         async let routines = try? await svc.listRoutines()
-        let (b, c, r) = await (bots, conversations, routines)
+        async let connections = try? await (svc as? any BarIntentServicing)?.listBarApps(query: nil)
+        let (b, c, r, a) = await (bots, conversations, routines, connections)
         if let b { await replace(domain: botDomain, items: b.map(botItem)) }
         if let c { await replace(domain: conversationDomain, items: c.prefix(maxConversations).map(conversationItem)) }
         if let r { await replace(domain: routineDomain, items: r.map(routineItem)) }
+        if let a { await replace(domain: connectionDomain, items: a.map(connectionItem)) }
     }
 
     /// Sign-out: nothing of this account stays in Spotlight.
     static func removeAll() {
-        let domains = [botDomain, conversationDomain, routineDomain]
+        let domains = [botDomain, conversationDomain, routineDomain, connectionDomain]
         CSSearchableIndex.default().deleteSearchableItems(withDomainIdentifiers: domains) { _ in }
     }
 
@@ -66,6 +71,12 @@ enum SpotlightIndexer {
         if #available(iOS 18.0, *) { attrs.associateAppEntity(RoutineEntity(r), priority: 1) }
         let url = URL(string: "allternit://routine/\(r.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? r.id)") ?? IntentLinks.home
         return item(url: url, domain: routineDomain, attrs: attrs)
+    }
+
+    private static func connectionItem(_ app: BarAppInfo) -> CSSearchableItem {
+        let attrs = attributes(title: app.name, description: "Connection, \(ConnectionWording.subtitle(app))")
+        if #available(iOS 18.0, *) { attrs.associateAppEntity(ConnectionEntity(app), priority: 1) }
+        return item(url: DoWording.barLink(app: app, tool: nil, values: [:]), domain: connectionDomain, attrs: attrs)
     }
 
     private static func attributes(title: String, description: String) -> CSSearchableItemAttributeSet {
