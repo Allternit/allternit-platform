@@ -330,6 +330,7 @@ pub mod mcp_directory_held;
 pub mod mcp_directory_routes;
 pub mod studio_apps_routes;
 pub mod mcp_routes;
+pub mod mcp_skills;
 pub mod oauth_result_page;
 pub mod oauth_return;
 pub mod official_mcp;
