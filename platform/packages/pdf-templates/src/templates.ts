@@ -5,6 +5,7 @@ import {
   type PdfDocModel,
   type PdfPageSize,
   type PdfRenderRequest,
+  type PdfSignatureSlot,
   type PdfTemplateId,
   type PdfTemplateInfo,
   type PdfVariant,
@@ -46,9 +47,38 @@ function pickVariant(v: PdfVariant | undefined, allowed: PdfVariant[]): PdfVaria
   return v && allowed.includes(v) ? v : allowed[0];
 }
 
-// ---- invoice ---------------------------------------------------------------
+// ---- signatures ------------------------------------------------------------
 
-function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
+/**
+ * A `signatures` block from template data, or null when the data asks for none.
+ * Accepts `true` (use the template's defaults), an array of slots, or
+ * `{ note?, slots? }`. Slot ids are kept unique; a missing id becomes `slot-N`.
+ */
+function signatures(v: unknown, fallback: { note?: string; slots: PdfSignatureSlot[] }): PdfBlock | null {
+  if (v == null || v === false) return null;
+  const r = Array.isArray(v) ? { slots: v } : rec(v);
+  const given = arr(r.slots).map(rec).map((s, i): PdfSignatureSlot => ({
+    id: str(s.id) || `slot-${i + 1}`,
+    label: str(s.label) || `Signature ${i + 1}`,
+    name: str(s.name) || undefined,
+    signed_on: str(s.signed_on ?? s.signedOn) || undefined,
+  }));
+  const slots = given.length ? given : fallback.slots;
+  if (!slots.length) return null;
+  const seen = new Set<string>();
+  const unique = slots.map((s) => {
+    let id = s.id;
+    for (let n = 2; seen.has(id); n++) id = `${s.id}-${n}`;
+    seen.add(id);
+    return id === s.id ? s : { ...s, id };
+  });
+  const note = 'note' in r ? str(r.note) : fallback.note;
+  return { t: 'signatures', note: note || undefined, slots: unique };
+}
+
+// ---- line items (invoice, quote) -------------------------------------------
+
+function lineItems(d: Rec, totalLabel: string): { table: PdfBlock; totals: PdfBlock } {
   const cur = str(d.currency, 'USD');
   const items = arr(d.items).map(rec);
   const rows = items.map((it) => {
@@ -65,7 +95,21 @@ function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
   const totals: { label: string; value: string; strong?: boolean }[] = [{ label: 'Subtotal', value: money(subtotal, cur) }];
   if (discount) totals.push({ label: 'Discount', value: `-${money(discount, cur)}` });
   if (taxRate) totals.push({ label: `Tax (${taxRate}%)`, value: money(tax, cur) });
-  totals.push({ label: d.paid ? 'Total paid' : 'Amount due', value: money(total, cur), strong: true });
+  totals.push({ label: totalLabel, value: money(total, cur), strong: true });
+  return {
+    table: {
+      t: 'table', head: ['Description', 'Qty', 'Unit', 'Amount'], align: ['l', 'r', 'r', 'r'], widths: [0.52, 0.1, 0.18, 0.2],
+      rows: rows.map((r) => [r.detail ? `${r.desc}\n${r.detail}` : r.desc, String(r.qty), money(r.unit, cur), money(r.amount, cur)]),
+    },
+    totals: { t: 'totals', rows: totals },
+  };
+}
+
+// ---- invoice ---------------------------------------------------------------
+
+function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
+  const { table, totals } = lineItems(d, d.paid ? 'Total paid' : 'Amount due');
+  const client = d.to ?? d.billTo ?? d.client;
   const blocks: PdfBlock[] = [
     {
       t: 'masthead', title: 'Invoice', brand: str(rec(d.from).name), style: variant,
@@ -73,16 +117,86 @@ function invoice(d: Rec, variant: PdfVariant): PdfBlock[] {
     },
     cols([
       { label: 'From', lines: party(d.from) },
-      { label: 'Bill to', lines: party(d.to ?? d.billTo ?? d.client) },
+      { label: 'Bill to', lines: party(client) },
     ]),
-    {
-      t: 'table', head: ['Description', 'Qty', 'Unit', 'Amount'], align: ['l', 'r', 'r', 'r'], widths: [0.52, 0.1, 0.18, 0.2],
-      rows: rows.map((r) => [r.detail ? `${r.desc}\n${r.detail}` : r.desc, String(r.qty), money(r.unit, cur), money(r.amount, cur)]),
-    },
-    { t: 'totals', rows: totals },
+    table,
+    totals,
   ];
   if (str(d.paymentInstructions)) blocks.push({ t: 'heading', text: 'Payment' }, { t: 'text', text: str(d.paymentInstructions) });
   if (str(d.notes)) blocks.push({ t: 'heading', text: 'Notes' }, { t: 'text', text: str(d.notes) });
+  const sig = signatures(d.signatures, {
+    note: 'By signing, both parties confirm the services listed above are complete.',
+    slots: [
+      { id: 'provider', label: 'Service provider', name: str(rec(d.from).name) || undefined },
+      { id: 'client', label: 'Client', name: str(rec(client).name) || undefined },
+    ],
+  });
+  if (sig) blocks.push(sig);
+  return blocks;
+}
+
+// ---- quote -----------------------------------------------------------------
+
+function quote(d: Rec, variant: PdfVariant): PdfBlock[] {
+  const { table, totals } = lineItems(d, 'Quote total');
+  const client = d.to ?? d.client ?? d.preparedFor;
+  const validUntil = str(d.validUntil ?? d.valid_until);
+  const blocks: PdfBlock[] = [
+    {
+      t: 'masthead', title: 'Quote', brand: str(rec(d.from).name), style: variant,
+      meta: meta([['Number', str(d.number)], ['Issued', str(d.issued ?? d.date)], ['Valid until', validUntil]]),
+    },
+    cols([
+      { label: 'From', lines: party(d.from) },
+      { label: 'Prepared for', lines: party(client) },
+    ]),
+    table,
+    totals,
+  ];
+  if (str(d.scope)) blocks.push({ t: 'heading', text: 'Scope' }, { t: 'text', text: str(d.scope) });
+  if (str(d.terms)) blocks.push({ t: 'heading', text: 'Terms' }, { t: 'text', text: str(d.terms) });
+  if (str(d.notes)) blocks.push({ t: 'heading', text: 'Notes' }, { t: 'text', text: str(d.notes) });
+  const sig = signatures(d.signatures ?? true, {
+    note: validUntil
+      ? `By signing, the client accepts this quote and its terms. Prices hold until ${validUntil}.`
+      : 'By signing, the client accepts this quote and its terms.',
+    slots: [
+      { id: 'provider', label: 'Service provider', name: str(rec(d.from).name) || undefined },
+      { id: 'client', label: 'Client', name: str(rec(client).name) || undefined },
+    ],
+  });
+  if (sig) blocks.push(sig);
+  return blocks;
+}
+
+// ---- contract --------------------------------------------------------------
+
+function contract(d: Rec, variant: PdfVariant): PdfBlock[] {
+  const parties = arr(d.parties).map(rec);
+  const blocks: PdfBlock[] = [
+    {
+      t: 'masthead', title: str(d.title, 'Agreement'), subtitle: str(d.subtitle), brand: str(parties[0]?.name), style: variant,
+      meta: meta([['Number', str(d.number)], ['Effective', str(d.effective ?? d.date)], ['Term', str(d.term)]]),
+    },
+    cols(parties.map((p, i) => ({ label: str(p.role) || `Party ${i + 1}`, lines: party(p) }))),
+  ];
+  if (str(d.intro)) blocks.push({ t: 'text', text: str(d.intro) });
+  arr(d.clauses).forEach((raw, i) => {
+    const cl = typeof raw === 'string' ? { body: raw } : rec(raw);
+    const heading = str(cl.heading ?? cl.title);
+    blocks.push({ t: 'heading', text: heading ? `${i + 1}. ${heading}` : `${i + 1}.` });
+    if (str(cl.body)) blocks.push({ t: 'text', text: str(cl.body) });
+    if (arr(cl.items).length) blocks.push({ t: 'list', items: strs(cl.items) });
+  });
+  const sig = signatures(d.signatures ?? true, {
+    note: 'By signing, each party agrees to the terms above.',
+    slots: parties.map((p, i) => ({
+      id: str(p.id) || `party-${i + 1}`,
+      label: str(p.role) || `Party ${i + 1}`,
+      name: str(p.name) || undefined,
+    })),
+  });
+  if (sig) blocks.push(sig);
   return blocks;
 }
 
@@ -201,7 +315,7 @@ function receipt(d: Rec, variant: PdfVariant): PdfBlock[] {
 
 // ---- registry ---------------------------------------------------------------
 
-const BUILDERS: Record<PdfTemplateId, (d: Rec, v: PdfVariant) => PdfBlock[]> = { invoice, report, ticket, minutes, receipt };
+const BUILDERS: Record<PdfTemplateId, (d: Rec, v: PdfVariant) => PdfBlock[]> = { invoice, quote, contract, report, ticket, minutes, receipt };
 
 export const PDF_TEMPLATE_INFO: Record<PdfTemplateId, PdfTemplateInfo> = {
   invoice: {
@@ -217,6 +331,40 @@ export const PDF_TEMPLATE_INFO: Record<PdfTemplateId, PdfTemplateInfo> = {
       ],
       paymentInstructions: 'Pay by ACH or card using the link in the email. Net 30.',
       notes: 'Thank you for your business.',
+    },
+  },
+  quote: {
+    id: 'quote', label: 'Quote', description: 'Line items and totals with a valid-until date, and slots for both sides to accept.',
+    variants: ['classic', 'minimal', 'modern'],
+    sample: {
+      number: 'Q-2051', issued: 'Nov 26, 2026', validUntil: 'Dec 26, 2026', currency: 'USD', taxRate: 8.25,
+      from: { name: 'Northwind Studio', lines: ['410 Market Street', 'Austin, TX 78701'], email: 'hello@northwind.example' },
+      to: { name: 'Harbor Coffee Co.', lines: ['22 Pier Road', 'Galveston, TX 77550'] },
+      items: [
+        { description: 'Website design', detail: 'Five pages, two rounds of changes', qty: 15, unitPrice: 100 },
+        { description: 'Website development', qty: 10, unitPrice: 100 },
+        { description: 'Copywriting', qty: 5, unitPrice: 50 },
+      ],
+      scope: 'Design and build of the new Harbor Coffee website, from wireframes to launch.',
+      terms: '50% due on acceptance, 50% on launch. Work starts within five business days of acceptance.',
+    },
+  },
+  contract: {
+    id: 'contract', label: 'Contract', description: 'Parties, numbered clauses, and a signature slot for each party.',
+    variants: ['classic', 'minimal'],
+    sample: {
+      title: 'Services agreement', number: 'SA-118', effective: 'Dec 1, 2026', term: '6 months',
+      parties: [
+        { id: 'provider', role: 'Service provider', name: 'Northwind Studio', lines: ['410 Market Street', 'Austin, TX 78701'] },
+        { id: 'client', role: 'Client', name: 'Harbor Coffee Co.', lines: ['22 Pier Road', 'Galveston, TX 77550'] },
+      ],
+      intro: 'This agreement sets out how Northwind Studio will provide design services to Harbor Coffee Co.',
+      clauses: [
+        { heading: 'Services', body: 'Northwind Studio will design and build the website described in quote Q-2051.' },
+        { heading: 'Fees and payment', body: 'The client pays the fees in quote Q-2051. Invoices are due within 30 days.' },
+        { heading: 'Ownership', body: 'The client owns the finished work once it is paid for in full.' },
+        { heading: 'Ending the agreement', body: 'Either party may end this agreement with 14 days written notice. Work done until then is paid for.' },
+      ],
     },
   },
   report: {
