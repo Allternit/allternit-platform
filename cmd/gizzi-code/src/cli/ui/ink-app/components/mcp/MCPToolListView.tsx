@@ -11,6 +11,7 @@ import { Byline } from '../design-system/Byline';
 import { Dialog } from '../design-system/Dialog';
 import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint';
 import type { ServerInfo } from './types';
+import { EmptyLine } from '../EmptyLine'
 type Props = {
   server: ServerInfo;
   onSelectTool: (tool: Tool, index: number) => void;
@@ -68,7 +69,7 @@ export function MCPToolListView({
   const t5 = plural(serverTools.length, "tool");
 
   const t6 = `${t4} ${t5}`;
-  const t7 = serverTools.length === 0 ? <Text dimColor={true}>No tools available</Text> : <Select options={toolOptions} onChange={value => {
+  const t7 = serverTools.length === 0 ? <EmptyLine>No tools available</EmptyLine> : <Select options={toolOptions} onChange={value => {
       const index_0 = parseInt(value);
       const tool_0 = serverTools[index_0];
       if (tool_0) {

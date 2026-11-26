@@ -27,6 +27,7 @@ import { buildPluginDetailsMenuOptions, extractGitHubRepo, type InstallablePlugi
 import type { ViewState as ParentViewState } from './types';
 import { usePagination } from './usePagination';
 import { BlockTitle } from '../../components/BlockTitle';
+import { EmptyLine } from '../../components/EmptyLine'
 type Props = {
   error: string | null;
   setError: (error: string | null) => void;
@@ -730,7 +731,7 @@ export function BrowseMarketplace({
         <Box marginBottom={1}>
           <Text bold>Install plugins</Text>
         </Box>
-        <Text dimColor>No new plugins available to install.</Text>
+        <EmptyLine>No new plugins available to install.</EmptyLine>
         <Text dimColor>
           All plugins from this marketplace are already installed.
         </Text>

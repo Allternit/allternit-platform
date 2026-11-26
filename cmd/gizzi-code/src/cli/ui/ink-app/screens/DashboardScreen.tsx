@@ -15,6 +15,7 @@
  * views claim Esc first; single-char chords like q are gated the same way).
  */
 
+import { EmptyLine } from '../components/EmptyLine'
 import * as React from 'react';
 import { useRegisterOverlay } from '../context/overlayContext';
 import { useTerminalSize } from '../hooks/useTerminalSize';
@@ -659,7 +660,7 @@ export function DashboardScreen({
           <Text dimColor>{'↑/↓ scroll · Ctrl+U/D page · g/G top/bottom · Esc back'}</Text>
         </Box>
         {transcript.length === 0 ? (
-          <Text dimColor>No transcript for this session.</Text>
+          <EmptyLine>No transcript for this session.</EmptyLine>
         ) : (
           <ScrollBox
             ref={detailsScrollRef}

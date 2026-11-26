@@ -8,6 +8,7 @@ import { bytes, formatPorts, formatServices, uptime, type ConsoleRow } from '@/c
 import { loadDetail, loadRows } from '@/cli/work/console-read'
 import { attentionReasons, ATTENTION_GROUP, flatRows, groupRows, isAsleep, meterLine } from '@/cli/work/console-view'
 import { useLoaded } from './WorkPane'
+import { EmptyLine } from '../../components/EmptyLine'
 
 /**
  * /computers: the Computers console in the terminal. Grouped list (Needs
@@ -92,7 +93,7 @@ export function ComputersPane({ onDone }: { onDone: () => void }): React.ReactNo
       </Box>
       {error ? <Text color="warning">{error}</Text> : null}
       {!data && !error ? <Text dimColor>Loading…</Text> : null}
-      {data && data.length === 0 ? <Text dimColor>No computers yet. Link one with: gizzi computers link</Text> : null}
+      {data && data.length === 0 ? <EmptyLine>No computers yet. Link one with: gizzi computers link</EmptyLine> : null}
       {groups.map(g => (
         <Box key={g.name} flexDirection="column" marginTop={1}>
           <Text bold color={g.name === ATTENTION_GROUP ? 'warning' : undefined}>{g.name}</Text>

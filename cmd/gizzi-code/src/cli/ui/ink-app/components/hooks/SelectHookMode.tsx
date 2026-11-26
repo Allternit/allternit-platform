@@ -12,6 +12,7 @@ import { Box, Text } from '../../ink';
 import { getHookDisplayText, hookSourceHeaderDisplayString, type IndividualHookConfig } from '../../utils/hooks/hooksSettings';
 import { Select } from '../CustomSelect/select';
 import { Dialog } from '../design-system/Dialog';
+import { EmptyLine } from '../EmptyLine'
 type Props = {
   selectedEvent: HookEvent;
   selectedMatcher: string | null;
@@ -30,7 +31,7 @@ export function SelectHookMode({
 }: Props) {
   const title = hookEventMetadata.matcherMetadata !== undefined ? `${selectedEvent} - Matcher: ${selectedMatcher || "(all)"}` : selectedEvent;
   if (hooksForSelectedMatcher.length === 0) {
-    const t1 = <Box flexDirection="column" gap={1}><Text dimColor={true}>No hooks configured for this event.</Text><Text dimColor={true}>To add hooks, edit settings.json directly or ask Gizzi.</Text></Box>;
+    const t1 = <Box flexDirection="column" gap={1}><EmptyLine>No hooks configured for this event.</EmptyLine><Text dimColor={true}>To add hooks, edit settings.json directly or ask Gizzi.</Text></Box>;
 
     const t2 = <Dialog title={title} subtitle={hookEventMetadata.description} onCancel={onCancel} inputGuide={_temp}>{t1}</Dialog>;
 
