@@ -445,6 +445,7 @@ fn voice_base() -> String {
 pub fn v1_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/ai/chat", post(agent_chat_bridge))
+        .route("/agent-chat/style-preview", get(style_preview_status))
         .route("/health", get(health))
         .route("/models", get(list_available_models))
         .route("/models/recommend", get(recommend_models))
@@ -897,6 +898,21 @@ async fn proxy_voice_stream(service_path: &str, body: Body) -> Response {
 /// mirroring /voice/voices.
 async fn list_cli_tools_stub() -> impl IntoResponse {
     Json(json!({ "tools": [], "total": 0 }))
+}
+
+/// Body of `GET /api/v1/agent-chat/style-preview`. Clients call it before
+/// showing the preview card; an API without this route answers 404 and the
+/// card stays hidden, so no tools-on turn is ever sent to an old server.
+fn style_preview_status_body(remaining: usize) -> serde_json::Value {
+    json!({
+        "supported": true,
+        "remaining": remaining,
+        "limit": crate::rate_limit::STYLE_PREVIEW_PER_HOUR,
+    })
+}
+
+async fn style_preview_status(Extension(user): Extension<AuthUser>) -> Response {
+    Json(style_preview_status_body(crate::rate_limit::style_preview_remaining(&user.user_id))).into_response()
 }
 
 pub fn agent_chat_router() -> Router<Arc<AppState>> {
@@ -3457,6 +3473,18 @@ mod tests {
         assert_eq!(super::style_preview_post_error(true, Some(422), fallback()), super::STYLE_PREVIEW_OLD_RUNTIME);
         assert_eq!(super::style_preview_post_error(true, Some(500), fallback()), fallback());
         assert_eq!(super::style_preview_post_error(false, Some(400), fallback()), fallback());
+    }
+
+    #[test]
+    fn the_style_preview_status_reports_the_remaining_count() {
+        let user = format!("status-test-{}", uuid::Uuid::new_v4());
+        let body = |u: &str| super::style_preview_status_body(crate::rate_limit::style_preview_remaining(u));
+        assert_eq!(body(&user), json!({"supported": true, "remaining": 20, "limit": 20}));
+        assert!(crate::rate_limit::style_preview_allowed(&user));
+        assert!(crate::rate_limit::style_preview_allowed(&user));
+        assert_eq!(body(&user)["remaining"], 18);
+        // Asking does not spend a preview.
+        assert_eq!(body(&user)["remaining"], 18);
     }
 
     #[test]

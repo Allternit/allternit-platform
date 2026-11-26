@@ -77,6 +77,33 @@ fn sliding_admit(
     true
 }
 
+/// Hits left in the window for `scope`, without counting a new one.
+fn sliding_remaining(
+    windows: &Mutex<HashMap<String, VecDeque<Instant>>>,
+    scope: &str,
+    limit: usize,
+    window: Duration,
+    now: Instant,
+) -> usize {
+    let windows = windows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let used = windows
+        .get(scope)
+        .map(|hits| hits.iter().filter(|t| now.duration_since(**t) <= window).count())
+        .unwrap_or(0);
+    limit.saturating_sub(used)
+}
+
+/// Style previews this user has left this hour.
+pub fn style_preview_remaining(user_id: &str) -> usize {
+    sliding_remaining(
+        &STYLE_PREVIEW_WINDOWS,
+        user_id,
+        STYLE_PREVIEW_PER_HOUR,
+        STYLE_PREVIEW_WINDOW,
+        Instant::now(),
+    )
+}
+
 /// True while this user is under the hourly style-preview cap (and counts the
 /// turn); false means answer 429.
 pub fn style_preview_allowed(user_id: &str) -> bool {
@@ -354,6 +381,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn style_preview_remaining_counts_down_without_spending() {
+        let windows = Mutex::new(HashMap::new());
+        let start = Instant::now();
+        let left = |at| sliding_remaining(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, at);
+        assert_eq!(left(start), 20);
+        assert_eq!(left(start), 20);
+        for _ in 0..3 {
+            sliding_admit(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start);
+        }
+        assert_eq!(left(start), 17);
+        assert_eq!(left(start + STYLE_PREVIEW_WINDOW + Duration::from_secs(1)), 20);
+    }
+
+    #[test]
     fn style_preview_cap_admits_twenty_an_hour_per_user() {
         let windows = Mutex::new(HashMap::new());
         let start = Instant::now();
@@ -364,6 +405,10 @@ mod tests {
             );
         }
         assert!(!sliding_admit(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start));
+        assert_eq!(
+            sliding_remaining(&windows, "u1", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start),
+            0
+        );
         // Another user is not affected.
         assert!(sliding_admit(&windows, "u2", STYLE_PREVIEW_PER_HOUR, STYLE_PREVIEW_WINDOW, start));
         // An hour later the window has emptied.
