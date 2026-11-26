@@ -286,7 +286,23 @@ private fun decodeUploaded(context: android.content.Context, uri: Uri): Bitmap? 
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
     var sample = 1
     while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1600) sample *= 2
-    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+    val decoded = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+    // Photos are stored sideways with an EXIF orientation tag; BitmapFactory ignores it (ImageDecoder needs API 28, minSdk is 26).
+    val orientation = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { android.media.ExifInterface(it).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL) }
+    }.getOrNull() ?: android.media.ExifInterface.ORIENTATION_NORMAL
+    val m = android.graphics.Matrix()
+    when (orientation) {
+        android.media.ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        android.media.ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        android.media.ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return@runCatching decoded
+    }
+    decoded?.let { Bitmap.createBitmap(it, 0, 0, it.width, it.height, m, true) }
 }.getOrNull()
 
 @Composable

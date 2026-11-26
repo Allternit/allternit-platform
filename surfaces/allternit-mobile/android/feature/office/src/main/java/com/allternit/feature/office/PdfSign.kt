@@ -2,41 +2,46 @@ package com.allternit.feature.office
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
-import android.graphics.Path as AndroidPath
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,60 +49,100 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.window.Popup
+import com.allternit.core.api.ApiResult
+import com.allternit.core.api.gen.SignRequest
+import com.allternit.core.api.gen.SignSlot
+import com.allternit.core.auth.AllternitAuth
+import com.allternit.core.auth.AuthState
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.uploadPdfToLibrary
+import com.allternit.feature.office.sign.SignMode
+import com.allternit.feature.office.sign.SignFlight
+import com.allternit.feature.office.sign.SignRepository
+import com.allternit.feature.office.sign.SignSheet
+import com.allternit.feature.office.sign.fitRect
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Page size in points of an unsigned blank page (iOS blankPDF, US Letter). */
 private const val BLANK_W = 612
 private const val BLANK_H = 792
-/** The signature box on the first page (iOS: 200 × 80 pt, 40 pt in from the bottom-right corner). */
-private const val SIG_W = 200f
-private const val SIG_H = 80f
-private const val SIG_MARGIN = 40f
 
-/** A page rendered with the platform [PdfRenderer] at [scale] pixels per point, plus its size in points. */
+/** Default slot (iOS defaultSlot): 180 × 56 pt, 36 pt in from the bottom-right corner of the last page. */
+private const val SLOT_W = 180.0
+private const val SLOT_H = 56.0
+private const val SLOT_MARGIN = 36.0
+
+/** Most pages drawn on screen at once (memory); every page is still composed into the signed copy. */
+private const val MAX_DISPLAY_PAGES = 40
+
+private val Warn = Color(0xFFE0612F)
+
+/** A page rendered with the platform [PdfRenderer], plus its size in points. */
 private class RenderedPage(val bitmap: Bitmap, val widthPt: Int, val heightPt: Int)
 
-private fun renderFirstPage(context: Context, pdf: ByteArray?, scale: Float): RenderedPage? {
-    if (pdf == null) {
-        val bmp = Bitmap.createBitmap((BLANK_W * scale).toInt(), (BLANK_H * scale).toInt(), Bitmap.Config.ARGB_8888)
-        bmp.eraseColor(AndroidColor.WHITE)
-        return RenderedPage(bmp, BLANK_W, BLANK_H)
-    }
+private class FlightPlan(val bitmap: Bitmap, val from: Rect, val to: Rect)
+
+private fun blankPdf(): ByteArray {
+    val doc = PdfDocument()
+    doc.finishPage(doc.startPage(PdfDocument.PageInfo.Builder(BLANK_W, BLANK_H, 1).create()))
+    return java.io.ByteArrayOutputStream().also { doc.writeTo(it); doc.close() }.toByteArray()
+}
+
+/** Renders the pages of [pdf]: for display (capped, lighter) or for composing (every page, 2 px per point). Null if unreadable. */
+private fun renderPages(context: Context, pdf: ByteArray, display: Boolean): List<RenderedPage>? {
     val file = File.createTempFile("sign-src", ".pdf", context.cacheDir)
     return try {
         file.writeBytes(pdf)
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
             PdfRenderer(fd).use { r ->
                 if (r.pageCount == 0) return@use null
-                r.openPage(0).use { page ->
-                    val bmp = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                    bmp.eraseColor(AndroidColor.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    RenderedPage(bmp, page.width, page.height)
+                val count = if (display) minOf(r.pageCount, MAX_DISPLAY_PAGES) else r.pageCount
+                val scale = if (!display) 2f else if (count > 10) 1f else 1.5f
+                List(count) { i ->
+                    r.openPage(i).use { page ->
+                        val bmp = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                        bmp.eraseColor(AndroidColor.WHITE)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        RenderedPage(bmp, page.width, page.height)
+                    }
                 }
             }
         }
@@ -108,76 +153,108 @@ private fun renderFirstPage(context: Context, pdf: ByteArray?, scale: Float): Re
     }
 }
 
-/** The pad's strokes as one path, scaled and centred (aspect-fit) into [box]. */
-private fun signaturePath(strokes: List<List<Offset>>, box: RectF): AndroidPath? {
-    val pts = strokes.flatten()
-    if (pts.isEmpty()) return null
-    val minX = pts.minOf { it.x }; val maxX = pts.maxOf { it.x }
-    val minY = pts.minOf { it.y }; val maxY = pts.maxOf { it.y }
-    val w = (maxX - minX).coerceAtLeast(1f); val h = (maxY - minY).coerceAtLeast(1f)
-    val k = minOf(box.width() / w, box.height() / h)
-    val ox = box.left + (box.width() - w * k) / 2f
-    val oy = box.top + (box.height() - h * k) / 2f
-    val path = AndroidPath()
-    strokes.forEach { s ->
-        s.forEachIndexed { i, p ->
-            val x = ox + (p.x - minX) * k; val y = oy + (p.y - minY) * k
-            if (i == 0) { path.moveTo(x, y); path.lineTo(x + 0.1f, y + 0.1f) } else path.lineTo(x, y)
-        }
-    }
-    return path
-}
+private fun defaultSlot(page: RenderedPage, index: Int) = SignSlot(
+    id = "slot-1", label = "Signature", page = index.toLong(),
+    x = page.widthPt - SLOT_W - SLOT_MARGIN, y = SLOT_MARGIN, w = SLOT_W, h = SLOT_H,
+)
 
 /**
- * Composes the signature onto the first page and returns a new one-page PDF (iOS applySignature: the page is
- * flattened, the signature drawn 200 × 80 pt from the bottom-right corner).
+ * Composes the signed copy (iOS compose): every page flattened, [ink] drawn into [slot] keeping its aspect, and a 7 pt
+ * footer line under the slot (above it when there is no room). Slot units are PDF points, origin bottom-left.
  */
-private fun composeSigned(context: Context, source: ByteArray?, strokes: List<List<Offset>>): ByteArray? {
-    val scale = 2f
-    val page = renderFirstPage(context, source, scale) ?: return null
-    val canvas = AndroidCanvas(page.bitmap)
-    val box = RectF(
-        (page.widthPt - SIG_W - SIG_MARGIN) * scale, (page.heightPt - SIG_H - SIG_MARGIN) * scale,
-        (page.widthPt - SIG_MARGIN) * scale, (page.heightPt - SIG_MARGIN) * scale,
-    )
-    val path = signaturePath(strokes, box) ?: return null
-    canvas.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.BLACK; style = Paint.Style.STROKE; strokeWidth = 2f * scale; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-    })
+private fun composeSigned(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray? {
+    val pages = renderPages(context, source, display = false) ?: return null
     val doc = PdfDocument()
-    val info = PdfDocument.PageInfo.Builder(page.widthPt, page.heightPt, 1).create()
-    val out = doc.startPage(info)
-    out.canvas.drawBitmap(page.bitmap, null, RectF(0f, 0f, page.widthPt.toFloat(), page.heightPt.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
-    doc.finishPage(out)
+    val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(255, 64, 64, 64); textSize = 7f }
+    pages.forEachIndexed { i, p ->
+        val w = p.widthPt.toFloat(); val h = p.heightPt.toFloat()
+        val out = doc.startPage(PdfDocument.PageInfo.Builder(p.widthPt, p.heightPt, i + 1).create())
+        out.canvas.drawBitmap(p.bitmap, null, RectF(0f, 0f, w, h), bitmapPaint)
+        if (i.toLong() == slot.page) {
+            val box = Rect(slot.x.toFloat(), (h - slot.y - slot.h).toFloat(), (slot.x + slot.w).toFloat(), (h - slot.y).toFloat())
+            val fit = fitRect(ink.width.toFloat(), ink.height.toFloat(), box)
+            out.canvas.drawBitmap(ink, null, RectF(fit.left, fit.top, fit.right, fit.bottom), bitmapPaint)
+            val lineY = if (box.bottom + 2f + 9f <= h) box.bottom + 2f else maxOf(box.top - 10f, 0f)
+            out.canvas.drawText(footer, box.left, lineY + 7f, textPaint)
+        }
+        doc.finishPage(out)
+    }
     return java.io.ByteArrayOutputStream().also { doc.writeTo(it); doc.close() }.toByteArray()
 }
 
+private fun shortDate(d: Date): String = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(d)
+private fun stamp(d: Date): String = SimpleDateFormat("yyyy-MM-dd HH:mm z", Locale.getDefault()).format(d)
+private fun signedFileName(name: String): String {
+    val base = name.removeSuffix(".pdf").removeSuffix(".PDF").replace('/', '-')
+    return "${base.ifEmpty { "Document" }}-signed.pdf"
+}
+
 /**
- * PDF signing (iOS PDFSignView): a signature pad on top, the PDF's first page below, Clear and Sign & Share. Signing
- * composes a new PDF, keeps a copy in the app's files (iOS Documents), and offers Save (the system picker, like Share)
- * and Save to library (uploads it to Artifacts as a PDF). [source] is the PDF's bytes, or null for a blank page.
+ * Review & sign for a PDF (iOS PDFSignView, web after.tsx): the document with a dashed "Sign here" slot, an orange
+ * "Awaiting your signature" bar that opens [SignSheet], a dim scrim and a "Preview" pill while the sheet is open, then
+ * [SignFlight] from the pad into the slot and "Signed <date>" under it.
+ *
+ * With [requestId] (an agent or app asked) the slot comes from the record and /sign closes it. Without one, a signed-in
+ * user signs their own document (a record is created first). Signed out, the signature is placed and saved on this
+ * device only, with no record. With no slot in the record, tap the page to move the default one (last page, bottom-right).
+ * [source] is the PDF's bytes; null means a blank page, or the request's document when [requestId] is set.
  */
 @Composable
-fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit) {
+fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, requestId: String? = null) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val strokes = remember { mutableStateListOf<List<Offset>>() }
-    var current by remember { mutableStateOf<List<Offset>>(emptyList()) }
-    var preview by remember { mutableStateOf<RenderedPage?>(null) }
-    var previewFailed by remember { mutableStateOf(false) }
-    var signed by remember { mutableStateOf<ByteArray?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var working by remember { mutableStateOf(false) }
-    BackHandler(onBack = onClose)
+    val scroll = rememberScrollState()
+    val screenHeightPx = LocalConfiguration.current.screenHeightDp * density.density
+    val auth by AllternitAuth.state.collectAsState()
+    val account = (auth as? AuthState.SignedIn)?.account
 
-    LaunchedEffect(source, signed) {
-        val bytes = signed ?: source
-        val r = withContext(Dispatchers.IO) { renderFirstPage(context, bytes, 1.5f) }
-        preview = r; previewFailed = r == null
+    var request by remember { mutableStateOf<SignRequest?>(null) }
+    var original by remember { mutableStateOf<ByteArray?>(null) }
+    var pages by remember { mutableStateOf<List<RenderedPage>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var slot by remember { mutableStateOf<SignSlot?>(null) }
+    var showSheet by remember { mutableStateOf(false) }
+    var previewing by remember { mutableStateOf(false) }
+    var submitting by remember { mutableStateOf(false) }
+    var placed by remember { mutableStateOf(false) }
+    var ink by remember { mutableStateOf<Bitmap?>(null) }
+    var flight by remember { mutableStateOf<FlightPlan?>(null) }
+    var signedAt by remember { mutableStateOf<Date?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var signedPdf by remember { mutableStateOf<ByteArray?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var slotCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var flightJob by remember { mutableStateOf<Job?>(null) }
+
+    val req = request
+    val docName = req?.documentName ?: if (title.endsWith(".pdf", true)) title else "$title.pdf"
+    val mode = when { req != null || requestId != null -> SignMode.Request; account != null -> SignMode.Self; else -> SignMode.Local }
+    val isPending = req?.status?.let { it == "pending" } ?: true
+    val hasRequestSlot = req?.slots?.isNotEmpty() == true
+    val canPlace = !hasRequestSlot && !placed && flight == null && !submitting && !showSheet
+
+    LaunchedEffect(source, requestId) {
+        loadError = null
+        val rec = if (requestId != null) {
+            when (val r = SignRepository.get(requestId)) {
+                is ApiResult.Ok -> r.value
+                else -> { loadError = SignRepository.errorMessage(r); return@LaunchedEffect }
+            }
+        } else null
+        request = rec
+        val bytes = source ?: if (rec != null) SignRepository.download(rec.documentUrl) else withContext(Dispatchers.IO) { blankPdf() }
+        if (bytes == null) { loadError = "The document could not be downloaded."; return@LaunchedEffect }
+        val rendered = withContext(Dispatchers.IO) { renderPages(context, bytes, display = true) }
+        if (rendered == null) { loadError = "The PDF could not be loaded."; return@LaunchedEffect }
+        original = bytes; pages = rendered
+        slot = rec?.slots?.firstOrNull() ?: defaultSlot(rendered.last(), rendered.lastIndex)
     }
+
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri: Uri? ->
-        val data = signed
+        val data = signedPdf
         if (uri != null && data != null) {
             scope.launch {
                 val ok = withContext(Dispatchers.IO) { runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(data) } != null }.getOrDefault(false) }
@@ -186,82 +263,196 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit) {
         }
     }
 
-    fun clear() { strokes.clear(); current = emptyList(); signed = null; message = null }
+    fun fail(text: String) {
+        flightJob?.cancel(); flight = null
+        failure = text; placed = false; ink = null; signedAt = null
+    }
 
-    Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("pdfSignScreen")) {
-        LibraryHeader(title = "Sign PDF", subtitle = title.takeIf { source != null }, onBack = onClose, backTag = "pdfSignCancel")
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Draw signature", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text("Clear", color = c.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clickable { clear() }.padding(4.dp).testTag("pdfSignClearTop"))
+    suspend fun submit(png: ByteArray, bmp: Bitmap, method: String, s: SignSlot, at: Date) {
+        try {
+            val src = original ?: throw IllegalStateException("The document could not be read.")
+            val name = account?.displayName ?: "this device"
+            val data: ByteArray
+            if (mode == SignMode.Local) {
+                data = withContext(Dispatchers.IO) { composeSigned(context, src, bmp, s, "Signed on this device by $name · ${stamp(at)}") }
+                    ?: throw IllegalStateException("Couldn't sign the PDF. Try again.")
+            } else {
+                val record = req ?: SignRepository.createSelf(docName, src, docName, listOf(s)).getOrThrow()
+                data = withContext(Dispatchers.IO) { composeSigned(context, src, bmp, s, "Signed electronically by $name · ${stamp(at)} · ${record.id.take(8)}") }
+                    ?: throw IllegalStateException("Couldn't sign the PDF. Try again.")
+                SignRepository.submitSignature(record, data, png, method, s, signedFileName(docName)).getOrThrow()
             }
-            Box(
-                Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(14.dp)).background(c.bgSecondary)
-                    .border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp)).testTag("pdfSignPad")
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { o -> signed = null; current = listOf(o) },
-                            onDrag = { change, _ -> change.consume(); current = current + change.position },
-                            onDragEnd = { if (current.isNotEmpty()) strokes.add(current); current = emptyList() },
-                            onDragCancel = { current = emptyList() },
-                        )
-                    },
-            ) {
-                Canvas(Modifier.fillMaxSize()) {
-                    (strokes + listOf(current)).forEach { s ->
-                        if (s.isEmpty()) return@forEach
-                        val p = Path().apply { moveTo(s[0].x, s[0].y); lineTo(s[0].x + 0.1f, s[0].y + 0.1f); s.drop(1).forEach { lineTo(it.x, it.y) } }
-                        drawPath(p, Color.Black, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-                    }
-                }
+            withContext(Dispatchers.IO) {
+                // iOS keeps a copy on the device so it can be reopened later.
+                runCatching { File(File(context.filesDir, "signed").apply { mkdirs() }, "signed-${UUID.randomUUID()}.pdf").writeBytes(data) }
             }
+            signedPdf = data
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e.message ?: "Couldn't sign the PDF. Try again.")
+        } finally {
+            submitting = false
         }
-        Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-            val page = preview
-            when {
-                page != null -> Image(page.bitmap.asImageBitmap(), "PDF preview", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                previewFailed -> FriendlyState(FriendlyStyle.Empty, "No PDF loaded", "Select a PDF to sign and share.") {
-                    Icon(painterResource(DesignR.drawable.deck_pdf), null, tint = c.accentPrimary)
-                }
+    }
+
+    fun handleSigned(png: ByteArray, bmp: Bitmap, method: String, from: Rect) {
+        val s = slot ?: return
+        val at = Date()
+        ink = bmp; signedAt = at; showSheet = false; previewing = false; failure = null; message = null; submitting = true
+        flightJob = scope.launch {
+            // Bring the slot into view, let the sheet slide away, then lift the ink out of where the pad was.
+            slotCoords?.takeIf { it.isAttached }?.let { co ->
+                val target = screenHeightPx * 0.32f
+                scroll.animateScrollBy(co.boundsInWindow().top - target)
             }
+            delay(350)
+            val to = slotCoords?.takeIf { it.isAttached }?.boundsInWindow() ?: Rect(from.left, from.top - 200f, from.left + 540f, from.top - 30f)
+            flight = FlightPlan(bmp, from, to)
         }
-        message?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp).testTag("pdfSignMessage")) }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            val empty = strokes.isEmpty()
-            val done = signed
-            Text("Clear", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.weight(1f).height(44.dp).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(12.dp)).clickable { clear() }.padding(top = 12.dp).testTag("pdfSignClear"))
-            if (done == null) {
-                Text(if (working) "Signing…" else "Sign & Share", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(c.accentPrimary.copy(alpha = if (empty) 0.6f else 1f))
-                        .clickable(enabled = !empty && !working) {
-                            working = true; message = null
-                            scope.launch {
-                                val data = withContext(Dispatchers.IO) {
-                                    composeSigned(context, source, strokes.toList())?.also { bytes ->
-                                        // iOS keeps a copy in Documents so it can be reopened later.
-                                        runCatching { File(File(context.filesDir, "signed").apply { mkdirs() }, "signed-${UUID.randomUUID()}.pdf").writeBytes(bytes) }
+        scope.launch { submit(png, bmp, method, s, at) }
+    }
+
+    fun movedSlot(pageIndex: Int, page: RenderedPage, xPt: Float, yFromTopPt: Float) {
+        val cur = slot ?: return
+        val x = (xPt - cur.w.toFloat() / 2f).coerceIn(0f, (page.widthPt - cur.w.toFloat()).coerceAtLeast(0f))
+        val y = (page.heightPt - yFromTopPt - cur.h.toFloat() / 2f).coerceIn(0f, (page.heightPt - cur.h.toFloat()).coerceAtLeast(0f))
+        slot = cur.copy(page = pageIndex.toLong(), x = x.toDouble(), y = y.toDouble())
+    }
+
+    val dim by animateFloatAsState(if (showSheet) 0.28f else 0f, tween(220), label = "signDim")
+
+    Box(Modifier.fillMaxSize().background(c.bgPrimary).testTag("pdfSignScreen")) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            LibraryHeader(title = req?.title ?: "Sign PDF", subtitle = docName.takeIf { req == null && source != null }, onBack = onClose, backTag = "pdfSignCancel")
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    pages.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        pages.forEachIndexed { index, p ->
+                            BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(p.widthPt.toFloat() / p.heightPt).shadow(2.dp, RoundedCornerShape(2.dp))) {
+                                val k = constraints.maxWidth.toFloat() / p.widthPt
+                                Image(
+                                    p.bitmap.asImageBitmap(), "Page ${index + 1}", Modifier.fillMaxSize().pointerInput(canPlace, p) {
+                                        if (canPlace) detectTapGestures { o -> movedSlot(index, p, o.x / k, o.y / k) }
+                                    },
+                                    contentScale = ContentScale.FillBounds,
+                                )
+                                val s = slot
+                                if (s != null && s.page == index.toLong()) {
+                                    val left = (s.x.toFloat() * k).toInt()
+                                    val top = ((p.heightPt - s.y - s.h).toFloat() * k).toInt()
+                                    val wDp = with(density) { (s.w.toFloat() * k).toDp() }
+                                    val hDp = with(density) { (s.h.toFloat() * k).toDp() }
+                                    Box(
+                                        Modifier.offset { IntOffset(left, top) }.size(wDp, hDp)
+                                            .onGloballyPositioned { slotCoords = it }
+                                            .background(Warn.copy(alpha = if (placed) 0f else 0.06f), RoundedCornerShape(8.dp))
+                                            .drawBehind {
+                                                if (!placed) drawRoundRect(Warn, cornerRadius = CornerRadius(8.dp.toPx()), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))))
+                                            }
+                                            .testTag("pdfSignSlot"),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        val shown = ink
+                                        if (placed && shown != null) Image(shown.asImageBitmap(), "Your signature", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                                        else if (!placed) Text(s.label.ifBlank { "Sign here" }.let { if (it == "Signature") "Sign here" else it }, color = Warn, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    val at = signedAt
+                                    if (placed && at != null) {
+                                        Text("Signed ${shortDate(at)}", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.offset { IntOffset(left, top + (s.h.toFloat() * k).toInt() + 2) })
                                     }
                                 }
-                                working = false
-                                if (data == null) message = "Couldn't sign the PDF. Try again." else { signed = data; saveFile.launch("signed-${title.replace('/', '-')}.pdf") }
                             }
-                        }.padding(top = 12.dp).testTag("pdfSignApply"))
-            } else {
-                Text("Save to library", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(c.accentPrimary)
-                        .clickable(enabled = !working) {
-                            working = true
+                        }
+                    }
+                    loadError != null -> FriendlyState(FriendlyStyle.Empty, "Couldn't open the PDF", loadError ?: "") {
+                        Icon(painterResource(DesignR.drawable.deck_pdf), null, tint = c.accentPrimary)
+                    }
+                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Loading document…", color = c.textSecondary, fontSize = 14.sp) }
+                }
+            }
+            // Bottom bar: error line, then the peek bar (or the result).
+            Column(
+                Modifier.fillMaxWidth().shadow(6.dp, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(c.bgPrimary, RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                    .navigationBarsPadding().padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                failure?.let { Text(it, color = Warn, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 20.dp).testTag("pdfSignError")) }
+                message?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp).testTag("pdfSignMessage")) }
+                if (pages.isNotEmpty() && !placed && !showSheet) {
+                    if (isPending) {
+                        if (previewing) PreviewPill("Back to signing", Modifier.align(Alignment.CenterHorizontally)) { previewing = false; failure = null; showSheet = true }
+                        else if (canPlace) Text("Tap the page to move the signing spot.", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
+                        Row(
+                            Modifier.fillMaxWidth().height(48.dp).clickable(enabled = !submitting) { failure = null; previewing = false; showSheet = true }.testTag("pdfSignPeek"),
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(painterResource(DesignR.drawable.ph_warning), null, tint = Warn, modifier = Modifier.size(15.dp))
+                            Text("  Awaiting your signature", color = Warn, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                        }
+                    } else {
+                        Text("This request is ${req?.status}.", color = c.textSecondary, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(56.dp).padding(top = 18.dp))
+                    }
+                } else if (placed) {
+                    Text(
+                        when {
+                            submitting -> "Saving your signed copy…"
+                            mode == SignMode.Local -> "Placed on this device. No signing record was made."
+                            else -> "Signed and saved to your files."
+                        },
+                        color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 20.dp),
+                    )
+                    val done = signedPdf
+                    if (done != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BarButton("Save", false, Modifier.weight(1f).testTag("pdfSignSave")) { saveFile.launch(signedFileName(docName)) }
+                        BarButton("Save to library", true, Modifier.weight(1f).testTag("pdfSignSaveLibrary")) {
                             scope.launch {
                                 val r = withContext(Dispatchers.IO) {
                                     val f = File(context.cacheDir, "signed-${UUID.randomUUID()}.pdf").also { it.writeBytes(done) }
                                     try { uploadPdfToLibrary(context, Uri.fromFile(f)) } finally { f.delete() }
                                 }
-                                working = false
                                 message = if (r.isSuccess) "Saved to your library." else (r.exceptionOrNull()?.message ?: "Couldn't save to your library.")
                             }
-                        }.padding(top = 12.dp).testTag("pdfSignSaveLibrary"))
+                        }
+                    } else Box(Modifier.height(8.dp))
+                }
             }
         }
+        // The document dims while the sheet is open.
+        if (dim > 0f) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)))
+        if (showSheet) {
+            // The sheet is its own window; the pill is a popup (above it) at about the sheet's top.
+            Popup(alignment = Alignment.BottomCenter, offset = IntOffset(0, -(screenHeightPx * 0.52f).toInt())) {
+                PreviewPill("Preview", Modifier) { showSheet = false; previewing = true }
+            }
+            SignSheet(
+                title = req?.title ?: docName, summary = req?.summary, details = req?.details ?: emptyList(),
+                sendTo = req?.sendTo?.let { it.name ?: it.email }, mode = mode,
+                onSign = { png, bmp, method, rect -> handleSigned(png, bmp, method, rect) },
+                onClose = { showSheet = false },
+            )
+        }
+        flight?.let { f ->
+            SignFlight(f.bitmap, f.from, f.to, Modifier.fillMaxSize()) { flight = null; placed = failure == null }
+        }
     }
+}
+
+@Composable
+private fun PreviewPill(label: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Text(
+        label, color = c.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+        modifier = modifier.shadow(5.dp, RoundedCornerShape(50)).clip(RoundedCornerShape(50)).background(c.bgPrimary)
+            .clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 7.dp).testTag("pdfSignPreview"),
+    )
+}
+
+@Composable
+private fun BarButton(label: String, filled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Text(
+        label, color = if (filled) Color.White else c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+        modifier = modifier.height(44.dp).clip(RoundedCornerShape(22.dp)).background(if (filled) Color.Black else c.bgSecondary).clickable(onClick = onClick).padding(top = 12.dp),
+    )
 }
