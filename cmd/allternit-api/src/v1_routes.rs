@@ -1111,6 +1111,51 @@ fn style_preview_metadata(meta: Option<serde_json::Value>) -> serde_json::Value 
     meta
 }
 
+/// Shown when a preview turn reaches a runtime that cannot keep tools off.
+const STYLE_PREVIEW_OLD_RUNTIME: &str =
+    "This computer's runtime is too old to preview a style. Update Allternit and try again.";
+
+/// The strictest permission mode: every call that would ask is refused.
+const STYLE_PREVIEW_PERMISSION_MODE: &str = "dontAsk";
+
+/// Body that answers any `permission.asked` during a preview with reject.
+fn style_preview_reject_body() -> serde_json::Value {
+    json!({ "reply": "reject", "message": "Tools are off in a style preview." })
+}
+
+/// True when a gizzi message part is a tool call of this session: a preview
+/// turn must have none, so an old runtime that ignored `toolAccess: "none"`
+/// is caught here.
+fn style_preview_tool_part(part: &serde_json::Value, session_id: &str) -> bool {
+    part.get("type").and_then(|v| v.as_str()) == Some("tool")
+        && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id)
+}
+
+/// The error frame and the finish frame that end a preview turn the runtime
+/// could not keep tools off for.
+fn style_preview_old_runtime_frames(msg_id: &str) -> [serde_json::Value; 2] {
+    [
+        json!({ "type": "error", "messageId": msg_id, "error": STYLE_PREVIEW_OLD_RUNTIME }),
+        json!({
+            "type": "finish",
+            "messageId": msg_id,
+            "status": "error",
+            "metadata": { "status": "error", "error": STYLE_PREVIEW_OLD_RUNTIME },
+        }),
+    ]
+}
+
+/// The error text for a failed message POST. A preview whose message the
+/// runtime refused outright (400/422: it rejects `toolAccess: "none"`) gets
+/// the old-runtime text, never a tools-on turn.
+fn style_preview_post_error(is_preview: bool, status: Option<u16>, fallback: String) -> String {
+    if is_preview && matches!(status, Some(400) | Some(422)) {
+        STYLE_PREVIEW_OLD_RUNTIME.to_string()
+    } else {
+        fallback
+    }
+}
+
 fn style_preview_cap_response() -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,
@@ -2290,7 +2335,7 @@ async fn agent_chat_bridge(
                 &client,
                 &gizzi,
                 &chat_id,
-                parse_permission_mode(&body_json),
+                if is_preview { STYLE_PREVIEW_PERMISSION_MODE } else { parse_permission_mode(&body_json) },
                 agent_id.as_deref(),
                 chat_run.as_ref().map(|r| r.run_id.as_str()),
             )
@@ -2299,6 +2344,16 @@ async fn agent_chat_bridge(
     };
     let gizzi_session_id = match resolved_session {
         Ok(id) => id,
+        Err(err) if is_preview => {
+            // The runtime would not take the strictest mode: it cannot keep
+            // tools off, so no preview runs on it.
+            warn!(error = %err, "style preview: runtime refused the strict permission mode");
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "style_preview_runtime_too_old", "message": STYLE_PREVIEW_OLD_RUNTIME })),
+            )
+                .into_response();
+        }
         Err(err) => {
             warn!(error = %err, "Failed to get or create Gizzi session");
             settle_chat_run(&chat_run, false, Some(&err)).await;
@@ -2689,6 +2744,7 @@ async fn agent_chat_bridge(
                             format!("gizzi unavailable: {}", body)
                         }
                     };
+                    let error = style_preview_post_error(is_preview, status.map(|s| s.as_u16()), error);
                     // Pass the runtime's structured error through so clients
                     // can render targeted UI (e.g. a model picker on
                     // ProviderModelNotFoundError) instead of parsing a string.
@@ -2848,6 +2904,15 @@ async fn agent_chat_bridge(
                                 file_frames_sent.insert(part_id.to_string());
                                 yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                             }
+                        }
+                        if is_preview && style_preview_tool_part(part, &session_id) {
+                            // A tool call in a preview: the runtime did not keep
+                            // tools off. Stop the turn and say so.
+                            let _ = client.post(format!("{}/session/{}/abort", gizzi, session_id)).send().await;
+                            for frame in style_preview_old_runtime_frames(&msg_id) {
+                                yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
+                            }
+                            return;
                         }
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
@@ -3064,6 +3129,17 @@ async fn agent_chat_bridge(
                             "type": "context_compacted",
                             "messageId": msg_id,
                         }).to_string()));
+                    }
+                    "permission.asked" if is_preview => {
+                        // A preview has no tools: refuse whatever asks. The
+                        // tool part that follows ends the turn.
+                        if let Some(request_id) = props.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                            let _ = client
+                                .post(format!("{}/permission/{}/reply", gizzi, request_id))
+                                .json(&style_preview_reject_body())
+                                .send()
+                                .await;
+                        }
                     }
                     "permission.asked" => {
                         // The tool guard parked the turn on this approval.
@@ -3355,6 +3431,32 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM cowork_sessions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_style_preview_refuses_asks_and_stops_on_a_tool_call() {
+        assert_eq!(super::style_preview_reject_body()["reply"], "reject");
+        assert_eq!(super::STYLE_PREVIEW_PERMISSION_MODE, "dontAsk");
+        let tool = json!({"type": "tool", "sessionID": "ses_1", "callID": "c1"});
+        assert!(super::style_preview_tool_part(&tool, "ses_1"));
+        assert!(!super::style_preview_tool_part(&tool, "ses_2"));
+        assert!(!super::style_preview_tool_part(&json!({"type": "text", "sessionID": "ses_1"}), "ses_1"));
+        let frames = super::style_preview_old_runtime_frames("m1");
+        assert_eq!(frames[0]["type"], "error");
+        assert_eq!(
+            frames[0]["error"],
+            "This computer's runtime is too old to preview a style. Update Allternit and try again."
+        );
+        assert_eq!(frames[1]["status"], "error");
+    }
+
+    #[test]
+    fn a_runtime_that_rejects_tools_none_gets_the_old_runtime_error() {
+        let fallback = || "gizzi message failed (400): bad tools".to_string();
+        assert_eq!(super::style_preview_post_error(true, Some(400), fallback()), super::STYLE_PREVIEW_OLD_RUNTIME);
+        assert_eq!(super::style_preview_post_error(true, Some(422), fallback()), super::STYLE_PREVIEW_OLD_RUNTIME);
+        assert_eq!(super::style_preview_post_error(true, Some(500), fallback()), fallback());
+        assert_eq!(super::style_preview_post_error(false, Some(400), fallback()), fallback());
     }
 
     #[test]
