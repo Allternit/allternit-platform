@@ -405,6 +405,9 @@ struct CustomizeScreen: View {
                 .foregroundColor(Theme.statusError)
                 .padding(.bottom, 12)
         }
+        if section == .skills, effectiveScope == .yours {
+            ServerSkillsSection()
+        }
         if loading.contains(section) && all.isEmpty {
             PolishCardSkeletons(count: 6)
         } else if let failure = failures[section], all.isEmpty, effectiveScope == .yours || discoverable.isEmpty {

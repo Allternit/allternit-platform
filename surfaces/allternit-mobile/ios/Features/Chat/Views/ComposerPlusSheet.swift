@@ -35,6 +35,7 @@ struct ComposerPlusSheet: View {
     @StateObject private var brainStore = BrainStore.shared
     @StateObject private var recentPhotos = RecentPhotosLoader()
     @ObservedObject private var permissionStore = ChatPermissionStore.shared
+    @ObservedObject private var serverSkills = ServerSkillsStore.shared
     @ObservedObject private var chipStore = ComputerChipStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var settings = SettingsStore.shared
@@ -364,6 +365,16 @@ struct ComposerPlusSheet: View {
                 PlusRow(icon: "bolt", title: "Connectors", chevron: true, testId: "plusSheetConnectors") { isConnectorsPresented = true }
                 PlusDivider()
                 PlusRow(icon: "graduationcap", title: "Skills", chevron: true) { capabilitiesKind = .skill }
+                if serverSkills.hasSkills {
+                    PlusDivider()
+                    PlusRow(icon: "sparkles", title: "Server skills", testId: "plusSheetServerSkills") {
+                        dismiss()
+                        // The composer types `/` and its list opens.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            NotificationCenter.default.post(name: .composerOpenSkills, object: nil)
+                        }
+                    }
+                }
                 PlusDivider()
                 PlusRow(icon: "puzzlepiece", title: "Plugins", chevron: true) { capabilitiesKind = .plugin }
             }

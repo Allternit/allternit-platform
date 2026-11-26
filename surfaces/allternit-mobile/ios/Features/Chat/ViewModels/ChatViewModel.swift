@@ -800,7 +800,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
                     clientLocation: clientLocation,
                     personInitiated: personInitiated,
-                    imagePrompt: imagePrompt
+                    imagePrompt: imagePrompt,
+                    skill: ServerSkillsStore.shared.pick(for: trimmed).map { AgentChatClient.SkillPick(id: $0.id, arguments: $0.arguments) }
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
