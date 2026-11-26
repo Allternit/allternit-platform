@@ -489,6 +489,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::voice_recordings::routes())
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
+        // Review & sign (migration 167): each handler resolves the caller itself; /sign, /decline and
+        // /signature take an interactive Clerk session only, never an agent, runtime or API key.
+        .merge(routes::sign_requests::routes())
         .merge(routes::runtime_files::routes())
         // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
         // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
