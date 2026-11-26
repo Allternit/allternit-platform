@@ -119,7 +119,7 @@ struct CustomizeScreen: View {
     var body: some View {
         NavigationStack(path: $path) {
             PolishedTabPage(
-                title: "Customize",
+                title: "Catalog",
                 description: "Skills, connectors, and plugins that shape what the agent can do.",
                 introKey: .customize,
                 hero: { CustomizeIntroHero() }
@@ -435,7 +435,7 @@ struct CustomizeScreen: View {
         } else if section == .connectors {
             VStack(alignment: .leading, spacing: 12) {
                 if showAll || category != nil {
-                    DirectoryBackLink(label: "Customize") { showAll = false; category = nil }
+                    DirectoryBackLink(label: "Catalog") { showAll = false; category = nil }
                 }
                 DirectoryGrid(list: Array(AppDirectory.ranked(entries(filtered)).prefix(120)), busy: connect.busy,
                               onOpen: { connectorDetail = $0 }, onAdd: { entry in Task { await connect.connect(entry) } })
@@ -472,7 +472,7 @@ struct CustomizeScreen: View {
         let byKey = Dictionary(entries(all).filter { !$0.connected }.map { (AppDirectory.rankKey($0.id), $0) },
                                uniquingKeysWith: { first, _ in first })
         return VStack(alignment: .leading, spacing: 12) {
-            DirectoryBackLink(label: "Customize") { collection = nil }
+            DirectoryBackLink(label: "Catalog") { collection = nil }
             Text(picked?.title ?? "Connectors")
                 .font(.system(size: 24, weight: .medium, design: .serif))
                 .foregroundColor(Color("TextPrimary"))

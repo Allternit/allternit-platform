@@ -58,7 +58,7 @@ struct StageHomeScene: View {
                 StageRailItem(icon: .folder, label: "Projects")
                 StageRailItem(icon: .doc, label: "Artifacts")
                 StageRailItem(icon: .clock, label: "Automation Tasks")
-                StageRailItem(icon: .sliders, label: "Customize")
+                StageRailItem(icon: .sliders, label: "Catalog")
                 StageRailItem(icon: .sliders, label: "More")
                 StageRailLabel(title: "Recents")
                 HStack(spacing: 6) {
@@ -899,7 +899,7 @@ struct StageAciScene: View {
                         .beat(.pop, at: 0.58)
                         .place(0, 186)
 
-                    Text("Customize")
+                    Text("Catalog")
                         .font(StageFont.sans(8.5))
                         .underline()
                         .fixedSize()
