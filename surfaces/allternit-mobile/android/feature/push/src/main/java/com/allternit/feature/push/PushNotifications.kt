@@ -44,6 +44,10 @@ object PushNotifications {
     const val NEEDS_FIX = "NEEDS_FIX"
     const val AGENT_MESSAGE = "AGENT_MESSAGE"
     const val COMPUTER_ALERT = "COMPUTER_ALERT"
+    /** Agent browser pushes (data.kind `aci_approval`, `aci_human`, `aci_blocked`; CONTRACT.md). */
+    const val ACI_APPROVAL = "ACI_APPROVAL"
+    const val ACI_HUMAN = "ACI_HUMAN"
+    const val ACI_BLOCKED = "ACI_BLOCKED"
 
     /** Button identifiers (iOS NotificationActionID). */
     const val ACTION_APPROVE = "APPROVE"
@@ -53,6 +57,8 @@ object PushNotifications {
     const val ACTION_OPEN = "OPEN"
     const val ACTION_RETRY = "RETRY"
     const val ACTION_SNOOZE = "SNOOZE"
+    const val ACTION_CONTINUE = "CONTINUE"
+    const val ACTION_STOP = "STOP"
 
     const val KEY_REPLY_TEXT = "allternit.reply"
     /** One id per tag: Android keys a notification by (tag, id). */
@@ -76,7 +82,7 @@ object PushNotifications {
 
     /** The channel for a push's category and `type`. */
     fun channelFor(category: String?, type: String?): String = when {
-        category == APPROVAL_INLINE || category == APPROVAL_REVIEW -> CHANNEL_APPROVALS
+        category == APPROVAL_INLINE || category == APPROVAL_REVIEW || category == ACI_APPROVAL || category == ACI_HUMAN || category == ACI_BLOCKED -> CHANNEL_APPROVALS
         category == BOT_REPLY || category == AGENT_MESSAGE -> CHANNEL_MESSAGES
         category == RUN_DONE || category == NEEDS_FIX -> CHANNEL_RUNS
         category == COMPUTER_ALERT || type == "computer_alert" -> CHANNEL_COMPUTER_ALERTS
@@ -123,7 +129,7 @@ object PushNotifications {
         }
         // One bot's notifications group together (APNs thread-id).
         data["botId"]?.takeIf { it.isNotBlank() }?.let { builder.setGroup("bot-$it") }
-        if (category == APPROVAL_INLINE || category == APPROVAL_REVIEW) builder.setCategory(Notification.CATEGORY_REMINDER)
+        if (category == APPROVAL_INLINE || category == APPROVAL_REVIEW || category == ACI_APPROVAL) builder.setCategory(Notification.CATEGORY_REMINDER)
         if (data["type"] == "call") builder.setCategory(Notification.CATEGORY_CALL)
         openIntent(context, tag, data)?.let { builder.setContentIntent(it) }
         actionsFor(context, category, tag, title, data).forEach { builder.addAction(it) }
@@ -132,7 +138,7 @@ object PushNotifications {
 
     /** The iOS category's buttons, in iOS order. */
     internal fun actionsFor(context: Context, category: String?, tag: String, title: String, data: Map<String, String>): List<Notification.Action> {
-        fun background(action: String, label: String, reply: String? = null): Notification.Action {
+        fun background(action: String, label: String, reply: String? = null, authRequired: Boolean = true): Notification.Action {
             val intent = Intent(context, NotificationActionReceiver::class.java).apply {
                 this.action = "com.allternit.push.$action"
                 putExtra(NotificationActionReceiver.EXTRA_ACTION, action)
@@ -145,14 +151,29 @@ object PushNotifications {
             val pending = PendingIntent.getBroadcast(context, (tag + action).hashCode(), intent, flags)
             val builder = Notification.Action.Builder(Icon.createWithResource(context, com.allternit.core.design.R.drawable.ph_bell), label, pending)
             if (reply != null) builder.addRemoteInput(RemoteInput.Builder(KEY_REPLY_TEXT).setLabel(reply).build())
-            if (Build.VERSION.SDK_INT >= 31) builder.setAuthenticationRequired(true)
+            if (Build.VERSION.SDK_INT >= 31) builder.setAuthenticationRequired(authRequired)
             return builder.build()
         }
         fun foreground(action: String, label: String): Notification.Action? {
             val pending = openIntent(context, tag + action, data) ?: return null
             return Notification.Action.Builder(Icon.createWithResource(context, com.allternit.core.design.R.drawable.ph_bell), label, pending).build()
         }
+        // Approve on an agent browser push opens a confirm screen first: fingerprint, face or screen lock, then the call.
+        fun confirmApprove(): Notification.Action {
+            val intent = Intent(context, AciApproveConfirmActivity::class.java).apply {
+                this.action = "com.allternit.push.$ACTION_APPROVE"
+                putExtra(NotificationActionReceiver.EXTRA_TAG, tag)
+                putExtra(NotificationActionReceiver.EXTRA_TITLE, title)
+                data.forEach { (k, v) -> if (k in PASSED_KEYS) putExtra("data.$k", v) }
+            }
+            val pending = PendingIntent.getActivity(context, (tag + ACTION_APPROVE).hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            return Notification.Action.Builder(Icon.createWithResource(context, com.allternit.core.design.R.drawable.ph_bell), "Approve", pending).build()
+        }
         return when (category) {
+            // Deny and Stop are safe to run from the lock screen (no auth); Continue follows the phone's lock rule.
+            ACI_APPROVAL -> listOfNotNull(confirmApprove(), background(ACTION_DENY, "Deny", authRequired = false), foreground(ACTION_OPEN, "Open"))
+            ACI_HUMAN -> listOfNotNull(background(ACTION_CONTINUE, "Continue"), background(ACTION_STOP, "Stop", authRequired = false), foreground(ACTION_OPEN, "Open"))
+            ACI_BLOCKED -> listOfNotNull(foreground(ACTION_OPEN, "Open"))
             APPROVAL_INLINE -> listOf(background(ACTION_APPROVE, "Approve"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
             APPROVAL_REVIEW -> listOfNotNull(foreground(ACTION_REVIEW, "Review"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
             BOT_REPLY -> listOfNotNull(background(ACTION_REPLY, "Reply", "Message the bot"), foreground(ACTION_OPEN, "Open"))
@@ -164,7 +185,8 @@ object PushNotifications {
     }
 
     /** The data keys a button needs (iOS reads them from `userInfo["data"]`). */
-    val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId", "computerId")
+    val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId", "computerId",
+        "run_id", "computer_id", "approval_id", "approval_kind", "kind")
 
     internal fun openIntent(context: Context, key: String, data: Map<String, String>): PendingIntent? {
         val intent = AllternitPush.tapIntent(context, data) ?: return null
