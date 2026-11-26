@@ -45,6 +45,7 @@ import { installAgentCursorWindow } from './agent-cursor-window.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
+import { isArtifactLink, artifactLinkTarget } from './artifact-link.js';
 import { isAppLink, appSlugFromLink, appShellUrl, resolveAppUrl, trustedAppUrl, requestAppHandoff } from './app-link.js';
 import { createAppLaunchers, isValidAppSlug, type AppInstallRequest } from './app-launchers.js';
 import { openAppWindow, closeAppWindow } from './app-window.js';
@@ -2780,6 +2781,23 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
     const target = modelLinkTarget(activePlatformUrl, url);
     if (!target) {
       log.warn('[Main] rejected model link');
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
+    void mainWindow.loadURL(target);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  // allternit://artifact/<id> (a plan or page link from Gizzi, a phone, a
+  // share): focus the main window and load /?artifact=<id>. Bad ids are
+  // dropped; see artifact-link.ts.
+  if (isArtifactLink(url)) {
+    const target = artifactLinkTarget(activePlatformUrl, url);
+    if (!target) {
+      log.warn('[Main] rejected artifact link');
       return;
     }
     if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
