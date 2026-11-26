@@ -77,6 +77,8 @@ struct McpServersSettingsView: View {
                     Text("Connection status isn't available: the Allternit runtime on your computer didn't answer.")
                 }
             }
+
+            if authManager.canCallAccountAPIs { UseAllternitElsewhereSection() }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)

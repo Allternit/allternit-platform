@@ -207,6 +207,9 @@ struct ComposerView: View {
                 .padding(.bottom, 6)
             }
 
+            // Watching rows (live / webhook / poll) for this chat, when it has any.
+            McpWatchStrip(sessionId: sessionId)
+
             if let armedPhoneName {
                 HStack {
                     PhoneArmedChip(name: armedPhoneName) { onClearPhone?() }

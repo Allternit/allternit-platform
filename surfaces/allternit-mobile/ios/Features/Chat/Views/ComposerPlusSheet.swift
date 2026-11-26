@@ -52,6 +52,7 @@ struct ComposerPlusSheet: View {
     @State private var isFilePickerPresented = false
     @State private var isSketchPresented = false
     @State private var isConnectorsPresented = false
+    @State private var isWatchEventPresented = false
     @State private var isBrainCapturePresented = false
     @State private var isNewProjectPresented = false
     @State private var capabilitiesKind: CapabilitiesClient.Kind? = nil
@@ -125,6 +126,9 @@ struct ComposerPlusSheet: View {
         }
         .sheet(isPresented: $isConnectorsPresented) {
             ConnectorsListView()
+        }
+        .sheet(isPresented: $isWatchEventPresented) {
+            McpWatchAppEventSheet(sessionId: sessionId)
         }
         .sheet(isPresented: $isBrainCapturePresented) {
             BrainCaptureSheet()
@@ -362,6 +366,8 @@ struct ComposerPlusSheet: View {
                 }
                 PlusDivider()
                 PlusRow(icon: "bolt", title: "Connectors", chevron: true, testId: "plusSheetConnectors") { isConnectorsPresented = true }
+                PlusDivider()
+                PlusRow(icon: "dot.radiowaves.left.and.right", title: "Watch an app event", chevron: true) { isWatchEventPresented = true }
                 PlusDivider()
                 PlusRow(icon: "graduationcap", title: "Skills", chevron: true) { capabilitiesKind = .skill }
                 PlusDivider()

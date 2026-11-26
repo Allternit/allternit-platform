@@ -460,3 +460,104 @@ struct McpToolDescriptor: Decodable, Equatable, Sendable, Identifiable {
         case serverName, originalName, title, requiresConfirmation
     }
 }
+
+// MARK: - MCP 2027 UI: watches, feedback, connected apps (allternit-api `v1/mcp/*`)
+
+struct McpSessionWatch: Decodable, Identifiable, Equatable, Sendable {
+    let watchId: String
+    let server: String
+    let event: String
+    let eventCount: Int?
+    let lastEventAt: String?
+    /// "live" | "webhook" | "poll"; older servers omit it (treated as poll).
+    let mode: String?
+    let pollMs: Int?
+    let tail: [String]?
+    let lineCount: Int?
+
+    var id: String { watchId }
+    var resolvedMode: String { mode ?? "poll" }
+}
+
+struct McpWatchLine: Decodable, Identifiable, Equatable, Sendable {
+    let n: Int
+    let at: String?
+    let text: String
+    var id: Int { n }
+}
+
+struct McpConnectedApp: Identifiable, Equatable, Sendable {
+    let clientId: String
+    let clientName: String
+    let lastUsedAt: String?
+    let tools: [String]
+    let approvalIds: [String]
+    var id: String { clientId }
+}
+
+extension McpServersClient {
+    private struct WatchesBody: Decodable { let watches: [McpSessionWatch]? }
+    private struct LinesBody: Decodable { let lines: [McpWatchLine]? }
+    private struct ApprovalRow: Decodable {
+        let id: String
+        let client: String
+        let clientName: String?
+        let lastUsedAt: String?
+        let tools: [String]?
+    }
+    private struct ApprovalsBody: Decodable { let approvals: [ApprovalRow]? }
+    private struct FeedbackBody: Encodable { let tool: String; let message: String? }
+
+    /// GET mcp/watches?session_id= — the strip re-reads the list; the server holds it in memory.
+    func watches(sessionId: String) async throws -> [McpSessionWatch] {
+        let q = sessionId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionId
+        let body: WatchesBody = try await APIClient.shared.get(path: "mcp/watches?session_id=\(q)")
+        return body.watches ?? []
+    }
+
+    /// GET mcp/watches/:id/lines?after= — every line the watch has kept (ring of 500).
+    func watchLines(watchId: String) async throws -> [McpWatchLine] {
+        let id = watchId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? watchId
+        let body: LinesBody = try await APIClient.shared.get(path: "mcp/watches/\(id)/lines?after=0")
+        return body.lines ?? []
+    }
+
+    func stopWatch(watchId: String) async throws {
+        let id = watchId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? watchId
+        try await APIClient.shared.delete(path: "mcp/watches/\(id)")
+    }
+
+    /// POST mcp/connectors/:id/feedback. Throws on 422 `feedback_unsupported`.
+    func sendFeedback(connectorId: String, tool: String, message: String? = nil) async throws {
+        let id = connectorId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? connectorId
+        try await APIClient.shared.post(path: "mcp/connectors/\(id)/feedback", body: FeedbackBody(tool: tool, message: message))
+    }
+
+    /// GET mcp/approvals grouped by client (web `groupApprovals`).
+    func connectedApps() async throws -> [McpConnectedApp] {
+        let body: ApprovalsBody = try await APIClient.shared.get(path: "mcp/approvals")
+        var order: [String] = []
+        var by: [String: McpConnectedApp] = [:]
+        for row in body.approvals ?? [] {
+            let name = (row.clientName?.isEmpty == false) ? row.clientName! : row.client
+            let prior = by[row.client]
+            if prior == nil { order.append(row.client) }
+            let last = [prior?.lastUsedAt, row.lastUsedAt].compactMap { $0 }.max()
+            var tools = prior?.tools ?? []
+            for t in row.tools ?? [] where !tools.contains(t) { tools.append(t) }
+            by[row.client] = McpConnectedApp(
+                clientId: row.client, clientName: name, lastUsedAt: last,
+                tools: tools, approvalIds: (prior?.approvalIds ?? []) + [row.id]
+            )
+        }
+        return order.compactMap { by[$0] }
+    }
+
+    /// DELETE mcp/approvals/:id for each row of the client.
+    func disconnectApp(_ app: McpConnectedApp) async throws {
+        for id in app.approvalIds {
+            let seg = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+            try await APIClient.shared.delete(path: "mcp/approvals/\(seg)")
+        }
+    }
+}
