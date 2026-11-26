@@ -340,6 +340,32 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// `GET /api/v1/agent-chat/style-preview`: whether this runtime can preview a
+    /// response style, and how many previews are left. Same base and auth as the
+    /// chat stream. A 404 or any other failure throws: the caller hides the card.
+    struct StylePreviewStatus: Decodable, Sendable {
+        let supported: Bool
+        let remaining: Int?
+        let limit: Int?
+    }
+
+    func stylePreviewStatus() async throws -> StylePreviewStatus {
+        guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
+            throw AgentChatClientError.noReachableNode
+        }
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/v1/agent-chat/style-preview"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.timeoutInterval = 15
+        let (data, response) = try await InstanceConnection.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse
+        }
+        return try JSONDecoder().decode(StylePreviewStatus.self, from: data)
+    }
+
     /// Sends `text` to the session and streams the response frames.
     ///
     /// `POST /api/agent-chat` on the resolved computer (relay, mesh or

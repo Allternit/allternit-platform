@@ -30,6 +30,10 @@ struct StylePreviewCard: View {
     @State private var answered: Snapshot? = nil
     /// No echo frame: the runtime cannot preview, so the card is gone.
     @State private var unsupported = false
+    /// The runtime's answer to `GET agent-chat/style-preview`; the card shows only on `supported`.
+    @State private var probed = false
+    /// Previews left today; nil when the runtime did not say.
+    @State private var remaining: Int? = nil
     @State private var task: Task<Void, Never>? = nil
     @FocusState private var focused: Bool
 
@@ -46,7 +50,8 @@ struct StylePreviewCard: View {
 
     private var signedIn: Bool { auth.isSignedIn }
     private var trimmedQuestion: String { question.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var canSend: Bool { signedIn && !trimmedQuestion.isEmpty }
+    private var outOfPreviews: Bool { signedIn && remaining == 0 }
+    private var canSend: Bool { signedIn && !outOfPreviews && !trimmedQuestion.isEmpty }
     /// An answer exists for a style that is no longer the one on screen.
     private var isStale: Bool { phase == .done && answered != nil && answered != current }
     private var isUnsaved: Bool {
@@ -57,7 +62,7 @@ struct StylePreviewCard: View {
     }
 
     var body: some View {
-        if !unsupported {
+        if !unsupported && (probed || !signedIn) {
             SettingsCardBox {
                 Text("Try this style")
                     .font(.system(size: 15, weight: .semibold))
@@ -80,6 +85,11 @@ struct StylePreviewCard: View {
                 } else {
                     if !answer.isEmpty || phase == .streaming {
                         answerView
+                    }
+                    if outOfPreviews {
+                        Text(ChatErrorInfo.make(message: nil, status: 429).reason)
+                            .font(.system(size: 14))
+                            .foregroundColor(Theme.statusError)
                     }
                     if let errorText {
                         HStack(alignment: .top, spacing: 8) {
@@ -105,6 +115,30 @@ struct StylePreviewCard: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: phase)
             .onDisappear { task?.cancel() }
+            .task(id: signedIn) { if !probed { await probe() } }
+        }
+        // Not shown, but it still has to probe: the card appears only once the runtime says it can.
+        else if !unsupported {
+            Color.clear.frame(height: 0).task(id: signedIn) { await probe() }
+        }
+    }
+
+    /// Nothing is sent unless this returns `supported: true`. A 404 or any error hides the card.
+    @MainActor
+    private func probe() async {
+        guard signedIn else { return }
+        do {
+            let status = try await AgentChatClient().stylePreviewStatus()
+            if status.supported {
+                remaining = status.remaining
+                probed = true
+            } else {
+                unsupported = true
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            unsupported = true
         }
     }
 
@@ -196,6 +230,7 @@ struct StylePreviewCard: View {
                     if !echoed {
                         guard start.stylePreview else { return markUnsupported() }
                         echoed = true
+                        if let left = remaining { remaining = max(0, left - 1) }
                     }
                 case .textDelta(let delta):
                     guard echoed else { return markUnsupported() }
@@ -221,6 +256,7 @@ struct StylePreviewCard: View {
         } catch let error as URLError where error.code == .cancelled {
             return
         } catch {
+            if case APIError.httpError(429, _) = error { remaining = 0 }
             fail(Self.message(for: error))
         }
     }
