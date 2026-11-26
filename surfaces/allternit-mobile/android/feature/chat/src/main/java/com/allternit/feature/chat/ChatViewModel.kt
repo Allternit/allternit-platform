@@ -912,6 +912,7 @@ class ChatViewModel(
                     (opt as? JsonObject)?.str("label") ?: (opt as? JsonPrimitive)?.content
                 },
                 multiple = q.bool("multiple") == true || q.bool("multiSelect") == true,
+                plan = parsePlanDraft(q),
             )
         }
         if (items.isEmpty()) return null

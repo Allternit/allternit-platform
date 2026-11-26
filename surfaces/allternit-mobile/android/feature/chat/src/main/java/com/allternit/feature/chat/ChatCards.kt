@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -271,6 +272,27 @@ fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Un
     if (ask.closed) return
     val picks = remember(ask.id) { mutableStateListOf<Set<String>>().apply { repeat(ask.questions.size) { add(emptySet()) } } }
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
+    val planAt = ask.questions.indexOfFirst { it.plan != null }
+    if (planAt >= 0) {
+        // A plan question draws a plan card; the sheet answers it (Approve = Yes, Revise / Ask = No).
+        val q = ask.questions[planAt]
+        var open by remember(ask.id) { mutableStateOf(false) }
+        // Revise / Ask: once the answer lands the card (and its sheet) leaves, and the composer
+        // takes focus with the web's prompt (ChatComposer PLAN_NOTE). A failed answer clears it.
+        var pendingNote by remember(ask.id) { mutableStateOf<String?>(null) }
+        DisposableEffect(ask.id) { onDispose { pendingNote?.let { ComposerFocusRequests.requests.tryEmit(it) } } }
+        PlanCard(q.plan!!) { open = true }
+        if (open) PlanSheet(q.plan, onDismiss = { open = false }) { action, onError ->
+            val label = planReplyLabel(q.options, action)
+            pendingNote = when (action) {
+                PlanAction.Approve -> null
+                PlanAction.Revise -> "What should change in the plan?"
+                PlanAction.Ask -> "Ask about the plan…"
+            }
+            onAnswer(ask.questions.indices.map { if (it == planAt) listOfNotNull(label) else emptyList() }) { pendingNote = null; onError(it) }
+        }
+        return
+    }
     CardChrome {
         CardHeader(com.allternit.core.design.R.drawable.ph_question, "Your agent is asking")
         ask.questions.forEachIndexed { index, q ->

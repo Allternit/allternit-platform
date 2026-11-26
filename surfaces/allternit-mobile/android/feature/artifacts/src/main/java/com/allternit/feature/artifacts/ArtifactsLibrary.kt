@@ -1,5 +1,6 @@
 package com.allternit.feature.artifacts
 
+import com.allternit.core.api.gen.AgentModes
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -120,7 +121,7 @@ fun FilterLabel(text: String) {
 
 // MARK: - Studio kinds (iOS ArtifactStudioKind, gallery order)
 
-enum class StudioKind(val raw: String, val label: String, val description: String, val emptyTitle: String, val studioHint: String, val modeId: String?, val studioKind: String, val filterKind: String?, val deck: Int) {
+enum class StudioKind(val raw: String, private val fallbackLabel: String, val description: String, val emptyTitle: String, val studioHint: String, val modeId: String?, val studioKind: String, val filterKind: String?, val deck: Int) {
     Docs("docs", "Docs", "A document you write and edit in place, with Allternit drafting alongside.", "Draft a plan, memo or brief with Allternit", "The document appears here as Allternit writes it, and opens in the editor.", "docs", "doc", "doc", DesignR.drawable.deck_docs),
     Sheets("sheets", "Sheets", "A spreadsheet for data, formulas, and charts.", "Paste your data and turn it into a sheet", "The sheet appears here as Allternit builds it, and opens in the editor.", "data", "sheet", "sheet", DesignR.drawable.deck_sheets),
     Slides("slides", "Slides", "A deck you can present, restyle, and export to PowerPoint.", "Paste your ideas and turn them into slides", "The deck appears here as Allternit builds it, and opens in the editor.", "slides", "slides", "slides", DesignR.drawable.deck_slides),
@@ -134,8 +135,20 @@ enum class StudioKind(val raw: String, val label: String, val description: Strin
     Image("image", "Image", "Generate or edit an image from a prompt.", "Describe an image and Allternit will make it", "Each image renders here, and you can refine it or ask for variations.", "image", "image", "image", DesignR.drawable.deck_image),
     Video("video", "Video", "A generated video clip, with the length and format you ask for.", "Describe a clip, its length and format", "The clip renders here when it's ready.", "video", "video", null, DesignR.drawable.deck_video);
 
-    /** GALLERY_TILES `beta`. */
-    val isBeta: Boolean get() = this !in setOf(Docs, Sheets, Slides, Page)
+    /** Label and Beta badge come from the generated registry (AgentModes.gen.kt), the same text iOS and web show. */
+    val label: String get() = AgentModes.mode(raw)?.label ?: fallbackLabel
+    val isBeta: Boolean get() = AgentModes.mode(raw)?.beta ?: false
+
+    companion object {
+        /** Registry order (the mode list order), kinds the registry lacks last. */
+        /** The studio kind a registry mode id starts. App has no kind of its own: it runs as a Build session (site or app). */
+        fun forMode(id: String): StudioKind? = entries.firstOrNull { it.raw == id } ?: if (id == "app") Build else null
+
+        val ordered: List<StudioKind> by lazy {
+            val order = AgentModes.all.map { it.id }
+            entries.sortedBy { k -> order.indexOf(k.raw).let { if (it < 0) Int.MAX_VALUE else it } }
+        }
+    }
 
     /** "Untitled <noun>" (Deep Research: "Untitled research"). */
     val newTitle: String get() = if (this == Research) "Untitled research" else "Untitled ${ArtifactKinds.noun(studioKind).lowercase()}"
@@ -216,7 +229,7 @@ class ArtifactLibraryStore {
 
 /**
  * The Artifacts section (iOS ArtifactsLibraryView): the round ☰ header with the search and filter
- * pill, "Artifacts", Make something new (the studio tiles), Your artifacts in List / Grid / Deck,
+ * pill, "Artifacts" with "+ New" (the mode list sheet), Your artifacts in List / Grid / Deck,
  * and every empty, offline, signed-out and error state with the iOS copy. A card opens the V2
  * artifact view; its ⋯ (and a long press, like the iOS context menu) opens Archive / Delete.
  * [studioChat] is the chat pane the studio shows for its session (the shell's chat screen).
@@ -231,6 +244,8 @@ fun ArtifactsLibraryScreen(
     onConnectors: () -> Unit,
     onSignIn: () -> Unit,
     initialArtifactId: String? = null,
+    /** A studio session the composer just started (Artifacts redesign 6.2): the library opens straight into it. */
+    initialStudio: StudioSession? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -242,16 +257,35 @@ fun ArtifactsLibraryScreen(
     var openId by remember { mutableStateOf(initialArtifactId) }
     var officeOpen by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<ArtifactSummary?>(null) }
-    var confirmDelete by remember { mutableStateOf<ArtifactSummary?>(null) }
-    var studio by remember { mutableStateOf<StudioSession?>(null) }
+    var studio by remember { mutableStateOf(initialStudio) }
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var newOpen by remember { mutableStateOf(false) }
+    var chip by remember { mutableStateOf(ShowChip.Everything) }
+    var appRows by remember { mutableStateOf<List<AppShelfRow>>(emptyList()) }
+    var appsReload by remember { mutableStateOf(0) }
+    var installFor by remember { mutableStateOf<InstallRequest?>(null) }
+    var makeAppFor by remember { mutableStateOf<ArtifactSummary?>(null) }
+    var appPage by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val appIds = remember(appRows) { appRows.mapNotNull { it.artifactId }.toSet() }
+    val pins = DeckPins.pins
 
     fun reload() { scope.launch { store.load() } }
+    val pdfPicker = rememberPdfPicker(
+        scope, onUploading = { store.notice = it },
+        onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
+    )
+
+    fun clearAll() { store.clearFilters(); chip = ShowChip.Everything; reload() }
+    fun pickChip(next: ShowChip) {
+        chip = next
+        val owner = if (next == ShowChip.Shared) ArtifactLibraryStore.Owner.Shared else ArtifactLibraryStore.Owner.All
+        if (owner != store.owner) { store.owner = owner; reload() }
+    }
 
     LaunchedEffect(signedIn) {
         if (signedIn) {
+            DeckPins.load(context)
             store.load()
             store.loadOrgSettings()
         }
@@ -270,28 +304,22 @@ fun ArtifactsLibraryScreen(
         return
     }
 
-    fun startSession(kind: StudioKind) {
+    fun startSession(kind: StudioKind, sessionKind: String? = null) {
         if (launching != null) return
         launching = kind
         scope.launch {
-            val r = ArtifactStudioLauncher.launch(context, kind)
+            val r = ArtifactStudioLauncher.launch(context, kind, sessionKind = sessionKind)
             launching = null
             r.onSuccess { studio = it }.onFailure { store.notice = "Couldn't start a ${ArtifactKinds.noun(kind.studioKind).lowercase()} session. ${it.message ?: ""}".trim() }
         }
     }
 
-    fun launch(kind: StudioKind) {
-        if (launching != null) return
-        // A tile with a library kind toggles that filter (iOS ArtifactTileFilter; tap again clears).
-        // Build, Deep Research, Ops and Video have none, so they start a session; while a kind
-        // filter is on, the first row ("New <Tile>") starts that kind's session.
-        val fk = kind.filterKind
-        if (fk != null) {
-            store.kind = if (store.kind == fk) null else fk
-            reload()
-            return
-        }
-        startSession(kind)
+    fun makeApp() { StudioKind.forMode("app")?.let { startSession(it, sessionKind = "app") } }
+
+    // One list for "+ New" and the empty library: the deck's modes. PDF picks a file; the rest start a session.
+    fun launchMode(e: com.allternit.core.api.gen.AgentModeEntry) {
+        if (e.launchType == com.allternit.core.api.gen.AgentModeLaunchType.PICK) { pdfPicker(); return }
+        StudioKind.forMode(e.id)?.let { startSession(it, sessionKind = e.id.takeIf { m -> m == "app" }) }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -310,7 +338,8 @@ fun ArtifactsLibraryScreen(
                 searchJob = scope.launch { delay(300); store.load() }
             }
         }
-        val tiles = StudioKind.entries.filter { k -> k.templateKind?.let { store.allows(it) } ?: true }
+        val modes = newArtifactModes(store.allows)
+        val shown = if (chip == ShowChip.Apps) store.items.filter { it.id in appIds } else store.items
         val columns = if (layout == LibraryLayout.Grid) 2 else 1
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -322,46 +351,38 @@ fun ArtifactsLibraryScreen(
         ) {
             val full: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
             item(key = "title", span = full) {
-                TabPage(
-                    description = "Docs, sheets, slides and pages you can edit, share and export.",
-                    modifier = Modifier.bleed(14.dp),
-                    title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Artifacts" }) },
-                ) {}
-            }
-            item(key = "make", span = full) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Make something new", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        Text("${tiles.size} types", color = c.textTertiary, fontSize = 12.sp)
-                    }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(tiles, key = { it.raw }) { k ->
-                            StudioTile(k, selected = store.kind != null && store.kind == k.filterKind, busy = launching == k) { launch(k) }
-                        }
-                    }
+                Box(Modifier.fillMaxWidth()) {
+                    TabPage(
+                        description = "Docs, sheets, slides and pages you can edit, share and export.",
+                        modifier = Modifier.bleed(14.dp),
+                        title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Artifacts" }) },
+                    ) {}
+                    // R2-C: "+ New" sits on the title line and opens the mode list sheet.
+                    LibraryNewPill("New artifact", "artifactsNew", Modifier.align(Alignment.TopEnd).padding(top = 4.dp)) { newOpen = true }
                 }
             }
-            item(key = "tools", span = full) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Or start from your connected tools", color = c.textTertiary, fontSize = 12.sp)
-                    GlassPill(onClick = onConnectors, modifier = Modifier.testTag("artifactsConnectTools"), height = 38.dp) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
-                            Text("Connect your tools", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    if (ArtifactOfficeHooks.documents != null) {
-                        GlassPill(onClick = { officeOpen = true }, modifier = Modifier.testTag("artifactsOfficeDocuments"), height = 38.dp) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
-                                Text("Allternit Office", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
+            if (ArtifactOfficeHooks.documents != null) item(key = "office", span = full) {
+                GlassPill(onClick = { officeOpen = true }, modifier = Modifier.testTag("artifactsOfficeDocuments"), height = 38.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
+                        Text("Allternit Office", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
             item(key = "yours", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (signedIn) {
+                        ArtifactsShowChips(chip, ::pickChip, Modifier.padding(top = 4.dp))
+                        if (chip == ShowChip.Everything || chip == ShowChip.Apps) {
+                            ArtifactAppsRow(
+                                artifacts = store.items, onMakeApp = ::makeApp, onRows = { appRows = it }, reloadKey = appsReload,
+                                onOpen = { app ->
+                                    val id = app.artifactId
+                                    if (id != null) openId = id else app.link?.let { appPage = it to app.name }
+                                },
+                            )
+                        }
+                    }
                     Text("Your artifacts", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     store.notice?.let { n ->
                         Row(
@@ -375,7 +396,7 @@ fun ArtifactsLibraryScreen(
                     if (store.filtered) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Showing " + filterSummary(store), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Clear", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(CircleShape).testTag("artifactsClearFilters").clickable { store.clearFilters(); reload() }.padding(8.dp))
+                            Text("Clear", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(CircleShape).testTag("artifactsClearFilters").clickable { clearAll() }.padding(8.dp))
                         }
                     }
                 }
@@ -406,11 +427,19 @@ fun ArtifactsLibraryScreen(
                         }
                     }
                 }
+                chip == ShowChip.Plans -> item(key = "plans", span = full) {
+                    PlansList(onOpen = { openId = it }, reloadKey = store.items.size)
+                }
+                chip == ShowChip.Apps && store.loaded && shown.isEmpty() -> item(key = "noapps", span = full) {
+                    FriendlyState(FriendlyStyle.Empty, "No apps yet", "Make an artifact into an app from its menu, or start one with Make an app.", actionTitle = "Make an app", onAction = ::makeApp) {
+                        Icon(painterResource(DesignR.drawable.deck_page), null, tint = c.textSecondary)
+                    }
+                }
                 store.loaded && store.items.isEmpty() -> item(key = "empty", span = full) {
                     val k = store.kind
                     when {
                         k != null && store.query.isBlank() && store.owner == ArtifactLibraryStore.Owner.All && store.show == ArtifactLibraryStore.Show.Saved ->
-                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap the ${ArtifactKinds.label(k)} tile above to make one.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
+                            FriendlyState(FriendlyStyle.Empty, "No ${ArtifactKinds.label(k).lowercase()} yet", "Tap + New to make one.", actionTitle = "Clear filters", onAction = { clearAll() }) {
                                 Icon(painterResource(ArtifactKinds.icon(k)), null, tint = c.textSecondary)
                             }
                         store.show == ArtifactLibraryStore.Show.Archive && !store.filteredBeyondArchive() ->
@@ -418,17 +447,25 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
                             }
                         store.filtered ->
-                            FriendlyState(FriendlyStyle.Empty, "Nothing matches", "Try another filter or search.", actionTitle = "Clear filters", onAction = { store.clearFilters(); reload() }) {
+                            FriendlyState(FriendlyStyle.Empty, "Nothing matches", "Try another filter or search.", actionTitle = "Clear filters", onAction = { clearAll() }) {
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
-                        else ->
-                            EmptyBox("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"), art = com.allternit.core.design.EmptyArtKind.Sheets, actionLabel = "New artifact", onAction = { newOpen = true })
+                        else -> Column(Modifier.testTag("artifactsEmpty"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Text("Nothing here yet", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            Text("Pick what you want to make. It opens in the composer.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            modes.chunked(2).forEach { pair ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    pair.forEach { e -> ModeTile(e, busy = launching == StudioKind.forMode(e.id), modifier = Modifier.weight(1f)) { launchMode(e) } }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        items(store.items, key = { it.id }) { a ->
-                            ArtifactCard(a, LibraryLayout.Deck, Modifier.width(280.dp), onOpen = { openId = a.id }, onMore = { actionsFor = a })
+                        items(shown, key = { it.id }) { a ->
+                            ArtifactCard(a, LibraryLayout.Deck, Modifier.width(280.dp), isApp = a.id in appIds, onOpen = { openId = a.id }, onMore = { actionsFor = a })
                         }
                     }
                 }
@@ -440,8 +477,8 @@ fun ArtifactsLibraryScreen(
                             }
                         }
                     }
-                    items(store.items, key = { it.id }) { a ->
-                        ArtifactCard(a, layout, Modifier, onOpen = { openId = a.id }, onMore = { actionsFor = a })
+                    items(shown, key = { it.id }) { a ->
+                        ArtifactCard(a, layout, Modifier, isApp = a.id in appIds, onOpen = { openId = a.id }, onMore = { actionsFor = a })
                     }
                     if (store.hasMore) item(key = "more", span = full) {
                         LaunchedEffect(store.items.size) { store.loadMore() }
@@ -463,19 +500,15 @@ fun ArtifactsLibraryScreen(
         },
     )
     }
-
-    // iOS: the floating "New artifact" capsule (its menu is a sheet here, reached by tap).
-    LibraryNewButton("New artifact", "artifactsNew", Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)) { newOpen = true }
     }
 
     ArtifactsIntroHost(signedIn)
 
     if (newOpen) {
         NewArtifactSheet(
-            tiles = StudioKind.entries.filter { k -> k.templateKind?.let { store.allows(it) } ?: true },
+            modes = newArtifactModes(store.allows),
             signedIn = signedIn,
-            onTile = { startSession(it) },
-            onConnectors = onConnectors,
+            onMode = { launchMode(it) },
             onUploading = { store.notice = it },
             onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
             onDismiss = { newOpen = false },
@@ -490,8 +523,6 @@ fun ArtifactsLibraryScreen(
                 LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
                 FilterLabel("Show")
                 PillRow(ArtifactLibraryStore.Show.entries, store.show, { if (it == ArtifactLibraryStore.Show.Saved) "Saved work" else "Archive" }, { "artifactsShow${it.name}" }) { store.show = it }
-                FilterLabel("Owner")
-                PillRow(ArtifactLibraryStore.Owner.entries, store.owner, { it.label }, { "artifactsOwner${it.scope}" }) { store.owner = it }
                 FilterLabel("Kind")
                 PillRow(listOf<String?>(null) + ArtifactKinds.filterKinds, store.kind, { it?.let(ArtifactKinds::label) ?: "All kinds" }, { "artifactsKind${it ?: "all"}" }) { store.kind = it }
             }
@@ -499,31 +530,98 @@ fun ArtifactsLibraryScreen(
     }
 
     actionsFor?.let { a ->
+        val isApp = a.id in appIds
+        val pinned = DeckPins.isPinned(a.id)
+        val archive = store.show == ArtifactLibraryStore.Show.Archive
+        // Docs, sheets and slides cannot become apps (web canBecomeApp); only the owner shares or makes apps.
+        val appRowsShown = a.isMine && (isApp || canBecomeApp(a.kind))
         LibrarySheet(a.title, "artifactActions", onDismiss = { actionsFor = null }) {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LibraryRowButton("Open", DesignR.drawable.ph_arrow_square_out, "artifactActionOpen") { actionsFor = null; openId = a.id }
-                val archive = store.show == ArtifactLibraryStore.Show.Archive
-                LibraryRowButton(if (archive) "Restore to saved work" else "Archive", DesignR.drawable.ph_floppy_disk, "artifactActionArchive") {
+                if (a.isMine) LibraryRowButton("Share", DesignR.drawable.ph_upload_simple, "artifactActionShare") {
+                    actionsFor = null
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, ArtifactWeb.shareLink(a.id))
+                    context.startActivity(android.content.Intent.createChooser(send, "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                if (appRowsShown) {
+                    if (isApp) {
+                        LibraryRowButton("Install app", DesignR.drawable.ph_download_simple, "artifactActionInstallApp") { actionsFor = null; installFor = InstallRequest(a, InstallTier.App) }
+                        LibraryRowButton("Copy app link", DesignR.drawable.ph_link_simple, "artifactActionCopyAppLink") {
+                            actionsFor = null
+                            val link = appRows.firstOrNull { it.artifactId == a.id }?.link ?: ArtifactWeb.shareLink(a.id)
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("App link", link))
+                            store.notice = "App link copied."
+                        }
+                    } else {
+                        LibraryRowButton("Make it an app", DesignR.drawable.ph_plus_circle, "artifactActionMakeApp") { actionsFor = null; makeAppFor = a }
+                    }
+                }
+                LibraryRowButton(if (pinned) "Unpin" else "Pin", if (pinned) DesignR.drawable.ph_push_pin_slash else DesignR.drawable.ph_push_pin, "artifactActionPin") {
+                    actionsFor = null
+                    scope.launch {
+                        DeckPins.toggle(context, DeckPin(a.id, a.kind, a.title)).onFailure { store.notice = it.message }
+                    }
+                }
+                LibraryRowButton(if (archive) "Restore to saved work" else "Archive", DesignR.drawable.ph_archive, "artifactActionArchive") {
                     actionsFor = null
                     scope.launch { store.setArchived(a, !archive) }
                 }
-                if (a.isMine) LibraryRowButton("Delete", DesignR.drawable.ph_trash, "artifactActionDelete", destructive = true) { actionsFor = null; confirmDelete = a }
+                if (a.isMine) com.allternit.core.design.HoldButton("Hold to delete", "artifactActionDelete", danger = true) {
+                    actionsFor = null
+                    scope.launch { store.delete(a) }
+                }
             }
         }
     }
 
-    confirmDelete?.let { a ->
-        AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("Delete permanently?") },
-            text = { Text("This can’t be undone.") },
-            confirmButton = {
-                TextButton(onClick = { confirmDelete = null; scope.launch { store.delete(a) } }, modifier = Modifier.testTag("artifactDeleteConfirm")) {
-                    Text("Delete permanently", color = AllternitStatic.StatusError)
+    makeAppFor?.let { a ->
+        MakeAppSheet(a, onDismiss = { makeAppFor = null }, onChanged = { appsReload++ }, onNotice = { store.notice = it })
+    }
+
+    // An app opens inside Allternit, never in Chrome (Artifacts redesign 6.8).
+    appPage?.let { (link, name) ->
+        androidx.compose.ui.window.Dialog(onDismissRequest = { appPage = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            Column(Modifier.fillMaxSize().background(c.bgPrimary).testTag("artifactAppPage")) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text("Done", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.heightIn(min = 48.dp).clickable { appPage = null }.padding(8.dp).testTag("artifactAppPageDone"))
                 }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
-        )
+                val pageUrl = if (link.startsWith("/")) ArtifactWeb.ORIGIN + link else link
+                ArtifactPageWebView(PageSource.Url(pageUrl), Modifier.fillMaxSize(), appHost = android.net.Uri.parse(pageUrl).host)
+            }
+        }
+    }
+
+    installFor?.let { req ->
+        LibrarySheet("Install ${req.artifact.title}?", "artifactInstallConsent", onDismiss = { installFor = null }) {
+            InstallConsent(
+                request = req,
+                onTier = { installFor = req.copy(tier = it) },
+                onCancel = { installFor = null },
+                onInstall = {
+                    installFor = null
+                    scope.launch {
+                        val body = kotlinx.serialization.json.buildJsonObject {
+                            put("granted_tier", kotlinx.serialization.json.JsonPrimitive(req.tier.wire)); put("consent", kotlinx.serialization.json.JsonPrimitive(true))
+                        }
+                        // The slug of an artifact app is the artifact id (same id web `useInstallApp` sends).
+                        val res = LibraryNet.send("POST", "apps/artifact/${LibraryNet.escape(req.artifact.id)}/install", body)
+                        if (res is ApiResult.Ok) {
+                            val o = res.value.obj
+                            if (o.bool("needs_consent") == true) {
+                                // The tier grew since the last yes: ask again with what is new.
+                                val added = o.list("added").mapNotNull { it.str("label") ?: it.str("name") } +
+                                    ((o.get("added") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty())
+                                installFor = InstallRequest(req.artifact, InstallTier.from(o.str("requested_tier") ?: req.tier.wire), added, true)
+                            } else { appsReload++; store.notice = "${req.artifact.title} installed." }
+                        } else store.notice = res.friendly("install this app")
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -538,9 +636,9 @@ private fun filterSummary(s: ArtifactLibraryStore): String = listOfNotNull(
     s.query.takeIf { it.isNotBlank() }?.let { "“$it”" },
 ).joinToString(" · ")
 
-/** A Make something new card: art on the neutral fill with a soft inner edge. Shrinks a little on tap, with a light haptic. */
+/** A mode tile for the empty library (R2-C-empty): the deck art on the neutral fill, the label under it, Beta in the corner. */
 @Composable
-private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: () -> Unit) {
+private fun ModeTile(e: com.allternit.core.api.gen.AgentModeEntry, busy: Boolean, modifier: Modifier = Modifier, onTap: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val source = remember { MutableInteractionSource() }
@@ -548,33 +646,23 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
     val s by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.49f, stiffness = 600f), label = "tilePress")
     val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier.width(136.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(shape)
-            .testTag("artifactsTile${k.raw}")
-            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = k.description) {
+        modifier.graphicsLayer { scaleX = s; scaleY = s }.clip(shape)
+            .testTag("artifactsTile${e.id}")
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = "New ${e.label}") {
                 PolishHaptic.perform(view, PolishHaptic.Kind.Light); onTap()
             }
-            .semantics { contentDescription = "New ${k.label}" },
+            .semantics { contentDescription = "New ${e.label}" },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth().height(95.dp).clip(shape).background(PolishGlass.track())
-                .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) c.textPrimary else PolishGlass.border()), shape),
+            Modifier.fillMaxWidth().height(95.dp).clip(shape).background(PolishGlass.track()).border(BorderStroke(1.dp, PolishGlass.border()), shape),
             contentAlignment = Alignment.Center,
         ) {
-            when (k) {
-                StudioKind.Docs, StudioKind.Sheets, StudioKind.Slides ->
-                    ArtifactMiniThumb(k.studioKind.let { if (it == "slides") "slide" else it }, Modifier.width(52.dp).height(66.dp))
-                else -> androidx.compose.foundation.Image(painterResource(k.deck), null, Modifier.fillMaxSize().padding(3.dp))
-            }
-            androidx.compose.foundation.Image(
-                painterResource(ArtifactKinds.icon(k.studioKind)), contentDescription = null,
-                modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(16.dp).clip(RoundedCornerShape(4.dp)),
-            )
-            if (k.isBeta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
+            androidx.compose.foundation.Image(painterResource(modeDeckArt(e.id)), null, Modifier.fillMaxSize().padding(3.dp))
+            if (e.beta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
             if (busy) Text("Starting…", color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(6.dp))
         }
-        Text(k.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        Text(k.description, color = c.textSecondary, fontSize = 11.5.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(e.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -588,7 +676,7 @@ private fun Modifier.bleed(by: Dp): Modifier = layout { measurable, constraints 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Modifier, onOpen: () -> Unit, onMore: () -> Unit) {
+private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Modifier, isApp: Boolean = false, onOpen: () -> Unit, onMore: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val thumbH = when (layout) { LibraryLayout.List -> 58; LibraryLayout.Grid -> 110; LibraryLayout.Deck -> 180 }
@@ -625,7 +713,7 @@ private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Mo
             Box {
                 body(Modifier.fillMaxWidth().height(thumbH.dp))
                 Text(
-                    ArtifactKinds.noun(a.kind), color = c.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Medium,
+                    if (isApp) "App" else ArtifactKinds.noun(a.kind), color = c.textPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(6.dp).clip(CircleShape).background(c.bgPanel).padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }

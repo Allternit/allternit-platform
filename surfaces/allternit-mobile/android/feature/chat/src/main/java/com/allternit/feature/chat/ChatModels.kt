@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 
 /**
@@ -109,7 +110,26 @@ data class PermissionAsk(
 /** A question the agent asked (`question.asked`), answered in place. */
 data class QuestionAsk(val id: String, val sessionId: String?, val questions: List<QuestionItem>, val closed: Boolean = false)
 
-data class QuestionItem(val header: String?, val question: String, val options: List<String>, val multiple: Boolean)
+data class QuestionItem(val header: String?, val question: String, val options: List<String>, val multiple: Boolean, val plan: PlanDraft? = null)
+
+/** A plan the agent wants approved (gizzi `plan_exit`; web `Question.plan`): steps, the body as Markdown, and the saved plan artifact. */
+data class PlanDraft(val title: String, val body: String, val steps: List<PlanStep>, val artifactId: String? = null, val artifactVersion: Int = 1)
+
+data class PlanStep(val title: String, val detail: String? = null)
+
+/** Reads `question.plan`; null when it has no steps (the question then draws as a normal card). */
+fun parsePlanDraft(q: JsonObject): PlanDraft? {
+    val raw = q["plan"] as? JsonObject ?: return null
+    val steps = (raw["steps"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val o = el as? JsonObject
+        val t = o?.str("title") ?: (el as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        t?.trim()?.takeIf { it.isNotEmpty() }?.let { PlanStep(it, o?.str("detail")?.trim()?.takeIf { d -> d.isNotEmpty() }) }
+    }
+    if (steps.isEmpty()) return null
+    val art = raw["artifact"] as? JsonObject
+    val title = raw.str("title")?.trim()?.takeIf { it.isNotEmpty() } ?: q.str("header")?.takeIf { it.isNotBlank() } ?: "Plan"
+    return PlanDraft(title, raw.str("body").orEmpty(), steps, art?.str("id"), (art?.get("version") as? JsonPrimitive)?.intOrNull ?: 1)
+}
 
 /**
  * The inline error card's data (iOS ChatError, ChatErrorCardView): built from a finish frame

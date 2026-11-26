@@ -275,7 +275,7 @@ private fun parseQuestionAsk(o: JsonObject): Pair<QuestionAsk, String?>? {
         val q = el as? JsonObject ?: return@mapNotNull null
         QuestionItem(q.str("header"), q.str("question") ?: return@mapNotNull null,
             (q["options"] as? JsonArray)?.mapNotNull { opt -> (opt as? JsonObject)?.str("label") ?: (opt as? JsonPrimitive)?.contentOrNull }.orEmpty(),
-            (q["multiple"] as? JsonPrimitive)?.contentOrNull == "true")
+            (q["multiple"] as? JsonPrimitive)?.contentOrNull == "true", com.allternit.feature.chat.parsePlanDraft(q))
     }.orEmpty()
     if (items.isEmpty()) return null
     val sid = o.str("sessionID") ?: o.str("sessionId") ?: o.str("session_id")
