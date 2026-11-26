@@ -14,13 +14,13 @@
 //! (and `/subscribe` in `routes::billing_subscriptions`) creates the session with
 //! Stripe `ui_mode=embedded`, a `return_url` (the success page plus
 //! `session_id={CHECKOUT_SESSION_ID}`) and `redirect_on_completion=if_required`,
-//! and answers `{ clientSecret, sessionId }` for Stripe.js to mount in the app.
+//! and answers `{ client_secret, session_id }` for Stripe.js to mount in the app.
 //! Without the field (or with `"hosted"`) the reply is the hosted
 //! `{ checkout_url }` exactly as before, so released apps keep working. The
 //! Stripe customer always comes from the signed-in account, never the body.
 //!
 //! `GET /api/v1/billing/config` is public and returns what Stripe.js needs:
-//! `{ publishableKey, mode: "test" | "live", paymentMethodTypes: ["card", "link"] }`.
+//! `{ publishable_key, mode: "test" | "live", payment_method_types: ["card", "link"] }`.
 //! The key is STRIPE_PUBLISHABLE_KEY; the mode comes from its prefix and must
 //! match STRIPE_SECRET_KEY's, otherwise the route answers 503
 //! billing_not_configured. Card and Link only: no wallets.
@@ -214,9 +214,8 @@ pub(crate) enum CheckoutSession {
     Embedded { client_secret: String, session_id: String },
 }
 
-/// `{ clientSecret, sessionId }`: the embedded reply Stripe.js mounts from.
+/// `{ client_secret, session_id }`: the embedded reply Stripe.js mounts from.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct EmbeddedCheckoutResponse {
     client_secret: String,
     session_id: String,
@@ -266,7 +265,6 @@ pub(crate) async fn open_checkout_session(
 
 /// `GET /api/v1/billing/config`: what Stripe.js needs to mount checkout.
 #[derive(Debug, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct BillingConfigResponse {
     publishable_key: String,
     /// `test` or `live`, from the key prefix.
@@ -1270,7 +1268,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body,
-            serde_json::json!({ "clientSecret": "cs_test_embedded_1_secret_abc", "sessionId": "cs_test_embedded_1" })
+            serde_json::json!({ "client_secret": "cs_test_embedded_1_secret_abc", "session_id": "cs_test_embedded_1" })
         );
     }
 
@@ -1332,7 +1330,7 @@ mod tests {
         let test = billing_config_from(Some("pk_test_abc"), Some("sk_test_xyz")).unwrap();
         assert_eq!(
             serde_json::to_value(&test).unwrap(),
-            serde_json::json!({ "publishableKey": "pk_test_abc", "mode": "test", "paymentMethodTypes": ["card", "link"] })
+            serde_json::json!({ "publishable_key": "pk_test_abc", "mode": "test", "payment_method_types": ["card", "link"] })
         );
         assert_eq!(billing_config_from(Some(" pk_test_abc "), Some("rk_test_xyz")).unwrap().publishable_key, "pk_test_abc");
         assert_eq!(billing_config_from(Some("pk_live_abc"), Some("sk_live_xyz")).unwrap().mode, "live");

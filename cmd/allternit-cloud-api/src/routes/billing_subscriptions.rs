@@ -23,7 +23,7 @@
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes. 409
 //!   `already_subscribed` (with `billing_provider`, `manage_url`) when any plan is open.
-//!   Optional body `"ui_mode": "embedded"` answers `{ clientSecret, sessionId }` for an
+//!   Optional body `"ui_mode": "embedded"` answers `{ client_secret, session_id }` for an
 //!   in-app Stripe.js form instead of the hosted `{ checkout_url }` (see
 //!   `routes::billing_checkout`); the Stripe customer is never taken from the body.
 //! - `POST /api/v1/billing/portal` (Clerk session or API token): billing-portal session for the user's Stripe
@@ -1043,7 +1043,7 @@ mod tests {
             assert_eq!(status, StatusCode::OK);
             assert_eq!(
                 body,
-                serde_json::json!({ "clientSecret": "cs_test_sub_1_secret_xyz", "sessionId": "cs_test_sub_1" })
+                serde_json::json!({ "client_secret": "cs_test_sub_1_secret_xyz", "session_id": "cs_test_sub_1" })
             );
         }
     }
