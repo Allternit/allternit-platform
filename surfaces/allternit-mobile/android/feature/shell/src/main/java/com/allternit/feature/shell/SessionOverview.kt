@@ -338,12 +338,9 @@ internal fun SessionOverviewScreen(
                             }
                         }
                     }
-                    Box {
-                        if (hasOptions) {
-                            PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Recents options", testTag = "recentsOptions", iconSize = 20) { optionsOpen = true }
-                        } else {
-                            PhoneIconButton(DesignR.drawable.ph_sliders_horizontal, "Layout", testTag = "overviewLayout", iconSize = 20) { optionsOpen = true }
-                        }
+                    com.allternit.feature.artifacts.LayoutCycleButton(OverviewLayout.entries, layout, { it.label }, { setLayout(it) })
+                    if (hasOptions) Box {
+                        PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Recents options", testTag = "recentsOptions", iconSize = 20) { optionsOpen = true }
                         DropdownMenu(
                             expanded = optionsOpen,
                             onDismissRequest = { optionsOpen = false },
@@ -351,9 +348,7 @@ internal fun SessionOverviewScreen(
                             containerColor = c.bgPrimary,
                             modifier = Modifier.width(240.dp),
                         ) {
-                            LayoutSwitch(layout) { setLayout(it) }
                             if (hasOptions) {
-                                HorizontalDivider(color = c.borderSubtle, modifier = Modifier.padding(vertical = 4.dp))
                                 MenuRow(DesignR.drawable.ph_check_circle_fill, selectLabel, testTag = "overviewSelect") {
                                     optionsOpen = false
                                     if (shown.isNotEmpty()) {
@@ -545,35 +540,6 @@ private class CardActions(
 private fun HeaderText(title: String, align: Alignment, onClick: () -> Unit) {
     Box(Modifier.width(88.dp).heightIn(min = 44.dp).clickable(role = Role.Button, onClick = onClick), contentAlignment = align) {
         Text(title, color = AllternitTheme.colors.textPrimary, fontSize = 16.sp)
-    }
-}
-
-/** List · Grid · Deck segmented switch (iOS OverviewLayoutSwitch). */
-@Composable
-private fun LayoutSwitch(current: OverviewLayout, onPick: (OverviewLayout) -> Unit) {
-    val c = AllternitTheme.colors
-    Row(
-        Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        OverviewLayout.entries.forEach { l ->
-            val on = l == current
-            Row(
-                Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) c.bgPrimary else Color.Transparent)
-                    .testTag("overviewLayout${l.raw}")
-                    .clickable(role = Role.RadioButton) { onPick(l) }
-                    .semantics { stateDescription = if (on) "Selected" else "Not selected" }
-                    .heightIn(min = 36.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(painterResource(l.icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
-                Text(l.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
-            }
-        }
     }
 }
 

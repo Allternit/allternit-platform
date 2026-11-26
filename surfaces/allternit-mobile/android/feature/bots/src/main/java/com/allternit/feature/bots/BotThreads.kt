@@ -50,9 +50,6 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibrarySearchField
-import com.allternit.feature.artifacts.LibrarySheet
-import com.allternit.feature.artifacts.LibrarySheetAction
-import com.allternit.feature.artifacts.PillRow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
@@ -82,7 +79,6 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
     val scope = rememberCoroutineScope()
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var layoutOpen by remember { mutableStateOf(false) }
     var layout by remember { mutableStateOf(threadsLayout(context)) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -105,7 +101,10 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
                     Text(waitingLine(waiting), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("botThreadsWaiting"))
                 }
                 LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search threads", "botThreadsSearch") { searching = !searching }
-                LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Layout", "botThreadsLayout") { layoutOpen = true }
+                com.allternit.feature.artifacts.LayoutCycleButton(RosterLayout.entries, layout, { it.label }, tag = "botThreadsLayoutCycle", onPick = {
+                    layout = it
+                    context.getSharedPreferences("allternit_bots", android.content.Context.MODE_PRIVATE).edit().putString("bot-threads", it.raw).apply()
+                })
             }
         }
         if (searching || query.isNotEmpty()) item { LibrarySearchField(query, "Search threads", "botThreadsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { query = it } }
@@ -121,12 +120,6 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
                 pair.forEach { t -> Box(Modifier.weight(1f)) { BotThreadCard(t, store, showsBot = botId == null, compact = false) { onOpen(t) } } }
                 if (pair.size == 1) Box(Modifier.weight(1f))
             }
-        }
-    }
-    if (layoutOpen) LibrarySheet(title = "Layout", testTag = "botThreadsLayoutSheet", onDismiss = { layoutOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { layoutOpen = false }) {
-        PillRow(RosterLayout.entries, layout, { it.label }, { "botThreadsLayout${it.label}" }, Modifier.padding(16.dp)) {
-            layout = it
-            context.getSharedPreferences("allternit_bots", android.content.Context.MODE_PRIVATE).edit().putString("bot-threads", it.raw).apply()
         }
     }
 }
@@ -146,6 +139,21 @@ private fun BotThreadCard(t: BotThread, store: BotModeStore, showsBot: Boolean, 
         BotThreadGroup.Waiting, BotThreadGroup.Working -> g.title
         BotThreadGroup.Queued -> "Queued"
         else -> null
+    }
+    if (compact) {
+        val bot = store.bot(t.botId)
+        com.allternit.core.design.QuietSessionRow(
+            title = t.displayTitle,
+            time = botTimeRelative(t.lastActivityAt),
+            testTag = "botThread${t.id}",
+            onClick = onOpen,
+            leading = {
+                if (showsBot && bot != null) BotStatusAvatar(bot, 22.dp, working = g == BotThreadGroup.Working, waiting = g == BotThreadGroup.Waiting)
+                else Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { Dot(groupColor(g)) }
+            },
+            status = { if (status != null) Text(status, color = groupColor(g), fontSize = 12.sp, fontWeight = FontWeight.Medium) },
+        )
+        return
     }
     Column(
         Modifier.padding(horizontal = if (compact) 16.dp else 0.dp, vertical = if (compact) 5.dp else 0.dp).fillMaxWidth()
@@ -189,22 +197,19 @@ private fun ProgressRing(t: BotThread, label: String) {
 internal fun BotThreadRow(t: BotThread, store: BotModeStore, showsBot: Boolean, onOpen: () -> Unit) {
     val c = AllternitTheme.colors
     val g = BotThreadGroup.of(t.group)
-    Row(
-        Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onOpen).testTag("botThreadRow${t.id}").heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        val bot = store.bot(t.botId)
-        if (showsBot && bot != null) BotAvatar(bot, 22.dp) else Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Dot(groupColor(g)) }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (t.kind == "task") Text("TASK", color = c.textTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
-                Text(t.displayTitle, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            t.statusLine?.takeIf { it.isNotEmpty() }?.let { Text(it, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        }
-        t.progressLabel?.let { ProgressRing(t, it) }
-        Text(botTimeRelative(t.lastActivityAt), color = c.textTertiary, fontSize = 11.5.sp)
-    }
+    val bot = store.bot(t.botId)
+    com.allternit.core.design.QuietSessionRow(
+        title = t.displayTitle,
+        time = botTimeRelative(t.lastActivityAt),
+        testTag = "botThreadRow${t.id}",
+        onClick = onOpen,
+        leading = {
+            if (showsBot && bot != null) BotAvatar(bot, 22.dp) else Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { Dot(groupColor(g)) }
+        },
+        status = {
+            if (t.kind == "task") Text("TASK", color = c.textTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
+        },
+    )
 }
 
 /**
