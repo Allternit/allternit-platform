@@ -1026,11 +1026,12 @@ struct ComposerTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         let placeholderLabel = UILabel()
-        var focusObserver: NSObjectProtocol?
+        nonisolated(unsafe) var focusObserver: NSObjectProtocol?
 
         init(_ parent: ComposerTextView) { self.parent = parent }
 
         deinit {
+            // Set once on the main actor in makeUIView; deinit only removes it.
             if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
         }
 

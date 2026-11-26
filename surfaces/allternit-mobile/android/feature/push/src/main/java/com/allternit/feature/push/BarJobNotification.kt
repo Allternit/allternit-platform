@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -45,7 +44,7 @@ object BarJobNotification {
         if (!started.compareAndSet(false, true)) return
         val app = context.applicationContext
         scope.launch {
-            BarJobs.current.distinctUntilChanged().collect { job ->
+            BarJobs.current.collect { job ->
                 update(app, job)
                 runCatching { BarWidget().updateAll(app) }
             }

@@ -252,7 +252,7 @@ internal fun BotThreadsPanel(store: BotModeStore, threads: List<BotThread>, botI
 
 /** The bot's plans as task groups (iOS BotThreadTasksView): each thread with steps, foldable, the open one first. */
 @Composable
-internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionId: String?, onOpen: (BotThread) -> Unit) {
+internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionId: String?, showTitle: Boolean = true, onOpen: (BotThread) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var folded by remember { mutableStateOf(emptySet<String>()) }
