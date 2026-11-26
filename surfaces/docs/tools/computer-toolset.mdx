@@ -203,6 +203,8 @@ The answer is `{ ok, action, run_id, domain, kind, rerun_target }`; `409 no_bloc
 
 A toolset call may carry `rerun_of: "<run id>"`. The link is recorded on the run's audit rows (`rerun_of=<id>`) and on its `computer.action` events (`rerun_of`), so history can show "re-run of" a blocked cloud run.
 
+Phones start the re-run with `POST /api/v1/computers/:id/runs` sent to the target's own `runtime_id` (falling back to `computer_id`) and read `run_id` from the answer; `404 computer_unavailable` shows "Your Mac isn't reachable". Gizzi Code reaches only the runtime behind its own API base, so it starts the re-run there using the target's `computer_id`. A `computer.human_requested` with `kind: "safari_profile"` carries `steps` for Safari setup on the Mac; clients list them and offer Continue.
+
 ### Masked secret box
 
 When a site asks for a one-off value that is not saved in the vault (a password, a 2FA code, a card CVC), call `request_human` with a `secret` instead of handing over the whole computer:

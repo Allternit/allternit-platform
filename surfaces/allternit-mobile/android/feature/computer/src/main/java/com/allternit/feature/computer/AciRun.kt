@@ -233,7 +233,7 @@ class AciRunModel(
                 }
             }
             is AciComputerEvent.ConfirmationRequired -> gate = AciRunGate.Approval(e)
-            is AciComputerEvent.HumanRequested -> gate = AciRunGate.NeedsYou(e.runId, e.reason, e.secret)
+            is AciComputerEvent.HumanRequested -> gate = AciRunGate.NeedsYou(e.runId, e.reason, e.secret, e.kind, e.steps)
             is AciComputerEvent.HumanResumed -> if (gate is AciRunGate.NeedsYou) gate = null
             is AciComputerEvent.BlockDetected -> gate = AciRunGate.Blocked(e)
             is AciComputerEvent.BlockResolved -> if (gate is AciRunGate.Blocked) gate = null
@@ -295,12 +295,14 @@ class AciRunModel(
         val t = this.target
         scope.launch {
             if (id != null) withContext(Dispatchers.IO) { runCatching { client.blockResolve(id, "rerun", target.computerId, t) } }
-            runCatching { withContext(Dispatchers.IO) { client.startComputerRun(target.computerId, goal, original) } }
+            runCatching { withContext(Dispatchers.IO) { client.startComputerRun(target.computerId, goal, original, target.runtimeId) } }
                 .onSuccess { run ->
                     lastMessage = "Re-running on ${target.name}"
-                    if (run != null) open(run, target.computerId)
+                    if (run != null) open(run, target.runtimeId ?: target.computerId)
                 }
-                .onFailure { lastMessage = "Couldn't start the re-run on ${target.name}" }
+                .onFailure {
+                    lastMessage = if (it is AciAgentClient.ComputerUnavailable) "Your Mac isn't reachable" else "Couldn't start the re-run on ${target.name}"
+                }
         }
     }
 

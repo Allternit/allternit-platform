@@ -273,11 +273,14 @@ final class ACIAgentRunViewModel: ObservableObject {
                                                rerunTarget: target.computerId, runtimeId: runtime)
             }
             do {
-                let newRun = try await client.startComputerRun(computerId: target.computerId, task: goal, rerunOf: previous)
+                let newRun = try await client.startComputerRun(computerId: target.computerId, runtimeId: target.runtimeId ?? target.computerId,
+                                                            task: goal, rerunOf: previous)
                 await MainActor.run {
                     self?.lastMessage = "Re-running on \(target.name)"
-                    if let newRun { self?.open(runId: newRun, on: target.computerId) }
+                    if let newRun { self?.open(runId: newRun, on: target.runtimeId ?? target.computerId) }
                 }
+            } catch ACIRunError.computerUnavailable {
+                await MainActor.run { self?.lastMessage = "Your Mac isn't reachable" }
             } catch {
                 await MainActor.run { self?.lastMessage = "Couldn't start the re-run on \(target.name)" }
             }

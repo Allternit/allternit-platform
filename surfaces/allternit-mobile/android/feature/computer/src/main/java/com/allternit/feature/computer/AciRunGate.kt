@@ -48,7 +48,7 @@ sealed interface AciRunGate {
         override val key get() = "approval-${request.approvalId}"
     }
 
-    data class NeedsYou(val runId: String?, val reason: String, val secret: Boolean) : AciRunGate {
+    data class NeedsYou(val runId: String?, val reason: String, val secret: Boolean, val kind: String? = null, val steps: List<String> = emptyList()) : AciRunGate {
         override val key get() = "human-${runId ?: "run"}-$reason"
     }
 
@@ -124,6 +124,10 @@ fun AciRunGateSheet(
                 is AciRunGate.NeedsYou -> {
                     Title("$botName needs you")
                     Caption(gate.reason)
+                    if (gate.kind == "safari_profile") {
+                        gate.steps.forEachIndexed { i, step -> Caption("${i + 1}. $step") }
+                        Caption("Do these on your Mac, then tap Continue.")
+                    }
                     if (gate.secret) {
                         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
                             if (secret.isEmpty()) Text("Secret", color = c.textTertiary, fontSize = 16.sp)

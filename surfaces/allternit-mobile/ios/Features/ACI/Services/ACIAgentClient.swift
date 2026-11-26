@@ -334,14 +334,25 @@ final class ACIAgentClient: @unchecked Sendable {
 
     /// Starts a run on a computer (`POST /api/v1/computers/:id/runs`), the
     /// route "Re-run on my Mac" uses with `rerun_of`. Returns the new run id.
-    func startComputerRun(computerId: String, task: String, rerunOf: String? = nil) async throws -> String? {
+    /// `computerId` is the path id (a computer id or the runtime's own id);
+    /// `runtimeId` is the relay target (the Mac's own runtime). A 404
+    /// `computer_unavailable` throws `ACIRunError.computerUnavailable`.
+    func startComputerRun(computerId: String, runtimeId: String? = nil, task: String,
+                          rerunOf: String? = nil) async throws -> String? {
         var body: [String: String] = ["task": task]
         if let rerunOf { body["rerun_of"] = rerunOf }
-        let (data, _) = try await send(path: "v1/computers/\(Self.escape(computerId))/runs",
-                                       runtimeId: computerId, bearer: nil,
+        let data: Data
+        do {
+            (data, _) = try await send(path: "v1/computers/\(Self.escape(computerId))/runs",
+                                       runtimeId: runtimeId ?? computerId, bearer: nil,
                                        body: try JSONSerialization.data(withJSONObject: body))
+        } catch {
+            // 404 computer_unavailable (the body code is flattened by the client).
+            if case APIError.httpError(let status, _) = error, status == 404 { throw ACIRunError.computerUnavailable }
+            throw error
+        }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        return (json?["run_id"] as? String) ?? (json?["id"] as? String) ?? (json?["sessionId"] as? String)
+        return (json?["run_id"] as? String) ?? (json?["sessionId"] as? String)
     }
 
     /// One frame of the computer's screen (`GET .../screenshot`), or of one
@@ -452,12 +463,20 @@ struct ACIHumanRequest: Sendable, Equatable {
     let reason: String
     /// Show a masked field: the owner types a secret that never leaves the device log.
     let secret: Bool
+    /// "safari_profile": Safari setup on the Mac, with `steps` to follow.
+    var kind: String? = nil
+    var steps: [String] = []
 }
+
+enum ACIRunError: Error { case computerUnavailable }
 
 struct ACIRerunTarget: Sendable, Equatable, Identifiable {
     var id: String { computerId }
     let computerId: String
     let name: String
+    /// The target's own runtime: a Mac listed from a cloud computer is
+    /// reachable only through it. Nil falls back to `computerId`.
+    var runtimeId: String? = nil
 }
 
 /// A site stopped the bot (login wall, 2FA, captcha, block page, rate limit).
@@ -517,14 +536,20 @@ enum ACIComputerEvent: Sendable, Equatable {
             self = .humanRequested(ACIHumanRequest(
                 runId: str("run_id"),
                 reason: str("reason") ?? str("message") ?? str("label") ?? str("secret") ?? "Your bot needs you.",
-                secret: secret))
+                secret: secret, kind: str("kind"),
+                steps: (d["steps"] as? [Any] ?? []).compactMap { step in
+                    if let t = step as? String { return t }
+                    let o = step as? [String: Any]
+                    return (o?["text"] as? String) ?? (o?["title"] as? String) ?? (o?["label"] as? String)
+                }))
         case "computer.human_resumed":
             self = .humanResumed(runId: str("run_id"))
         case "computer.block_detected":
             guard let domain = str("domain") else { return nil }
             let targets = (d["rerun_targets"] as? [[String: Any]] ?? []).compactMap { t -> ACIRerunTarget? in
                 guard let id = t["computer_id"] as? String else { return nil }
-                return ACIRerunTarget(computerId: id, name: (t["name"] as? String) ?? id)
+                return ACIRerunTarget(computerId: id, name: (t["name"] as? String) ?? id,
+                                      runtimeId: t["runtime_id"] as? String)
             }
             self = .blockDetected(ACIBlock(
                 runId: str("run_id"), domain: domain, kind: str("kind") ?? "block_page",
