@@ -35,6 +35,10 @@ The row is a normal `Session.Info` with:
 - `directory` set to the terminal's folder, while the row lives in the engine's **default project**, where Desktop, the web app and the phone list and stream sessions. `/v1/session/<id>/…` requests for a terminal row stay in the default instance (`sessionDirectory` in `server.ts`);
 - `defaultModel` set to the terminal's model, used if the engine continues the session later.
 
+## Names
+
+A terminal row's title is the first real prompt. Until one exists the engine stores a default name, `New session - <ISO time>`. No surface shows it raw. The web app, phone and Desktop use `src/lib/sessions/session-display-title.ts` (first prompt, else "New session · Nov 17"); the Gizzi session list and picker (`cli/commands/session.ts`) and `getLogDisplayTitle` apply the same rule.
+
 ## Terminal → engine
 
 | Call | Effect, and the events surfaces already receive |

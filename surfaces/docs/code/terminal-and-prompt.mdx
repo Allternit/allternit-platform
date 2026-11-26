@@ -53,6 +53,14 @@ On a phone, the same state shows as question buttons and **Stop** above the keys
 - **Live cards.** In the Code overview, every terminal, plain shells included, is a live card in **List**, **Grid** or **Deck**: its title, folder, the agent and its state, and the last lines of the screen above the agent's input box. A runtime that cannot list terminals still shows "Terminal session". The cards update only while the overview is open.
 - **On this Mac.** The menu, the overview and the phone sessions sheet also list every agent session running outside Allternit (Terminal, iTerm2, Ghostty), with **Move here**, **Open a copy** and **New session here**. See [Move a session into Allternit](/guides/live-sessions#move-a-session-into-allternit).
 
+### Delete, reuse and names
+
+- **Hold to delete.** In the Terminals menu, the overview and the tabs, hold **Delete** (or **Close** on a tab) until it fills. A quick click does nothing. Deleting ends the shell.
+- **Recents.** Terminal sessions and Code sessions show in the shell rail's Recents in every mode.
+- **One shell per place.** Opening a terminal where one is already running and idle attaches to it. It no longer starts a second zsh each time. Each session is labelled with where it was opened.
+- **Readable names.** A session never shows its raw default name ("New session - 2026-11-18T04:47:31.282Z"). It shows the first prompt, or "New session · Nov 17".
+- **No stray characters.** Reports a terminal sends back on its own (cursor position and colour replies) are not typed into the shell, so `3R30;` no longer appears at a prompt.
+
 ### Harness support
 
 <a id="harness-support"></a>
@@ -100,6 +108,7 @@ Code mode can show the same moving background as bot chats. Each workspace can h
 - Terminal mode: `src/views/code/CodeTerminalCanvas.tsx` and `code-terminal.css` (`.code-terminal-dark`, `.code-terminal-session-line`). On Desktop it renders the session line, then one `TerminalSurface` (dark scheme), or `BotSession` (the bot's `PaneMirrorView`) after a `factory-attach-pane` request. CodeCanvas renders it in place of the thread and keeps the session header, prompt and status row; the prompt dock gets `.code-terminal-dark` while it is open. With no runtime (`useRuntimeAvailable`) it shows **Not connected**.
 - Open state and input: `useCodeTerminalStore` in `src/views/code/code-terminal.store.ts` (`open`, `toggle`, `openCodeTerminal()`, `sendInput`). The open session sets `sendInput`; `handleSend` in `CodeCanvas.tsx` hands the prompt to it (shell: `sendTerminalInput(id, text + "\r")`; bot: `sendPaneInput` via `terminalDataToPaneInput`). The status row's `code-bottom-status-terminal` button (`CodeTerminalButton`) toggles it and reads **Thread** while open. Factory bot attach (`src/components/factory/pane/attach.ts`) and `MultiTabTerminal` call `openCodeTerminal()`.
 - Session switcher: `src/views/code/CodeSessionSwitcher.tsx` (`code-session-switcher`). It reads `useCodeTerminalStore.open` for the kind, lists `useModeOverview("code")` rows, sets `useCodeTerminalStore.botId` for a Terminal bot with a live pane (else `openOverviewItem`), and **See all** calls `rememberOverviewLayout("desktop:code", layout)`, sets `useCodeOverviewKind` and opens `code-threads`. It sits in `CodeSessionHeader` and, before the header shows, in `CodeTopRightTools` (`code-top-right-tools`, `CodeThreadView.tsx`) with the session toolbar (`CodeSessionLauncher placement="inline"`) or the canvas toggle. `CodeTopRightTools` publishes its width as `--code-floating-tools-w`, which the session line uses as right padding. Phone: `PhoneOverviewButton kind`.
+- Terminal hygiene: `UnifiedTerminal.tsx` drops xterm report replies (CPR, DA, OSC colour) unless the view is the focused interactive one and not replaying scrollback. `UnifiedTerminal.tsx` and `CodeTerminalCanvas.tsx` reuse an existing idle shell for the place before starting one. Names come from `src/lib/sessions/session-display-title.ts`. Delete and Close use the shared hold-to-confirm button.
 - Collapsed rail: `.code-terminal-session-line[data-at-top]` (launchpad) and `CodeSessionHeader` pad by `--titlebar-controls-w` under `[data-rail-collapsed=true]`.
 - Dashed frame: `.code-terminal-dark` sets `--polish-hairline` / `--polish-hairline-strong` for `composer-terminal-input`.
 - The shown Terminal bot is `useCodeTerminalStore.botId` (null = your shell). The Gizzi companion sits above the prompt line (`bottom: 100%`) and hides in Terminal mode.
