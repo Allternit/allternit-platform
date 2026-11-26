@@ -11,6 +11,9 @@ import type { IDESelection } from '../../hooks/useIdeSelection';
 import { useMainLoopModel } from '../../hooks/useMainLoopModel';
 import { useVoiceEnabled } from '../../hooks/useVoiceEnabled';
 import { Box, Text } from '../../ink';
+import { Bus } from '@/shared/bus';
+import { TuiEvent } from '../../event';
+import { TOAST_GLYPHS } from '../../constants/figures';
 import { useClaudeAiLimits } from '../../services/claudeAiLimitsHook';
 import { calculateTokenWarningState } from '../../services/compact/autoCompact';
 import type { MCPServerConnection } from '../../services/mcp/types';
@@ -99,6 +102,19 @@ export function Notifications({
   const t6 = [addNotification];
 
   useEffect(t5, t6);
+  useEffect(() => {
+    return Bus.subscribe(TuiEvent.ToastShow, event => {
+      const { id, kind, title, message, variant, duration } = event.properties;
+      const glyph = kind ? TOAST_GLYPHS[kind] : "";
+      addNotification({
+        key: "toast:" + (id ?? "last"),
+        text: (glyph ? glyph + " " : "") + (title ?? message),
+        color: variant === "error" ? "error" : variant === "warning" ? "warning" : variant === "success" ? "success" : undefined,
+        priority: "low",
+        timeoutMs: duration ?? 5000
+      });
+    });
+  }, [addNotification]);
   const shouldShowIdeSelection = ideStatus === "connected" && (ideSelection?.filePath || ideSelection?.text && ideSelection.lineCount > 0);
   const shouldShowAutoUpdater = !shouldShowIdeSelection || isAutoUpdating || autoUpdaterResult?.status !== "success";
   const isInOverageMode = claudeAiLimits.isUsingOverage;
