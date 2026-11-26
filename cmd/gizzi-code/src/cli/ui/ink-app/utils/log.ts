@@ -45,7 +45,7 @@ export function getLogDisplayTitle(
   const useFirstPrompt = strippedFirstPrompt && !isAutonomousPrompt
   const title =
     log.agentName ||
-    log.customTitle ||
+    (log.customTitle && !/^(New|Child) session - \d{4}-\d{2}-\d{2}T/.test(log.customTitle) ? log.customTitle : undefined) ||
     log.summary ||
     (useFirstPrompt ? strippedFirstPrompt : undefined) ||
     defaultTitle ||

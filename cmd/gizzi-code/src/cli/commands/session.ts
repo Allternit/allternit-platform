@@ -161,7 +161,7 @@ export const SessionExportCommand = cmd({
           message: "Select session to export",
           maxItems: 10,
           options: sessions.map((session) => ({
-            label: session.title,
+            label: displayTitle(session),
             value: session.id,
             hint: `${new Date(session.time.updated).toLocaleString()} • ${session.id.slice(-8)}`,
           })),
@@ -205,17 +205,31 @@ export const SessionExportCommand = cmd({
   },
 })
 
+/**
+ * Same rule as allternit-ai src/lib/sessions/session-display-title.ts: a raw
+ * default name ("New session - 2026-11-18T04:47:31.282Z") never shows; use
+ * "New session · Nov 17" instead.
+ */
+function displayTitle(session: Session.Info): string {
+  const title = (session.title ?? "").trim()
+  if (title && !/^(New|Child) session - \d{4}-\d{2}-\d{2}T/.test(title)) return title
+  const stamp = title.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z?/)?.[0]
+  const ts = stamp ? new Date(stamp).getTime() : session.time.created
+  const date = new Date(Number.isFinite(ts) ? ts : Date.now()).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  return `${title.startsWith("Child") ? "Child session" : "New session"} · ${date}`
+}
+
 function formatSessionTable(sessions: Session.Info[]): string {
   const lines: string[] = []
 
   const maxIdWidth = Math.max(20, ...sessions.map((s) => s.id.length))
-  const maxTitleWidth = Math.max(25, ...sessions.map((s) => s.title.length))
+  const maxTitleWidth = Math.max(25, ...sessions.map((s) => displayTitle(s).length))
 
   const header = `Session ID${" ".repeat(maxIdWidth - 10)}  Title${" ".repeat(maxTitleWidth - 5)}  Updated`
   lines.push(header)
   lines.push("─".repeat(header.length))
   for (const session of sessions) {
-    const truncatedTitle = Locale.truncate(session.title, maxTitleWidth)
+    const truncatedTitle = Locale.truncate(displayTitle(session), maxTitleWidth)
     const timeStr = Locale.todayTimeOrDateTime(session.time.updated)
     const line = `${session.id.padEnd(maxIdWidth)}  ${truncatedTitle.padEnd(maxTitleWidth)}  ${timeStr}`
     lines.push(line)
