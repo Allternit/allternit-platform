@@ -422,11 +422,13 @@ Bots mode's top bar has one glass pill with **Search bots** and **Bots options**
 When an agent run drives a browser, the live view shows the bot's cursor with its name badge, and a line under it reads "Bot name is working · step N" with **Stop**. A bottom sheet opens over the run when the bot needs you. It matches the iPhone's sheet: same words, same order.
 
 - **Credential approval.** "Fill your (name) login on (site)?" with **Approve**, **Allow for this run** and **Deny**. The password never shows on screen or in the log. **Approve** and **Allow for this run** ask for your fingerprint, face or screen lock first. A phone with no screen lock cannot approve. "Allow for this run" covers that one login on that site for this run only; nothing is remembered for next time.
-- **Needs you.** "Bot name needs you" with the reason, **Continue** and **Stop**. When the step is a secret, a masked box shows. It is cleared when you tap Continue and is never sent.
-- **Blocked.** "Site blocked Bot name" with **Continue**, **Stop** and **Re-run on (computer name)** for each other computer you have. A re-run starts fresh, with no logins carried over. With no other computer ready, the sheet says so.
+- **Needs you.** "Bot name needs you" with the reason, **Continue** and **Stop**. When the step is a secret, a masked box shows with **Send** and a **Save to vault** switch (give it a name to keep it). The value goes to the computer in one request, the box is cleared, and it is never logged.
+- **Blocked.** "Site blocked Bot name" with **Continue**, **Stop** and **Re-run on (computer name)** for each other computer you have. A re-run starts fresh, with no logins carried over; the run screen then opens the new run. With no other computer ready, the sheet says so.
 
 The same three moments arrive as notifications when the app is closed. **Approve** opens a short confirm screen that asks for your fingerprint, face or screen lock, then sends the approval. **Deny** and **Stop** work from the lock screen. **Continue** follows the phone's lock rule. **Open** goes to the computer.
 
-Take over is not on Android yet: there is no control path for it, so the button is hidden until there is one.
+**Take over** gives you the computer. Tap it and the line reads "You have control · Hand back". Tap the screen to click there, swipe to scroll, and use the box under the screen to type, with a **Return** key. While you hold control the bot's calls are refused. **Hand back** (or leaving the run) gives it back. On a Linux computer the screen shows that run's own display.
+
+Tapping an agent browser notification opens that run's screen, not the console.
 
 For developers: `AciData.kt` in `feature/computer` reads the computer's toolset events (`/api/v1/computers/:id/toolset/events`, one SSE name `computer.action`, kind in the JSON `type`) and calls approve, deny, human-done, block-resolve and a re-run (`rerun_of`). `AciRunGate.kt` is the sheet. `core/auth/DeviceAuth.kt` is the unlock check, and `feature/push` maps `aci_approval`, `aci_human` and `aci_blocked` to the ACI_APPROVAL, ACI_HUMAN and ACI_BLOCKED notification categories.

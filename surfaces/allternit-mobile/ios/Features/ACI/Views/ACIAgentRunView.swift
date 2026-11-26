@@ -49,9 +49,16 @@ final class ACIAgentRunViewModel: ObservableObject {
 
     let goal: String
     /// The computer whose toolset events are followed; nil = the active computer.
-    let computerId: String?
+    private(set) var computerId: String?
     /// A run that already exists (push / deep link): follow it, do not start one.
-    let attachRunId: String?
+    private(set) var attachRunId: String?
+    /// True while this person holds control of the computer ("You have control").
+    @Published private(set) var controlHeld = false
+    @Published private(set) var controlBusy = false
+    @Published private(set) var controlError: String? = nil
+    /// Set once the run has its own display (Linux): frames come from `screenshot?run_id=`.
+    private var displayRunId: String?
+    private var frameTask: Task<Void, Never>?
 
     private let client: ACIAgentClient
     private var runId: String? = nil
@@ -188,6 +195,10 @@ final class ACIAgentRunViewModel: ObservableObject {
         case .blockResolved(let id, _, _):
             guard isThisRun(id) else { return }
             if case .blocked = gate { gate = nil }
+        case .agentDisplay(let id):
+            guard isThisRun(id) else { return }
+            displayRunId = id ?? runId
+            startFrames()
         }
     }
 
@@ -205,6 +216,18 @@ final class ACIAgentRunViewModel: ObservableObject {
         gate = nil
         let client = self.client, runtime = computerId
         Task { [client] in try? await client.denyHandoff(approvalId: request.approvalId, runtimeId: runtime) }
+    }
+
+    /// Sends the typed secret to the masked box. The value is passed straight
+    /// to the request and never stored or logged here; the caller clears its field.
+    func submitSecret(_ text: String, saveAs: String?) {
+        guard case .needsYou = gate, !text.isEmpty else { return }
+        gate = nil
+        guard let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in
+            try? await client.submitSecret(computerId: computer, text: text, saveAs: saveAs, runtimeId: runtime)
+        }
     }
 
     func continueGate() {
@@ -229,6 +252,10 @@ final class ACIAgentRunViewModel: ObservableObject {
             let client = self.client, runtime = computerId
             Task { [client] in try? await client.resolveBlock(computerId: computer, action: "stop", runtimeId: runtime) }
         }
+        if case .needsYou(let request) = current, request.secret, let computer = resolvedComputerId ?? computerId {
+            let client = self.client, runtime = computerId
+            Task { [client] in try? await client.cancelSecret(computerId: computer, runtimeId: runtime) }
+        }
         stop()
     }
 
@@ -246,10 +273,115 @@ final class ACIAgentRunViewModel: ObservableObject {
                                                rerunTarget: target.computerId, runtimeId: runtime)
             }
             do {
-                _ = try await client.startRun(goal: goal, rerunOf: previous, runtimeId: target.computerId)
-                await MainActor.run { self?.lastMessage = "Re-running on \(target.name)" }
+                let newRun = try await client.startComputerRun(computerId: target.computerId, task: goal, rerunOf: previous)
+                await MainActor.run {
+                    self?.lastMessage = "Re-running on \(target.name)"
+                    if let newRun { self?.open(runId: newRun, on: target.computerId) }
+                }
             } catch {
                 await MainActor.run { self?.lastMessage = "Couldn't start the re-run on \(target.name)" }
+            }
+        }
+    }
+
+    /// Points this view at another run (the re-run) and follows it.
+    private func open(runId newRun: String, on computer: String) {
+        streamTask?.cancel(); streamTask = nil
+        eventsTask?.cancel(); eventsTask = nil
+        frameTask?.cancel(); frameTask = nil
+        if controlHeld, let old = resolvedComputerId ?? computerId {
+            let client = self.client, runtime = computerId
+            Task { [client] in try? await client.releaseControl(computerId: old, runtimeId: runtime) }
+        }
+        controlHeld = false
+        displayRunId = nil
+        computerId = computer
+        resolvedComputerId = computer
+        attachRunId = newRun
+        runId = newRun
+        gate = nil
+        agentAction = nil
+        screenshot = nil
+        traceLines = []
+        errorMessage = nil
+        status = .running
+        hasStarted = false
+        start()
+    }
+
+    // MARK: Take over
+
+    /// Take over: the bot's calls are refused while this person holds control.
+    func takeOver() {
+        guard !controlHeld, !controlBusy, let computer = resolvedComputerId ?? computerId else { return }
+        controlBusy = true
+        controlError = nil
+        let client = self.client, runtime = computerId
+        Task { [weak self, client] in
+            do {
+                try await client.takeControl(computerId: computer, runtimeId: runtime)
+                await MainActor.run { self?.controlHeld = true; self?.controlBusy = false; self?.startFrames() }
+            } catch {
+                await MainActor.run { self?.controlError = "Couldn't take control."; self?.controlBusy = false }
+            }
+        }
+    }
+
+    func handBack() {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        controlHeld = false
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.releaseControl(computerId: computer, runtimeId: runtime) }
+    }
+
+    /// A tap on the live view, as a fraction (0...1) of the screen.
+    func tap(fx: Double, fy: Double) { sendMouse("click", fx: fx, fy: fy) }
+
+    /// A swipe on the live view: "up" scrolls the page down, like a finger.
+    func scroll(fx: Double, fy: Double, up: Bool) {
+        sendMouse("scroll", fx: fx, fy: fy, button: up ? "down" : "up", amount: 3)
+    }
+
+    func type(_ text: String) {
+        guard controlHeld, !text.isEmpty, let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.keyboard(computerId: computer, text: text, runtimeId: runtime) }
+    }
+
+    func press(key: String) {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.keyboard(computerId: computer, key: key, runtimeId: runtime) }
+    }
+
+    private func sendMouse(_ action: String, fx: Double, fy: Double, button: String? = nil, amount: Int? = nil) {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        // The API takes screen pixels: the bot's screen size, else the frame's.
+        let w = agentAction?.screenW ?? Double(screenshot.map { $0.size.width * $0.scale } ?? 0)
+        let h = agentAction?.screenH ?? Double(screenshot.map { $0.size.height * $0.scale } ?? 0)
+        guard w > 1, h > 1 else { return }
+        let x = Int((min(max(fx, 0), 1) * w).rounded()), y = Int((min(max(fy, 0), 1) * h).rounded())
+        let client = self.client, runtime = computerId
+        Task { [client] in
+            try? await client.mouse(computerId: computer, action: action, x: x, y: y,
+                                    button: button, amount: amount, runtimeId: runtime)
+        }
+    }
+
+    /// Polls the computer's screen (or the run's own display on Linux) while the
+    /// live view needs frames the run stream does not carry.
+    private func startFrames() {
+        frameTask?.cancel()
+        frameTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if let computer = self.resolvedComputerId ?? self.computerId,
+                   let data = try? await self.client.screenshot(computerId: computer, runId: self.displayRunId,
+                                                                runtimeId: self.computerId),
+                   let image = UIImage(data: data) {
+                    self.screenshot = image
+                }
+                try? await Task.sleep(for: .milliseconds(self.controlHeld ? 700 : 1500))
             }
         }
     }
@@ -260,6 +392,9 @@ final class ACIAgentRunViewModel: ObservableObject {
         streamTask = nil
         eventsTask?.cancel()
         eventsTask = nil
+        frameTask?.cancel()
+        frameTask = nil
+        handBack()
         guard isActive else { return }
         status = .done
         lastMessage = "Stopped"
@@ -282,6 +417,9 @@ final class ACIAgentRunViewModel: ObservableObject {
             streamTask = nil
             eventsTask?.cancel()
             eventsTask = nil
+            frameTask?.cancel()
+            frameTask = nil
+            handBack()
             return
         }
         stop()
@@ -399,7 +537,8 @@ struct ACIAgentRunView: View {
                 onDeny: { viewModel.denyGate() },
                 onContinue: { viewModel.continueGate() },
                 onStop: { viewModel.stopFromGate() },
-                onRerun: { viewModel.rerun(on: $0) }
+                onRerun: { viewModel.rerun(on: $0) },
+                onSecret: { viewModel.submitSecret($0, saveAs: $1) }
             )
         }
     }
@@ -550,6 +689,10 @@ struct ACIAgentRunView: View {
                 )
                 .offset(x: offsetX, y: offsetY)
 
+            if viewModel.controlHeld {
+                takeOverLayer(frame: CGRect(x: offsetX, y: offsetY, width: displayW, height: displayH))
+            }
+
             if let box = viewModel.currentAction?.boundingBox {
                 highlightBox(box, scale: scale, offsetX: offsetX, offsetY: offsetY)
             }
@@ -561,6 +704,30 @@ struct ACIAgentRunView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// While you hold control: a tap clicks there, a swipe scrolls. `frame` is
+    /// where the screen is drawn; positions go to the API as screen fractions.
+    private func takeOverLayer(frame: CGRect) -> some View {
+        Color.clear
+            .frame(width: frame.width, height: frame.height)
+            .contentShape(Rectangle())
+            .overlay(Rectangle().stroke(PolishTokens.ink.opacity(0.5), lineWidth: 2))
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local).onEnded { value in
+                    let fx = value.location.x / max(frame.width, 1)
+                    let fy = value.location.y / max(frame.height, 1)
+                    if abs(value.translation.height) > 14 {
+                        viewModel.scroll(fx: value.startLocation.x / max(frame.width, 1),
+                                         fy: value.startLocation.y / max(frame.height, 1),
+                                         up: value.translation.height < 0)
+                    } else {
+                        viewModel.tap(fx: fx, fy: fy)
+                    }
+                }
+            )
+            .offset(x: frame.minX, y: frame.minY)
+            .accessibilityLabel("Live screen. Tap to click, swipe to scroll.")
     }
 
     /// No video frame yet: a neutral screen-shaped panel so the cursor still
@@ -625,17 +792,22 @@ struct ACIAgentRunView: View {
                         .foregroundColor(PolishTokens.ink)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    // Take over: iOS has no control or lease path for a
-                    // computer's browser yet (PhoneLiveClient drives the phone
-                    // itself), so the button is shown off rather than faked.
-                    Button("Take over") {}
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(PolishTokens.ink)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(PolishTokens.neutralFill))
-                        .disabled(true)
-                        .opacity(0.45)
+                    if viewModel.controlHeld {
+                        Button("Hand back") { viewModel.handBack() }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(PolishTokens.ink))
+                    } else {
+                        Button("Take over") { viewModel.takeOver() }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(PolishTokens.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(PolishTokens.neutralFill))
+                            .disabled(viewModel.controlBusy)
+                    }
                     Button("Stop") { viewModel.stop() }
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Color(hex: "#C0392B"))
@@ -643,10 +815,18 @@ struct ACIAgentRunView: View {
                         .padding(.vertical, 6)
                         .background(Capsule().fill(PolishTokens.neutralFill))
                 }
-                Text("Taking over from the iPhone isn't available yet.")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if viewModel.controlHeld {
+                    Text("You have control · Hand back")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(PolishTokens.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TakeOverKeys(onType: { viewModel.type($0) }, onKey: { viewModel.press(key: $0) })
+                } else if let error = viewModel.controlError {
+                    Text(error)
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#C0392B"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -894,5 +1074,37 @@ struct ACIAgentRunView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
         }
+    }
+}
+
+/// Text box and Return for the person who took over: typed text goes to the
+/// computer's keyboard route.
+private struct TakeOverKeys: View {
+    let onType: (String) -> Void
+    let onKey: (String) -> Void
+    @State private var text = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Type to the computer", text: $text)
+                .font(.system(size: 13))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(PolishTokens.neutralFill))
+                .onSubmit(send)
+            Button("Send", action: send)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PolishTokens.ink)
+            Button("Return") { onKey("Return") }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PolishTokens.ink)
+        }
+    }
+
+    private func send() {
+        guard !text.isEmpty else { return }
+        onType(text)
+        text = ""
     }
 }

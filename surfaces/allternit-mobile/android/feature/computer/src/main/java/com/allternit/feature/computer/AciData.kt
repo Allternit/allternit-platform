@@ -67,6 +67,12 @@ object AciNav {
         openComputerId = id
         tab = AciTab.Computers
     }
+    /** A computer, run pair from an `aci.attention` push (`/computers/<id>?run=<run_id>`): the Agent tab opens that run's screen. */
+    var pendingRun: Pair<String, String>? by mutableStateOf(null)
+    fun openRun(computerId: String, runId: String) {
+        pendingRun = computerId to runId
+        tab = AciTab.Agent
+    }
 }
 
 /** A suggestion shown until it's dismissed once (iOS ACIOnceNudge, the PWA's key names). */
@@ -533,8 +539,8 @@ class AciAgentClient(private val backend: ChatBackend) {
 
     private class DoneSignal : Exception()
 
-    suspend fun stop(runId: String) {
-        backend.runtimeJson("POST", "/api/aci/stop/" + Uri.encode(runId), "{}")
+    suspend fun stop(runId: String, target: String? = null) {
+        backend.runtimeJson("POST", "/api/aci/stop/" + Uri.encode(runId), "{}", target)
     }
 
 
@@ -545,9 +551,9 @@ class AciAgentClient(private val backend: ChatBackend) {
      * The computer's toolset events (`GET /api/v1/computers/:id/toolset/events`, same relay path as `/api/aci/*`).
      * Every frame is named `computer.action`, so the kind comes from the JSON `type`. Undecodable frames are skipped.
      */
-    fun toolsetEvents(computerId: String): Flow<AciComputerEvent> = flow {
+    fun toolsetEvents(computerId: String, target: String? = null): Flow<AciComputerEvent> = flow {
         try {
-            backend.runtimeEvents("/api/v1/computers/" + Uri.encode(computerId) + "/toolset/events").collect { e ->
+            backend.runtimeEvents("/api/v1/computers/" + Uri.encode(computerId) + "/toolset/events", target).collect { e ->
                 if (e.data.isEmpty()) return@collect
                 AciComputerEvent.parse(e.data)?.let { emit(it) }
             }
@@ -557,25 +563,97 @@ class AciAgentClient(private val backend: ChatBackend) {
     }
 
     /** `POST /api/aci/handoff/:approval_id/approve`; `scope = "run"` is "Allow for this run", null is once. */
-    suspend fun approveHandoff(approvalId: String, scope: String? = null): Boolean {
+    suspend fun approveHandoff(approvalId: String, scope: String? = null, target: String? = null): Boolean {
         val body = if (scope != null) buildJsonObject { put("scope", scope) }.toString() else null
-        return backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/approve", body) is RuntimeCall.Ok
+        return backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/approve", body, target) is RuntimeCall.Ok
     }
 
-    suspend fun denyHandoff(approvalId: String): Boolean =
-        backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/deny", null) is RuntimeCall.Ok
+    suspend fun denyHandoff(approvalId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/deny", null, target) is RuntimeCall.Ok
 
     /** `POST /api/v1/computers/:id/human-done`: the person did the step (Continue on "needs you"). */
-    suspend fun humanDone(computerId: String): Boolean =
-        backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/human-done", "{}") is RuntimeCall.Ok
+    suspend fun humanDone(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/human-done", "{}", target) is RuntimeCall.Ok
 
     /** `POST /api/v1/computers/:id/block-resolve` with `continue`, `stop` or `rerun` (+ the target computer). */
-    suspend fun blockResolve(computerId: String, action: String, rerunTarget: String? = null): Boolean {
+    suspend fun blockResolve(computerId: String, action: String, rerunTarget: String? = null, target: String? = null): Boolean {
         val body = buildJsonObject {
             put("action", action)
             if (rerunTarget != null) put("rerun_target", rerunTarget)
         }.toString()
-        return backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/block-resolve", body) is RuntimeCall.Ok
+        return backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/block-resolve", body, target) is RuntimeCall.Ok
+    }
+
+    private fun computerPath(computerId: String, tail: String) = "/api/v1/computers/" + Uri.encode(computerId) + "/" + tail
+
+    /** Take over: `POST /api/v1/computers/:id/control/take`. While a person holds control, the bot's calls are refused. */
+    suspend fun takeControl(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "control/take"), "{}", target) is RuntimeCall.Ok
+
+    /** Hand back: `POST /api/v1/computers/:id/control/release`. */
+    suspend fun releaseControl(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "control/release"), "{}", target) is RuntimeCall.Ok
+
+    /** Mouse on a computer you hold control of, in screen pixels: `action` is click, scroll (with `button` up/down and `amount`) ... */
+    suspend fun mouse(computerId: String, action: String, x: Int, y: Int, button: String? = null, amount: Int? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            put("action", action)
+            put("x", x)
+            put("y", y)
+            if (button != null) put("button", button)
+            if (amount != null) put("amount", amount)
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "mouse"), body, target) is RuntimeCall.Ok
+    }
+
+    /** Keyboard on a computer you hold control of: type [text], or press [key]. */
+    suspend fun keyboard(computerId: String, text: String? = null, key: String? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            if (text != null) { put("action", "type"); put("text", text) } else { put("action", "key"); put("key", key ?: "Return") }
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "keyboard"), body, target) is RuntimeCall.Ok
+    }
+
+    /**
+     * The masked secret box: `POST /api/v1/computers/:id/secret`. The value goes in this one request body and
+     * nowhere else (never logged or stored). [saveAs] also saves it to the vault under that name. False on 409 (nothing pending).
+     */
+    suspend fun submitSecret(computerId: String, text: String, saveAs: String? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            put("text", text)
+            if (!saveAs.isNullOrBlank()) put("save_as", saveAs)
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "secret"), body, target) is RuntimeCall.Ok
+    }
+
+    suspend fun cancelSecret(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "secret"), buildJsonObject { put("cancel", true) }.toString(), target) is RuntimeCall.Ok
+
+    /** Starts a run on a computer: `POST /api/v1/computers/:id/runs {task, rerun_of}`. Returns the new run id. */
+    suspend fun startComputerRun(computerId: String, task: String, rerunOf: String? = null): String? {
+        val body = buildJsonObject {
+            put("task", task)
+            if (rerunOf != null) put("rerun_of", rerunOf)
+        }.toString()
+        return when (val r = backend.runtimeJson("POST", computerPath(computerId, "runs"), body, computerId)) {
+            is RuntimeCall.Ok -> r.body.obj.let { it.str("run_id") ?: it.str("id") ?: it.str("sessionId") }
+            RuntimeCall.NoComputer -> throw NoComputer()
+            is RuntimeCall.Failed -> throw IllegalStateException(r.message)
+            is RuntimeCall.Http -> throw IllegalStateException(r.message?.takeIf { it.isNotBlank() } ?: "The computer couldn't start the run (HTTP ${r.status}).")
+        }
+    }
+
+    /** One frame of the computer's screen, or of one run's own display on Linux (`?run_id=`). Raw image bytes, or JSON holding a base64 image. */
+    suspend fun screenshot(computerId: String, runId: String? = null, target: String? = null): ByteArray? {
+        val path = computerPath(computerId, "screenshot") + (runId?.let { "?run_id=" + Uri.encode(it) } ?: "")
+        val (status, bytes) = backend.runtimeBytes(path, "image/png, application/json", target) ?: return null
+        if (status !in 200..299 || bytes.isEmpty()) return null
+        if (bytes[0] == '{'.code.toByte()) {
+            val o = runCatching { ApiJson.default.parseToJsonElement(String(bytes)) }.getOrNull() as? JsonObject ?: return null
+            val b64 = o.str("image") ?: o.str("screenshot") ?: o.str("data") ?: return null
+            return runCatching { android.util.Base64.decode(b64.substringAfter(','), android.util.Base64.DEFAULT) }.getOrNull()
+        }
+        return bytes
     }
 
     suspend fun approve(runId: String, deny: Boolean) {
@@ -612,6 +690,8 @@ sealed interface AciComputerEvent {
         override val runId: String?, val computerId: String?, val domain: String, val kind: String, val rerunTargets: List<AciRerunTarget>,
     ) : AciComputerEvent
     data class BlockResolved(override val runId: String?, val domain: String?, val action: String?) : AciComputerEvent
+    /** Linux: this run has its own display; follow `screenshot?run_id=`. */
+    data class AgentDisplay(override val runId: String?) : AciComputerEvent
 
     companion object {
         fun parse(raw: String): AciComputerEvent? {
@@ -640,6 +720,7 @@ sealed interface AciComputerEvent {
                         AciRerunTarget(o.str("computer_id") ?: return@mapNotNull null, o.str("name") ?: "another computer")
                     })
                 "computer.block_resolved" -> BlockResolved(runId, d.str("domain"), d.str("action"))
+                "computer.agent_display" -> AgentDisplay(runId)
                 else -> null
             }
         }

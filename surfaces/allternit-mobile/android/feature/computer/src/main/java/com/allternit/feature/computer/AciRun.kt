@@ -61,6 +61,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -104,7 +107,13 @@ private val Red = Color(0xFFEF4444)
 data class AciTraceLine(val id: Int, val text: String, val kind: String?)
 
 /** A live ACI run (iOS ACIAgentRunViewModel): start, stream, stop, approve / deny, retry. */
-class AciRunModel(private val goal: String, private val client: AciAgentClient) {
+class AciRunModel(
+    private val goal: String,
+    private val client: AciAgentClient,
+    /** A run that already exists (a push or link): follow it on this computer instead of starting one. */
+    attachComputerId: String? = null,
+    attachRunId: String? = null,
+) {
     var status by mutableStateOf(AciRunStatus.Idle)
         private set
     var lastMessage by mutableStateOf<String?>(null)
@@ -140,8 +149,25 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
     private var runId: String? = null
     private var job: Job? = null
     private var eventsJob: Job? = null
-    private var computerId: String? = null
+    private var computerId: String? = attachComputerId
+    /** The computer to address when it is not the picked one (an attached run or a re-run). */
+    private var target: String? = attachComputerId
+    private val attached: Boolean get() = attachedRun != null
+    private var attachedRun: String? = attachRunId
     private var counter = 0
+
+    /** True while this person holds control of the computer ("You have control"). */
+    var controlHeld by mutableStateOf(false)
+        private set
+    var controlBusy by mutableStateOf(false)
+        private set
+    var controlError by mutableStateOf<String?>(null)
+        private set
+    private var displayRunId: String? = null
+    private var frameJob: Job? = null
+    /** Pixels of the bot's screen, from `computer.action`, for mapping taps. */
+    private var screenW: Double? = null
+    private var screenH: Double? = null
     private var started = false
 
     val requiresApproval: Boolean get() = status == AciRunStatus.WaitingApproval
@@ -152,6 +178,16 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
         started = true
         job = scope.launch {
             try {
+                val id = attachedRun
+                if (id != null) {
+                    // A followed run may not be on the ACI stream (a browser run from the extension): its computer events still drive the view.
+                    runId = id
+                    status = AciRunStatus.Running
+                    listenToComputer(id)
+                    runCatching { client.stream(id).collect { apply(it) } }.onFailure { if (it is CancellationException) throw it }
+                    eventsJob?.join()
+                    return@launch
+                }
                 val run = client.startRun(goal)
                 runId = run.sessionId
                 if (adapterId == null) adapterId = run.adapterId
@@ -169,12 +205,12 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
 
     /** The computer's toolset events for this run: cursor, credential approvals, needs-you and blocks. A failed stream just means no gates. */
     private fun listenToComputer(run: String) {
-        val id = client.currentComputerId() ?: return
+        val id = computerId ?: client.currentComputerId() ?: return
         computerId = id
         eventsJob?.cancel()
         eventsJob = scope.launch {
             try {
-                client.toolsetEvents(id).collect { e -> if (e.runId == null || e.runId == run) applyComputer(e) }
+                client.toolsetEvents(id, target).collect { e -> if (e.runId == null || e.runId == run) applyComputer(e) }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -191,6 +227,7 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
                 val y = e.y
                 val w = e.screenW
                 val h = e.screenH
+                if (w != null && h != null && w > 0 && h > 0) { screenW = w; screenH = h }
                 if (x != null && y != null && w != null && h != null && w > 0 && h > 0) {
                     cursor = (x / w).toFloat().coerceIn(0f, 1f) to (y / h).toFloat().coerceIn(0f, 1f)
                 }
@@ -200,7 +237,20 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
             is AciComputerEvent.HumanResumed -> if (gate is AciRunGate.NeedsYou) gate = null
             is AciComputerEvent.BlockDetected -> gate = AciRunGate.Blocked(e)
             is AciComputerEvent.BlockResolved -> if (gate is AciRunGate.Blocked) gate = null
+            is AciComputerEvent.AgentDisplay -> {
+                displayRunId = e.runId ?: runId
+                startFrames()
+            }
         }
+    }
+
+    /** The typed secret goes to the masked box. The value is passed straight to the request; never stored or logged here. */
+    fun submitSecret(text: String, saveAs: String?) {
+        if (gate !is AciRunGate.NeedsYou || text.isEmpty()) return
+        gate = null
+        val id = computerId ?: return
+        val t = target
+        io { client.submitSecret(id, text, saveAs, t) }
     }
 
     fun dismissGate() { gate = null }
@@ -209,13 +259,13 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
     fun approveGate(scope: String?) {
         val g = gate as? AciRunGate.Approval ?: return
         gate = null
-        io { client.approveHandoff(g.request.approvalId, scope) }
+        io { client.approveHandoff(g.request.approvalId, scope, target) }
     }
 
     fun denyGate() {
         val g = gate as? AciRunGate.Approval ?: return
         gate = null
-        io { client.denyHandoff(g.request.approvalId) }
+        io { client.denyHandoff(g.request.approvalId, target) }
     }
 
     /** Continue after "needs you" (human-done) or after a block (block-resolve continue). */
@@ -223,31 +273,126 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
         val g = gate ?: return
         gate = null
         val id = computerId ?: return
-        io { if (g is AciRunGate.Blocked) client.blockResolve(id, "continue") else client.humanDone(id) }
+        io { if (g is AciRunGate.Blocked) client.blockResolve(id, "continue", target = target) else client.humanDone(id, target) }
     }
 
     fun stopGate() {
         val g = gate
         gate = null
         val id = computerId
-        if (g is AciRunGate.Blocked && id != null) io { client.blockResolve(id, "stop") }
+        val t = target
+        if (g is AciRunGate.Blocked && id != null) io { client.blockResolve(id, "stop", target = t) }
+        if (g is AciRunGate.NeedsYou && g.secret && id != null) io { client.cancelSecret(id, t) }
         stop()
     }
 
-    /** Re-run on another computer: resolve the block as `rerun`, then start a fresh run there with `rerun_of`. */
+    /** Re-run on another computer: resolve the block as `rerun`, start a fresh run there with `rerun_of`, and open it. */
     fun rerun(target: AciRerunTarget) {
-        val g = gate as? AciRunGate.Blocked ?: return
+        if (gate !is AciRunGate.Blocked) return
         gate = null
         val original = runId
         val id = computerId
-        io {
-            if (id != null) client.blockResolve(id, "rerun", target.computerId)
-            runCatching { client.startRun(goal, rerunOf = original, targetRuntimeId = target.computerId) }
-                .onSuccess { lastMessage = "Re-running on ${target.name}" }
-                .onFailure { errorMessage = it.message ?: "Couldn't start the re-run." }
+        val t = this.target
+        scope.launch {
+            if (id != null) withContext(Dispatchers.IO) { runCatching { client.blockResolve(id, "rerun", target.computerId, t) } }
+            runCatching { withContext(Dispatchers.IO) { client.startComputerRun(target.computerId, goal, original) } }
+                .onSuccess { run ->
+                    lastMessage = "Re-running on ${target.name}"
+                    if (run != null) open(run, target.computerId)
+                }
+                .onFailure { lastMessage = "Couldn't start the re-run on ${target.name}" }
         }
-        stop()
-        lastMessage = "Re-running on ${target.name}"
+    }
+
+    /** Points this screen at another run (the re-run) and follows it. */
+    private fun open(newRun: String, computer: String) {
+        job?.cancel(); eventsJob?.cancel(); frameJob?.cancel()
+        if (controlHeld) { val old = computerId; val t = target; if (old != null) io { client.releaseControl(old, t) } }
+        controlHeld = false
+        displayRunId = null
+        computerId = computer
+        target = computer
+        attachedRun = newRun
+        runId = newRun
+        gate = null
+        cursor = null
+        screenshot = null
+        traceLines.clear()
+        errorMessage = null
+        status = AciRunStatus.Running
+        started = false
+        start()
+    }
+
+    /** Take over: the bot's calls are refused while this person holds control. */
+    fun takeOver() {
+        val id = computerId ?: client.currentComputerId() ?: return
+        if (controlHeld || controlBusy) return
+        computerId = id
+        controlBusy = true
+        controlError = null
+        val t = target
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching { client.takeControl(id, t) }.getOrDefault(false) }
+            controlBusy = false
+            if (ok) { controlHeld = true; startFrames() } else controlError = "Couldn't take control."
+        }
+    }
+
+    fun handBack() {
+        if (!controlHeld) return
+        controlHeld = false
+        val id = computerId ?: return
+        val t = target
+        io { client.releaseControl(id, t) }
+    }
+
+    /** A tap on the live view, as fractions (0..1) of the screen. */
+    fun tap(fx: Float, fy: Float) = sendMouse("click", fx, fy)
+
+    /** A swipe: dragging up scrolls the page down, like a finger. */
+    fun scroll(fx: Float, fy: Float, up: Boolean) = sendMouse("scroll", fx, fy, if (up) "down" else "up", 3)
+
+    fun type(text: String) {
+        val id = computerId ?: return
+        if (!controlHeld || text.isEmpty()) return
+        val t = target
+        io { client.keyboard(id, text = text, target = t) }
+    }
+
+    fun press(key: String) {
+        val id = computerId ?: return
+        if (!controlHeld) return
+        val t = target
+        io { client.keyboard(id, key = key, target = t) }
+    }
+
+    private fun sendMouse(action: String, fx: Float, fy: Float, button: String? = null, amount: Int? = null) {
+        val id = computerId ?: return
+        if (!controlHeld) return
+        // The API takes screen pixels: the bot's screen size, else the frame's.
+        val w = screenW ?: screenshot?.width?.toDouble() ?: return
+        val h = screenH ?: screenshot?.height?.toDouble() ?: return
+        val x = (fx.coerceIn(0f, 1f) * w).toInt()
+        val y = (fy.coerceIn(0f, 1f) * h).toInt()
+        val t = target
+        io { client.mouse(id, action, x, y, button, amount, t) }
+    }
+
+    /** Polls the computer's screen (or the run's own display on Linux) while the live view needs frames the run stream does not carry. */
+    private fun startFrames() {
+        frameJob?.cancel()
+        frameJob = scope.launch {
+            while (true) {
+                val id = computerId ?: client.currentComputerId()
+                if (id != null) {
+                    val bytes = withContext(Dispatchers.IO) { runCatching { client.screenshot(id, displayRunId, target) }.getOrNull() }
+                    val bmp = bytes?.let { withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull() } }
+                    if (bmp != null) screenshot = bmp.asImageBitmap()
+                }
+                kotlinx.coroutines.delay(if (controlHeld) 700 else 1500)
+            }
+        }
     }
 
     private fun io(block: suspend () -> Unit) {
@@ -258,17 +403,22 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
         job?.cancel()
         job = null
         eventsJob?.cancel()
+        frameJob?.cancel()
+        handBack()
         if (!isActive) return
         status = AciRunStatus.Done
         lastMessage = "Stopped"
         val id = runId ?: return
-        CoroutineScope(Dispatchers.IO).launch { runCatching { client.stop(id) } }
+        val t = target
+        CoroutineScope(Dispatchers.IO).launch { runCatching { client.stop(id, t) } }
     }
 
     /** Leaving the screen stops a live run (iOS leave()). */
     fun leave() {
-        if (!isActive) job?.cancel() else stop()
+        // A run followed from a push belongs to someone else's session: leaving only stops watching.
+        if (attached || !isActive) { job?.cancel(); handBack() } else stop()
         eventsJob?.cancel()
+        frameJob?.cancel()
         scope.cancel()
     }
 
@@ -283,9 +433,10 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
     fun retry() {
         job?.cancel()
         eventsJob?.cancel()
+        frameJob?.cancel()
         gate = null
         cursor = null
-        runId = null
+        runId = attachedRun
         errorMessage = null
         status = AciRunStatus.Idle
         started = false
@@ -336,12 +487,13 @@ internal fun AciAgentRunView(
     goal: String,
     client: AciAgentClient,
     onExit: () -> Unit,
-    /** Hands the run to the person. No Android control path exists yet, so the button shows only when this is set. */
-    onTakeOver: (() -> Unit)? = null,
+    /** A run that already exists (an `aci.attention` push): its computer and run id. Follow it, do not start one. */
+    computerId: String? = null,
+    runId: String? = null,
     controls: @Composable () -> Unit = {},
 ) {
     val c = AllternitTheme.colors
-    val model = remember(goal) { AciRunModel(goal, client) }
+    val model = remember(goal, computerId, runId) { AciRunModel(goal, client, computerId, runId) }
     DisposableEffect(model) {
         model.start()
         onDispose { model.leave() }
@@ -424,6 +576,22 @@ internal fun AciAgentRunView(
                             y += 4.dp.toPx()
                         }
                     }
+                    if (model.controlHeld) {
+                        // While you hold control: a tap clicks there, a swipe scrolls. Positions go to the API as screen fractions.
+                        Box(Modifier.fillMaxSize().border(2.dp, c.textPrimary.copy(alpha = 0.5f))
+                            .pointerInput(shot, ox, oy, dw, dh) {
+                                detectTapGestures { p -> model.tap((p.x - ox) / dw, (p.y - oy) / dh) }
+                            }
+                            .pointerInput(shot, ox, oy, dw, dh) {
+                                var dy = 0f
+                                var start = androidx.compose.ui.geometry.Offset.Zero
+                                detectDragGestures(
+                                    onDragStart = { start = it; dy = 0f },
+                                    onDrag = { _, d -> dy += d.y },
+                                    onDragEnd = { if (kotlin.math.abs(dy) > 14f) model.scroll((start.x - ox) / dw, (start.y - oy) / dh, up = dy < 0) },
+                                )
+                            }.testTag("aciTakeOverLayer"))
+                    }
                     model.cursor?.let { (fx, fy) ->
                         // The agent cursor and the bot's badge, from computer.action x/y over screen_w/screen_h.
                         val cx = with(density) { (ox + fx * dw).toDp() }
@@ -475,13 +643,20 @@ internal fun AciAgentRunView(
             }
         }
         controls()
-        if (model.status == AciRunStatus.Running && model.actor != null) {
+        if (model.status == AciRunStatus.Running && (model.actor != null || runId != null)) {
             val n = model.actionStep ?: model.stepIndex
-            Row(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 6.dp).testTag("aciWorkingLine"),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(model.botName + " is working" + (n?.let { " · step $it" } ?: ""), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                if (onTakeOver != null) OutlineButton("Take over", c.textPrimary, "aciRunTakeOver") { onTakeOver() }
-                OutlineButton("Stop", Red, "aciRunStopWorking") { model.stop() }
+            Column(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 6.dp).testTag("aciWorkingLine"),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(model.botName + " is working" + (n?.let { " · step $it" } ?: ""), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                    if (model.controlHeld) OutlineButton("Hand back", c.textPrimary, "aciRunHandBack") { model.handBack() }
+                    else OutlineButton("Take over", c.textPrimary, "aciRunTakeOver") { if (!model.controlBusy) model.takeOver() }
+                    OutlineButton("Stop", Red, "aciRunStopWorking") { model.stop() }
+                }
+                if (model.controlHeld) {
+                    Text("You have control · Hand back", color = c.textPrimary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    TakeOverKeys(onType = { model.type(it) }, onKey = { model.press(it) })
+                } else model.controlError?.let { Text(it, color = Red, fontSize = 10.sp) }
             }
         }
         Row(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -493,10 +668,28 @@ internal fun AciAgentRunView(
                         .padding(horizontal = 14.dp, vertical = 7.dp).testTag("aciRunApprove"))
             }
             Spacer(Modifier.weight(1f))
-            if (model.isActive && !(model.status == AciRunStatus.Running && model.actor != null)) OutlineButton("■ Stop", Red, "aciRunStop") { model.stop() }
+            if (model.isActive && !(model.status == AciRunStatus.Running && (model.actor != null || runId != null))) OutlineButton("■ Stop", Red, "aciRunStop") { model.stop() }
         }
     }
     RunGateHost(model)
+}
+
+/** Text box and Return for the person who took over: typed text goes to the computer's keyboard route. */
+@Composable
+private fun TakeOverKeys(onType: (String) -> Unit, onKey: (String) -> Unit) {
+    val c = AllternitTheme.colors
+    var text by remember { mutableStateOf("") }
+    fun send() { if (text.isNotEmpty()) { onType(text); text = "" } }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(8.dp)) {
+            if (text.isEmpty()) Text("Type to the computer", color = c.textTertiary, fontSize = 13.sp)
+            BasicTextField(text, { text = it }, singleLine = true, textStyle = TextStyle(color = c.textPrimary, fontSize = 13.sp), cursorBrush = SolidColor(c.textPrimary),
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }),
+                modifier = Modifier.fillMaxWidth().testTag("aciTakeOverText"))
+        }
+        OutlineButton("Send", c.textPrimary, "aciTakeOverSend") { send() }
+        OutlineButton("Return", c.textPrimary, "aciTakeOverReturn") { onKey("Return") }
+    }
 }
 
 @Composable
@@ -506,7 +699,8 @@ private fun RunGateHost(model: AciRunModel) {
         gate = g, botName = model.botName,
         onApprove = { model.approveGate(it) }, onDeny = { model.denyGate() },
         onContinue = { model.continueGate() }, onStop = { model.stopGate() },
-        onRerun = { model.rerun(it) }, onDismiss = { model.dismissGate() },
+        onRerun = { model.rerun(it) }, onSecret = { text, saveAs -> model.submitSecret(text, saveAs) },
+        onDismiss = { model.dismissGate() },
     )
 }
 

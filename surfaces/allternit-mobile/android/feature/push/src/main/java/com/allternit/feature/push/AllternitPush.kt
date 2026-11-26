@@ -204,6 +204,10 @@ data class PushTap(
     val computer: String?
         get() = computerId ?: url?.let { Regex("""^/computers/([^/?#]+)""").find(it)?.groupValues?.get(1) }
 
+    /** The run an `aci.attention` push names: the `run` query of `/computers/<id>?run=<run_id>`. Null for other pushes. */
+    val run: String?
+        get() = url?.let { runCatching { android.net.Uri.parse("https://app$it").getQueryParameter("run") }.getOrNull() }?.takeIf { it.isNotBlank() }
+
     /** The inbox item: `inboxId`, else the `allternit_inbox` query of the url (`/?allternit_inbox=approval%3Aap1`). */
     val inboxItem: String?
         get() = inboxId ?: url?.let { runCatching { android.net.Uri.parse("https://app$it").getQueryParameter("allternit_inbox") }.getOrNull() }
