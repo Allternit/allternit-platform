@@ -67,6 +67,8 @@ Re-attach. When the inbox (re)connects, which includes the first connect and a r
 
 `GET /v1/terminal/sessions/:id/inbox?host=&pid=` is a server-sent event stream. While it is open the session is **live**: `TerminalLive.attached(id)` is true and `session.terminal` `{ sessionID, attached, host, cwd }` is published on attach and detach. `GET /v1/terminal/sessions` lists live terminals.
 
+**Remote Control state.** The engine keeps an `rc` value per session, `{ state, since }`, and publishes `session.rc` `{ sessionID, rc }` when it changes. `state` is `connected` while the inbox is open, `reconnecting` for 10 s after it drops (the terminal re-opens it after 2 s), `offline` for a terminal session with no terminal, and `off` for an ordinary engine session. `since` is when the state began (ms), or null when the engine never saw it change (after an engine restart, a terminal row reads `offline` since its last update). `GET /v1/remote-control/sessions` and `GET /v1/remote-control/sessions/:id` return it as `rc` beside `session` and `status`. The web maps `rc.state` to `metadata.rcState`.
+
 | Inbox event | Sent when | The terminal does |
 |---|---|---|
 | `{ type: "input", id, text }` | Any prompt route runs `SessionPrompt.prompt` on a live row: `/v1/session/:id/message`, `prompt_async`, `/api/v1/agent-sessions/:id/messages`, `/api/agent-chat`, `/v1/remote-control/sessions/:id/messages` | Queues it like typed input. During a turn it steers the turn. The echo comes back as the stored user message. |
