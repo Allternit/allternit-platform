@@ -112,7 +112,8 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
         if (cards.isEmpty()) item {
             val err = store.threadsError
             if (err != null && !store.isLoadingThreads) ListState(false, err, true, "Couldn't load threads", "") { scope.launch { store.refreshThreads() } }
-            else Text(if (store.isLoadingThreads) "Loading threads…" else "No open threads. Start one from the composer.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp))
+            else if (store.isLoadingThreads) Text("Loading threads…", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp))
+            else ListState(false, null, true, "", "No open threads. Start one from the composer.", art = com.allternit.core.design.EmptyArtKind.Envelope) {}
         } else if (layout == RosterLayout.List) items(cards, key = { it.id }) { t ->
             BotThreadCard(t, store, showsBot = botId == null, compact = true) { onOpen(t) }
         } else items(cards.chunked(2), key = { it.first().id }) { pair ->

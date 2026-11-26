@@ -135,7 +135,7 @@ private fun DayList(store: AutomationStore, day: LocalDate, items: List<Occurren
     val label = when (day) { today -> "Today"; today.plusDays(1) -> "Tomorrow"; else -> day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + day.monthValue + "/" + day.dayOfMonth }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("automationDayList_$day"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label.uppercase(), color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.6.sp)
-        if (items.isEmpty()) Text(emptyText, color = c.textTertiary, fontSize = 13.sp)
+        if (items.isEmpty()) com.allternit.core.design.InlineEmpty(emptyText, art = com.allternit.core.design.EmptyArtKind.Bell)
         items.take(30).forEach { o -> OccurrenceRow(store, o, onOpen) }
         if (items.isEmpty()) Text("New task at 9:00 AM", color = c.accentCode, fontSize = 13.sp, modifier = Modifier.heightIn(min = 44.dp).testTag("automationNewAt_$day").clickable(role = Role.Button) { onNewAt(CronWords.DEFAULT_CRON) }.padding(vertical = 10.dp))
     }
@@ -145,7 +145,7 @@ private fun DayList(store: AutomationStore, day: LocalDate, items: List<Occurren
 @Composable
 internal fun AutomationGraph(store: AutomationStore, tasks: List<AutoTask>, all: Boolean, onOpen: (AutoTask) -> Unit) {
     val c = AllternitTheme.colors
-    if (tasks.isEmpty()) { EmptyState("Nothing to draw yet", "Scheduled routines and loops appear here with their recent runs.", Modifier.padding(horizontal = 20.dp)); return }
+    if (tasks.isEmpty()) { EmptyState("Nothing to draw yet", "Scheduled routines and loops appear here with their recent runs.", Modifier.padding(horizontal = 20.dp), art = com.allternit.core.design.EmptyArtKind.Flow); return }
     val goals = if (all) store.of(TaskType.Goal) else emptyList()
     val linked = tasks.filter { t -> t.goalId != null && goals.any { it.id == t.goalId } }
     val free = tasks - linked.toSet()

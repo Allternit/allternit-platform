@@ -226,7 +226,7 @@ internal fun ConnectComputerSheet(backend: ChatBackend, onDismiss: () -> Unit, o
             when {
                 loading && devices == null -> Text("Loading…", color = c.textSecondary, fontSize = 14.sp)
                 failed -> Text("Couldn't load your computers", color = AllternitStatic.StatusError, fontSize = 14.sp)
-                devices.isNullOrEmpty() -> Text("No computers yet.", color = c.textSecondary, fontSize = 14.sp)
+                devices.isNullOrEmpty() -> com.allternit.core.design.InlineEmpty("No computers yet.", art = com.allternit.core.design.EmptyArtKind.ConnectScene)
                 else -> devices.orEmpty().forEach { d ->
                     val status = when {
                         d.isOnline -> "Online"

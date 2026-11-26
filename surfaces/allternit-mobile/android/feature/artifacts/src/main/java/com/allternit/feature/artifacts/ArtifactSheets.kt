@@ -106,7 +106,8 @@ fun ArtifactCommentsSheet(a: ArtifactV2, onDismiss: () -> Unit, onOpenCount: (In
                     shown.isEmpty() -> FriendlyState(
                         FriendlyStyle.Empty, if (roots.isEmpty()) "No comments yet" else "No open comments",
                         if (canComment) "Add a comment below." else "Only people who can comment can add one.",
-                    ) { Icon(painterResource(DesignR.drawable.ph_identification_card), null, tint = c.textSecondary) }
+                        art = com.allternit.core.design.EmptyArtKind.Envelope, icon = {},
+                    )
                     else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(shown, key = { it.id }) { root ->
                             val thread = listOf(root) + comments.orEmpty().filter { it.parentId == root.id }
@@ -368,9 +369,7 @@ fun ArtifactDetailsScreen(record: ArtifactRecordInput, onClose: () -> Unit, onOp
                     Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary)
                 }
                 is DetailsLoad.Ready -> when {
-                    l.text.isBlank() -> FriendlyState(FriendlyStyle.Empty, "This artifact is empty", "Nothing was captured for this artifact.") {
-                        Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
-                    }
+                    l.text.isBlank() -> FriendlyState(FriendlyStyle.Empty, "This artifact is empty", "Nothing was captured for this artifact.", art = com.allternit.core.design.EmptyArtKind.Sheets, icon = {})
                     previewable && preview -> SandboxedArtifactWebView(l.text, kind, Modifier.fillMaxSize())
                     else -> SelectionContainer(Modifier.fillMaxSize()) {
                         Text(
