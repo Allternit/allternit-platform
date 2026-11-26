@@ -419,6 +419,7 @@ async fn run_one(state: &Arc<AppState>, user: &AuthUser, p: &Planned, left: Dura
         agent_id: None,
         agent_name: None,
         step: None,
+        rerun_of: None,
     };
     let spec = crate::computer_toolset::contract(Toolset::Computer).member("run_subtask").expect("run_subtask is in the contract");
     let (desc, verdict) = match policy_check(user, &p.computer, &req) {

@@ -1336,21 +1336,51 @@ async fn aci_handoff_status(State(state): State<Arc<AppState>>, Path(id): Path<S
     }
 }
 
+/// Approve a handoff. The body is optional: `{ "scope": "run" }` on a
+/// credential approval (`kind: "credential"`, from `use_credential`) is
+/// "Allow for this run": later fills of the same credential name into the
+/// same domain in the same run skip the prompt. Memory only, gone when the
+/// run ends; any other approval is single-use (`scope: "once"`).
 async fn aci_handoff_approve(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Response {
+    let wants_run = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|b| b.get("scope").and_then(serde_json::Value::as_str).map(|s| s == "run"))
+        .unwrap_or(false);
     if state.approval_store.approve(&id) {
         // Mirror the human decision into the action-hash grant so a
         // subsequent run carrying this approval_id can redeem it.
         crate::aci_approvals::GRANTS.approve(&id);
-        Json(json!({"approval_id": id, "status": "approved"})).into_response()
+        let scope = if wants_run { allow_credential_for_run(&state, &id) } else { "once" };
+        Json(json!({"approval_id": id, "status": "approved", "scope": scope})).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "handoff_not_found", "message": "No such handoff request."})),
         )
             .into_response()
+    }
+}
+
+/// "Allow for this run" on an approved credential handoff. Answers the
+/// scope that took effect: "run", or "once" when the approval isn't a
+/// credential fill inside a run.
+fn allow_credential_for_run(state: &AppState, id: &str) -> &'static str {
+    let Some(req) = state.approval_store.get(id) else { return "once" };
+    let args = &req.args;
+    let credential = args.get("credential");
+    let name = credential.and_then(|c| c.get("name")).and_then(serde_json::Value::as_str).filter(|n| !n.is_empty());
+    let run_id = args.get("run_id").and_then(serde_json::Value::as_str).filter(|r| !r.is_empty());
+    match (args.get("kind").and_then(serde_json::Value::as_str), name, run_id) {
+        (Some("credential"), Some(name), Some(run_id)) => {
+            let domain = credential.and_then(|c| c.get("domain")).and_then(serde_json::Value::as_str);
+            crate::aci_credentials::RUN_CREDENTIAL_ALLOWS.allow(&req.user_id, run_id, name, domain);
+            "run"
+        }
+        _ => "once",
     }
 }
 
@@ -2430,5 +2460,54 @@ mod credential_binding_http_tests {
                 "receipt leaked the value: {text}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn credential_approval_allowed_for_the_run_covers_only_that_credential_and_domain() {
+        use crate::aci_safety::{enforce_confirmation_with_mode_details, ConfirmationClass, SafetyMode};
+        let dir = std::env::temp_dir().join(format!("aci-run-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let run = format!("run-{}", uuid::Uuid::new_v4().simple());
+        let details = json!({ "kind": "credential", "credential": { "name": "github", "domain": "github.com" }, "run_id": run, "computer_id": "cmp-1" });
+        let denial = enforce_confirmation_with_mode_details(
+            SafetyMode::Enforce,
+            &st.approval_store,
+            "user-a",
+            "computer.toolset",
+            ConfirmationClass::Irreversible,
+            &json!({ "member": "use_credential", "input": { "name": "github", "domain": "github.com" } }),
+            None,
+            &details,
+        )
+        .unwrap_err();
+        assert_eq!(denial.body["error"], "confirmation_required");
+        assert_eq!(denial.body["kind"], "credential");
+        assert_eq!(denial.body["credential"], json!({ "name": "github", "domain": "github.com" }));
+        let id = denial.body["approval_id"].as_str().unwrap().to_string();
+        assert_eq!(st.approval_store.get(&id).unwrap().args["run_id"], json!(run));
+
+        assert!(st.approval_store.approve(&id));
+        assert_eq!(allow_credential_for_run(&st, &id), "run");
+        let allows = &crate::aci_credentials::RUN_CREDENTIAL_ALLOWS;
+        assert!(allows.allowed("user-a", &run, "github", Some("github.com")));
+        assert!(!allows.allowed("user-a", &run, "github", Some("gitlab.com")), "another domain prompts");
+
+        // A plain action approval has no run scope: it stays single-use.
+        let action = enforce_confirmation_with_mode_details(
+            SafetyMode::Enforce,
+            &st.approval_store,
+            "user-a",
+            "computer.toolset",
+            ConfirmationClass::Risky,
+            &json!({ "member": "type", "input": { "text": "hi" } }),
+            None,
+            &json!({ "run_id": run }),
+        )
+        .unwrap_err();
+        assert_eq!(action.body["kind"], "action");
+        assert!(action.body.get("credential").is_none());
+        assert_eq!(allow_credential_for_run(&st, action.body["approval_id"].as_str().unwrap()), "once");
+        allows.forget_run(&run);
     }
 }

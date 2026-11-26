@@ -47,7 +47,7 @@ The structured members. They read and drive the UI through the [Allternit Driver
 | `run_batch` | risky | on non-sandbox targets, when any `act` step enters text | `steps` (1–50): `{act? {id, op, value?, key?}, menu?, pixel? {tool, args}, wait? ms, wait_for?, expect?, timeout_ms?}`; `version?` |
 | `verify` | reversible | no | `checks` (1–20): `{id?, role?, name?, text?, gone?, value?, enabled?}`, `timeout_ms?` |
 | `request_human` | reversible | no | `reason?`, `timeout_ms?` (default 5 min) |
-| `use_credential` | risky | on non-sandbox targets | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
+| `use_credential` | risky | always (every target) | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
 | `run_subtask` | risky | on non-sandbox targets, **once per subtask** (its steps carry that grant) | `goal`, `inputs?` (`[{name, value}]`, the only text it may type), `success?` (1–10 `verify` checks, or `{ask}` for a fuzzy yes/no), `constraints?` (`ops?`, `avoid?`, `allow_irreversible?`), `max_steps?` (default 12, max 40), `budget_ms?` (default 60 000), `app?` / `pid?` / `window_id?`, `query?`, `max_elements?` (default 300), `cache?` (`auto` default, `refresh`, `off`), `save_as?` (save the recording as a named skill), `api_options?` (`[{tool, description?}]`, MCP tools / API actions the planner holds), `best_of?` (2–5) + `computers?` + `max_cost_usd?` for [Best-of-N](/tools/computer-parallel) |
 | `run_parallel` | risky | **once per call** when any subtask targets a non-sandbox computer | `subtasks` (1–8): each `{computer?, …run_subtask fields}`; `max_parallel?` (default 4, max 8), `budget_ms?` (whole call, default 120 000), `max_cost_usd?` (default 0.25). See [Parallel subtasks and Best-of-N](/tools/computer-parallel) |
 | `run_skill` | risky | on non-sandbox targets, **once per run** (like `run_subtask`) | `name`, `inputs?` (a value for each of the skill's input names), `app?` / `pid?` / `window_id?`, `max_steps?`, `budget_ms?` |
@@ -163,7 +163,45 @@ Refusals add an `error` code. Text results that carry screen or page content arr
 POST /api/v1/computers/:id/human-done
 ```
 
-which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again."
+which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again." `computer.human_requested` also goes out as an `aci_human` push (`secret: false`; a masked-box request sends `secret: true`).
+
+### Blocked pages
+
+After every `read_ui` (and a browser `get_page_text` or `read_page`) the executor checks the result for a page the agent can't pass on its own (`cmd/allternit-api/src/computer_block.rs`):
+
+| `kind` | What matched |
+|---|---|
+| `login` | A password field (secure text field) next to sign-in words |
+| `two_factor` | "2-Step Verification", "verification code", "authenticator app" and similar, on a short page |
+| `captcha` | A captcha frame: "I'm not a robot", a reCAPTCHA or hCaptcha challenge, Turnstile, FunCaptcha, GeeTest |
+| `block_page` | A Cloudflare, Akamai, PerimeterX, Incapsula or DataDome challenge or block page, or a short "Access denied" page |
+| `rate_limited` | "429 Too Many Requests", "rate limit exceeded" |
+
+Vendor signatures count on any page. Generic phrases ("access denied", "verification code") count only on short pages, so an article that mentions them is not a wall, and a "protected by reCAPTCHA" line on a sign-in form is a `login`, not a `captcha`. On a match the run holds (like `request_human`; on cloud computers the agent's lease is released so the person can sign in on the live view) and this goes out on the events stream, plus an `aci_blocked` push:
+
+```json
+{ "type": "computer.block_detected", "ts": "2026-11-26T21:00:00Z",
+  "data": { "run_id": "ses_123", "computer_id": "cmp_cloud", "domain": "shop.example.com",
+            "kind": "block_page", "rerun_targets": [ { "computer_id": "cmp_mac", "name": "My MacBook" } ],
+            "timeout_ms": 600000 } }
+```
+
+`rerun_targets` lists the person's online Macs (this-device computers), or `[]`. The person answers:
+
+```http
+POST /api/v1/computers/:id/block-resolve
+{ "action": "continue" | "stop" | "rerun", "rerun_target": "cmp_mac" }
+```
+
+- `continue`: they dealt with it. The call reads the page again and returns the fresh read; the same domain and kind won't hold this run again.
+- `stop`: the run ends here. The call returns an error result (`run_stopped`) telling the model to stop.
+- `rerun`: the run ends here (`rerun_elsewhere`), and **the client** starts a new run on `rerun_target` with `rerun_of` set to the old run id (the route answers it as `run_id`). The server never moves a run between computers, and cloud sign-ins don't carry over to the Mac.
+
+The answer is `{ ok, action, run_id, domain, kind, rerun_target }`; `409 no_block_pending` when nothing is waiting, `400 invalid_rerun_target` for a computer not in `rerun_targets`. A hold nobody answers in 10 minutes lets the run go on with a note telling the model to call `request_human`: detection is a heuristic with false positives and misses, so it pauses and asks but never ends a run by itself. `computer.block_resolved` (`{ run_id, computer_id, domain, kind, action, rerun_target }`, `action` also `timed_out`) closes the hold.
+
+### Re-runs
+
+A toolset call may carry `rerun_of: "<run id>"`. The link is recorded on the run's audit rows (`rerun_of=<id>`) and on its `computer.action` events (`rerun_of`), so history can show "re-run of" a blocked cloud run.
 
 ### Masked secret box
 
@@ -235,6 +273,21 @@ The calls in one turn (`turn_id`) run in `call_index` order. After a call fails,
 
 A retry of the failed call itself, for example with an approval grant, is allowed.
 
+### Needs-you prompts in gizzi
+
+gizzi answers the three things that stop an agent browser run through its normal permission prompt, never a second one:
+
+| What stops the run | Prompt | Buttons | Call |
+|---|---|---|---|
+| A step that would fill a saved login (`409`/`403` with `kind: "credential"`) | Fill your *name* login on *domain*? | Approve, Allow for this run, Deny | `POST /api/aci/handoff/:approval_id/approve` (`{"scope":"run"}` for the second) or `/deny`, then the call is retried once |
+| `request_human` (`computer.human_requested`) | *bot* needs you: *reason* | Continue, Stop | `POST /api/v1/computers/:id/human-done` |
+| `request_human` with a `secret` (`computer.secret_requested`) | *bot* needs you: *label* | Send, Cancel | The value is typed into a masked input and goes straight to `POST /api/v1/computers/:id/secret`. It is never logged, never in the transcript, never shown to the model. A client with no masked input leaves the box open in the live view. |
+| A held block (`computer.block_detected`) | *domain* blocked *bot* | Continue, Re-run on my Mac, Stop | `POST /api/v1/computers/:id/block-resolve`; Re-run starts a new run on the Mac with `rerun_of`, and later steps in the session follow it |
+
+Stop ends the waiting call. Every fill asks: "Allow for this run" covers one credential name and domain for that run and is never remembered.
+
+`gizzi run` without a terminal never approves a credential. It fails the step with a message naming the approval id and how to approve it from the app (the needs-you card for the run, or the approve route above), and leaves the approval pending. Human and block holds are left for the app the same way.
+
 ### Model frame and scaling
 
 Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.
@@ -263,7 +316,19 @@ Every action that runs emits this event:
             "step": "Clicking Send" } }
 ```
 
-`x` and `y` are screen pixels. `actor` says who is driving: `agent_id` is the request's `agent_id`, else the computer's bot, and `name` is the request's `agent_name` or `null`. `actor` is `null` when neither an id nor a name is known. `step` is the request's masked step text or `null`. The steps an approved `run_subtask` or `run_skill` runs, and the children of `run_parallel` and `best_of`, carry the actor their parent call named. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+`x` and `y` are screen pixels. `rerun_of` is the run this run re-runs, or `null`. `actor` says who is driving: `agent_id` is the request's `agent_id`, else the computer's bot, and `name` is the request's `agent_name` or `null`. `actor` is `null` when neither an id nor a name is known. `step` is the request's masked step text or `null`. The steps an approved `run_subtask` or `run_skill` runs, and the children of `run_parallel` and `best_of`, carry the actor their parent call named. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+
+The same stream carries the run's gates, so a client that shows the live view can show every card. On the SSE stream every frame's `event:` name is `computer.action` (kept for older listeners): read `type` from the JSON.
+
+| Event | `data` | Push kind |
+|---|---|---|
+| `computer.confirmation_required` | `{ run_id, computer_id, approval_id, kind: "action" \| "credential", credential: { name, domain } \| null, confirmation_class, member, message }` | `aci_approval` |
+| `computer.human_requested` / `computer.human_resumed` | `{ computer_id, run_id, reason, live_view, input_enabled, … }` ([Human hand-off](#human-hand-off)) | `aci_human` |
+| `computer.block_detected` / `computer.block_resolved` | see [Blocked pages](#blocked-pages) | `aci_blocked` |
+
+Approve a `computer.confirmation_required` with `POST /api/aci/handoff/:approval_id/approve` (optional `{ "scope": "run" }` for a credential, see [Allow for this run](/tools/computer-credentials#allow-for-this-run)); the agent then resends the call with the grant.
+
+Pushes go from allternit-api to cloud-api `POST /push/notify/:runtime_id`, relay-signed the same way as `/api/v1/runtime/events`, only when the runtime is paired to the run's owner. The body is `{ data, bot_name? }`, where `data` is `{ kind: "aci_approval", run_id, computer_id, approval_id, approval_kind, credential?, message }`, `{ kind: "aci_human", run_id, computer_id, reason, secret }` or `{ kind: "aci_blocked", run_id, computer_id, domain, block_kind, rerun_targets }` (computer ids). cloud-api rebuilds it from an allowlist and fans it out to web push, APNs and FCM. A credential goes by name and domain only. The shapes are in `cmd/allternit-api/openapi/app-v1.yaml`.
 
 ## Adapters
 

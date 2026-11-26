@@ -22,7 +22,24 @@ export interface ExecutorReply {
     action_hash?: string
     risk?: string
     message?: string
+    /** 409/403 credential approval (contract #3112): which login the step would fill. */
+    kind?: "action" | "credential" | string
+    credential?: { name?: string; domain?: string } | null
   }
+}
+
+/** One frame of GET /computers/:id/toolset/events (event name `computer.action`; read `type`). */
+export interface ComputerEvent {
+  type: string
+  ts?: string
+  data: Record<string, any>
+}
+
+/** The person's answer to a held block (POST /computers/:id/block-resolve). */
+export interface BlockResolveReply {
+  ok: boolean
+  run_id?: string
+  rerun_target?: string | null
 }
 
 /** GET /computers/:id/toolset/schema: what the target runs right now. */
@@ -38,7 +55,20 @@ export interface ToolsetSchema {
 export interface ExecutorClient {
   run(computerId: string, req: ToolsetRequest, signal?: AbortSignal): Promise<ExecutorReply>
   schema(computerId: string, toolset: "computer" | "browser", signal?: AbortSignal): Promise<ToolsetSchema | undefined>
-  approve(approvalId: string, signal?: AbortSignal): Promise<boolean>
+  /** `scope: "run"` = allow this credential name + domain for this run only. */
+  approve(approvalId: string, signal?: AbortSignal, scope?: "run"): Promise<boolean>
+  // The calls below are optional so a scripted fake can leave them out; the
+  // needs-you watcher (needs-you.ts) does nothing without `events`.
+  deny?(approvalId: string, signal?: AbortSignal): Promise<boolean>
+  events?(computerId: string, signal: AbortSignal): AsyncIterable<ComputerEvent>
+  humanDone?(computerId: string, signal?: AbortSignal): Promise<boolean>
+  /** The masked secret box: `{ text }` or `{ cancel: true }`. Never logs the value. */
+  supplySecret?(computerId: string, body: { text: string } | { cancel: true }, signal?: AbortSignal): Promise<boolean>
+  blockResolve?(
+    computerId: string,
+    body: { action: "continue" | "stop" | "rerun"; rerun_target?: string },
+    signal?: AbortSignal,
+  ): Promise<BlockResolveReply | undefined>
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
@@ -81,8 +111,59 @@ export const httpExecutor: ExecutorClient = {
     if (!res.ok) return undefined
     return (await res.json()) as ToolsetSchema
   },
-  async approve(approvalId, signal) {
-    const res = await platformFetch("POST", `/api/aci/handoff/${enc(approvalId)}/approve`, {}, { signal, timeoutMs: 10_000 })
+  async approve(approvalId, signal, scope) {
+    const res = await platformFetch("POST", `/api/aci/handoff/${enc(approvalId)}/approve`, scope ? { scope } : {}, { signal, timeoutMs: 10_000 })
     return res.ok
+  },
+  async deny(approvalId, signal) {
+    const res = await platformFetch("POST", `/api/aci/handoff/${enc(approvalId)}/deny`, {}, { signal, timeoutMs: 10_000 })
+    return res.ok
+  },
+  async *events(computerId, signal) {
+    const res = await platformFetch("GET", `/api/v1/computers/${enc(computerId)}/toolset/events`, undefined, {
+      signal,
+      accept: "text/event-stream",
+    })
+    if (!res.ok || !res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ""
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) return
+        buf += decoder.decode(value, { stream: true })
+        let at: number
+        while ((at = buf.search(/\r?\n\r?\n/)) >= 0) {
+          const frame = buf.slice(0, at)
+          buf = buf.slice(at).replace(/^\r?\n\r?\n/, "")
+          const data = frame
+            .split(/\r?\n/)
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart())
+            .join("\n")
+          if (!data) continue
+          try {
+            const ev = JSON.parse(data)
+            if (ev && typeof ev.type === "string") yield { type: ev.type, ts: ev.ts, data: ev.data ?? {} }
+          } catch {}
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {})
+    }
+  },
+  async humanDone(computerId, signal) {
+    const res = await platformFetch("POST", `/api/v1/computers/${enc(computerId)}/human-done`, {}, { signal, timeoutMs: 10_000 })
+    return res.ok
+  },
+  async supplySecret(computerId, body, signal) {
+    const res = await platformFetch("POST", `/api/v1/computers/${enc(computerId)}/secret`, body, { signal, timeoutMs: 30_000 })
+    return res.ok
+  },
+  async blockResolve(computerId, body, signal) {
+    const res = await platformFetch("POST", `/api/v1/computers/${enc(computerId)}/block-resolve`, body, { signal, timeoutMs: 10_000 })
+    if (!res.ok) return undefined
+    return (await res.json()) as BlockResolveReply
   },
 }

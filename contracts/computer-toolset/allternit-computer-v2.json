@@ -1079,11 +1079,11 @@
     },
     {
       "name": "use_credential",
-      "description": "Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing.",
+      "description": "Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run.",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": true,
-      "confirm": "non_sandbox",
+      "confirm": "always",
       "result_kind": "none",
       "ack_text": "Credential {name} typed.",
       "scale_fields": {},
