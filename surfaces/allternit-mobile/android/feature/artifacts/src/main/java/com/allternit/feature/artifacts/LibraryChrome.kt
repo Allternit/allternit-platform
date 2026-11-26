@@ -347,7 +347,7 @@ private fun Modifier.horizontalScrollable(): Modifier =
 
 /** The rounded search field at the top of a library (iOS .searchable look). */
 @Composable
-fun LibrarySearchField(value: String, placeholder: String, testTag: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+fun LibrarySearchField(value: String, placeholder: String, testTag: String, modifier: Modifier = Modifier, onSubmit: ((String) -> Unit)? = null, onChange: (String) -> Unit) {
     val c = AllternitTheme.colors
     Row(
         modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(horizontal = 12.dp),
@@ -359,6 +359,8 @@ fun LibrarySearchField(value: String, placeholder: String, testTag: String, modi
             if (value.isEmpty()) Text(placeholder, color = c.textTertiary, fontSize = 15.sp)
             BasicTextField(
                 value = value, onValueChange = onChange, singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSubmit?.invoke(value) }),
                 textStyle = TextStyle(color = c.textPrimary, fontSize = 15.sp), cursorBrush = SolidColor(c.textPrimary),
                 modifier = Modifier.fillMaxWidth().testTag(testTag),
             )
