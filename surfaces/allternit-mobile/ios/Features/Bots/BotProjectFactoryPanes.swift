@@ -526,6 +526,7 @@ struct ProjectTeamPane: View {
     @State private var agents: [FactoryAgent] = []
     @State private var edges: [FactoryTeam.Edge] = []
     @State private var nodes: [FactoryNodeCard] = []
+    @State private var deliveries: [FactoryDelivery] = []
     @State private var isLoading = true
     @State private var failure: ProjectFactoryFailure?
 
@@ -614,6 +615,10 @@ struct ProjectTeamPane: View {
             }
         }
         .padding(.top, 10)
+        // Messages sit under the team views, which fill their own height.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ProjectTeamMessages(deliveries: deliveries, agents: agents)
+        }
     }
 
     private func canvasContent(_ layout: ProjectGraphLayout<FactoryAgent>) -> some View {
@@ -655,6 +660,7 @@ struct ProjectTeamPane: View {
             agents = team.agents
             edges = team.edges
             failure = nil
+            deliveries = (try? await BotProjectClient.shared.deliveries()) ?? []
             // Lanes read the campaign's nodes; with none, each bot's current node stands in.
             if let campaign = try? await BotProjectClient.shared.campaign(projectId: projectId),
                let board = try? await BotProjectClient.shared.board(campaignId: campaign.id) {
@@ -1566,6 +1572,97 @@ private struct ProjectBotPaneScreen: View {
             }
             .task { mirror.start() }
             .onDisappear { mirror.stop() }
+        }
+    }
+}
+
+
+/// The team's Messages: step back and forward through the deliveries between
+/// bots, or stay Live on the latest; a tap on the row opens from → to, time
+/// and the preview.
+private struct ProjectTeamMessages: View {
+    let deliveries: [FactoryDelivery]
+    let agents: [FactoryAgent]
+
+    /// nil = Live (the newest message).
+    @State private var index: Int?
+    @State private var opened: FactoryDelivery?
+    @ObservedObject private var store = BotModeStore.shared
+
+    private var current: Int? {
+        guard !deliveries.isEmpty else { return nil }
+        return min(index ?? deliveries.count - 1, deliveries.count - 1)
+    }
+
+    private func name(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "Unknown" }
+        return store.bot(id)?.botDisplayName ?? agents.first { $0.id == id }?.name ?? id
+    }
+
+    private func time(_ d: FactoryDelivery) -> String {
+        d.at.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "time not saved"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Messages").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextSecondary"))
+            if let i = current {
+                let message = deliveries[i]
+                HStack(spacing: 4) {
+                    Button { index = max(i - 1, 0) } label: { Image(systemName: "chevron.left") }
+                        .disabled(i == 0).accessibilityLabel("Previous message")
+                    Button { index = i + 1 >= deliveries.count ? nil : i + 1 } label: { Image(systemName: "chevron.right") }
+                        .disabled(i == deliveries.count - 1).accessibilityLabel("Next message")
+                    Button("Live") { index = nil }.disabled(index == nil)
+                    Spacer()
+                    Text("\(i + 1) of \(deliveries.count) · \(time(message))")
+                        .font(.system(size: 12).monospacedDigit()).foregroundColor(Color("TextTertiary"))
+                }
+                .frame(minHeight: 44)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(agents, id: \.id) { agent in
+                            let role = agent.id == message.from ? "sender" : agent.id == message.to ? "receiver" : nil
+                            VStack(spacing: 2) {
+                                ProjectBotFigure(botId: agent.id, size: 28)
+                                Text(store.bot(agent.id)?.botDisplayName ?? agent.name).font(.system(size: 11)).lineLimit(1)
+                                if let role { Text(role).font(.system(size: 10, weight: .semibold)).foregroundColor(Color("TextSecondary")) }
+                            }
+                            .padding(6)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(role == nil ? Color.clear : Color("BorderSubtle"), lineWidth: 1))
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(role.map { "\(agent.name), \($0)" } ?? agent.name)
+                        }
+                    }
+                }
+                Button { opened = message } label: {
+                    HStack {
+                        Text("\(name(message.from)) → \(name(message.to))")
+                            .font(.system(size: 14, weight: .medium)).foregroundColor(Color("TextPrimary"))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("Your team is starting").font(.system(size: 14)).foregroundColor(Color("TextTertiary"))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(Color("BgPanel"))
+        .sheet(item: $opened) { message in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(name(message.from)) → \(name(message.to))").font(.headline)
+                Text(time(message)).font(.subheadline).foregroundColor(Color("TextSecondary"))
+                Text(message.preview.flatMap { $0.isEmpty ? nil : $0 } ?? "No text was saved").font(.body)
+                Spacer()
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .presentationDetents([.medium])
         }
     }
 }
