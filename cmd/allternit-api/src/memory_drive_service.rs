@@ -49,6 +49,16 @@ pub struct DriveRecord {
     pub import_revision: Option<String>,
     pub kind: String,
     pub scope_id: String,
+    /// Entries left out of the index because their provenance is not owned by
+    /// this account. Filled in memory when the drive is indexed.
+    #[serde(default)]
+    pub skipped_entries: usize,
+}
+/// Shown next to `skipped_entries` when it is above zero.
+pub const SKIPPED_NOTICE: &str = "Some memories came from another account and were left out";
+fn skipped_counts() -> &'static std::sync::Mutex<BTreeMap<String,usize>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String,usize>>> = std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
 }
 impl DriveRecord {
     pub fn storage(&self) -> Result<MemoryDrive> {
@@ -68,7 +78,8 @@ const RECORD_SQL: &str = "SELECT d.id,d.user_id,d.name,d.brain_id,d.repo_path,d.
 
 fn row_to_record(r: &rusqlite::Row) -> rusqlite::Result<DriveRecord> {
     Ok(DriveRecord { id:r.get(0)?,user_id:r.get(1)?,name:r.get(2)?,brain_id:r.get(3)?,repo_path:PathBuf::from(r.get::<_,String>(4)?),branch:r.get(5)?,
-        indexed_revision:r.get(6)?,dirty_revision:r.get(7)?,imported_at:r.get(8)?,import_revision:r.get(9)?,kind:r.get(10)?,scope_id:r.get(11)? })
+        indexed_revision:r.get(6)?,dirty_revision:r.get(7)?,imported_at:r.get(8)?,import_revision:r.get(9)?,kind:r.get(10)?,scope_id:r.get(11)?,
+        skipped_entries:0 }).map(|mut d|{ d.skipped_entries=skipped_counts().lock().ok().and_then(|m|m.get(&d.id).copied()).unwrap_or(0); d })
 }
 
 fn record(conn: &Connection, owner: &str) -> Result<Option<DriveRecord>> {
@@ -245,8 +256,15 @@ fn digest(text: &str) -> String { hex::encode(Sha256::digest(text.as_bytes())) }
 /// No kernel canonical writer is called: insert/update here is an index only.
 fn index_snapshot(conn: &Connection, drive: &DriveRecord, snapshot: &Snapshot) -> Result<()> {
     let mut seen = BTreeSet::new();
+    let mut skipped_entries=0usize;
     for (path, entry) in entries(snapshot)? {
-        validate_provenance(conn,&drive.user_id,&entry)?;
+        // A foreign or unknown provenance never loosens the ownership check:
+        // the entry is left out of the index and counted, the rest still loads.
+        match validate_provenance(conn,&drive.user_id,&entry) {
+            Ok(())=>{}
+            Err(ServiceError::Provenance(_))=>{ skipped_entries+=1; continue; }
+            Err(e)=>return Err(e),
+        }
         if !active(&entry) { continue; }
         seen.insert(entry.id.clone());
         let hash=digest(&entry.render()?);
@@ -277,6 +295,7 @@ fn index_snapshot(conn: &Connection, drive: &DriveRecord, snapshot: &Snapshot) -
         crate::memory_relations::supersede_fact(conn,&drive.user_id,&fact)?;
     }}
     recover_import(conn,drive,snapshot)?;
+    if let Ok(mut m)=skipped_counts().lock() { m.insert(drive.id.clone(),skipped_entries); }
     conn.execute("UPDATE memory_drives SET indexed_revision=?2,dirty_revision=NULL WHERE id=?1",params![drive.id,snapshot.revision])?;
     Ok(())
 }
@@ -324,7 +343,11 @@ pub fn apply_as(db: &DbHandle, owner: &str, expected: &str, operations: &[Operat
             _=>{}
         }
     }
-    for (_,entry) in entries(&candidate)? { validate_provenance(&db.connect()?,owner,&entry)?; }
+    // Existing entries with foreign provenance are quarantined at index time,
+    // so they must not block edits to the rest of the drive.
+    for (_,entry) in entries(&candidate)? {
+        match validate_provenance(&db.connect()?,owner,&entry) { Ok(())|Err(ServiceError::Provenance(_))=>{}, Err(e)=>return Err(e) }
+    }
     candidate.files.clear(); // validation snapshot does not participate in writes
     db.connect()?.execute("UPDATE memory_drives SET dirty_revision='pending' WHERE id=?1 AND user_id=?2",params![drive.id,owner])?;
     let result=drive.storage()?.apply_batch(Some(expected),operations,message,author)?;

@@ -238,7 +238,7 @@ function NotificationContent({
         </Box>}
       {(apiKeyStatus === 'invalid' || apiKeyStatus === 'missing') && usesFirstPartyAuth(mainLoopModel) && <Box>
           <Text color="error" wrap="truncate">
-            {isEnvTruthy(process.env.GIZZI_CODE_REMOTE) ? 'Authentication error · Try again' : 'Not logged in · Run /login'}
+            {isEnvTruthy(process.env.GIZZI_CODE_REMOTE) ? 'Authentication error · Try again' : 'Not signed in. Run /login to sign in.'}
           </Text>
         </Box>}
       {debug && <Box>
