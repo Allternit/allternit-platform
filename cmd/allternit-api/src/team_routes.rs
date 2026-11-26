@@ -346,6 +346,25 @@ pub fn rule_text(rule: &ApprovalRule, names: &HashMap<String, String>) -> String
     )
 }
 
+/// The bot's model label for its node: the model of `botBrain.modelRef`, else the
+/// `botBrain.runtime` / config `runtime` id, else the agent row's `model` column; `null` when none is stored.
+pub(crate) fn brain_label(cfg: &Value, column_model: Option<&str>) -> Value {
+    let brain = cfg.get("botBrain").unwrap_or(&Value::Null);
+    if let Some((_, model)) = crate::bot_brain::brain_model_pair(brain) {
+        return json!(model);
+    }
+    if let Some(m) = brain.get("modelRef").and_then(Value::as_str).filter(|m| !m.is_empty()) {
+        return json!(m);
+    }
+    brain
+        .get("runtime")
+        .or_else(|| cfg.get("runtime"))
+        .and_then(Value::as_str)
+        .filter(|r| !r.is_empty())
+        .or(column_model.filter(|m| !m.is_empty()))
+        .map_or(Value::Null, |r| json!(r))
+}
+
 /// Build the `/team/map` body from rows in hand. `cloud` is the cloud routed
 /// read and `tiers` the cloud app shelf read (`Err` in either fills `partial`).
 pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, String>, tiers: &TierRead) -> rusqlite::Result<Value> {
@@ -413,14 +432,14 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
     let mut bot_nodes: Vec<(String, BotKind, String)> = vec![]; // id, kind, owner
     for owner in &member_ids {
         let mut stmt = conn.prepare(
-            "SELECT id, name, avatar, parent_agent_id, COALESCE(config, '{}') FROM agents
+            "SELECT id, name, avatar, parent_agent_id, COALESCE(config, '{}'), model FROM agents
              WHERE user_id = ?1 AND is_bot = 1 AND archived_at IS NULL ORDER BY name",
         )?;
         let rows = stmt.query_map(params![owner], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?))
         })?;
         for r in rows {
-            let (id, name, avatar, parent, config) = r?;
+            let (id, name, avatar, parent, config, model) = r?;
             if vendor_ids.contains(&id) {
                 continue;
             }
@@ -428,6 +447,7 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
             nodes.push(json!({
                 "id": format!("b:{id}"), "kind": "bot", "name": name, "avatar": avatar, "role": Value::Null,
                 "is_main": crate::floor_routes::config_is_main_bot(&cfg), "computer": Value::Null,
+                "brain": brain_label(&cfg, model.as_deref()),
                 "state": "idle", "counts": { "asks": 0, "jobs": 0 },
             }));
             edges.push(json!({ "from": format!("p:{owner}"), "to": format!("b:{id}"), "kind": "owns" }));
@@ -438,10 +458,16 @@ pub fn map_json(conn: &Connection, v: &Viewer, cloud: &Result<Vec<AskRec2>, Stri
         }
     }
     for (vid, owner, directing) in &vendors {
-        let name: Option<String> = conn.query_row("SELECT name FROM agents WHERE id = ?1", params![vid], |r| r.get(0)).optional()?;
+        let row: Option<(String, String, Option<String>)> = conn
+            .query_row("SELECT name, COALESCE(config, '{}'), model FROM agents WHERE id = ?1", params![vid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        let (name, vcfg, vmodel) = match row {
+            Some((n, c, m)) => (Some(n), serde_json::from_str::<Value>(&c).unwrap_or(Value::Null), m),
+            None => (None, Value::Null, None),
+        };
         nodes.push(json!({
             "id": format!("v:{vid}"), "kind": "bot", "name": name.unwrap_or_else(|| vid.clone()), "avatar": Value::Null, "role": Value::Null,
-            "is_main": false, "computer": Value::Null,
+            "is_main": false, "computer": Value::Null, "brain": brain_label(&vcfg, vmodel.as_deref()),
             "state": "offline", "counts": { "asks": 0, "jobs": 0 },
         }));
         edges.push(json!({ "from": format!("p:{owner}"), "to": format!("v:{vid}"), "kind": "owns" }));
@@ -1556,6 +1582,7 @@ mod tests {
             level: None,
             rule_id: None,
             approver_user_id: Some("owner1"),
+            app_name: None,
         };
         let waiting = bar_routes::insert_job(&conn, &new_job(Some("bot1"))).unwrap();
         bar_routes::set_job_state(&conn, &waiting, JobState::WaitingApproval, &Default::default()).unwrap();
@@ -1585,6 +1612,16 @@ mod tests {
         let other = Viewer { user_id: "emp2".into(), is_admin: false, ..admin.clone() };
         let m2 = map_json(&conn, &other, &Ok(vec![]), &TierRead::skipped()).unwrap();
         assert!(m2["jobs"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn team_map_bot_nodes_carry_brain() {
+        let (conn, admin) = seeded();
+        conn.execute("UPDATE agents SET config = '{\"botBrain\":{\"runtime\":\"claude\",\"modelRef\":\"anthropic/claude-opus\"}}' WHERE id = 'bot1'", []).unwrap();
+        let map = map_json(&conn, &admin, &Ok(vec![]), &TierRead::skipped()).unwrap();
+        let brain = |id: &str| map["nodes"].as_array().unwrap().iter().find(|n| n["id"] == id).unwrap()["brain"].clone();
+        assert_eq!(brain("b:bot1"), json!("claude-opus"));
+        assert_eq!(brain("b:bot2"), json!("m"), "falls back to the agent row's model column");
     }
 
     #[test]
