@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
@@ -328,6 +329,20 @@ internal object ToolDescriber {
 
     fun normalized(name: String): String = normalize(name)
 
+    /** The kind's icon (Image, Description, Search, Edit, Terminal, Build), or null for no kind (today's orb). */
+    fun kindIcon(name: String): Int? {
+        val n = normalize(name)
+        return when {
+            n.contains("image") || n.contains("imagegen") -> DesignR.drawable.ph_image
+            n.contains("websearch") || n == "search" || n == "bravesearch" || n == "grep" || n == "glob" -> DesignR.drawable.ph_magnifying_glass
+            n == "edit" || n == "multiedit" || n == "patch" || n == "write" -> DesignR.drawable.ph_pencil_simple
+            n == "bash" || n == "shell" || n.contains("exec") || n == "runcode" -> DesignR.drawable.ph_terminal
+            n == "read" || n == "readfile" || n.contains("fetch") || n.contains("document") -> DesignR.drawable.ph_file_text
+            n == "task" || n == "agent" || n == "delegate" -> DesignR.drawable.ph_wrench
+            else -> null
+        }
+    }
+
     /** The verb for a call: "Searching the web" while running, "Searched the web" when done. */
     fun describe(call: ToolCallRecord): String {
         val running = call.state == ToolState.Running
@@ -363,6 +378,24 @@ internal object ToolDescriber {
 
 internal fun formatDuration(ms: Long): String = if (ms < 1000) "${ms}ms" else String.format(java.util.Locale.US, "%.1fs", ms / 1000.0)
 
+/** A tool kind's icon: pulses while running, a check when done (Material alpha pulse). */
+@Composable
+internal fun ToolKindIcon(icon: Int, running: Boolean, done: Boolean, size: androidx.compose.ui.unit.Dp) {
+    val c = AllternitTheme.colors
+    val alpha = if (running) {
+        val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "toolKindPulse")
+        t.animateFloat(
+            0.35f, 1f,
+            androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(800), androidx.compose.animation.core.RepeatMode.Reverse),
+            label = "toolKindAlpha",
+        ).value
+    } else 1f
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(size).graphicsLayer { this.alpha = alpha })
+        if (done) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(size - 3.dp))
+    }
+}
+
 @Composable
 internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, waiting: Boolean, backend: ChatBackend? = null) {
     val c = AllternitTheme.colors
@@ -395,7 +428,9 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (streaming) com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(calls.lastOrNull()?.toolName ?: ""))
+            val railIcon = calls.lastOrNull()?.toolName?.let { ToolDescriber.kindIcon(it) }
+            if (railIcon != null) ToolKindIcon(railIcon, running = streaming, done = !streaming, size = 14.dp)
+            else if (streaming) com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(calls.lastOrNull()?.toolName ?: ""))
             Text(header, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Icon(painterResource(if (open) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
             if (agentSteps > 0) Text(
@@ -433,9 +468,9 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
 internal fun ToolStatusLine(status: ToolStatus) {
     val c = AllternitTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val kindIcon = status.toolName.let { ToolDescriber.kindIcon(it) }
         when (status.state) {
-            ToolState.Running -> com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(status.toolName))
-            ToolState.Done -> Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(16.dp))
+            ToolState.Running, ToolState.Done -> if (kindIcon != null) ToolKindIcon(kindIcon, running = status.state == ToolState.Running, done = status.state == ToolState.Done, size = 16.dp) else if (status.state == ToolState.Done) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(16.dp)) else com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(status.toolName))
             ToolState.Failed -> Icon(painterResource(DesignR.drawable.ph_warning), contentDescription = null, tint = AllternitStatic.StatusWarning, modifier = Modifier.size(16.dp))
         }
         Text(status.text, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
