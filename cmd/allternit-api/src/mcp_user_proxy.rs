@@ -918,7 +918,7 @@ async fn acting_bot(state: &Arc<AppState>, actor: &TokenActor, session_id: &str)
 /// The bot a chat turn's session belongs to (the app's `isBot` session tag, the
 /// same lookup the agent-chat bridge uses for the bot marker). `None` = the
 /// person acting as themself. Only for tokens without the actor claims.
-async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
+pub(crate) async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
     let db = state.db.clone();
     let sid = session_id.to_string();
     tokio::task::spawn_blocking(move || {
