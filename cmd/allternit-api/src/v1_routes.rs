@@ -1865,6 +1865,11 @@ async fn agent_chat_bridge(
     let db = state.db.clone();
     let user_id = user.user_id;
     let user_id_for_record = user_id.clone();
+    // `/` pick (mcp_skills): unknown/disabled id → 422; else a one-turn directive.
+    let skill_directive = match crate::mcp_skills::turn_directive(&state, &user_id, &body_json).await {
+        Ok(d) => d,
+        Err(code) => return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": code }))).into_response(),
+    };
     let agent_id_for_task = agent_id.clone();
     let gathered = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2351,6 +2356,7 @@ async fn agent_chat_bridge(
         if let Some(layers) = turn_layers(template_line.as_deref(), location_layer.as_deref())
             .into_iter()
             .chain(repair_note.clone())
+            .chain(skill_directive.clone())
             .reduce(|a, b| format!("{a}\n\n{}", b.trim()))
         {
             gizzi_payload["turnSystem"] = json!(layers);
