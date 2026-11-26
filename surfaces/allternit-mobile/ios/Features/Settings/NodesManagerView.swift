@@ -242,7 +242,9 @@ struct NodesManagerView: View {
             title: "No nodes connected",
             message: "Add compute nodes to run agents and workloads. You can deploy new cloud instances or connect existing machines.",
             actionTitle: "Connect Existing Node",
-            action: generateToken
+            action: generateToken,
+            art: .network,
+            size: .panel
         )
         .padding(.vertical, 24)
         .background(Color("BgPanel"))

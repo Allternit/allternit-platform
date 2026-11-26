@@ -53,9 +53,11 @@ struct McpServersSettingsView: View {
                         title: "No MCP servers yet",
                         message: "Add a server to give your agents its tools.",
                         actionTitle: "Add a server",
-                        action: { isAdding = true }
+                        action: { isAdding = true },
+                        art: .connectScene
                     )
                 } else if visible.isEmpty {
+                    EmptyArt(kind: .search, size: EmptyArtSize.inline.points)
                     Text("No servers match “\(search)”.")
                         .font(.subheadline)
                         .foregroundColor(Color("TextSecondary"))

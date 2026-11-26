@@ -219,6 +219,7 @@ struct ModelManagementListContent: View {
                 Section {
                     let hits = ProviderSearch.matches(others, query: query)
                     if hits.isEmpty {
+                        EmptyArt(kind: .search, size: EmptyArtSize.inline.points)
                         Text("No other provider matches “\(query)”.")
                             .font(.caption)
                             .foregroundColor(Color("TextSecondary"))
@@ -279,6 +280,7 @@ private struct ProviderGroupList: View {
         let rows = q.isEmpty ? engines : ProviderSearch.matches(engines, query: q, limit: .max)
         List {
             if rows.isEmpty {
+                EmptyArt(kind: .network, size: EmptyArtSize.inline.points)
                 Text(q.isEmpty ? "Nothing connected here yet." : "No match.")
                     .font(.subheadline)
                     .foregroundColor(Color("TextSecondary"))
@@ -313,6 +315,7 @@ private struct OtherProvidersList: View {
                         .foregroundColor(Color("TextSecondary"))
                 }
                 if hits.isEmpty {
+                    EmptyArt(kind: .search, size: EmptyArtSize.inline.points)
                     Text(q.isEmpty ? "Type a provider name." : "No other provider matches.")
                         .font(.subheadline)
                         .foregroundColor(Color("TextSecondary"))
