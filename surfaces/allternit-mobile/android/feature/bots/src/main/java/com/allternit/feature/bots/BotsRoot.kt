@@ -261,6 +261,7 @@ sealed interface BotRoute {
     data class Listing(val id: String) : BotRoute
     data class FileEditor(val botId: String, val file: WorkspaceFileInfo) : BotRoute
     data object Activity : BotRoute
+    data object TeamReplay : BotRoute
     data class ActivityDetail(val thread: AgentActivityThread) : BotRoute
     data object Decisions : BotRoute
     /** The bots' Office floor (iOS BotRoute.office). */
@@ -402,6 +403,7 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         onHub = { optionsOpen = false; nav.open(BotRoute.Hub) },
         onDecisions = { optionsOpen = false; nav.open(BotRoute.Decisions) },
         onActivity = { optionsOpen = false; nav.open(BotRoute.Activity) },
+        onTeamReplay = { optionsOpen = false; nav.open(BotRoute.TeamReplay) },
         onGroups = { optionsOpen = false; nav.open(BotRoute.Groups) },
         onTogglePause = { scope.launch { pause.toggle() } },
         onConnections = { optionsOpen = false; host.openConnections() },
@@ -425,7 +427,7 @@ private fun PausedBanner() {
 @Composable
 private fun BotsOptionsSheet(
     waiting: Int, paused: Boolean, onDismiss: () -> Unit, onThreads: () -> Unit, onOffice: (() -> Unit)?, onHub: () -> Unit, onDecisions: () -> Unit,
-    onActivity: () -> Unit, onGroups: () -> Unit, onTogglePause: () -> Unit, onConnections: () -> Unit,
+    onActivity: () -> Unit, onTeamReplay: () -> Unit, onGroups: () -> Unit, onTogglePause: () -> Unit, onConnections: () -> Unit,
 ) {
     val context = LocalContext.current
     var layout by remember { mutableStateOf(rosterLayout(context)) }
@@ -440,6 +442,7 @@ private fun BotsOptionsSheet(
             NavRow("Agent hub", com.allternit.core.design.R.drawable.ph_squares_four, null, "botsOptionsHub", last = false, onClick = onHub)
             NavRow("Decisions", com.allternit.core.design.R.drawable.ph_question, null, "botsOptionsDecisions", last = false, onClick = onDecisions)
             NavRow("Agent activity", com.allternit.core.design.R.drawable.ph_chat_circle, null, "botsOptionsActivity", last = false, onClick = onActivity)
+            NavRow("Team messages", com.allternit.core.design.R.drawable.ph_chat_circle, null, "botsOptionsTeamReplay", last = false, onClick = onTeamReplay)
             NavRow("Group chats", com.allternit.core.design.R.drawable.ph_chat_circle, null, "botsOptionsGroups", last = false, onClick = onGroups)
             NavRow(if (paused) "Resume all bots" else "Pause all bots", if (paused) DesignR.drawable.ph_play_fill else com.allternit.core.design.R.drawable.ph_stop_fill, null, "botsOptionsPause", last = false, onClick = onTogglePause)
             NavRow("Connections", DesignR.drawable.ph_plugs_connected, null, "botsOptionsConnections", onClick = onConnections)
@@ -906,6 +909,7 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
         is BotRoute.Listing -> MarketplaceListingScreen(route.id, store, nav)
         is BotRoute.FileEditor -> withBot(route.botId) { WorkspaceFileEditorScreen(it, route.file, host.backend, nav) }
         BotRoute.Activity -> AgentActivityListScreen(host.backend, nav)
+        BotRoute.TeamReplay -> TeamReplayScreen(store, host.backend, nav)
         is BotRoute.ActivityDetail -> AgentActivityDetailScreen(route.thread, host.backend, nav)
         BotRoute.Decisions -> DecisionsScreen(host, store, nav)
     }
