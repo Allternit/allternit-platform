@@ -40,6 +40,7 @@ import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
 import { mcpToolMetadata } from "@/runtime/tools/mcp/apps"
+import { McpScript } from "@/runtime/tools/builtins/mcp-script"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
@@ -1864,6 +1865,8 @@ const message = await createUserMessage(input)
     // mount none until connector_search loads them (non-connector MCP tools
     // always mount). Loaded tools keep their own permission rules below.
     const connectorMounted = Connectors.mountFilter(input.session.id, mcpCatalog.descriptors)
+    // Code Mode (mcp_script): the MCP tools a script may call this turn.
+    const scriptEntries: McpScript.Entry[] = []
     for (const [key, item] of mcpTools) {
       if (!connectorMounted(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
@@ -1946,6 +1949,7 @@ const message = await createUserMessage(input)
         } finally {
           McpUserProxy.clearApproval(opts.toolCallId)
         }
+        McpScript.noteRaw(opts, result)
 
         await Plugin.trigger(
           "tool.execute.after",
@@ -2018,7 +2022,25 @@ const message = await createUserMessage(input)
         }
       }
       tools[key] = item
+      // A Code Mode call takes this same wrapped execute, so every gate above
+      // (connector/bot off, ctx.ask, the proxy's approval) applies to it.
+      const wrapped = item.execute as (args: Record<string, unknown>, opts: ToolCallOptions) => Promise<unknown>
+      const descriptor = mcpCatalog.descriptors[key]
+      scriptEntries.push({
+        key,
+        server: descriptor?.serverName ?? key,
+        tool: descriptor?.originalName ?? key,
+        description: item.description,
+        inputSchema: jsonSchemaValue.jsonSchema,
+        outputSchema: descriptor?.outputSchema,
+        call: async (args, ctx) => {
+          const opts = { toolCallId: ctx.callID ?? "", abortSignal: ctx.abort, messages: [] } as ToolCallOptions
+          await wrapped(args, opts)
+          return McpScript.takeRaw(opts)
+        },
+      })
     }
+    McpScript.attach(tools, input.session.id, scriptEntries)
 
     // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
     await addSelfhostCustomTools(tools, { ...input, context, mcpCatalog })

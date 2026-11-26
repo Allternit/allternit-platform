@@ -33,6 +33,7 @@ import { SkillTool } from "@/runtime/tools/builtins/skill"
 import { AgentCommunicateTool } from "@/runtime/tools/builtins/agent-communicate"
 import { ListTool } from "@/runtime/tools/builtins/ls"
 import { MultiEditTool } from "@/runtime/tools/builtins/multiedit"
+import { McpScriptTool } from "@/runtime/tools/builtins/mcp-script"
 import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import type { Agent } from "@/runtime/loop/agent"
 import { Tool } from "@/runtime/tools/builtins/tool"
@@ -256,6 +257,9 @@ export namespace ToolRegistry {
       EditTool,
       MultiEditTool,
       SymbolEditTool,
+      // Code Mode: one sandboxed script calls several MCP tools. Offered only with
+      // 2+ MCP tools connected (McpScript.attach in session/prompt.ts).
+      McpScriptTool,
       WriteTool,
       TaskTool,
       AgentSwarmTool,

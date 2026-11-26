@@ -1,0 +1,10 @@
+Run one TypeScript script that calls several MCP tools, and get back only what the script returns.
+
+Use this instead of separate MCP tool calls when a task needs 3 or more calls, a loop over results, or data from one tool passed to another. Intermediate results stay inside the script and never fill the conversation.
+
+How to write the script:
+- It is the body of an async function. Call tools as `await <server>.<tool>(args)` using the declarations below, and `return` the value you need (JSON-serializable, cut at 8 KB, so return only what matters).
+- A call rejects when the tool errors or the person declines it; use try/catch when you can continue without it.
+- Each call asks for permission the same way a normal MCP tool call does.
+- Limits: 50 calls, 60 s of run time (time waiting for the person's approval does not count), 32 MB memory.
+- Only plain JavaScript built-ins exist. There is no fetch, setTimeout, process, require, import or file system.
