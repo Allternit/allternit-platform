@@ -62,6 +62,8 @@ import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.bots.BotRecord
 import kotlinx.coroutines.launch
 
@@ -239,7 +241,7 @@ fun AutopilotSheet(
                         }
                         Text("Rules", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 4.dp, top = 6.dp).semantics { heading() })
                         if (drafts.isEmpty()) {
-                            Text("No rules yet. Every need asks you first.", color = c.textTertiary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                            InlineEmpty("No rules yet. Every need asks you first.", modifier = Modifier.padding(horizontal = 4.dp), art = EmptyArtKind.Sheets)
                         }
                         drafts.forEach { d ->
                             RuleRow(
@@ -337,7 +339,7 @@ private fun RuleRow(
                 if (pods.isNotEmpty()) Chip("A pod", r.scopeType == "pod", "autopilotScopePod") { onChange { it.copy(rule = it.rule.copy(scopeType = "pod", scopeId = pods.firstOrNull()?.id)) } }
             }
             if (r.scopeType == "bot") FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (bots.isEmpty()) Text("No bots yet.", color = c.textTertiary, fontSize = 13.sp)
+                if (bots.isEmpty()) InlineEmpty("No bots yet.", art = EmptyArtKind.Gizzi)
                 bots.forEach { b -> Chip(b.displayName, r.scopeId == b.id, "autopilotBot") { onChange { it.copy(rule = it.rule.copy(scopeId = b.id)) } } }
             }
             if (r.scopeType == "pod") FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

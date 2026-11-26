@@ -60,6 +60,8 @@ import com.allternit.feature.artifacts.PillRow
 import com.allternit.feature.chat.ChatBackend
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 
 /** What the shell gives Cowork: the relay, the menu button, sign-in and the chat for a session. */
 class CoworkHost(
@@ -252,9 +254,9 @@ fun CoworkTasksScreen(api: CoworkApi, state: CoworkTasksState, onBack: () -> Uni
         actionError?.let { Text(it, color = AllternitStatic.StatusWarning, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) }
         when {
             state.loading && state.tasks.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }
-            state.noComputer && state.tasks.isEmpty() -> FriendlyState(FriendlyStyle.Empty, "No computer yet", "Tasks show up here once a computer is connected.", Modifier.padding(horizontal = 20.dp)) { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary) }
+            state.noComputer && state.tasks.isEmpty() -> FriendlyState(FriendlyStyle.Empty, "No computer yet", "Tasks show up here once a computer is connected.", Modifier.padding(horizontal = 20.dp), art = EmptyArtKind.ConnectScene) { }
             state.error != null && state.tasks.isEmpty() -> FriendlyState(FriendlyStyle.Offline, "Couldn't load tasks", state.error.orEmpty(), Modifier.padding(horizontal = 20.dp), "Retry", { scope.launch { state.refresh() } }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
-            visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (agentSegment) "No agent tasks yet" else "No tasks yet", "Create a task to get started.", Modifier.padding(horizontal = 20.dp), "Create task", { creating = true }) { Icon(painterResource(DesignR.drawable.ph_check_circle_fill), null, tint = c.textSecondary) }
+            visible.isEmpty() -> FriendlyState(FriendlyStyle.Empty, if (agentSegment) "No agent tasks yet" else "No tasks yet", "Create a task to get started.", Modifier.padding(horizontal = 20.dp), "Create task", { creating = true }, art = EmptyArtKind.Bell) { }
             else -> PullToRefreshBox(isRefreshing = state.loading, onRefresh = { scope.launch { state.refresh() } }, modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     visible.forEach { t ->
@@ -410,7 +412,8 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
         PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { refresh() } }, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Pending approvals", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                if (pending.isEmpty()) Text(if (noComputer) "Connect a computer to see approvals." else error ?: "No approvals waiting.", color = c.textSecondary, fontSize = 13.sp)
+                if (pending.isEmpty() && !noComputer && error == null) InlineEmpty("No approvals waiting.", art = EmptyArtKind.Bell)
+                else if (pending.isEmpty()) Text(if (noComputer) "Connect a computer to see approvals." else error.orEmpty(), color = c.textSecondary, fontSize = 13.sp)
                 pending.forEach { a ->
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row { Text(a.capability, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); Text(a.status, color = AllternitStatic.StatusWarning, fontSize = 12.sp) }
@@ -429,7 +432,7 @@ private fun FabricApprovalsScreen(api: CoworkApi, onBack: () -> Unit) {
                     }
                 }
                 Text("Recent runs", color = c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-                if (runs.isEmpty()) Text("No runs yet.", color = c.textSecondary, fontSize = 13.sp)
+                if (runs.isEmpty()) InlineEmpty("No runs yet.", art = EmptyArtKind.Bell)
                 runs.forEach { run ->
                     Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(role = Role.Button) {
                         selected = if (selected == run.id) null else run.id

@@ -28,6 +28,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.EmptyBox
 import com.allternit.core.design.FilterPills
 import com.allternit.core.design.ProvideDockScroll
+import com.allternit.core.design.EmptyArtKind
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -141,7 +142,7 @@ internal fun AciExtensionsView() {
             if (marketplace) {
                 Text("Extension Marketplace", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Text("Install curated browser capabilities into Allternit.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
-                if (market.isEmpty()) EmptyBox("No extensions found", "Nothing in the marketplace matches.", Modifier.testTag("aciState"))
+                if (market.isEmpty()) EmptyBox("No extensions found", "Nothing in the marketplace matches.", Modifier.testTag("aciState"), art = EmptyArtKind.Search)
                 else AciRoundedCard {
                     market.forEach { e ->
                         val installed = store.items.any { it.name == e.name && it.installed }
@@ -151,7 +152,7 @@ internal fun AciExtensionsView() {
                     }
                 }
             } else {
-                if (mine.isEmpty()) EmptyBox("No extensions found", "Install one from the Marketplace, or upload your own.", Modifier.testTag("aciState"), onClick = { marketplace = true })
+                if (mine.isEmpty()) EmptyBox("No extensions found", "Install one from the Marketplace, or upload your own.", Modifier.testTag("aciState"), onClick = { marketplace = true }, art = EmptyArtKind.Search)
                 else AciRoundedCard {
                     mine.forEach { e ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

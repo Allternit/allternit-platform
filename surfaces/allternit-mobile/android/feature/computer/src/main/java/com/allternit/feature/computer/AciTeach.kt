@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.InlineEmpty
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.list
@@ -238,7 +240,7 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
                         onDeleted = { skills = skills.orEmpty().filterNot { it.id == sel.id }; selected = null })
                     failure != null && list == null -> {
                         val f = failure!!
-                        if (f.gate) AciStateCard("No computer is connected", "Teach skills and recordings are saved on your computer. Open Allternit Desktop or start your cloud computer, then try again.", "Try again", { scope.launch { load() } })
+                        if (f.gate) AciStateCard("No computer is connected", "Teach skills and recordings are saved on your computer. Open Allternit Desktop or start your cloud computer, then try again.", "Try again", { scope.launch { load() } }, art = EmptyArtKind.ConnectScene)
                         else AciStateCard("Couldn’t load skills", f.message, "Retry", { scope.launch { load() } })
                     }
                     list == null -> AciStateCard("Loading skills…", "Reading your skills.")
@@ -314,7 +316,7 @@ private fun TeachEditor(skill: TeachSkill, client: TeachClient, onSaved: (TeachS
         Text("Goal", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         AciSearchField(intent, "What this skill does", { intent = it }, "aciTeachIntent")
         Text("Steps", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        if (steps.isEmpty()) Text("No steps yet. Add the first one.", color = c.textSecondary, fontSize = 13.sp)
+        if (steps.isEmpty()) InlineEmpty("No steps yet. Add the first one.", art = EmptyArtKind.Log)
         steps.forEachIndexed { idx, s ->
             AciCard(Modifier.testTag("aciTeachStep-$idx")) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -332,7 +334,7 @@ private fun TeachEditor(skill: TeachSkill, client: TeachClient, onSaved: (TeachS
         }
         AciPillButton("Add step", "aciTeachAddStep") { steps += DraftStep(JsonObject(emptyMap()), TeachClient.newId("step"), "ui", "", "") }
         Text("Inputs", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        if (inputs.isEmpty()) Text("No inputs. Add one for a value that changes each run, then use {{name}} in a step.", color = c.textSecondary, fontSize = 13.sp)
+        if (inputs.isEmpty()) InlineEmpty("No inputs. Add one for a value that changes each run, then use {{name}} in a step.", art = EmptyArtKind.Log)
         unknown.forEach { n -> Text("{{$n}} has no input. Add an input named “$n” or fix the name.", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.clickable { inputs += DraftInput(JsonObject(emptyMap()), n, n.replace(Regex("[_.-]+"), " ").replaceFirstChar { it.uppercase() }, "", true) }) }
         inputs.forEachIndexed { idx, i ->
             AciCard(Modifier.testTag("aciTeachInput-$idx")) {
