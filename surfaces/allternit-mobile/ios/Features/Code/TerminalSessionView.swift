@@ -300,8 +300,27 @@ struct TerminalSurfaceView: UIViewRepresentable {
 extension TerminalSurfaceView.Coordinator: TerminalViewDelegate {
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let text = String(decoding: data, as: UTF8.self)
+        // Replaying scrollback makes the emulator answer old cursor/device
+        // queries. Those replies are not typing; sent to the shell they show up
+        // as "^[[12;23R" (UI feedback K3, same guard as the web terminal).
+        if Self.isTerminalReport(text) { return }
         let onInput = self.onInput
         Task { @MainActor in onInput(text) }
+    }
+
+    /// Cursor position (`ESC[r;cR`), device attributes (`ESC[?..c`, `ESC[>..c`),
+    /// status (`ESC[0n`, `ESC[?..n`), mode reports (`ESC[?..;..$y`) and OSC
+    /// colour replies (`ESC]1x;rgb:...`): replies, never keystrokes.
+    static func isTerminalReport(_ text: String) -> Bool {
+        guard text.hasPrefix("\u{1B}[") || text.hasPrefix("\u{1B}]") else { return false }
+        let patterns = [
+            "^(\u{1B}\\[[0-9]+;[0-9]+R)+$",
+            "^\u{1B}\\[[?>][0-9;]*c$",
+            "^\u{1B}\\[[?]?[0-9;]*n$",
+            "^\u{1B}\\[[?]?[0-9;]*\\$y$",
+            "^\u{1B}\\]1[0-9];rgb:[0-9a-fA-F/]+(\u{07}|\u{1B}\\\\)$",
+        ]
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {

@@ -298,7 +298,7 @@ struct SessionOverviewView: View {
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.name ?? "Untitled")
+                    Text(session.displayTitle)
                         .font(.system(size: 16.5))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -631,7 +631,7 @@ struct SessionOverviewView: View {
     }
 
     private func accessibilityTitle(_ session: AgentSession) -> String {
-        let name = session.name ?? "Untitled"
+        let name = session.displayTitle
         if store.isStreaming(session.id) { return "\(name), Working" }
         if store.isUnread(session) { return "\(name), New reply" }
         return name
@@ -657,7 +657,7 @@ struct SessionOverviewView: View {
                 .accessibilityLabel("Rename")
                 .frame(maxWidth: .infinity)
         } else {
-            Text(session.name ?? "Untitled")
+            Text(session.displayTitle)
                 .font(.system(size: size, weight: weight))
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(lines)
@@ -685,7 +685,7 @@ struct SessionOverviewView: View {
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel("More for \(session.name ?? "Untitled")")
+        .accessibilityLabel("More for \(session.displayTitle)")
     }
 
     /// Teleport from ⋯: the session keeps its conversation and resumes on the other computer.
@@ -718,7 +718,7 @@ struct SessionOverviewView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Archive \(session.name ?? "Untitled")")
+        .accessibilityLabel("Archive \(session.displayTitle)")
     }
 
     /// Phones: swipe a deck card up to close it.

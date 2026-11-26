@@ -503,3 +503,27 @@ struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
         action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? "recalled"
     }
 }
+
+// MARK: - Display title (UI feedback K4)
+
+extension AgentSession {
+    /// True for a name the runtime made up ("New session - 2026-11-17T...",
+    /// "New thread 2026-11-17", "Untitled"): it must never show as a title.
+    /// Same rule as allternit-ai `session-display-title.ts`.
+    static func isRawDefaultName(_ name: String?) -> Bool {
+        let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if n.isEmpty || n == "untitled" || n == "new session" || n == "new thread" || n == "new chat" { return true }
+        let prefixes = ["new session", "new thread", "new chat", "untitled"]
+        return prefixes.contains { n.hasPrefix($0) } && n.contains { $0.isNumber }
+    }
+
+    /// The name people see: the session's own name, else "New session · Nov 17"
+    /// from its created date. (The list wire carries no first prompt.)
+    var displayTitle: String {
+        if !Self.isRawDefaultName(name) { return (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let date = (try? Date(createdAt, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(createdAt, strategy: Date.ISO8601FormatStyle()))
+        guard let date else { return "New session" }
+        return "New session · " + date.formatted(.dateTime.month(.abbreviated).day())
+    }
+}

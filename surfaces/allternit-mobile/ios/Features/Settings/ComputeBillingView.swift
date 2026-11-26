@@ -83,7 +83,8 @@ struct ComputeBillingView: View {
     }
 
     private var billingList: some View {
-        List {
+        // Dot title that docks into the bar on scroll (UI feedback I12).
+        DockingTitleList(title: title) {
             if title != "Usage" {
                 Section {
                     MemberCardView(
@@ -199,9 +200,6 @@ struct ComputeBillingView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task {

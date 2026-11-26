@@ -34,15 +34,10 @@ struct CapabilitiesSettingsView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                Text(kind == .skill
-                     ? "Skills your agents can use on this computer. Turn one off to keep agents from using it."
-                     : "Plugin packages installed on this computer. Turn one off to keep agents from loading it.")
-                    .font(.footnote)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-
+        // Dot title that docks into the bar on scroll (UI feedback I15, I17).
+        DockingTitleList(title: title, description: kind == .skill
+                         ? "Skills your agents can use on this computer. Turn one off to keep agents from using it."
+                         : "Plugin packages installed on this computer. Turn one off to keep agents from loading it.") {
             Section {
                 if !authManager.canCallAccountAPIs {
                     SettingsSignedOutView(message: "Sign in to see the \(noun)s on your computer.")
@@ -84,9 +79,6 @@ struct CapabilitiesSettingsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Search \(noun)s")

@@ -94,7 +94,8 @@ struct CustomizeSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            // Dot title that docks into the bar on scroll (UI feedback I14).
+            DockingTitleList(title: "Customize") {
                 if !auth.isSignedIn && !auth.isSkippingAuth {
                     FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to customize",
                                       message: "Skills, connectors and plugins belong to your account.",

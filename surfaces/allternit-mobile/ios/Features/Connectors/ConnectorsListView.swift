@@ -20,6 +20,7 @@ struct ConnectorsListView: View {
     @State private var isLoading = false
     @State private var loadError: String? = nil
     @State private var searchText = ""
+    @State private var isConnectPresented = false
     /// "Who can use this" for a connected connector (team map flag on).
     @State private var whoCanUse: TeamAppRef? = nil
 
@@ -61,19 +62,19 @@ struct ConnectorsListView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            // Dot title that docks into the bar on scroll (UI feedback I16).
+            DockingTitleScrollView(title: "Connectors", chrome: .navigationBar) {
                 searchBar
                 Divider().background(Color("BorderSubtle"))
-                ScrollView {
-                    // Meetings: the calendar step, until a calendar is connected.
-                    MeetingsConnectorsPrompt()
-                    content
-                }
-                .refreshable { await loadConnectors() }
+                // Meetings: the calendar step, until a calendar is connected.
+                MeetingsConnectorsPrompt()
+                content
             }
+            .refreshable { await loadConnectors() }
             .background(Color("BgPrimary"))
             .navigationTitle("Connectors")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
@@ -163,7 +164,10 @@ struct ConnectorsListView: View {
                     icon: "puzzlepiece.extension",
                     title: "No connectors available",
                     message: "Add a connector to link external accounts and services.",
-                    art: .apps
+                    actionTitle: "Connect",
+                    action: { isConnectPresented = true },
+                    art: .connectScene,
+                    size: .panel
                 )
                 .frame(maxWidth: .infinity)
             } else {
