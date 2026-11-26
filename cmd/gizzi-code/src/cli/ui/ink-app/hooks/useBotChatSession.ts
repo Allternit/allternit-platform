@@ -185,9 +185,9 @@ export function useBotChatSession({
       const description = patterns.length ? `${toolName}: ${patterns.join(', ')}` : `${toolName} requires permission`
       const input = (event.metadata && typeof event.metadata === 'object' ? event.metadata : { patterns }) as Record<string, unknown>
       const toolUseID = permToolUseId(requestId)
-      const answer = (reply: 'once' | 'always' | 'reject', message?: string) => {
+      const answer = (reply: 'once' | 'always' | 'task' | 'reject', message?: string, secret?: string) => {
         dropPrompt(requestId)
-        replyPermission(requestId, reply, message).catch(error =>
+        replyPermission(requestId, reply, message, secret).catch(error =>
           notice(`Couldn't answer the bot's permission request: ${error?.message ?? error}`, 'error'),
         )
       }
@@ -205,6 +205,8 @@ export function useBotChatSession({
         onAbort: () => answer('reject'),
         onAllow: (_input, permissionUpdates) => answer(permissionUpdates?.length ? 'always' : 'once'),
         onReject: (feedback?: string) => answer('reject', feedback),
+        // Agent-browser needs-you prompts: buttons from metadata.options, a masked answer for secrets.
+        onNeedsYou: (reply, secret) => answer(reply, undefined, secret),
         async recheckPermission() {},
       }
       setToolUseConfirmQueue(queue => [...queue.filter(item => item.toolUseID !== confirm.toolUseID), confirm])

@@ -288,6 +288,10 @@ Stop ends the waiting call. Every fill asks: "Allow for this run" covers one cre
 
 `gizzi run` without a terminal never approves a credential. It fails the step with a message naming the approval id and how to approve it from the app (the needs-you card for the run, or the approve route above), and leaves the approval pending. Human and block holds are left for the app the same way.
 
+The terminal UI shows these same prompts everywhere it shows an agent's permission request: the permission dialog in a bot chat, and the `/decisions` list. Each prompt is titled **Needs you** and shows the summary line, then one button per option the run offered. Pick a button with the arrow keys and Enter (or its number in `/decisions`); Esc stops. When the run asks for a secret, choosing Continue opens a hidden field that shows only bullets as you type. Enter sends the value as the answer and Esc cancels. The value is never echoed, never written to the transcript or the prompt history, and never logged. Editors that connect through ACP show the same buttons but cannot take hidden input, so a secret ask there is stopped with a message pointing to the terminal or the app.
+
+*Screenshot description:* the terminal with a "Needs you" heading, the line "Fill your Acme login on example.com?" and below it three buttons, "Approve", "Allow for this run" and "Deny", the first one highlighted. A second screenshot shows "Value (hidden)" with a row of bullets and "Enter send · Esc stop".
+
 ### Model frame and scaling
 
 Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.

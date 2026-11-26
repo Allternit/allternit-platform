@@ -153,8 +153,13 @@ export function rejectQuestion(id: string): Promise<unknown> {
   return engine(`/v1/question/${encodeURIComponent(id)}/reject`, {})
 }
 
-export function answerApproval(id: string, reply: "once" | "always" | "reject"): Promise<unknown> {
-  return engine(`/v1/permission/${encodeURIComponent(id)}/reply`, { reply })
+export function answerApproval(
+  id: string,
+  reply: "once" | "always" | "task" | "reject",
+  /** Needs-you prompts: a typed secret (never logged). */
+  answer?: string,
+): Promise<unknown> {
+  return engine(`/v1/permission/${encodeURIComponent(id)}/reply`, { reply, ...(answer !== undefined ? { answer } : {}) })
 }
 
 /** One-line summary of what an approval is for (file, command or URL first). */

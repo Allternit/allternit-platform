@@ -1876,6 +1876,14 @@ fn permission_reply_payload(body: &serde_json::Value) -> Option<serde_json::Valu
     if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
         payload["message"] = json!(message);
     }
+    // Needs-you prompts (computer.credential / human / block): a masked secret
+    // rides `answer`; never logged here.
+    if let Some(answer) = body.get("answer").and_then(|v| v.as_str()) {
+        payload["answer"] = json!(answer);
+    }
+    if let Some(action) = body.get("humanAction").and_then(|v| v.as_str()) {
+        payload["humanAction"] = json!(action);
+    }
     Some(payload)
 }
 

@@ -81,11 +81,17 @@ export function abortSession(sessionId: string): Promise<unknown> {
 export type PermissionReply = "once" | "always" | "task" | "reject"
 
 /** Answer a bot's permission prompt (gateway relays to gizzi `/v1/permission/:id/reply`). */
-export function replyPermission(requestId: string, reply: PermissionReply, message?: string): Promise<unknown> {
+export function replyPermission(
+  requestId: string,
+  reply: PermissionReply,
+  message?: string,
+  /** Needs-you prompts: a typed secret (never logged). */
+  answer?: string,
+): Promise<unknown> {
   return platformRequest(
     "POST",
     `/api/v1/permissions/${enc(requestId)}/reply`,
-    { reply, ...(message ? { message } : {}) },
+    { reply, ...(message ? { message } : {}), ...(answer !== undefined ? { answer } : {}) },
     ACTION,
   )
 }
