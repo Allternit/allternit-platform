@@ -818,8 +818,19 @@ async fn call_tool(
             // Team map (levels, then rules) before the install mode. Rules only add asks.
             let read_only = tool["annotations"]["readOnlyHint"] == json!(true);
             let decision =
-                team_gate(state, &team, &connector_id, &connector_name, &tool_name, read_only, &arguments, approved, needs_confirmation)
-                    .await?;
+                team_gate(
+                    state,
+                    &team,
+                    &connector_id,
+                    &connector_name,
+                    &tool_name,
+                    read_only,
+                    tool.get("inputSchema"),
+                    &arguments,
+                    approved,
+                    needs_confirmation,
+                )
+                .await?;
             let claimed = team_refusal(decision, gate, &connector_name, &tool_name, &team)?;
             if needs_confirmation {
                 // The gate claims nothing for a call held here; release anything anyway.
@@ -930,6 +941,7 @@ async fn team_gate(
     connector_name: &str,
     tool_name: &str,
     read_only: bool,
+    input_schema: Option<&Value>,
     arguments: &Value,
     self_confirmed: bool,
     held_for_confirmation: bool,
@@ -937,6 +949,7 @@ async fn team_gate(
     let db = state.db.clone();
     let (team, connector_id, connector_name, tool_name, arguments) =
         (team.clone(), connector_id.to_string(), connector_name.to_string(), tool_name.to_string(), arguments.clone());
+    let input_schema = input_schema.cloned();
     let decided = tokio::task::spawn_blocking(move || {
         let conn = db.connect().map_err(|e| e.to_string())?;
         crate::team_rules::gate_call(
@@ -950,6 +963,7 @@ async fn team_gate(
                 tool: &tool_name,
                 tool_read_only: read_only,
                 args: &arguments,
+                input_schema: input_schema.as_ref(),
                 approval_ids: &team.approval_ids,
                 job_id: team.job_id.as_deref(),
                 self_confirmed,
