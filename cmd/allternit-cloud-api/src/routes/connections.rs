@@ -99,6 +99,12 @@ struct CatalogQuery {
     limit: Option<String>,
     #[serde(default)]
     cursor: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    interactive: Option<String>,
+    #[serde(default)]
+    sort: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -133,6 +139,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/connections/copilot/callback", get(copilot_callback))
         // A static segment: matched before `:id`, so `catalog` is never an id.
         .route("/api/v1/connections/catalog", get(catalog))
+        .route("/api/v1/connections/catalog/:id", get(catalog_detail))
         .route("/api/v1/connections/:id", axum::routing::delete(remove))
         .route("/api/v1/connections/:id/connect", post(connect))
         .route("/api/v1/connections/:id/submit", post(submit))
@@ -352,7 +359,10 @@ async fn catalog(
             query.q.as_deref(),
             query.limit.as_deref(),
             query.cursor.as_deref(),
-        ) {
+        )
+        .and_then(|parsed| {
+            catalog::with_filters(parsed, query.category.as_deref(), query.interactive.as_deref(), query.sort.as_deref())
+        }) {
             Ok(query) => query,
             Err(error) => return Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": error.code() }))).into_response()),
         };
@@ -366,6 +376,39 @@ async fn catalog(
             false
         };
         Ok(Json(catalog::page(&query, online)).into_response())
+    }
+    .await);
+    if response.status() == StatusCode::OK {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
+    }
+    response
+}
+
+/// `GET /api/v1/connections/catalog/:id` (version 2): one entry as
+/// `{"version": 2, "entry": {...}}`, or 404 `{"error": "not_found"}`.
+async fn catalog_detail(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    use crate::services::connections_catalog as catalog;
+    let mut response = reply(async {
+        let user = session_user(&state, &headers).await?;
+        let online = if catalog::detail_needs_computer_fact(&id) {
+            let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
+            catalog::computer_online(&state.db, &user, &connected, Utc::now()).await.unwrap_or_else(|error| {
+                tracing::warn!(%error, "computer status unavailable; catalog entry listed as unavailable");
+                false
+            })
+        } else {
+            false
+        };
+        match catalog::detail(&id, online) {
+            Some(entry) => Ok(Json(json!({ "version": catalog::VERSION, "entry": entry })).into_response()),
+            None => Ok((StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response()),
+        }
     }
     .await);
     if response.status() == StatusCode::OK {
