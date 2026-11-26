@@ -453,6 +453,7 @@ pub mod team_skill_routes;
 // pipe on Windows).
 pub mod terminal_routes;
 pub mod token_crypto;
+pub mod tool_policy_routes;
 pub mod tool_routes;
 pub mod udemy_routes;
 pub mod upload_routes;
