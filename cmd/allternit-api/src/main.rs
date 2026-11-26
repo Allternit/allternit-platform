@@ -966,6 +966,17 @@ async fn main() {
             }
         });
     }
+    // Island bar jobs: ledger every state change as `bar_job.changed` (Live Activity push).
+    {
+        let db = state.db.clone();
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::bar_routes::run_job_ledger(db) => {}
+            }
+        });
+    }
 
     // Office view: pushes the public floor projection to the cloud every 60 s while the live link is on.
     {
