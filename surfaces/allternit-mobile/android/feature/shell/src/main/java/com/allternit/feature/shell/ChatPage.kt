@@ -47,6 +47,8 @@ internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
     agentModeId = agentModeId,
     webSearch = webSearch,
     research = research,
+    skillId = skillId,
+    skillArguments = skillArguments,
 )
 
 /**
