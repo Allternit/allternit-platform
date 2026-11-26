@@ -110,8 +110,27 @@ private val Warn = Color(0xFFE0612F)
 private val WriteEase = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
 private const val WRITE_MS = 850
 private const val WRITE_HOLD_MS = 1050L
-private enum class Step { Review, Sign }
-private enum class Tab { Draw, Type }
+internal enum class Step { Review, Sign }
+internal enum class Tab { Draw, Type }
+
+/**
+ * The sheet's ink and form state, owned by the host so closing the sheet (Preview) and reopening it keeps the drawing,
+ * the typed name, the chosen tab, the uploaded image and the step. Create it with [rememberSignSheetState] in the host
+ * (not inside the sheet) and pass it to [SignSheet].
+ */
+class SignSheetState {
+    val pad = SignPadState()
+    internal var step by mutableStateOf<Step?>(null)
+    internal var tab by mutableStateOf(Tab.Draw)
+    internal var typed by mutableStateOf("")
+    internal var uploaded by mutableStateOf<Bitmap?>(null)
+
+    /** Forget the ink (after a successful sign). */
+    fun reset() { pad.clear(); step = null; tab = Tab.Draw; typed = ""; uploaded = null }
+}
+
+@Composable
+fun rememberSignSheetState(): SignSheetState = remember { SignSheetState() }
 
 /**
  * Review & sign sheet (iOS `SignSheetView`, web `after.tsx`): a review step with rows, then a sign step with a Draw | Type
@@ -131,6 +150,7 @@ fun SignSheet(
     details: List<SignDetail> = emptyList(),
     sendTo: String? = null,
     mode: SignMode = SignMode.Request,
+    state: SignSheetState = rememberSignSheetState(),
     onSign: (png: ByteArray, bitmap: Bitmap, method: String, sourceRectInWindow: Rect) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -144,12 +164,12 @@ fun SignSheet(
     val bare = details.isEmpty() && summary.isNullOrBlank() && sendTo.isNullOrBlank()
     val script = remember { FontFamily(Font(R.font.sacramento_regular)) }
     val typeface = remember { runCatching { context.resources.getFont(R.font.sacramento_regular) }.getOrDefault(Typeface.create("cursive", Typeface.NORMAL)) }
-    val pad = remember { SignPadState() }
+    val pad = state.pad
 
-    var step by remember { mutableStateOf(if (bare) Step.Sign else Step.Review) }
-    var tab by remember { mutableStateOf(Tab.Draw) }
-    var typed by remember { mutableStateOf("") }
-    var uploaded by remember { mutableStateOf<Bitmap?>(null) }
+    val step = state.step ?: if (bare) Step.Sign else Step.Review
+    var tab by state::tab
+    var typed by state::typed
+    var uploaded by state::uploaded
     var failure by remember { mutableStateOf<String?>(null) }
     var padRect by remember { mutableStateOf(Rect.Zero) }
     var writing by remember { mutableStateOf(false) }
@@ -203,7 +223,7 @@ fun SignSheet(
                 if (s == Step.Review) {
                     ReviewStep(title, summary, details, sendTo, onClose) {
                         PolishHaptic.perform(view, PolishHaptic.Kind.Light)
-                        step = Step.Sign
+                        state.step = Step.Sign
                     }
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -240,7 +260,7 @@ fun SignSheet(
                         )
                         failure?.let { Text(it, color = Warn, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp).testTag("signFailure")) }
                         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Pill("Close", filled = false, enabled = !writing, modifier = Modifier.width(96.dp).testTag("signClose")) { if (bare) onClose() else step = Step.Review }
+                            Pill("Close", filled = false, enabled = !writing, modifier = Modifier.width(96.dp).testTag("signClose")) { if (bare) onClose() else state.step = Step.Review }
                             SignButton(
                                 label = if (mode == SignMode.Local) "Place signature" else "Sign & send",
                                 hasInk = hasInk, writing = writing, reduce = reduce, script = script, modifier = Modifier.weight(1f),

@@ -542,6 +542,10 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                     modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { dockDp = with(density) { it.height.toDp().value.roundToInt() } },
                 )
             }
+            // "Awaiting your signature": pending sign requests, loaded when the floor appears.
+            if (kit != null && !full && sheetBot == null && digest == null && ready) {
+                OfficeSignRequestCard(userId, Modifier.align(Alignment.TopCenter).padding(start = 12.dp, end = 12.dp, top = 58.dp))
+            }
             // "While you were away": once per visit after 30+ minutes away; a line opens that bot's sheet.
             val away = digest
             if (kit != null && away != null && !full && sheetBot == null) {

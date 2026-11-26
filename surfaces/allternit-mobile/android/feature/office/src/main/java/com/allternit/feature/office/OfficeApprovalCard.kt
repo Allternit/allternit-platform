@@ -173,7 +173,7 @@ private data class Quad(val icon: Int, val header: String, val title: String, va
 
 /** The card's capsule button (the Bots Pill look: neutral fill, or ink for the primary). */
 @Composable
-private fun CardButton(title: String, testTag: String, primary: Boolean = false, label: String = title, enabled: Boolean = true, busy: Boolean = false, onClick: () -> Unit) {
+internal fun CardButton(title: String, testTag: String, primary: Boolean = false, label: String = title, enabled: Boolean = true, busy: Boolean = false, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(

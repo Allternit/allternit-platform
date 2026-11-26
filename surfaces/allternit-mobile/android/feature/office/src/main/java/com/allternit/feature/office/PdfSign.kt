@@ -33,12 +33,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -88,6 +91,7 @@ import com.allternit.feature.office.sign.SignMode
 import com.allternit.feature.office.sign.SignFlight
 import com.allternit.feature.office.sign.SignRepository
 import com.allternit.feature.office.sign.SignSheet
+import com.allternit.feature.office.sign.rememberSignSheetState
 import com.allternit.feature.office.sign.fitRect
 import java.io.File
 import java.text.SimpleDateFormat
@@ -110,13 +114,67 @@ private const val SLOT_W = 180.0
 private const val SLOT_H = 56.0
 private const val SLOT_MARGIN = 36.0
 
-/** Most pages drawn on screen at once (memory); every page is still composed into the signed copy. */
-private const val MAX_DISPLAY_PAGES = 40
-
 private val Warn = Color(0xFFE0612F)
 
 /** A page rendered with the platform [PdfRenderer], plus its size in points. */
 private class RenderedPage(val bitmap: Bitmap, val widthPt: Int, val heightPt: Int)
+
+/** A page's size in points. */
+private class PageInfo(val widthPt: Int, val heightPt: Int)
+
+/**
+ * The document on screen: one [PdfRenderer] kept open, pages rendered on demand (only the ones the LazyColumn shows) and
+ * kept in a small cache, so a 300-page PDF costs a few bitmaps, not all of them. [PdfRenderer] opens one page at a time,
+ * so renders are serialized.
+ */
+private class PdfDisplay private constructor(
+    private val file: File, private val fd: ParcelFileDescriptor, private val renderer: PdfRenderer, val sizes: List<PageInfo>,
+) {
+    private val lock = Any()
+    private val scale = if (sizes.size > 10) 1f else 1.5f
+    private val cache = object : android.util.LruCache<Int, Bitmap>(8) {}
+
+    val count: Int get() = sizes.size
+
+    fun cached(i: Int): Bitmap? = cache.get(i)
+
+    fun render(i: Int): Bitmap? {
+        cache.get(i)?.let { return it }
+        return synchronized(lock) {
+            cache.get(i) ?: runCatching {
+                renderer.openPage(i).use { page ->
+                    val bmp = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(AndroidColor.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bmp
+                }
+            }.getOrNull()?.also { cache.put(i, it) }
+        }
+    }
+
+    fun close() {
+        synchronized(lock) {
+            runCatching { renderer.close() }; runCatching { fd.close() }; file.delete()
+        }
+    }
+
+    companion object {
+        /** Opens [pdf] and reads every page's size (cheap); null if unreadable or empty. */
+        fun open(context: Context, pdf: ByteArray): PdfDisplay? {
+            val file = File.createTempFile("sign-view", ".pdf", context.cacheDir)
+            return try {
+                file.writeBytes(pdf)
+                val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                try {
+                    val r = PdfRenderer(fd)
+                    if (r.pageCount == 0) { r.close(); fd.close(); file.delete(); return null }
+                    val sizes = List(r.pageCount) { i -> r.openPage(i).use { PageInfo(it.width, it.height) } }
+                    PdfDisplay(file, fd, r, sizes)
+                } catch (e: Exception) { runCatching { fd.close() }; file.delete(); null }
+            } catch (_: Exception) { file.delete(); null }
+        }
+    }
+}
 
 private class FlightPlan(val bitmap: Bitmap, val from: Rect, val to: Rect)
 
@@ -126,17 +184,16 @@ private fun blankPdf(): ByteArray {
     return java.io.ByteArrayOutputStream().also { doc.writeTo(it); doc.close() }.toByteArray()
 }
 
-/** Renders the pages of [pdf]: for display (capped, lighter) or for composing (every page, 2 px per point). Null if unreadable. */
-private fun renderPages(context: Context, pdf: ByteArray, display: Boolean): List<RenderedPage>? {
+/** Renders every page of [pdf] at 2 px per point for composing the signed copy. Null if unreadable. */
+private fun renderPages(context: Context, pdf: ByteArray): List<RenderedPage>? {
     val file = File.createTempFile("sign-src", ".pdf", context.cacheDir)
     return try {
         file.writeBytes(pdf)
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
             PdfRenderer(fd).use { r ->
                 if (r.pageCount == 0) return@use null
-                val count = if (display) minOf(r.pageCount, MAX_DISPLAY_PAGES) else r.pageCount
-                val scale = if (!display) 2f else if (count > 10) 1f else 1.5f
-                List(count) { i ->
+                val scale = 2f
+                List(r.pageCount) { i ->
                     r.openPage(i).use { page ->
                         val bmp = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1), (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
                         bmp.eraseColor(AndroidColor.WHITE)
@@ -153,7 +210,7 @@ private fun renderPages(context: Context, pdf: ByteArray, display: Boolean): Lis
     }
 }
 
-private fun defaultSlot(page: RenderedPage, index: Int) = SignSlot(
+private fun defaultSlot(page: PageInfo, index: Int) = SignSlot(
     id = "slot-1", label = "Signature", page = index.toLong(),
     x = page.widthPt - SLOT_W - SLOT_MARGIN, y = SLOT_MARGIN, w = SLOT_W, h = SLOT_H,
 )
@@ -163,7 +220,7 @@ private fun defaultSlot(page: RenderedPage, index: Int) = SignSlot(
  * footer line under the slot (above it when there is no room). Slot units are PDF points, origin bottom-left.
  */
 private fun composeSigned(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray? {
-    val pages = renderPages(context, source, display = false) ?: return null
+    val pages = renderPages(context, source) ?: return null
     val doc = PdfDocument()
     val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(255, 64, 64, 64); textSize = 7f }
@@ -206,14 +263,16 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val scroll = rememberScrollState()
     val screenHeightPx = LocalConfiguration.current.screenHeightDp * density.density
     val auth by AllternitAuth.state.collectAsState()
     val account = (auth as? AuthState.SignedIn)?.account
 
     var request by remember { mutableStateOf<SignRequest?>(null) }
     var original by remember { mutableStateOf<ByteArray?>(null) }
-    var pages by remember { mutableStateOf<List<RenderedPage>>(emptyList()) }
+    var doc by remember { mutableStateOf<PdfDisplay?>(null) }
+    DisposableEffect(doc) { val d = doc; onDispose { d?.close() } }
+    val sheetState = rememberSignSheetState()
+    val listState = rememberLazyListState()
     var loadError by remember { mutableStateOf<String?>(null) }
     var slot by remember { mutableStateOf<SignSlot?>(null) }
     var showSheet by remember { mutableStateOf(false) }
@@ -247,10 +306,11 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
         request = rec
         val bytes = source ?: if (rec != null) SignRepository.download(rec.documentUrl) else withContext(Dispatchers.IO) { blankPdf() }
         if (bytes == null) { loadError = "The document could not be downloaded."; return@LaunchedEffect }
-        val rendered = withContext(Dispatchers.IO) { renderPages(context, bytes, display = true) }
-        if (rendered == null) { loadError = "The PDF could not be loaded."; return@LaunchedEffect }
-        original = bytes; pages = rendered
-        slot = rec?.slots?.firstOrNull() ?: defaultSlot(rendered.last(), rendered.lastIndex)
+        val opened = withContext(Dispatchers.IO) { PdfDisplay.open(context, bytes) }
+        if (opened == null) { loadError = "The PDF could not be loaded."; return@LaunchedEffect }
+        original = bytes; doc = opened
+        // The default slot sits on the real last page, however long the document is.
+        slot = rec?.slots?.firstOrNull() ?: defaultSlot(opened.sizes.last(), opened.count - 1)
     }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri: Uri? ->
@@ -287,6 +347,7 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
                 runCatching { File(File(context.filesDir, "signed").apply { mkdirs() }, "signed-${UUID.randomUUID()}.pdf").writeBytes(data) }
             }
             signedPdf = data
+            sheetState.reset()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -302,9 +363,10 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
         ink = bmp; signedAt = at; showSheet = false; previewing = false; failure = null; message = null; submitting = true
         flightJob = scope.launch {
             // Bring the slot into view, let the sheet slide away, then lift the ink out of where the pad was.
+            slot?.let { sl -> listState.animateScrollToItem(sl.page.toInt().coerceIn(0, (doc?.count ?: 1) - 1)) }
             slotCoords?.takeIf { it.isAttached }?.let { co ->
                 val target = screenHeightPx * 0.32f
-                scroll.animateScrollBy(co.boundsInWindow().top - target)
+                listState.animateScrollBy(co.boundsInWindow().top - target)
             }
             delay(350)
             val to = slotCoords?.takeIf { it.isAttached }?.boundsInWindow() ?: Rect(from.left, from.top - 200f, from.left + 540f, from.top - 30f)
@@ -313,7 +375,7 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
         scope.launch { submit(png, bmp, method, s, at) }
     }
 
-    fun movedSlot(pageIndex: Int, page: RenderedPage, xPt: Float, yFromTopPt: Float) {
+    fun movedSlot(pageIndex: Int, page: PageInfo, xPt: Float, yFromTopPt: Float) {
         val cur = slot ?: return
         val x = (xPt - cur.w.toFloat() / 2f).coerceIn(0f, (page.widthPt - cur.w.toFloat()).coerceAtLeast(0f))
         val y = (page.heightPt - yFromTopPt - cur.h.toFloat() / 2f).coerceIn(0f, (page.heightPt - cur.h.toFloat()).coerceAtLeast(0f))
@@ -327,16 +389,22 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
             LibraryHeader(title = req?.title ?: "Sign PDF", subtitle = docName.takeIf { req == null && source != null }, onBack = onClose, backTag = "pdfSignCancel")
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    pages.isNotEmpty() -> Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        pages.forEachIndexed { index, p ->
-                            BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(p.widthPt.toFloat() / p.heightPt).shadow(2.dp, RoundedCornerShape(2.dp))) {
-                                val k = constraints.maxWidth.toFloat() / p.widthPt
-                                Image(
-                                    p.bitmap.asImageBitmap(), "Page ${index + 1}", Modifier.fillMaxSize().pointerInput(canPlace, p) {
-                                        if (canPlace) detectTapGestures { o -> movedSlot(index, p, o.x / k, o.y / k) }
-                                    },
-                                    contentScale = ContentScale.FillBounds,
-                                )
+                    doc != null -> {
+                        val d = doc!!
+                        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(d.count, key = { it }) { index ->
+                                val p = d.sizes[index]
+                                val bitmap by produceState<Bitmap?>(d.cached(index), d, index) { if (value == null) value = withContext(Dispatchers.IO) { d.render(index) } }
+                                BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(p.widthPt.toFloat() / p.heightPt).shadow(2.dp, RoundedCornerShape(2.dp)).background(Color.White)) {
+                                    val k = constraints.maxWidth.toFloat() / p.widthPt
+                                    bitmap?.let { bmp ->
+                                        Image(
+                                            bmp.asImageBitmap(), "Page ${index + 1}", Modifier.fillMaxSize().pointerInput(canPlace, p) {
+                                                if (canPlace) detectTapGestures { o -> movedSlot(index, p, o.x / k, o.y / k) }
+                                            },
+                                            contentScale = ContentScale.FillBounds,
+                                        )
+                                    }
                                 val s = slot
                                 if (s != null && s.page == index.toLong()) {
                                     val left = (s.x.toFloat() * k).toInt()
@@ -365,6 +433,7 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
                             }
                         }
                     }
+                    }
                     loadError != null -> FriendlyState(FriendlyStyle.Empty, "Couldn't open the PDF", loadError ?: "") {
                         Icon(painterResource(DesignR.drawable.deck_pdf), null, tint = c.accentPrimary)
                     }
@@ -379,7 +448,7 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
             ) {
                 failure?.let { Text(it, color = Warn, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 20.dp).testTag("pdfSignError")) }
                 message?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp).testTag("pdfSignMessage")) }
-                if (pages.isNotEmpty() && !placed && !showSheet) {
+                if (doc != null && !placed && !showSheet) {
                     if (isPending) {
                         if (previewing) PreviewPill("Back to signing", Modifier.align(Alignment.CenterHorizontally)) { previewing = false; failure = null; showSheet = true }
                         else if (canPlace) Text("Tap the page to move the signing spot.", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
@@ -427,7 +496,7 @@ fun PdfSignScreen(title: String, source: ByteArray?, onClose: () -> Unit, reques
             }
             SignSheet(
                 title = req?.title ?: docName, summary = req?.summary, details = req?.details ?: emptyList(),
-                sendTo = req?.sendTo?.let { it.name ?: it.email }, mode = mode,
+                sendTo = req?.sendTo?.let { it.name ?: it.email }, mode = mode, state = sheetState,
                 onSign = { png, bmp, method, rect -> handleSigned(png, bmp, method, rect) },
                 onClose = { showSheet = false },
             )
