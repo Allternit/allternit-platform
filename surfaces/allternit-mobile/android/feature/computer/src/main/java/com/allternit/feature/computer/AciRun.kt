@@ -123,9 +123,24 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
         private set
     val traceLines = mutableStateListOf<AciTraceLine>()
 
+    /** What the run is waiting on: a credential or action approval, a "needs you", or a block. Null when nothing. */
+    var gate by mutableStateOf<AciRunGate?>(null)
+        private set
+    /** Who is acting (from `computer.action`), for the cursor badge and the "<bot> is working" line. */
+    var actor by mutableStateOf<AciActor?>(null)
+        private set
+    /** The agent cursor as fractions of the screen (x / screen_w, y / screen_h), or null before the first action. */
+    var cursor by mutableStateOf<Pair<Float, Float>?>(null)
+        private set
+    var actionStep by mutableStateOf<Int?>(null)
+        private set
+    val botName: String get() = actor?.name?.takeIf { it.isNotBlank() } ?: "Your bot"
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var runId: String? = null
     private var job: Job? = null
+    private var eventsJob: Job? = null
+    private var computerId: String? = null
     private var counter = 0
     private var started = false
 
@@ -140,6 +155,7 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
                 val run = client.startRun(goal)
                 runId = run.sessionId
                 if (adapterId == null) adapterId = run.adapterId
+                listenToComputer(run.sessionId)
                 client.stream(run.sessionId).collect { apply(it) }
                 if (isActive) status = AciRunStatus.Done
             } catch (e: CancellationException) {
@@ -151,9 +167,97 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
         }
     }
 
+    /** The computer's toolset events for this run: cursor, credential approvals, needs-you and blocks. A failed stream just means no gates. */
+    private fun listenToComputer(run: String) {
+        val id = client.currentComputerId() ?: return
+        computerId = id
+        eventsJob?.cancel()
+        eventsJob = scope.launch {
+            try {
+                client.toolsetEvents(id).collect { e -> if (e.runId == null || e.runId == run) applyComputer(e) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun applyComputer(e: AciComputerEvent) {
+        when (e) {
+            is AciComputerEvent.Action -> {
+                e.actor?.let { actor = it }
+                e.step?.let { actionStep = it }
+                val x = e.x
+                val y = e.y
+                val w = e.screenW
+                val h = e.screenH
+                if (x != null && y != null && w != null && h != null && w > 0 && h > 0) {
+                    cursor = (x / w).toFloat().coerceIn(0f, 1f) to (y / h).toFloat().coerceIn(0f, 1f)
+                }
+            }
+            is AciComputerEvent.ConfirmationRequired -> gate = AciRunGate.Approval(e)
+            is AciComputerEvent.HumanRequested -> gate = AciRunGate.NeedsYou(e.runId, e.reason, e.secret)
+            is AciComputerEvent.HumanResumed -> if (gate is AciRunGate.NeedsYou) gate = null
+            is AciComputerEvent.BlockDetected -> gate = AciRunGate.Blocked(e)
+            is AciComputerEvent.BlockResolved -> if (gate is AciRunGate.Blocked) gate = null
+        }
+    }
+
+    fun dismissGate() { gate = null }
+
+    /** Approve (once, or `scope = "run"`). The sheet has already confirmed with the device lock. */
+    fun approveGate(scope: String?) {
+        val g = gate as? AciRunGate.Approval ?: return
+        gate = null
+        io { client.approveHandoff(g.request.approvalId, scope) }
+    }
+
+    fun denyGate() {
+        val g = gate as? AciRunGate.Approval ?: return
+        gate = null
+        io { client.denyHandoff(g.request.approvalId) }
+    }
+
+    /** Continue after "needs you" (human-done) or after a block (block-resolve continue). */
+    fun continueGate() {
+        val g = gate ?: return
+        gate = null
+        val id = computerId ?: return
+        io { if (g is AciRunGate.Blocked) client.blockResolve(id, "continue") else client.humanDone(id) }
+    }
+
+    fun stopGate() {
+        val g = gate
+        gate = null
+        val id = computerId
+        if (g is AciRunGate.Blocked && id != null) io { client.blockResolve(id, "stop") }
+        stop()
+    }
+
+    /** Re-run on another computer: resolve the block as `rerun`, then start a fresh run there with `rerun_of`. */
+    fun rerun(target: AciRerunTarget) {
+        val g = gate as? AciRunGate.Blocked ?: return
+        gate = null
+        val original = runId
+        val id = computerId
+        io {
+            if (id != null) client.blockResolve(id, "rerun", target.computerId)
+            runCatching { client.startRun(goal, rerunOf = original, targetRuntimeId = target.computerId) }
+                .onSuccess { lastMessage = "Re-running on ${target.name}" }
+                .onFailure { errorMessage = it.message ?: "Couldn't start the re-run." }
+        }
+        stop()
+        lastMessage = "Re-running on ${target.name}"
+    }
+
+    private fun io(block: suspend () -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch { runCatching { block() } }
+    }
+
     fun stop() {
         job?.cancel()
         job = null
+        eventsJob?.cancel()
         if (!isActive) return
         status = AciRunStatus.Done
         lastMessage = "Stopped"
@@ -164,6 +268,7 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
     /** Leaving the screen stops a live run (iOS leave()). */
     fun leave() {
         if (!isActive) job?.cancel() else stop()
+        eventsJob?.cancel()
         scope.cancel()
     }
 
@@ -177,6 +282,9 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
 
     fun retry() {
         job?.cancel()
+        eventsJob?.cancel()
+        gate = null
+        cursor = null
         runId = null
         errorMessage = null
         status = AciRunStatus.Idle
@@ -224,7 +332,14 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
  * the screenshot with the action highlight and scanlines, the trace log, and Approve / Deny / Stop.
  */
 @Composable
-internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () -> Unit, controls: @Composable () -> Unit = {}) {
+internal fun AciAgentRunView(
+    goal: String,
+    client: AciAgentClient,
+    onExit: () -> Unit,
+    /** Hands the run to the person. No Android control path exists yet, so the button shows only when this is set. */
+    onTakeOver: (() -> Unit)? = null,
+    controls: @Composable () -> Unit = {},
+) {
     val c = AllternitTheme.colors
     val model = remember(goal) { AciRunModel(goal, client) }
     DisposableEffect(model) {
@@ -309,6 +424,17 @@ internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () ->
                             y += 4.dp.toPx()
                         }
                     }
+                    model.cursor?.let { (fx, fy) ->
+                        // The agent cursor and the bot's badge, from computer.action x/y over screen_w/screen_h.
+                        val cx = with(density) { (ox + fx * dw).toDp() }
+                        val cy = with(density) { (oy + fy * dh).toDp() }
+                        val botColor = runCatching { Color(android.graphics.Color.parseColor(model.actor?.color ?: "")) }.getOrDefault(c.accentBrowser)
+                        Box(Modifier.align(Alignment.TopStart).offset(cx - 6.dp, cy - 6.dp).size(12.dp).clip(CircleShape).background(botColor)
+                            .border(2.dp, Color.White, CircleShape).testTag("aciAgentCursor"))
+                        Text(model.botName, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.TopStart).offset(cx + 8.dp, cy + 4.dp).clip(RoundedCornerShape(6.dp)).background(botColor)
+                                .padding(horizontal = 6.dp, vertical = 2.dp).testTag("aciAgentBadge"))
+                    }
                     val label = action?.label ?: action?.selector
                     val ax = action?.x
                     val ay = action?.y
@@ -349,6 +475,15 @@ internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () ->
             }
         }
         controls()
+        if (model.status == AciRunStatus.Running && model.actor != null) {
+            val n = model.actionStep ?: model.stepIndex
+            Row(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 6.dp).testTag("aciWorkingLine"),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(model.botName + " is working" + (n?.let { " · step $it" } ?: ""), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                if (onTakeOver != null) OutlineButton("Take over", c.textPrimary, "aciRunTakeOver") { onTakeOver() }
+                OutlineButton("Stop", Red, "aciRunStopWorking") { model.stop() }
+            }
+        }
         Row(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (model.requiresApproval) {
@@ -358,9 +493,21 @@ internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () ->
                         .padding(horizontal = 14.dp, vertical = 7.dp).testTag("aciRunApprove"))
             }
             Spacer(Modifier.weight(1f))
-            if (model.isActive) OutlineButton("■ Stop", Red, "aciRunStop") { model.stop() }
+            if (model.isActive && !(model.status == AciRunStatus.Running && model.actor != null)) OutlineButton("■ Stop", Red, "aciRunStop") { model.stop() }
         }
     }
+    RunGateHost(model)
+}
+
+@Composable
+private fun RunGateHost(model: AciRunModel) {
+    val g = model.gate ?: return
+    AciRunGateSheet(
+        gate = g, botName = model.botName,
+        onApprove = { model.approveGate(it) }, onDeny = { model.denyGate() },
+        onContinue = { model.continueGate() }, onStop = { model.stopGate() },
+        onRerun = { model.rerun(it) }, onDismiss = { model.dismissGate() },
+    )
 }
 
 @Composable
