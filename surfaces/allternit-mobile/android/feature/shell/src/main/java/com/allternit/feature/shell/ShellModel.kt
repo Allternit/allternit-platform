@@ -163,7 +163,25 @@ internal val AgentSession.readyForReview: Boolean get() = metaBool("readyForRevi
 internal val AgentSession.completed: Boolean get() = metaBool("completed")
 internal val AgentSession.isTerminal: Boolean
     get() = ((meta("sourceRef") as? JsonObject)?.get("harness") as? JsonPrimitive)?.contentOrNull == "gizzi-tui"
-internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.isNotEmpty() } ?: "Untitled"
+/**
+ * A readable title (allternit-ai session-display-title.ts). Sessions made without a name are stored as
+ * "New session - 2026-11-18T04:47:31.282Z"; never show that: use the description when it holds a
+ * first prompt, else "New session · Nov 17" from the stamp or created_at.
+ */
+internal val AgentSession.title: String
+    get() {
+        val shown = displayName(name)?.takeIf { it.isNotEmpty() }
+        if (shown != null && !GENERATED_NAME.containsMatchIn(shown)) return shown
+        val prompt = description.orEmpty().replace(Regex("\\s+"), " ").trim()
+        if (prompt.isNotEmpty()) return if (prompt.length > 60) prompt.take(60) + "…" else prompt
+        val stamp = shown?.let { STAMP.find(it)?.value }
+        val millis = parseMillis(stamp) ?: parseMillis(createdAt)
+        return if (millis == null) "New session" else "New session · " + SHORT_DATE.format(java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()))
+    }
+
+private val GENERATED_NAME = Regex("^New session - \\d{4}-\\d{2}-\\d{2}T")
+private val STAMP = Regex("\\d{4}-\\d{2}-\\d{2}T[\\d:.]+Z?")
+private val SHORT_DATE = java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.getDefault())
 
 /** iOS AutomationScheduleLogic.displayName: drop a routine run's `[bot:<name>] ` owner tag. */
 internal fun displayName(raw: String?): String? {
@@ -181,8 +199,9 @@ internal fun AgentSession.belongs(mode: ShellMode): Boolean {
     val surface = originSurface
     return when (mode) {
         ShellMode.Bots -> agentId != null
-        ShellMode.Home -> agentId == null && (surface == "chat" || surface == "cowork" || surface.isEmpty())
-        ShellMode.Code -> agentId == null && surface == "code"
+        // Code and terminal sessions show in Recents in every mode, beside chats (web filterRailRecents).
+        ShellMode.Home -> agentId == null && (surface == "chat" || surface == "cowork" || surface.isEmpty() || surface == "code" || isTerminal)
+        ShellMode.Code -> agentId == null && (surface == "code" || isTerminal)
         ShellMode.Aci -> agentId == null && surface == "browser"
     }
 }

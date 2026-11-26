@@ -230,7 +230,25 @@ class TerminalSession(
     private var sending = false
     private var closed = false
 
-    init { screen.onReply = { send(it) } }
+    /**
+     * Report replies (cursor position, device attributes) answer the emulator's own queries. The
+     * stream replays the kept scrollback on every attach, and old queries in it must not be answered
+     * again: a shell at a continuation prompt echoes them as "30;3R30;3R" (UI feedback 11-26 K3, web
+     * createTerminalReplyGuard). Replies are dropped from attach until 400 ms after the last replayed
+     * chunk, or 1.5 s after the stream opens; a shell this tile just created has no replay.
+     */
+    private var replayOpenedAt = 0L
+    private var replayLastChunkAt = 0L
+    private var freshShell = false
+
+    private fun replaying(): Boolean {
+        if (freshShell) return false
+        val now = android.os.SystemClock.uptimeMillis()
+        if (replayOpenedAt == 0L) return true
+        return now - replayOpenedAt < 1500L && now - replayLastChunkAt < 400L
+    }
+
+    init { screen.onReply = { if (!replaying()) send(it) } }
 
     /** Creates the terminal (sized to the view once it is known) or re-attaches the remembered one. */
     fun start() {
@@ -238,11 +256,11 @@ class TerminalSession(
     }
 
     private suspend fun open() {
-        state = PtyState.Starting; message = null; canReattach = true
+        state = PtyState.Starting; message = null; canReattach = true; freshShell = false
         val id = terminalId ?: when (val r = CodeApi.createTerminal(backend, size?.first ?: screen.cols, size?.second ?: screen.rows)) {
             CodeResult.NoComputer -> { state = PtyState.Offline; return }
             is CodeResult.Failed -> { state = PtyState.Failed; message = r.message; return }
-            is CodeResult.Ok -> r.value.also { terminalId = it; onId(it) }
+            is CodeResult.Ok -> r.value.also { terminalId = it; onId(it); freshShell = true }
         }
         attach(id)
     }
@@ -251,6 +269,7 @@ class TerminalSession(
         stream?.cancel()
         // The stream replays the scrollback from the start: draw it on a clean screen.
         screen.reset(); version++
+        replayOpenedAt = 0L; replayLastChunkAt = 0L
         pushed = null
         size?.let { (c, r) -> pushSize(c, r) }
         stream = scope.launch {
@@ -258,11 +277,12 @@ class TerminalSession(
                 // Collected on the main thread: each event's output lands on the screen as it arrives.
                 backend.runtimeEvents(CodeApi.terminalStreamPath(id)).collect { e ->
                     if (state == PtyState.Starting) state = PtyState.Live
+                    if (replayOpenedAt == 0L) { replayOpenedAt = android.os.SystemClock.uptimeMillis(); replayLastChunkAt = replayOpenedAt }
                     // Keep-alives (`event: ping`) and any other named event are not output.
                     if (e.event != "message") return@collect
                     when (val out = streamOutput(e.data)) {
                         StreamOutput.Exit -> exited()
-                        is StreamOutput.Text -> { screen.feed(out.text); version++ }
+                        is StreamOutput.Text -> { replayLastChunkAt = android.os.SystemClock.uptimeMillis(); screen.feed(out.text); version++ }
                         null -> Unit
                     }
                 }

@@ -68,6 +68,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick as semOnClick
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -103,7 +105,7 @@ private val Coral = Color(0xFFD97757)
 /** The session's surface glyph (iOS ShellSearchView.icon). */
 internal fun sessionIcon(session: AgentSession): Int = when {
     session.agentId != null -> DesignR.drawable.ph_cpu
-    session.originSurface == "code" -> DesignR.drawable.ph_terminal
+    session.originSurface == "code" || session.isTerminal -> DesignR.drawable.ph_terminal
     session.originSurface == "browser" -> DesignR.drawable.ph_globe
     else -> com.allternit.core.design.R.drawable.ph_chat_circle
 }
@@ -111,7 +113,7 @@ internal fun sessionIcon(session: AgentSession): Int = when {
 /** The session's home in words (iOS ShellSearchView.surfaceLabel). */
 internal fun sessionSurfaceLabel(session: AgentSession): String = when {
     session.agentId != null -> "Bots"
-    session.originSurface == "code" -> "Code"
+    session.originSurface == "code" || session.isTerminal -> "Code"
     session.originSurface == "browser" -> "ACI"
     else -> "Home"
 }
@@ -147,7 +149,6 @@ internal fun SessionOverviewScreen(
     var selecting by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var optionsOpen by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var editingId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
@@ -469,7 +470,13 @@ internal fun SessionOverviewScreen(
                         selecting = false
                         selected = emptySet()
                     }
-                    BarButton("Delete", DesignR.drawable.ph_trash, none, destructive = true) { confirmDelete = true }
+                    // Delete is a hold, never a dialog (web ConfirmMorph hold mode).
+                    BarButton("Delete", DesignR.drawable.ph_trash, none, destructive = true, hold = true) {
+                        Haptics.perform(view, Haptics.Kind.Warning)
+                        pins = pins - selected
+                        RailPinPrefs.set(context, pins)
+                        bulk { id -> store.delete(id) }
+                    }
                 }
             } else {
                 androidx.compose.animation.AnimatedVisibility(
@@ -491,25 +498,6 @@ internal fun SessionOverviewScreen(
         }
     }
 
-    if (confirmDelete) {
-        val n = selected.size
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            containerColor = c.bgPrimary,
-            title = { Text("Delete $n ${if (n == 1) "item" else "items"}? This can't be undone.", color = c.textPrimary, fontSize = 17.sp) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    Haptics.perform(view, Haptics.Kind.Warning)
-                    val ids = selected
-                    pins = pins - ids
-                    RailPinPrefs.set(context, pins)
-                    bulk { id -> store.delete(id) }
-                }, modifier = Modifier.testTag("overviewDeleteConfirm")) { Text("Delete", color = AllternitStatic.StatusError) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel", color = c.textPrimary) } },
-        )
-    }
     actionError?.let { message ->
         AlertDialog(
             onDismissRequest = { actionError = null },
@@ -577,21 +565,41 @@ private fun LayoutSwitch(current: OverviewLayout, onPick: (OverviewLayout) -> Un
     }
 }
 
+/** A bar action. `hold` (Delete) acts only after a 0.8 s hold while a danger fill grows; screen readers get a plain activate. */
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.BarButton(title: String, icon: Int, disabled: Boolean, destructive: Boolean = false, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.RowScope.BarButton(title: String, icon: Int, disabled: Boolean, destructive: Boolean = false, hold: Boolean = false, onClick: () -> Unit) {
     val tint = if (destructive) AllternitStatic.StatusError else AllternitTheme.colors.textPrimary
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val act by androidx.compose.runtime.rememberUpdatedState(onClick)
+    val base = Modifier
+        .weight(1f)
+        .heightIn(min = 48.dp)
+        .clip(RoundedCornerShape(22.dp))
+    val gesture = if (hold) {
+        base
+            .background(AllternitStatic.StatusError.copy(alpha = 0.18f * progress.value))
+            .semantics { semOnClick(label = title) { if (!disabled) act(); true } }
+            .pointerInput(disabled) {
+                if (!disabled) detectTapGestures(onPress = {
+                    val held = scope.launch {
+                        progress.animateTo(1f, tween(800, easing = androidx.compose.animation.core.LinearEasing))
+                        act()
+                        progress.snapTo(0f)
+                    }
+                    tryAwaitRelease()
+                    held.cancel()
+                    scope.launch { progress.animateTo(0f, tween(150)) }
+                })
+            }
+    } else base.clickable(enabled = !disabled, role = Role.Button, onClick = onClick)
     Column(
-        Modifier
-            .weight(1f)
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .clickable(enabled = !disabled, role = Role.Button, onClick = onClick)
-            .alpha(if (disabled) 0.4f else 1f),
+        gesture.alpha(if (disabled) 0.4f else 1f),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-        Text(title, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        Text(if (hold) "Hold to delete" else title, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
 }
 
