@@ -51,7 +51,7 @@ final class CodeCanvasStore: ObservableObject {
                 width: 160,
                 height: 132,
                 zIndex: offset + 1,
-                label: session.name ?? "Untitled Session"
+                label: session.displayTitle
             )
         }
         workspaces[index].tiles = tiles

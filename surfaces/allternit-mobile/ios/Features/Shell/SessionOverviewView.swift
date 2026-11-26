@@ -28,7 +28,6 @@ struct SessionOverviewView: View {
     @State private var barHidden = false
     @State private var optionsOpen = false
     @State private var layoutOpen = false
-    @State private var confirmDelete = false
     @State private var seeded = false
     /// The chosen layout, kept across launches (useOverviewLayout).
     @AppStorage("allternit-phone-overview-layout") private var layoutRaw = Layout.grid.rawValue
@@ -176,14 +175,6 @@ struct SessionOverviewView: View {
             if launchArgumentEnabled(LaunchArgument.calmOverviewMenu) { optionsOpen = true }
             seedForLaunchArguments()
             #endif
-        }
-        .confirmationDialog(
-            "Delete \(select.selected.count) \(select.selected.count == 1 ? "item" : "items")? This can't be undone.",
-            isPresented: $confirmDelete,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) { bulkDelete() }
-            Button("Cancel", role: .cancel) {}
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .accessibilityIdentifier("phoneOverview")
@@ -522,7 +513,7 @@ struct SessionOverviewView: View {
             HStack(spacing: 4) {
                 barButton(archivedView ? "Unarchive" : "Archive", icon: archivedView ? "tray.and.arrow.up" : "archivebox", disabled: none) { bulkArchive() }
                 barButton(pinAction == .pin ? "Pin" : "Unpin", icon: pinAction == .pin ? "pin" : "pin.slash", disabled: none) { bulkPin(pinAction) }
-                barButton("Delete", icon: "trash", disabled: none, destructive: true) { confirmDelete = true }
+                holdDeleteButton(count: select.selected.count, disabled: none)
             }
             .padding(6)
             .glassSurface(cornerRadius: 28)
@@ -530,6 +521,27 @@ struct SessionOverviewView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
         .accessibilityIdentifier("overviewSelectBar")
+    }
+
+    /// Delete is press and hold, never a tap or a dialog (Allternit rule).
+    private func holdDeleteButton(count: Int, disabled: Bool) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: "trash").font(.system(size: 18))
+            Text("Hold to delete").font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(Theme.statusError)
+        .frame(maxWidth: .infinity, minHeight: 48)
+        .contentShape(Rectangle())
+        .onLongPressGesture(minimumDuration: 1.0) {
+            guard !disabled else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            bulkDelete()
+        }
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+        .accessibilityLabel("Hold to delete \(count) \(count == 1 ? "item" : "items")")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { bulkDelete() }
     }
 
     private func barButton(_ text: String, icon: String, disabled: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {

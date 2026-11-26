@@ -694,7 +694,7 @@ struct HistorySidebarView: View {
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.name ?? "Untitled")
+                    Text(session.displayTitle)
                         .font(.system(size: 16.5, weight: unread ? .semibold : .regular))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -1114,7 +1114,7 @@ struct HistorySidebarView: View {
     // MARK: - Filtering
 
     private func belongsToMode(_ session: AgentSession) -> Bool {
-        ShellSessionsStore.belongs(session, to: modeStore.shellMode)
+        ShellSessionsStore.belongsToRecents(session, mode: modeStore.shellMode)
     }
 
     /// Home's pins (desktop rail pins), newest first, at most 10.
