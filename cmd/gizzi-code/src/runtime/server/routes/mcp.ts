@@ -58,6 +58,8 @@ export const McpRoutes = lazy(() =>
           tool: z.string().min(1),
           args: z.record(z.string(), z.any()).optional(),
           meta: z.record(z.string(), z.any()).optional(),
+          toolCallID: z.string().min(1).optional(),
+          mcpProxy: z.any().optional(),
         }),
       ),
       async (c) => {
