@@ -474,6 +474,7 @@ struct McpSessionWatch: Decodable, Identifiable, Equatable, Sendable {
     let pollMs: Int?
     let tail: [String]?
     let lineCount: Int?
+    let arguments: JSONValue?
 
     var id: String { watchId }
     var resolvedMode: String { mode ?? "poll" }
@@ -520,6 +521,16 @@ extension McpServersClient {
         let id = watchId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? watchId
         let body: LinesBody = try await APIClient.shared.get(path: "mcp/watches/\(id)/lines?after=0")
         return body.lines ?? []
+    }
+
+    private struct StartWatchBody: Encodable {
+        let server: String; let event: String; let session_id: String; let arguments: JSONValue?
+    }
+
+    /// POST mcp/watches (Resume: the saved request, a new watch id).
+    func startWatch(server: String, event: String, sessionId: String, arguments: JSONValue?) async throws {
+        try await APIClient.shared.post(path: "mcp/watches",
+            body: StartWatchBody(server: server, event: event, session_id: sessionId, arguments: arguments))
     }
 
     func stopWatch(watchId: String) async throws {

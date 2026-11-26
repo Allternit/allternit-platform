@@ -1,20 +1,44 @@
 import SwiftUI
 
+/// A watch paused from the strip: the server dropped it (DELETE), the request stays here so
+/// Resume can POST it again. Kept per chat session (web useSessionWatches `PausedWatch`).
+struct McpPausedWatch: Codable, Identifiable, Equatable {
+    let key: String
+    let server: String
+    let event: String
+    let arguments: JSONValue?
+    let eventCount: Int?
+    let lastEventAt: String?
+    var id: String { key }
+
+    static func key(_ sessionId: String) -> String { "mcp.pausedWatches.\(sessionId)" }
+    static func read(_ sessionId: String) -> [McpPausedWatch] {
+        guard let data = UserDefaults.standard.data(forKey: key(sessionId)) else { return [] }
+        return (try? JSONDecoder().decode([McpPausedWatch].self, from: data)) ?? []
+    }
+    static func write(_ rows: [McpPausedWatch], _ sessionId: String) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(rows), forKey: key(sessionId))
+    }
+}
+
 /// Watching rows above the composer (web WatchingStrip): live / webhook / poll,
 /// the last 3 lines, "Open all N lines", Pause and Stop. Hidden when there are none.
 struct McpWatchStrip: View {
     let sessionId: String?
     @State private var watches: [McpSessionWatch] = []
-    @State private var paused: Set<String> = []
+    @State private var paused: [McpPausedWatch] = []
+    @State private var error: String?
     @State private var allLines: McpSessionWatch?
     @State private var tick = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if !watches.isEmpty {
+            if !watches.isEmpty || !paused.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(watches) { row($0) }
+                    ForEach(paused) { pausedRow($0) }
+                    if let error { Text(error).font(.caption).foregroundColor(Theme.statusError).padding(.vertical, 6) }
                 }
                 .padding(.horizontal, 12)
                 .background(Color("FillNeutral").opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
@@ -44,7 +68,6 @@ struct McpWatchStrip: View {
     }
 
     private func row(_ w: McpSessionWatch) -> some View {
-        let isPaused = paused.contains(w.watchId)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Image(systemName: icon(w.resolvedMode))
@@ -52,18 +75,14 @@ struct McpWatchStrip: View {
                     .symbolEffect(.pulse, options: .nonRepeating, value: reduceMotion ? 0 : tick)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Watching \(w.event)").font(.footnote.weight(.medium)).lineLimit(1)
-                    Text("\(w.server) · \(isPaused ? "Paused" : note(w)) · \(w.eventCount ?? 0) events")
+                    Text("\(w.server) · \(note(w)) · \(w.eventCount ?? 0) events")
                         .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if w.resolvedMode == "live" {
-                    button(isPaused ? "Resume" : "Pause") {
-                        if isPaused { paused.remove(w.watchId) } else { paused.insert(w.watchId) }
-                    }
-                }
+                button("Pause") { Task { await pause(w) } }
                 button("Stop") { Task { await stop(w) } }
             }
-            if w.resolvedMode == "live", !isPaused, let tail = w.tail, !tail.isEmpty {
+            if w.resolvedMode == "live", let tail = w.tail, !tail.isEmpty {
                 ForEach(Array(tail.suffix(3).enumerated()), id: \.offset) { _, line in
                     Text(line).font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Color("TextSecondary")).lineLimit(1)
@@ -79,6 +98,45 @@ struct McpWatchStrip: View {
         .padding(.vertical, 6)
     }
 
+    private func pausedRow(_ p: McpPausedWatch) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pause.circle").font(.system(size: 16))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Watching \(p.event)").font(.footnote.weight(.medium)).lineLimit(1)
+                Text("\(p.server) · Paused · \(p.eventCount ?? 0) events")
+                    .font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            button("Resume") { Task { await resume(p) } }
+            button("Stop") { savePaused(paused.filter { $0.key != p.key }) }
+        }
+        .foregroundColor(Color("TextPrimary"))
+        .padding(.vertical, 6)
+    }
+
+    private func savePaused(_ rows: [McpPausedWatch]) {
+        paused = rows
+        if let sessionId { McpPausedWatch.write(rows, sessionId) }
+    }
+
+    @MainActor private func pause(_ w: McpSessionWatch) async {
+        error = nil
+        do { try await McpServersClient.shared.stopWatch(watchId: w.watchId) } catch { self.error = "Couldn't pause this watch. Try again."; return }
+        watches.removeAll { $0.watchId == w.watchId }
+        savePaused(paused + [McpPausedWatch(key: w.watchId, server: w.server, event: w.event, arguments: w.arguments,
+                                            eventCount: w.eventCount, lastEventAt: w.lastEventAt)])
+    }
+
+    @MainActor private func resume(_ p: McpPausedWatch) async {
+        guard let sessionId else { return }
+        error = nil
+        do {
+            try await McpServersClient.shared.startWatch(server: p.server, event: p.event, sessionId: sessionId, arguments: p.arguments)
+        } catch { self.error = "Couldn't resume this watch. Try again."; return }
+        savePaused(paused.filter { $0.key != p.key })
+        if let list = try? await McpServersClient.shared.watches(sessionId: sessionId) { watches = list }
+    }
+
     private func button(_ title: String, _ action: @escaping () -> Void) -> some View {
         Button(title) { Haptics.light(); action() }
             .font(.caption).foregroundColor(Color("TextPrimary"))
@@ -92,12 +150,11 @@ struct McpWatchStrip: View {
 
     /// Re-reads the list while the chat is open (the server keeps it in memory with a lease).
     @MainActor private func poll() async {
-        guard let sessionId, !sessionId.isEmpty else { watches = []; return }
+        guard let sessionId, !sessionId.isEmpty else { watches = []; paused = []; return }
+        paused = McpPausedWatch.read(sessionId)
         while !Task.isCancelled {
             if let list = try? await McpServersClient.shared.watches(sessionId: sessionId) {
-                let paused = self.paused
-                // A paused live watch keeps its old tail instead of redrawing it.
-                watches = list.map { w in paused.contains(w.watchId) ? (watches.first { $0.watchId == w.watchId } ?? w) : w }
+                watches = list
                 tick += 1
             }
             try? await Task.sleep(for: .seconds(watches.contains { $0.resolvedMode == "live" } ? 3 : 10))
