@@ -14,6 +14,10 @@ The phone Settings screen has 17 rows in these groups:
 - **Advanced**: every other settings page, in seven sections. No page was removed.
 - **Log out**.
 
+## Icon tiles
+
+Each row has a white tile with an icon in it. The icon moves once when the screen opens and again when you press the row. With **Reduce motion** on, or when your phone asks for reduced motion, the icons stay still. See [AnimatedIcon](/architecture/animated-icon).
+
 ## The ⓘ menu
 
 The **ⓘ** button at the top holds the app version and the links to Terms, Privacy, Help and support, and Status. The web version has no Licenses page.
@@ -22,9 +26,11 @@ The **ⓘ** button at the top holds the app version and the links to Terms, Priv
 
 **Haptic feedback** turns off every vibration in the phone layout. iPhone Safari has no vibration support, so on an iPhone the web app has no haptics either way.
 
-**Reduce motion** replaces the drawer push, the mode fan and the zoom transitions with short fades. It applies as soon as the app opens.
+**Reduce motion** replaces the drawer push, the mode fan and the zoom transitions with short fades. It also turns off the movement of the icons in Settings. It applies as soon as the app opens.
 
 ## Appearance
+
+Light, Dark and System each show a small picture of the app in that look. Tap one to switch.
 
 Light is the default for anyone who has not picked a theme. If you picked Light, Dark or System before, your choice is kept. Dark uses the graphite colours.
 

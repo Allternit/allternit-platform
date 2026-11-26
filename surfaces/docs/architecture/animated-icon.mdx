@@ -1,0 +1,69 @@
+---
+title: 'AnimatedIcon (Arc)'
+description: 'The shared icon component that moves once on tap or on appear: props, the icon names, the motion on web, iOS and Android, reduced-motion rules and how to add an icon.'
+---
+
+`AnimatedIcon` draws one icon and plays a short motion on it. The Settings screens use it inside white icon tiles. It lives next to the other Arc parts, see [UI components (Arc)](/architecture/ui-components).
+
+The code is at `src/components/arc/animated-icon/` in `allternit-ai`: `animated-icon.tsx`, `animated-icon.module.css` and one small file per icon in `icons/`. Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA share it.
+
+## Props
+
+| Prop | Type | Default | What it does |
+|---|---|---|---|
+| `name` | icon name | none | Which icon to draw. See the list below. |
+| `state` | boolean | `false` | The second state of a toggling icon, for example stop instead of send. |
+| `status` | `"idle"`, `"active"`, `"done"` or `"error"` | `"idle"` | `"active"` lets looping icons loop. |
+| `size` | number, px | `20` | Icon size. |
+| `weight` | `"regular"`, `"bold"` or `"fill"` | `"regular"` | Phosphor weight to draw. |
+| `playKey` | number or string | none | Plays the motion again each time the value changes. A row press or a screen appearing bumps it. |
+| `onSettled` | function | none | Called once when a one-shot motion ends. It is called also when motion is off. |
+| `title` | string | none | Accessible label. Without it the icon is hidden from screen readers, and the button around it carries the name. |
+
+The icon uses `currentColor` only, so it follows light and graphite dark mode. Looping icons run only while `status` is `"active"` and the icon is on screen.
+
+## Icon names
+
+- **Settings glyphs:** `profile`, `general`, `account`, `organization`, `privacy`, `billing`, `setup`, `notifications`, `meetings`, `status`, `voice`, `memory`, `response-style`, `open-models`, `code`, `devices`, `computers`, `desktop-pet`, `extensions`, `diagnostics`, `agent-rules`, `skills`, `connectors`, `about`.
+- **Also available:** `bell`, `mic`, `brain`, `approve`.
+
+## Motion
+
+Each icon has one named motion. A motion plays once, in under a second. The web column is the CSS keyframe name; the iOS and Android columns say what the same motion does there.
+
+| Motion | Used by | Web keyframe | iOS (SF Symbol effect) | Android (`graphicsLayer`) |
+|---|---|---|---|---|
+| bob | profile, account, devices | `i-bob`: up 14% and back, 440 ms | `bounce` | translateY up and back |
+| spin | general | `i-spin`: turn 90 degrees, 620 ms | `rotate` (iOS 18) | rotation 90 degrees, spring |
+| rise | organization | `i-rise`: scaleY .6 to 1, 480 ms | `bounce` | scaleY from the bottom edge |
+| click | privacy | `i-click`: press down, then settle, 420 ms | `bounce` | translateY and scale, then settle |
+| swipe | billing, sliders, sign out | `i-swipe`: slide in from the left, 440 ms | `bounce` | translateX and alpha |
+| ring | notifications, bell | `i-ring`: swing from the top, 620 ms | `wiggle` (iOS 18) | rotation around the top edge |
+| halo | voice, mic | `i-halo`: ring grows and fades, 900 ms, plus a small pop | `pulse` | ring scale and alpha, plus a pop |
+| breathe | memory, brain | `i-breathe`: scale to 1.12 and back, 900 ms, with two sparks | `breathe` (iOS 18) | scale up and back |
+| pop | response-style, chat, approve, agent-rules | `i-pop`: .78 to 1.14 to 1, 360 ms | `bounce` | scale spring |
+| beat | setup, status (pulse glyphs) | `i-beat`: two quick pulses, 560 ms | `pulse` | scale keyframes |
+| spark | graph glyphs | `i-spk`: turn from -28 degrees, 560 ms | `bounce` | rotation and scale |
+| spread | code | `i-spread`: scaleX .7 to 1, 440 ms | `bounce` | scaleX spring |
+| glow | computers | `i-glow`: fade in and rise, 560 ms | `bounce` | alpha and translateY |
+| step | desktop-pet, palette | `i-step`: tilt and hop, 500 ms | `bounce` | rotation and translateY |
+| snap | extensions | `i-snap`: slide into place, 460 ms | `bounce` | translate and rotation |
+| buzz | vibrate | `i-buzz`: quick side to side, 380 ms | `wiggle` (iOS 18) | translateX keyframes |
+| drift | wind | `i-drift`: slide in and fade up, 620 ms | `bounce` | translateX and alpha |
+
+iOS 18 effects (`rotate`, `wiggle`, `breathe`) fall back to `bounce` on iOS 17, which is the lowest iOS version the app supports. Which SF Symbol effects need iOS 18 has not been checked against Apple's documentation, so the code guards each with an availability check.
+
+## Reduced motion
+
+- When the system or app setting is on, nothing plays. One-shot icons show their end state at once, loops do not start, and `onSettled` is still called.
+- Web reads `useReducedMotion()` from `motion/react`, the CSS `prefers-reduced-motion: reduce` rule, and the app **Reduce motion** setting. An app-level override wins.
+- iOS reads the system Reduce Motion setting and the app **Reduce motion** switch. Android reads the app switch.
+- On the phone, **Reduce motion** in Settings turns icon motion off along with the other transitions. See [Settings on a phone](/guides/phone-settings).
+
+## Add an icon
+
+1. Add the icon file in `icons/<name>.tsx` with its Phosphor paths. Use `currentColor`.
+2. Add the name to `AnimatedIconName` and pick one motion from the table. Add a new motion only if none fits: a keyframe in `animated-icon.module.css`, and the same motion on iOS and Android.
+3. Make sure the reduced-motion rule covers it. Tests and screenshots must show the end state with motion off.
+4. Add a row to the table above.
+5. Run the typecheck and look at the icon on desktop, the phone layout and the PWA.
