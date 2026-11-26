@@ -422,7 +422,11 @@ struct BotsDrawerRail: View {
                           addLabel: "New project") { isNewProjectPresented = true }
             if projectsExpanded {
                 if projects.isEmpty {
-                    emptyLine("No projects yet.")
+                    VStack(alignment: .leading, spacing: 0) {
+                        EmptyArt(kind: .sheets, size: .panel)
+                            .padding(.horizontal, 12)
+                        emptyLine("No projects yet.")
+                    }
                 } else {
                     ForEach(projects) { project in
                         Button { onOpen(.project(project)) } label: {
@@ -464,11 +468,14 @@ struct BotsDrawerRail: View {
             if botsExpanded {
                 if bots.isEmpty {
                     Button { isNewBotPresented = true } label: {
-                        Text("No bots yet. Create a bot")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color("TextTertiary"))
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 44, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 4) {
+                            EmptyArt(kind: .gizzi, size: .panel)
+                            Text("No bots yet. Create a bot")
+                                .font(.system(size: 12.5))
+                                .foregroundColor(Color("TextTertiary"))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44, alignment: .leading)
                     }
                     .buttonStyle(.plain)
                 } else {

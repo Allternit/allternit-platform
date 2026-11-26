@@ -93,7 +93,8 @@ struct WebhooksSettingsView: View {
                         title: "No webhook triggers yet",
                         message: "A trigger gives external systems a signed URL that wakes one of your bots.",
                         actionTitle: "Create trigger",
-                        action: { startCreate() }
+                        action: { startCreate() },
+                        art: .bell
                     )
                     .padding(.vertical, 12)
                 }
@@ -103,7 +104,8 @@ struct WebhooksSettingsView: View {
                         style: .empty,
                         icon: "magnifyingglass",
                         title: "No matches",
-                        message: "No triggers match “\(searchText)”."
+                        message: "No triggers match “\(searchText)”.",
+                        art: .search
                     )
                 }
             } else {
@@ -252,7 +254,8 @@ struct WebhooksSettingsView: View {
                 style: .empty,
                 icon: "tray",
                 title: "No deliveries yet",
-                message: "Webhook events will appear here after they're received."
+                message: "Webhook events will appear here after they're received.",
+                art: .log
             )
         } else {
             ForEach(deliveries) { delivery in
@@ -451,7 +454,8 @@ private struct WebhookTriggerEditorSheet: View {
                             style: .empty,
                             icon: "cpu",
                             title: "No bots available yet",
-                            message: "Create a bot first, then link it to this trigger."
+                            message: "Create a bot first, then link it to this trigger.",
+                            art: .gizzi
                         )
                     } else {
                         Picker("Target bot", selection: $selectedBotId) {

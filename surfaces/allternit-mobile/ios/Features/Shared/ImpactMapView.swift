@@ -254,10 +254,13 @@ struct ImpactMapView: View {
             focusCard(focus, usedBy: usedBy.count, far: far.count, uses: uses.count)
             if !uses.isEmpty { group("Uses", items: uses, key: "uses") }
             if usedBy.isEmpty && uses.isEmpty {
-                Text("Nothing is linked to this yet.")
-                    .font(.footnote)
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(spacing: 8) {
+                    EmptyArt(kind: .sheets, size: .panel)
+                    Text("Nothing is linked to this yet.")
+                        .font(.footnote)
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .frame(maxWidth: .infinity)
             }
             if truncated {
                 Text("Showing the first 500 items.")
