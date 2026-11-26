@@ -52,6 +52,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -173,6 +175,7 @@ class ArtifactLibraryStore {
     var owner by mutableStateOf(Owner.All)
     var kind by mutableStateOf<String?>(null)
     var query by mutableStateOf("")
+    var counts by mutableStateOf<ArtifactCounts?>(null); private set
     var allows by mutableStateOf<(String) -> Boolean>({ true }); private set
     private var cursor: String? = null
 
@@ -189,6 +192,7 @@ class ArtifactLibraryStore {
         }
     }
 
+    suspend fun loadCounts() { counts = ArtifactsV2Client.counts("all") }
     suspend fun loadOrgSettings() { allows = ArtifactsV2Client.allowedKinds() }
 
     suspend fun loadMore() {
@@ -260,6 +264,14 @@ fun ArtifactsLibraryScreen(
     var studio by remember { mutableStateOf(initialStudio) }
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    // Recent searches (iOS recentSearches): newest first, 8 kept, one SharedPreferences string split on newlines.
+    val prefs = remember { context.getSharedPreferences("allternit_artifacts", Context.MODE_PRIVATE) }
+    var recents by remember { mutableStateOf(prefs.getString("artifacts.recentSearches", "").orEmpty().split("\n").filter { it.isNotBlank() }) }
+    fun saveRecents(list: List<String>) { prefs.edit().putString("artifacts.recentSearches", list.joinToString("\n")).apply() }
+    fun rememberSearch(text: String) {
+        val t = text.trim(); if (t.isEmpty()) return
+        recents = (listOf(t) + recents.filter { !it.equals(t, ignoreCase = true) }).take(8).also(::saveRecents)
+    }
     var newOpen by remember { mutableStateOf(false) }
     var chip by remember { mutableStateOf(ShowChip.Everything) }
     var appRows by remember { mutableStateOf<List<AppShelfRow>>(emptyList()) }
@@ -288,6 +300,7 @@ fun ArtifactsLibraryScreen(
             DeckPins.load(context)
             store.load()
             store.loadOrgSettings()
+            store.loadCounts()
         }
     }
 
@@ -335,7 +348,25 @@ fun ArtifactsLibraryScreen(
             LibrarySearchField(store.query, "Search artifacts", "artifactsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { q ->
                 store.query = q
                 searchJob?.cancel()
-                searchJob = scope.launch { delay(300); store.load() }
+                searchJob = scope.launch { delay(300); store.load(); rememberSearch(q) }
+            }
+            if (store.query.isBlank() && recents.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Recent", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text("Clear", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable(role = Role.Button) { recents = emptyList(); saveRecents(emptyList()) }.padding(8.dp))
+                }
+                recents.forEach { term ->
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+                            store.query = term; searchJob?.cancel(); searchJob = scope.launch { store.load() }
+                        }.padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(painterResource(DesignR.drawable.ph_clock), null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
+                        Text(term, color = c.textPrimary, fontSize = 15.sp)
+                    }
+                }
             }
         }
         val modes = newArtifactModes(store.allows)
@@ -359,6 +390,35 @@ fun ArtifactsLibraryScreen(
                     ) {}
                     // R2-C: "+ New" sits on the title line and opens the mode list sheet.
                     LibraryNewPill("New artifact", "artifactsNew", Modifier.align(Alignment.TopEnd).padding(top = 4.dp)) { newOpen = true }
+                }
+            }
+            item(key = "kindMenu", span = full) {
+                var open by remember { mutableStateOf(false) }
+                Box {
+                    Row(
+                        Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { open = true }.testTag("artifactsKindMenu")
+                            .semantics { contentDescription = "Filter artifacts by kind" },
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(store.kind?.let(ArtifactKinds::label) ?: "All kinds", color = c.textSecondary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
+                    }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = c.bgPrimary) {
+                        fun pick(k: String?) { open = false; if (store.kind != k) { store.kind = k; reload() } }
+                        fun label(t: String, n: Int?) = n?.let { "$t · $it" } ?: t
+                        DropdownMenuItem(
+                            text = { Text(label("All kinds", store.counts?.total)) },
+                            leadingIcon = { Icon(painterResource(if (store.kind == null) DesignR.drawable.ph_check else DesignR.drawable.ph_squares_four), null, modifier = Modifier.size(18.dp)) },
+                            onClick = { pick(null) },
+                        )
+                        ArtifactKinds.filterKinds.forEach { k ->
+                            DropdownMenuItem(
+                                text = { Text(label(ArtifactKinds.label(k), store.counts?.byKind?.get(k))) },
+                                leadingIcon = { Icon(painterResource(if (store.kind == k) DesignR.drawable.ph_check else ArtifactKinds.icon(k)), null, modifier = Modifier.size(18.dp)) },
+                                onClick = { pick(k) },
+                            )
+                        }
+                    }
                 }
             }
             if (ArtifactOfficeHooks.documents != null) item(key = "office", span = full) {
@@ -523,8 +583,6 @@ fun ArtifactsLibraryScreen(
                 LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
                 FilterLabel("Show")
                 PillRow(ArtifactLibraryStore.Show.entries, store.show, { if (it == ArtifactLibraryStore.Show.Saved) "Saved work" else "Archive" }, { "artifactsShow${it.name}" }) { store.show = it }
-                FilterLabel("Kind")
-                PillRow(listOf<String?>(null) + ArtifactKinds.filterKinds, store.kind, { it?.let(ArtifactKinds::label) ?: "All kinds" }, { "artifactsKind${it ?: "all"}" }) { store.kind = it }
             }
         }
     }
