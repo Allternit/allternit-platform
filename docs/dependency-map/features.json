@@ -5706,6 +5706,44 @@
         "allternit/cmd/allternit-cloud-api/openapi/sign-requests.yaml",
         "allternit/sdk/apps-bridge/src/allternit.ts"
       ]
+    },
+    {
+      "id": "feature:agent-browser",
+      "label": "Agent browser",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A bot browses in a real browser on each target: Mac Safari in its own window in the Allternit Agent profile, a Linux cloud computer with headed Chrome (its own display and kept profile per agent), a Windows cloud computer with Edge (one agent at a time), or the person's own Chrome through the extension. Every credential fill asks first (Approve, Allow for this run, Face ID on phones; Deny from the lock screen). Needs-you and blocked-site cards offer Continue, Stop and Re-run on my Mac; Take over and the working pill are on every surface; pushes carry Approve/Deny, Continue/Stop and Open. Secrets are written into one element on the device and never reach the model.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/computer_v2.rs",
+        "allternit/cmd/allternit-api/src/computer_toolset.rs",
+        "allternit/cmd/allternit-api/src/aci_routes.rs",
+        "allternit/domains/computer-use/driver",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/computers.rs",
+        "allternit/surfaces/allternit-extensions",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib/agent-cursor",
+        "allternit/surfaces/allternit-mobile/ios/Features",
+        "allternit/surfaces/allternit-mobile/android/feature",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop",
+        "surface:ios",
+        "surface:android",
+        "surface:gizzi-cli",
+        "surface:docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Eoj: every fill asks, with Allow for this run only and no per-site memory; Approve needs Face ID or fingerprint and Deny works from the lock screen; a blocked cloud run asks each time before re-running on the Mac (fresh run, no logins carried over). Copy: Fill your <name> login on <domain>?, <bot> needs you, <domain> blocked <bot>. Secrets on this device are written into one element id from read_ui, never typed into the front window."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/agent-browser.mdx",
+        "allternit/surfaces/docs/tools/computer-credentials.mdx"
+      ]
     }
   ],
   "journeys": [
