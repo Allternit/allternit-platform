@@ -273,6 +273,21 @@ The calls in one turn (`turn_id`) run in `call_index` order. After a call fails,
 
 A retry of the failed call itself, for example with an approval grant, is allowed.
 
+### Needs-you prompts in gizzi
+
+gizzi answers the three things that stop an agent browser run through its normal permission prompt, never a second one:
+
+| What stops the run | Prompt | Buttons | Call |
+|---|---|---|---|
+| A step that would fill a saved login (`409`/`403` with `kind: "credential"`) | Fill your *name* login on *domain*? | Approve, Allow for this run, Deny | `POST /api/aci/handoff/:approval_id/approve` (`{"scope":"run"}` for the second) or `/deny`, then the call is retried once |
+| `request_human` (`computer.human_requested`) | *bot* needs you: *reason* | Continue, Stop | `POST /api/v1/computers/:id/human-done` |
+| `request_human` with a `secret` (`computer.secret_requested`) | *bot* needs you: *label* | Send, Cancel | The value is typed into a masked input and goes straight to `POST /api/v1/computers/:id/secret`. It is never logged, never in the transcript, never shown to the model. A client with no masked input leaves the box open in the live view. |
+| A held block (`computer.block_detected`) | *domain* blocked *bot* | Continue, Re-run on my Mac, Stop | `POST /api/v1/computers/:id/block-resolve`; Re-run starts a new run on the Mac with `rerun_of`, and later steps in the session follow it |
+
+Stop ends the waiting call. Every fill asks: "Allow for this run" covers one credential name and domain for that run and is never remembered.
+
+`gizzi run` without a terminal never approves a credential. It fails the step with a message naming the approval id and how to approve it from the app (the needs-you card for the run, or the approve route above), and leaves the approval pending. Human and block holds are left for the app the same way.
+
 ### Model frame and scaling
 
 Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.
