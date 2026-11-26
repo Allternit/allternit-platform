@@ -6,6 +6,9 @@ import Foundation
 struct McpToolMeta: Equatable {
     let server: String
     let tool: String
+    /// The connector id the feedback route expects (nil on older runtimes: use `server`).
+    let connectorId: String?
+    let connectorName: String?
     let structured: Any?
     let canReport: Bool
 
@@ -55,6 +58,8 @@ enum McpMetaReader {
         let structured = obj["structuredContent"]
         return McpToolMeta(
             server: server, tool: tool,
+            connectorId: (obj["connectorId"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            connectorName: (obj["connectorName"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             structured: structured is NSNull ? nil : structured,
             canReport: (obj["canReport"] as? Bool) ?? false
         )

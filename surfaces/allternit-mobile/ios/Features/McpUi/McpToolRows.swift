@@ -104,7 +104,7 @@ struct McpTypedResultView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("\(meta.server) · \(meta.tool)").font(.caption).foregroundColor(Color("TextSecondary"))
+                Text("\(meta.connectorName ?? meta.server) · \(meta.tool)").font(.caption).foregroundColor(Color("TextSecondary"))
                 Spacer()
                 HStack(spacing: 0) {
                     chip("Table", selected: !raw) { raw = false }
@@ -183,7 +183,7 @@ struct McpTypedResultView: View {
                 reportState = .sending
                 Task {
                     do {
-                        try await McpServersClient.shared.sendFeedback(connectorId: meta.server, tool: meta.tool)
+                        try await McpServersClient.shared.sendFeedback(connectorId: meta.connectorId ?? meta.server, tool: meta.tool)
                         reportState = .sent
                     } catch { reportState = .failed }
                 }
