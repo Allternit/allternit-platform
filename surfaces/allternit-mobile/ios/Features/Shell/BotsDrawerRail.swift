@@ -487,49 +487,27 @@ struct BotsDrawerRail: View {
         }
     }
 
-    /// One bot: avatar with its status dot, name and time, and the last line
-    /// of its latest thread (or "Needs you" / "Working" while that holds).
+    /// One bot, one line: avatar, name, a mark only when it is working or
+    /// needs you, and the time of its latest thread.
     private func botRow(_ bot: AgentRecord) -> some View {
         let latest = latestThread(bot.id)
         let waiting = store.waitingCount(for: bot.id) > 0 || BotStatusStore.shared.needsAttention(for: bot.id)
         let working = !waiting && (store.workingCount(for: bot.id) > 0 || BotStatusStore.shared.isWorking(for: bot.id))
-        let line = latest.map { $0.statusLine?.nilIfBlank ?? $0.displayTitle } ?? bot.botTagline
         return Button { onOpenBot(bot.id) } label: {
-            HStack(spacing: 12) {
-                LiveBotStatusAvatar(bot: bot, size: 60, tiled: true)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        BotNameText(bot.botDisplayName, size: 15)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(Color("TextPrimary"))
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        if let at = latest?.lastActivityAt {
-                            Text(BotTime.short(at))
-                                .font(.system(size: 11))
-                                .monospacedDigit()
-                                .foregroundColor(Color("TextTertiary"))
-                        }
-                    }
-                    HStack(spacing: 4) {
-                        if waiting {
-                            Text("Needs you").font(.system(size: 12.5, weight: .medium)).foregroundColor(Theme.statusWarning)
-                        } else if working {
-                            Text("Working").font(.system(size: 12.5, weight: .medium)).foregroundColor(Theme.statusSuccess)
-                        } else {
-                            Text(line)
-                                .font(.system(size: 12.5))
-                                .foregroundColor(Color("TextSecondary"))
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
+            QuietSessionRow(
+                title: bot.botDisplayName,
+                time: latest.map { BotTime.short($0.lastActivityAt) } ?? "",
+                emphasized: waiting,
+                leading: { LiveBotStatusAvatar(bot: bot, size: 40, tiled: true) }
+            ) {
+                if waiting {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.statusWarning)
+                } else if working {
+                    Circle().fill(Theme.statusSuccess).frame(width: 8, height: 8)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(bot.botDisplayName + (waiting ? ", needs you" : working ? ", working" : ""))
@@ -546,20 +524,11 @@ struct BotsDrawerRail: View {
                     VStack(spacing: 0) {
                         ForEach(groups) { group in
                             Button { onOpen(.group(group.id)) } label: {
-                                HStack(spacing: 10) {
-                                    GroupAvatarStack(members: group.members, size: 34)
-                                    Text(group.name)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(Color("TextPrimary"))
-                                        .lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    Text(BotTime.short(group.updatedAt))
-                                        .font(.system(size: 11))
-                                        .foregroundColor(Color("TextTertiary"))
-                                }
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 44)
-                                .contentShape(Rectangle())
+                                QuietSessionRow(
+                                    title: group.name,
+                                    time: BotTime.short(group.updatedAt),
+                                    leading: { GroupAvatarStack(members: group.members, size: 34) }
+                                ) { EmptyView() }
                             }
                             .buttonStyle(.plain)
                         }
