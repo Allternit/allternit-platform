@@ -228,6 +228,7 @@ fun SettingsRoot(host: SettingsHost) {
             "subscriptions" -> host.connections(back)
             "device-access" -> DeviceAccessPage(back)
             "devices" -> DevicePairingPage(host, back)
+            "response-style" -> ResponseStylePage(host, back, push)
             "memory" -> MemoryPage(host, back, push)
             "memory-drive" -> MemoryDrivePage(host, back, push)
             "memory-history" -> MemoryHistoryPage(host, back)
