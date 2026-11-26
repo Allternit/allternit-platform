@@ -24,6 +24,9 @@ final class BotLiveActivityManager {
 
     /// cloud-api `BOT_ATTRIBUTES` / `BOT_ACTIVITY_KEY` (the attributes' `mode`).
     nonisolated static let attributesType = "BotActivityAttributes"
+    /// Bar job activities (`TaskActivityAttributes`): the update token's
+    /// `activityKey` is the job id; one push-to-start token per device.
+    nonisolated static let taskAttributesType = "TaskActivityAttributes"
     nonisolated static let activityKey = "summary"
 
     private static let log = Logger(subsystem: "com.allternit.mobile", category: "live-activity")
@@ -36,9 +39,11 @@ final class BotLiveActivityManager {
     /// Activity ids whose token and state streams are being watched.
     private var observed: Set<String> = []
     private var installed = false
-    /// Bar job activities by job id (`TaskActivityAttributes`). App-process
-    /// only: cloud-api has no push route for this attributes type.
+    /// Bar job activities by job id (`TaskActivityAttributes`), requested with
+    /// `pushType: .token`; cloud-api updates and ends them by push.
     private var taskActivities: [String: Activity<TaskActivityAttributes>] = [:]
+    /// Task activity ids whose token and state streams are being watched.
+    private var observedTasks: Set<String> = []
 
     private init() {}
 
@@ -62,11 +67,13 @@ final class BotLiveActivityManager {
         }
         for existing in Activity<TaskActivityAttributes>.activities
         where existing.activityState == .active || existing.activityState == .stale {
-            taskActivities[existing.attributes.jobId] = existing
+            adoptTask(existing)
         }
         Task { await Self.watchNewActivities() }
+        Task { await Self.watchNewTaskActivities() }
         if #available(iOS 17.2, *) {
             Task { await Self.watchPushToStartTokens() }
+            Task { await Self.watchTaskPushToStartTokens() }
         }
     }
 
@@ -112,6 +119,38 @@ final class BotLiveActivityManager {
     private nonisolated static func watchPushToStartTokens() async {
         for await token in Activity<BotActivityAttributes>.pushToStartTokenUpdates {
             await ActivityTokenRegistry.shared.update(kind: .laStart, attributesType: attributesType, activityKey: nil, token: token)
+        }
+    }
+
+    /// Push-to-start for bar jobs: cloud-api opens the activity when a job
+    /// enters `waiting_approval` or `working` (CONTRACT.md section 5).
+    @available(iOS 17.2, *)
+    private nonisolated static func watchTaskPushToStartTokens() async {
+        for await token in Activity<TaskActivityAttributes>.pushToStartTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laStart, attributesType: taskAttributesType, activityKey: nil, token: token)
+        }
+    }
+
+    /// A bar job activity started by a push (not by `syncBarJob`): track it
+    /// and upload its update token.
+    private nonisolated static func watchNewTaskActivities() async {
+        for await new in Activity<TaskActivityAttributes>.activityUpdates {
+            await BotLiveActivityManager.shared.adoptTask(new)
+        }
+    }
+
+    private nonisolated static func watchTaskTokens(id: String, jobId: String) async {
+        guard let tracked = liveTask(id) else { return }
+        for await token in tracked.pushTokenUpdates {
+            await ActivityTokenRegistry.shared.update(kind: .laUpdate, attributesType: taskAttributesType, activityKey: jobId, token: token)
+        }
+    }
+
+    private nonisolated static func watchTaskState(id: String, jobId: String) async {
+        guard let tracked = liveTask(id) else { return }
+        for await state in tracked.activityStateUpdates where state == .ended || state == .dismissed {
+            await BotLiveActivityManager.shared.didEndTask(jobId: jobId, id: id)
+            return
         }
     }
 
@@ -321,14 +360,36 @@ final class BotLiveActivityManager {
         guard job.state == "waiting_approval" || job.state == "working" else { return }
         let attributes = TaskActivityAttributes(jobId: job.jobId, title: job.title, appName: job.appName)
         do {
-            taskActivities[job.jobId] = try Activity.request(
+            let started = try Activity.request(
                 attributes: attributes,
-                content: ActivityContent(state: content, staleDate: nil)
+                content: ActivityContent(state: content, staleDate: nil),
+                pushType: .token
             )
+            adoptTask(started)
         } catch {
             // Live Activities off in Settings or the concurrent limit: nothing to recover.
             Self.log.notice("bar job activity request failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Track a bar job activity (started here or by a push) and upload its
+    /// update token, keyed by job id. Once per activity.
+    fileprivate func adoptTask(_ activity: Activity<TaskActivityAttributes>) {
+        let jobId = activity.attributes.jobId
+        if let known = taskActivities[jobId], known.id == activity.id, observedTasks.contains(activity.id) { return }
+        taskActivities[jobId] = activity
+        guard observedTasks.insert(activity.id).inserted else { return }
+        let id = activity.id
+        Task { await Self.watchTaskTokens(id: id, jobId: jobId) }
+        Task { await Self.watchTaskState(id: id, jobId: jobId) }
+    }
+
+    /// The activity ended (by us, by a pushed `end`, or the user dismissed it):
+    /// its update token is spent.
+    fileprivate func didEndTask(jobId: String, id: String) async {
+        _ = observedTasks.remove(id)
+        if taskActivities[jobId]?.id == id { taskActivities.removeValue(forKey: jobId) }
+        await ActivityTokenRegistry.shared.remove(kind: .laUpdate, attributesType: Self.taskAttributesType, activityKey: jobId)
     }
 
     /// The job is gone (deleted, signed out of its team): end it now.
@@ -419,6 +480,7 @@ final class BotLiveActivityManager {
         activity = nil
         startedLocally = false
         taskActivities.removeAll()
+        observedTasks.removeAll()
         let taskIds = Activity<TaskActivityAttributes>.activities.map(\.id)
         Task {
             for id in taskIds {

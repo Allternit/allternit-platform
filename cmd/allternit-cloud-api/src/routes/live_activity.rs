@@ -16,6 +16,14 @@
 //! - **Loop activities** (`LoopActivityAttributes`, `activityKey` = `loopId`): update and end from
 //!   `snapshot.loops`. No push-to-start: the app starts them. A snapshot without `loops` (a failed poll)
 //!   ends nothing.
+//! - **Bar job activities** (`TaskActivityAttributes`, `activityKey` = `jobId`): driven by the runtime's
+//!   `bar_job.changed` event ([`on_bar_job`], not a stored event). Per user (the runtime's paired owner,
+//!   who is the job's requester or its approver): `start` to the device's push-to-start token when the job
+//!   is `waiting_approval` or `working` and no update token exists for it yet (the approver only starts on
+//!   `waiting_approval`), `update` to the job's update token on every later state, `end` on
+//!   `completed` / `failed` / `cancelled` (the approver's ends as soon as the job stops waiting). The
+//!   approver's content state has `isOwner` true and, while waiting, the question fields under the same
+//!   rules as the bot activity. The requester's has none.
 //! - **Widget** (`widget` tokens): `{"aps":{"content-changed":true}}` when the counts, `needsYouRows`,
 //!   `paused` or `lastRoutine` change, at most once per [`WIDGET_EVERY_SECS`] per device (a change inside the
 //!   window is sent when it ends).
@@ -46,6 +54,9 @@ use super::notifications::{self, Level};
 
 pub const BOT_ATTRIBUTES: &str = "BotActivityAttributes";
 pub const LOOP_ATTRIBUTES: &str = "LoopActivityAttributes";
+pub const TASK_ATTRIBUTES: &str = "TaskActivityAttributes";
+/// A finished bar job stays on the Lock Screen this long (the app's `barJobFinalDwell`).
+pub const TASK_DISMISS_SECS: i64 = 4 * 3600;
 /// `activityKey` the app uploads with the bot activity's update token (the attributes' `mode`).
 pub const BOT_ACTIVITY_KEY: &str = "summary";
 pub const LA_TOPIC_SUFFIX: &str = ".push-type.liveactivity";
@@ -253,6 +264,39 @@ pub fn bot_content_state(s: &Summary) -> Value {
 /// `LoopActivityAttributes.ContentState` (`iterationsCompleted`, `maxIterations`, `state`).
 pub fn loop_content_state(l: &Value) -> Value {
     json!({ "iterationsCompleted": count(l, "iterationsCompleted"), "maxIterations": count(l, "maxIterations"), "state": text(l, "state").unwrap_or("running") })
+}
+
+/// `TaskActivityAttributes.ContentState` for one bar job, from a `bar_job.changed` payload. The keys are
+/// the app's Codable keys exactly: `state` and `isOwner` always (the app's synthesized decoder needs
+/// them); `approverName`, `botName`, `amount`, `receipt`, `error` when present; and, only on the approver's
+/// phone while the job waits, `inboxId` and (inline only) `question`, `contentHash`, `approveInline`,
+/// `runtimeId`.
+pub fn task_content_state(d: &Value, runtime_id: &str, is_owner: bool) -> Value {
+    let state = text(d, "state").unwrap_or("working");
+    let mut m = Map::new();
+    m.insert("state".into(), json!(state));
+    m.insert("isOwner".into(), json!(is_owner));
+    for (key, max) in [("approverName", 60), ("botName", 60), ("amount", 24), ("receipt", 80), ("error", 120)] {
+        if let Some(v) = text(d, key) {
+            m.insert(key.into(), json!(clip(v, max)));
+        }
+    }
+    if is_owner && state == "waiting_approval" {
+        if let Some(id) = text(d, "inboxId") {
+            m.insert("inboxId".into(), json!(clip(id, 128)));
+        }
+        if let Some(q) = inline_question(d) {
+            m.insert("question".into(), json!(q));
+            m.insert("contentHash".into(), json!(clip(text(d, "contentHash").unwrap_or_default(), 128)));
+            m.insert("approveInline".into(), json!(true));
+            m.insert("runtimeId".into(), json!(clip(runtime_id, 128)));
+        }
+    }
+    Value::Object(m)
+}
+
+fn task_terminal(state: &str) -> bool {
+    matches!(state, "completed" | "failed" | "cancelled")
 }
 
 fn loop_running(state: &Value) -> bool {
@@ -466,6 +510,8 @@ struct Mem {
     tokens: HashMap<String, TokenMem>,
     /// `user\0device` whose bot activity aged out.
     restart: HashSet<String>,
+    /// `user\0device\0job` bar jobs started by push whose update token has not arrived yet: no second start.
+    task_started: HashSet<String>,
 }
 
 fn mem() -> &'static Mutex<Mem> {
@@ -643,6 +689,85 @@ pub async fn plan(db: &PgPool, user: &str, runtime_id: &str, previous: Option<&V
         }
     }
     Ok(out)
+}
+
+/// Plan the bar job pushes for `user`'s phones after a `bar_job.changed` (`data`) came from `runtime_id`.
+/// Reads the tokens and quiet hours; sends nothing. See the module docs for the rules.
+pub async fn plan_bar_job(db: &PgPool, user: &str, runtime_id: &str, data: &Value, now: DateTime<Utc>) -> Result<Vec<Planned>, sqlx::Error> {
+    let (Some(job), Some(state)) = (text(data, "jobId"), text(data, "state")) else { return Ok(Vec::new()) };
+    let tokens: Vec<TokenRow> = sqlx::query_as("SELECT id, device_id, token, environment, kind, attributes_type, activity_key, created_at, last_ok_at FROM apns_activity_tokens WHERE user_id = $1 AND attributes_type = $2 ORDER BY created_at")
+        .bind(user)
+        .bind(TASK_ATTRIBUTES)
+        .fetch_all(db)
+        .await?;
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    let is_owner = text(data, "approverUserId") == Some(user);
+    let waiting = state == "waiting_approval";
+    // The approver's activity is about the ask: it ends once the job stops waiting.
+    let finished = task_terminal(state) || (is_owner && !waiting);
+    let content = task_content_state(data, runtime_id, is_owner);
+    let title = text(data, "title").unwrap_or("Task");
+    let quiet = notifications::quiet_hours(db, user).await.unwrap_or_default();
+    let alert_on = is_owner && waiting && !quiet.holds_at(Level::NeedsYou, now);
+    let ts = now.timestamp();
+    let devices: HashMap<String, PushTarget> = apns::device_targets(db, user).await?.into_iter().map(|d| (d.device_id.clone(), d)).collect();
+    let mut g = mem().lock().expect("live activity state");
+    let mut out = Vec::new();
+    for (device_id, dev) in &devices {
+        if !dev.has("la_push") {
+            continue;
+        }
+        let started_key = format!("{user}\0{device_id}\0{job}");
+        let update = of_kind(&tokens, device_id, "la_update", Some(TASK_ATTRIBUTES)).find(|t| t.activity_key.as_deref() == Some(job));
+        let mk = |row: &TokenRow, event: &str, priority: u8, extras: LaExtras, end: bool| Planned {
+            target: row.target(user),
+            push_type: "liveactivity",
+            topic_suffix: LA_TOPIC_SUFFIX,
+            priority,
+            payload: la_payload(event, content.clone(), ts, &extras),
+            at: None,
+            state: Some(content.clone()),
+            end,
+            restart_after: false,
+        };
+        if let Some(row) = update {
+            g.task_started.remove(&started_key);
+            if g.tokens.get(&row.id).and_then(|m| m.sent_state.as_ref()) == Some(&content) {
+                continue;
+            }
+            if finished {
+                let dismiss = if task_terminal(state) { ts + TASK_DISMISS_SECS } else { ts };
+                out.push(mk(row, "end", 10, LaExtras { dismissal_date: Some(dismiss), ..LaExtras::default() }, true));
+            } else {
+                let extras = LaExtras { alert: alert_on.then(|| alert(title, text(&content, "question").unwrap_or(GENERIC_APPROVAL), true)), ..LaExtras::default() };
+                out.push(mk(row, "update", if alert_on { 10 } else { 5 }, extras, false));
+            }
+            continue;
+        }
+        if finished || !(waiting || (state == "working" && !is_owner)) || g.task_started.contains(&started_key) {
+            continue;
+        }
+        let Some(start) = of_kind(&tokens, device_id, "la_start", Some(TASK_ATTRIBUTES)).last() else { continue };
+        g.task_started.insert(started_key);
+        let attrs = json!({ "jobId": job, "title": clip(title, 60), "appName": clip(text(data, "appName").unwrap_or(""), 60) });
+        let ask = alert_on.then(|| alert(title, text(&content, "question").unwrap_or(GENERIC_APPROVAL), true));
+        out.push(mk(start, "start", 10, LaExtras { alert: ask, start: Some((TASK_ATTRIBUTES, attrs)), dismissal_date: None }, false));
+    }
+    Ok(out)
+}
+
+/// After the runtime reported a bar job change: plan and send the Live Activity pushes. Does nothing when
+/// APNs isn't configured.
+pub async fn on_bar_job(db: PgPool, user: String, runtime_id: String, data: Value) {
+    if Apns::from_env().is_none() {
+        return;
+    }
+    match plan_bar_job(&db, &user, &runtime_id, &data, Utc::now()).await {
+        Ok(planned) => dispatch(&db, planned).await,
+        Err(error) => tracing::warn!("live activity: bar job planning failed: {error}"),
+    }
 }
 
 fn describe(p: &Planned) -> String {
@@ -975,4 +1100,74 @@ mod tests {
         let p = plan(&db, user, "rt_1", prev.as_ref(), later_now).await.unwrap();
         assert!(p.iter().all(|x| x.target.id != "apat_start"), "second start inside 10 minutes");
     }
+
+    /// `bar_job.changed` through the real token tables: push-to-start on waiting, an update with the owner
+    /// variant and the contract's keys, and an end with the final dwell. The sender is the same `Planned`
+    /// the existing tests inspect (no APNs call is made).
+    #[tokio::test]
+    async fn bar_job_changed_plans_start_update_and_end_payloads_for_the_task_activity() {
+        let db = test_pool().await;
+        crate::routes::notifications::tests::schema(&db).await;
+        let caps = vec!["actions".to_string(), "la_push".into()];
+        let add = |user: &'static str, device: &'static str, id: &'static str, kind: &'static str, key: Option<&'static str>, token: String| {
+            let db = db.clone();
+            async move {
+                sqlx::query("INSERT INTO apns_activity_tokens (id, user_id, device_id, kind, attributes_type, activity_key, token, environment) VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')")
+                    .bind(id).bind(user).bind(device).bind(kind).bind(TASK_ATTRIBUTES).bind(key).bind(token).execute(&db).await.unwrap();
+            }
+        };
+        for (user, device, seed) in [("u_req", "phone_r", "a1"), ("u_own", "phone_o", "a2")] {
+            apns::register(&db, user, &seed.repeat(32), "sandbox", &apns::DeviceInfo { device_id: device.into(), os_version: Some("26.1".into()), app_build: Some("31".into()), capabilities: caps.clone() }).await.unwrap();
+        }
+        add("u_req", "phone_r", "t_req_start", "la_start", None, "b1".repeat(40)).await;
+        add("u_own", "phone_o", "t_own_start", "la_start", None, "b2".repeat(40)).await;
+        let now = Utc::now();
+        let waiting = json!({ "jobId": "j1", "title": "Refund payment", "appName": "Stripe", "state": "waiting_approval", "botName": "Raven",
+            "requesterUserId": "u_req", "approverUserId": "u_own", "approverName": "Noah", "amount": "€320",
+            "inboxId": "approval:ap1", "question": "Refund €320 to Acme?", "contentHash": "ab12", "approveInline": true, "private": false });
+
+        // Requester: a start with the attributes, no alert, no question.
+        let p = plan_bar_job(&db, "u_req", "rt_1", &waiting, now).await.unwrap();
+        assert_eq!(p.len(), 1);
+        let aps = &p[0].payload["aps"];
+        assert_eq!((p[0].target.id.as_str(), p[0].push_type, p[0].topic_suffix, p[0].priority), ("t_req_start", "liveactivity", LA_TOPIC_SUFFIX, 10));
+        assert_eq!((&aps["event"], &aps["attributes-type"], &aps["attributes"]), (&json!("start"), &json!(TASK_ATTRIBUTES), &json!({ "jobId": "j1", "title": "Refund payment", "appName": "Stripe" })));
+        assert!(aps.get("alert").is_none());
+        assert_eq!(aps["content-state"], json!({ "state": "waiting_approval", "isOwner": false, "approverName": "Noah", "botName": "Raven", "amount": "€320" }));
+        // A second event before the app uploaded its update token does not start another activity.
+        assert!(plan_bar_job(&db, "u_req", "rt_1", &waiting, now).await.unwrap().is_empty());
+
+        // Approver: the owner variant with the question fields and an alert.
+        let p = plan_bar_job(&db, "u_own", "rt_9", &waiting, now).await.unwrap();
+        assert_eq!(p.len(), 1);
+        let aps = &p[0].payload["aps"];
+        assert_eq!(aps["event"], "start");
+        assert_eq!(aps["alert"]["body"], "Refund €320 to Acme?");
+        let cs = &aps["content-state"];
+        assert_eq!((cs["isOwner"].clone(), cs["question"].clone(), cs["inboxId"].clone(), cs["contentHash"].clone(), cs["approveInline"].clone(), cs["runtimeId"].clone()),
+            (json!(true), json!("Refund €320 to Acme?"), json!("approval:ap1"), json!("ab12"), json!(true), json!("rt_9")));
+
+        // The app uploads its update token (keyed by job id): working is an update, never a start.
+        add("u_req", "phone_r", "t_req_job", "la_update", Some("j1"), "c1".repeat(40)).await;
+        add("u_own", "phone_o", "t_own_job", "la_update", Some("j1"), "c2".repeat(40)).await;
+        let working = json!({ "jobId": "j1", "title": "Refund payment", "appName": "Stripe", "state": "working", "botName": "Raven", "approverUserId": "u_own", "amount": "€320" });
+        let p = plan_bar_job(&db, "u_req", "rt_1", &working, now).await.unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!((p[0].target.id.as_str(), p[0].payload["aps"]["event"].clone(), p[0].priority, p[0].end), ("t_req_job", json!("update"), 5, false));
+        assert_eq!(p[0].payload["aps"]["content-state"]["state"], "working");
+        // The approver's activity ends as soon as the job stops waiting.
+        let p = plan_bar_job(&db, "u_own", "rt_9", &working, now).await.unwrap();
+        assert_eq!((p[0].target.id.as_str(), p[0].payload["aps"]["event"].clone(), p[0].end), ("t_own_job", json!("end"), true));
+        assert_eq!(p[0].payload["aps"]["dismissal-date"], now.timestamp());
+
+        // Done: the requester's ends with the receipt and stays four hours.
+        let done = json!({ "jobId": "j1", "title": "Refund payment", "appName": "Stripe", "state": "completed", "receipt": "Refund payment €320", "approverUserId": "u_own" });
+        let p = plan_bar_job(&db, "u_req", "rt_1", &done, now).await.unwrap();
+        assert_eq!((p[0].payload["aps"]["event"].clone(), p[0].end), (json!("end"), true));
+        assert_eq!(p[0].payload["aps"]["dismissal-date"], now.timestamp() + TASK_DISMISS_SECS);
+        assert_eq!(p[0].payload["aps"]["content-state"]["receipt"], "Refund payment €320");
+        // Other attribute types and users' tokens are never touched; a job with no tokens plans nothing.
+        assert!(plan_bar_job(&db, "u_nobody", "rt_1", &done, now).await.unwrap().is_empty());
+    }
 }
+
