@@ -71,7 +71,7 @@ struct PadEditSheet: View {
     private var tilesSection: some View {
         Section {
             if tiles.isEmpty {
-                Text("No tiles yet.").font(.subheadline).foregroundColor(Color("TextTertiary"))
+                FriendlyInlineStateView(title: "No tiles yet.", art: .sheets)
             }
             ForEach(Array(tiles.enumerated()), id: \.offset) { index, tile in
                 HStack {

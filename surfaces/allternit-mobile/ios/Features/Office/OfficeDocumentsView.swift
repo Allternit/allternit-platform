@@ -31,9 +31,9 @@ struct OfficeDocumentsView: View {
                 } else if artifacts.isEmpty {
                     FriendlyStateView(
                         style: .empty,
-                        icon: "doc",
                         title: "No documents yet",
-                        message: "Docs, sheets, decks and PDFs you make or are shared appear here."
+                        message: "Docs, sheets, decks and PDFs you make or are shared appear here.",
+                        art: .sheets
                     )
                 } else {
                     ScrollView {
