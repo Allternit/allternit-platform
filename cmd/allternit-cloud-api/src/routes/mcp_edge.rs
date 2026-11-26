@@ -770,7 +770,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
             let reply = match rpc_method {
                 "tools/list" => {
                     let tools = edge_tools(phone_key.is_some(), mail_key.is_some(), model_key.as_ref());
-                    remember_tools(&target.approval_target(), &tools);
+                    remember_tools(&caller.user_id, &target.approval_target(), &tools);
                     mcp_protocol::rpc_ok(&id, json!({ "tools": tools }))
                 }
                 "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
@@ -839,7 +839,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
                 None => reply,
             };
             if rpc_method == "tools/list" && status == 200 {
-                remember_tools_in_reply(&target.approval_target(), &reply);
+                remember_tools_in_reply(&caller.user_id, &target.approval_target(), &reply);
             }
             let reply = match apps.filter(|_| status == 200) {
                 Some(_) if rpc_method == "initialize" => super::mcp_edge_apps::advertise_resources(reply),
@@ -1010,30 +1010,32 @@ fn with_feedback_tool(reply: Vec<u8>) -> Vec<u8> {
 }
 const MAX_LISTED_TOOLS: usize = 20;
 
-/// The tool names the last `tools/list` answered with, per approval target (memory only, no table).
-fn listed_tools() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> {
-    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> = std::sync::OnceLock::new();
+/// The tool names the last `tools/list` answered with, per (user, approval target) (memory only, no table).
+/// Keyed by user so one user's tool names never reach another user's approvals list.
+type ListedKey = (String, String);
+fn listed_tools() -> &'static std::sync::Mutex<std::collections::HashMap<ListedKey, Vec<String>>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<ListedKey, Vec<String>>>> = std::sync::OnceLock::new();
     M.get_or_init(Default::default)
 }
 
-fn remember_tools(approval_target: &str, tools: &[Value]) {
+fn remember_tools(user_id: &str, approval_target: &str, tools: &[Value]) {
     let names: Vec<String> = tools.iter().filter_map(|t| t["name"].as_str().map(str::to_string)).take(MAX_LISTED_TOOLS).collect();
     if let Ok(mut m) = listed_tools().lock() {
-        m.insert(approval_target.to_string(), names);
+        m.insert((user_id.to_string(), approval_target.to_string()), names);
     }
 }
 
-fn remember_tools_in_reply(approval_target: &str, reply: &[u8]) {
+fn remember_tools_in_reply(user_id: &str, approval_target: &str, reply: &[u8]) {
     if let Some(tools) = serde_json::from_slice::<Value>(reply).ok().as_ref().and_then(|v| v.pointer("/result/tools")).and_then(Value::as_array) {
-        remember_tools(approval_target, tools);
+        remember_tools(user_id, approval_target, tools);
     }
 }
 
 /// What a connected app can use on this target: the tool names its last
 /// `tools/list` answered with (runtime tools included), at most 20; before any
 /// list has been seen, the tools the edge serves itself.
-pub fn edge_tool_names(approval_target: &str) -> Vec<String> {
-    match listed_tools().lock().ok().and_then(|m| m.get(approval_target).cloned()) {
+pub fn edge_tool_names(user_id: &str, approval_target: &str) -> Vec<String> {
+    match listed_tools().lock().ok().and_then(|m| m.get(&(user_id.to_string(), approval_target.to_string())).cloned()) {
         Some(names) if !names.is_empty() => names,
         _ => vec![FEEDBACK_TOOL.to_string()],
     }
@@ -1779,10 +1781,12 @@ mod tests {
         let bad = jsonschema::validator_for(&output_schema_for("mail_read_otp")).unwrap();
         assert!(!bad.is_valid(&json!({ "object": "mail_otp" })), "a schema that accepts anything is not a schema");
         // The approvals `tools` list follows what tools/list answered, capped at 20.
-        remember_tools("bot:zz", &(0..30).map(|i| json!({ "name": format!("t{i}") })).collect::<Vec<_>>());
-        let names = edge_tool_names("bot:zz");
+        remember_tools("user-a", "bot:zz", &(0..30).map(|i| json!({ "name": format!("t{i}") })).collect::<Vec<_>>());
+        let names = edge_tool_names("user-a", "bot:zz");
         assert_eq!((names.len(), names[0].as_str()), (20, "t0"));
-        assert_eq!(edge_tool_names("bot:never-listed"), vec!["submit_feedback".to_string()]);
+        // Another user never sees user A's names for the same target.
+        assert_eq!(edge_tool_names("user-b", "bot:zz"), vec!["submit_feedback".to_string()]);
+        assert_eq!(edge_tool_names("user-a", "bot:never-listed"), vec!["submit_feedback".to_string()]);
         let long = feedback_result("u", &json!({ "tool": "t", "message": "é".repeat(900) }));
         assert_eq!(long["structuredContent"]["ok"], true);
     }

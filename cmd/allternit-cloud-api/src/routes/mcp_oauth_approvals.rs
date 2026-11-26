@@ -136,7 +136,7 @@ async fn list_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Quer
     let now = chrono::Utc::now();
     Json(json!({
         "approvals": rows.into_iter().map(|(id, client, target, label, created, used)| {
-            let mut row = approval_json(&id, &client, &target, &label, created, used);
+            let mut row = approval_json(&user, &id, &client, &target, &label, created, used);
             row["subscriptions"] = match &subs {
                 Some(subs) => subs.iter().filter(|s| s.client == client && s.target == target).map(|s| s.to_json(now)).collect(),
                 None => serde_json::Value::Null,
@@ -148,10 +148,10 @@ async fn list_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Quer
 }
 
 /// One list item. `clientName` is the label, else the client id; `tools` the edge tool names for the target.
-fn approval_json(id: &str, client: &str, target: &str, label: &str, created: chrono::DateTime<chrono::Utc>, used: Option<chrono::DateTime<chrono::Utc>>) -> serde_json::Value {
+fn approval_json(user_id: &str, id: &str, client: &str, target: &str, label: &str, created: chrono::DateTime<chrono::Utc>, used: Option<chrono::DateTime<chrono::Utc>>) -> serde_json::Value {
     let name = if label.trim().is_empty() { client } else { label };
     json!({
-        "id": id, "client": client, "clientName": name, "target": target, "label": label, "tools": crate::routes::mcp_edge::edge_tool_names(target),
+        "id": id, "client": client, "clientName": name, "target": target, "label": label, "tools": crate::routes::mcp_edge::edge_tool_names(user_id, target),
         "createdAt": created.to_rfc3339(), "lastUsedAt": used.map(|u| u.to_rfc3339()),
     })
 }
@@ -214,9 +214,9 @@ mod tests {
     #[test]
     fn a_listed_approval_has_a_client_name_and_tools() {
         let now = chrono::Utc::now();
-        let labelled = approval_json("moa_1", "client-x", "agents", "Claude", now, None);
+        let labelled = approval_json("u1", "moa_1", "client-x", "agents", "Claude", now, None);
         assert_eq!(labelled["clientName"], "Claude");
-        let bare = approval_json("moa_2", "client-x", "bot:b1", " ", now, None);
+        let bare = approval_json("u1", "moa_2", "client-x", "bot:b1", " ", now, None);
         assert_eq!(bare["clientName"], "client-x");
         assert!(bare["tools"].as_array().unwrap().iter().any(|t| t == "submit_feedback"));
     }
