@@ -69,7 +69,7 @@ object BarWording {
         "working" -> "Working"
         "input_required" -> "Needs input"
         "review" -> "Review"
-        "completed" -> receipt?.takeIf { it.isNotBlank() }?.let(::pastTense) ?: "Completed"
+        "completed" -> receipt?.takeIf { it.isNotBlank() }?.let { pastTense(it) } ?: "Completed"
         "failed" -> if (error.isNullOrBlank()) "Failed" else "Failed: $error"
         "cancelled" -> "Cancelled"
         else -> "Working"
@@ -114,12 +114,12 @@ object BarWording {
         "assign" to "Assigned", "move" to "Moved", "start" to "Started", "stop" to "Stopped", "run" to "Ran",
     )
 
-    fun pastTense(verb: String): String? = known[verb.lowercase()]
+    fun verbPastTense(verb: String): String? = known[verb.lowercase()]
 
     /** A pushed or server receipt ("Refund payment €320") in the past tense ("Refunded €320"). */
     fun pastTense(receipt: String): String {
         val words = receipt.split(' ').filter { it.isNotEmpty() }
-        val verb = words.firstOrNull()?.let(::pastTense) ?: return receipt
+        val verb = words.firstOrNull()?.let(::verbPastTense) ?: return receipt
         val rest = words.drop(1).toMutableList()
         if (rest.lastOrNull()?.lowercase() == "done") {
             rest.removeAt(rest.lastIndex)
@@ -139,7 +139,7 @@ object BarWording {
         val amount = (structured?.get("amount") as? JsonPrimitive)?.doubleOrNull ?: (args?.get("amount") as? JsonPrimitive)?.doubleOrNull
         val currency = structured.s("currency") ?: args.s("currency")
         val words = title.split(' ').filter { it.isNotEmpty() }
-        val verb = words.firstOrNull()?.let(::pastTense) ?: return "$title: done"
+        val verb = words.firstOrNull()?.let(::verbPastTense) ?: return "$title: done"
         if (amount != null) return "$verb ${money(amount, currency)}"
         val rest = words.drop(1).joinToString(" ")
         return if (rest.isEmpty()) verb else "$verb ${rest.lowercase()}"
