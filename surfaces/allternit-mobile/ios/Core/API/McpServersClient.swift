@@ -549,7 +549,7 @@ extension McpServersClient {
 
     /// GET mcp/approvals grouped by client (web `groupApprovals`).
     func connectedApps() async throws -> [McpConnectedApp] {
-        let body: ApprovalsBody = try await APIClient.shared.get(path: "mcp/approvals")
+        let body: ApprovalsBody = try await cloudApprovals(path: "api/v1/mcp/approvals", method: "GET")
         var order: [String] = []
         var by: [String: McpConnectedApp] = [:]
         for row in body.approvals ?? [] {
@@ -571,7 +571,19 @@ extension McpServersClient {
     func disconnectApp(_ app: McpConnectedApp) async throws {
         for id in app.approvalIds {
             let seg = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-            try await APIClient.shared.delete(path: "mcp/approvals/\(seg)")
+            let _: EmptyApprovalsBody = try await cloudApprovals(path: "api/v1/mcp/approvals/\(seg)", method: "DELETE")
         }
+    }
+
+    private struct EmptyApprovalsBody: Decodable { init(from decoder: Decoder) throws {} }
+
+    /// Approvals are served by cloud-api (mcp_oauth_approvals.rs), not allternit-api:
+    /// go DIRECT to `AppConfig.cloudAPIBaseURL` with the Bearer, like CoworkTasksClient.
+    private func cloudApprovals<T: Decodable>(path: String, method: String) async throws -> T {
+        let client = APIClient.shared
+        let request = try await client.authorizedRequest(url: AppConfig.cloudAPIBaseURL.appendingPathComponent(path), method: method)
+        let (data, response) = try await client.session.data(for: request)
+        try client.validate(response, data: data)
+        do { return try JSONDecoder().decode(T.self, from: data) } catch { throw APIError.decoding(error) }
     }
 }
