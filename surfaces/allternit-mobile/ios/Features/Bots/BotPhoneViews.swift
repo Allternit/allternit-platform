@@ -333,9 +333,9 @@ struct BotPhoneView: View {
                                   message: loadError, actionTitle: "Retry", action: { Task { await load() } })
                     .listRowBackground(Color.clear)
             } else if !snapshot.hasPhone {
-                FriendlyStateView(style: .empty, icon: "iphone", title: "No phone yet",
+                FriendlyStateView(style: .empty, title: "No phone yet",
                                   message: "Give \(bot.botDisplayName) a number, an email address or a messaging channel.",
-                                  actionTitle: "Give it a phone", action: { givingPhone = true })
+                                  actionTitle: "Give it a phone", action: { givingPhone = true }, art: .phone)
                     .listRowBackground(Color.clear)
             } else {
                 presenceHeader
@@ -416,9 +416,7 @@ struct BotPhoneView: View {
     private var conversationsSection: some View {
         Section {
             if snapshot.conversations.isEmpty {
-                Text("No conversations yet. When someone messages \(bot.botDisplayName), it shows up here.")
-                    .font(.footnote)
-                    .foregroundColor(Color("TextSecondary"))
+                FriendlyInlineStateView(title: "No conversations yet. When someone messages \(bot.botDisplayName), it shows up here.", art: .envelope)
             } else {
                 ForEach(snapshot.conversations) { conversation in
                     Button { open(conversation) } label: { conversationRow(conversation) }

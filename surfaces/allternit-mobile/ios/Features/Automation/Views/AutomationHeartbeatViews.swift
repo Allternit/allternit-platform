@@ -170,16 +170,16 @@ struct HeartbeatAgentPicker: View {
         } else if hub.agents.isEmpty {
             FriendlyInlineStateView(
                 style: .empty,
-                icon: "cpu",
                 title: "No agents available",
-                message: "Create an agent first to configure heartbeat tasks."
+                message: "Create an agent first to configure heartbeat tasks.",
+                art: .gizzi
             )
         } else if shown.isEmpty {
             FriendlyInlineStateView(
                 style: .empty,
-                icon: "magnifyingglass",
                 title: "No agents match your search",
-                message: "Try another search."
+                message: "Try another search.",
+                art: .search
             )
         } else {
             LazyVStack(spacing: 12) {

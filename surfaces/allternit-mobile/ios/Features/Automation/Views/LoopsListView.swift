@@ -218,9 +218,9 @@ struct LoopsListView: View {
                     if visibleLoops.isEmpty {
                         FriendlyInlineStateView(
                             style: .empty,
-                            icon: "magnifyingglass",
                             title: "No matches",
-                            message: "No loops match."
+                            message: "No loops match.",
+                            art: .search
                         )
                         .padding(.top, 24)
                     }

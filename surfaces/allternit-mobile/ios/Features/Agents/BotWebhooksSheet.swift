@@ -31,19 +31,12 @@ struct BotWebhooksSheet: View {
                     }
                     .padding(.horizontal, 20)
                 } else if subscriptions.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "link")
-                            .font(.system(size: 28))
-                            .foregroundColor(Color("TextSecondary").opacity(0.6))
-                        Text("No organization subscriptions yet")
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextPrimary"))
-                        Text("Webhooks are organization-wide. They let outside services push events into Allternit.")
-                            .font(.caption)
-                            .foregroundColor(Color("TextSecondary"))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
+                    FriendlyStateView(
+                        title: "No organization subscriptions yet",
+                        message: "Webhooks are organization-wide. They let outside services push events into Allternit.",
+                        art: .sheets,
+                        size: .panel
+                    )
                     .padding(.top, 40)
                 } else {
                     List {
