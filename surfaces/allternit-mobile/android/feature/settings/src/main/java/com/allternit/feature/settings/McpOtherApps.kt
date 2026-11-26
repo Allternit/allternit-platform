@@ -62,7 +62,7 @@ internal fun UseAllternitInOtherApps() {
     var copied by remember { mutableStateOf(false) }
     var tick by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
-    val (load, reload) = rememberLoad("mcpApprovals") { Net.get("mcp/approvals").toLoad("load connected apps") }
+    val (load, reload) = rememberLoad("mcpApprovals") { Net.cloud("GET", "api/v1/mcp/approvals").toLoad("load connected apps") }
 
     Text("Use Allternit in other apps", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
     CCard {
@@ -89,7 +89,7 @@ internal fun UseAllternitInOtherApps() {
                         SButton("Disconnect", tag = "mcpDisconnect_${a.client}", destructive = true) {
                             scope.launch {
                                 error = null
-                                val failed = a.ids.map { Net.send("DELETE", "mcp/approvals/${LibraryNet.escape(it)}") }.firstOrNull { it !is ApiResult.Ok }
+                                val failed = a.ids.map { Net.cloud("DELETE", "api/v1/mcp/approvals/${LibraryNet.escape(it)}") }.firstOrNull { it !is ApiResult.Ok }
                                 if (failed != null) error = failed.friendly("disconnect") else reload()
                             }
                         }
