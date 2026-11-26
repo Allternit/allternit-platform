@@ -93,6 +93,7 @@ struct SettingsView: View {
             }
             .navigationDestination(for: SettingsPageID.self) { page in
                 destination(page)
+                    .environment(\.settingsPageSymbol, page.systemImage)
             }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {

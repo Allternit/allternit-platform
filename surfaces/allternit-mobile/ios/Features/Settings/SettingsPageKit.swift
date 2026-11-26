@@ -444,6 +444,10 @@ struct PhoneSettingsPage<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
+    @Environment(\.settingsPageSymbol) private var pageSymbol
+    @ReducedMotion private var reduced
+    @State private var shown = false
+
     var body: some View {
         // The title is a block title that spells itself into the nav bar as the
         // page scrolls (DockingTitleScrollView, chrome .navigationBar).
@@ -453,6 +457,22 @@ struct PhoneSettingsPage<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(EdgeInsets(top: 4, leading: 16, bottom: 32, trailing: 16))
+            // Contents fade in and rise 6pt as the page lands.
+            .opacity(shown || reduced ? 1 : 0)
+            .offset(y: shown || reduced ? 0 : 6)
+        }
+        .onAppear {
+            guard !shown else { return }
+            withAnimation(.easeOut(duration: 0.24)) { shown = true }
+        }
+        // The page's icon tile sits in the bar beside the title; the system
+        // back button and swipe-back stay.
+        .toolbar {
+            if let pageSymbol {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SettingsIconTile(systemImage: pageSymbol, size: 28)
+                }
+            }
         }
         // Kept for the back button label on pushed pages and for VoiceOver.
         .navigationTitle(title)

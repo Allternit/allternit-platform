@@ -74,7 +74,17 @@ private struct SettingsRowPressedKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct SettingsPageSymbolKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
 extension EnvironmentValues {
+    /// The SF Symbol of the pushed settings page, shown as a tile by its title.
+    var settingsPageSymbol: String? {
+        get { self[SettingsPageSymbolKey.self] }
+        set { self[SettingsPageSymbolKey.self] = newValue }
+    }
+
     var settingsRowPressed: Bool {
         get { self[SettingsRowPressedKey.self] }
         set { self[SettingsRowPressedKey.self] = newValue }
