@@ -5,6 +5,14 @@ so reads walk the AT-SPI tree directly with pyatspi, key/pixel input posts
 through xdotool (already the image's pixel fallback), and screenshots come
 from scrot (the full screen) cropped to the window with Pillow.
 
+Displays: a guest can run one Xvfb per agent (``allternit_driver.agent_display``,
+``:10`` and up) beside the computer's own ``:0``. Every agent's Chrome joins
+the one shared D-Bus session, so the one AT-SPI registry lists them all, told
+apart by pid; only X is per display. Input (xdotool) and pixels (scrot) for a
+window go to the display its process runs on, read from ``/proc/<pid>/environ``;
+pid-less calls (a desktop screenshot, a pixel op) take ``display`` from the
+call and fall back to the unit's ``DISPLAY``.
+
 ``window_id`` is the ordinal of the window among the app's shown top-level
 windows (AT-SPI exposes no X window id); reads and actions agree because both
 resolve it the same way. Element ``native`` handles are the read's tree path
@@ -19,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -66,6 +75,37 @@ _KEYSYMS = {
 # can reach the desktop's accessibility bus.
 _BUS_FILES = ("/run/allternit/session-bus.env",)
 
+_DISPLAY_RE = re.compile(r"^:[0-9]{1,4}(\.[0-9]{1,2})?$")
+
+
+def check_display(display: Any) -> str | None:
+    """A caller's ``display`` (":10"), or None when not given; refuses anything
+    that isn't a local X display, so it never reaches a shell or a socket path
+    unchecked."""
+    if display is None or display == "":
+        return None
+    d = str(display).strip()
+    if not _DISPLAY_RE.match(d):
+        raise CuaError("bad_input", f"display must look like :10, not {d[:20]!r}")
+    return d
+
+
+def default_display() -> str:
+    return os.environ.get("DISPLAY") or ":0"
+
+
+def display_of_pid(pid: int) -> str | None:
+    """The X display a process was started on (its ``DISPLAY``), or None."""
+    try:
+        with open(f"/proc/{int(pid)}/environ", "rb") as f:
+            for item in f.read().split(b"\0"):
+                if item.startswith(b"DISPLAY="):
+                    d = item[8:].decode("utf-8", "replace").strip()
+                    return d if _DISPLAY_RE.match(d) else None
+    except (OSError, ValueError):
+        return None
+    return None
+
 
 def _role(name: str) -> str:
     mapped = _ROLES.get(name.lower())
@@ -94,6 +134,25 @@ class ATSPIEngine:
         self.error: str | None = None
         self._desktop: Any = None
         self._lock = threading.Lock()
+        self._displays: dict[int, str] = {}  # pid -> X display (a pid's DISPLAY never changes)
+
+    def display_for(self, pid: int | None, display: str | None = None) -> str:
+        """The display a call acts on: the caller's ``display``, else the
+        target process's own, else the unit's."""
+        given = check_display(display)
+        if given:
+            return given
+        if pid:
+            d = self._displays.get(int(pid))
+            if d is None:
+                d = display_of_pid(int(pid))
+                if d is not None:
+                    if len(self._displays) > 512:
+                        self._displays.clear()
+                    self._displays[int(pid)] = d
+            if d:
+                return d
+        return default_display()
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -278,6 +337,7 @@ class ATSPIEngine:
                 out.append({
                     "pid": app_pid or 0, "window_id": i, "app_name": name, "title": title,
                     "bounds": bounds, "frame": bounds, "is_on_screen": self._showing(win),
+                    "display": self.display_for(app_pid),
                 })
         return out
 
@@ -410,8 +470,8 @@ class ATSPIEngine:
             pass
         return False
 
-    def _xdo(self, *args: str) -> None:
-        display = os.environ.get("DISPLAY") or ":0"
+    def _xdo(self, *args: str, display: str | None = None) -> None:
+        display = display or default_display()
         try:
             out = subprocess.run(["xdotool", *args], env={**os.environ, "DISPLAY": display},
                                  capture_output=True, text=True, timeout=20)
@@ -427,17 +487,18 @@ class ATSPIEngine:
         n = key.strip().lower().replace("-", "_")
         return _KEYSYMS.get(n, key.strip())
 
-    def _type_text(self, text: str) -> None:
-        self._xdo("type", "--delay", "12", "--", text)
+    def _type_text(self, text: str, display: str | None = None) -> None:
+        self._xdo("type", "--delay", "12", "--", text, display=display)
 
-    def _press(self, key: str) -> None:
-        self._xdo("key", "--", self._keysym(key))
+    def _press(self, key: str, display: str | None = None) -> None:
+        self._xdo("key", "--", self._keysym(key), display=display)
 
     def act(self, pid: int, window_id: int, native: dict[str, Any], op: str, value: Any = None, key: str | None = None) -> None:
         path = str((native or {}).get("path") or "")
         if not path:
             raise CuaError("unknown_element", "this element has no AT-SPI handle; call read_ui first")
         acc = self._find(pid, window_id, path)
+        d = self.display_for(pid)
         if op in ("click", "select"):
             if self._invoke(acc, "click", "activate", "press", "open", "select"):
                 return
@@ -446,16 +507,16 @@ class ATSPIEngine:
             except Exception:
                 pass
             x, y = self._center(acc)
-            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)))
-            self._xdo("click", "1")
+            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)), display=d)
+            self._xdo("click", "1", display=d)
         elif op == "double_click":
             x, y = self._center(acc)
-            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)))
-            self._xdo("click", "--repeat", "2", "--delay", "80", "1")
+            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)), display=d)
+            self._xdo("click", "--repeat", "2", "--delay", "80", "1", display=d)
         elif op == "right_click":
             x, y = self._center(acc)
-            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)))
-            self._xdo("click", "3")
+            self._xdo("mousemove", "--sync", str(round(x)), str(round(y)), display=d)
+            self._xdo("click", "3", display=d)
         elif op == "focus":
             try:
                 acc.queryComponent().grabFocus()
@@ -469,18 +530,18 @@ class ATSPIEngine:
                 acc.queryComponent().grabFocus()
             except Exception:
                 pass
-            self._press("ctrl+a")
-            self._type_text(text)
+            self._press("ctrl+a", d)
+            self._type_text(text, d)
         elif op == "type":
             try:
                 acc.queryComponent().grabFocus()
             except Exception:
                 pass
-            self._type_text("" if value is None else str(value))
+            self._type_text("" if value is None else str(value), d)
         elif op == "press":
             if key and "+" in key:
                 raise CuaError("unsupported_op", "press takes one key; use a run_batch pixel step ({\"pixel\": {\"tool\": \"hotkey\", \"args\": {\"keys\": [...]}}}) for chords")
-            self._press(key or "return")
+            self._press(key or "return", d)
         else:
             raise CuaError("unsupported_op", f"{op} isn't an element action")
 
@@ -506,6 +567,7 @@ class ATSPIEngine:
         return False
 
     def menu(self, pid: int, window_id: int, path: list[str]) -> None:
+        d = self.display_for(pid)
         for part in path:
             window = self._window(pid, window_id)
             self._refresh(window)
@@ -529,17 +591,19 @@ class ATSPIEngine:
                 raise CuaError("window_not_found", f"no menu item named {part!r} in this window")
             if not self._invoke(found, "click", "activate"):
                 x, y = self._center(found)
-                self._xdo("mousemove", "--sync", str(round(x)), str(round(y)))
-                self._xdo("click", "1")
+                self._xdo("mousemove", "--sync", str(round(x)), str(round(y)), display=d)
+                self._xdo("click", "1", display=d)
             import time
 
             time.sleep(0.3)
 
     # ---- pixels / screenshots ------------------------------------------------------
 
-    def screenshot(self, pid: int | None, window_id: int | None) -> bytes:
-        display = os.environ.get("DISPLAY") or ":0"
-        path = f"/tmp/.allternit-driver-{os.getpid()}.png"
+    def screenshot(self, pid: int | None, window_id: int | None, display: str | None = None) -> bytes:
+        """The screen of the window's display (or ``display``, or the unit's),
+        cropped to the window when one is given."""
+        display = self.display_for(pid, display)
+        path = f"/tmp/.allternit-driver-{os.getpid()}-{threading.get_ident()}.png"
         try:
             out = subprocess.run(["scrot", "-z", "-o", path], env={**os.environ, "DISPLAY": display},
                                  capture_output=True, text=True, timeout=30)
@@ -572,15 +636,17 @@ class ATSPIEngine:
     def pixel(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         coord = args.get("coordinate") or [args.get("x"), args.get("y")]
         x, y = (int(round(float(v))) for v in coord) if isinstance(coord, list) and len(coord) == 2 and coord[0] is not None else (None, None)
+        pid = args.get("pid")
+        d = self.display_for(int(pid) if pid else None, args.get("display"))
         button = {"left": "1", "middle": "2", "right": "3"}.get(str(args.get("button") or "left"), "1")
         if tool == "get_screen_size":
-            out = self._xdout("getdisplaygeometry")
+            out = self._xdout("getdisplaygeometry", display=d)
             parts = out.split()
             if len(parts) >= 2:
                 return {"width": float(parts[0]), "height": float(parts[1])}
             raise CuaError("error", f"couldn't parse the display size: {out.strip()[:100]}")
         if tool == "get_cursor_position":
-            out = self._xdout("getmouselocation", "--shell")
+            out = self._xdout("getmouselocation", "--shell", display=d)
             pos = {}
             for line in out.splitlines():
                 if "=" in line:
@@ -589,7 +655,7 @@ class ATSPIEngine:
             return {"x": float(pos.get("X", "0")), "y": float(pos.get("Y", "0"))}
         if tool == "move_cursor":
             self._need_xy(tool, x, y)
-            self._xdo("mousemove", "--sync", str(x), str(y))
+            self._xdo("mousemove", "--sync", str(x), str(y), display=d)
             return {}
         if tool == "click" or tool in ("double_click", "right_click"):
             count = 2 if tool == "double_click" else int(args.get("count") or 1)
@@ -601,26 +667,26 @@ class ATSPIEngine:
             for m in mods:
                 down += ["keydown", _MODS.get(m.lower(), m)]
             if down:
-                self._xdo(*down)
+                self._xdo(*down, display=d)
             try:
-                self._xdo("mousemove", "--sync", str(x), str(y))
-                self._xdo("click", "--repeat", str(count), "--delay", "80", button)
+                self._xdo("mousemove", "--sync", str(x), str(y), display=d)
+                self._xdo("click", "--repeat", str(count), "--delay", "80", button, display=d)
             finally:
                 if down:
-                    self._xdo("keyup", *[_MODS.get(m.lower(), m) for m in reversed(mods)])
+                    self._xdo("keyup", *[_MODS.get(m.lower(), m) for m in reversed(mods)], display=d)
             return {}
         if tool == "drag":
             self._need_xy(tool, x, y)
             from_x = int(round(float(args.get("from_x", x))))
             from_y = int(round(float(args.get("from_y", y))))
             steps = max(2, min(20, (abs(x - from_x) + abs(y - from_y)) // 40 + 2))
-            self._xdo("mousemove", "--sync", str(from_x), str(from_y))
-            self._xdo("mousedown", "1")
+            self._xdo("mousemove", "--sync", str(from_x), str(from_y), display=d)
+            self._xdo("mousedown", "1", display=d)
             try:
                 for i in range(1, steps + 1):
-                    self._xdo("mousemove", str(round(from_x + (x - from_x) * i / steps)), str(round(from_y + (y - from_y) * i / steps)))
+                    self._xdo("mousemove", str(round(from_x + (x - from_x) * i / steps)), str(round(from_y + (y - from_y) * i / steps)), display=d)
             finally:
-                self._xdo("mouseup", "1")
+                self._xdo("mouseup", "1", display=d)
             return {}
         if tool == "scroll":
             direction = str(args.get("scroll_direction") or args.get("direction") or "down")
@@ -629,14 +695,14 @@ class ATSPIEngine:
                 raise CuaError("bad_input", "scroll_direction must be up, down, left or right")
             amount = int(args.get("scroll_amount", args.get("amount", 3)) or 3)
             if x is not None and y is not None:
-                self._xdo("mousemove", "--sync", str(x), str(y))
-            self._xdo("click", "--repeat", str(max(1, min(amount, 50))), "--delay", "30", btn)
+                self._xdo("mousemove", "--sync", str(x), str(y), display=d)
+            self._xdo("click", "--repeat", str(max(1, min(amount, 50))), "--delay", "30", btn, display=d)
             return {}
         if tool == "type_text":
-            self._type_text(str(args.get("text") or ""))
+            self._type_text(str(args.get("text") or ""), d)
             return {}
         if tool == "press_key":
-            self._press(str(args.get("key") or "return"))
+            self._press(str(args.get("key") or "return"), d)
             return {}
         if tool == "hotkey":
             keys = [str(k) for k in (args.get("keys") or [])]
@@ -645,16 +711,16 @@ class ATSPIEngine:
             down = []
             for k in keys:
                 down += ["keydown", self._keysym(k)]
-            self._xdo(*down)
+            self._xdo(*down, display=d)
             up = []
             for k in reversed(keys):
                 up += ["keyup", self._keysym(k)]
-            self._xdo(*up)
+            self._xdo(*up, display=d)
             return {}
         raise CuaError("bad_input", f"{tool} isn't a pixel op")
 
-    def _xdout(self, *args: str) -> str:
-        display = os.environ.get("DISPLAY") or ":0"
+    def _xdout(self, *args: str, display: str | None = None) -> str:
+        display = display or default_display()
         try:
             out = subprocess.run(["xdotool", *args], env={**os.environ, "DISPLAY": display},
                                  capture_output=True, text=True, timeout=15)

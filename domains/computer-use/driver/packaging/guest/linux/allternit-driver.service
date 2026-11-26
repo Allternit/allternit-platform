@@ -7,6 +7,9 @@ After=allternit-desktop.service allternit-session-bus.service allternit-xvfb.ser
 
 [Service]
 Type=simple
+# The computer's own screen. Agent browsers run on their own displays (:10
+# and up, allternit-agent-display); the driver acts on the display of the
+# window's process, or the call's `display`, and uses this one otherwise.
 Environment=DISPLAY=:0
 Environment=HOME=/root
 Environment=PYTHONPATH=/opt/allternit-driver
