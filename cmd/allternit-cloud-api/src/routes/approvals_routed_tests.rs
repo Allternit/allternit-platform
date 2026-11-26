@@ -148,3 +148,52 @@ async fn approver_me_lists_only_routed_pending_asks_and_the_default_list_is_unch
     let (status, _) = get_json(&app, "/api/v1/approvals?approver=someone").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn routed_path_answers_a_runtime_device_token_and_a_session_but_not_a_stranger() {
+    use crate::routes::runtime_events::{RUNTIME_ID_HEADER, SIG_HEADER, TS_HEADER};
+    use crate::routes::runtime_pairing::sha256_hex;
+    use crate::routes::runtime_relay::sign_runtime_request;
+    use crate::routes::test_support::seed_runtime_device;
+
+    let (state, _) = setup().await;
+    platform_row(&state, "gap_mine", json!({ "approver_user_id": OWNER, "actor_ref": "b:agent_7" }), "pending").await;
+    platform_row(&state, "gap_theirs", json!({ "approver_user_id": OTHER }), "pending").await;
+    seed_runtime_device(&state.db, "rt-1", OWNER).await;
+    let app = Router::new().merge(routed_routes()).with_state(state.clone());
+    let path = "/api/v1/approvals/routed";
+
+    // The runtime signs the path without the query; it acts as its owner.
+    let key = sha256_hex(b"token-of-rt-1");
+    let ts = Utc::now().timestamp();
+    let signed = Request::builder()
+        .uri(format!("{path}?limit=10"))
+        .header(RUNTIME_ID_HEADER, "rt-1")
+        .header(TS_HEADER, ts.to_string())
+        .header(SIG_HEADER, sign_runtime_request(&key, ts, "GET", path, b""))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(signed).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 22).await.unwrap()).unwrap();
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1, "{body}");
+    assert_eq!(data[0]["source"]["source_ref"], "gap_mine");
+
+    // A bad signature is 401 (never falls through to a session).
+    let forged = Request::builder()
+        .uri(path)
+        .header(RUNTIME_ID_HEADER, "rt-1")
+        .header(TS_HEADER, ts.to_string())
+        .header(SIG_HEADER, sign_runtime_request(&sha256_hex(b"nope"), ts, "GET", path, b""))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.clone().oneshot(forged).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+
+    // A signed-in session works too (test stand-in header).
+    let session = Request::builder().uri(path).header("x-test-session-user", OTHER).body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(session).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 22).await.unwrap()).unwrap();
+    assert_eq!(body["data"][0]["source"]["source_ref"], "gap_theirs");
+}
