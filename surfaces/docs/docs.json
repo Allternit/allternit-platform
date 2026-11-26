@@ -102,6 +102,7 @@
               "guides/usage-dashboard",
               "guides/switch-accounts",
               "guides/phone-settings",
+              "guides/desktop-settings",
               "guides/phone-sms-runtime",
               "guides/project-coordination",
               "guides/project-status",
@@ -276,7 +277,8 @@
               "architecture/verification",
               "architecture/receipts",
               "architecture/replay",
-              "architecture/ui-components"
+              "architecture/ui-components",
+              "architecture/animated-icon"
             ],
             "icon": "/icons/stack.svg"
           },

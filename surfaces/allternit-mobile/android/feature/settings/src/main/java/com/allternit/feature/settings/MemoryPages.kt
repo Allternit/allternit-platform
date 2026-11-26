@@ -158,7 +158,7 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
             SLabel("Files")
             LoadView(tree, reloadTree, "load the files") { body ->
                 val rows = body.listUnder("files", "entries", "tree", "items").filter { (it.str("type") ?: "file") != "dir" && (it.str("type") ?: "file") != "directory" }
-                val skipped = (body.obj["skipped_entries"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
+                val skipped = (body.obj?.get("skipped_entries") as? kotlinx.serialization.json.JsonArray)?.size ?: 0
                 if (skipped > 0) SNote("$skipped ${if (skipped == 1) "entry was" else "entries were"} skipped because ${if (skipped == 1) "it" else "they"} could not be read. The rest of your drive is synced.")
                 if (rows.isEmpty()) SNote("No files yet.", art = com.allternit.core.design.EmptyArtKind.Sheets) else SCard {
                     rows.forEachIndexed { i, f ->

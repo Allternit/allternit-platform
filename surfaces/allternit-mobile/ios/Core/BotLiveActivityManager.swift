@@ -135,7 +135,9 @@ final class BotLiveActivityManager {
     /// and upload its update token.
     private nonisolated static func watchNewTaskActivities() async {
         for await new in Activity<TaskActivityAttributes>.activityUpdates {
-            await BotLiveActivityManager.shared.adoptTask(new)
+            // Activity is not Sendable: hand over its id and look it up on the main actor.
+            let id = new.id
+            await BotLiveActivityManager.shared.adoptTask(id: id)
         }
     }
 
@@ -374,6 +376,11 @@ final class BotLiveActivityManager {
 
     /// Track a bar job activity (started here or by a push) and upload its
     /// update token, keyed by job id. Once per activity.
+    fileprivate func adoptTask(id activityId: String) {
+        guard let activity = Self.liveTask(activityId) else { return }
+        adoptTask(activity)
+    }
+
     fileprivate func adoptTask(_ activity: Activity<TaskActivityAttributes>) {
         let jobId = activity.attributes.jobId
         if let known = taskActivities[jobId], known.id == activity.id, observedTasks.contains(activity.id) { return }

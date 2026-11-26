@@ -109,11 +109,14 @@ final class AppearanceStore: ObservableObject {
     }
 }
 
-/// Light / Dark / System as picture tiles (phone.css `.phone-theme-tiles`):
-/// a mini page with two ink lines and an accent dot; the picked tile gets a
-/// 2pt accent border and an accent label.
+/// Light / Dark / System as window thumbnails (phone.css `.phone-theme-tiles`):
+/// a mini app window (sidebar, text lines, composer pill; System is split on
+/// the diagonal). One ring in TextPrimary, set off by a gap, slides to the
+/// picked tile; the picked label goes bold.
 struct AppearanceTiles: View {
     @ObservedObject private var store = AppearanceStore.shared
+    @Namespace private var ringSpace
+    @ReducedMotion private var reduced
 
     var body: some View {
         HStack(spacing: 10) {
@@ -121,20 +124,31 @@ struct AppearanceTiles: View {
                 let picked = store.theme == option
                 Button(action: {
                     Haptics.selection()
-                    store.theme = option
+                    withAnimation(reduced ? .easeOut(duration: 0.12) : .spring(response: 0.34, dampingFraction: 0.78)) {
+                        store.theme = option
+                    }
                 }) {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 8) {
                         ThemeTilePicture(mode: option)
-                            .frame(height: 62)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .aspectRatio(128.0 / 78.0, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(picked ? Color("BrandAccent") : Color("BorderSubtle"),
-                                                  lineWidth: picked ? 2 : 1)
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .strokeBorder(Color("BorderSubtle"), lineWidth: 1)
+                            )
+                            .background(
+                                ZStack {
+                                    if picked {
+                                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                            .strokeBorder(Color("TextPrimary"), lineWidth: 2)
+                                            .padding(-4)
+                                            .matchedGeometryEffect(id: "themeRing", in: ringSpace)
+                                    }
+                                }
                             )
                         Text(option.label)
-                            .font(.system(size: 13, weight: picked ? .semibold : .regular))
-                            .foregroundColor(picked ? Color("BrandAccent") : Color("TextPrimary"))
+                            .font(.system(size: 13, weight: picked ? .bold : .regular))
+                            .foregroundColor(Color("TextPrimary"))
                     }
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
@@ -144,58 +158,72 @@ struct AppearanceTiles: View {
                 .accessibilityAddTraits(picked ? [.isSelected, .isButton] : .isButton)
             }
         }
-        .padding(12)
+        .padding(EdgeInsets(top: 16, leading: 16, bottom: 12, trailing: 16))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Appearance")
     }
 }
 
-/// `.phone-theme-pic`: white, graphite (#1F1F1E), or split on the diagonal.
+/// A mini app window: sidebar, two text lines, a composer pill. System draws
+/// the light window with the dark one across the lower-right diagonal half.
 private struct ThemeTilePicture: View {
     let mode: AppearanceStore.Mode
 
-    private static let graphite = Color(red: 0x1F / 255, green: 0x1F / 255, blue: 0x1E / 255)
-
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                background(size: geo.size)
-                let ink = mode == .dark ? Color(red: 0.91, green: 0.91, blue: 0.90) : Color(red: 0.165, green: 0.165, blue: 0.157)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(ink.opacity(0.7))
-                    .frame(width: geo.size.width * 0.44, height: 4)
-                    .offset(x: 10, y: 12)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(ink.opacity(0.4))
-                    .frame(width: geo.size.width * 0.26, height: 4)
-                    .offset(x: 10, y: 21)
-                Circle()
-                    .fill(Color("BrandAccent"))
-                    .frame(width: 10, height: 10)
-                    .offset(x: geo.size.width - 20, y: geo.size.height - 20)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func background(size: CGSize) -> some View {
         switch mode {
         case .light:
-            Color.white
+            WindowThumb(dark: false)
         case .dark:
-            Self.graphite
+            WindowThumb(dark: true)
         case .system:
             ZStack {
-                Self.graphite
-                Path { path in
-                    path.move(to: .zero)
-                    path.addLine(to: CGPoint(x: size.width, y: 0))
-                    path.addLine(to: CGPoint(x: 0, y: size.height))
-                    path.closeSubpath()
-                }
-                .fill(Color.white)
+                WindowThumb(dark: false)
+                WindowThumb(dark: true)
+                    .mask(DiagonalHalf())
             }
         }
     }
 }
 
+/// The lower-right triangle (corner to corner).
+private struct DiagonalHalf: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct WindowThumb: View {
+    let dark: Bool
+
+    private var page: Color { dark ? Color(red: 0x1F / 255, green: 0x1F / 255, blue: 0x1E / 255) : .white }
+    private var side: Color { dark ? Color(red: 0x2A / 255, green: 0x2A / 255, blue: 0x28 / 255) : Color(red: 0xF1 / 255, green: 0xF1 / 255, blue: 0xEF / 255) }
+    private var ink: Color { dark ? Color(red: 0.91, green: 0.91, blue: 0.90) : Color(red: 0.165, green: 0.165, blue: 0.157) }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            ZStack(alignment: .topLeading) {
+                page
+                side.frame(width: w * 0.27, height: h)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.35))
+                    .frame(width: w * 0.16, height: 3).offset(x: w * 0.05, y: h * 0.16)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.25))
+                    .frame(width: w * 0.12, height: 3).offset(x: w * 0.05, y: h * 0.30)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.7))
+                    .frame(width: w * 0.40, height: 4).offset(x: w * 0.34, y: h * 0.20)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.4))
+                    .frame(width: w * 0.28, height: 4).offset(x: w * 0.34, y: h * 0.36)
+                Capsule().fill(ink.opacity(0.14))
+                    .frame(width: w * 0.58, height: h * 0.17).offset(x: w * 0.34, y: h * 0.74)
+                Circle().fill(Color("BrandAccent"))
+                    .frame(width: 6, height: 6).offset(x: w * 0.34 + w * 0.58 - 10, y: h * 0.74 + (h * 0.17 - 6) / 2)
+            }
+        }
+    }
+}

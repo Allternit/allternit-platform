@@ -15,6 +15,24 @@ import androidx.compose.ui.semantics.semantics
 import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.SectionLabel
 import androidx.compose.foundation.border
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.Stroke
+import com.allternit.core.design.AllternitColors
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -179,7 +197,24 @@ fun SettingsRoot(host: SettingsHost) {
     val back: () -> Unit = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) }
     val push: (String) -> Unit = { stack.add(it) }
     Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
-        when (top) {
+        val frame = SettingsFrame(stack.size, top)
+        val reduced = rememberReduceMotion()
+        AnimatedContent(
+            targetState = frame,
+            transitionSpec = {
+                if (reduced) EnterTransition.None togetherWith ExitTransition.None
+                else {
+                    val pushing = targetState.depth > initialState.depth
+                    val spec = tween<IntOffset>(380, easing = PUSH_EASING)
+                    if (pushing) (slideInHorizontally(spec) { it } togetherWith slideOutHorizontally(spec) { -(it * 0.28f).toInt() }).apply { targetContentZIndex = 1f }
+                    else (slideInHorizontally(spec) { -(it * 0.28f).toInt() } togetherWith slideOutHorizontally(spec) { it }).apply { targetContentZIndex = -1f }
+                }
+            },
+            label = "settingsPush",
+        ) { f ->
+        val page = f.id
+        CompositionLocalProvider(LocalCrumbIcon provides crumbIconFor(page)) {
+        when (page) {
             null -> RootList(host, push)
             "advanced" -> AdvancedPage(host, back, push)
             "open-links" -> OpenLinksPage(back)
@@ -230,9 +265,25 @@ fun SettingsRoot(host: SettingsHost) {
             "gizziio-code" -> ProductsPage(ProductsPart.GizziCode, host, back)
             "cowork" -> ProductsPage(ProductsPart.Cowork, host, back)
             "extensions" -> ProductsPage(ProductsPart.Extensions, host, back)
-            else -> SPlaceholder(pageLabel(top), back)
+            else -> SPlaceholder(pageLabel(page), back)
+        }
+        }
         }
     }
+}
+
+/** One Settings screen in the push stack; [depth] tells push from pop. */
+private data class SettingsFrame(val depth: Int, val id: String?)
+
+/** `cubic-bezier(.32,.72,0,1)` from the approved phone push. */
+private val PUSH_EASING = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+
+/** The page's icon for the back crumb tile; null shows the plain back button. */
+private fun crumbIconFor(id: String?): Int? = when (id) {
+    null -> null
+    "advanced" -> DesignR.drawable.ph_terminal
+    "open-links" -> DesignR.drawable.ph_arrow_square_out
+    else -> ALL_PAGES.firstOrNull { it.id == id }?.icon
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -249,7 +300,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
     var signOutError by remember { mutableStateOf<String?>(null) }
     val account = host.account
     SPage(
-        "Settings", tag = "settingsScreen",
+        "Settings", tag = "settingsScreen", animateIn = false,
         leading = { SRoundButton(DesignR.drawable.ph_x, "Close settings", "settingsClose", host.onClose) },
         trailing = { SRoundButton(DesignR.drawable.ph_info, "About Allternit", "settingsInfoMenu") { info = true } },
     ) {
@@ -276,7 +327,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
                         is RootRow.Page -> SRow(row.label ?: page(row.id).label, "settingsRow_${row.id}", icon = page(row.id).icon, onClick = { push(row.id) })
                         RootRow.Customize -> SRow("Customize", "settingsRow_customize", icon = DesignR.drawable.ph_sliders_horizontal, onClick = { push("customize") })
                         RootRow.OpenLinks -> SRow("Open links in", "settingsRow_openLinks", icon = DesignR.drawable.ph_arrow_square_out, value = if (inApp) "In app" else "Browser", onClick = { push("open-links") })
-                        RootRow.Haptics -> SToggleRow("Haptic feedback", "settingsRow_haptics", haptics, icon = DesignR.drawable.ph_dots_three_vertical, onChange = { haptics = it; SettingsPrefs.setHapticsOn(context, it); if (it) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
+                        RootRow.Haptics -> SToggleRow("Haptic feedback", "settingsRow_haptics", haptics, icon = DesignR.drawable.ph_vibrate, onChange = { haptics = it; SettingsPrefs.setHapticsOn(context, it); if (it) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
                         RootRow.ReduceMotion -> SToggleRow("Reduce motion", "settingsRow_reduceMotion", reduceMotion, icon = DesignR.drawable.ph_arrows_down_up, onChange = { reduceMotion = it; SettingsPrefs.setReduceMotion(context, it); if (haptics) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
                     }
                     }
@@ -291,7 +342,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
         }
         if (account != null) {
             SCard(Modifier.padding(top = 22.dp)) {
-                SRow("Log out", "settingsSignOut", icon = DesignR.drawable.ph_arrow_up, destructive = true, chevron = false, onClick = {
+                SRow("Log out", "settingsSignOut", icon = DesignR.drawable.ph_sign_out, destructive = true, chevron = false, onClick = {
                     scope.launch {
                         val result = AllternitAuth.signOut()
                         // Success flips AllternitAuth.state, and MainActivity shows sign-in.
@@ -358,23 +409,54 @@ private fun AccountRow(name: String, detail: String, tag: String, onClick: () ->
     }
 }
 
-/** iOS AppearanceTiles: Light, Dark, System. The workspace follows [AppearancePrefs]. */
+/** Approved look: three window pictures (sidebar lines + composer pill; System split on the diagonal), a ring that eases to the choice, bold label. */
 @Composable
 private fun AppearanceTiles() {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val mode = AppearancePrefs.mode
+    val reduced = rememberReduceMotion()
     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         for ((value, label) in listOf(ThemeMode.Light to "Light", ThemeMode.Dark to "Dark", ThemeMode.System to "System")) {
             val selected = mode == value
-            Box(
-                Modifier.weight(1f).heightIn(min = 64.dp).clip(RoundedCornerShape(AllternitRadii.MD))
-                    .background(c.bgPrimary)
-                    .border(if (selected) 2.dp else 1.dp, if (selected) c.brandAccent else c.borderSubtle, RoundedCornerShape(AllternitRadii.MD))
-                    .testTag("appearance_${label.lowercase()}")
+            val ring by animateFloatAsState(if (selected) 1f else 0f, if (reduced) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(220), label = "ring")
+            val ringShape = RoundedCornerShape(AllternitRadii.MD + 3.dp)
+            Column(
+                Modifier.weight(1f).testTag("appearance_${label.lowercase()}")
                     .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { AppearancePrefs.set(context, value) },
-                contentAlignment = Alignment.Center,
-            ) { Text(label, color = c.textPrimary, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) }
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(Modifier.fillMaxWidth().border(2.dp, c.textPrimary.copy(alpha = ring), ringShape).padding(3.dp)) {
+                    WindowThumb(value, Modifier.fillMaxWidth().aspectRatio(1.4f).clip(RoundedCornerShape(AllternitRadii.MD)).border(1.dp, c.borderSubtle, RoundedCornerShape(AllternitRadii.MD)))
+                }
+                Text(label, color = c.textPrimary, fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(top = 8.dp))
+            }
+        }
+    }
+}
+
+/** A tiny app window in [mode]'s colors; System draws Light with Dark on the lower-right of the diagonal. */
+@Composable
+private fun WindowThumb(mode: ThemeMode, modifier: Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        fun window(k: com.allternit.core.design.AllternitColorScheme) {
+            val w = size.width; val h = size.height
+            drawRect(k.bgPrimary)
+            drawRect(k.fillNeutral, topLeft = Offset.Zero, size = Size(w * 0.28f, h))
+            for (n in 0 until 3) {
+                drawRoundRect(k.textTertiary, Offset(w * 0.05f, h * (0.16f + n * 0.14f)), Size(w * (if (n == 1) 0.14f else 0.18f), h * 0.05f), CornerRadius(h * 0.025f))
+            }
+            drawRoundRect(k.bgPanel, Offset(w * 0.36f, h * 0.72f), Size(w * 0.56f, h * 0.17f), CornerRadius(h * 0.085f))
+            drawRoundRect(k.borderSubtle, Offset(w * 0.36f, h * 0.72f), Size(w * 0.56f, h * 0.17f), CornerRadius(h * 0.085f), style = Stroke(1.dp.toPx()))
+        }
+        when (mode) {
+            ThemeMode.Light -> window(AllternitColors.Light)
+            ThemeMode.Dark -> window(AllternitColors.Dark)
+            else -> {
+                window(AllternitColors.Light)
+                val tri = Path().apply { moveTo(size.width, 0f); lineTo(size.width, size.height); lineTo(0f, size.height); close() }
+                clipPath(tri) { window(AllternitColors.Dark) }
+            }
         }
     }
 }

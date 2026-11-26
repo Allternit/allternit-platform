@@ -614,7 +614,7 @@ fun ArtifactsLibraryScreen(
                             if (o.bool("needs_consent") == true) {
                                 // The tier grew since the last yes: ask again with what is new.
                                 val added = o.list("added").mapNotNull { it.str("label") ?: it.str("name") } +
-                                    ((o.get("added") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty())
+                                    ((o?.get("added") as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty())
                                 installFor = InstallRequest(req.artifact, InstallTier.from(o.str("requested_tier") ?: req.tier.wire), added, true)
                             } else { appsReload++; store.notice = "${req.artifact.title} installed." }
                         } else store.notice = res.friendly("install this app")
