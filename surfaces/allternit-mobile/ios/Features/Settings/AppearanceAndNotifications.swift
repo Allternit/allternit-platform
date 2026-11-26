@@ -50,17 +50,28 @@ final class AppearanceStore: ObservableObject {
     private static let legacyReduceMotionKey = "allternit-appearance-reduce-motion"
     private static let chatFontKey = "allternit-appearance-chat-font"
 
-    /// Settings → General → Chat font (the PWA's `appearance.chatFont`):
-    /// the typeface of assistant replies in the transcript.
+    /// Settings → General → Response font (the web's `appearance.chatFont`,
+    /// decision E5): the typeface of assistant replies in the transcript.
+    /// The picker offers Sans and Serif; Serif is the default for anyone who
+    /// never picked one. `default` and `system` stay as raw values so older
+    /// saved picks and agent writes (`appearance.chat_font`) still decode;
+    /// both read as Sans.
     enum ChatFont: String, CaseIterable, Identifiable {
         case `default`, serif, system
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .default: return "Default"
             case .serif: return "Serif"
-            case .system: return "System"
+            case .default, .system: return "Sans"
             }
+        }
+        /// The two choices the Response font picker shows.
+        static let choices: [ChatFont] = [.default, .serif]
+        /// The choice a saved value shows as (System reads as Sans).
+        var choice: ChatFont { self == .serif ? .serif : .default }
+        /// The font for a saved value: Serif when nothing was saved (E5).
+        static func initial(saved: String?) -> ChatFont {
+            saved.flatMap(ChatFont.init(rawValue:)) ?? .serif
         }
     }
 
@@ -88,7 +99,7 @@ final class AppearanceStore: ObservableObject {
             reduceMotion = legacy
             if legacy { defaults.set(true, forKey: ReducedMotion.appKey) }
         }
-        chatFont = ChatFont(rawValue: UserDefaults.standard.string(forKey: Self.chatFontKey) ?? "") ?? .default
+        chatFont = ChatFont.initial(saved: defaults.string(forKey: Self.chatFontKey))
         // Windows created later (new scenes) pick the saved theme up too.
         NotificationCenter.default.addObserver(
             forName: UIScene.didActivateNotification, object: nil, queue: .main

@@ -221,10 +221,18 @@ struct SettingsView: View {
         case .group(let label, let rows):
             VStack(spacing: 0) {
                 SectionLabel(label).padding(EdgeInsets(top: 18, leading: 2, bottom: 8, trailing: 2))
-                PhoneSettingsCard {
+                FlatSettingsGroup {
                     ForEach(Array(rows.enumerated()), id: \.element) { index, row in
                         if index > 0 { PhoneCardDivider() }
                         rootRow(row)
+                    }
+                    if label == "Account" {
+                        // Account rows (web SettingsDrilldown `feedback` /
+                        // `changelog`): both open the web page.
+                        PhoneCardDivider()
+                        linkRow("Give feedback", systemImage: "bubble.left", url: SettingsAccountLinks.feedback)
+                        PhoneCardDivider()
+                        linkRow("View changelog", systemImage: "doc.text", url: SettingsAccountLinks.changelog)
                     }
                 }
             }
@@ -234,7 +242,7 @@ struct SettingsView: View {
                 PhoneSettingsCard { AppearanceTiles() }
             }
         case .advanced:
-            PhoneSettingsCard {
+            FlatSettingsGroup {
                 NavigationLink(value: SettingsRoute.advanced) {
                     PhoneSettingsRowContent(title: "Advanced", systemImage: "wrench",
                                             value: "\(SettingsRoot.advancedPageCount()) pages") { PhoneRowChevron() }
@@ -294,6 +302,23 @@ struct SettingsView: View {
         }
     }
 
+    /// A row that opens a web page: label left, ↗ right.
+    private func linkRow(_ title: String, systemImage: String, url: URL) -> some View {
+        Button {
+            Haptics.selection()
+            openURL(url)
+        } label: {
+            PhoneSettingsRowContent(title: title, systemImage: systemImage) {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color("TextTertiary"))
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(SettingsRowPress())
+        .accessibilityHint("Opens in your browser")
+    }
+
     private func actionRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             PhoneSettingsRowContent(title: title, systemImage: systemImage) { PhoneRowChevron() }
@@ -327,7 +352,7 @@ struct SettingsView: View {
     /// Profile.
     private var accountsCard: some View {
         VStack(spacing: 0) {
-            PhoneSettingsCard {
+            FlatSettingsGroup {
                 if authManager.isSignedIn {
                     ForEach(Array(accountRowModels.enumerated()), id: \.element.id) { index, row in
                         if index > 0 { PhoneCardDivider() }
@@ -1012,4 +1037,23 @@ private struct SettingsRowPress: ButtonStyle {
             .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
             .environment(\.settingsRowPressed, configuration.isPressed)
     }
+}
+
+// MARK: - Flat rows (Claude polish i2)
+
+/// The root's row group, matching the 390 px web frame
+/// (`shots/S-after-phone-root-s0.png`): no card fill, label left and
+/// control right, a hairline between rows (`PhoneCardDivider`).
+private struct FlatSettingsGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) { content }
+    }
+}
+
+/// The two account rows' pages (same URLs as the web `SettingsDrilldown`).
+enum SettingsAccountLinks {
+    static let feedback = URL(string: "https://allternit.com/feedback")!
+    static let changelog = URL(string: "https://docs.allternit.com/changelog")!
 }

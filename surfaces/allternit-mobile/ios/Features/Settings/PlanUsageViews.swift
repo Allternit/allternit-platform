@@ -126,48 +126,6 @@ struct PlanUsageRows: View {
     }
 }
 
-/// "Choose a plan" / "Buy credits" rows. On the US storefront they link out to
-/// allternit.com; elsewhere the App Store doesn't allow the link, so nothing
-/// is shown (the caller shows plan status only, and the In-App Purchase
-/// rows where the App Store sells). A plan Apple or Google bills is managed
-/// in that store (StoreBilledByView), so "Manage billing" is web plans only.
-struct PayLinkRows: View {
-    @ObservedObject private var storefront = StorefrontGate.shared
-    @ObservedObject private var plan = AccountPlanStore.shared
-    @Environment(\.openURL) private var openURL
-
-    var body: some View {
-        if storefront.allowsPurchaseLinks {
-            if plan.subscription?.isPaid != true {
-                linkRow("Choose a plan", systemImage: "star") { openURL(plan.upgradeURL) }
-            }
-            linkRow("Buy credits", systemImage: "creditcard") { openURL(StorefrontGate.creditsURL) }
-            if plan.subscription?.isPaid == true, (plan.subscription?.billingProvider ?? "stripe") == "stripe" {
-                linkRow("Manage billing", systemImage: "doc.text") { openURL(StorefrontGate.creditsURL) }
-            }
-        }
-    }
-
-    private func linkRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.subheadline)
-                    .frame(width: 20)
-                Text(title)
-                    .font(.subheadline)
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Settings → Usage (phone calm I15, mirrors web PlanUsageBars, ai #1161)
 
 /// One usage bar (web `UsageWindowBar`): title, "N% used", a bar that grows
@@ -234,6 +192,41 @@ struct UsageWindowBar: View {
     }
 }
 
+/// A window with no limit (`limit_usd` null): title, spend, reset line, no
+/// bar.
+struct UsageSpendRow: View {
+    let label: String
+    let usedUsd: Double
+    var reset: String? = nil
+
+    private var spent: String { String(format: "$%.2f used", usedUsd) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(label)
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(spent)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .monospacedDigit()
+            }
+            if let reset {
+                Text(reset)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(reset.map { "\(spent). \($0)" } ?? spent)
+    }
+}
+
 /// A Usage page card: white (graphite in dark) with a hairline, like the
 /// web phone layout's plan and credits cards. Never tan.
 struct UsageCard<Content: View>: View {
@@ -286,19 +279,21 @@ struct UsageNote: View {
     }
 }
 
-/// Settings → Usage, in the web's order: Allternit Cloud (plan window with
-/// its reset, cloud computer hours), Connected accounts (the Cloud card,
-/// then every subscription or key account that reports limits, 5-hour and
-/// weekly bars where the provider reports them), Credits (balance, Buy
-/// credits), then the real thresholds. Sources:
-/// - Plan window: `GET /api/v1/me/usage` (`UsageStore`, `cloudUsageWindows`).
-///   Cloud reports a monthly window only, so there is no Cloud weekly bar.
+/// Settings → Usage (Claude polish i3, web frame `M1-usage-phone`, plan
+/// decision 5): Allternit usage first (the pace line, the 5-hour / 7-day /
+/// month rows, cloud computer hours, credits), then Connected accounts as
+/// before (the Cloud card, then every subscription or key account that
+/// reports limits), then the real thresholds. Sources:
+/// - Windows and pace: `GET /api/v1/me/usage` `windows` / `pace`
+///   (cloud-api #3101, snake_case). A window with `limit_usd` null shows its
+///   spend with no bar. The pace line shows only when `pace.runs_out_at`
+///   exists. An older server without `windows` falls back to the monthly
+///   window from `UsageStore` (`cloudUsageWindows`).
 /// - Cloud computer hours: `GET /api/v1/hosted-runtimes/entitlement`.
 /// - Connected accounts: `GET /api/v1/providers/:id/quota` (`ProviderQuotaStore`).
 /// - Credits: `GET /api/v1/billing/credits` (`AccountPlanStore`).
-/// - Buy credits: `StorePurchaseSheet(focus: .pack)` or the web billing
-///   page, exactly as `ComputeGateView` decides (`BuyCreditsRoute`). No
-///   purchase code lives here.
+/// - Buy credits: `StorePurchaseSheet(focus: .pack)` where the App Store
+///   sells packs, else hidden. No link out to pay (App Store 3.1.1).
 /// Calm states: placeholder bars while loading, one plain line when there is
 /// nothing; a compute-gate refusal on a read is an empty state, not an error.
 struct UsagePageView: View {
@@ -306,30 +301,43 @@ struct UsagePageView: View {
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
     @ObservedObject private var auth = AuthManager.shared
-    @Environment(\.openURL) private var openURL
     @State private var isStoreSheetPresented = false
+    /// `windows` + `pace` from `/me/usage`; nil until read or on an old server.
+    @State private var limits: CloudUsageLimits?
 
     private var cloudWindows: [ProviderLimitWindow] { sortUsageWindows(cloudUsageWindows(usage.snapshot)) }
+    private var limitWindows: [CloudUsageWindow] { sortCloudWindows(limits?.windows ?? []) }
 
+    /// The store sheet or nothing: this page never links out to pay.
     private var buyRoute: BuyCreditsRoute {
         BuyCreditsRoute.resolve(
             storeSellsPacks: storefront.showsStoreButtons(for: .pack),
-            allowsPurchaseLinks: storefront.allowsPurchaseLinks
+            allowsPurchaseLinks: false
         )
     }
 
     var body: some View {
         PhoneSettingsPage(title: "Usage") {
-            UsageSectionLabel(title: "Allternit Cloud", detail: auth.isSignedIn ? plan.planName ?? usage.planLabel : nil)
+            UsageSectionLabel(title: "Your usage", detail: auth.isSignedIn ? plan.planName ?? usage.planLabel : nil)
+            if auth.isSignedIn, let line = usagePaceLine(limits) {
+                Text(line)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(EdgeInsets(top: 2, leading: 4, bottom: 10, trailing: 4))
+                    .accessibilityAddTraits(.isHeader)
+            }
             UsageCard { cloudBody }
-
-            UsageSectionLabel(title: "Connected accounts")
-            AccountUsageCardsView()
 
             if auth.isSignedIn {
                 UsageSectionLabel(title: "Credits")
                 UsageCard { creditsBody }
             }
+
+            // Kept and visible (plan decision 5).
+            UsageSectionLabel(title: "Connected accounts")
+            AccountUsageCardsView()
 
             Text(UsageThresholds.footerText)
                 .font(.system(size: 12))
@@ -346,17 +354,26 @@ struct UsagePageView: View {
 
     @ViewBuilder
     private var cloudBody: some View {
-        let windows = cloudWindows
+        let rows = limitWindows
+        let windows = rows.isEmpty ? cloudWindows : []
         let hours = plan.cloudHoursFraction
         if !auth.isSignedIn {
             UsageNote(text: "Sign in to see your plan usage.")
-        } else if windows.isEmpty && hours == nil && (usage.isLoading || plan.isLoading || usage.availability == .unknown) {
+        } else if rows.isEmpty && windows.isEmpty && hours == nil && (usage.isLoading || plan.isLoading || usage.availability == .unknown) {
             placeholderBars(2)
-        } else if windows.isEmpty && hours == nil {
+        } else if rows.isEmpty && windows.isEmpty && hours == nil {
             // Unmetered, metering off on this server, or a read the server
             // refused: one plain line, never the server's status.
             UsageNote(text: "No plan limits to show. Allternit Cloud reports them once your plan has an allowance.")
         } else {
+            ForEach(rows) { w in
+                if let fraction = w.barFraction {
+                    UsageWindowBar(label: cloudWindowTitle(w), fraction: fraction, reset: usageResetsText(w.resetDate))
+                } else {
+                    UsageSpendRow(label: cloudWindowTitle(w), usedUsd: w.usedUsd, reset: usageResetsText(w.resetDate))
+                }
+            }
+            // Older server: the monthly window from `UsageStore`.
             ForEach(windows) { w in
                 UsageWindowBar(label: usageWindowTitle(w), fraction: w.usedRatio, reset: usageResetsText(w.resetDate))
             }
@@ -413,7 +430,7 @@ struct UsagePageView: View {
                         .frame(minHeight: 44)
                 }
                 .buttonStyle(SettingsQuietButtonStyle())
-                .accessibilityHint(buyRoute == .storeSheet ? "Shows the credit packs" : "Opens billing in your browser")
+                .accessibilityHint("Shows the credit packs")
             }
         }
         .padding(.vertical, 6)
@@ -423,8 +440,7 @@ struct UsagePageView: View {
         Haptics.light()
         switch buyRoute {
         case .storeSheet: isStoreSheetPresented = true
-        case .web: openURL(StorefrontGate.creditsURL)
-        case .hidden: break
+        case .web, .hidden: break
         }
     }
 
@@ -443,6 +459,15 @@ struct UsagePageView: View {
 
     private func reload(force: Bool) async {
         UsageStore.shared.fetchUsageIfNeeded(force: force)
+        if auth.isSignedIn {
+            // The additive `windows` / `pace` fields; an older server (or a
+            // failed read) keeps the UsageStore fallback.
+            if let fetched: CloudUsageLimits = try? await APIClient.shared.get(path: "me/usage") {
+                limits = fetched
+            }
+        } else {
+            limits = nil
+        }
         if auth.isSignedIn { AccountPlanStore.shared.load(force: force) }
         if force { ProviderQuotaStore.shared.refreshAll() }
         StorefrontGate.shared.refresh()
