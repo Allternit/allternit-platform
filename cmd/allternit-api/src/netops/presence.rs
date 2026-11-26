@@ -378,11 +378,16 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
     Ok(true)
 }
 
-/// The heartbeat loop (inert until the runtime is paired).
+/// The heartbeat loop (inert until the runtime is paired). Every tick also
+/// marks this machine's own this-device computer rows as seen, paired or not:
+/// "Re-run on my Mac" offers only Macs seen in the last two minutes
+/// (`computer_block::rerun_targets`).
 pub fn spawn(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(EVERY).await;
+            let db = state.db.clone();
+            let _ = tokio::task::spawn_blocking(move || db.connect().map(|c| crate::computer_block::mark_this_device_seen(&c))).await;
             if let Err(e) = beat_and_reconcile(&state, &crate::phone_sync::cloud_base()).await {
                 tracing::debug!("runtime presence heartbeat: {e}");
             }

@@ -355,26 +355,53 @@ pub fn forget_run(run_id: &str) {
     crate::aci_credentials::RUN_CREDENTIAL_ALLOWS.forget_run(run_id);
 }
 
-/// The person's online Macs registered as this-device computers, other than
-/// the one the run is on. Empty when none is online.
+/// How recently a Mac must have been seen to be offered as a re-run target.
+pub const RERUN_SEEN_WITHIN_SECS: i64 = 120;
+
+/// The person's Macs registered as this-device computers and seen in the last
+/// [`RERUN_SEEN_WITHIN_SECS`], other than the one the run is on. "Seen" is
+/// the row's `last_activity_at`: set when Desktop registers the Mac and
+/// bumped every 60 s by that Mac's own API while it runs
+/// ([`mark_this_device_seen`], from the runtime-presence loop), so a Mac that
+/// is asleep, shut down or quit drops out after two minutes even though its
+/// row still says `running`. Empty when none is fresh.
 pub async fn rerun_targets(state: &Arc<AppState>, user_id: &str, exclude_computer: &str) -> Vec<RerunTarget> {
     let (db, owner, exclude) = (state.db.clone(), user_id.to_string(), exclude_computer.to_string());
     tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<RerunTarget>> {
         let conn = db.connect()?;
-        let mut q = conn.prepare(
-            "SELECT id, name FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_type = 'user'
-             AND owner_id = ?2 AND os = 'macos' AND status = 'running' AND id != ?3 ORDER BY last_activity_at DESC",
-        )?;
-        let rows = q.query_map(rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER, owner, exclude], |r| {
-            Ok(RerunTarget { computer_id: r.get(0)?, name: r.get(1)? })
-        })?;
-        let out: rusqlite::Result<Vec<RerunTarget>> = rows.collect();
-        out
+        fresh_rerun_targets(&conn, &owner, &exclude)
     })
     .await
     .ok()
     .and_then(Result::ok)
     .unwrap_or_default()
+}
+
+/// The query under [`rerun_targets`].
+pub fn fresh_rerun_targets(conn: &rusqlite::Connection, owner: &str, exclude: &str) -> rusqlite::Result<Vec<RerunTarget>> {
+    let mut q = conn.prepare(
+        "SELECT id, name FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_type = 'user'
+         AND owner_id = ?2 AND os = 'macos' AND status = 'running' AND id != ?3
+         AND last_activity_at IS NOT NULL AND last_activity_at >= datetime('now', ?4)
+         ORDER BY last_activity_at DESC",
+    )?;
+    let window = format!("-{RERUN_SEEN_WITHIN_SECS} seconds");
+    let rows = q.query_map(rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER, owner, exclude, window], |r| {
+        Ok(RerunTarget { computer_id: r.get(0)?, name: r.get(1)? })
+    })?;
+    let out: rusqlite::Result<Vec<RerunTarget>> = rows.collect();
+    out
+}
+
+/// This API is running, so the computer it runs on is up: bump its
+/// this-device rows (`provider = this_device` always means "the machine
+/// running this API"). Called every 60 s from the runtime-presence loop.
+pub fn mark_this_device_seen(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE computers SET last_activity_at = CURRENT_TIMESTAMP
+         WHERE kind = 'local' AND provider = ?1 AND status = 'running'",
+        rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER],
+    )
 }
 
 fn emit(computer_id: &str, kind: &str, data: Value) {
@@ -658,6 +685,31 @@ mod tests {
         assert_eq!((d.kind, d.domain.as_deref()), (BlockKind::Login, Some("accounts.example.com")));
         let secure_flag = json!({ "elements": [el("button", "Sign in"), json!({ "role": "textfield", "name": "", "secure": true })] });
         assert_eq!(detect(&secure_flag).map(|d| d.kind), Some(BlockKind::Login));
+    }
+
+    /// A Mac whose row still says `running` but that hasn't been seen for
+    /// over two minutes (asleep, shut down) is not offered for "Re-run on my
+    /// Mac"; a fresh one is, and the heartbeat makes a stale one fresh again.
+    #[test]
+    fn rerun_targets_list_only_macs_seen_in_the_last_two_minutes() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE computers (id TEXT PRIMARY KEY, kind TEXT, provider TEXT, status TEXT, owner_type TEXT, owner_id TEXT, name TEXT, os TEXT, last_activity_at DATETIME);",
+        )
+        .unwrap();
+        let p = crate::computer_routes::THIS_DEVICE_PROVIDER;
+        for (id, seen) in [("fresh", "datetime('now', '-30 seconds')"), ("stale", "datetime('now', '-10 minutes')"), ("never", "NULL")] {
+            conn.execute(
+                &format!("INSERT INTO computers VALUES (?1, 'local', ?2, 'running', 'user', 'u1', ?1, 'macos', {seen})"),
+                rusqlite::params![id, p],
+            )
+            .unwrap();
+        }
+        let ids = |c: &rusqlite::Connection| fresh_rerun_targets(c, "u1", "cloud-1").unwrap().into_iter().map(|t| t.computer_id).collect::<Vec<_>>();
+        assert_eq!(ids(&conn), ["fresh"]);
+        assert!(fresh_rerun_targets(&conn, "u1", "fresh").unwrap().is_empty(), "the run's own computer is excluded");
+        mark_this_device_seen(&conn).unwrap();
+        assert_eq!(ids(&conn).len(), 3, "the heartbeat marks this machine's rows seen");
     }
 
     #[test]

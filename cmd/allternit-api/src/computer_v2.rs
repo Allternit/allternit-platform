@@ -184,6 +184,8 @@ pub async fn execute_v2(
                 if let Some(det) = crate::computer_block::detect(&reply).filter(|d| crate::computer_block::should_hold(run_id, d)) {
                     let outcome = crate::computer_block::hold(state, user, computer, target, run_id, &det).await?;
                     if let Some(ended) = crate::computer_block::ended_result(&outcome, &det) {
+                        // Stopped or moved to the Mac: the run is over here.
+                        crate::computer_agent_display::end_run(run_id);
                         return Ok(ended);
                     }
                     if outcome == crate::computer_block::HoldOutcome::Continue {
@@ -488,6 +490,15 @@ async fn request_secret(
         .collect::<String>();
     let field = spec.get("field").and_then(Value::as_str).map(str::trim).filter(|f| !f.is_empty()).map(|f| f.chars().take(80).collect::<String>());
     let domain = spec.get("domain").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+    let element_id = spec.get("element_id").and_then(Value::as_str).map(str::trim).filter(|e| !e.is_empty()).map(str::to_string);
+    // Refuse before asking the person: on this device the value goes into
+    // one element only, never into whatever window is in front.
+    if matches!(target, Target::ThisDevice) && element_id.is_none() {
+        return Err(Fail::from(
+            "On this device the masked box writes the value straight into one field. Call read_ui, then request_human again with secret.element_id set to the field's id; if the field has no element id, call plain request_human so the person fills it themselves.",
+        ));
+    }
+    secret_route(target, element_id.as_deref())?;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<SecretReply>();
     {
@@ -545,7 +556,7 @@ async fn request_secret(
     // Screen later screenshots and observations for this value.
     crate::aci_credentials::remember_ephemeral_secret(&user.user_id, &value);
 
-    let typed = type_secret(target, &value).await;
+    let typed = type_secret(target, &value, element_id.as_deref()).await;
     let mut saved = false;
     let mut save_note: Option<String> = None;
     if typed.is_ok() {
@@ -576,10 +587,11 @@ async fn request_secret(
                 Some(note) => Err(note),
                 None => Ok(()),
             });
-            Ok(secret_result(format!("The person provided '{label}' and it was typed into the focused field."), false))
+            let into = element_id.as_deref().map_or_else(|| "the focused field".to_string(), |e| format!("element {e}"));
+            Ok(secret_result(format!("The person provided '{label}' and it was written into {into}."), false))
         }
         Err(fail) => {
-            let _ = reply.ack.send(Err("couldn't type into the focused field".to_string()));
+            let _ = reply.ack.send(Err("couldn't fill the field".to_string()));
             Err(fail)
         }
     }
@@ -604,7 +616,7 @@ fn human_result(reason: &str, timed_out: bool, resumed: bool) -> ToolsetResult {
 }
 
 // ---------------------------------------------------------------------------
-// use_credential: resolve from a backend, type into the focused field.
+// use_credential: resolve from a backend, write into the element the model picked (this device) or the run's field (guests).
 // The value never enters the model context, the logs, or the audit row;
 // verification is by outcome (field filled, redacted audit row).
 // ---------------------------------------------------------------------------
@@ -842,30 +854,91 @@ async fn resolve_credential(user: &AuthUser, input: &Value) -> Result<ResolvedFo
     )))
 }
 
-/// Type the resolved value into the focused field, per target. The value
-/// rides the local driver socket or the guest driver's pixel path when the
-/// guest image's driver is answering (the value goes straight into the
-/// in-guest socket; nothing touches the guest's disk or the exec channel's
-/// command line beyond the base64 line itself); otherwise it takes the
-/// legacy guest exec channel (base64-wrapped there, in a temp file that is
-/// removed at once). It is never written to logs, the audit row, or the
-/// model result.
-async fn type_secret(target: &Target, value: &str) -> Result<(), Fail> {
+/// The refusal on this device when no element id was given. The model gets
+/// the way forward in the same message.
+pub(crate) const SECRET_NEEDS_ELEMENT: &str = "On this device a secret is written straight into one field, never typed into whatever window is in front. Call read_ui, find the password or text field, and call again with element_id set to that field's id. If the field has no element id, call request_human with secret { label, element_id } so the person types it into the masked box, or plain request_human so they fill the field themselves.";
+
+/// How a secret reaches the computer. Never "type into the front window" on
+/// this device: the Safari spike (2026-11-26) put a dummy secret into a
+/// window that wasn't the target through exactly that route.
+#[derive(Debug, PartialEq)]
+pub(crate) enum SecretRoute {
+    /// This device: an accessibility value write on that element, with no
+    /// focus step (focusing steals the key window) and no key fallback
+    /// (driver `act` `{op: "set_value", focus: false}`).
+    ElementValue { element_id: String },
+    /// A guest: the element write when an id is given, else typed on the
+    /// run's own display (or the guest's one desktop).
+    Guest { element_id: Option<String> },
+}
+
+/// Pick the route, or refuse. Pure, so the "never desktop typing on this
+/// device" rule is tested without a driver.
+pub(crate) fn secret_route(target: &Target, element_id: Option<&str>) -> Result<SecretRoute, Fail> {
+    let id = element_id.map(str::trim).filter(|e| !e.is_empty()).map(str::to_string);
     match target {
-        Target::ThisDevice => td::call_driver("type_text", json!({ "scope": "desktop", "text": value }))
-            .await
-            .map(|_| ())
-            .map_err(|e| Fail::from(String::from(e))),
-        Target::Guest { .. } if crate::guest_driver::guest_driver_available(target).await => {
-            crate::guest_driver::guest_driver_raw(
-                target,
-                "pixel_type_text",
-                json!({ "scope": "desktop", "text": value }),
-                Duration::from_secs(30),
-            )
-            .await
-            .map(|_| ())
+        Target::ThisDevice => match id {
+            // A vision element is a screen position: writing to it means
+            // clicking and typing at the screen.
+            Some(e) if e.starts_with('v') => Err(Fail::from(
+                "element_id must be an accessibility element from read_ui (not a vision element 'v…'); a secret is never typed at a screen position on this device",
+            )),
+            Some(e) => Ok(SecretRoute::ElementValue { element_id: e }),
+            None => Err(Fail::from(SECRET_NEEDS_ELEMENT)),
+        },
+        Target::Guest { .. } => Ok(SecretRoute::Guest { element_id: id }),
+        Target::Browser { .. } => Err(Fail::from("use_credential doesn't run on the browser toolset")),
+    }
+}
+
+/// The driver call for a value-only element write. The value travels only in
+/// this request (local driver socket or the base64 guest RPC line).
+pub(crate) fn element_value_params(element_id: &str, value: &str) -> Value {
+    json!({ "id": element_id, "op": "set_value", "value": value, "focus": false })
+}
+
+/// Write the resolved value into a field, per target. On this device it is
+/// an element value write through the local driver sidecar only (no CLI
+/// fallback, whose argv would carry the value). On a guest it is the element
+/// write when an id is given, then typing scoped to the run's own display
+/// (`computer_agent_display`; the guest driver adds `display`, the xdotool
+/// path exports it), as before. The value is never written to logs, the
+/// audit row, or the model result; the driver's reply is dropped unread.
+async fn type_secret(target: &Target, value: &str, element_id: Option<&str>) -> Result<(), Fail> {
+    match secret_route(target, element_id)? {
+        SecretRoute::ElementValue { element_id } => {
+            driver_op("act", &element_value_params(&element_id, value)).await.map(|_| ()).map_err(|f| {
+                Fail::from(format!(
+                    "couldn't write the secret into element {element_id}: {}. Nothing was typed. Call read_ui for a fresh id, or call request_human so the person fills it.",
+                    f.message
+                ))
+            })
         }
+        SecretRoute::Guest { element_id } => type_secret_guest(target, value, element_id.as_deref()).await,
+    }
+}
+
+async fn type_secret_guest(target: &Target, value: &str, element_id: Option<&str>) -> Result<(), Fail> {
+    let driver_up = crate::guest_driver::guest_driver_available(target).await;
+    if driver_up {
+        if let Some(id) = element_id {
+            match crate::guest_driver::guest_driver_raw(target, "act", element_value_params(id, value), Duration::from_secs(30)).await {
+                Ok(_) => return Ok(()),
+                // Guests keep their typing path: one agent per display, so
+                // the focused field is the run's own.
+                Err(e) => tracing::debug!(error = %e.message, "guest element write refused; typing on the run's display"),
+            }
+        }
+        return crate::guest_driver::guest_driver_raw(
+            target,
+            "pixel_type_text",
+            json!({ "scope": "desktop", "text": value }),
+            Duration::from_secs(30),
+        )
+        .await
+        .map(|_| ());
+    }
+    match target {
         Target::Guest { os, .. } if os == "windows" => {
             let script = format!(
                 "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}'))\n$t = [regex]::Replace($t, '[+^%~(){{}}\\[\\]]', '{{$0}}')\nAdd-Type -AssemblyName System.Windows.Forms\n[System.Windows.Forms.SendKeys]::SendWait($t)",
@@ -873,7 +946,7 @@ async fn type_secret(target: &Target, value: &str) -> Result<(), Fail> {
             );
             windows_exec(target, &script).await.map(|_| ()).map_err(Fail::from)
         }
-        Target::Guest { .. } => {
+        _ => {
             let b64 = B64.encode(value.as_bytes());
             guest_exec(
                 target,
@@ -883,13 +956,16 @@ async fn type_secret(target: &Target, value: &str) -> Result<(), Fail> {
             .map(|_| ())
             .map_err(Fail::from)
         }
-        Target::Browser { .. } => Err(Fail::from("use_credential doesn't run on the browser toolset")),
     }
 }
 
 async fn use_credential(user: &AuthUser, target: &Target, input: &Value) -> Result<ToolsetResult, Fail> {
     let name = input.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
     let kind = input.get("kind").and_then(Value::as_str).unwrap_or("secret");
+    let element_id = input.get("element_id").and_then(Value::as_str).map(str::trim).filter(|e| !e.is_empty()).map(str::to_string);
+    // Where it goes is settled before the secret is opened: on this device
+    // only an element value write, never typing into the front window.
+    secret_route(target, element_id.as_deref())?;
     let resolved = resolve_credential(user, input).await?;
 
     // The binding check: a bound credential only types into its app/domain.
@@ -913,11 +989,12 @@ async fn use_credential(user: &AuthUser, target: &Target, input: &Value) -> Resu
         (other, _) => return Err(Fail::from(format!("unknown use_credential kind '{other}' (secret or totp)"))),
     };
 
-    type_secret(target, &value).await?;
+    type_secret(target, &value, element_id.as_deref()).await?;
     // The result names the credential, never the value.
+    let into = element_id.as_deref().map_or_else(|| "the focused field".to_string(), |e| format!("element {e}"));
     Ok(ToolsetResult {
         is_error: false,
-        content: vec![text(format!("Credential '{name}' typed into the focused field."))],
+        content: vec![text(format!("Credential '{name}' written into {into}."))],
         browser_state: None,
         screen: screen_info(None),
         error: None,
@@ -1003,6 +1080,36 @@ mod tests {
         // The latch still wakes its waiter even though the gate is gone.
         latch.notify_waiters();
         assert!(human_gate_pending("c-test").is_none());
+    }
+
+    /// Security regression (Safari spike, 2026-11-26): use_credential on
+    /// this device sent the secret through desktop-scope typing, which types
+    /// into whatever window is in front; a dummy secret landed in a window
+    /// that wasn't the target. On this device every input must either be
+    /// refused or become a value-only write on one element.
+    #[test]
+    fn a_secret_never_goes_through_desktop_typing_on_this_device() {
+        use crate::computer_toolset::Target;
+        for element_id in [None, Some(""), Some("   "), Some("v3"), Some("e12"), Some(" e7 ")] {
+            match super::secret_route(&Target::ThisDevice, element_id) {
+                Ok(super::SecretRoute::ElementValue { element_id: id }) => {
+                    assert!(!id.is_empty() && !id.starts_with('v'), "{element_id:?} -> {id}");
+                    let params = super::element_value_params(&id, "S3cret-test-123");
+                    assert_eq!(params["op"], "set_value");
+                    assert_eq!(params["focus"], false, "no focus step: focusing steals the key window");
+                    assert_eq!(params["id"], id.as_str());
+                    assert!(params.get("scope").is_none() && params.get("text").is_none(), "never a typing call: {params}");
+                }
+                Ok(other) => panic!("{element_id:?} took {other:?} on this device"),
+                Err(fail) => assert!(element_id.map(str::trim).filter(|e| !e.is_empty() && !e.starts_with('v')).is_none(), "{element_id:?} refused: {}", fail.message),
+            }
+        }
+        let refused = super::secret_route(&Target::ThisDevice, None).unwrap_err().message;
+        assert!(refused.contains("element_id") && refused.contains("request_human"), "the refusal says what to do: {refused}");
+        assert_eq!(
+            super::secret_route(&Target::ThisDevice, Some(" e7 ")).unwrap(),
+            super::SecretRoute::ElementValue { element_id: "e7".into() }
+        );
     }
 
     #[test]

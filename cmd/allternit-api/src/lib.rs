@@ -219,6 +219,7 @@ pub mod computer_parallel;
 pub mod computer_subtask;
 pub mod computer_safety;
 pub mod computer_access;
+pub mod computer_agent_display;
 pub mod computer_ocr;
 pub mod computer_v2;
 pub mod computer_block;

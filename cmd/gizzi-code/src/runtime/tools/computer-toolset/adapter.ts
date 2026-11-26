@@ -210,7 +210,7 @@ export function toolDescriptionV2(members: readonly ToolsetMemberSpec[]): string
     PREFER_STRUCTURED,
     "Element ids come from read_ui and are stable until the UI changes; pass the version back to act/run_batch to catch a moved UI.",
     "run_batch runs many steps in one call and stops at the first failed check, then returns one fresh read — batch aggressively.",
-    "use_credential types a vault secret or TOTP code into the focused field; the value is never shown to you.",
+    "use_credential writes a vault secret or TOTP code into the field you name with element_id (its id from read_ui; required on the person's own computer); the value is never shown to you.",
     "request_human pauses for a person (CAPTCHA, 2FA, judgment calls) and resumes the session when they signal done.",
     ACCESS_TIERS,
     "",

@@ -515,9 +515,25 @@ class Driver:
         """Act on an element id: click, double_click, right_click, set_value,
         type, select, press (key), focus; or ``menu`` with ``path`` and a window.
         ``version`` pins the map the action was planned on: an older one is
-        refused with the fresh map."""
+        refused with the fresh map.
+
+        ``focus: false`` (``set_value`` only) writes the value through
+        accessibility on that element and nothing else: no focus step and no
+        key-typing fallback. Focusing a field in a window that isn't key makes
+        that window key, and the person's typing then goes into it (Safari
+        spike, 2026-11-26), so ``use_credential`` uses this on the person's
+        own computer. A field that refuses the write answers ``value_refused``."""
         start = time.perf_counter()
         op = str(p.get("op") or "click")
+        focus = p.get("focus", True) is not False
+        if not focus:
+            if op != "set_value":
+                raise DriverError("bad_input", "focus: false applies to set_value only")
+            if str(p.get("id") or "").startswith("v"):
+                # A vision element is a pixel position: writing to it means
+                # clicking and typing at the screen, which is exactly what
+                # focus: false must never do.
+                raise DriverError("bad_input", "focus: false needs an accessibility element id from read_ui, not a vision element")
         if op == "menu":
             out = self._menu(self.target(p), p.get("path"))
             out["ms"] = _ms(start)
@@ -538,11 +554,11 @@ class Driver:
         except em.StaleVersion:
             fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id})
             return {"status": "stale_version", "map": fresh, "ms": _ms(start)}
-        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"))
+        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"), focus=focus)
         out["ms"] = _ms(start)
         return out
 
-    def _act_on(self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None) -> dict[str, Any]:
+    def _act_on(self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None, focus: bool = True) -> dict[str, Any]:
         element = cur.elements.get(eid)
         if element is None:
             raise DriverError("element_gone", f"{eid} is not in version {cur.number}")
@@ -551,7 +567,24 @@ class Driver:
             start = time.perf_counter()
             d = Decision(cur.engine, "map")
             try:
-                if op == "press" and cur.engine == ARC and self.cua.available:
+                if not focus:
+                    # Value write only (see act). ARC writes AXValue with no
+                    # AXFocused; the other engines use their direct value
+                    # setter (AT-SPI text, UIA ValuePattern, Cua set_value)
+                    # and never fall back to keys.
+                    text = "" if value is None else str(value)
+                    if cur.engine == ARC:
+                        wrote = self.arc.write_value(self._snaps[t.key], element.native, text, replace=True, focus=False)
+                    else:
+                        writer = getattr(self._engine(cur.engine), "write_value_only", None)
+                        if writer is None:
+                            raise DriverError("unsupported_op", f"the {cur.engine} engine can't write a value without focusing the field")
+                        wrote = bool(writer(t.pid, t.window_id, element.native, text))
+                    if not wrote:
+                        raise DriverError("value_refused", "this field refuses an accessibility value write; it was left as it was")
+                    status, settled = "done", None
+                    cur, _ = self._read(t, fresh=True)
+                elif op == "press" and cur.engine == ARC and self.cua.available:
                     # arc's Skylight key posting can take the whole sidecar
                     # down (SIGSEGV in the private SPI path on macOS 14).
                     # Key input runs on the Cua engine instead — the same
@@ -602,7 +635,11 @@ class Driver:
         out: dict[str, Any] = {"status": status, "version": cur.number, "engine": d.engine}
         if settled is not None:
             out["settled"] = {"reacted": settled.reacted, "timed_out": settled.timed_out, "ms": settled.elapsed_ms}
-        if status == "done":
+        if status == "done" and not focus:
+            # A value-only write carries secrets (use_credential): the reply
+            # never echoes the element diff, which would hold the new value.
+            pass
+        elif status == "done":
             diff = self.maps.window(t.key).diff(before)
             if diff is not None:
                 out["changes"] = diff

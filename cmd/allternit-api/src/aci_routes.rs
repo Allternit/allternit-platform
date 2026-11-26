@@ -385,6 +385,8 @@ fn post_frame_cards(db: &crate::db::DbHandle, run_id: &str, frame: &serde_json::
 }
 
 fn buffer_mark_done(run_id: &str) {
+    // The run ended: its agent display (Linux guests) and run-scoped memory go.
+    crate::computer_agent_display::end_run(run_id);
     if let Ok(mut store) = ACI_RUN_EVENTS.lock() {
         if let Some(buf) = store.get_mut(run_id) {
             buf.done = true;
@@ -1148,6 +1150,7 @@ async fn aci_stop(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
     if crate::phone_runs::request_stop(&id) {
         return Json(json!({"run_id": id, "status": "cancelled"})).into_response();
     }
+    crate::computer_agent_display::end_run(&id);
     let acu = acu_base(&state);
     let client = crate::net_client::client();
     match client
@@ -1336,16 +1339,71 @@ async fn aci_handoff_status(State(state): State<Arc<AppState>>, Path(id): Path<S
     }
 }
 
+/// Who may answer a handoff: the run's owner. That is the user the approval
+/// was raised for (the run's caller), the owner of the computer it names (a
+/// bot-owned computer counts for the bot's owner), or the Desktop app on this
+/// device itself (its spawn-time access token, not a call the desktop relay
+/// forwarded from another device). Anyone else gets 403 and the approval
+/// stays pending. cloud-api forwards console decisions signed as the
+/// computer's owner (`platform_v1/computers.rs` `decide_on_computer`).
+pub(crate) fn may_decide(state: &AppState, user: &AuthUser, headers: &axum::http::HeaderMap, req: &crate::permission_policy::ApprovalRequest) -> bool {
+    if !req.user_id.is_empty() && user.user_id == req.user_id {
+        return true;
+    }
+    if headers.get(crate::cowork_devices_routes::RELAYED_HEADER).is_none()
+        && crate::auth::verify_desktop_access_token(headers, &state.config)
+    {
+        return true;
+    }
+    let Some(computer_id) = req.args.get("computer_id").and_then(serde_json::Value::as_str).filter(|c| !c.is_empty()) else {
+        return false;
+    };
+    let Ok(conn) = state.db.connect() else { return false };
+    conn.query_row(
+        "SELECT COUNT(*) FROM computers WHERE id = ?1 AND status != 'deleted' AND (
+             (owner_type = 'user' AND owner_id = ?2)
+             OR (owner_type = 'bot' AND owner_id IN (SELECT id FROM agents WHERE user_id = ?2)))",
+        rusqlite::params![computer_id, user.user_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+fn handoff_not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({"error": "handoff_not_found", "message": "No such handoff request."})),
+    )
+        .into_response()
+}
+
+fn not_the_owner() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": "not_run_owner", "message": "Only the person who owns this run or computer can answer this approval."})),
+    )
+        .into_response()
+}
+
 /// Approve a handoff. The body is optional: `{ "scope": "run" }` on a
 /// credential approval (`kind: "credential"`, from `use_credential`) is
 /// "Allow for this run": later fills of the same credential name into the
 /// same domain in the same run skip the prompt. Memory only, gone when the
-/// run ends; any other approval is single-use (`scope: "once"`).
-async fn aci_handoff_approve(
+/// run ends; any other approval is single-use (`scope: "once"`). Only the
+/// run's owner may approve ([`may_decide`]).
+pub(crate) async fn aci_handoff_approve(
     State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     body: axum::body::Bytes,
 ) -> Response {
+    let Some(req) = state.approval_store.get(&id) else { return handoff_not_found() };
+    if !may_decide(&state, &user, &headers, &req) {
+        warn!(approval_id = %id, "handoff approve refused: caller isn't the run's owner");
+        return not_the_owner();
+    }
     let wants_run = serde_json::from_slice::<serde_json::Value>(&body)
         .ok()
         .and_then(|b| b.get("scope").and_then(serde_json::Value::as_str).map(|s| s == "run"))
@@ -1357,11 +1415,7 @@ async fn aci_handoff_approve(
         let scope = if wants_run { allow_credential_for_run(&state, &id) } else { "once" };
         Json(json!({"approval_id": id, "status": "approved", "scope": scope})).into_response()
     } else {
-        (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "handoff_not_found", "message": "No such handoff request."})),
-        )
-            .into_response()
+        handoff_not_found()
     }
 }
 
@@ -1384,24 +1438,79 @@ fn allow_credential_for_run(state: &AppState, id: &str) -> &'static str {
     }
 }
 
-async fn aci_handoff_deny(
+/// Deny a handoff. Only the run's owner may deny ([`may_decide`]).
+pub(crate) async fn aci_handoff_deny(
     State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: axum::http::HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
+    let Some(req) = state.approval_store.get(&id) else { return handoff_not_found() };
+    if !may_decide(&state, &user, &headers, &req) {
+        warn!(approval_id = %id, "handoff deny refused: caller isn't the run's owner");
+        return not_the_owner();
+    }
     if state.approval_store.deny(&id) {
         crate::aci_approvals::GRANTS.deny(&id);
         Json(json!({"approval_id": id, "status": "denied"})).into_response()
     } else {
-        (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "handoff_not_found", "message": "No such handoff request."})),
-        )
-            .into_response()
+        handoff_not_found()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    fn who(user_id: &str) -> crate::auth::AuthUser {
+        crate::auth::AuthUser {
+            user_id: user_id.to_string(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: None,
+            organization_id: None,
+            organization_role: None,
+            organization_slug: None,
+        }
+    }
+
+    /// Approvals are answered by the run's owner only: a signed-in stranger
+    /// who learns an approval id gets 403 and the approval stays pending.
+    #[tokio::test]
+    async fn only_the_run_owner_answers_a_handoff() {
+        use axum::extract::{Extension, Path, State};
+        use axum::http::{HeaderMap, StatusCode};
+        let dir = std::env::temp_dir().join(format!("aci-approver-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let id = st.approval_store.create("owner-a", "computer.confirmation_required", &json!({ "kind": "credential", "run_id": "r1" }));
+
+        for (decide, label) in [(true, "approve"), (false, "deny")] {
+            let res = if decide {
+                super::aci_handoff_approve(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await
+            } else {
+                super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(id.clone())).await
+            };
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "a non-owner {label} is refused");
+            assert_eq!(st.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Pending);
+        }
+
+        let res = super::aci_handoff_approve(State(st.clone()), Extension(who("owner-a")), HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await;
+        assert_eq!(res.status(), StatusCode::OK, "the owner approves");
+        assert_eq!(st.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Approved);
+
+        // The computer's owner answers an approval raised by another caller
+        // (e.g. a run started on their computer by a service identity).
+        st.db.connect().unwrap().execute(
+            "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name) VALUES ('cmp_1','cloud_desktop','incus','running','user','owner-b','Box')",
+            [],
+        ).unwrap();
+        let other = st.approval_store.create("svc", "computer.confirmation_required", &json!({ "computer_id": "cmp_1" }));
+        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(other.clone())).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("owner-b")), HeaderMap::new(), Path(other.clone())).await;
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn computer_run_cards_follow_the_frames_in_order() {
         let dir = std::env::temp_dir().join(format!("aci-cards-{}", uuid::Uuid::new_v4()));

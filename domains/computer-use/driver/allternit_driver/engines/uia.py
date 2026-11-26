@@ -395,6 +395,16 @@ class UIAEngine:
 
         return self._call(work)
 
+    def write_value_only(self, pid: int, window_id: int, native: dict[str, Any], text: str) -> bool:
+        """``act set_value`` with ``focus: false``: ValuePattern.SetValue only.
+        No SetFocus and no SendInput typing."""
+        path = str((native or {}).get("path") or "")
+        if not path:
+            raise CuaError("unknown_element", "this element has no UI Automation handle; call read_ui first")
+        hwnd = int(window_id)
+        el = self._call(lambda: self._find_inner(hwnd, path))
+        return bool(self._invoke_pattern(el, _PATTERN_VALUE, "SetValue", text))
+
     def act(self, pid: int, window_id: int, native: dict[str, Any], op: str, value: Any = None, key: str | None = None) -> None:
         path = str((native or {}).get("path") or "")
         if not path:

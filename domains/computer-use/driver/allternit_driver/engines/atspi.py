@@ -545,6 +545,15 @@ class ATSPIEngine:
         else:
             raise CuaError("unsupported_op", f"{op} isn't an element action")
 
+    def write_value_only(self, pid: int, window_id: int, native: dict[str, Any], text: str) -> bool:
+        """``act set_value`` with ``focus: false``: the direct value setters
+        only. No grabFocus and no xdotool typing, so the value can't land in
+        another window."""
+        path = str((native or {}).get("path") or "")
+        if not path:
+            raise CuaError("unknown_element", "this element has no AT-SPI handle; call read_ui first")
+        return self._try_set_value(self._find(pid, window_id, path), text)
+
     def _try_set_value(self, acc: Any, text: str) -> bool:
         # Text interface direct write (pyatspi >= 2.45), then the Value
         # interface for sliders/spinners; fields that refuse both are typed
