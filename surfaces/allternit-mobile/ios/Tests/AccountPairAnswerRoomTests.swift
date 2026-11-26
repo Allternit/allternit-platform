@@ -85,4 +85,42 @@ final class AccountPairAnswerRoomTests: XCTestCase {
         XCTAssertNil(AnswerRoom.split(thread(), anchor: "gone"))
         XCTAssertNil(AnswerRoom.split(thread(), anchor: nil))
     }
+
+    func testTailFollowReleaseThenGrowSetsHasNew() {
+        var tail = TailFollow()
+        XCTAssertTrue(tail.follows)
+        tail.userScrolledUp()
+        tail.grew()
+        XCTAssertFalse(tail.follows)
+        XCTAssertTrue(tail.hasNew)
+    }
+
+    func testTailFollowReachedBottomClearsHasNew() {
+        var tail = TailFollow()
+        tail.userScrolledUp()
+        tail.grew()
+        tail.reachedBottom()
+        XCTAssertTrue(tail.follows)
+        XCTAssertFalse(tail.hasNew)
+    }
+
+    func testTailFollowJumpedAndSentRefollow() {
+        var tail = TailFollow()
+        tail.userScrolledUp()
+        tail.grew()
+        tail.jumped()
+        XCTAssertTrue(tail.follows)
+        XCTAssertFalse(tail.hasNew)
+        tail.userScrolledUp()
+        tail.grew()
+        tail.sent()
+        XCTAssertEqual(tail, TailFollow())
+    }
+
+    func testTailFollowGrowWhileFollowingLeavesHasNewFalse() {
+        var tail = TailFollow()
+        tail.grew()
+        XCTAssertTrue(tail.follows)
+        XCTAssertFalse(tail.hasNew)
+    }
 }
