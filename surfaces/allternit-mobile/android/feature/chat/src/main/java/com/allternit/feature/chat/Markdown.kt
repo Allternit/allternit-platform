@@ -215,7 +215,7 @@ internal object MarkdownParser {
 
 /** Renders assistant markdown at 15sp (iOS AssistantContent). Selectable, links open in the browser. */
 @Composable
-internal fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     val c = AllternitTheme.colors
     val blocks = remember(text) { MarkdownParser.parse(text) }
     val codeBg = c.fillNeutral

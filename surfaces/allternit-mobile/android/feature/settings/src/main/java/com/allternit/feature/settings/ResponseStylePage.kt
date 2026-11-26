@@ -43,12 +43,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiCall
@@ -62,6 +58,7 @@ import com.allternit.core.stream.AgentChatFrames
 import com.allternit.core.stream.ChatStreamEvent
 import com.allternit.core.stream.SseParser
 import com.allternit.feature.artifacts.LibraryNet
+import com.allternit.feature.chat.MarkdownText
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -315,7 +312,7 @@ private fun TryThisStyleCard(signedIn: Boolean, style: String, instructions: Str
                         .semantics { liveRegion = LiveRegionMode.Polite }.testTag("stylePreviewAnswer"),
                 ) {
                     // The cursor is a still bar, so reduced motion has nothing to turn off.
-                    PreviewAnswerText(if (streaming) "$answer▍" else answer)
+                    MarkdownText(if (streaming) "$answer▍" else answer)
                 }
             }
 
@@ -361,41 +358,6 @@ private fun previewErrorText(f: PreviewEvent.Failed): String = when {
     f.status == 401 || f.status == 403 -> "Sign in again to try a style."
     f.code == "network" -> "You're offline. Check your connection and try again."
     else -> FriendlyErrorMessage.from(f.message ?: f.code ?: "The reply didn't finish")
-}
-
-/** A small renderer for the answer: paragraphs, bullets, headings and **bold**. */
-@Composable
-private fun PreviewAnswerText(text: String) {
-    val c = AllternitTheme.colors
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        text.lines().forEach { raw ->
-            val line = raw.trimEnd()
-            if (line.isBlank()) return@forEach
-            val heading = line.trimStart().startsWith("#")
-            val bullet = line.trimStart().let { it.startsWith("- ") || it.startsWith("* ") }
-            val body = when {
-                heading -> line.trimStart().trimStart('#').trim()
-                bullet -> "• " + line.trimStart().drop(2)
-                else -> line
-            }
-            Text(
-                inlineBold(body), color = c.textPrimary, fontSize = 14.sp, lineHeight = 21.sp,
-                fontWeight = if (heading) FontWeight.Medium else FontWeight.Normal,
-            )
-        }
-    }
-}
-
-private fun inlineBold(s: String): AnnotatedString = buildAnnotatedString {
-    var i = 0
-    while (i < s.length) {
-        val open = s.indexOf("**", i)
-        val close = if (open >= 0) s.indexOf("**", open + 2) else -1
-        if (open < 0 || close < 0) { append(s.substring(i)); break }
-        append(s.substring(i, open))
-        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(s.substring(open + 2, close)) }
-        i = close + 2
-    }
 }
 
 // MARK: - The stream
