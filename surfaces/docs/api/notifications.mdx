@@ -221,3 +221,13 @@ The cost tracker (`services/cost_service.rs`, every minute) emits the `usage.thr
 ```
 
 From the backbone it reaches push (above) and [MCP Events](/guides/mcp-events) subscribers through the same path as every other event. Platform API project webhooks carry project events only, so they don't get it. The `cost_alerts` rows the tracker already wrote every 24 hours are unchanged.
+
+## Status holds pushes
+
+A person's [status](/api/me-status) of `dnd`, `away` or `autopilot` makes them quiet, the same as being inside quiet hours:
+
+- A push below their saved let-through level (`letThrough` in quiet hours, `urgent` when nothing is saved) is held in `notification_held` instead of sent. Urgent pushes still arrive.
+- An urgent push while the status holds pages, as described under [Paging](#paging).
+- The held summary push waits. The sink loop sends it on its first run (about once a minute) after the status is back to `online` and quiet hours are over.
+
+Reading the status fails open: if it cannot be read, the push is sent.

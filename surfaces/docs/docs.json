@@ -810,6 +810,7 @@
                   "api/web-push",
                   "api/ios-push",
                   "api/notifications",
+                  "api/me-status",
                   "api/allternit-api",
                   "api/phone-stream-relay",
                   "api/authentication",
