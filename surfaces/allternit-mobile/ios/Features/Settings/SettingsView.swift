@@ -1009,5 +1009,6 @@ private struct SettingsRowPress: ButtonStyle {
             .background(configuration.isPressed ? Color("FillNeutral") : Color.clear)
             .scaleEffect(configuration.isPressed ? PolishTokens.pressRow : 1)
             .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
+            .environment(\.settingsRowPressed, configuration.isPressed)
     }
 }

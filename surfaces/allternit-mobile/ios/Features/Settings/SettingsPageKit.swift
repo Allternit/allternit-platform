@@ -351,11 +351,7 @@ struct PhoneSettingsRowContent<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.system(size: 19, weight: .regular))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(width: 22, height: 22)
-                .accessibilityHidden(true)
+            SettingsIconTile(systemImage: systemImage)
             Text(title)
                 .font(.system(size: 16))
                 .foregroundColor(Color("TextPrimary"))
@@ -389,6 +385,7 @@ struct PhoneRowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(configuration.isPressed ? Color("FillNeutral") : Color.clear)
+            .environment(\.settingsRowPressed, configuration.isPressed)
     }
 }
 
@@ -396,18 +393,26 @@ struct PhoneRowButtonStyle: ButtonStyle {
 struct PhoneSwitch: View {
     let isOn: Bool
 
+    @Environment(\.settingsRowPressed) private var pressed
+    @Environment(\.accessibilityReduceMotion) private var systemReduced
+    @AppStorage(ReducedMotion.appKey) private var appReduced = false
+
     var body: some View {
+        let reduced = systemReduced || appReduced
+        // The knob stretches 4pt while the row is pressed and keeps its
+        // trailing/leading edge, then springs across with a light overshoot.
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
                 .fill(isOn ? Color("BrandAccent") : Color("TextPrimary").opacity(0.09))
-            Circle()
+            Capsule()
                 .fill(Color.white)
                 .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
-                .frame(width: 26, height: 26)
+                .frame(width: (pressed && !reduced) ? 30 : 26, height: 26)
                 .padding(2)
         }
         .frame(width: 50, height: 30)
-        .animation(.easeOut(duration: 0.2), value: isOn)
+        .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.62), value: isOn)
+        .animation(reduced ? nil : .easeOut(duration: 0.12), value: pressed)
         .accessibilityHidden(true)
     }
 }
