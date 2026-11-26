@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 
 use crate::team_store::{
     self, AppKind, ApprovalRouting, ApprovalRule, ApproverKind, BotKind, GrantLevel, NewRoutedApproval, RuleActor,
-    RuleOp,
+    RuleOp, ScopeKind,
 };
 
 /// `_meta` key on a `tools/call`: the routed approval(s) that let this call run.
@@ -258,14 +258,37 @@ pub fn rule_matches(rule: &ApprovalRule, args: &Value) -> bool {
     }
 }
 
-/// The rule as one sentence (D5), for the ask card and the 403 body.
-pub fn rule_text(rule: &ApprovalRule, app_name: &str) -> String {
-    let tool = if rule.tool == "*" { "Any tool".to_string() } else { format!("'{}'", rule.tool) };
-    let app = match (&rule.app_kind, &rule.app_ref) {
-        (_, Some(_)) => format!(" in {app_name}"),
-        _ => String::new(),
+/// Display names a rule sentence shows. `None` falls back to a generic word
+/// ("Anyone", "the owner", the app's ref).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RuleNames<'a> {
+    /// The person or bot the rule is scoped to (unused for an org rule).
+    pub scope: Option<&'a str>,
+    /// The app's display name (unused when the rule names no app).
+    pub app: Option<&'a str>,
+    /// The approver's name, when it is known for this rule or call.
+    pub approver: Option<&'a str>,
+}
+
+/// The rule as one sentence (D5): the one renderer for the team map, the bar
+/// review card, the ask card and the 403 body. Shape:
+/// `<who> · <app> <tool> · <condition> needs <approver>`, e.g.
+/// "Refunds bot · Stripe refund payment · amount over 250 USD needs Noah".
+/// The condition part is left out for an `always` rule.
+pub fn render_rule(rule: &ApprovalRule, names: &RuleNames<'_>) -> String {
+    let who = match rule.scope_kind {
+        ScopeKind::Org => "Anyone".to_string(),
+        ScopeKind::Person => names.scope.or(rule.scope_ref.as_deref()).unwrap_or("A person").to_string(),
+        ScopeKind::Bot => names.scope.or(rule.scope_ref.as_deref()).unwrap_or("A bot").to_string(),
     };
-    let value = |v: &Option<Value>| match v {
+    let app = rule.app_ref.as_deref().map(|r| names.app.unwrap_or(r));
+    let what = match (app, rule.tool.as_str()) {
+        (Some(a), "*") => format!("any {a} tool"),
+        (Some(a), t) => format!("{a} {}", crate::mcp_server_routes::tool_label(t)),
+        (None, "*") => "any tool".to_string(),
+        (None, t) => crate::mcp_server_routes::tool_label(t),
+    };
+    let value = match &rule.value {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(list)) => list
             .iter()
@@ -276,20 +299,57 @@ pub fn rule_text(rule: &ApprovalRule, app_name: &str) -> String {
         None => "?".to_string(),
     };
     let unit = rule.unit_label.as_deref().map(|u| format!(" {u}")).unwrap_or_default();
-    let field = rule.field.as_deref().unwrap_or("?");
-    let when = match rule.op {
-        RuleOp::Always => String::new(),
-        RuleOp::Gt => format!(" when {field} is over {}{unit}", value(&rule.value)),
-        RuleOp::Gte => format!(" when {field} is {}{unit} or more", value(&rule.value)),
-        RuleOp::Eq => format!(" when {field} is {}{unit}", value(&rule.value)),
-        RuleOp::In => format!(" when {field} is one of {}", value(&rule.value)),
+    let field = rule.field.as_deref().unwrap_or("the value");
+    let cond = match rule.op {
+        RuleOp::Always => None,
+        RuleOp::Gt => Some(format!("{field} over {value}{unit}")),
+        RuleOp::Gte => Some(format!("{field} {value}{unit} or more")),
+        RuleOp::Eq => Some(format!("{field} is {value}{unit}")),
+        RuleOp::In => Some(format!("{field} is one of {value}")),
     };
-    let who = match rule.approver_kind {
-        ApproverKind::Owner => "the owner",
-        ApproverKind::Manager => "their manager",
-        ApproverKind::User => "a named person",
+    let approver = names.approver.map(str::to_string).unwrap_or_else(|| {
+        match rule.approver_kind {
+            ApproverKind::Owner => "the owner",
+            ApproverKind::Manager => "their manager",
+            ApproverKind::User => "a named person",
+        }
+        .to_string()
+    });
+    match cond {
+        Some(c) => format!("{who} · {what} · {c} needs {approver}"),
+        None => format!("{who} · {what} needs {approver}"),
+    }
+}
+
+/// [`render_rule`] for one call: the scope's and the approver's names are
+/// read from `users` / `agents` (a missing name falls back to the generic word).
+pub fn rule_text(conn: &Connection, rule: &ApprovalRule, app_name: &str, approver_user_id: Option<&str>) -> rusqlite::Result<String> {
+    let scope = match (rule.scope_kind, rule.scope_ref.as_deref()) {
+        (ScopeKind::Person, Some(u)) => person_name(conn, u)?,
+        // A bot scope is `b:<agent id>` or `v:<vendor bot id>`; both have an `agents` row.
+        (ScopeKind::Bot, Some(b)) => conn
+            .query_row("SELECT name FROM agents WHERE id = ?1", params![b.split_once(':').map_or(b, |x| x.1)], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()?
+            .flatten(),
+        _ => None,
     };
-    format!("{tool}{app}{when} needs approval from {who}.")
+    let approver = match approver_user_id {
+        Some(u) => person_name(conn, u)?,
+        None => None,
+    };
+    Ok(render_rule(rule, &RuleNames { scope: scope.as_deref(), app: Some(app_name), approver: approver.as_deref() }))
+}
+
+/// A person's display name: `users.name`, else their email.
+fn person_name(conn: &Connection, user_id: &str) -> rusqlite::Result<Option<String>> {
+    Ok(conn
+        .query_row("SELECT COALESCE(NULLIF(TRIM(name), ''), email) FROM users WHERE id = ?1", params![user_id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
 }
 
 /// Canonical JSON: object keys sorted at every level, so the same arguments
@@ -567,7 +627,7 @@ fn needs_owner(
     approver: &str,
     hash: &str,
 ) -> rusqlite::Result<Decision> {
-    let text = rule_text(rule, call.app_name);
+    let text = rule_text(conn, rule, call.app_name, Some(approver))?;
     let approval_id = open_ask(conn, call, rule, &text, approver, hash)?;
     Ok(Decision::NeedsOwner {
         rule: rule.clone(),
@@ -632,7 +692,7 @@ pub fn gate_call(conn: &Connection, call: &GateCall<'_>) -> rusqlite::Result<Dec
     // "You approve": the confirming user's own confirmation.
     if let Some(rule) = mine {
         if !call.self_confirmed {
-            let text = rule_text(&rule, call.app_name);
+            let text = rule_text(conn, &rule, call.app_name, Some(call.user_id))?;
             return Ok(Decision::NeedsSelf { rule, rule_text: text });
         }
     }
@@ -671,6 +731,65 @@ pub fn gate_call(conn: &Connection, call: &GateCall<'_>) -> rusqlite::Result<Dec
 }
 
 /// `_meta["allternit/approvalId"]`: a string or an array of strings.
+/// What `gate_call` would decide for a call, read only: no ask is opened and no
+/// approval is spent. The Island bar's review card (`bar_routes.rs`, lane 15)
+/// shows this before the person presses Run; the run itself still goes through
+/// `gate_call` in the proxy.
+#[derive(Debug, Clone)]
+pub struct Preview {
+    /// The bot's live level. `None` for a person acting as themself, or for a
+    /// bot whose owner never set levels (today's behaviour).
+    pub level: Option<GrantLevel>,
+    /// `Some(DenyNoGrant | DenyReadOnly)` when the level refuses the call.
+    pub denied: Option<Decision>,
+    /// Every matching rule with its resolved approver, in candidate order.
+    pub matches: Vec<(ApprovalRule, String)>,
+}
+
+/// Read-only twin of `gate_call` steps 1-2 plus approver resolution (same
+/// helpers, same order). `user_id` is the confirming user, as in `GateCall`.
+#[allow(clippy::too_many_arguments)]
+pub fn preview_call(
+    conn: &Connection,
+    user_id: &str,
+    bot_id: Option<&str>,
+    app_kind: AppKind,
+    app_ref: &str,
+    tool: &str,
+    tool_read_only: bool,
+    args: &Value,
+) -> rusqlite::Result<Preview> {
+    let actor = resolve_actor(conn, user_id, bot_id)?;
+    let mut level = None;
+    let mut denied = None;
+    if let Some(bot) = bot_id {
+        if levels_in_use(conn, &actor.person_user_id)? {
+            match team_store::get_live_grant(conn, BotKind::Agent, bot, app_kind, app_ref)? {
+                None => denied = Some(Decision::DenyNoGrant),
+                Some(g) => {
+                    if g.level == GrantLevel::Browser && !tool_read_only {
+                        denied = Some(Decision::DenyReadOnly);
+                    }
+                    level = Some(g.level);
+                }
+            }
+        }
+    }
+    let rule_actor = RuleActor {
+        org_id: actor.org_id.as_deref(),
+        person_user_id: &actor.person_user_id,
+        bot: bot_id.map(|b| (BotKind::Agent, b)),
+    };
+    let mut matches = Vec::new();
+    for rule in team_store::list_rules_for_call(conn, &rule_actor, app_kind, app_ref, tool)? {
+        if rule_matches(&rule, args) {
+            let approver = resolve_approver(conn, &rule, &actor)?;
+            matches.push((rule, approver));
+        }
+    }
+    Ok(Preview { level, denied, matches })
+}
+
 pub fn approval_ids_from_meta(meta: &Value) -> Vec<String> {
     match &meta[APPROVAL_ID_META_KEY] {
         Value::String(s) if !s.trim().is_empty() => vec![s.trim().to_string()],
@@ -722,6 +841,32 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
         }
+    }
+
+    #[test]
+    fn one_renderer_names_the_bot_app_tool_and_approver() {
+        let mut r = rule(RuleOp::Gt, Some("amount"), Some(json!(250)));
+        r.scope_kind = ScopeKind::Bot;
+        r.scope_ref = Some("b:bot-9".into());
+        r.app_kind = Some(AppKind::Connector);
+        r.app_ref = Some("conn-9".into());
+        r.tool = "refund_payment".into();
+        r.approver_kind = ApproverKind::User;
+        r.approver_user_id = Some("noah".into());
+        let named = RuleNames { scope: Some("Refunds bot"), app: Some("Stripe"), approver: Some("Noah") };
+        assert_eq!(render_rule(&r, &named), "Refunds bot · Stripe refund payment · amount over 250 needs Noah");
+        // No names known: the refs and the generic approver word.
+        assert_eq!(render_rule(&r, &RuleNames::default()), "b:bot-9 · conn-9 refund payment · amount over 250 needs a named person");
+        // An org-wide `always` rule on any tool has no condition part.
+        assert_eq!(render_rule(&rule(RuleOp::Always, None, None), &RuleNames::default()), "Anyone · any tool needs the owner");
+
+        // The per-call form reads the bot's and the approver's names.
+        let conn = db();
+        conn.execute("INSERT INTO users (id, email, name) VALUES ('noah', 'noah@x.test', 'Noah')", []).unwrap();
+        conn.execute("INSERT INTO users (id, email, name) VALUES ('own', 'own@x.test', 'Own')", []).unwrap();
+        conn.execute("INSERT INTO agents (id, user_id, name, model, provider, is_bot) VALUES ('bot-9', 'own', 'Refunds bot', 'm', 'p', 1)", [])
+            .unwrap();
+        assert_eq!(rule_text(&conn, &r, "Stripe", Some("noah")).unwrap(), "Refunds bot · Stripe refund payment · amount over 250 needs Noah");
     }
 
     #[test]

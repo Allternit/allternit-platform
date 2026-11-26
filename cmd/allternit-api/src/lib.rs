@@ -155,6 +155,8 @@ pub mod autonomy;
 pub mod task_grants;
 pub mod team_rules;
 pub mod team_store;
+pub mod bar_blanks;
+pub mod bar_routes;
 pub mod team_routes;
 pub mod channel_tools;
 pub mod templates_routes;
