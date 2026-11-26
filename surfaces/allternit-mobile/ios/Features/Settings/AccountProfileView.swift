@@ -16,6 +16,7 @@ struct AccountProfileView: View {
     @State private var switchingTo: String?? = nil
     @State private var errorMessage: String? = nil
     @State private var isDeletePresented = false
+    @StateObject private var statusModel = UserStatusModel()
 
     var body: some View {
         List {
@@ -34,6 +35,25 @@ struct AccountProfileView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            if authManager.isSignedIn {
+                Section("Status") {
+                    Picker("Status", selection: Binding(get: { statusModel.status }, set: { statusModel.choose($0) })) {
+                        ForEach(UserStatus.allCases) { item in
+                            VStack(alignment: .leading) {
+                                Text(item.title)
+                                if !item.subline.isEmpty {
+                                    Text(item.subline).font(.caption)
+                                }
+                            }
+                            .tag(item)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                .task { await statusModel.load() }
             }
 
             if authManager.isSignedIn {
