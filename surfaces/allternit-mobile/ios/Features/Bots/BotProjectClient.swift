@@ -467,6 +467,31 @@ struct FactoryTeam: Decodable, Sendable {
     let edges: [Edge]
 }
 
+/// One message between two bots (`GET /api/factory/deliveries`). `from` and
+/// `preview` come with platform #3052; older records have neither.
+struct FactoryDelivery: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let from: String?
+    let to: String?
+    let preview: String?
+    let at: Date?
+
+    private enum CodingKeys: String, CodingKey { case id, from, to, preview, at, createdAt, sender, receiver }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        from = (try? c.decodeIfPresent(String.self, forKey: .from)) ?? (try? c.decodeIfPresent(String.self, forKey: .sender))
+        to = (try? c.decodeIfPresent(String.self, forKey: .to)) ?? (try? c.decodeIfPresent(String.self, forKey: .receiver))
+        preview = try? c.decodeIfPresent(String.self, forKey: .preview)
+        if let text = (try? c.decodeIfPresent(String.self, forKey: .at)) ?? (try? c.decodeIfPresent(String.self, forKey: .createdAt)) {
+            at = ISO8601DateFormatter().date(from: text)
+        } else {
+            at = nil
+        }
+    }
+}
+
 struct FactoryNodePage: Decodable, Sendable {
     struct ProofLine: Decodable, Hashable, Sendable {
         let line: String
@@ -485,6 +510,9 @@ struct FactoryNodePage: Decodable, Sendable {
 
     struct Delivery: Decodable, Hashable, Sendable {
         let id: String?
+        /// Sender and short text (platform #3052); nil from an older engine.
+        let from: String?
+        let preview: String?
     }
 
     let card: FactoryNodeCard
@@ -806,6 +834,15 @@ final class BotProjectClient: @unchecked Sendable {
         let (data, response) = try await InstanceConnection.runtimeAPIData(for: request, session: client.session)
         try client.validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Oldest first. Accepts a bare array or `{deliveries: [...]}`.
+    func deliveries() async throws -> [FactoryDelivery] {
+        struct Envelope: Decodable { let deliveries: [FactoryDelivery] }
+        let list: [FactoryDelivery]
+        if let envelope: Envelope = try? await factory("deliveries") { list = envelope.deliveries }
+        else { list = try await factory("deliveries") }
+        return list.sorted { ($0.at ?? .distantPast) < ($1.at ?? .distantPast) }
     }
 
     func campaign(projectId: String) async throws -> FactoryCampaign? {

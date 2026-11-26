@@ -112,6 +112,8 @@ struct ArtifactDetailsView: View {
     @Environment(\.dismiss) var dismiss
     @Environment(\.openURL) private var openURL
     @State private var selectedTab = 0
+    @State private var previewSharp = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sharedFile: SharedArtifactFile?
     @State private var shareError: String?
     @StateObject private var loader = ArtifactContentLoader()
@@ -301,6 +303,11 @@ struct ArtifactDetailsView: View {
             } else if selectedTab == 0 && artifact.isPreviewable {
                 // Sandboxed execution preview (custom scheme + CSP, no network).
                 SandboxedArtifactWebView(content: text, artifactType: artifact.fileType)
+                    .blur(radius: previewSharp || reduceMotion ? 0 : 12)
+                    .opacity(previewSharp || !reduceMotion ? 1 : 0)
+                    .onAppear {
+                        withAnimation(.easeOut(duration: 0.22)) { previewSharp = true }
+                    }
             } else {
                 // Scrollable plain code container
                 ScrollView {
