@@ -121,7 +121,8 @@ fun ChatScreen(
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 // A finger drag down moves the content toward earlier messages.
-                if (source == NestedScrollSource.UserInput && available.y > 0f) tail = tail.userScrolledUp()
+                // Only a list that can move back releases: a drag at the top of a short thread must not.
+                if (source == NestedScrollSource.UserInput && available.y > 0f && list.canScrollBackward) tail = tail.userScrolledUp()
                 return Offset.Zero
             }
         }
