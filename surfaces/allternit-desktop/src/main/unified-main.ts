@@ -42,6 +42,7 @@ import { hudWindowingView, linuxOzoneBackend, resolveHudWindowing } from './hud-
 import { INACTIVE_GAME_OVERLAY, startHudGameOverlayWatch } from './hud-game-overlay.js';
 import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
+import { installAgentAttention } from './agent-attention-ipc.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
@@ -988,6 +989,29 @@ const desktopCompanion = installDesktopCompanion({
 const agentCursorWindow = installAgentCursorWindow({
   origin: () => activePlatformUrl,
   preload: join(__dirname, '../preload/index.js'),
+});
+
+// Status pill on the agent's Safari window, Safari profile card, and the
+// native "needs you" notices (also fed by the Chrome extension bridge).
+const agentAttention = installAgentAttention({
+  cursorWindow: () => agentCursorWindow.window(),
+  openRoute: (route) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (!route) return;
+    try { void mainWindow.loadURL(new URL(route, activePlatformUrl).toString()); }
+    catch (error) { log.warn('[AgentAttention] bad route', error); }
+  },
+  safariWindows: async () => {
+    const list = await enumerateWindowsFrontToBack(process.pid, false);
+    if (enumerationFailed(list)) return [];
+    return list.filter((w) => /safari/i.test(w.app)).map((w) => w.bounds);
+  },
+  sendToExtension: (message) => sendToExtension(message),
+  broadcast: (channel, payload) => broadcastToMainWindows(channel, payload),
+  isAppSender: (event) => BrowserWindow.fromWebContents(event.sender) === mainWindow,
 });
 
 // Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
@@ -2197,6 +2221,8 @@ function startExtensionBridge(): void {
           const message = JSON.parse(line) as Record<string, unknown>;
           // Forward to renderer
           broadcastToMainWindows('extension:message', message);
+          // A paused task: same in-app "needs you" state plus a notification.
+          agentAttention.handleExtensionMessage(message);
           // Resolve any pending ACU relay request waiting on this id
           const id = message['id'] as string | undefined;
           if (id && pendingRelayResponses.has(id)) {

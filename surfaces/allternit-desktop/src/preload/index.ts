@@ -680,6 +680,15 @@ const extensionAPI = {
     ipcRenderer.invoke('extension:get-status'),
   send: (message: unknown): Promise<boolean> =>
     ipcRenderer.invoke('extension:send', message),
+  /** Answer a paused extension task: sends {type:"resume_task", payload:{handoffId, approved}}. */
+  resumeTask: (handoffId: string, approved: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('extension:resume-task', handoffId, approved),
+  /** The extension's {type:"needs_you"} pause, as {kind,url,domain,handoffId,botName}. */
+  onNeedsYou: (handler: (needs: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, needs: unknown) => handler(needs);
+    ipcRenderer.on('agent-attention:needs-you', listener);
+    return () => ipcRenderer.removeListener('agent-attention:needs-you', listener);
+  },
   onMessage: (handler: (message: unknown) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, msg: unknown) => handler(msg);
     ipcRenderer.on('extension:message', listener);
@@ -1640,4 +1649,19 @@ contextBridge.exposeInMainWorld('allternitAgentCursor', {
     ipcRenderer.on('agent-cursor:display-changed', listener);
     return () => ipcRenderer.removeListener('agent-cursor:display-changed', listener);
   },
+});
+
+// The agent status pill, Safari profile card and native "needs you" notices.
+// Main accepts these only from the agent cursor window's main frame; that page
+// owns the lease and the run, so pill clicks come back through onAction.
+contextBridge.exposeInMainWorld('allternitAgentPill', {
+  update: (state: { botName: string; step?: number; bounds?: { x: number; y: number; width: number; height: number } }) => ipcRenderer.send('agent-pill:update', state),
+  hide: () => ipcRenderer.send('agent-pill:hide'),
+  onAction: (callback: (action: 'takeover' | 'stop') => void) => {
+    const listener = (_event: IpcRendererEvent, action: 'takeover' | 'stop') => callback(action);
+    ipcRenderer.on('agent-pill:action', listener);
+    return () => ipcRenderer.removeListener('agent-pill:action', listener);
+  },
+  notify: (input: { kind: 'credential' | 'human' | 'blocked'; runId?: string; computerId?: string; botName?: string; name?: string; domain?: string }) => ipcRenderer.send('agent-attention:notify', input),
+  ensureSafariProfile: () => ipcRenderer.invoke('agent-safari-profile:ensure') as Promise<'ready' | 'card-shown' | 'not-applicable'>,
 });

@@ -39,6 +39,27 @@ The bot that is driving rides along with the cursor, so you can always tell whic
 - **When you take control,** the badge greys out and reads "You have control". It comes back when you hand control back.
 - **Turn it off:** Settings → Computers → **Agent cursor** → **Show the bot on the cursor**. It's on by default. The cursor itself keeps the style you picked.
 
+### The status pill on this Mac
+
+While a bot holds control of this Mac's Safari, a small pill sits on the top edge of the window it is using: "Raven is working · step 4 · Take over · Stop".
+
+- **Take over** hands control to you, the same as Take control in the run view. **Stop** ends the run.
+- The pill takes clicks but never takes focus from the window underneath. It is left out of the bot's own screenshots and goes away when the bot lets go.
+
+### The "Allternit Agent" Safari profile
+
+Bots browse in their own Safari profile so they never see your logins or history. The first time a bot uses Safari on this Mac, Allternit shows a one-time card with the steps: open Safari, choose Safari → Settings → Profiles, click **+**, and name the profile **Allternit Agent**. **Open Safari Settings** jumps there. Click **I added "Allternit Agent"** when you're done and the card doesn't come back. **Not now** closes it and asks again on the next run.
+
+### Needs-you notifications on this Mac
+
+When a run on this Mac needs you, macOS shows a notification. Click it to open the run in Allternit. You approve or deny in the app, never in the notification.
+
+- **"Fill your Gmail login on mail.google.com?"**: a bot wants to use a saved login.
+- **"Raven needs you"**: a bot asked a person to take over.
+- **"example.com blocked Raven"**: a site showed a login wall, captcha or block page.
+
+Pauses from the Chrome extension show up the same way. Your answer goes back to the extension as `resume_task`.
+
 ### For developers: the event it plays
 
 The overlay plays `computer.action` events from the computer's events channel in allternit-api. The computer toolset executor (`POST /computers/:id/toolset`) emits one per pointer action:
