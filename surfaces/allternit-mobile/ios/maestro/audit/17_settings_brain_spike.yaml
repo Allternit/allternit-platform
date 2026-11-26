@@ -1,0 +1,15 @@
+appId: com.allternit.mobile
+---
+# Verifies Brain Spike settings opens.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-settings-brain-spike: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Brain Spike"
+- takeScreenshot: settings_brain_spike
+- stopApp

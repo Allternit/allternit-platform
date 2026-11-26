@@ -1,0 +1,7 @@
+appId: com.allternit.mobile
+---
+launchApp:
+  appId: com.allternit.mobile
+  clearState: true
+  arguments:
+    - -skip-auth

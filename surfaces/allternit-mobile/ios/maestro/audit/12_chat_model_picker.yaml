@@ -1,0 +1,16 @@
+appId: com.allternit.mobile
+---
+# Verifies the composer model picker sheet opens and shows its header.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-model-picker: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Select model"
+- takeScreenshot: chat_model_picker
+- tapOn: "Done"
+- stopApp

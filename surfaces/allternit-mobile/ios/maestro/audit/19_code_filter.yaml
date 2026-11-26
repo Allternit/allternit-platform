@@ -1,0 +1,18 @@
+appId: com.allternit.mobile
+---
+# Verifies the Code tab's "Filter by status" sheet opens.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-code-filter: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Filter by status"
+- takeScreenshot: code_filter_sheet
+- tapOn:
+    text: "Done"
+    optional: true
+- stopApp

@@ -116,7 +116,7 @@ enum ModeHubSpec {
         .init(id: "artifacts", mode: .home, label: "Artifacts", short: "Artifacts", phosphor: "Shapes", symbol: "square.on.circle", more: "All artifacts", requires: nil, target: .tab(.artifacts)),
         .init(id: "automation", mode: .home, label: "Automation Tasks", short: "Automations", phosphor: "Timer", symbol: "timer", more: "All tasks", requires: nil, target: .tab(.automation)),
         .init(id: "meetings", mode: .home, label: "Meetings", short: "Meetings", phosphor: "VideoCamera", symbol: "video", more: "Open Meetings", requires: "meetings", target: .meetingsSheet),
-        .init(id: "customize", mode: .home, label: "Customize", short: "Customize", phosphor: "SlidersHorizontal", symbol: "slider.horizontal.3", more: "Open Customize", requires: nil, target: .tab(.customize)),
+        .init(id: "customize", mode: .home, label: "Catalog", short: "Catalog", phosphor: "SlidersHorizontal", symbol: "slider.horizontal.3", more: "Open Catalog", requires: nil, target: .tab(.customize)),
         .init(id: "freeweights", mode: .home, label: "Freeweights Studio", short: "Freeweights", phosphor: "Barbell", symbol: "dumbbell", more: "Open Freeweights", requires: nil, target: .tab(.models)),
         // Bots
         .init(id: "main-bot", mode: .bots, label: "Main bot", short: "Main bot", phosphor: "Star", symbol: "star", more: "Open main bot", requires: nil, target: .bots(.mainBot)),

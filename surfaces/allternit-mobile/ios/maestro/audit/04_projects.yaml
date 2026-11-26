@@ -1,0 +1,13 @@
+appId: com.allternit.mobile
+---
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn: "Projects"
+- takeScreenshot: projects_list
+- tapOn: "Open sidebar"
+- takeScreenshot: projects_sidebar_open
+- stopApp

@@ -213,7 +213,7 @@ enum ModeBarItem: String, CaseIterable {
         case .artifacts: return "Artifacts"
         case .agents: return "Bots"
         case .automation: return "Automation Tasks"
-        case .customize: return "Customize"
+        case .customize: return "Catalog"
         case .tasks: return "Tasks"
         case .models: return "Models"
         case .code: return "Code"

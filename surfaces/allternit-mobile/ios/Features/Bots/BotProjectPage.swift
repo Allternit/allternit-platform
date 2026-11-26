@@ -247,7 +247,7 @@ struct BotProjectPage: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Customize")
+            .accessibilityLabel("Catalog")
         }
     }
 

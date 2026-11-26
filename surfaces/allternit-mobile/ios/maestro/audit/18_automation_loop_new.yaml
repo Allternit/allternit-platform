@@ -1,0 +1,18 @@
+appId: com.allternit.mobile
+---
+# Verifies tapping "New loop" opens the loop creation sheet.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn: "Automation Tasks"
+- tapOn: "Loops"
+- tapOn: "New loop"
+- assertVisible: "New loop"
+- assertVisible: "Command"
+- assertVisible: "Create loop"
+- takeScreenshot: automation_loop_new
+- tapOn: "Close"
+- stopApp

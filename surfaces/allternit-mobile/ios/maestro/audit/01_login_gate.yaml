@@ -1,0 +1,11 @@
+appId: com.allternit.mobile
+---
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+- assertVisible: "Allternit"
+- assertVisible: "Sign In"
+- assertVisible: "Create Account"
+- assertVisible: "Continue without signing in"
+- takeScreenshot: login_gate
+- stopApp
