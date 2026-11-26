@@ -62,6 +62,7 @@ struct OfficeFloorView: View {
     @State private var isTeamMapPresented = false
     /// The map's 0-bot "Add a bot": the main-bot setup opens once the map has closed.
     @State private var addBotAfterTeamMap = false
+    @StateObject private var signModel = OfficeSignRequestsModel()
     @ReducedMotion private var reduceMotion
 
     var body: some View {
@@ -90,13 +91,20 @@ struct OfficeFloorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .transition(.opacity)
                 }
+                if ready, mode == .workspace, !signModel.pending.isEmpty {
+                    OfficeSignCards(model: signModel, signedIn: auth.currentUserId != nil)
+                        .padding(.horizontal, 12)
+                        .padding(.top, needBots.isEmpty ? 8 : 60)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.opacity)
+                }
                 if showsFloorChrome, let digest {
                     OfficeDigestView(digest: digest, mainBotName: mainBotName, onOpenBot: { botId in
                         self.digest = nil
                         openSheet(botId)
                     }, onClose: { self.digest = nil })
                     .padding(.horizontal, 12)
-                    .padding(.top, needBots.isEmpty ? 8 : 60)
+                    .padding(.top, (needBots.isEmpty ? 8 : 60) + (signModel.pending.isEmpty ? 0 : 110))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .transition(.opacity)
                     .onAppear { markSeen() }
@@ -217,6 +225,7 @@ struct OfficeFloorView: View {
             }
         }
         .task(id: auth.currentUserId) { await checkDigest() }
+        .task(id: auth.currentUserId) { await signModel.refresh(signedIn: auth.currentUserId != nil) }
         .onDisappear {
             // Leaving the Office counts as seen, so the next digest covers only the time away.
             if isSignedIn, digestCheckedFor != nil { markSeen() }
