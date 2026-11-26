@@ -24,6 +24,14 @@ struct SignFlight: View {
     @State private var sweep: CGFloat = -0.4
     @State private var started = false
 
+    private var hasAlpha: Bool {
+        guard let info = image.cgImage?.alphaInfo else { return false }
+        switch info {
+        case .none, .noneSkipFirst, .noneSkipLast: return false
+        default: return true
+        }
+    }
+
     static let flightSeconds = 0.7
     static let shimmerSeconds = 1.1
 
@@ -36,10 +44,13 @@ struct SignFlight: View {
                 Image(uiImage: image)
                     .resizable()
                     .renderingMode(.original)
+                // The shimmer only tints the ink: masked by the image's own
+                // alpha, and skipped when the image is opaque (an upload).
                 Image(uiImage: image)
                     .resizable()
                     .renderingMode(.template)
                     .foregroundStyle(Color(hex: "#C9A45C"))
+                    .mask { Image(uiImage: image).resizable() }
                     .mask(alignment: .leading) {
                         GeometryReader { g in
                             LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
@@ -47,7 +58,7 @@ struct SignFlight: View {
                                 .offset(x: g.size.width * sweep)
                         }
                     }
-                    .opacity(sweep > -0.4 ? 1 : 0)
+                    .opacity(hasAlpha && sweep > -0.4 ? 1 : 0)
             }
             .frame(width: rect.width, height: rect.height)
             .position(x: rect.midX, y: rect.midY)
