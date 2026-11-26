@@ -66,3 +66,40 @@ export function generatedFilePart(input: {
   }
   return part
 }
+
+/** Source uri of a file a tool call produced: `tool-call://<callID>`. Clients use it to put the file on that call's card. */
+export const TOOL_CALL_URI = "tool-call://"
+/** Largest picture a tool result publishes as a generated file (decoded bytes). */
+export const MAX_TOOL_OUTPUT_FILE_BYTES = 8 * 1024 * 1024
+
+/**
+ * The generated-file part for a tool result whose metadata sets `outputFile: true`
+ * (media_generate's engine pictures and GIFs): its first PNG or GIF attachment, so
+ * the picture rides the generated-artifact path every client already renders (live
+ * `artifact` frame, reload `metadata.parts`). The attachment stays on the tool
+ * result for the model; assistant file parts never go to the model.
+ */
+export function toolOutputFilePart(input: {
+  id: string
+  messageID: string
+  sessionID: string
+  callID: string
+  metadata?: Record<string, unknown>
+  attachments?: ReadonlyArray<{ mime: string; url: string; filename?: string }>
+}): MessageV2.FilePart | undefined {
+  if (input.metadata?.outputFile !== true || !input.callID) return undefined
+  const file = input.attachments?.find(
+    (a) => (a.mime === "image/png" || a.mime === "image/gif") && a.url.startsWith(`data:${a.mime};base64,`),
+  )
+  if (!file) return undefined
+  const base64 = file.url.slice(`data:${file.mime};base64,`.length)
+  if (!base64 || Math.floor((base64.length * 3) / 4) > MAX_TOOL_OUTPUT_FILE_BYTES) return undefined
+  return generatedFilePart({
+    id: input.id,
+    messageID: input.messageID,
+    sessionID: input.sessionID,
+    mediaType: file.mime,
+    base64,
+    meta: { filename: file.filename, title: file.filename, sourceUri: `${TOOL_CALL_URI}${input.callID}` },
+  })
+}

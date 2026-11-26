@@ -11,6 +11,8 @@ struct MessageRow: View {
     /// else offers "Retry" (re-streams the last sent text).
     var onChooseModel: () -> Void = {}
     var onRetry: (String) -> Void = { _ in }
+    /// A failed picture that needs ChatGPT sign-in: opens the sign-in browser.
+    var onSignInToChatGPT: () -> Void = {}
     var availableErrorActions: Set<ChatErrorAction.Kind> = []
     var onErrorAction: (String, ChatErrorAction) -> Void = { _, _ in }
     /// Phase 8 action bar: true only on the most recent assistant reply —
@@ -104,6 +106,7 @@ struct MessageRow: View {
                             replyIsLive: message.isStreaming,
                             onChooseModel: onChooseModel,
                             onRetry: { onRetry(message.id) },
+                            onSignInToChatGPT: onSignInToChatGPT,
                             onRevealing: { revealing in
                                 if revealing { revealingCalls.insert(call.id) } else { revealingCalls.remove(call.id) }
                             }

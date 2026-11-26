@@ -44,6 +44,8 @@ data class ChatSendRequest(
     val browserImage: Boolean = false,
     /** Set only by a foreground composer; helpers and routines leave this false. */
     val personTurn: Boolean = false,
+    /** Raw composer text of an Image or Artifact mode send (`metadata.image_prompt`); person sends only. */
+    val imagePrompt: String? = null,
 )
 
 /** iOS ToolCallRecord.State / MessageRecord.ToolStatus.State. */
@@ -69,6 +71,9 @@ data class ToolCallRecord(
     val finishedAt: Long? = null,
     /** Local validated ACI result retained when the runtime later replaces output text. */
     val browserImageResult: String? = null,
+    /** Engine picture or GIF folded onto this call from an assistant file part with source `tool-call://<id>`: a data URL, up to 8 MiB. */
+    val attachedImageUrl: String? = null,
+    val attachedImageMime: String? = null,
 )
 
 /** The single status line under a reply (iOS MessageRecord.ToolStatus). */
@@ -192,6 +197,16 @@ data class MessageRecord(
     /** Wave H2: the feed's "Voice chat ended" card (iOS MessageRecord.voiceSummary); a local system row. */
     val voiceSummary: com.allternit.feature.chat.voice.VoiceSummary? = null,
 ) {
+    /** Folds an engine picture (`tool-call://<id>` file part) onto its call; false when no such call is here yet. */
+    fun attachToolImage(sourceUri: String?, url: String?, mime: String?): MessageRecord? {
+        val callId = sourceUri?.takeIf { it.startsWith("tool-call://") }?.removePrefix("tool-call://") ?: return null
+        if (url.isNullOrEmpty()) return null
+        val index = toolCalls.indexOfFirst { it.id == callId }
+        if (index < 0) return null
+        val kind = mime?.takeIf { it.startsWith("image/") } ?: url.substringAfter("data:", "").substringBefore(';').takeIf { it.startsWith("image/") } ?: "image/png"
+        return copy(toolCalls = toolCalls.toMutableList().also { it[index] = it[index].copy(attachedImageUrl = url, attachedImageMime = kind) })
+    }
+
     /** Inserts or updates one tool call from a stream frame (iOS upsertToolCall). */
     fun upsertToolCall(call: ToolCallRecord): MessageRecord {
         val index = toolCalls.indexOfFirst { it.id == call.id }
@@ -210,6 +225,8 @@ data class MessageRecord(
             startedAt = old.startedAt ?: call.startedAt,
             finishedAt = call.finishedAt ?: old.finishedAt,
             browserImageResult = call.browserImageResult ?: old.browserImageResult,
+            attachedImageUrl = call.attachedImageUrl ?: old.attachedImageUrl,
+            attachedImageMime = call.attachedImageMime ?: old.attachedImageMime,
         )
         return copy(toolCalls = toolCalls.toMutableList().also { it[index] = merged })
     }
@@ -245,7 +262,15 @@ data class MessageRecord(
                     finishedAt = time?.long("end"),
                 )
             }
-            val artifacts = parts.filter { it.str("type") == "file" }.map { part ->
+            val attached = HashMap<String, Pair<String, String?>>()
+            val artifacts = parts.filter { it.str("type") == "file" }.filter { part ->
+                val src = part.obj("source")?.str("uri") ?: part.str("sourceUri")
+                val url = part.str("url")
+                if (src != null && src.startsWith("tool-call://") && !url.isNullOrEmpty() && tools.any { it.id == src.removePrefix("tool-call://") }) {
+                    attached[src.removePrefix("tool-call://")] = url to (part.str("mime") ?: part.str("mimeType"))
+                    false
+                } else true
+            }.map { part ->
                 val url = part.str("url")
                 val title = part.str("filename") ?: url?.substringAfterLast('/') ?: "Attachment"
                 val ext = title.substringAfterLast('.', "").lowercase().ifEmpty { "text" }
@@ -256,7 +281,7 @@ data class MessageRecord(
                 role = record.role,
                 content = if (tools.isEmpty()) record.content else stripToolMarkers(record.content),
                 reasoning = record.thinking.orEmpty(),
-                toolCalls = tools,
+                toolCalls = tools.map { t -> attached[t.id]?.let { (u, m) -> t.copy(attachedImageUrl = u, attachedImageMime = m?.takeIf { it.startsWith("image/") } ?: "image/png") } ?: t },
                 artifacts = if (record.role == "user") emptyList() else artifacts,
                 attachmentNames = if (record.role == "user") artifacts.map { it.title } else emptyList(),
                 createdAt = parseMillis(record.timestamp) ?: System.currentTimeMillis(),

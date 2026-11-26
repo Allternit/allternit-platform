@@ -398,7 +398,7 @@ class ChatBackend(
      * [ChatStreamEvent.Failed]: 503 `runtime_warming` (the caller waits and retries),
      * `runtime_offline`, 409 `no_brain`, 428 / `compute_required` (no computer).
      */
-    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false): Flow<ChatStreamEvent> {
+    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false, imagePrompt: String? = null): Flow<ChatStreamEvent> {
         val envelope = buildJsonObject {
             put("method", "POST")
             put("path", "/api/agent-chat")
@@ -407,7 +407,12 @@ class ChatBackend(
                 put("content-type", "application/json")
             })
             val encoded = json.encodeToJsonElement(AgentChatRequest.serializer(), body) as JsonObject
-            val marked = if (personTurn) JsonObject(encoded + ("metadata" to JsonObject((encoded["metadata"] as? JsonObject).orEmpty() + ("turn" to JsonPrimitive("person"))))) else encoded
+            // image_prompt rides only with turn:"person" on a person foreground send; retries pass neither.
+            val person = buildJsonObject {
+                put("turn", "person")
+                imagePrompt?.takeIf { it.isNotBlank() && it.length <= 16000 }?.let { put("image_prompt", it) }
+            }
+            val marked = if (personTurn) JsonObject(encoded + ("metadata" to JsonObject((encoded["metadata"] as? JsonObject).orEmpty() + person))) else encoded
             put("body", marked.toString())
             put("bodyEncoding", "utf8")
         }.toString()

@@ -1044,8 +1044,22 @@ fn gizzi_turn_metadata(body: &serde_json::Value, is_bot_turn: bool) -> Option<se
     if !is_bot_turn && body.pointer("/metadata/turn").and_then(|v| v.as_str()) == Some("person") {
         let obj = meta.get_or_insert_with(|| json!({}));
         obj["turn"] = json!("person");
+        if let Some(prompt) = body.get("metadata").and_then(turn_image_prompt) {
+            obj["image_prompt"] = json!(prompt);
+        }
     }
     meta
+}
+
+/// The person-turn hint `metadata.image_prompt`: the raw composer text for an
+/// image request, a string of 1-16000 UTF-16 code units. Empty, non-string or
+/// longer values are dropped. Callers pass it only on a person turn.
+pub(crate) fn turn_image_prompt(meta: &serde_json::Value) -> Option<String> {
+    let prompt = meta.get("image_prompt")?.as_str()?;
+    if prompt.is_empty() || prompt.encode_utf16().count() > 16000 {
+        return None;
+    }
+    Some(prompt.to_string())
 }
 
 /// Turn hints that pass only with their one allowed value (the other hint,
@@ -1232,8 +1246,9 @@ enum ToolFrameState {
 /// Tools whose settled `tool_result` frame carries the part's `state.metadata`
 /// (send_user_message: text + files + push; automation: the saved automation;
 /// lookup: the validated answer card the client draws in place of a
-/// model-written one).
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings", "second_opinion", "pr_comments", "status_update", "feedback_note", "user_location", "voice_control", "end_conversation", "worktree_enter", "worktree_exit"];
+/// model-written one; media_generate: ok, size, engine and the result code
+/// the card's sign-in action reads).
+const METADATA_CARD_TOOLS: &[&str] = &["media_generate", "send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings", "second_opinion", "pr_comments", "status_update", "feedback_note", "user_location", "voice_control", "end_conversation", "worktree_enter", "worktree_exit"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
@@ -3407,6 +3422,22 @@ mod tests {
         // Only the exact value passes.
         assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "bot" } }), false), None);
         assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": true } }), false), None);
+    }
+
+    #[test]
+    fn image_prompt_passes_only_on_a_person_turn_within_limits() {
+        let person = |p: serde_json::Value| gizzi_turn_metadata(&json!({ "metadata": { "turn": "person", "image_prompt": p } }), false);
+        assert_eq!(person(json!("a blue mug")), Some(json!({ "turn": "person", "image_prompt": "a blue mug" })));
+        // Empty, non-string and over-long values are dropped.
+        assert_eq!(person(json!("")), Some(json!({ "turn": "person" })));
+        assert_eq!(person(json!(5)), Some(json!({ "turn": "person" })));
+        assert_eq!(person(json!("a".repeat(16001))), Some(json!({ "turn": "person" })));
+        assert!(person(json!("a".repeat(16000))).unwrap().get("image_prompt").is_some());
+        // 8001 astral chars = 16002 UTF-16 units.
+        assert!(person(json!("\u{1F600}".repeat(8001))).unwrap().get("image_prompt").is_none());
+        // No person marker, or a bot turn: never passed.
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "image_prompt": "x" } }), false), None);
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "person", "image_prompt": "x" } }), true), None);
     }
 
     #[test]

@@ -821,19 +821,28 @@ private struct ArtifactImageView: View {
                 if fit == .fill {
                     // Fill: cover the viewer edge to edge, cropping the overflow.
                     GeometryReader { proxy in
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
+                        if image.isAnimatedPicture {
+                            AnimatedImageView(image: image, fill: true)
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                        } else {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .clipped()
+                        }
                     }
                 } else {
                     ScrollView {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
-                            .padding(16)
+                        Group {
+                            if image.isAnimatedPicture {
+                                AnimatedImageView(image: image)
+                            } else {
+                                Image(uiImage: image).resizable().scaledToFit()
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
+                        .padding(16)
                     }
                 }
             } else if failed {
@@ -845,7 +854,7 @@ private struct ArtifactImageView: View {
         .task {
             do {
                 let data = try await ArtifactMediaLoader.data(for: urlString) { p in Task { @MainActor in progress = p } }
-                if let decoded = UIImage(data: data) {
+                if let decoded = AnimatedImageView.decode(data) {
                     // The halftone poster crossfades into the real picture (instant with Reduce Motion).
                     if !reduceMotion, progress != nil {
                         revealing = decoded

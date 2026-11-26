@@ -1,5 +1,6 @@
 import SwiftUI
 import ImageIO
+import UniformTypeIdentifiers
 import CryptoKit
 import AVFoundation
 import UIKit
@@ -39,6 +40,7 @@ final class NativePaneRenderer {
             return await ACIBrowserImageJob.shared.run(request, client: client, local: browserLocal)
         case .image: return await renderImage(request, client: client)
         case .video: return await renderVideo(request, client: client)
+        case .gif: return await renderGif(request, client: client)
         case .check: return await check(request)
         }
     }
@@ -225,7 +227,7 @@ final class NativePaneRenderer {
         return """
         <!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="\(Self.frameCSP)"></head><body style="margin:0">
         <script>var __errors = []; window.onerror = function (m) { __errors.push(String(m)); };</script>
-        <script>function __scene(ctx, t, width, height) {
+        <script>function __scene(ctx, t, width, height, source) {
         \(Self.scriptSafe(r.code))
         }</script>
         \(score)
@@ -247,10 +249,18 @@ final class NativePaneRenderer {
           function drawAt(t) {
             wctx.setTransform(1, 0, 0, 1, 0, 0); wctx.globalAlpha = 1; wctx.globalCompositeOperation = 'source-over';
             wctx.fillStyle = '#000'; wctx.fillRect(0, 0, W, H);
-            reseed(); wctx.save(); __scene(wctx, t, W, H); wctx.restore();
+            reseed(); wctx.save(); __scene(wctx, t, W, H, __source); wctx.restore();
           }
+          var __source, SOURCE = \(r.source.map { "\"" + $0 + "\"" } ?? "null");
           window.__ready = function () {
-            return typeof __scene === 'function' ? null : 'The scene code did not parse: ' + (__errors.join('; ') || 'syntax error');
+            if (typeof __scene !== 'function') return 'The scene code did not parse: ' + (__errors.join('; ') || 'syntax error');
+            if (!SOURCE) return null;
+            return new Promise(function (res) {
+              var im = new Image();
+              im.onload = function () { __source = im; res(null); };
+              im.onerror = function () { res('The source picture did not load.'); };
+              im.src = SOURCE;
+            });
           };
           window.__frame = function (i) {
             try {
@@ -359,6 +369,50 @@ final class NativePaneRenderer {
             video: PaneRenderVideo(url: stored, mime: "video/mp4", bytes: data.count, duration: duration, fps: fps, codec: "avc1", audio: pcm != nil),
             width: r.width, height: r.height
         )
+    }
+
+    /// A code-animated GIF: the scene draws like a video's, frames are encoded
+    /// with ImageIO (loop forever). Limits are clamped in PaneRenderRequest.
+    @MainActor
+    private func renderGif(_ r: PaneRenderRequest, client: AgentChatClient) async -> PaneRenderResult {
+        let fps = r.fps ?? 12
+        let total = max(1, min(120, Int(((r.duration ?? 3) * Double(fps)).rounded())))
+        let deadline = Date().addingTimeInterval((r.timeoutMs ?? 120_000) / 1000 - 5)
+        let progress = PaneRenderProgressReporter(requestId: r.requestId, client: client)
+        progress.report(stage: .drawing) { .init(lane: .picture, stage: .drawing, label: "Setting up the animation") }
+        guard let (view, _) = await loadView(html: videoDocument(r, samples: 1), width: 16, height: 16) else {
+            return .failed("The app has no window to render in.")
+        }
+        defer { view.removeFromSuperview() }
+        if let problem = try? await view.callAsyncJavaScript("return window.__ready ? await window.__ready() : 'The scene page did not load.'", contentWorld: .page) as? String {
+            return .failed(problem)
+        }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.gif.identifier as CFString, total, nil) else {
+            return .failed("The phone couldn't start the GIF encoder.")
+        }
+        CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]] as CFDictionary)
+        let frameProps = [kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: 1.0 / Double(fps)]] as CFDictionary
+        for i in 0..<total {
+            if Date() > deadline { return .failed("The render ran out of time at frame \(i) of \(total).") }
+            if Task.isCancelled { return .failed("Cancelled.") }
+            let out = try? await view.callAsyncJavaScript("return window.__frame(i)", arguments: ["i": i], contentWorld: .page) as? [String: Any]
+            if let error = out?["error"] as? String { return .failed(error) }
+            guard let jpeg = out?["jpeg"] as? String, let frame = Self.image(fromDataURL: jpeg)?.cgImage else {
+                return .failed("Frame \(i) didn't draw.")
+            }
+            CGImageDestinationAddImage(dest, frame, frameProps)
+            progress.report(stage: .rendering) {
+                .init(lane: .picture, stage: .rendering, label: "Frame \(i + 1) of \(total)", frame: i + 1, frames: total,
+                      fraction: Double(i + 1) / Double(total), preview: Self.thumbnailURL(UIImage(cgImage: frame)))
+            }
+        }
+        progress.report(stage: .encoding) { .init(lane: .picture, stage: .encoding, label: "Encoding the GIF") }
+        guard CGImageDestinationFinalize(dest) else { return .failed("The GIF couldn't be encoded.") }
+        guard data.length <= 8 * 1024 * 1024 else {
+            return .failed("The GIF is larger than 8 MB. Make it shorter or smaller.")
+        }
+        return PaneRenderResult(ok: true, image: "data:image/gif;base64," + (data as Data).base64EncodedString(), width: r.width, height: r.height)
     }
 
     private static func floats(_ data: Data) -> [Float] {

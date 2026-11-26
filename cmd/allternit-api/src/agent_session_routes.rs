@@ -1751,6 +1751,7 @@ async fn send_message(
         payload["bot"] = bot;
         if let Some(metadata) = payload.get_mut("metadata").and_then(serde_json::Value::as_object_mut) {
             metadata.remove("turn");
+            metadata.remove("image_prompt");
         }
     }
 
@@ -2242,6 +2243,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     // job regardless of their chat model. Persist-only notes grant nothing.
     if body.no_reply != Some(true) && body.metadata.as_ref().and_then(|m| m.get("turn")).and_then(|v| v.as_str()) == Some("person") {
         payload["metadata"]["turn"] = json!("person");
+        if let Some(prompt) = body.metadata.as_ref().and_then(crate::v1_routes::turn_image_prompt) {
+            payload["metadata"]["image_prompt"] = json!(prompt);
+        }
     }
     payload
 }
@@ -3652,6 +3656,30 @@ mod send_message_payload_tests {
             "text": "Make an image", "metadata": { "turn": true }
         })));
         assert!(invalid.pointer("/metadata/turn").is_none());
+    }
+
+    #[test]
+    fn image_prompt_rides_only_with_the_person_turn() {
+        let ok = send_message_payload(&body(serde_json::json!({
+            "text": "mug", "metadata": { "turn": "person", "image_prompt": "a blue mug" }
+        })));
+        assert_eq!(ok["metadata"]["image_prompt"], "a blue mug");
+        let no_marker = send_message_payload(&body(serde_json::json!({
+            "text": "mug", "metadata": { "image_prompt": "a blue mug" }
+        })));
+        assert!(no_marker.pointer("/metadata/image_prompt").is_none());
+        let note = send_message_payload(&body(serde_json::json!({
+            "text": "mug", "noReply": true, "metadata": { "turn": "person", "image_prompt": "a blue mug" }
+        })));
+        assert!(note.pointer("/metadata/image_prompt").is_none());
+        let long = send_message_payload(&body(serde_json::json!({
+            "text": "mug", "metadata": { "turn": "person", "image_prompt": "a".repeat(16001) }
+        })));
+        assert!(long.pointer("/metadata/image_prompt").is_none());
+        let empty = send_message_payload(&body(serde_json::json!({
+            "text": "mug", "metadata": { "turn": "person", "image_prompt": "" }
+        })));
+        assert!(empty.pointer("/metadata/image_prompt").is_none());
     }
 
     #[test]

@@ -39,7 +39,7 @@ import com.allternit.core.design.GlassPill
 /** A composer send → the chat's send request (iOS ChatView onSend: model, effort, files, tools). */
 internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
     text = text,
-    browserImage = agentModeId == "image",
+    imagePrompt = if (agentModeId == "image" || agentModeId == "artifact") text.trim().take(16000).takeIf { it.isNotEmpty() } else null,
     personTurn = true,
     attachments = attachments.map { ChatAttachmentInput(it.name, it.uri, it.kind, it.bytes, it.mediaType) },
     runtimeModelId = modelId,

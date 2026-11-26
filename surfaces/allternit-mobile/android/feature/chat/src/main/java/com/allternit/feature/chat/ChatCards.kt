@@ -556,6 +556,7 @@ private val imageCache = android.util.LruCache<String, ImageBitmap>(24)
 @Composable
 internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = null, modifier: Modifier, contentScale: ContentScale = ContentScale.Fit, description: String? = null, onFail: (() -> Unit)? = null) {
     var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(imageCache.get(url)) }
+    var gif by remember(url) { mutableStateOf<ByteArray?>(null) }
     LaunchedEffect(url) {
         if (bitmap != null) return@LaunchedEffect
         val loaded = withContext(Dispatchers.IO) {
@@ -563,6 +564,7 @@ internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = 
                 client.newCall(request ?: Request.Builder().url(url).build()).execute().use { resp ->
                     if (!resp.isSuccessful) return@use null
                     val bytes = resp.body?.bytes() ?: return@use null
+                    if (com.allternit.core.design.isGif(bytes) && bytes.size <= 8 * 1024 * 1024) gif = bytes
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                 }
             }.getOrNull()
@@ -575,7 +577,10 @@ internal fun RemoteImage(url: String, client: OkHttpClient, request: Request? = 
         }
     }
     val b = bitmap
-    if (b != null) {
+    val g = gif
+    if (b != null && g != null) {
+        com.allternit.core.design.AnimatedGif(g, modifier, description)
+    } else if (b != null) {
         Image(b, contentDescription = description, modifier = modifier, contentScale = contentScale)
     } else {
         Box(modifier.background(AllternitTheme.colors.fillNeutral), contentAlignment = Alignment.Center) {

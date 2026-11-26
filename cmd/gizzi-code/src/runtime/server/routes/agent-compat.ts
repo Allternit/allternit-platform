@@ -178,15 +178,26 @@ function extractReasoning(parts: any[]): string | null {
  * run_kind "background_code", a voice engine that reads expressive tags voice_tags "on". Only these keys and values
  * pass; SessionPrompt.prompt remembers the zone for turns without a client. Shared by
  * every message route here.
+ *
+ * The person's own composer send also carries turn "person" (person-plan/rules.ts
+ * isPersonTurn: person-only plan models, media_generate's picture engines) and, in Image
+ * or Artifact mode, image_prompt: the raw composer text, 1–16000 UTF-16 units. image_prompt
+ * passes only beside turn "person". A route that knows the send starts no model turn
+ * (noReply) passes `person: false` and both are dropped. Messages the runtime makes itself
+ * (sub-agents, routines, bots, missions) never come through here, so they never carry them.
  */
-export function promptHints(raw: any): Record<string, string> | undefined {
+export function promptHints(raw: any, opts: { person?: boolean } = {}): Record<string, string> | undefined {
   const formFactor = raw?.form_factor === "phone" ? "phone" : undefined
   const replyMode = raw?.reply_mode === "voice" ? "voice" : undefined
   const timeZone = Clock.validZone(raw?.time_zone)
   const answerCards = raw?.answer_cards === "widgets" ? "widgets" : undefined
   const runKind = raw?.run_kind === "background_code" ? "background_code" : undefined
   const voiceTags = raw?.voice_tags === "on" ? "on" : undefined
-  if (!formFactor && !replyMode && !timeZone && !answerCards && !runKind && !voiceTags) return undefined
+  const turn = opts.person !== false && raw?.turn === "person" ? "person" : undefined
+  const prompt = raw?.image_prompt
+  const imagePrompt =
+    turn && typeof prompt === "string" && prompt.length >= 1 && prompt.length <= 16_000 ? prompt : undefined
+  if (!formFactor && !replyMode && !timeZone && !answerCards && !runKind && !voiceTags && !turn) return undefined
   return {
     ...(formFactor ? { form_factor: formFactor } : {}),
     ...(replyMode ? { reply_mode: replyMode } : {}),
@@ -194,6 +205,8 @@ export function promptHints(raw: any): Record<string, string> | undefined {
     ...(answerCards ? { answer_cards: answerCards } : {}),
     ...(runKind ? { run_kind: runKind } : {}),
     ...(voiceTags ? { voice_tags: voiceTags } : {}),
+    ...(turn ? { turn } : {}),
+    ...(imagePrompt ? { image_prompt: imagePrompt } : {}),
   }
 }
 
@@ -726,11 +739,13 @@ export const AgentCompatRoutes = () =>
       // `noReply` records the message without a model turn (a note typed in
       // ACI while a run is going); `source` labels where it was typed.
       const source = typeof body.source === "string" && body.source !== "" ? body.source : undefined
+      // A noReply note starts no turn, so it is never marked as the person's send.
+      const hints = promptHints(body?.metadata, { person: body.noReply !== true })
       const result = await SessionPrompt.prompt({
         sessionID,
         parts: [{ type: "text", text: String(body.text ?? ""), ...(source ? { metadata: { source } } : {}) }],
         model: selectModel(body.metadata),
-        ...(promptHints(body?.metadata) ? { metadata: promptHints(body?.metadata) } : {}),
+        ...(hints ? { metadata: hints } : {}),
         ...(body.noReply === true ? { noReply: true } : {}),
       })
       return c.json(transformMessage(result))
@@ -917,7 +932,8 @@ export const AgentCompatRoutes = () =>
       // a phone client sends form_factor "phone", a voice turn reply_mode "voice",
       // every client sends its IANA time_zone (only a valid name passes;
       // SessionPrompt.prompt remembers it for turns without a client), and a
-      // client that draws no catalog cards sends answer_cards "widgets".
+      // client that draws no catalog cards sends answer_cards "widgets". The person's
+      // composer send carries turn "person" and, in Image or Artifact mode, image_prompt.
       const hints = promptHints(body?.metadata)
       const metadata =
         (tools && typeof tools === "object") || fast || hints

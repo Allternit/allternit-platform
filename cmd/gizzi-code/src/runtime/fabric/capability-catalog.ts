@@ -209,6 +209,14 @@ export function builtInCapabilities(): FabricCapability[] {
       description: "Navigate to a URL and return structured page metadata.",
     },
     {
+      id: "cap:image:auto",
+      name: "image.auto",
+      version: "0.1.0",
+      kind: kind.execute,
+      resource: "image",
+      description: "Make a picture from the person's own Image-mode send (metadata.image_prompt); the runtime picks the engine.",
+    },
+    {
       id: "cap:network:tailscale",
       name: "network.tailscale",
       version: "0.1.0",

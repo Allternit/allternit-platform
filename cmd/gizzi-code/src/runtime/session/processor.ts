@@ -22,7 +22,7 @@ import { ContextProjector } from "@/runtime/session/context-projector"
 import { consumeRetryHint } from "@/runtime/providers/retry-hint"
 import { SessionContext } from "./context-event"
 import { Guardrails } from "./guardrails"
-import { generatedFileMeta, generatedFilePart, type GeneratedFileMeta } from "./generated-file"
+import { generatedFileMeta, generatedFilePart, toolOutputFilePart, type GeneratedFileMeta } from "./generated-file"
 import { mergeSources, sourceFromStreamPart, todosFromNativePlan, type ResponseSource } from "./response-parts"
 import { Todo } from "./todo"
 import { CliBridgeResults } from "@/runtime/integrations/cli-bridge/results"
@@ -380,6 +380,18 @@ export namespace SessionProcessor {
                         attachments: value.output.attachments,
                       },
                     })) as MessageV2.ToolPart
+
+                    // A picture the tool made (media_generate engine image or GIF) also becomes a
+                    // generated file on the reply, so every client shows it live and after a reload.
+                    const outputFile = toolOutputFilePart({
+                      id: Identifier.ascending("part"),
+                      messageID: match.messageID,
+                      sessionID: match.sessionID,
+                      callID: match.callID,
+                      metadata: value.output.metadata,
+                      attachments: value.output.attachments,
+                    })
+                    if (outputFile) await Session.updatePart(outputFile)
 
                     // Memory chips come from the tool's own result, not from what the model says.
                     try {

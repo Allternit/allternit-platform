@@ -188,11 +188,21 @@ class ChatViewModel(
         private set
     private val claimedImages = mutableMapOf<String, String>()
     private var claimingImage = false
+    private val refusedImages = mutableSetOf<String>()
     private fun refreshLocalImages() { savedImageTurns = localImages?.entries().orEmpty().map { org.json.JSONObject(it.toString()) } }
 
     private fun offerBrowserImage(r: BrowserImageJob.Request, originalMessage: String?): Boolean {
         val owner = browserImages ?: return false
         if (r.remote && r.id !in claimedImages) {
+            val sent = lastImageText
+            if (sent == null || !r.prompt.startsWith(sent)) {
+                // Device guard: only the text this person sent in Image mode may reach the browser.
+                if (r.id !in refusedImages) {
+                    refusedImages += r.id
+                    scope.launch { backend.imageSync("POST", r.id, "reply", BrowserImageJob.error("invalid_request", "This request does not match what you sent, so it was not run.").toString()) }
+                }
+                return false
+            }
             if (claimingImage) return false
             claimingImage = true
             scope.launch {
@@ -204,7 +214,7 @@ class ChatViewModel(
                         offerBrowserImage(r, originalMessage)
                     }
                 } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { transientError = "Could not claim this image request. It has not been sent to ChatGPT." }
+                catch (e: Exception) { transientError = "Could not claim this image request. It has not been sent." }
                 finally { claimingImage = false }
             }
             return true
@@ -217,7 +227,7 @@ class ChatViewModel(
             scope.launch { backend.imageSync("POST", r.id, "reply", BrowserImageJob.error("storage", "Could not save the original turn on this phone.").put("executorId", claimedImages[r.id]).toString()) }
             transientError = "Could not save the image turn on this phone."; return false
         }
-        return owner.offer(r, onProgress = { detail ->
+        val offered = owner.offer(r, onProgress = { detail ->
             val metadata = com.allternit.core.api.ApiJson.default.parseToJsonElement(org.json.JSONObject().put("progress_detail", detail).toString()) as JsonObject
             GenerationProgressDetail.read(metadata)?.let { GenerationProgressStore.shared.set(r.call, it) }
             if (currentSessionId == r.session) update(messageId) { it.upsertToolCall(ToolCallRecord(r.call, "media_generate", ToolState.Running, metadata = metadata,
@@ -247,6 +257,9 @@ class ChatViewModel(
             }
             if (r.remote) onSessionsChanged()
         })
+        // The person's own Image-mode send is the confirmation; no dialog.
+        if (offered) confirmBrowserImage()
+        return offered
     }
 
     internal fun confirmBrowserImage() {
@@ -342,7 +355,27 @@ class ChatViewModel(
 
     /** The composer's send (iOS sendMessage): optimistic user bubble, then [startStream]. */
     fun send(request: ChatSendRequest) {
+        request.imagePrompt?.takeIf { request.personTurn }?.let { lastImageText = it }
         if (request.browserImage) { sendBrowserImage(request); return }
+        // Image mode: a chat with a runtime sends normally (image_prompt rides along); a phone-only chat
+        // (saved locally, or no computer paired) runs the device job directly.
+        if (request.agentModeId == "image" && request.personTurn && request.imagePrompt != null && request.attachments.isEmpty()) {
+            if (currentSessionId?.startsWith("android-local-") == true) { sendBrowserImage(request); return }
+            if (isStreaming || isCreatingSession || browserImages?.request != null) return
+            isCreatingSession = true
+            scope.launch {
+                val pick = try { backend.relay.resolve() } finally { isCreatingSession = false }
+                if (pick == RelayPick.NoComputer) sendBrowserImage(request) else sendToRuntime(request)
+            }
+            return
+        }
+        sendToRuntime(request)
+    }
+
+    /** The last Image-mode text this person sent; a runtime-issued browser-image request must start with it. */
+    private var lastImageText: String? = null
+
+    private fun sendToRuntime(request: ChatSendRequest) {
         val trimmed = request.text.trim()
         if (trimmed.isEmpty() || isStreaming || isCreatingSession || browserImages?.request != null) return
         imagePersonTurn = request.personTurn
@@ -359,6 +392,7 @@ class ChatViewModel(
             agentModeId = request.agentModeId,
             systemPrompt = request.systemPrompt,
             personTurn = request.personTurn,
+            imagePrompt = request.imagePrompt,
         )
     }
 
@@ -376,7 +410,7 @@ class ChatViewModel(
         val browserCall = messages.lastOrNull { it.role == "assistant" }?.toolCalls?.lastOrNull { it.browserImageResult != null }
         if (browserCall != null) {
             draftToRestore = browserCall.input?.str("prompt")
-            transientError = "Use Image mode to confirm a new request. Check ChatGPT first if the earlier request was interrupted."
+            transientError = "Use Image mode to confirm a new request. Check the browser first if the earlier request was interrupted."
             return
         }
         val index = messages.indexOfLast { it.role == "assistant" }
@@ -472,6 +506,7 @@ class ChatViewModel(
         agentModeId: String?,
         systemPrompt: String? = null,
         personTurn: Boolean = false,
+        imagePrompt: String? = null,
     ) {
         transientError = null
         draftToRestore = null
@@ -544,7 +579,7 @@ class ChatViewModel(
                         answerCards = "widgets",
                     ),
                 )
-                failed = runStream(runtimeId, body, assistantId, personTurn)
+                failed = runStream(runtimeId, body, assistantId, personTurn, imagePrompt)
                 finishStreaming(assistantId)
             } catch (e: CancellationException) {
                 isCreatingSession = false
@@ -585,12 +620,12 @@ class ChatViewModel(
      * up to 120 s, iOS RuntimeRelayClient.wakeTimeout) as long as nothing has arrived yet.
      * Returns true when the reply failed (error frame / finish "error").
      */
-    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String, personTurn: Boolean): Boolean {
+    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String, personTurn: Boolean, imagePrompt: String? = null): Boolean {
         val deadline = System.currentTimeMillis() + 120_000
         while (true) {
             var failedFrame = false
             var transport: ChatStreamEvent.Failed? = null
-            backend.streamTurn(runtimeId, body, personTurn && browserImages?.foreground == true).collect { event ->
+            backend.streamTurn(runtimeId, body, personTurn && browserImages?.foreground == true, imagePrompt?.takeIf { personTurn && browserImages?.foreground == true }).collect { event ->
                 if (event is ChatStreamEvent.Failed) transport = event else if (apply(event, assistantId)) failedFrame = true
             }
             val t = transport ?: run {
@@ -661,7 +696,8 @@ class ChatViewModel(
                     .copy(toolStatus = status)
             }.also { syncProgress(id) }
             is ChatStreamEvent.Artifact -> update(id) {
-                it.copy(artifacts = it.artifacts + ArtifactRecord(event.artifactId, event.kind, event.title, event.url, event.content))
+                // An engine picture or GIF (`tool-call://<callID>`) belongs inside that call's card, not in a chip.
+                it.attachToolImage(event.sourceUri, event.url, event.mimeType) ?: it.copy(artifacts = it.artifacts + ArtifactRecord(event.artifactId, event.kind, event.title, event.url, event.content))
             }
             is ChatStreamEvent.Finish -> {
                 if (event.status != "error") return false

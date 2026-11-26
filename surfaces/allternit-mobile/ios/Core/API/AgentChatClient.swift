@@ -285,7 +285,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         /// `screen_context: "available"` says this app can answer capture_screen_context
         /// with its own view (ScreenContextResponder); sent only while the app is in front.
         /// Optional fields are omitted when nil.
-        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String?; let turn: String? }
+        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String?; let turn: String?; let image_prompt: String? }
         let chatId: String
         let message: String
         let agentId: String?
@@ -346,7 +346,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         personInitiated && isForeground ? "person" : nil
     }
 
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -376,7 +376,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets", turn: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil)),
+                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets", turn: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil), image_prompt: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil) == nil ? nil : imagePrompt.flatMap { (1...16000).contains($0.utf16.count) ? $0 : nil }),
                         workdir: workdir,
                         client_location: clientLocation
                     ))
