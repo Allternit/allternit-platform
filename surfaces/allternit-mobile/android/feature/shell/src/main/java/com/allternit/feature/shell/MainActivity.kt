@@ -207,6 +207,13 @@ class MainActivity : ComponentActivity() {
         val uri = intent.data ?: return
         if (intent.action != Intent.ACTION_VIEW || uri.scheme != com.allternit.feature.system.SystemLinks.SCHEME) return
         val segments = listOfNotNull(uri.host) + uri.pathSegments
+        // Island bar (lane 36): allternit://bar?app=&tool=&v.<key>= opens the translucent bar over the app.
+        // With `bar.island` off the link falls through to Home like any unknown link.
+        if (segments.firstOrNull() == com.allternit.feature.bar.BarDeepLink.HOST && com.allternit.feature.bar.BarFlag.isOn(this)) {
+            startActivity(com.allternit.feature.bar.BarDeepLink.intent(this, com.allternit.feature.bar.BarDeepLink.parse(uri) ?: com.allternit.feature.bar.BarLinkRequest()))
+            intent.data = null
+            return
+        }
         val nonce = System.nanoTime()
         shellLaunch = when (segments.firstOrNull()) {
             "inbox" -> ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)

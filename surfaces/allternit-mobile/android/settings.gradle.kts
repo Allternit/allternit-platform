@@ -79,3 +79,5 @@ include(":feature:push")
 // Wave I2: phone system surfaces (Glance widget, Quick Settings tiles, status sync, share target). :feature:push, :feature:shell
 // depend on it (nativeapp flavor only).
 include(":feature:system")
+// Island bar (lanes 36/37): the translucent bar Activity the BarWidget opens; bar jobs follow in LiveRunNotification.
+include(":feature:bar")

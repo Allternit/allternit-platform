@@ -17,10 +17,18 @@ object FeatureFlags {
         runCatching { context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(name, true) }
             .getOrDefault(true)
 
+    /** A flag whose default is not ON (the island bar, [BAR_ISLAND], ships off; CONTRACT.md section 6). */
+    fun isOn(context: Context, name: String, default: Boolean): Boolean =
+        runCatching { context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(name, default) }
+            .getOrDefault(default)
+
     fun set(context: Context, name: String, on: Boolean) {
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(name, on).apply()
     }
 
     const val MCP_TASKS = "mcp.tasks"
     const val APPS_SHELF = "apps.shelf"
+
+    /** The island bar ("Do with an app", allternit://bar). OFF by default: read it with `isOn(context, BAR_ISLAND, false)`. */
+    const val BAR_ISLAND = "bar.island"
 }
