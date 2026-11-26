@@ -123,6 +123,8 @@ internal fun MessageRow(
                                 onRetry = { actions.onRetry(message.id) },
                             )
                         }
+                        call.mcpScriptMeta()?.let { McpScriptRow(it) }
+                        call.mcpMeta()?.takeIf { it.structured != null }?.let { McpTypedResultRow(call, it, backend) }
                         if (n == "lookup") call.metadata?.obj("card")?.let { AnswerCard(it, call.output, backend) }
                         val suggestion = ConnectorSuggestions.parse(call)
                         if (suggestion != null) {

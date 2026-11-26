@@ -275,7 +275,7 @@ data class MessageRecord(
                     error = state?.str("error"),
                     output = state?.get("output")?.asText(),
                     input = state?.obj("input"),
-                    metadata = state?.obj("metadata"),
+                    metadata = state?.obj("metadata") ?: part.obj("metadata"),
                     files = part["files"] ?: state?.get("files"),
                     run = part.obj("run") ?: state?.obj("run"),
                     startedAt = time?.long("start"),

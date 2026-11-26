@@ -170,6 +170,7 @@ internal fun ChatPage(
             composer = {
                 com.allternit.feature.chat.voice.VoiceBarSlot(voiceHost, onEnd = endVoice)
                 Composer(
+                    watchSessionId = chat.currentSessionId,
                     models = models,
                     noComputer = store.noComputer,
                     phoneArmed = false,

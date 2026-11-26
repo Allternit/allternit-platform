@@ -414,6 +414,7 @@ fun ConnectorsRoot(onBack: () -> Unit) {
         SNote("Connect apps like Gmail, Calendar or GitHub so your bots can use them. You choose what each one can do.")
         SField("Search connectors", query, "connectors_search", { query = it })
         ConnectorsBody(query, onlyConnected = false)
+        if (query.isBlank()) UseAllternitInOtherApps()
     }
 }
 
