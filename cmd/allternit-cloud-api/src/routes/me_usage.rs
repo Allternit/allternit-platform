@@ -56,10 +56,128 @@ pub struct UsageResponse {
     pub credits: Option<f64>,
     pub month_to_date_usage_usd: f64,
     pub recent_transactions: Vec<UsageTransaction>,
+    /// Rolling 5-hour, rolling 7-day and current-month spend windows (snake_case keys inside).
+    pub windows: Vec<UsageWindow>,
+    pub pace: UsagePace,
     /// Same object as on `GET /api/v1/billing/credits` (contract D4); the
     /// key is snake_case on both endpoints.
     #[serde(rename = "cloud_models")]
     pub cloud_models: services::CloudModelsEntitlement,
+}
+
+/// One spend window. Limits are null until Eoj approves numbers (step C1b); nothing is enforced yet.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct UsageWindow {
+    pub id: String,
+    pub label: String,
+    pub used_usd: f64,
+    pub limit_usd: Option<f64>,
+    pub used_ratio: Option<f64>,
+    pub resets_at: String,
+    pub enforced: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct UsagePace {
+    pub window_id: String,
+    pub burn_per_hour: f64,
+    pub runs_out_at: Option<String>,
+    /// "ok" | "warn" | "out"
+    pub status: String,
+}
+
+/// Per-window spend limits for one plan, in USD. `None` = no limit configured.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WindowLimits {
+    pub five_hour: Option<f64>,
+    pub seven_day: Option<f64>,
+    pub month: Option<f64>,
+}
+
+/// Per-plan window limits, keyed by plan id. EMPTY ON PURPOSE: the numbers need Eoj's approval
+/// (decision E3). Step C1b fills this table and flips enforcement; C1 never enforces.
+pub(crate) const PLAN_WINDOW_LIMITS: &[(&str, WindowLimits)] = &[];
+
+pub(crate) fn window_limits_for(plan_id: &str) -> WindowLimits {
+    PLAN_WINDOW_LIMITS
+        .iter()
+        .find(|(id, _)| *id == plan_id)
+        .map(|(_, limits)| *limits)
+        .unwrap_or_default()
+}
+
+/// Spend (USD) from the inference ledger over each window.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WindowSpend {
+    pub five_hour: f64,
+    pub seven_day: f64,
+    pub month: f64,
+}
+
+pub(crate) fn month_start(now: DateTime<Utc>) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
+}
+
+/// Build `windows` and `pace` from ledger spend. Pure: `now` and `limits` are inputs.
+pub(crate) fn compose_windows(
+    spend: WindowSpend,
+    limits: WindowLimits,
+    now: DateTime<Utc>,
+) -> (Vec<UsageWindow>, UsagePace) {
+    let month_resets = next_month_start(now);
+    let month_hours = ((now - month_start(now)).num_seconds() as f64 / 3600.0).max(1.0);
+    // (id, label, used, limit, resets_at, hours elapsed in window)
+    let rows: [(&str, &str, f64, Option<f64>, DateTime<Utc>, f64); 3] = [
+        ("5h", "5-hour", spend.five_hour, limits.five_hour, now + Duration::hours(5), 5.0),
+        ("7d", "7-day", spend.seven_day, limits.seven_day, now + Duration::days(7), 168.0),
+        ("month", "This month", spend.month, limits.month, month_resets, month_hours),
+    ];
+    let windows: Vec<UsageWindow> = rows
+        .iter()
+        .map(|(id, label, used, limit, resets, _)| UsageWindow {
+            id: id.to_string(),
+            label: label.to_string(),
+            used_usd: *used,
+            limit_usd: *limit,
+            used_ratio: limit.filter(|l| *l > 0.0).map(|l| used / l),
+            resets_at: resets.to_rfc3339(),
+            enforced: false,
+        })
+        .collect();
+
+    // Pace follows the window closest to its limit; with no limits it reports month burn.
+    let pick = rows
+        .iter()
+        .filter(|r| r.3.map(|l| l > 0.0).unwrap_or(false))
+        .max_by(|a, b| {
+            let ra = a.2 / a.3.unwrap_or(1.0);
+            let rb = b.2 / b.3.unwrap_or(1.0);
+            ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(&rows[2]);
+    let (id, _, used, limit, resets, hours) = *pick;
+    let burn = if hours > 0.0 { used / hours } else { 0.0 };
+    let (runs_out_at, status) = match limit.filter(|l| *l > 0.0) {
+        None => (None, "ok"),
+        Some(l) if used >= l => (Some(now), "out"),
+        Some(l) if burn > 0.0 => {
+            let secs = ((l - used) / burn * 3600.0) as i64;
+            let at = now + Duration::seconds(secs);
+            (Some(at), if at < resets { "warn" } else { "ok" })
+        }
+        Some(_) => (None, "ok"),
+    };
+    let pace = UsagePace {
+        window_id: id.to_string(),
+        burn_per_hour: burn,
+        runs_out_at: runs_out_at.map(|t| t.to_rfc3339()),
+        status: status.to_string(),
+    };
+    (windows, pace)
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -758,6 +876,13 @@ pub(crate) fn compose_usage(
         month_to_date_usage_usd,
         recent_transactions,
         cloud_models,
+        windows: Vec::new(),
+        pace: UsagePace {
+            window_id: "month".to_string(),
+            burn_per_hour: 0.0,
+            runs_out_at: None,
+            status: "ok".to_string(),
+        },
     }
 }
 
@@ -810,6 +935,25 @@ async fn get_my_usage(
 
     let cloud_models = services::cloud_models_entitlement(&state.db, &user_id, credit_balance).await;
 
+    let now = Utc::now();
+    let (five_hour, seven_day, month): (f64, f64, f64) = sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $2), 0)::float8,
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $3), 0)::float8,
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $4), 0)::float8
+        FROM inference_usage
+        WHERE user_id = $1 AND created_at >= LEAST($2, $3, $4)
+        "#,
+    )
+    .bind(&user_id)
+    .bind(now - Duration::hours(5))
+    .bind(now - Duration::days(7))
+    .bind(month_start(now))
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or((0.0, 0.0, 0.0));
+
     let recent = sqlx::query_as::<_, CreditTxnRow>(
         r#"
         SELECT amount_usd, source, created_at
@@ -824,7 +968,15 @@ async fn get_my_usage(
     .await
     .unwrap_or_default();
 
-    Ok(Json(compose_usage(
+    let paid_plan = if matches!(plan_id.as_str(), "plus" | "super" | "ultra")
+        && matches!(plan_status.as_str(), "active" | "trialing")
+    {
+        plan_id.as_str()
+    } else {
+        "free"
+    };
+    let limits = window_limits_for(paid_plan);
+    let mut usage = compose_usage(
         &plan_id,
         &plan_status,
         &plan_tier,
@@ -840,7 +992,11 @@ async fn get_my_usage(
             })
             .collect(),
         cloud_models,
-    )))
+    );
+    let (windows, pace) = compose_windows(WindowSpend { five_hour, seven_day, month }, limits, now);
+    usage.windows = windows;
+    usage.pace = pace;
+    Ok(Json(usage))
 }
 
 #[cfg(test)]

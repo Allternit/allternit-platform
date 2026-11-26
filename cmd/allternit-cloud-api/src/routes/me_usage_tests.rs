@@ -479,3 +479,81 @@ async fn turning_log_bodies_off_deletes_that_projects_bodies() {
     let left: Vec<String> = sqlx::query_scalar("SELECT request_id FROM inference_request_bodies").fetch_all(&state.db).await.unwrap();
     assert_eq!(left, ["req_b"]);
 }
+
+fn hr(h: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 10, h, 0, 0).unwrap()
+}
+
+fn lim(five: f64) -> WindowLimits {
+    WindowLimits { five_hour: Some(five), seven_day: None, month: None }
+}
+
+#[test]
+fn plan_with_grant_has_three_unenforced_windows_and_null_limits() {
+    let spend = WindowSpend { five_hour: 0.5, seven_day: 3.0, month: 8.0 };
+    let (w, pace) = compose_windows(spend, window_limits_for("plus"), hr(12));
+    let ids: Vec<&str> = w.iter().map(|x| x.id.as_str()).collect();
+    assert_eq!(ids, vec!["5h", "7d", "month"]);
+    assert!(w.iter().all(|x| !x.enforced && x.limit_usd.is_none() && x.used_ratio.is_none()));
+    assert_eq!(w[2].used_usd, 8.0);
+    assert_eq!(pace.window_id, "month");
+    assert_eq!(pace.status, "ok");
+    assert!(pace.runs_out_at.is_none());
+    // Old fields still computed from the grant.
+    let ent = services::CloudModelsEntitlement {
+        allowed: true,
+        reason: None,
+        balance_usd: 10.5,
+        byok_providers: Vec::new(),
+    };
+    let usage = compose_usage("plus", "active", "pro", Some(10.5), 1.25, hr(0), vec![], ent);
+    assert_eq!(usage.weekly_limit, 22.0);
+}
+
+#[test]
+fn plan_without_grant_has_windows_and_no_limits() {
+    let (w, pace) = compose_windows(WindowSpend::default(), window_limits_for("free"), hr(12));
+    assert_eq!(w.len(), 3);
+    assert!(w.iter().all(|x| x.used_usd == 0.0 && x.limit_usd.is_none()));
+    assert_eq!(pace.status, "ok");
+    assert_eq!(pace.burn_per_hour, 0.0);
+}
+
+#[test]
+fn pace_ok_when_limit_outlasts_window() {
+    // 0.5 USD in 5h = 0.1/h; 10 USD limit -> 95h left, resets in 5h... runs out after reset: ok.
+    let spend = WindowSpend { five_hour: 0.5, ..Default::default() };
+    let (w, pace) = compose_windows(spend, lim(10.0), hr(12));
+    assert_eq!(w[0].limit_usd, Some(10.0));
+    assert_eq!(w[0].used_ratio, Some(0.05));
+    assert_eq!(pace.window_id, "5h");
+    assert_eq!(pace.status, "ok");
+}
+
+#[test]
+fn pace_warn_when_burn_exhausts_before_reset() {
+    // 4 USD in 5h = 0.8/h; 5 USD limit -> 1.25h left, before the 5h reset: warn.
+    let spend = WindowSpend { five_hour: 4.0, ..Default::default() };
+    let (_, pace) = compose_windows(spend, lim(5.0), hr(12));
+    assert_eq!(pace.status, "warn");
+    assert!(pace.runs_out_at.is_some());
+    assert!((pace.burn_per_hour - 0.8).abs() < 1e-9);
+}
+
+#[test]
+fn pace_out_when_limit_reached() {
+    let spend = WindowSpend { five_hour: 5.0, ..Default::default() };
+    let (w, pace) = compose_windows(spend, lim(5.0), hr(12));
+    assert_eq!(pace.status, "out");
+    assert_eq!(pace.runs_out_at, Some(hr(12).to_rfc3339()));
+    assert_eq!(w[0].used_ratio, Some(1.0));
+    assert!(!w[0].enforced);
+}
+
+#[test]
+fn response_keys_stay_snake_case_inside_windows() {
+    let (w, pace) = compose_windows(WindowSpend::default(), WindowLimits::default(), hr(12));
+    let j = serde_json::to_value((&w, &pace)).unwrap();
+    assert!(j[0][0].get("used_usd").is_some());
+    assert!(j[1].get("burn_per_hour").is_some());
+}
