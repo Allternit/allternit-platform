@@ -1,0 +1,303 @@
+openapi: 3.1.0
+info:
+  title: Allternit Sign Requests API
+  version: "1.0.0"
+  summary: Review-and-sign requests for the Allternit apps.
+  description: |
+    Internal contract for Allternit's own apps, not the public developer API
+    (`platform-v1.yaml` is pinned to `/v1` routes by a router test). Base URL
+    `https://api.allternit.com` (the app's `ApiConfig.cloudBaseUrl`); paths are
+    absolute on it (`x-base: cloud`). Handler: `src/routes/sign_requests.rs`.
+
+    JSON is snake_case. All routes are user-scoped; another user's id answers 404.
+    Signing needs an interactive user session; an agent, runtime or API-key
+    credential never signs (403 `user-session-required`).
+
+    State machine: `pending` to `signed`, `declined` or `cancelled`; `expired` is
+    lazy (pending with `expires_at` in the past). End states never change; any
+    transition from one answers 409 `not-pending` with the current `status`.
+
+    Errors are `{ "error": "<code>" }`: 400 `consent-required`, `bad-signature`,
+    `bad-slot`; 403 `user-session-required`; 404 `not-found`, `file-not-found`;
+    409 `not-pending` (with `status`), `document-changed`; 410 `expired`.
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/sign-requests:
+    post:
+      operationId: createSignRequest
+      summary: Ask the signed-in person to review and sign a document
+      x-base: cloud
+      x-handler: sign_requests.rs create
+      tags: [Sign]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSignRequestBody" }
+      responses:
+        "201":
+          description: Created, status pending.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      operationId: listSignRequests
+      summary: List sign requests, newest first
+      x-base: cloud
+      x-handler: sign_requests.rs list
+      tags: [Sign]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: thread_id, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200":
+          description: A page of requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequestList" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}:
+    get:
+      operationId: getSignRequest
+      summary: One sign request
+      x-base: cloud
+      x-handler: sign_requests.rs get
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}/signature:
+    get:
+      operationId: getSignRequestSignature
+      summary: The stored signature image (owner only)
+      x-base: cloud
+      x-handler: sign_requests.rs signature
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The signature as image/png.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}/sign:
+    post:
+      operationId: signSignRequest
+      summary: Sign and send (interactive user session only)
+      x-base: cloud
+      x-handler: sign_requests.rs sign
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignBody" }
+      responses:
+        "200":
+          description: Signed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}/decline:
+    post:
+      operationId: declineSignRequest
+      summary: Decline to sign
+      x-base: cloud
+      x-handler: sign_requests.rs decline
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeclineBody" }
+      responses:
+        "200":
+          description: Declined.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}/cancel:
+    post:
+      operationId: cancelSignRequest
+      summary: Cancel a pending request
+      x-base: cloud
+      x-handler: sign_requests.rs cancel
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/v1/sign-requests/{id}/sent:
+    post:
+      operationId: markSignRequestSent
+      summary: Record that the signed copy was emailed (only when signed)
+      x-base: cloud
+      x-handler: sign_requests.rs sent
+      tags: [Sign]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SentBody" }
+      responses:
+        "200":
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignRequest" }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Error:
+      description: An error. 409 not-pending also carries the current status.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignError" }
+  schemas:
+    SignError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: "consent-required, bad-signature, bad-slot, user-session-required, not-found, file-not-found, not-pending, document-changed, expired." }
+        status: { type: string, description: "Current status, on 409 not-pending." }
+    SignSlot:
+      type: object
+      description: A signing area in PDF points, origin bottom-left, page 0-based.
+      required: [id, label, page, x, y, w, h]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        page: { type: integer }
+        x: { type: number }
+        y: { type: number }
+        w: { type: number }
+        h: { type: number }
+    SignDetail:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: string }
+    SignSendTo:
+      type: object
+      required: [email]
+      properties:
+        name: { type: string }
+        email: { type: string }
+    SignRequest:
+      type: object
+      required: [id, status, requester_kind, source_surface, title, details, document_file_id, document_name, document_sha256, slots, created_at, expires_at, document_url]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, signed, declined, cancelled, expired] }
+        requester_kind: { type: string, enum: [self, agent, mcp_app] }
+        requester_name: { type: string }
+        source_surface: { type: string }
+        thread_id: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        details:
+          type: array
+          description: At most 8 rows.
+          items: { $ref: "#/components/schemas/SignDetail" }
+        document_file_id: { type: string }
+        document_name: { type: string }
+        document_sha256: { type: string, description: "64 hex characters." }
+        slots:
+          type: array
+          items: { $ref: "#/components/schemas/SignSlot" }
+        send_to: { $ref: "#/components/schemas/SignSendTo" }
+        created_at: { type: string }
+        expires_at: { type: string }
+        resolved_at: { type: string }
+        signature_method: { type: string, enum: [draw, type, upload] }
+        signature_slot: { $ref: "#/components/schemas/SignSlot" }
+        signed_file_id: { type: string }
+        signed_sha256: { type: string }
+        consent_version: { type: string }
+        signer_name: { type: string }
+        signer_email: { type: string }
+        signed_surface: { type: string }
+        sent_at: { type: string }
+        sent_to: { type: string }
+        document_url: { type: string, description: "Download link, valid 10 minutes." }
+        signed_url: { type: string, description: "Download link for the signed copy, valid 10 minutes; present when signed." }
+    SignRequestList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SignRequest" }
+    CreateSignRequestBody:
+      type: object
+      required: [title, document_file_id, document_sha256, requester_kind, source_surface]
+      properties:
+        title: { type: string }
+        summary: { type: string }
+        details:
+          type: array
+          items: { $ref: "#/components/schemas/SignDetail" }
+        document_file_id: { type: string }
+        document_sha256: { type: string }
+        slots:
+          type: array
+          items: { $ref: "#/components/schemas/SignSlot" }
+        send_to: { $ref: "#/components/schemas/SignSendTo" }
+        requester_kind: { type: string, enum: [self, agent, mcp_app] }
+        requester_name: { type: string }
+        source_surface: { type: string }
+        thread_id: { type: string }
+        expires_in_days: { type: integer }
+    SignBody:
+      type: object
+      required: [consent, consent_version, method, signature_png_base64, slot, document_sha256, signed_file_id, signed_sha256, surface]
+      properties:
+        consent: { type: boolean, description: "Must be true." }
+        consent_version: { type: string, description: '"v1".' }
+        method: { type: string, enum: [draw, type, upload] }
+        signature_png_base64: { type: string, description: "PNG, at most 256 KB." }
+        slot: { $ref: "#/components/schemas/SignSlot" }
+        document_sha256: { type: string }
+        signed_file_id: { type: string }
+        signed_sha256: { type: string }
+        surface: { type: string }
+    DeclineBody:
+      type: object
+      properties:
+        reason: { type: string }
+    SentBody:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string }

@@ -38,6 +38,7 @@
     openInAci: function (a) { return call("openInAci", a); },
     dispatchAgent: function (a) { return call("dispatchAgent", a); },
     handoffToComputer: function (a) { return call("handoffToComputer", a); },
-    requestCheckout: function (a) { return call("requestCheckout", a); }
+    requestCheckout: function (a) { return call("requestCheckout", a); },
+    requestSignature: function (a) { return call("requestSignature", a); }
   };
 })(window);

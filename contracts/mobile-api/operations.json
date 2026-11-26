@@ -2,13 +2,15 @@
   "$comment": "Operations the native Android app's generated client covers, grouped by plan phase. Add an operationId here after its path is in one of the specs. See README.md.",
   "specs": [
     "cmd/allternit-api/openapi/app-v1.yaml",
-    "cmd/allternit-cloud-api/openapi/device-tokens.yaml"
+    "cmd/allternit-cloud-api/openapi/device-tokens.yaml",
+    "cmd/allternit-cloud-api/openapi/sign-requests.yaml"
   ],
   "phases": [
     { "name": "account", "step": 6, "operations": ["getMe", "createPersonalOrganization"] },
     { "name": "sessions", "step": 6, "operations": ["listAgentSessions", "createAgentSession", "getAgentSession", "listAgentSessionMessages"] },
     { "name": "chat", "step": 6, "operations": ["agentChat"] },
     { "name": "models", "step": 6, "operations": ["listModels", "listProviders"] },
-    { "name": "push", "step": 6, "operations": ["registerDeviceToken", "unregisterDeviceToken"] }
+    { "name": "push", "step": 6, "operations": ["registerDeviceToken", "unregisterDeviceToken"] },
+    { "name": "sign", "step": 6, "operations": ["createSignRequest", "listSignRequests", "getSignRequest", "getSignRequestSignature", "signSignRequest", "declineSignRequest", "cancelSignRequest", "markSignRequestSent"] }
   ]
 }

@@ -5673,6 +5673,39 @@
         "allternit/surfaces/docs/cli/team.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs"
       ]
+    },
+    {
+      "id": "feature:review-sign",
+      "label": "Review and sign",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A person reviews a PDF and signs it (draw, type or upload) on Desktop, ai.allternit.com, the PWA, iPhone and Android. Requests come from the person, an agent (gizzi request_signature, which can never sign) or an MCP app (window.allternit.requestSignature). Cloud-api keeps the sign_requests record (consent, signer, time, IP, user agent, hashes); the app gets nothing until Sign & send, and never the strokes or the signature image. Quote and contract PDF templates carry signature slots.",
+      "touches": [
+        "allternit-ai/src/components/pdf-editor",
+        "allternit-ai/src/lib/ai/mcp",
+        "allternit-ai/src/lib/pdf-templates",
+        "allternit-ai/src/components/inbox",
+        "allternit/cmd/allternit-cloud-api/src/routes",
+        "allternit/cmd/allternit-cloud-api/openapi",
+        "allternit/sdk/apps-bridge",
+        "allternit/platform/packages/pdf-templates",
+        "allternit/surfaces/allternit-mobile/ios/Features/Office",
+        "allternit/surfaces/allternit-mobile/android/feature/office",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Eoj approved the design and starred picks. An agent can never sign: signing needs an interactive user session. The host method is x-allternit/requestSignature and the app receives only the result record, never strokes or the signature PNG."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/openapi/sign-requests.yaml",
+        "allternit/sdk/apps-bridge/src/allternit.ts"
+      ]
     }
   ],
   "journeys": [
