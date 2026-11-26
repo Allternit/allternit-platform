@@ -16,7 +16,16 @@
 //!   `auto_topup_dispute` (`services::billing_disputes`).
 //! - `POST /api/v1/billing/auto-topup/setup` — a setup-mode Stripe Checkout
 //!   to save a card; returns `{ checkout_url }`. The
-//!   `checkout.session.completed` webhook stores the card.
+//!   `checkout.session.completed` webhook stores the card. With
+//!   `?ui_mode=embedded` it instead returns `{ client_secret, setup_intent_id }`
+//!   of a SetupIntent (card + Link) for Stripe Elements in the app; the
+//!   client then calls `POST /api/v1/billing/auto-topup/setup/confirm`
+//!   `{ setup_intent_id }`, which checks the intent belongs to the caller's
+//!   customer and user (404 otherwise), and stores its card.
+//!
+//! This router also carries the saved payment methods and invoices routes
+//! (`routes::billing_payment_methods`, `routes::billing_invoices`), so they
+//! mount with the other billing routes without a new merge in `lib.rs`.
 //!
 //! 503 `billing_not_configured` without `STRIPE_SECRET_KEY` (setup only;
 //! GET reports `configured: false`).
@@ -45,6 +54,126 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/billing/auto-topup", get(get_auto_topup).put(put_auto_topup))
         .route("/api/v1/billing/auto-topup/setup", post(create_setup_session))
+        .route("/api/v1/billing/auto-topup/setup/confirm", post(confirm_setup_intent))
+        .merge(super::billing_payment_methods::routes())
+        .merge(super::billing_invoices::routes())
+}
+
+/// `?ui_mode=embedded` on card setup: a SetupIntent secret for Stripe
+/// Elements instead of a hosted Checkout URL. Absent or `hosted`: Checkout.
+#[derive(Debug, Default, Deserialize)]
+pub struct SetupMode {
+    #[serde(default)]
+    ui_mode: Option<String>,
+}
+
+impl SetupMode {
+    fn embedded(&self) -> Result<bool, Response> {
+        match self.ui_mode.as_deref().map(str::trim) {
+            None | Some("") | Some("hosted") => Ok(false),
+            Some("embedded") => Ok(true),
+            Some(_) => Err(crate::error::ApiError::BadRequest("ui_mode must be embedded or hosted.".to_string())
+                .into_response()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmSetup {
+    setup_intent_id: String,
+}
+
+/// Why an embedded setup could not be stored.
+#[derive(Debug, PartialEq)]
+enum ConfirmRefusal {
+    /// The intent is not the caller's (other customer, other user, no customer).
+    NotFound,
+    /// The card was not confirmed yet.
+    NotFinished,
+    /// The saved method is not a card or Link.
+    NotChargeable,
+}
+
+/// Check a SetupIntent (with `payment_method` expanded) belongs to the
+/// caller and finished, and return the card to store.
+fn card_from_confirmed_intent(
+    intent: &Value,
+    customer_id: &str,
+    clerk_user_id: &str,
+) -> Result<auto_topup::SavedCard, ConfirmRefusal> {
+    let owner = intent["customer"].as_str().or_else(|| intent["customer"]["id"].as_str());
+    if owner != Some(customer_id) || intent["metadata"]["clerk_user_id"].as_str() != Some(clerk_user_id) {
+        return Err(ConfirmRefusal::NotFound);
+    }
+    if intent["status"].as_str() != Some("succeeded") {
+        return Err(ConfirmRefusal::NotFinished);
+    }
+    auto_topup::saved_card_from_payment_method(&intent["payment_method"]).ok_or(ConfirmRefusal::NotChargeable)
+}
+
+async fn confirm_setup_intent(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<ConfirmSetup>,
+) -> Response {
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
+        Ok(user) => user,
+        Err(error) => return error.into_response(),
+    };
+    let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
+        return billing_not_configured_response();
+    };
+    let not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "setup_intent_not_found", "message": "That card setup isn't on your account." })),
+        )
+            .into_response()
+    };
+    let setup_intent_id = body.setup_intent_id.trim();
+    if !setup_intent_id.starts_with("seti_") || !setup_intent_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return not_found();
+    }
+    let customer_id = match auto_topup::linked_customer(&state.db, &user.id).await {
+        Ok(Some(customer_id)) => customer_id,
+        Ok(None) => return not_found(),
+        Err(error) => return error.into_response(),
+    };
+    let stripe = ReqwestStripeCheckout::new();
+    let intent = match stripe
+        .get_object(
+            &secret_key,
+            &format!("/v1/setup_intents/{setup_intent_id}"),
+            &[("expand[]".to_string(), "payment_method".to_string())],
+        )
+        .await
+    {
+        Ok(intent) => intent,
+        Err(error) => return billing_upstream_error_response(&error),
+    };
+    let card = match card_from_confirmed_intent(&intent, &customer_id, &user.id) {
+        Ok(card) => card,
+        Err(ConfirmRefusal::NotFound) => return not_found(),
+        Err(ConfirmRefusal::NotFinished) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "setup_not_finished", "message": "The card wasn't confirmed. Try adding it again." })),
+            )
+                .into_response();
+        }
+        Err(ConfirmRefusal::NotChargeable) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "auto_topup_card_unsupported", "message": "Auto top-up needs a card or Link." })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = auto_topup::save_card(&state.db, &user.id, &customer_id, &card).await {
+        return error.into_response();
+    }
+    let row = auto_topup::load(&state.db, &user.id).await.ok().flatten();
+    Json(view(row.as_ref(), auto_topup::charges_live())).into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -250,6 +379,7 @@ async fn create_setup_session(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
     Query(return_to): Query<ReturnTo>,
+    Query(mode): Query<SetupMode>,
 ) -> Response {
     let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "billing").await {
         Ok(user) => user,
@@ -258,6 +388,30 @@ async fn create_setup_session(
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
+    let embedded = match mode.embedded() {
+        Ok(embedded) => embedded,
+        Err(response) => return response,
+    };
+    if embedded {
+        let stripe = ReqwestStripeCheckout::new();
+        let customer_id =
+            match auto_topup::ensure_customer(&state.db, &stripe, &secret_key, &user.id, user.email.as_deref()).await {
+                Ok(customer_id) => customer_id,
+                Err(error) => return billing_upstream_error_response(&error),
+            };
+        return match super::billing_payment_methods::create_setup_intent_secret(
+            &stripe,
+            &secret_key,
+            &customer_id,
+            &user.id,
+            "auto_topup_setup",
+        )
+        .await
+        {
+            Ok(body) => Json(body).into_response(),
+            Err(error) => billing_upstream_error_response(&error),
+        };
+    }
     let (success_url, cancel_url) = match checkout_return_urls(&return_to) {
         Ok(urls) => urls,
         Err(error) => return error.into_response(),
@@ -328,5 +482,40 @@ mod tests {
         assert!(form.contains(&("customer".to_string(), "cus_1".to_string())));
         assert!(form.contains(&("metadata[kind]".to_string(), "auto_topup_setup".to_string())));
         assert!(form.contains(&("metadata[clerk_user_id]".to_string(), "user_1".to_string())));
+    }
+
+    fn intent(customer: &str, user: &str, status: &str) -> Value {
+        json!({
+            "id": "seti_1", "customer": customer, "status": status,
+            "metadata": { "kind": "auto_topup_setup", "clerk_user_id": user },
+            "payment_method": { "id": "pm_1", "type": "card", "card": { "brand": "visa", "last4": "4242" } },
+        })
+    }
+
+    #[test]
+    fn embedded_setup_stores_only_the_callers_finished_intent() {
+        let card = card_from_confirmed_intent(&intent("cus_a", "user_a", "succeeded"), "cus_a", "user_a").unwrap();
+        assert_eq!(card.payment_method_id, "pm_1");
+        assert_eq!(card.last4.as_deref(), Some("4242"));
+        // Another customer's intent, or one made for another user: 404.
+        assert_eq!(
+            card_from_confirmed_intent(&intent("cus_b", "user_a", "succeeded"), "cus_a", "user_a"),
+            Err(ConfirmRefusal::NotFound)
+        );
+        assert_eq!(
+            card_from_confirmed_intent(&intent("cus_a", "user_b", "succeeded"), "cus_a", "user_a"),
+            Err(ConfirmRefusal::NotFound)
+        );
+        assert_eq!(
+            card_from_confirmed_intent(&intent("cus_a", "user_a", "requires_payment_method"), "cus_a", "user_a"),
+            Err(ConfirmRefusal::NotFinished)
+        );
+    }
+
+    #[test]
+    fn ui_mode_is_hosted_unless_embedded() {
+        assert_eq!(SetupMode::default().embedded().ok(), Some(false));
+        assert_eq!(SetupMode { ui_mode: Some("embedded".into()) }.embedded().ok(), Some(true));
+        assert!(SetupMode { ui_mode: Some("popup".into()) }.embedded().is_err());
     }
 }
