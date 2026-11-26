@@ -3,6 +3,7 @@ import { ArrowClockwise, Check, CircleNotch, Copy, PaperPlaneTilt, Plus, ShieldC
 import { formatApiError } from "@/lib/api-client";
 import { WEBHOOK_EVENT_TYPES, allPages, type V1Client, type V1Webhook, type V1WebhookDelivery } from "@/lib/platform-v1";
 import { Badge, EmptyState, MonoChip, SkeletonRow } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import { DESTRUCTIVE_BUTTON_CLASS, QUIET_BUTTON_CLASS } from "@/components/console-ui/buttonStyles";
 import { cn } from "@/lib/utils";
 import {
@@ -327,7 +328,7 @@ function Deliveries({ client, hookId }: { client: V1Client; hookId: string }) {
           <SkeletonRow lines={2} />
         </div>
       ) : items.length === 0 ? (
-        <p className="m-0 p-3 text-[12px] text-[var(--text-secondary)]">No deliveries yet. Send a test event to try the endpoint.</p>
+        <EmptyInline art="log" className="p-3">No deliveries yet. Send a test event to try the endpoint.</EmptyInline>
       ) : (
         <ul className="m-0 list-none divide-y divide-[var(--border-subtle)] p-0">
           {items.map((d) => (

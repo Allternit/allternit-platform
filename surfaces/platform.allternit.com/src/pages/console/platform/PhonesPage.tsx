@@ -13,6 +13,7 @@ import { ArrowClockwise, CircleNotch, DeviceMobile, Play, X } from "@phosphor-ic
 import { AllternitApiError, formatApiError } from "@/lib/api-client";
 import type { V1Client, V1Phone, V1PhoneHistory, V1PhoneLive, V1PhoneRun } from "@/lib/platform-v1";
 import { Badge, EmptyState, MonoChip, SkeletonRow } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import { QUIET_BUTTON_CLASS } from "@/components/console-ui/buttonStyles";
 import { cn } from "@/lib/utils";
 import { CARD_CLASS, ErrorBanner, PlatformHeader, PRIMARY_BUTTON_CLASS, ProjectGate, formatDateTime, usePlatformProjects } from "./shared";
@@ -277,7 +278,8 @@ function HistoryPanel({ client, phone }: { client: V1Client; phone: V1Phone }) {
         </div>
       ) : history && runs.length === 0 && history.steps.length === 0 ? (
         <EmptyState
-          icon={<DeviceMobile size={28} aria-hidden />}
+          art="bell"
+          size="panel"
           title="No runs yet"
           caption="Run a task or skill on this phone (POST /v1/phones/{serial}/task) and its steps show here."
         />
@@ -286,7 +288,7 @@ function HistoryPanel({ client, phone }: { client: V1Client; phone: V1Phone }) {
           <div className="min-w-0">
             <div className="mb-2 text-[12px] font-medium text-[var(--text-secondary)]">Runs</div>
             {runs.length === 0 ? (
-              <p className="m-0 text-[12px] text-[var(--text-tertiary)]">No task or skill runs, only single tool calls.</p>
+              <EmptyInline art="apps">No task or skill runs, only single tool calls.</EmptyInline>
             ) : (
               <ul className="m-0 list-none space-y-1.5 p-0">
                 <li>

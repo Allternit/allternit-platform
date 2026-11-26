@@ -76,7 +76,8 @@ export function ProjectGate({
     return (
       <div className="rounded-xl border border-solid border-[var(--border-subtle)]">
         <EmptyState
-          icon={<Cube size={32} aria-hidden />}
+          art="sheets"
+          size="panel"
           title="No projects yet"
           caption="A project is your app. It holds its accounts, agents, numbers and keys. Create one to start."
         />

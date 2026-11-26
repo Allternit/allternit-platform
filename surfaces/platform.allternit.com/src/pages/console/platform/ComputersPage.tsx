@@ -8,7 +8,6 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Desktop } from "@phosphor-icons/react";
 import { AllternitApiError, formatApiError } from "@/lib/api-client";
 import {
   allPages,
@@ -187,7 +186,8 @@ function ComputerList({ client }: { client: V1Client }) {
         </div>
       ) : computers.length === 0 ? (
         <EmptyState
-          icon={<Desktop size={32} aria-hidden />}
+          art="connect-scene"
+          size="panel"
           title="No computers yet"
           caption="Your app creates computers with POST /v1/computers using a key with the computers scope. They show up here."
         />

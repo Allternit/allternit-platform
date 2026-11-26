@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, ShieldCheck } from "@phosphor-icons/react";
+import { ArrowLeft, Plus } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
 import { EmptyState, SkeletonRow } from "@/components/console-ui";
+import { EmptyInline } from "@/components/console-ui/EmptyState";
 import { QUIET_BUTTON_CLASS } from "@/components/console-ui/buttonStyles";
 import { CreatedNotice, OAUTH_INPUT_CLASS as INPUT, OAUTH_PRIMARY_CLASS as PRIMARY, RedirectEditor, SecretBox, StateActions, StateBadge } from "@/components/oauth/parts";
 import {
@@ -88,7 +89,8 @@ function AppList({ projectId }: { projectId: string }) {
       ) : apps.length === 0 && !error ? (
         <div className={CARD_CLASS}>
           <EmptyState
-            icon={<ShieldCheck size={32} aria-hidden />}
+            art="apps"
+            size="panel"
             title="No OAuth apps yet"
             caption="Create one to get a client ID and let users link your app to their Allternit account."
           />
@@ -424,7 +426,7 @@ function AppDetail({ projectId }: { projectId: string }) {
           <h2 className="m-0 text-[14px] font-semibold text-[var(--text-primary)]">Test users</h2>
           <p className="m-0 text-[12px] text-[var(--text-tertiary)]">Up to {MAX_TEST_USERS} emails ({testUsers.length} used). They can link the app while it is in testing.</p>
           {testUsers.length === 0 ? (
-            <p className="m-0 text-[13px] text-[var(--text-secondary)]">No test users yet.</p>
+            <EmptyInline art="people">No test users yet.</EmptyInline>
           ) : (
             <ul className="m-0 list-none space-y-1.5 p-0">
               {testUsers.map((t) => (
