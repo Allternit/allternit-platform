@@ -331,12 +331,18 @@ struct SettingsView: View {
                 if authManager.isSignedIn {
                     ForEach(Array(accountRowModels.enumerated()), id: \.element.id) { index, row in
                         if index > 0 { PhoneCardDivider() }
+                        if row.orgId == nil && row.isActive {
+                            UserStatusAccountMenu(name: row.name, onAccountSettings: {
+                                path.append(SettingsPageID.profile)
+                            }) { AccountAvatar(size: 36) }
+                        } else {
                         accountRow(row) {
                             if row.orgId == nil {
                                 AccountAvatar(size: 36)
                             } else {
                                 orgBadge(row.name)
                             }
+                        }
                         }
                     }
                     // Other people (I14b, option B): one Clerk session at a
