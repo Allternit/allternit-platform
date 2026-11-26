@@ -41,6 +41,12 @@ export interface AgentTask {
    */
   bot?: BotTurnInfo
   /**
+   * Tools the account blocks for this session (BlockedTools, pushed with the
+   * permission mode), in the runtime's name forms. A bot turn carries them
+   * in `bot.blockedTools` instead. Absent = nothing blocked.
+   */
+  blockedTools?: string[]
+  /**
    * Set when the session turn runs the plan agent: the session's plan file.
    * CLI adapters run the vendor's own read-only mode where there is one and
    * hand the plan over through the bridge's plan_exit (see CliBridge).

@@ -1,5 +1,5 @@
 import type { AgentTask } from "@/runtime/runtime-driver"
-import { claudeBotFlags } from "@/runtime/bots/bot-turn"
+import { claudeBotFlags, claudeDisallowed } from "@/runtime/bots/bot-turn"
 import { getRuntime, listRuntimes, type SystemLayerVia } from "@/runtime/providers/discovery/runtime-registry"
 
 /**
@@ -41,6 +41,16 @@ export function claudePermissionFlags(ctx: {
     return ["--permission-mode", mode, "--permission-prompt-tool", "stdio"]
   }
   return ["--permission-mode", "bypassPermissions"]
+}
+
+/**
+ * Claude Code's `--disallowedTools` for a session turn: AskUserQuestion
+ * (it never reaches the user) and the tools the account blocks, from the bot
+ * marker or, for a normal session, the list pushed with the permission mode
+ * (BlockedTools). One flag, so the CLI never has to merge two.
+ */
+export function claudeDisallowedTools(ctx: { bot?: AgentTask["bot"]; blockedTools?: AgentTask["blockedTools"] }): string[] {
+  return [...new Set(["AskUserQuestion", ...claudeDisallowed(ctx.bot?.blockedTools), ...claudeDisallowed(ctx.blockedTools)])]
 }
 
 /** What a CLI needs to know in a plan turn: where the plan goes and how to hand it over. */
