@@ -5765,7 +5765,7 @@
       "touches": [
         "allternit/cmd/gizzi-code/src/cli/factory/render.ts",
         "allternit/factory/engine/src/orchestration/send.rs"
-      , "allternit-ai/src/components/factory/views/TeamReplay.tsx", "allternit-ai/src/lib/factory/replay.ts", "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift", "allternit/surfaces/allternit-mobile/android/feature/bots"],
+      , "allternit-ai/src/components/factory/views/TeamGraph.tsx", "allternit-ai/src/lib/factory", "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift", "allternit/surfaces/allternit-mobile/android/feature/bots"],
       "decisions": [
         {
           "on": "2026-11-26",
