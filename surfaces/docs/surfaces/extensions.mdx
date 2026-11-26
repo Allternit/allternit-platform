@@ -128,3 +128,39 @@ pnpm --filter @allternit/extension build
 
 - [Allternit Office Add-in](/surfaces/office-addin)
 - [Browser Automation cookbook](/cookbooks/browser-automation)
+
+## Self-hosted install on cloud computers
+
+Cloud computers run their own Chrome for the agent browser, and the agent needs the extension in it. The extension is not on the Chrome Web Store, and Chrome 137 and later ignore `--load-extension`, so the only way in is a **managed policy** that force-installs it from a self-hosted update manifest.
+
+<Warning>
+  **Status: packaging is built, hosting is not live until the files are published.** Until `update.xml` and the CRX exist at the URL below, Chrome on a cloud computer cannot fetch the extension and the agent browser runs without it. Check with `curl -sI https://runtime.allternit.com/chrome-extension/update.xml` before relying on it.
+</Warning>
+
+### How it fits together
+
+| Piece | Where | What it does |
+|---|---|---|
+| Workflow | `.github/workflows/extension-crx.yml` | Builds the extension with WXT, packs a CRX3 signed with the stable extension key, writes `update.xml` (gupdate format: app id, `codebase`, `version`). Runs on manual dispatch and on a tag `extension/v<version>` (the tag must match `package.json`). Never deploys. |
+| Packer | `scripts/pack-crx3.mjs` | Dependency-free CRX3 writer. Prints the extension id the key gives; the workflow fails if it is not `chheieepkpbhkiimdmbdjmnhcooclpok`. |
+| Host | `https://runtime.allternit.com/chrome-extension/` | The R2 bucket `allternit-runtime` (the same one that serves Desktop runtime files, see [Owned downloads](/operations/owned-downloads)). Holds `update.xml` and `allternit-extension-<version>.crx`. |
+| Policy | `install-browser-policy.sh` (Linux guest image) | Writes `/etc/opt/chrome/policies/managed/allternit.json` with `ExtensionSettings` set to `force_installed` for the extension id and `update_url` set to the `update.xml` above. |
+
+The default update URL is `https://runtime.allternit.com/chrome-extension/update.xml`. Set `ALLTERNIT_EXTENSION_UPDATE_URL` to use another host, or to `none` to remove the policy and install nothing.
+
+### Release steps
+
+1. Bump `version` in `surfaces/allternit-extensions/allternit-extension/package.json`. Chrome only updates when the version in `update.xml` is higher than the installed one.
+2. Tag and push `extension/v<version>`, or run the workflow by hand. The run's summary prints the two upload commands. The CRX and `update.xml` are also attached to the tag's GitHub release and the run's artifacts.
+3. After approval, run the printed `r2-upload.py` commands (CRX first, then `update.xml`). The workflow does not run them.
+4. Cloud computers pick up the new version through Chrome's normal extension update check (a few hours), or at once from `chrome://extensions` with **Update**.
+
+### The signing key
+
+The extension id comes from the public `key` field in `wxt.config.ts`. A CRX is accepted for that id only if it is signed with the matching **private** key. The private key is not in the repository. It must be added as the Actions secret **`ALLTERNIT_EXTENSION_PRIVATE_KEY`** (PEM). The workflow packs the CRX, derives the id from the key and fails if it differs, so a wrong key can never produce a published file. If the original private key is lost, the id cannot be kept: a new key means a new id, a new `key` in `wxt.config.ts`, and an updated id in the policy and in Gizzi Code. Do not use the secret name `ALLTERNIT_EXTENSION_KEY`; `wxt.config.ts` reads that name as the public key.
+
+### Windows cloud computers
+
+Chrome and Edge on Windows only force-install an extension that is not from their own store on a machine that is **managed**: joined to an Active Directory domain, enrolled in Microsoft Entra ID / device management (MDM), or enrolled in Chrome Browser Cloud Management. On an unmanaged machine the `ExtensionInstallForcelist` / `ExtensionSettings` policy is ignored for off-store extensions, and the extension shows as unsupported. Chrome 137 and later also ignore `--load-extension` there.
+
+Our Windows cloud VMs are not domain joined and are not MDM enrolled, so **we do not expect the force-install to work on them**, and we have not tested it. This section does not promise it. Options to decide later: enrol the VMs in Chrome Browser Cloud Management (free, needs an enrolment token per organization), or publish the extension to the Chrome Web Store (unlisted) so the store accepts it. Until one of those is done, the Windows agent browser works without the extension (the existing computer driver path).

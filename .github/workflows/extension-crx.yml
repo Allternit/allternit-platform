@@ -1,0 +1,142 @@
+name: Package extension (CRX)
+
+# Builds the Allternit Chrome extension (surfaces/allternit-extensions/allternit-extension),
+# packs a CRX3 signed with the stable extension key, and writes the gupdate
+# update.xml that Chrome's managed policy (install-browser-policy.sh) points at.
+# Cloud computers need this because the extension is not on the Chrome Web Store
+# and Chrome 137+ ignores --load-extension.
+#
+# Runs on manual dispatch and on a tag extension/v<version> (the tag must match
+# package.json's version). It never deploys. The job summary prints the exact
+# upload commands; the publish is a separate, human-approved step (build train).
+#
+# Secret (Settings -> Secrets -> Actions):
+#   ALLTERNIT_EXTENSION_PRIVATE_KEY  PEM private key (PKCS#8 or PKCS#1) whose public half is the
+#                                    `key` in wxt.config.ts, i.e. the key behind id
+#                                    chheieepkpbhkiimdmbdjmnhcooclpok. The job fails if it does not match.
+#   (Not ALLTERNIT_EXTENSION_KEY: wxt.config.ts reads that name as the PUBLIC key.)
+on:
+  workflow_dispatch:
+  push:
+    tags: ['extension/v*']
+
+permissions:
+  contents: write   # attach release assets on tag runs
+
+concurrency:
+  group: extension-crx-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXT_DIR: surfaces/allternit-extensions/allternit-extension
+  EXT_ID: chheieepkpbhkiimdmbdjmnhcooclpok
+  # Where the files get served from (R2 bucket allternit-runtime, public as runtime.allternit.com)
+  BASE_URL: https://runtime.allternit.com/chrome-extension
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+          run_install: false
+
+      - name: Version
+        id: ver
+        run: |
+          V=$(node -p "require('./${EXT_DIR}/package.json').version")
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "extension/v${V}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${V}"; exit 1
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+
+      - name: Install (extension and the packages it depends on)
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter '@allternit/extension...'
+
+      - name: Build workspace dependencies
+        run: pnpm --filter '@allternit/extension^...' run --if-present build
+
+      - name: Build extension
+        working-directory: ${{ env.EXT_DIR }}
+        env:
+          ALLTERNIT_EXTENSION_KEY: ''   # use the public key committed in wxt.config.ts
+        run: |
+          pnpm exec wxt prepare
+          pnpm exec wxt build
+
+      - name: Check built manifest key gives the expected id
+        working-directory: ${{ env.EXT_DIR }}
+        run: |
+          node -e '
+            const c=require("node:crypto"), m=require("./.output/chrome-mv3/manifest.json");
+            const h=c.createHash("sha256").update(Buffer.from(m.key,"base64")).digest("hex").slice(0,32);
+            const id=[...h].map(x=>String.fromCharCode(97+parseInt(x,16))).join("");
+            if(id!==process.env.EXT_ID){console.error("manifest key gives id "+id+", expected "+process.env.EXT_ID);process.exit(1)}
+            console.log("manifest key -> "+id+" ok, version "+m.version)'
+
+      - name: Pack CRX3
+        env:
+          KEY_PEM: ${{ secrets.ALLTERNIT_EXTENSION_PRIVATE_KEY }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          [ -n "${KEY_PEM}" ] || { echo "::error::secret ALLTERNIT_EXTENSION_PRIVATE_KEY is not set. Without the private key behind ${EXT_ID} no CRX that Chrome accepts can be made."; exit 1; }
+          umask 077
+          KEY_FILE="${RUNNER_TEMP}/ext-key.pem"
+          printf '%s\n' "${KEY_PEM}" > "${KEY_FILE}"
+          mkdir -p dist
+          (cd "${EXT_DIR}/.output/chrome-mv3" && zip -qr -X "${GITHUB_WORKSPACE}/dist/ext.zip" .)
+          GOT=$(node scripts/pack-crx3.mjs dist/ext.zip "${KEY_FILE}" "dist/allternit-extension-${VERSION}.crx")
+          rm -f "${KEY_FILE}" dist/ext.zip
+          [ "${GOT}" = "${EXT_ID}" ] || { rm -f dist/*.crx; echo "::error::the private key gives id ${GOT}, not ${EXT_ID}; it is not the key behind the extension id"; exit 1; }
+          echo "packed id ${GOT}"
+
+      - name: Write update.xml
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          cat > dist/update.xml <<EOF
+          <?xml version='1.0' encoding='UTF-8'?>
+          <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+            <app appid='${EXT_ID}'>
+              <updatecheck codebase='${BASE_URL}/allternit-extension-${VERSION}.crx' version='${VERSION}' />
+            </app>
+          </gupdate>
+          EOF
+          cat dist/update.xml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allternit-extension-crx
+          path: dist/
+          if-no-files-found: error
+
+      - name: Attach to the release (tag runs)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --title "Allternit extension ${GITHUB_REF_NAME#extension/v}" --notes "Self-hosted CRX + update.xml. Served from ${BASE_URL}/ after the publish step."
+          gh release upload "${GITHUB_REF_NAME}" dist/*.crx dist/update.xml --clobber
+
+      - name: Print the deploy step (does not run it)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          {
+            echo "### Extension ${VERSION} packed. Not deployed."
+            echo "Served from \`${BASE_URL}/update.xml\` (R2 bucket \`allternit-runtime\`, public as runtime.allternit.com). After Eoj's go, from a checkout with R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET set, download this run's artifact into \`dist/\` and run (CRX first, then update.xml, so Chrome never sees a manifest that points at a missing file):"
+            echo '```sh'
+            echo "python3 scripts/r2-upload.py dist/allternit-extension-${VERSION}.crx allternit-runtime chrome-extension/allternit-extension-${VERSION}.crx application/x-chrome-extension 'public, max-age=31536000, immutable'"
+            echo "python3 scripts/r2-upload.py dist/update.xml allternit-runtime chrome-extension/update.xml text/xml 'public, max-age=300'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
