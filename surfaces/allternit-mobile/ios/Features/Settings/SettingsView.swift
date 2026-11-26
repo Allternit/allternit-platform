@@ -93,6 +93,7 @@ struct SettingsView: View {
             }
             .navigationDestination(for: SettingsPageID.self) { page in
                 destination(page)
+                    .environment(\.settingsPageSymbol, page.systemImage)
             }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
@@ -1009,5 +1010,6 @@ private struct SettingsRowPress: ButtonStyle {
             .background(configuration.isPressed ? Color("FillNeutral") : Color.clear)
             .scaleEffect(configuration.isPressed ? PolishTokens.pressRow : 1)
             .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
+            .environment(\.settingsRowPressed, configuration.isPressed)
     }
 }
