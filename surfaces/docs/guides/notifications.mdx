@@ -61,6 +61,10 @@ Quiet hours are for your whole account, like the switches below, so they apply t
 
 For developers: [Quiet hours API](/api/notifications#quiet-hours).
 
+## Job toasts
+
+In Gizzi Code, a job can raise a one-line toast above the prompt: tests, a pull request, a deploy, a build, context compaction, a session or an image. Each kind has its own block glyph. A toast carries an id, and a second toast with the same id replaces the first line in place, so a deploy shows one line that changes instead of a stack. Gizzi raises them through the `tui.showToast` call with the optional `id` and `kind` fields. When Gizzi compacts the conversation, the line reads Context compacted.
+
 ## Change what notifies you
 
 Open **Settings**, then **Notifications**, and scroll to **Phone and browser notifications**. Each event above has a switch, with its name and what it covers. A switch you haven't changed says **Default**; one you have changed shows **Reset to default**. A change saves as soon as you flip it. If it can't be saved, the switch goes back and says why.
