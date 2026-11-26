@@ -52,6 +52,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
+import com.allternit.core.design.EmptyArtKind
+import com.allternit.core.design.FriendlyStyle
+import com.allternit.core.design.FriendlyState
+import com.allternit.core.design.InlineEmpty
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.R as DesignR
@@ -324,7 +328,7 @@ fun DelegatePane(coordinatorId: String, onClose: () -> Unit) {
             error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp) }
             if (!loaded) LibrarySpinner("Loading Delegate")
             Text("To do (${tasks.size})", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            if (tasks.isEmpty()) Text("Nothing here", color = c.textTertiary, fontSize = 13.sp)
+            if (tasks.isEmpty()) InlineEmpty("Nothing here", art = EmptyArtKind.Sheets)
             tasks.forEach { t ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
@@ -347,7 +351,7 @@ fun DelegatePane(coordinatorId: String, onClose: () -> Unit) {
             for ((label, wanted) in listOf("Working" to "working", "Needs you" to "waiting", "Done" to "resolved")) {
                 val rows = bots.flatMap { b -> b.queue.filter { it.second == wanted }.map { b.name to it.first } }
                 Text("$label (${rows.size})", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (rows.isEmpty()) Text("Nothing here", color = c.textTertiary, fontSize = 13.sp)
+                if (rows.isEmpty()) InlineEmpty("Nothing here", art = EmptyArtKind.Sheets)
                 rows.forEach { (bot, title) -> Text("$title · $bot", color = c.textSecondary, fontSize = 14.sp) }
             }
             Text("Bots", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -382,8 +386,7 @@ fun ProjectMemorySheet(sessionIds: Set<String>, onDismiss: () -> Unit) {
             when {
                 facts == null -> LibrarySpinner("Loading memory")
                 facts!!.isEmpty() -> {
-                    Text("No memory yet", color = c.textSecondary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                    Text("Facts from this project's chats show here after a few turns.", color = c.textTertiary, fontSize = 13.sp)
+                    FriendlyState(FriendlyStyle.Empty, "No memory yet", "Facts from this project's chats show here after a few turns.", art = EmptyArtKind.Memory, panel = true, icon = {})
                 }
                 else -> facts!!.forEach { Text(it, color = c.textPrimary, fontSize = 14.sp) }
             }

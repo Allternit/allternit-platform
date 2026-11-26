@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
@@ -116,9 +117,7 @@ fun OfficeDocumentsScreen(onClose: () -> Unit, openArtifact: @Composable (id: St
                 actionTitle = "Retry", onAction = { state = DocsState.Loading; reload += 1 },
             ) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary) }
             is DocsState.Ready -> if (s.items.isEmpty()) {
-                FriendlyState(FriendlyStyle.Empty, "No documents yet", "Docs, sheets, decks and PDFs you make or are shared appear here.") {
-                    Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.accentPrimary)
-                }
+                FriendlyState(FriendlyStyle.Empty, "No documents yet", "Docs, sheets, decks and PDFs you make or are shared appear here.", art = EmptyArtKind.Sheets, icon = {})
             } else PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshing = true; reload += 1 }, modifier = Modifier.fillMaxSize()) {
                 LazyColumn(Modifier.fillMaxSize().testTag("officeDocumentsList"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(s.items, key = { it.id }) { a ->
@@ -174,9 +173,7 @@ fun OfficeDocumentScreen(artifactId: String, onClose: () -> Unit) {
             OfficeLoad.SignedOut -> FriendlyState(FriendlyStyle.Empty, "Sign in to open this document", "Documents are saved to your Allternit account, so they open once you're signed in.") {
                 Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.accentPrimary)
             }
-            OfficeLoad.ComputeRequired -> FriendlyState(FriendlyStyle.Empty, "No computer yet", "This document opens on your Allternit computer. Add one in Settings, then come back.") {
-                Icon(painterResource(DesignR.drawable.ph_globe), null, tint = c.accentPrimary)
-            }
+            OfficeLoad.ComputeRequired -> FriendlyState(FriendlyStyle.Empty, "No computer yet", "This document opens on your Allternit computer. Add one in Settings, then come back.", art = EmptyArtKind.ConnectScene, icon = {})
             is OfficeLoad.Failed -> FriendlyState(FriendlyStyle.Offline, "Couldn't load document", l.message, actionTitle = "Retry", onAction = { reload += 1 }) {
                 Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary)
             }

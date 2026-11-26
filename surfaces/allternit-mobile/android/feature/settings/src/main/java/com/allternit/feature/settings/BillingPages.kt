@@ -295,7 +295,7 @@ private fun ConnectedAccounts(signedIn: Boolean) {
     Column(Modifier.testTag("usage_connectedAccounts"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (all.isEmpty()) {
             if (loading) Text("Loading connected accounts…", color = c.textSecondary, fontSize = 13.sp)
-            else SNote("No connected account reports usage. Subscriptions and API keys you connect show their limits here.")
+            else SNote("No connected account reports usage. Subscriptions and API keys you connect show their limits here.", art = com.allternit.core.design.EmptyArtKind.Coins)
         }
         all.forEach { card ->
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.bgSecondary).padding(12.dp).testTag("usage_account_${card.provider}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {

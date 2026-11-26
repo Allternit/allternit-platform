@@ -293,7 +293,7 @@ private fun SkillDirectory(host: SettingsHost, query: String) {
         val have = body.listUnder("skills").mapNotNull { it.str("id") }.toSet()
         val rows = CATALOG
             .filter { (category == null || it.category == category) && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.blurb.contains(query, ignoreCase = true)) }
-        if (rows.isEmpty()) StateBox("No skills match", "Try another word or category.", null, null) else {
+        if (rows.isEmpty()) StateBox("No skills match", "Try another word or category.", null, null, art = com.allternit.core.design.EmptyArtKind.Search) else {
             CCard(Modifier.padding(top = 8.dp)) {
                 rows.forEachIndexed { i, s ->
                     if (i > 0) SDivider()

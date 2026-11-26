@@ -142,7 +142,7 @@ internal fun DevicePairingPage(host: SettingsHost, back: () -> Unit) {
         LoadView(load, reload, "load your devices") { body ->
             val devices = body.listUnder("devices", "items")
             if (devices.isEmpty()) {
-                StateBox("No paired devices", "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.", null, null)
+                StateBox("No paired devices", "Install Allternit Desktop or run `gizzi pair` on a computer to connect it.", null, null, art = com.allternit.core.design.EmptyArtKind.ConnectScene)
             } else {
                 // One row per physical device: the same platform + name paired again is folded into "paired N times".
                 val groups = devices.filter { it.str("id") != null }.groupBy { (it.str("platform") ?: "") + "|" + (it.str("name") ?: it.str("device_name") ?: "Device") }.values.toList()
