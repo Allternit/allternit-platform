@@ -82,6 +82,17 @@ import com.allternit.core.design.SectionLabel
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyErrorMessage
 import com.allternit.core.design.Haptics
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import com.allternit.feature.chat.TailFollow
 import com.allternit.core.stream.ChatStreamEvent
 import com.allternit.feature.artifacts.LibraryField
 import com.allternit.feature.artifacts.LibrarySheet
@@ -883,8 +894,31 @@ internal fun GroupRoomScreen(groupId: String, host: BotsHost, store: BotModeStor
 private fun GroupLog(room: GroupRoom, store: BotModeStore, speaking: String?, runError: String?, docked: Boolean, modifier: Modifier) {
     val c = AllternitTheme.colors
     val list = rememberLazyListState()
-    LaunchedEffect(room.log.size, speaking) { val n = room.log.size + (if (speaking != null) 1 else 0); if (n > 0) list.animateScrollToItem(n - 1) }
-    LazyColumn(modifier.fillMaxWidth().testTag("groupLog"), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    // Follow the log only while the reader is at the bottom; only their own drag releases it.
+    var tail by remember { mutableStateOf(TailFollow()) }
+    val tailConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y > 0f) tail = tail.userScrolledUp()
+                return Offset.Zero
+            }
+        }
+    }
+    LaunchedEffect(list) {
+        snapshotFlow { !list.canScrollForward }.collect { atBottom -> if (atBottom) tail = tail.reachedBottom() }
+    }
+    LaunchedEffect(room.log.lastOrNull()?.id) { if (room.log.lastOrNull()?.from == "user") tail = tail.sent() }
+    LaunchedEffect(room.log.size, speaking) {
+        val n = room.log.size + (if (speaking != null) 1 else 0)
+        if (n <= 0) return@LaunchedEffect
+        if (!tail.follows) { tail = tail.grew(); return@LaunchedEffect }
+        list.animateScrollToItem(n - 1)
+        list.scrollBy(100_000f)
+    }
+    Box(modifier) {
+    LazyColumn(Modifier.fillMaxSize().nestedScroll(tailConnection).testTag("groupLog"), state = list, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (room.log.isEmpty() && docked) item { Text("Say hi. Everyone answers, or @mention one of them.", color = c.textSecondary, fontSize = 14.sp) }
         items(room.log, key = { it.id }) { m -> GroupMessageRow(m, store) }
         if (speaking != null) item {
@@ -895,6 +929,36 @@ private fun GroupLog(room: GroupRoom, store: BotModeStore, speaking: String?, ru
             }
         }
         if (runError != null) item { Text(runError, color = AllternitStatic.StatusError, fontSize = 12.sp) }
+    }
+    if (tail.hasNew) {
+        Row(
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
+                .height(40.dp)
+                .shadow(4.dp, CircleShape)
+                .clip(CircleShape)
+                .background(c.bgPanel)
+                .border(1.dp, c.borderSubtle, CircleShape)
+                .testTag("groupJumpToBottom")
+                .clickable(role = Role.Button) {
+                    Haptics.perform(view, Haptics.Kind.Tap)
+                    scope.launch {
+                        val count = list.layoutInfo.totalItemsCount
+                        if (count > 0) {
+                            list.scrollToItem(count - 1)
+                            list.scrollBy(100_000f)
+                        }
+                        tail = tail.jumped()
+                    }
+                }
+                .semantics { contentDescription = "New text below, jump to latest" }
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("New text", color = c.textPrimary, fontSize = 13.sp)
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_arrow_down), null, tint = c.textPrimary, modifier = Modifier.size(15.dp))
+        }
+    }
     }
 }
 

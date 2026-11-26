@@ -241,4 +241,28 @@ class GenerationExperienceTest {
         val typed = ChatError(null, "limit", "limit", ChatErrorInfo.make("limit", code = "usage_limit"))
         assertEquals(ChatErrorInfo.Kind.UsageLimit, typed.typed!!.kind)
     }
+
+    @Test fun releasedReaderGetsNewTextPill() {
+        val t = TailFollow().userScrolledUp().grew()
+        assertFalse(t.follows)
+        assertTrue(t.hasNew)
+    }
+
+    @Test fun reachingTheBottomClearsThePill() {
+        val t = TailFollow().userScrolledUp().grew().reachedBottom()
+        assertTrue(t.follows)
+        assertFalse(t.hasNew)
+    }
+
+    @Test fun growingWhileFollowingLeavesNoPill() {
+        val t = TailFollow().grew().grew()
+        assertTrue(t.follows)
+        assertFalse(t.hasNew)
+    }
+
+    @Test fun jumpedAndSentFollowAgain() {
+        val released = TailFollow().userScrolledUp().grew()
+        assertEquals(TailFollow(), released.jumped())
+        assertEquals(TailFollow(), released.sent())
+    }
 }
