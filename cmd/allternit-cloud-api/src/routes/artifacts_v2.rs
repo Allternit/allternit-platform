@@ -1386,6 +1386,8 @@ async fn public_artifact(
 // * `GET /api/v2/artifacts/:id/app` (view) -> `{ app: AppPackage | null }`
 // * `PUT /api/v2/artifacts/:id/app` (owner) `{ name, icon?, tier: browser|app|full,
 //   install_scope?: private|people|org|link, tools?: [..], skill_ref?: "skill://..",
+//   (skill_ref: one of the owner's skills, 422 `skill_ref_not_found` otherwise;
+//   installers get it as skill://app/<slug>/<name>/SKILL.md, mcp_edge_skills)
 //   pinned_version?, export_mcp? }` -> `{ app: AppPackage }`. `export_mcp` lands in
 //   `capability_snapshot.export_mcp` (omitted keeps the stored value). Makes the artifact an app (or
 //   re-publishes it): `app_slug` is minted once and never changes;
@@ -1549,6 +1551,25 @@ async fn put_app(
     if let Some(skill) = req.skill_ref.as_deref() {
         if !skill.starts_with("skill://") || skill.len() <= "skill://".len() || skill.len() > 512 {
             return Err(ArtifactError::unprocessable("invalid_skill_ref", "skill_ref is a skill:// link"));
+        }
+        // Decision 7: skill://user/<name>, skill://org/<org_id>/<name> or
+        // skill://<name>, naming a skill the publisher can read right now.
+        let store = crate::routes::cloud_skills::PgSkillStore { db: &state.db };
+        match crate::routes::mcp_edge_skills::resolve_skill_ref(&store, &caller.id, skill).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(ArtifactError::unprocessable(
+                    "skill_ref_not_found",
+                    "skill_ref must name one of your skills: skill://user/<name> or skill://org/<org_id>/<name>.",
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "put_app: skill_ref check failed");
+                return Err(ArtifactError::unprocessable(
+                    "skill_ref_not_found",
+                    "Could not check that skill right now. Try again in a moment.",
+                ));
+            }
         }
     }
     let pinned_version = match req.pinned_version {

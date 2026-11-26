@@ -1,6 +1,6 @@
 //! Route tests for the artifacts v2 API (contract §3). Each test gets its
-//! own Postgres schema (routes::test_support) with migrations 085, 109, 161
-//! and 166 applied.
+//! own Postgres schema (routes::test_support) with migrations 085, 109, 161,
+//! 163 and 166 applied.
 //! Clerk-session callers (org, role, email) are stood in for by the
 //! test-only `x-test-caller` header; API-token and device-token callers go
 //! through the real resolvers.
@@ -25,8 +25,24 @@ async fn setup() -> (Router, PgPool) {
         .execute(&state.db).await.expect("161 applies");
     sqlx::raw_sql(include_str!("../../migrations_pg/166_plan_artifacts.sql"))
         .execute(&state.db).await.expect("166 applies");
+    // cloud_skills: an app's skill_ref must name one of the publisher's skills.
+    sqlx::raw_sql(&include_str!("../../migrations_pg/163_cloud_skills.sql").replace("public.", ""))
+        .execute(&state.db).await.expect("163 applies");
     let db = state.db.clone();
     (routes().with_state(state), db)
+}
+
+/// A cloud skill `owner` owns, written straight into the table.
+async fn seed_skill(db: &PgPool, owner: &str, name: &str, body: &str) {
+    sqlx::query("INSERT INTO cloud_skills (id, owner_user_id, name, description, skill_md) VALUES ($1, $2, $3, $4, $5)")
+        .bind(format!("skl_{owner}_{name}"))
+        .bind(owner)
+        .bind(name)
+        .bind(format!("{name} skill"))
+        .bind(format!("---\nname: {name}\ndescription: {name} skill\n---\n\n{body}\n"))
+        .execute(db)
+        .await
+        .unwrap();
 }
 
 fn who(id: &str, org: Option<&str>, email: Option<&str>) -> Value {
@@ -574,6 +590,7 @@ async fn api_tokens_and_device_tokens_resolve_to_their_user() {
 async fn make_an_app_mints_the_slug_once_and_the_public_record_reads_it() {
     let (router, db) = setup().await;
     let owner = who("u_app_owner", None, None);
+    seed_skill(&db, "u_app_owner", "tips", "Split the bill.").await;
     let id = create(&router, &owner, "page", "Tip calculator").await;
     let app_path = format!("/api/v2/artifacts/{id}/app");
 
@@ -622,6 +639,76 @@ async fn make_an_app_mints_the_slug_once_and_the_public_record_reads_it() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = send(&router, request("GET", "/api/v2/public/apps/Bad.Slug", None, None)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn app_skill_ref_must_resolve_for_the_publisher() {
+    let (router, db) = setup().await;
+    let owner = who("u_ref_owner", None, None);
+    seed_skill(&db, "u_ref_owner", "tips", "Split the bill.").await;
+    seed_skill(&db, "u_ref_other", "secret", "Not yours.").await;
+    let id = create(&router, &owner, "page", "Ref check").await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+    for bad in ["skill://nope", "skill://user/secret", "skill://secret/SKILL.md", "skill://app/x/tips", "skill://user/../tips"] {
+        let (status, got) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "X", "tier": "browser", "skill_ref": bad}))).await;
+        assert_eq!((status, got["error"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("skill_ref_not_found")), "{bad} -> {got}");
+    }
+    for good in ["skill://user/tips", "skill://tips", "skill://user/tips/SKILL.md"] {
+        let (status, got) = call(&router, "PUT", &app_path, &owner, Some(json!({"name": "X", "tier": "browser", "skill_ref": good}))).await;
+        assert_eq!(status, StatusCode::OK, "{good} -> {got}");
+        assert_eq!(got["app"]["skill_ref"], good);
+    }
+}
+
+/// B sees A's app skill only through a live install; uninstall removes it;
+/// a share-link install starts switched off, the owner's own install on.
+#[tokio::test]
+async fn app_skills_follow_live_installs() {
+    use crate::routes::cloud_skills::PgSkillStore;
+    use crate::routes::mcp_edge_skills::{available, read, resources, SkillCaller};
+    let (router, db) = setup().await;
+    let a = who("u_appsk_a", None, None);
+    seed_skill(&db, "u_appsk_a", "tips", "A's tip steps.").await;
+    let id = create(&router, &a, "page", "Tips app").await;
+    let app_path = format!("/api/v2/artifacts/{id}/app");
+    let publish = |scope: &str| json!({"name": "Tips", "tier": "browser", "install_scope": scope, "skill_ref": "skill://user/tips"});
+    let (status, made) = call(&router, "PUT", &app_path, &a, Some(publish("people"))).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    let slug = made["app"]["slug"].as_str().unwrap().to_string();
+    let uri = format!("skill://app/{slug}/tips/SKILL.md");
+
+    let store = PgSkillStore { db: &db };
+    let b = SkillCaller { user_id: "u_appsk_b", personal: true };
+    let uris = |list: Vec<Value>| list.iter().map(|r| r["uri"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert!(!uris(resources(&store, &b).await).contains(&uri), "no install, not listed");
+    assert!(read(&store, &b, &uri).await.is_none(), "no install, not readable");
+    assert!(read(&store, &b, "skill://user/tips/SKILL.md").await.is_none(), "B never reads A's user skill");
+
+    let install = |user: &'static str| {
+        sqlx::query("INSERT INTO app_installs (id, user_id, app_kind, app_ref, granted_tier) VALUES ($1, $2, 'artifact', $3, 'browser')")
+            .bind(format!("ain_{user}"))
+            .bind(user)
+            .bind(id.clone())
+    };
+    install("u_appsk_b").execute(&db).await.unwrap();
+    assert!(uris(resources(&store, &b).await).contains(&uri), "the MCP edge lists it for the installer");
+    let text = read(&store, &b, &uri).await.expect("installer reads the app skill").1;
+    assert!(text.contains("name: tips") && text.contains("A's tip steps."), "{text}");
+    assert!(read(&store, &b, "skill://user/tips/SKILL.md").await.is_none(), "the install grants the app copy only");
+    let item = |list: Vec<Value>| list.into_iter().find(|i| i["uri"] == json!(uri));
+    let got = item(available(&store, &b).await).expect("in available");
+    assert_eq!((got["source"].as_str(), got["from"].as_str(), got["defaultEnabled"].as_bool()), (Some("app"), Some("Tips"), Some(true)));
+
+    let (status, _) = call(&router, "PUT", &app_path, &a, Some(publish("link"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(item(available(&store, &b).await).unwrap()["defaultEnabled"], false, "a share-link install starts off");
+    install("u_appsk_a").execute(&db).await.unwrap();
+    let mine = SkillCaller { user_id: "u_appsk_a", personal: true };
+    assert_eq!(item(available(&store, &mine).await).unwrap()["defaultEnabled"], true, "the owner's own app stays on");
+
+    sqlx::query("DELETE FROM app_installs WHERE user_id = 'u_appsk_b'").execute(&db).await.unwrap();
+    assert!(item(available(&store, &b).await).is_none(), "uninstall removes it");
+    assert!(read(&store, &b, &uri).await.is_none());
 }
 
 #[tokio::test]

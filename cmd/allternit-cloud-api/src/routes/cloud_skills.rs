@@ -17,6 +17,18 @@
 //!   `files`, when sent, replaces the whole set.
 //! * `DELETE /api/v1/skills/:id` -> `{ removed: true }`
 //!
+//! * `GET  /api/v1/skills/available` -> `[{ source: user|org|app, uri, name,
+//!   description, from, defaultEnabled }]`: every skill the caller can load
+//!   (their own, their orgs', and the skills of apps they installed,
+//!   `skill://app/<app_slug>/<name>/SKILL.md`). `from` is "You", the org id
+//!   or the app name. `defaultEnabled` is false for an app installed by share link.
+//! * `GET  /api/v1/skills/read?uri=skill://...` -> `{ text }` (the SKILL.md as
+//!   served at the MCP edge, or a supporting file). Not visible to the caller
+//!   or unknown: 404 `skill_not_found`; over 64 KB: 413 `skill_too_large`.
+//!   These two also take allternit-api's path-signed call from a paired
+//!   computer (`x-allternit-runtime-id/-ts/-sig`, account_sync.rs), which acts
+//!   as the computer's owner.
+//!
 //! Summary = `{ id, name, description, orgId, version, sizeBytes, createdAt, updatedAt }`;
 //! Skill = Summary + `{ skillMd, files }`.
 //!
@@ -32,7 +44,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -44,8 +56,9 @@ use sqlx::PgPool;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::routes::mcp_edge_skills::{valid_file_path, valid_name, Skill, SkillFile, SkillStore};
+use crate::routes::mcp_edge_skills::{resolve_skill_ref, valid_file_path, valid_name, AppSkill, Skill, SkillCaller, SkillFile, SkillStore};
 use crate::routes::paired_computers::signed_in_caller;
+use crate::routes::runtime_events::{authenticate_runtime, RUNTIME_ID_HEADER};
 use crate::routes::platform_v1::new_id;
 use crate::services::user_trust::OrgMembership;
 use crate::{ApiError, ApiState};
@@ -54,10 +67,14 @@ pub const MAX_TOTAL_BYTES: usize = 256 * 1024;
 pub const MAX_FILES: usize = 40;
 pub const MAX_PER_OWNER: i64 = 100;
 const MAX_DESCRIPTION: usize = 1024;
+/// `GET /api/v1/skills/read` answers up to this many bytes (contract: `skill_too_large`).
+pub const MAX_READ_BYTES: usize = 64 * 1024;
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/skills", get(list_skills).post(create_skill))
+        .route("/api/v1/skills/available", get(available_skills))
+        .route("/api/v1/skills/read", get(read_skill))
         .route("/api/v1/skills/:id", get(get_skill).put(update_skill).delete(delete_skill))
 }
 
@@ -362,6 +379,58 @@ async fn delete_skill(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pa
     })
 }
 
+// ------------------------------------------ available + read (allternit-api) ----
+
+/// The signed-in person, or allternit-api on a paired computer: a request
+/// path-signed with the runtime's device token (`account_sync.rs`, verified by
+/// `runtime_events::authenticate_runtime`, the same as account projects),
+/// which acts as the computer's owner. The signature covers the path only.
+async fn skill_reader(state: &ApiState, headers: &HeaderMap, uri: &Uri) -> Result<String, Response> {
+    if headers.contains_key(RUNTIME_ID_HEADER) {
+        let (user, _runtime) = authenticate_runtime(&state.db, headers, "GET", uri.path(), &[], Utc::now().timestamp()).await?;
+        return Ok(user);
+    }
+    signed_in_caller(state, headers).await.map(|c| c.user_id).map_err(IntoResponse::into_response)
+}
+
+fn private(mut r: Response) -> Response {
+    r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    r
+}
+
+fn skill_not_found() -> Response {
+    fail(StatusCode::NOT_FOUND, "skill_not_found", "That skill was not found.")
+}
+
+async fn available_skills(State(state): State<Arc<ApiState>>, headers: HeaderMap, uri: Uri) -> Response {
+    let user = match skill_reader(&state, &headers, &uri).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let store = PgSkillStore { db: &state.db };
+    let list = crate::routes::mcp_edge_skills::available(&store, &SkillCaller { user_id: &user, personal: true }).await;
+    private(Json(Value::Array(list)).into_response())
+}
+
+#[derive(Deserialize)]
+struct ReadQuery {
+    uri: Option<String>,
+}
+
+async fn read_skill(State(state): State<Arc<ApiState>>, headers: HeaderMap, uri: Uri, Query(q): Query<ReadQuery>) -> Response {
+    let user = match skill_reader(&state, &headers, &uri).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let Some(skill_uri) = q.uri.filter(|u| !u.is_empty()) else { return private(skill_not_found()) };
+    let store = PgSkillStore { db: &state.db };
+    private(match crate::routes::mcp_edge_skills::read(&store, &SkillCaller { user_id: &user, personal: true }, &skill_uri).await {
+        None => skill_not_found(),
+        Some((_, text)) if text.len() > MAX_READ_BYTES => fail(StatusCode::PAYLOAD_TOO_LARGE, "skill_too_large", "That skill is larger than 64 KB."),
+        Some((_, text)) => Json(json!({ "text": text })).into_response(),
+    })
+}
+
 // ------------------------------------------------- the MCP edge's store ----
 
 /// `SkillStore` over `cloud_skills`, used by `ProdBackend::skills`.
@@ -401,6 +470,45 @@ impl SkillStore for PgSkillStore<'_> {
             if let Some(s) = to_skill(row) {
                 out.entry(org).or_default().push(s);
             }
+        }
+        Ok(out)
+    }
+
+    async fn app_skills(&self, user_id: &str) -> Result<Vec<AppSkill>, String> {
+        // A live install is a row (uninstall deletes it, apps.rs). Installs do
+        // not record how they were made, so a share-link install is one by
+        // someone other than the owner and outside the app's org, of an app
+        // whose install scope is `link`.
+        type InstallRow = (String, Option<String>, Option<String>, Option<String>, Option<String>, String, Option<String>);
+        let rows: Vec<InstallRow> = sqlx::query_as(
+            "SELECT a.app_slug, a.app_name, a.owner_id, a.org_id, a.app_install_scope, a.app_skill_ref, i.org_id \
+             FROM app_installs i JOIN artifacts a ON a.id = i.app_ref \
+             WHERE i.user_id = $1 AND i.app_kind = 'artifact' AND a.app_slug IS NOT NULL AND a.app_skill_ref IS NOT NULL \
+             ORDER BY a.app_slug",
+        )
+        .bind(user_id)
+        .fetch_all(self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for (app_slug, app_name, owner, app_org, scope, skill_ref, install_org) in rows {
+            let Some(owner) = owner.filter(|o| !o.is_empty()) else { continue };
+            // Resolved as the publisher now, so their edits and deletions show at once.
+            let skill = match resolve_skill_ref(self, &owner, &skill_ref).await {
+                Ok(Some(s)) => s,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(error = %e, app = %app_slug, "app skill unavailable");
+                    continue;
+                }
+            };
+            let own_or_org = owner == user_id || (app_org.is_some() && app_org == install_org);
+            out.push(AppSkill {
+                app_name: app_name.unwrap_or_else(|| app_slug.clone()),
+                app_slug,
+                default_enabled: own_or_org || scope.as_deref() != Some("link"),
+                skill,
+            });
         }
         Ok(out)
     }
