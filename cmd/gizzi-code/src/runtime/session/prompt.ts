@@ -2028,8 +2028,7 @@ const message = await createUserMessage(input)
       const descriptor = mcpCatalog.descriptors[key]
       scriptEntries.push({
         key,
-        server: descriptor?.serverName ?? key,
-        tool: descriptor?.originalName ?? key,
+        ...McpScript.bridgeName(descriptor, key),
         description: item.description,
         inputSchema: jsonSchemaValue.jsonSchema,
         outputSchema: descriptor?.outputSchema,

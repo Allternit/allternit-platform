@@ -43,6 +43,30 @@ export namespace McpScript {
     while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string)
   }
 
+  /**
+   * How a tool is named inside a script. App-chat tools reach gizzi through one
+   * proxy server as `<prefix>__<tool>` with `_meta["allternit/connector"]`
+   * (descriptor `connectorId` / `appName`): those become `<connector>.<tool>`,
+   * the connector name slugged to an identifier, else the prefix. A server
+   * connected straight to gizzi stays `<server>.<tool>`. `calls[].server` is this label.
+   */
+  export function bridgeName(
+    descriptor: { serverName: string; originalName: string; appName?: string; connectorId?: string } | undefined,
+    key: string,
+  ): { server: string; tool: string } {
+    if (!descriptor) return { server: key, tool: key }
+    const split = descriptor.originalName.indexOf("__")
+    const proxied = descriptor.connectorId !== undefined || descriptor.appName !== undefined
+    if (!proxied || split <= 0) return { server: descriptor.serverName, tool: descriptor.originalName }
+    const prefix = descriptor.originalName.slice(0, split)
+    const tool = descriptor.originalName.slice(split + 2) || descriptor.originalName
+    const slug = (descriptor.appName ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+    return { server: ScriptSandbox.identifier(slug || prefix), tool }
+  }
+
   // The raw CallToolResult of a bridged call, keyed by the options object the
   // bridge passed in (the wrapped execute returns model-ready output only).
   const raw = new WeakMap<object, unknown>()

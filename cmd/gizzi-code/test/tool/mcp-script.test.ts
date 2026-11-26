@@ -85,6 +85,20 @@ describe("mcp_script sandbox", () => {
     expect(new TextEncoder().encode(r.result).byteLength).toBeLessThanOrEqual(8 * 1024)
   })
 
+  test("proxied app-chat tools are bridged as <connector>.<tool>", () => {
+    expect(
+      McpScript.bridgeName({ serverName: "allternit", originalName: "gcal__list_events", appName: "Google Calendar", connectorId: "c1" }, "k"),
+    ).toEqual({ server: "google_calendar", tool: "list_events" })
+    expect(McpScript.bridgeName({ serverName: "allternit", originalName: "gh__a__b", connectorId: "c2" }, "k")).toEqual({
+      server: "gh",
+      tool: "a__b",
+    })
+    expect(McpScript.bridgeName({ serverName: "local-fs", originalName: "read__file" }, "k")).toEqual({
+      server: "local-fs",
+      tool: "read__file",
+    })
+  })
+
   test("declarations come from input and output schemas", () => {
     const d = McpScript.declarations([
       { key: "a", server: "github", tool: "list_issues", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] }, outputSchema: { type: "object", properties: { n: { type: "integer" } } }, call: async () => 0 },
