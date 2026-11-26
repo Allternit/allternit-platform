@@ -15,6 +15,16 @@ import androidx.compose.ui.semantics.semantics
 import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.SectionLabel
 import androidx.compose.foundation.border
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -187,7 +197,24 @@ fun SettingsRoot(host: SettingsHost) {
     val back: () -> Unit = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) }
     val push: (String) -> Unit = { stack.add(it) }
     Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
-        when (top) {
+        val frame = SettingsFrame(stack.size, top)
+        val reduced = rememberReduceMotion()
+        AnimatedContent(
+            targetState = frame,
+            transitionSpec = {
+                if (reduced) EnterTransition.None togetherWith ExitTransition.None
+                else {
+                    val pushing = targetState.depth > initialState.depth
+                    val spec = tween<IntOffset>(380, easing = PUSH_EASING)
+                    if (pushing) (slideInHorizontally(spec) { it } togetherWith slideOutHorizontally(spec) { -(it * 0.28f).toInt() }).apply { targetContentZIndex = 1f }
+                    else (slideInHorizontally(spec) { -(it * 0.28f).toInt() } togetherWith slideOutHorizontally(spec) { it }).apply { targetContentZIndex = -1f }
+                }
+            },
+            label = "settingsPush",
+        ) { f ->
+        val page = f.id
+        CompositionLocalProvider(LocalCrumbIcon provides crumbIconFor(page)) {
+        when (page) {
             null -> RootList(host, push)
             "advanced" -> AdvancedPage(host, back, push)
             "open-links" -> OpenLinksPage(back)
@@ -238,9 +265,25 @@ fun SettingsRoot(host: SettingsHost) {
             "gizziio-code" -> ProductsPage(ProductsPart.GizziCode, host, back)
             "cowork" -> ProductsPage(ProductsPart.Cowork, host, back)
             "extensions" -> ProductsPage(ProductsPart.Extensions, host, back)
-            else -> SPlaceholder(pageLabel(top), back)
+            else -> SPlaceholder(pageLabel(page), back)
+        }
+        }
         }
     }
+}
+
+/** One Settings screen in the push stack; [depth] tells push from pop. */
+private data class SettingsFrame(val depth: Int, val id: String?)
+
+/** `cubic-bezier(.32,.72,0,1)` from the approved phone push. */
+private val PUSH_EASING = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+
+/** The page's icon for the back crumb tile; null shows the plain back button. */
+private fun crumbIconFor(id: String?): Int? = when (id) {
+    null -> null
+    "advanced" -> DesignR.drawable.ph_terminal
+    "open-links" -> DesignR.drawable.ph_arrow_square_out
+    else -> ALL_PAGES.firstOrNull { it.id == id }?.icon
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -257,7 +300,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
     var signOutError by remember { mutableStateOf<String?>(null) }
     val account = host.account
     SPage(
-        "Settings", tag = "settingsScreen",
+        "Settings", tag = "settingsScreen", animateIn = false,
         leading = { SRoundButton(DesignR.drawable.ph_x, "Close settings", "settingsClose", host.onClose) },
         trailing = { SRoundButton(DesignR.drawable.ph_info, "About Allternit", "settingsInfoMenu") { info = true } },
     ) {

@@ -11,6 +11,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.border
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -162,6 +167,9 @@ internal fun StateBox(title: String, message: String, actionTitle: String?, onAc
     }
 }
 
+/** The icon of the page being shown, for the back crumb tile (set by SettingsRoot per pushed page). */
+internal val LocalCrumbIcon = compositionLocalOf<Int?> { null }
+
 /** A pushed Settings page: a round ‹ (or [leading]), a centred title, and a scrolling column. */
 @Composable
 internal fun SPage(
@@ -170,10 +178,16 @@ internal fun SPage(
     onBack: (() -> Unit)? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
+    animateIn: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = AllternitTheme.colors
     val scroll = rememberScrollState()
+    val crumb = LocalCrumbIcon.current
+    val reduced = rememberReduceMotion()
+    // Contents fade in and rise 6dp as the page finishes sliding in.
+    val intro = remember { Animatable(if (reduced || !animateIn) 1f else 0f) }
+    LaunchedEffect(Unit) { if (intro.value < 1f) intro.animateTo(1f, tween(220, delayMillis = 100, easing = LinearOutSlowInEasing)) }
     // Every settings page docks its title: the big title sits under the bar and spells into the bar's centre.
     ProvideDockScroll(scroll) {
         val offset = LocalDockOffset.current
@@ -183,13 +197,16 @@ internal fun SPage(
                 Box(Modifier.align(Alignment.CenterStart)) {
                     when {
                         leading != null -> leading()
-                        onBack != null -> SRoundButton(DesignR.drawable.ph_caret_left, "Back", "settingsBack", onBack)
+                        onBack != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SRoundButton(DesignR.drawable.ph_caret_left, "Back", "settingsBack", onBack)
+                            if (crumb != null) STile(crumb, c.textPrimary, playOnAppear = true)
+                        }
                     }
                 }
                 Box(Modifier.align(Alignment.CenterEnd)) { trailing() }
             }
             Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+                Modifier.weight(1f).fillMaxWidth().graphicsLayer { alpha = intro.value; translationY = 6.dp.toPx() * (1f - intro.value) }.verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 // Room for the big title (it flies up into the bar as this column scrolls).
