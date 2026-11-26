@@ -44,5 +44,7 @@ dependencies {
     implementation(libs.activity.compose)
     // WebViewCompat.addWebMessageListener / addDocumentStartJavaScript.
     implementation(libs.androidx.webkit)
+    // Real-PDF signing (PdfSign.kt): keeps the original pages and their text.
+    implementation(libs.pdfbox.android)
     testImplementation(libs.junit)
 }
