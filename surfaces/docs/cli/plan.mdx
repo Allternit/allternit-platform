@@ -86,6 +86,28 @@ gizzi exec --permission-mode plan "Plan a refactor of the checkout flow"
 
 In these cases the agent behaves the same way as if `/plan` had been invoked: it explores, designs, and writes a plan before making any changes.
 
+## Saved plans
+
+When the agent finishes a plan and you have an Allternit account, Gizzi saves the plan to it as one artifact for the session (id `art_plan_<session id>`). A changed plan is a new version of the same artifact. Offline or signed out, nothing is saved and the prompt works as before.
+
+Plans stay out of the normal artifact list. To list them:
+
+```bash
+gizzi artifact list --plans
+```
+
+Each plan prints like any other artifact: its id, version, type, title and last update. The plan's status (`open`, `approved` or `done`) shows in the app's Plans list. Without `--plans`, `gizzi artifact list` doesn't show plans.
+
+### Open in Allternit
+
+When the plan is saved to your account, the approval prompt shows the plan's title and steps with the hint **Press o to open in Allternit**. Press `o` to open the plan in the app, where you can approve, revise or ask a question:
+
+- With Allternit Desktop installed, it opens `allternit://artifact/<id>` in the Desktop window, and the hint changes to "Opened in Allternit".
+- Without Desktop, it opens `https://ai.allternit.com/?artifact=<id>` in your browser ("Opened in your browser").
+- If neither works, the hint says "Could not open the plan".
+
+The prompt still works in the terminal. Whichever place answers first counts.
+
 ## Exiting plan mode
 
 Plan mode ends when:

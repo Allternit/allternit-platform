@@ -46,10 +46,23 @@ See [Authentication](/api/authentication).
 | `pdf` | `application/pdf` | |
 | `video` | `application/vnd.allternit.video+json` | |
 | `guard-report` | `text/html` | |
+| `plan` | `text/markdown` | |
 
 When a create leaves out `body_format`, the kind's default is used. The server also accepts well-formed kinds it doesn't know (lower-case, at most 32 characters) so newer clients keep working. Apps show an unknown kind as a page when the body is HTML and as code otherwise.
 
 `runtime_version` is `2` for current artifacts. `1` marks legacy artifacts imported from the old local stores. A create with `runtime_version: 1` must set `origin.legacy_source`.
+
+## Plan kind
+
+A `plan` artifact is a chat's plan. Gizzi writes it when the agent finishes planning.
+
+- **One per chat.** The id is `art_plan_<session id>` and the body is the plan as Markdown. A create with an id that exists returns the first plan, so a second plan request for the same chat doesn't add a row. A revised plan is a new version of the same artifact.
+- **Left out of lists.** `GET /api/v2/artifacts` without `kind=plan` never returns a plan. That includes title search and the lists of org members. Old clients that don't know the kind never show plans. Ask for them with `GET /api/v2/artifacts?kind=plan`, newest `updated_at` first.
+- **Status.** Summaries and artifacts of kind `plan` carry `plan: {status}`, `open` (also when never set), `approved` or `done`. Set it with `PATCH /api/v2/artifacts/{id}` and `{ "plan_status": "approved" }`. It needs `owner` and doesn't add a version. Other kinds answer `422 not_a_plan`, and a value other than the three answers `422 invalid_plan_status`. Gizzi sets `approved` when you approve the plan and `done` when every todo of the approved plan is completed.
+- **Not an app.** Installing a plan as an app answers `422 kind_not_installable`.
+- **Deep link.** Allternit Desktop opens `allternit://artifact/<id>` in its main window at `/?artifact=<id>`, the same address the web app reads. The id must be `art_` followed by up to 64 letters, digits, `_` or `-`. Query strings, extra path parts and escapes are dropped, and anything else is ignored.
+
+The database stores the status in the nullable `plan_status` column (migration 166), with an index on the owner's plans for the Plans list.
 
 ## guard-report kind
 
@@ -102,6 +115,7 @@ Viewers and commenters see `shared_version`, or the latest version when it is `n
 | `origin` | object | Where it came from. The owner sees the full object (`surface`, `session_id`, `message_id`, `computer_id`, `legacy_source`, `legacy_id`). Everyone else sees only `surface` and `legacy_source`. |
 | `runtime_version` | number | `2`, or `1` for legacy. |
 | `thumbnail_url` | string \| null | |
+| `plan` | object | Only on `plan` artifacts: `{status}` with `open`, `approved` or `done`. See [Plan kind](#plan-kind). |
 
 ### Artifact
 
@@ -124,7 +138,7 @@ GET /api/v2/artifacts?scope=all&kind=page&q=plan&origin=chat&limit=50&cursor=...
 | Query | Description |
 | --- | --- |
 | `scope` | `mine`, `shared` (shared with you, or visible to your org), or `all` (default). Link-shared artifacts are never listed for people who don't own them. |
-| `kind` | Only this kind. |
+| `kind` | Only this kind. Without `kind`, `plan` artifacts are left out (see [Plan kind](#plan-kind)). `kind=plan` lists only plans. |
 | `q` | Case-insensitive title search. |
 | `origin` | Only artifacts whose `origin.surface` matches. |
 | `limit` | 1–100, default 50. |
@@ -158,11 +172,11 @@ Returns `201` with the `Artifact` (version 1). Optional fields: `id`, `icon`, `t
 
 ```http
 GET    /api/v2/artifacts/{id}
-PATCH  /api/v2/artifacts/{id}   { "title"?, "icon"?, "shared_version"?: number | null, "capabilities"? }
+PATCH  /api/v2/artifacts/{id}   { "title"?, "icon"?, "shared_version"?: number | null, "capabilities"?, "plan_status"? }
 DELETE /api/v2/artifacts/{id}
 ```
 
-`PATCH` returns the `Artifact`. `title` and `icon` need `edit`. `shared_version` (from 1 to `current_version`, or `null`) and `capabilities` need `owner`. Turning on `ai` or `connectors` for an artifact shared by link gets `422 link_not_allowed`.
+`PATCH` returns the `Artifact`. `title` and `icon` need `edit`. `shared_version` (from 1 to `current_version`, or `null`), `capabilities` and `plan_status` need `owner`. Turning on `ai` or `connectors` for an artifact shared by link gets `422 link_not_allowed`.
 
 `DELETE` is owner-only and **permanent**. There is no trash. Versions, shares and comments are deleted with the artifact. It returns `204`.
 

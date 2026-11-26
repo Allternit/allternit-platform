@@ -31,7 +31,43 @@ Empty steps are dropped when you approve. A plan holds at most 50 steps, and eac
 - **Approve + allow sends**: the same, and the plan's messages and file uploads go out without asking again for this task. Payments, signatures and deletions still ask.
 - **Keep planning**: the agent stays in plan mode. Reply with notes to revise the plan.
 
-## Open the full plan
+## Open the plan in the app
+
+When the plan is saved to your account, the card has an **Open plan** button. It opens the whole plan in the artifact window, docked to the right of the chat on Desktop and the web, and as a sheet on the phone layout and in the m.allternit.com app. On Desktop it never opens a browser window. The window shows the plan's own sections and its step list.
+
+The bar at the bottom of the plan window has three buttons while the plan is waiting for you:
+
+| Button | What it does |
+|---|---|
+| **Approve** | Answers Yes. The agent switches to building and runs the steps. |
+| **Revise** | Answers No, so the agent keeps planning. Your cursor goes to the text box, and your next message is the note on what to change. |
+| **Ask a question** | Also answers No and keeps planning. Your next message is the question. |
+
+After you answer, the bar shows the plan's status instead of the buttons. The window's **...** menu has **Open in browser** (only when the plan also has a plan page), **Copy link** and **Export PDF**.
+
+## Plans are saved as artifacts
+
+Each chat has one plan artifact. When the agent finishes a plan, Gizzi saves it to your account. If the agent changes the plan and asks again, the saved plan gets a new version. It doesn't add a second plan for that chat.
+
+A plan has a status:
+
+| Status | Meaning |
+|---|---|
+| **Open** | Waiting for your answer, or you chose to keep planning. |
+| **Approved** | You approved it and the agent is working on its steps. |
+| **Done** | Every approved step is completed. |
+
+Plans never flood your lists. They don't show in **Recent** or **Everything** on the Artifacts page, in the composer deck's Artifacts list, or on iOS and Android. They show only under the **Plans** chip on the Artifacts page. See [Artifacts](/guides/artifacts).
+
+The Plans list is grouped by project and sorted with the newest first. Each row has the plan's title, its chat, its status, its version (such as "v4"), when it was updated and **Open**.
+
+If you are offline or signed out, the plan isn't saved. The card still shows the steps and the approval works as before; **Open plan** isn't shown.
+
+## On iOS and Android
+
+The plan question shows a plan card with the title, the number of steps and **Open plan**. The plan opens in a sheet that shows the plan and its steps with **Approve**, **Revise** and **Ask a question**. The sheet is read-only: you can't edit the steps on iOS or Android, so Approve runs them as proposed.
+
+## Open the full plan page
 
 The card shows only the steps. When the plan is also open as a plan page, the card has an **Open full plan** link. The page shows the whole plan with its sections, and it has the same step list to edit. You can answer on the card or on the page. The first answer counts, and the other one closes.
 
@@ -49,4 +85,7 @@ If you changed the plan, the agent is told that you edited it and runs your list
 - The question carries `plan: { steps }`. The reply to `POST /api/v1/questions/{id}/reply` may carry `plan: [{ title, detail? }]` with the edited steps. allternit-api forwards only well-formed steps within the limits above, and Gizzi checks them again.
 - `POST /v1/question/{id}/plan-page` with `{ url }` on Gizzi links a pending plan question to a page that shows the same plan. Only http and https links of at most 2,000 characters are kept. The link appears as `plan.page` in the question list, and the card shows it as **Open full plan**. On ai.allternit.com, a link to `127.0.0.1` shows only in a browser on the same machine.
 - The answer-me plan bridge (a Gizzi plugin) uses this route. It shows the question's `plan.steps` as an editable list on its page, and its reply carries the edited steps as `plan`.
-- Clients that don't draw the card (the terminal UI, iOS, bot channels) answer the same question with its options, and the agent runs the steps as proposed.
+- When the plan is saved, the question also carries `plan.body` (the Markdown), `plan.title` and `plan.artifact` (`{ id, version, persisted }`). The id is `art_plan_<session id>`. See [Artifacts API](/api/artifacts-v2#plan-kind).
+- Approve (Yes) sets the plan artifact's `plan_status` to `approved`. Gizzi sets `done` once every todo of the approved plan is completed, also after a restart. Keep planning leaves it `open`. A failed status update is logged and never blocks the turn.
+- Revise and Ask a question both send No, the same reply as Keep planning. The note or question goes in the next message.
+- Clients that don't draw the card (bot channels, the VS Code extension) answer the same question with its options, and the agent runs the steps as proposed. In the terminal, see [Open in Allternit](/cli/plan#open-in-allternit).

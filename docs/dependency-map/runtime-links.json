@@ -953,6 +953,16 @@
     {
       "source": "allternit/cmd/gizzi-code/src/runtime/tools",
       "target": "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
+      "kind": "HTTP /api/v2/artifacts plan artifacts (plan_exit creates art_plan_<session> with kind plan; PATCH plan_status open|approved|done; GET ?kind=plan lists them, the default list leaves them out)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/plan.ts",
+        "allternit/docs/design/artifacts-v2.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
       "kind": "HTTP /api/v2/artifacts (artifact_create / artifact_update / artifact_read)",
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",

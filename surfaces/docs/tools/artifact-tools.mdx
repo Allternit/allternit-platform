@@ -206,8 +206,21 @@ Heartbeats are best effort. They run in the background with a 2.5 second timeout
 | `diagram` | `text/vnd.mermaid` or `image/svg+xml` |
 | `image` | `text/uri-list` (the image URL, not its data) |
 | `code` | `text/plain`, with `meta.language` and optionally `meta.filename` |
+| `plan` | `text/markdown` (written by `plan_exit` only) |
 
 The JSON and OpenUI formats (docs, sheets, slides, designs, dashboards, ops sheets, motion, cards) are described to the model by the app's system prompt; the tool descriptions point the model there. gizzi refuses a format that doesn't belong to the kind and a `+json` body that isn't valid JSON, with an error the model can act on.
+
+## Plans
+
+`plan_exit` saves the session's plan as the one `plan` artifact of that chat (id `art_plan_<session id>`, Markdown body, capped at 100,000 characters). The title is the plan's first heading, else the session title. A changed plan adds a version, an unchanged plan adds nothing. The plan question then carries `plan.body`, `plan.title` and `plan.artifact` (`{id, version, persisted}`). Offline, signed out, or against an older server that doesn't know the kind, `persisted` is `false` and the question still carries the body.
+
+`plan` is not a kind the model can pass to `artifact_create`; only `plan_exit` writes it. `artifact_list` leaves plans out. In the terminal, `gizzi artifact list --plans` lists them. After you answer the plan question, Gizzi sets the plan's status to `approved`, and to `done` when every todo is completed. See [Plan status](/api/artifacts-v2#plan-kind) and [Edit and approve an agent's plan](/guides/plan-approval).
+
+## The mode registry
+
+The modes the composer, the Artifacts page, the rail menu and the native apps list come from one file, `contracts/agent-modes/agent-modes-v1.json` in allternit-platform: Agent (auto), Agent Swarm, Docs, Sheets, Slides, PDF, Page, Dashboard, Ops sheet, Design, Image, Video, Motion, App, Build and Deep Research. Each entry has its label, icon, placeholder, how it launches, the artifact kind it files under and the surfaces where it shows. Its `can` list names the "It can" toggles (`connectors`, `storage`, `ai`) the kind can honour.
+
+`node contracts/agent-modes/generate.mjs` writes the Gizzi (`agentModes.gen.ts`), iOS (`AgentModes.gen.swift`) and Android (`AgentModes.gen.kt`) copies, and `--check` fails when one is stale. The web app keeps a byte copy of the JSON. Don't edit the generated files by hand.
 
 ## Where artifacts are saved
 
