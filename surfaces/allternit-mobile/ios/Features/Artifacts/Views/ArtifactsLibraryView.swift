@@ -38,6 +38,7 @@ struct ArtifactsLibraryView: View {
     @State private var showingOfficeDocuments = false
     @State private var choosingNew = false
     @State private var searchDraft = ""
+    @State private var introShowing = false
     @State private var searching = false
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
@@ -56,6 +57,8 @@ struct ArtifactsLibraryView: View {
                 LibrarySectionHeader(title: nil, onMenu: { openLibraryDrawer($isSidebarOpen) }) {
                     ProjectsPill(searching: $searching, filtersActive: filtersOn, searchLabel: "Search artifacts") { filterPopover }
                 }
+                .blur(radius: introShowing ? PolishTokens.introScrimBlur : 0)
+                .allowsHitTesting(!introShowing)
                 if searching || !searchDraft.isEmpty {
                     ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
                 }
@@ -80,7 +83,10 @@ struct ArtifactsLibraryView: View {
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
             .hidesOnScroll(barHidden)
+            .opacity(introShowing ? 0 : 1)
+            .allowsHitTesting(!introShowing)
         }
+        .onPreferenceChange(IntroShowingKey.self) { introShowing = $0 }
         .background(Color("BgPrimary").ignoresSafeArea())
         .tracksScrollForHide($barHidden)
         .fullScreenCover(item: $openArtifact) { summary in

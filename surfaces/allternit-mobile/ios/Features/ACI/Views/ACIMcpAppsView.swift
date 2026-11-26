@@ -67,14 +67,14 @@ struct ACIMcpAppsView: View {
 
     var body: some View {
         Group {
-            if tab == .build || tab == .shelf {
-                // Build keeps its own scroll, so it keeps the serif title.
+            if tab == .shelf {
+                // The shelf keeps its own scroll, so it keeps the serif title.
                 VStack(spacing: 0) {
                     ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16)
                         .padding(.horizontal, 16)
                     bar
                     noticeRow
-                    if tab == .shelf { AppsShelfView() } else { ACIMcpBuildTab(model: model) }
+                    AppsShelfView()
                 }
             } else {
                 ACIDockReader { dock in
@@ -84,7 +84,11 @@ struct ACIMcpAppsView: View {
                             ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16, dock: dock)
                                 .padding(.horizontal, 2)
                             Section {
-                                if tab == .installed { installed } else { discover }
+                                switch tab {
+                                case .installed: installed
+                                case .build: ACIMcpBuildTab(model: model, embedded: true)
+                                default: discover
+                                }
                             } header: {
                                 VStack(spacing: 0) {
                                     bar
@@ -425,6 +429,12 @@ struct ACIMcpAppsView: View {
                     + top.map { FilterPills<String>.Item(id: $0.name, title: $0.name) },
                 selection: picks
             )
+            // Edge fade: a chip running off the right edge fades, so a cut word reads as "scrolls".
+            .mask(HStack(spacing: 0) {
+                Rectangle().fill(Color.black)
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 22)
+            })
             if !rest.isEmpty {
                 Menu {
                     ForEach(rest, id: \.name) { item in
@@ -1175,30 +1185,39 @@ private struct ACIMcpBuildTab: View {
     @ObservedObject var model: ACIMcpAppsModel
     @State private var mine: [ACIMcpAppsModel.Submission]? = nil
     @State private var loadFailed = false
+    /// Inside the docking page (no scroll view of its own).
+    var embedded = false
 
     var body: some View {
-        ScrollView {
+        if embedded {
+            content.task { await load() }
+        } else {
+            ScrollView { content }.task { await load() }
+        }
+    }
+
+    private var content: some View {
             VStack(alignment: .leading, spacing: 32) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Your apps")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
                     if loadFailed {
-                        HStack(spacing: 8) {
-                            Text("Couldn’t load your apps.").foregroundColor(Color("TextSecondary"))
-                            Button("Retry") { Task { await load() } }
-                                .fontWeight(.medium)
-                                .foregroundColor(Color("TextPrimary"))
-                                .underline()
-                        }
-                        .font(.system(size: 14))
+                        EmptyBox(title: "Couldn’t load your apps",
+                                 line: "Check your connection and try again.",
+                                 art: .apps,
+                                 actionTitle: "Retry",
+                                 action: { Task { await load() } })
+                        Link("Read the MCP Apps docs", destination: URL(string: "https://docs.allternit.com/mini-apps")!)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                            .frame(maxWidth: .infinity)
                     }
                     if let mine {
                         if mine.isEmpty {
                             if !loadFailed {
-                                Text("You haven’t submitted an app yet. Package one below and it shows up here.")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(Color("TextSecondary"))
+                                EmptyRowCard(art: .apps, title: "No apps submitted yet",
+                                             hint: "Package one below and it shows up here.")
                             }
                         } else {
                             ForEach(mine) { record in
@@ -1240,10 +1259,8 @@ private struct ACIMcpBuildTab: View {
                     .foregroundColor(Color("TextSecondary"))
                     .tint(Color("TextSecondary"))
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, embedded ? 14 : 24)
             .padding(.vertical, 20)
-        }
-        .task { await load() }
     }
 
     private func load() async {

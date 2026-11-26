@@ -110,6 +110,29 @@ struct EmptyBox: View {
     }
 }
 
+/// A compact empty row: neutral fill, small empty art left, title + hint right.
+struct EmptyRowCard: View {
+    let art: EmptyArtKind
+    let title: String
+    let hint: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            EmptyArt(kind: art, size: .panel, paper: PolishTokens.neutralFill)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(PolishTokens.ink)
+                Text(hint).font(.system(size: 14)).foregroundStyle(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// The page every polished tab uses: docking block title, description, then
 /// content with 14 pt gutters and room for a floating button. Pass `introKey`
 /// and `hero` to show the first-visit intro.
