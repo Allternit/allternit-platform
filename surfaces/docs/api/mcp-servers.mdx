@@ -287,7 +287,7 @@ Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a sh
 
 ## Result schemas, feedback and connected apps (mcp.allternit.com)
 
-Every tool the edge itself serves (phone, mail, `decide`, `respond` and `submit_feedback`) lists an `outputSchema` next to its `inputSchema`. When a call returns a JSON object, the result carries it as `structuredContent` and also as text in `content`, so older clients keep working.
+Every tool the edge itself serves (phone, mail, `decide`, `respond` and `submit_feedback`) lists an `outputSchema` next to its `inputSchema`. Each schema is the real result shape of that tool (properties, types, required), so a client can generate typed stubs from it. A tool relayed from a runtime keeps the schema the runtime gave it, or a generic object. When a call returns a JSON object, the result carries it as `structuredContent` and also as text in `content`, so older clients keep working.
 
 `submit_feedback` takes `{ "tool": "<tool name>", "message": "<optional note>" }` and returns `{ "ok": true }`. The edge writes one log line with your user id, the tool and the first 500 characters of the message. It stores nothing else and relays nothing to a computer. It is listed on every `tools/list` answer, so an app can show a "Report a problem" action for it.
 
@@ -296,7 +296,7 @@ Every tool the edge itself serves (phone, mail, `decide`, `respond` and `submit_
 | Field | Value |
 | --- | --- |
 | `clientName` | The app's label, or its client id when it has no label. |
-| `tools` | `string[]`: the tool names the edge serves to that app for its target (today `["submit_feedback"]`; the server's own tools are not listed). |
+| `tools` | `string[]`: the tool names the edge serves to that app for its target (the names the last `tools/list` on that target answered with, runtime tools included, at most 20; before any list has been seen, only the edge's own tools such as `submit_feedback`). |
 
 Disconnect an app with `DELETE /api/v1/mcp/approvals/:id` for each of its rows.
 

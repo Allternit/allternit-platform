@@ -768,7 +768,11 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
                 return rpc_reply(&era, reply);
             }
             let reply = match rpc_method {
-                "tools/list" => mcp_protocol::rpc_ok(&id, json!({ "tools": edge_tools(phone_key.is_some(), mail_key.is_some(), model_key.as_ref()) })),
+                "tools/list" => {
+                    let tools = edge_tools(phone_key.is_some(), mail_key.is_some(), model_key.as_ref());
+                    remember_tools(&target.approval_target(), &tools);
+                    mcp_protocol::rpc_ok(&id, json!({ "tools": tools }))
+                }
                 "tools/call" => mcp_protocol::rpc_err(&id, mcp_protocol::codes::INVALID_PARAMS, format!("Unknown tool: {tool}")),
                 _ => mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, format!("Method not found: {rpc_method}")),
             };
@@ -834,6 +838,9 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
                 Some(k) => with_model_tools(reply, k),
                 None => reply,
             };
+            if rpc_method == "tools/list" && status == 200 {
+                remember_tools_in_reply(&target.approval_target(), &reply);
+            }
             let reply = match apps.filter(|_| status == 200) {
                 Some(_) if rpc_method == "initialize" => super::mcp_edge_apps::advertise_resources(reply),
                 Some(store) => super::mcp_edge_apps::with_app_entries(store, &caller.user_id, rpc_method, reply).await,
@@ -952,7 +959,8 @@ const FEEDBACK_MAX_CHARS: usize = 500;
 fn add_output_schemas(tools: &mut [Value]) {
     for t in tools {
         if let Some(o) = t.as_object_mut() {
-            o.entry("outputSchema").or_insert_with(|| json!({ "type": "object", "additionalProperties": true }));
+            let name = o.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+            o.entry("outputSchema").or_insert_with(|| output_schema_for(&name));
         }
     }
 }
@@ -1000,10 +1008,112 @@ fn with_feedback_tool(reply: Vec<u8>) -> Vec<u8> {
         _ => reply,
     }
 }
-/// The tool names the edge itself serves to any caller of an approval target
-/// (what a connected app may call here); the runtime's own tools are not listed.
-pub fn edge_tool_names(_approval_target: &str) -> Vec<String> {
-    vec![FEEDBACK_TOOL.to_string()]
+const MAX_LISTED_TOOLS: usize = 20;
+
+/// The tool names the last `tools/list` answered with, per approval target (memory only, no table).
+fn listed_tools() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<String>>> {
+    static M: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> = std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
+fn remember_tools(approval_target: &str, tools: &[Value]) {
+    let names: Vec<String> = tools.iter().filter_map(|t| t["name"].as_str().map(str::to_string)).take(MAX_LISTED_TOOLS).collect();
+    if let Ok(mut m) = listed_tools().lock() {
+        m.insert(approval_target.to_string(), names);
+    }
+}
+
+fn remember_tools_in_reply(approval_target: &str, reply: &[u8]) {
+    if let Some(tools) = serde_json::from_slice::<Value>(reply).ok().as_ref().and_then(|v| v.pointer("/result/tools")).and_then(Value::as_array) {
+        remember_tools(approval_target, tools);
+    }
+}
+
+/// What a connected app can use on this target: the tool names its last
+/// `tools/list` answered with (runtime tools included), at most 20; before any
+/// list has been seen, the tools the edge serves itself.
+pub fn edge_tool_names(approval_target: &str) -> Vec<String> {
+    match listed_tools().lock().ok().and_then(|m| m.get(approval_target).cloned()) {
+        Some(names) if !names.is_empty() => names,
+        _ => vec![FEEDBACK_TOOL.to_string()],
+    }
+}
+
+fn nullable(ty: &str) -> Value {
+    json!({ "type": [ty, "null"] })
+}
+
+/// The real result shape of an edge-served tool, read from its handler. A tool
+/// the edge does not know (relayed from a runtime) gets the generic object.
+fn output_schema_for(name: &str) -> Value {
+    let s = || json!({ "type": "string" });
+    let obj = |props: Value, required: &[&str]| json!({ "type": "object", "properties": props, "required": required, "additionalProperties": true });
+    let page = |item: Value| obj(json!({ "data": { "type": "array", "items": item }, "has_more": { "type": "boolean" }, "next_cursor": nullable("string") }), &["data"]);
+    let mailbox = obj(json!({ "id": s(), "object": { "const": "mailbox" }, "account_id": s(), "agent_id": nullable("string"), "address": s(), "display_name": nullable("string"), "created_at": s() }), &["id", "object", "address"]);
+    let message = obj(
+        json!({
+            "id": s(), "object": { "const": "mail_message" }, "mailbox_id": s(), "from": s(), "to": s(), "subject": nullable("string"), "snippet": nullable("string"),
+            "codes": { "type": "array" }, "links": { "type": "array" }, "is_verification": { "type": "boolean" }, "received_at": s(),
+            "text": nullable("string"), "html": nullable("string")
+        }),
+        &["id", "object", "mailbox_id", "from", "to"],
+    );
+    // A phone action runs on the device; its result is the device's, plus `object`.
+    let phone_tool_result = obj(json!({ "object": { "const": "phone.tool_result" }, "ok": { "type": "boolean" }, "serial": s(), "error": s(), "message": s(), "mimeType": s() }), &[]);
+    let run_started = obj(json!({ "object": { "const": "phone.run" }, "run_id": nullable("string"), "serial": nullable("string"), "skill": nullable("string"), "status": s() }), &["object", "status"]);
+    match name {
+        FEEDBACK_TOOL => obj(json!({ "ok": { "type": "boolean" } }), &["ok"]),
+        "phones_list" => obj(json!({ "phones": { "type": "array", "items": { "type": "object" } } }), &["phones"]),
+        "phone_screenshot" | "phone_tap" | "phone_type" | "phone_open_app" | "phone_tool" => phone_tool_result,
+        "phone_task" | "phone_skill_run" => run_started,
+        "phone_run_status" => obj(
+            json!({
+                "object": { "const": "phone.run" }, "run_id": s(), "serial": {}, "status": s(), "ok": nullable("boolean"), "started_at": {}, "ended_at": {},
+                "steps": {}, "failed": {}, "held_ms": {}, "holds": { "type": "array" }, "recent_steps": { "type": "array" }
+            }),
+            &["object", "run_id", "status", "holds", "recent_steps"],
+        ),
+        "phone_history" => obj(
+            json!({
+                "object": { "const": "phone.history" }, "serial": s(), "steps": { "type": "array" }, "runs": { "type": "array" },
+                "retention_days": {}, "max_steps": {}, "limit": {}, "truncated": { "type": "boolean" }
+            }),
+            &["object", "serial", "steps", "runs", "truncated"],
+        ),
+        "phone_live_url" => obj(
+            json!({
+                "object": { "const": "phone.live_view" }, "id": s(), "serial": s(), "view_only": { "type": "boolean" }, "expires_in": { "type": "integer" },
+                "expires_at": s(), "viewer_url": s(), "stream_url": s()
+            }),
+            &["object", "id", "view_only", "viewer_url", "stream_url"],
+        ),
+        "phone_maps" => obj(json!({ "ok": { "type": "boolean" }, "maps": { "type": "array" }, "map": { "type": "object" } }), &["ok"]),
+        "mailbox_create" => mailbox,
+        "mailbox_list" => obj(json!({ "data": { "type": "array", "items": mailbox } }), &["data"]),
+        "mail_list" => page(message),
+        "mail_read" => message,
+        "mail_read_otp" => obj(
+            json!({ "object": { "const": "mail_otp" }, "found": { "type": "boolean" }, "code": nullable("string"), "codes": { "type": "array" }, "links": { "type": "array" }, "message": { "type": ["object", "null"] } }),
+            &["object", "found", "code", "codes", "links", "message"],
+        ),
+        "decide" => obj(
+            json!({
+                "id": s(), "object": { "const": "decision" }, "created_at": s(), "answers": { "type": "array", "items": { "type": "object" } }, "backend": {},
+                "latency_ms": { "type": "integer" }, "usage": { "type": "object" }, "outcomes": {}, "metadata": {}
+            }),
+            &["id", "object", "answers"],
+        ),
+        "respond" => obj(
+            json!({
+                "id": s(), "object": { "const": "response" }, "status": s(), "model": {}, "agent_id": nullable("string"), "conversation_id": nullable("string"),
+                "previous_response_id": nullable("string"), "output": {}, "incomplete_details": {}, "required_actions": { "type": "array" },
+                "usage": obj(json!({ "input_tokens": { "type": "integer" }, "output_tokens": { "type": "integer" } }), &["input_tokens", "output_tokens"]),
+                "error": {}, "metadata": {}, "created_at": s(), "completed_at": {}
+            }),
+            &["id", "object", "status", "output", "usage"],
+        ),
+        _ => json!({ "type": "object", "additionalProperties": true }),
+    }
 }
 // ─── outputSchema + feedback ─── END
 
@@ -1648,6 +1758,31 @@ mod tests {
         let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY), call).await;
         assert_eq!((s, b["result"]["isError"].as_bool(), b["result"]["structuredContent"]["ok"].as_bool()), (StatusCode::OK, Some(false), Some(true)));
         assert!(f.calls.lock().unwrap().is_empty(), "feedback never reaches a runtime");
+        // Each edge tool's schema accepts a sample of its real result shape.
+        let ok = |name: &str, sample: Value| {
+            let v = jsonschema::validator_for(&output_schema_for(name)).unwrap();
+            assert!(v.is_valid(&sample), "{name}: {sample}");
+        };
+        ok("submit_feedback", json!({ "ok": true }));
+        ok("phones_list", json!({ "phones": [{ "serial": "R5C", "online": true }] }));
+        ok("phone_tap", json!({ "object": "phone.tool_result", "ok": true, "serial": "R5C" }));
+        ok("phone_task", json!({ "object": "phone.run", "run_id": "r1", "serial": null, "skill": null, "status": "running" }));
+        ok("phone_run_status", json!({ "object": "phone.run", "run_id": "r1", "serial": "R5C", "status": "ended", "ok": null, "started_at": null, "ended_at": null, "steps": 3, "failed": 0, "held_ms": null, "holds": [], "recent_steps": [] }));
+        ok("phone_history", json!({ "object": "phone.history", "serial": "R5C", "steps": [], "runs": [], "retention_days": 7, "max_steps": 50, "limit": 20, "truncated": false }));
+        ok("phone_live_url", json!({ "object": "phone.live_view", "id": "v", "serial": "R5C", "view_only": true, "expires_in": 600, "expires_at": "t", "viewer_url": "u", "stream_url": "w" }));
+        ok("phone_maps", json!({ "ok": true, "maps": [] }));
+        ok("mailbox_list", json!({ "data": [{ "id": "mbx_1", "object": "mailbox", "account_id": "a", "agent_id": null, "address": "a@b.c", "display_name": null, "created_at": "t" }] }));
+        ok("mail_list", json!({ "data": [], "has_more": false, "next_cursor": null }));
+        ok("mail_read_otp", json!({ "object": "mail_otp", "found": false, "code": null, "codes": [], "links": [], "message": null }));
+        ok("decide", json!({ "id": "dec_1", "object": "decision", "created_at": "t", "answers": [{ "name": "q" }], "backend": "x", "latency_ms": 5, "usage": {}, "outcomes": null, "metadata": null }));
+        ok("respond", json!({ "id": "resp_1", "object": "response", "status": "completed", "model": "m", "agent_id": null, "output": [], "usage": { "input_tokens": 1, "output_tokens": 2 }, "created_at": "t" }));
+        let bad = jsonschema::validator_for(&output_schema_for("mail_read_otp")).unwrap();
+        assert!(!bad.is_valid(&json!({ "object": "mail_otp" })), "a schema that accepts anything is not a schema");
+        // The approvals `tools` list follows what tools/list answered, capped at 20.
+        remember_tools("bot:zz", &(0..30).map(|i| json!({ "name": format!("t{i}") })).collect::<Vec<_>>());
+        let names = edge_tool_names("bot:zz");
+        assert_eq!((names.len(), names[0].as_str()), (20, "t0"));
+        assert_eq!(edge_tool_names("bot:never-listed"), vec!["submit_feedback".to_string()]);
         let long = feedback_result("u", &json!({ "tool": "t", "message": "é".repeat(900) }));
         assert_eq!(long["structuredContent"]["ok"], true);
     }
