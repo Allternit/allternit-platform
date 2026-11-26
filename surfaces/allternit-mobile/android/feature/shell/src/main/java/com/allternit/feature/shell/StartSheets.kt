@@ -57,6 +57,7 @@ import com.allternit.core.api.ApiJson
 import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.FriendlyErrorMessage
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
@@ -286,12 +287,14 @@ internal fun NativeSessionPickerSheet(
                     onAction = { reload++ },
                     modifier = Modifier.padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_desktop), contentDescription = null, tint = c.textSecondary) }
-                filtered.isEmpty() -> Text(
-                    if (query.isEmpty()) "No CLI sessions found on your computer." else "Nothing matches.",
-                    color = c.textSecondary,
-                    fontSize = 13.sp,
+                filtered.isEmpty() -> FriendlyState(
+                    style = FriendlyStyle.Empty,
+                    title = if (query.isEmpty()) "No CLI sessions found on your computer." else "Nothing matches.",
+                    message = "",
+                    art = EmptyArtKind.Search,
+                    panel = true,
                     modifier = Modifier.padding(20.dp),
-                )
+                ) {}
                 else -> LazyColumn(Modifier.fillMaxSize()) {
                     items(filtered, key = { it.id }) { item ->
                         NativeSessionRow(item, picking = picking == item.id, enabled = picking == null) { pick(item) }
