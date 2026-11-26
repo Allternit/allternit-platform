@@ -879,7 +879,14 @@ export namespace MCP {
           title: mcpTool.title ?? (mcpTool.annotations as { title?: string } | undefined)?.title,
           destructive: (mcpTool.annotations as { destructiveHint?: boolean } | undefined)?.destructiveHint === true,
           outputSchema: mcpTool.outputSchema,
-          canReport: sortedTools.some((t) => t.name === "submit_feedback"),
+          canReport: sortedTools.some((t) => {
+            const connector = (t._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { id?: string } | undefined
+            const mine = (mcpTool._meta as Record<string, any> | undefined)?.[MCP_CONNECTOR_META_KEY] as { id?: string } | undefined
+            if ((connector?.id ?? null) !== (mine?.id ?? null)) return false
+            // Proxied tools are `<prefix>__<tool>`; compare the un-prefixed name.
+            const cut = t.name.indexOf("__")
+            return (cut >= 0 ? t.name.slice(cut + 2) : t.name) === "submit_feedback"
+          }),
         }
       }
     }

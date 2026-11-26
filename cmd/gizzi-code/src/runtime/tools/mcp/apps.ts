@@ -80,7 +80,7 @@ export function mcpAppMetadata(
  * Emitted only when the result carries `structuredContent`.
  */
 export function mcpTypedMetadata(
-  descriptor: { serverName: string; originalName: string; outputSchema?: unknown; canReport?: boolean } | undefined,
+  descriptor: { serverName: string; originalName: string; outputSchema?: unknown; canReport?: boolean; connectorId?: string; appName?: string } | undefined,
   result: { structuredContent?: unknown },
 ): { mcp?: Record<string, unknown> } {
   if (!descriptor || result.structuredContent === undefined || result.structuredContent === null) return {}
@@ -89,6 +89,8 @@ export function mcpTypedMetadata(
     mcp: {
       server: descriptor.serverName,
       tool: descriptor.originalName,
+      connectorId: descriptor.connectorId ?? descriptor.serverName,
+      ...(descriptor.appName && { connectorName: descriptor.appName }),
       ...(withinLimit ? { structuredContent: result.structuredContent } : { structuredOmitted: "too_large" }),
       ...(descriptor.outputSchema !== undefined && { outputSchema: descriptor.outputSchema }),
       canReport: descriptor.canReport === true,
