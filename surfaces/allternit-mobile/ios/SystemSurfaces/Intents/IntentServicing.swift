@@ -278,3 +278,128 @@ struct FocusFilterRequest: Sendable, Equatable, Codable {
 protocol FocusFilterServicing: Sendable {
     func setFocusFilter(_ request: FocusFilterRequest) async throws
 }
+
+// MARK: - Bar (Do with Allternit)
+
+/// One app in the bar (`GET /api/v1/bar/apps`). `id` is `<kind>:<ref>`.
+struct BarAppInfo: Sendable, Equatable, Hashable {
+    /// `connector` | `vendor` | `artifact`.
+    var kind: String
+    var ref: String
+    var name: String
+    /// `browser` | `app` | `full`.
+    var level: String
+    var toolCount: Int
+
+    var id: String { "\(kind):\(ref)" }
+    /// Artifact apps are listed but cannot run yet (contract section 8).
+    var isRunnable: Bool { kind != "artifact" }
+
+    /// Splits an id made by `id`. The ref may itself hold colons.
+    static func split(_ id: String) -> (kind: String, ref: String)? {
+        guard let colon = id.firstIndex(of: ":") else { return nil }
+        let kind = String(id[..<colon]), ref = String(id[id.index(after: colon)...])
+        return kind.isEmpty || ref.isEmpty ? nil : (kind, ref)
+    }
+}
+
+/// One tool of a bar app (`GET /api/v1/bar/apps/:kind/:ref/tools`).
+struct BarToolInfo: Sendable, Equatable, Hashable {
+    var name: String
+    var title: String
+    var hasUI: Bool
+    var readOnly: Bool
+}
+
+/// A value for one blank, sent as typed JSON.
+enum BarValue: Sendable, Equatable, Hashable {
+    case text(String)
+    case number(Double)
+    case bool(Bool)
+
+    /// What a person reads (and what a deep link carries).
+    var display: String {
+        switch self {
+        case .text(let s): return s
+        case .number(let n): return n.rounded() == n && abs(n) < 1e15 ? String(Int64(n)) : String(n)
+        case .bool(let b): return b ? "true" : "false"
+        }
+    }
+}
+
+/// One blank of an intent sentence (contract `Blank`).
+struct BarBlankInfo: Sendable, Equatable, Hashable {
+    struct Option: Sendable, Equatable, Hashable { var value: String; var label: String }
+
+    var key: String
+    var label: String
+    /// `text` | `number` | `enum` | `boolean` | anything newer.
+    var type: String
+    var required: Bool
+    var unit: String?
+    var options: [Option]
+    /// `standard` | `mcp_app` (`mcp_app` needs the app's own picker).
+    var pickerKind: String
+
+    /// True when Siri or Shortcuts can ask for it as plain text.
+    var isSimple: Bool {
+        pickerKind == "standard" && ["text", "number", "enum", "boolean", "string", "integer"].contains(type)
+    }
+}
+
+/// `POST /api/v1/bar/intent`. `sentence` is the parts joined, with each
+/// blank shown as its label.
+struct BarIntentInfo: Sendable, Equatable {
+    var intentId: String
+    var app: BarAppInfo
+    var toolName: String
+    var toolTitle: String
+    var sentence: String
+    var blanks: [BarBlankInfo]
+}
+
+/// `POST /api/v1/bar/review`.
+struct BarReviewInfo: Sendable, Equatable {
+    struct Line: Sendable, Equatable, Hashable { var label: String; var value: String }
+
+    var jobId: String
+    var level: String
+    var needsConfirmation: Bool
+    /// The server's rule text, shown as sent (contract section 4).
+    var ruleText: String?
+    var approverName: String?
+    var approverIsYou: Bool
+    var lines: [Line]
+}
+
+/// Where a run ended up when the intent stopped watching it.
+enum BarRunOutcome: Sendable, Equatable {
+    /// A receipt such as "Refunded €320", else the tool title.
+    case completed(receipt: String)
+    /// Still running when the wait ran out.
+    case working
+    /// A rule sent it to someone else. `approverName` nil = not known.
+    case waitingApproval(approverName: String?)
+    case needsInput
+    case failed(String)
+    case cancelled
+}
+
+/// Bar calls for the Do intent. Implemented by the app's `IntentServices`
+/// (over `APIClient`) and reached as `IntentServiceRegistry.current as?
+/// any BarIntentServicing`, like `FocusFilterServicing`.
+///
+/// Throws `IntentFailure`: `.noComputer` for `no_runtime` / 428 / no reply,
+/// `.failed(text)` with plain wording for gate codes, never a raw code.
+protocol BarIntentServicing: Sendable {
+    /// `query` filters by app name (sent as `?q=` and applied here too).
+    func listBarApps(query: String?) async throws -> [BarAppInfo]
+    func listBarTools(appKind: String, appRef: String) async throws -> [BarToolInfo]
+    /// `botId` nil = the caller acts as themself.
+    func barIntent(appKind: String, appRef: String, tool: String, botId: String?) async throws -> BarIntentInfo
+    /// A 422 `missing_fields` throws `.failed("Fill in X first.")`.
+    func barReview(intentId: String, values: [String: BarValue], botId: String?) async throws -> BarReviewInfo
+    /// Runs the job and watches it for up to `wait` seconds.
+    func barRun(jobId: String, wait: TimeInterval) async throws -> BarRunOutcome
+    func barCancel(jobId: String) async
+}

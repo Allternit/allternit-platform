@@ -259,3 +259,68 @@ struct ProjectQuery: EntityStringQuery {
     }
     func suggestedEntities() async throws -> [ProjectEntity] { await all() }
 }
+
+// MARK: Connection (a bar app)
+
+/// An app in the bar: a connection, a vendor or an artifact app. Backed by
+/// `GET /api/v1/bar/apps?q=`. Empty in an extension (no service there).
+/// Bots use `BotEntity` above (the bots list the app already reads).
+struct ConnectionEntity: AppEntity, Sendable {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Connection"
+    static let defaultQuery = ConnectionQuery()
+
+    /// `<kind>:<ref>`.
+    var id: String
+    var name: String
+    var kind: String
+    var ref: String
+    var level: String
+    var toolCount: Int
+
+    init(_ info: BarAppInfo) {
+        id = info.id; name = info.name; kind = info.kind; ref = info.ref
+        level = info.level; toolCount = info.toolCount
+    }
+
+    var info: BarAppInfo { BarAppInfo(kind: kind, ref: ref, name: name, level: level, toolCount: toolCount) }
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)", subtitle: "\(ConnectionWording.subtitle(info))",
+                              image: .init(systemName: "square.grid.2x2"))
+    }
+}
+
+enum ConnectionWording {
+    static func level(_ level: String) -> String {
+        switch level {
+        case "browser": return "Browser level"
+        case "app": return "App level"
+        case "full": return "Full level"
+        default: return level.isEmpty ? "" : level.capitalized
+        }
+    }
+
+    /// "App level · 3 tools"; artifact apps say they cannot run yet.
+    static func subtitle(_ app: BarAppInfo) -> String {
+        guard app.isRunnable else { return "Not runnable yet" }
+        let tools = app.toolCount == 1 ? "1 tool" : "\(app.toolCount) tools"
+        return [level(app.level), tools].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+struct ConnectionQuery: EntityStringQuery {
+    init() {}
+    private func all(_ q: String?) async -> [ConnectionEntity] {
+        guard let svc = IntentServiceRegistry.current as? any BarIntentServicing,
+              let list = try? await svc.listBarApps(query: q) else { return [] }
+        return list.map(ConnectionEntity.init)
+    }
+    func entities(for identifiers: [String]) async throws -> [ConnectionEntity] {
+        let list = await all(nil)
+        return identifiers.compactMap { IntentDirectory.pick(list, id: $0, name: \.name, itemId: \.id) }
+    }
+    func entities(matching string: String) async throws -> [ConnectionEntity] {
+        await all(string).filter { IntentDirectory.matches([$0.name, $0.ref], string) }
+    }
+    func suggestedEntities() async throws -> [ConnectionEntity] { await all(nil) }
+}

@@ -4,6 +4,11 @@ import AppIntents
 /// with no setup. Every phrase contains the app name, as the system requires.
 /// Call `AllternitShortcuts.updateAppShortcutParameters()` when the bot list
 /// changes so phrases with a bot name stay current.
+///
+/// Apple allows 10 App Shortcuts and all 10 are used. "Do with Allternit"
+/// (DoWithAllternitIntent) is not one of them: it still shows in Shortcuts,
+/// Spotlight and "Search or Ask" as an App Intent. Give it a phrase only by
+/// replacing one of these 10.
 struct AllternitShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
