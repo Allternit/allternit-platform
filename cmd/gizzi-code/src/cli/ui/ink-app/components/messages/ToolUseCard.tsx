@@ -5,6 +5,7 @@ import { useAnimationFrame } from '../../ink/hooks/use-animation-frame'
 import { useAppStateMaybeOutsideOfProvider } from '../../state/AppState'
 import { OrbMark } from '../Spinner/OrbMark'
 import { orbFrameAt, orbStateForTool } from '../Spinner/allternitOrbFrames'
+import { TOOL_GLYPHS, toolGlyphKind } from '../../constants/figures'
 import type { ToolUseBlockParam } from '@allternit/gizzi-sdk/providers/allternit/resources/index.mjs'
 
 type Props = {
@@ -50,12 +51,13 @@ export function ToolUseCard({
       <Box flexDirection="row" justifyContent="space-between" gap={1}>
         <Box flexDirection="row" flexShrink={1}>
           <Text color={bar}>{'▎'}</Text>
+          <Text color={isError ? 'error' : isResolved ? 'inactive' : 'gizzi'}>{TOOL_GLYPHS[toolGlyphKind(toolName)]} </Text>
           <Text bold={true} wrap="truncate">
             {toolName}
           </Text>
           {args}
         </Box>
-        {state === 'done' ? null : <ToolOrb state={state} toolName={toolName} />}
+        {state === 'done' ? <Text color="success">{'✓'}</Text> : <ToolOrb state={state} toolName={toolName} />}
       </Box>
       {backgroundTask && (
         <Text dimColor wrap="truncate">
