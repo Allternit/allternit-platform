@@ -344,13 +344,17 @@ struct PhoneCodeTerminal: View {
                 .opacity(store.isStarting || store.tiles.count >= CodeTerminalStore.maxTiles ? 0.5 : 1)
                 .accessibilityLabel("New terminal")
                 if let selected = store.selected {
-                    Button(action: { store.closeTile(selected.id) }) {
-                        tabLabel { Image(systemName: "xmark").font(.system(size: 15)) }
-                            .background(TerminalPalette.key)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close \(store.displayName(selected))")
+                    // Ending a shell kills its pty: press and hold, never a tap.
+                    tabLabel { Image(systemName: "xmark").font(.system(size: 15)) }
+                        .background(TerminalPalette.key)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .onLongPressGesture(minimumDuration: 1.2) {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            store.closeTile(selected.id)
+                        }
+                        .accessibilityLabel("Hold to end \(store.displayName(selected))")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { store.closeTile(selected.id) }
                 }
             }
             .padding(4)

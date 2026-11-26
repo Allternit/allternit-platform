@@ -23,6 +23,7 @@ struct ArtifactsLibraryView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @StateObject private var store = ArtifactLibraryStore.shared
+    @State private var barHidden = false
     @StateObject private var launcher = ArtifactStudioLauncher.shared
     @AppStorage("allternit-overview-layout:phone:artifacts") private var layoutRaw = LibraryLayout.grid.rawValue
     @State private var openArtifact: ArtifactV2Summary?
@@ -77,8 +78,10 @@ struct ArtifactsLibraryView: View {
             }
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
+            .hidesOnScroll(barHidden)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
+        .tracksScrollForHide($barHidden)
         .fullScreenCover(item: $openArtifact) { summary in
             V2ArtifactView(artifactId: summary.id, initialTitle: summary.title)
         }

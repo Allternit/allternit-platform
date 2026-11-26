@@ -471,6 +471,7 @@ struct CodeModeView: View {
                 open(sessionId: session.id)
             },
             onArchive: { session in archive(session.id) },
+            onDelete: { session in deleteSession(session.id) },
             onStart: { prompt in
                 closeSessionsView()
                 shellOpen = false
@@ -667,6 +668,20 @@ struct CodeModeView: View {
         Task {
             do {
                 try await CodeSessionsClient().archive(sessionId: sessionId)
+            } catch {
+                actionError = FriendlyErrorMessage.from(error.localizedDescription)
+            }
+            await loadSessions()
+        }
+    }
+
+    /// Hold-to-delete from the sessions view (archived sessions).
+    private func deleteSession(_ sessionId: String) {
+        if sessionId == activeSessionId { newThread() }
+        sessions.removeAll { $0.id == sessionId }
+        Task {
+            do {
+                try await CodeSessionsClient().delete(sessionId: sessionId)
             } catch {
                 actionError = FriendlyErrorMessage.from(error.localizedDescription)
             }
