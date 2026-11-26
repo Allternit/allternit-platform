@@ -82,6 +82,17 @@ The driver keeps a **live map** of every window it reads: it subscribes to the O
 - **macOS run loop.** The sidecar's main thread now runs the Cocoa run loop (requests are served on a thread). Without it, `NSWorkspace` never refreshed its list of running apps, so an app launched after the sidecar started answered `app_not_running`.
 - **Linux and Windows (D1b: the guest-image engines).** The native engines run the structured members on guest images: `engines/atspi.py` walks the AT-SPI tree with pyatspi (roles mapped to the same AX-style vocabulary arc and Cua emit, so element ids and router decisions are comparable across OSes), acts through AT-SPI action/text/value interfaces, and posts keys and pixels through `xdotool`; `engines/uia.py` walks UI Automation with comtypes on one MTA thread, acts through invoke/value/selection/toggle patterns, and posts input through `user32`. Reads stay behind the same live-map contract: the observer (above) decides when a read is needed, the engine answers the tree. Both observers and engines were written to the macOS design and run for the first time on these images — `validate-image.sh` / `validate-windows-image.ps1` prove `hello` and a populated `read_ui` before an image ships. Without pyatspi/comtypes or an accessibility bus, every window reports `degraded` and the API fails structured calls as `driver_unavailable`, never silently. Chromium and Electron apps (Chrome, the Allternit app) only publish an AT-SPI tree when accessibility is requested, so the Linux images set `ACCESSIBILITY_ENABLED=1` (and `GTK_MODULES=atk-bridge`) for the desktop session, the headless app service and `/etc/environment`. Verified on the 1.1.6 cloud computer image (2026-10-10): `read_ui` on Chrome returns its tree through the AT-SPI engine.
 
+## Agent browser on Windows
+
+Windows cloud computers run an agent's browser through `allternit-agent-browser`, installed beside the driver (`C:\Program Files\Allternit\Driver\allternit-agent-browser.cmd`; source `allternit_driver/agent_browser.py`). Run it in the desktop session, the same one the driver's logon task uses.
+
+- `allternit-agent-browser start <agent_id>` opens Microsoft Edge (Chrome if Edge is missing), headed, with `--user-data-dir=C:\ProgramData\Allternit\browser-profiles\<agent_id>` and prints `{agent_id, pid, profile_dir, cdp_port}`, the same shape as the Linux launcher. Starting an id that already runs returns the running browser. Agent ids are letters, digits, `.`, `_` and `-`, up to 64 characters.
+- `allternit-agent-browser stop <agent_id>` closes only that agent's browser (a polite close, then a forced one after 10 s). The profile stays, so logins and cookies survive the next `start`.
+- The UI Automation engine addresses the browser by the printed `pid`: `read_ui`, `act` and screenshots refuse a window that belongs to another process (`window_not_found`), so they never land on another window.
+- **One agent at a time.** Windows has one interactive desktop and the driver's input lease is its single owner, so two agents take turns; each keeps its own profile.
+- **No extension on Windows yet.** Force-installing an off-store extension only works on managed machines, and our VMs are not managed, so the agent browser has no Allternit extension here. The Linux and Mac browsers cover that path.
+- Check: the manual workflow `windows-browser-smoke.yml` installs the driver from the checkout, starts two agent ids in turn, reads each window and uploads a screenshot of each.
+
 ## Router
 
 | Op | macOS default | Windows / Linux |
