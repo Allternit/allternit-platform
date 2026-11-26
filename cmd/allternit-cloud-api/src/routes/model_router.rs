@@ -343,6 +343,9 @@ async fn chat_completions_attributed(
     // `credits_exhausted`. A platform runtime bills its project instead.
     let balance = inference_settlement::credit_balance_row(&state.db, &user_id).await?;
     if platform_runtime.is_none() {
+        // Enforced 5h / 7d windows on paid plans first (429 usage_window_exhausted), so
+        // an account over a window with an empty balance hears about the window.
+        crate::routes::me_usage::check_usage_windows(&state.db, &user_id, balance).await?;
         inference_settlement::check_inference_allowed(balance)?;
     }
 
