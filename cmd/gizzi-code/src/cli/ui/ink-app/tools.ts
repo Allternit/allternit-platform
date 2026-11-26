@@ -24,6 +24,7 @@ import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessage
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
 import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
 import { AskUserLaterTool } from './tools/AskUserLaterTool/AskUserLaterTool.js'
+import { RequestSignatureTool } from './tools/RequestSignatureTool/RequestSignatureTool.js'
 // Primitives Wave B (agent control + context): same tool ids as the runtime builtins.
 import { WaitAgentsTool } from './tools/WaitAgentsTool/WaitAgentsTool.js'
 import { AgentControlTool } from './tools/AgentControlTool/AgentControlTool.js'
@@ -223,6 +224,7 @@ export function getAllBaseTools(): Tools {
     SendUserMessageTool,
     AutomationTool,
     AskUserLaterTool,
+    RequestSignatureTool,
     WaitAgentsTool,
     AgentControlTool,
     GetContextRemainingTool,
