@@ -92,7 +92,8 @@ import com.allternit.core.design.R as DesignR
 
 /*
  * The Settings kit (iOS SettingsPageKit: PhoneSettingsLabel, PhoneSettingsCard, PhoneSettingsRowContent,
- * PhoneToggleRow, PhoneSettingsPage). Rounded neutral cards, hairline dividers, 16sp rows.
+ * PhoneToggleRow, PhoneSettingsPage). Flat groups on the page (web 390 px phone frame `S-after-phone-root`): grey
+ * section labels, label-left / control-right 16sp rows, hairlines between rows, no card fill.
  */
 
 internal val Danger = Color(0xFFD64545)
@@ -233,7 +234,7 @@ internal fun SRoundButton(icon: Int, label: String, tag: String, onClick: () -> 
     ) { Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp)) }
 }
 
-/** `.phone-settings-label`. */
+/** `.phone-settings-label`: the grey section label above a flat group. */
 @Composable
 internal fun SLabel(text: String) {
     Text(
@@ -242,15 +243,42 @@ internal fun SLabel(text: String) {
     )
 }
 
-/** `.phone-settings-card`: a rounded neutral card; put [SDivider] between rows. */
+/** `.phone-settings-card`: a flat group of rows on the page (no fill, no corners); put [SDivider] between rows. */
 @Composable
 internal fun SCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(AllternitRadii.LG)).background(AllternitTheme.colors.fillNeutral), content = content)
+    Column(modifier.fillMaxWidth(), content = content)
 }
 
+/** The hairline between two rows of a group. */
 @Composable
 internal fun SDivider() {
-    Box(Modifier.fillMaxWidth().height(0.5.dp).background(AllternitTheme.colors.borderSubtle))
+    Box(Modifier.fillMaxWidth().height(0.5.dp).background(AllternitTheme.colors.borderStrong))
+}
+
+/**
+ * A two-option segmented control for a row's right side (label left, control right): Sans | Serif and the like.
+ * The chosen side gets the panel fill and a hairline; the other stays quiet.
+ */
+@Composable
+internal fun SSegmented(options: List<String>, selected: Int, tag: String, onSelect: (Int) -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    Row(Modifier.clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(2.dp).testTag(tag)) {
+        options.forEachIndexed { index, label ->
+            val on = index == selected
+            Box(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .then(if (on) Modifier.background(c.bgPanel).border(0.5.dp, c.borderStrong, RoundedCornerShape(8.dp)) else Modifier)
+                    .clickable(role = Role.RadioButton) { if (!on) { Haptics.perform(view, Haptics.Kind.Tap); onSelect(index) } }
+                    .semantics { stateDescription = if (on) "Selected" else "Not selected" }
+                    .testTag("${tag}_$index")
+                    .heightIn(min = 32.dp).padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(label, color = if (on) c.textPrimary else c.textSecondary, fontSize = 14.sp, fontWeight = if (on) FontWeight.Medium else FontWeight.Normal)
+            }
+        }
+    }
 }
 
 /** `.phone-row`: icon (optional), title, optional detail and value, optional ›. */
