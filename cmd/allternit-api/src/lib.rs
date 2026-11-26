@@ -223,6 +223,7 @@ pub mod computer_agent_display;
 pub mod computer_ocr;
 pub mod computer_v2;
 pub mod computer_block;
+pub mod computer_safari_window;
 pub mod guest_driver;
 pub mod vnc_auth;
 pub mod vnc_readonly;

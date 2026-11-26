@@ -8,6 +8,16 @@
 //!   [`super::computer_metrics`]).
 //! * `GET /api/v1/runtime-presence`: signed-in owner →
 //!   `[{runtimeId, name, online, lastSeen, wakeable, nextDue}]`.
+//! * `GET /api/v1/runtime-presence/computers?kind=this_device&online=true`:
+//!   runtime → cloud, relay-signed over `("GET", that path without the
+//!   query, empty body)`. The calling runtime's owner's other Allternit
+//!   Desktop runtimes on macOS whose heartbeat (`last_seen_at`) is under
+//!   two minutes old → `{"computers": [{computer_id, runtime_id, name,
+//!   last_seen}]}` (`computer_id` = `runtime_id`). allternit-api asks it
+//!   for "Re-run on my Mac" targets when a run on a cloud computer hits a
+//!   blocked page (computer_block.rs `cloud_macs`). Under
+//!   `/api/v1/runtime-presence` so it never shadows the data-plane relay of
+//!   the runtime's own `GET /api/v1/computers`.
 //! * The sweeper ([`sweep`], once a minute) raises `attention.opened` through
 //!   [`super::allternit_events::emit_user_event`] and resolves it
 //!   (`attention.resolved`) when the runtime is back:
@@ -34,6 +44,10 @@ use super::{allternit_events, runtime_events};
 use crate::{ApiError, ApiState};
 
 pub const HEARTBEAT_PATH: &str = "/api/v1/runtime-presence/heartbeat";
+pub const THIS_DEVICE_COMPUTERS_PATH: &str = "/api/v1/runtime-presence/computers";
+/// A Mac whose heartbeat is older than this isn't offered as a re-run target
+/// (two missed 60 s beats; allternit-api `RERUN_SEEN_WITHIN_SECS`).
+pub const RERUN_ONLINE_WITHIN_SECS: i64 = 120;
 /// A heartbeat this recent counts as online (three missed beats).
 const ONLINE_WITHIN_SECS: i64 = 180;
 /// How long past a due time or a waiting message before the owner is told.
@@ -44,6 +58,7 @@ const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route(HEARTBEAT_PATH, post(heartbeat))
+        .route(THIS_DEVICE_COMPUTERS_PATH, get(this_device_computers))
         .route("/api/v1/runtime-presence", get(list))
 }
 
@@ -289,6 +304,73 @@ struct Row {
 
 fn is_online(connected: bool, beat: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     connected || beat.is_some_and(|b| now - b < Duration::seconds(ONLINE_WITHIN_SECS))
+}
+
+/// One Desktop runtime row for [`this_device_computers`].
+#[derive(sqlx::FromRow)]
+struct MacRow {
+    id: String,
+    name: Option<String>,
+    platform: Option<String>,
+    last_seen_at: Option<DateTime<Utc>>,
+}
+
+/// The owner's online Macs for a runtime asking for re-run targets: Desktop
+/// runtimes on macOS, not the caller, seen in the last
+/// [`RERUN_ONLINE_WITHIN_SECS`].
+fn online_macs(rows: Vec<MacRow>, caller: &str, now: DateTime<Utc>) -> Vec<Value> {
+    rows.into_iter()
+        .filter(|r| r.id != caller)
+        .filter(|r| super::computers_console::os_label(r.platform.as_deref()).1 == "macos")
+        .filter(|r| r.last_seen_at.is_some_and(|t| now - t <= Duration::seconds(RERUN_ONLINE_WITHIN_SECS)))
+        .map(|r| {
+            json!({
+                "computer_id": r.id,
+                "runtime_id": r.id,
+                "name": r.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Mac".into()),
+                "last_seen": r.last_seen_at.map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect()
+}
+
+#[derive(serde::Deserialize)]
+struct MacsQuery {
+    kind: Option<String>,
+    online: Option<String>,
+}
+
+async fn this_device_computers(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<MacsQuery>,
+) -> Response {
+    let (owner, runtime_id) =
+        match runtime_events::authenticate_runtime(&state.db, &headers, "GET", THIS_DEVICE_COMPUTERS_PATH, b"", Utc::now().timestamp()).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+    if q.kind.as_deref().is_some_and(|k| k != "this_device") || q.online.as_deref().is_some_and(|o| o != "true") {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "unsupported_filter", "message": "Only kind=this_device&online=true is supported." }))).into_response();
+    }
+    let rows: Result<Vec<MacRow>, sqlx::Error> = sqlx::query_as(
+        "SELECT id, name, platform, last_seen_at FROM runtime_devices \
+         WHERE user_id = $1 AND revoked_at IS NULL AND runtime_type = 'desktop' AND id <> $2 \
+           AND last_seen_at >= now() - make_interval(secs => $3) \
+         ORDER BY last_seen_at DESC LIMIT 20",
+    )
+    .bind(&owner)
+    .bind(&runtime_id)
+    .bind(RERUN_ONLINE_WITHIN_SECS as f64)
+    .fetch_all(&state.db)
+    .await;
+    match rows {
+        Ok(rows) => Json(json!({ "computers": online_macs(rows, &runtime_id, Utc::now()) })).into_response(),
+        Err(e) => {
+            tracing::error!("runtime presence: listing Macs failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal" }))).into_response()
+        }
+    }
 }
 
 async fn list(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {

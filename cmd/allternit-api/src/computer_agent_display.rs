@@ -227,10 +227,12 @@ pub fn live_view_display(computer_id: &str, run_id: Option<&str>) -> Option<Stri
 }
 
 /// The run ended: forget what it kept (block continue marks, run-scoped
-/// credential approvals) and stop its display when it was the last run of
+/// credential approvals), close its Safari window on this device, and stop its display when it was the last run of
 /// that agent on that computer.
 pub fn end_run(run_id: &str) {
     crate::computer_block::forget_run(run_id);
+    // This-device browser runs (macOS) close their own Safari window.
+    crate::computer_safari_window::end_run(run_id);
     let ended = RUNS.lock().unwrap_or_else(|p| p.into_inner()).remove(run_id);
     let Some(entry) = ended else { return };
     let shared = RUNS

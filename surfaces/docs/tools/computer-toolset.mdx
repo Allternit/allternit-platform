@@ -186,7 +186,12 @@ Vendor signatures count on any page. Generic phrases ("access denied", "verifica
             "timeout_ms": 600000 } }
 ```
 
-`rerun_targets` lists the person's Macs (this-device computers) seen in the last two minutes, or `[]`. A Mac counts as seen when Desktop registers it and every 60 s after that while its own allternit-api runs (the runtime-presence loop bumps its row), so a Mac that is asleep, shut down or quit drops out even though its row still says `running`. The person answers:
+`rerun_targets` lists the person's Macs seen in the last two minutes, or `[]`. Each entry is `{ computer_id, name, runtime_id }`. The list merges two sources and drops repeats, the run's own computer, and anything older than two minutes:
+
+- **This allternit-api's own Macs.** This-device computers in its database. A Mac counts as seen when Desktop registers it and every 60 s after that while its own allternit-api runs (the runtime-presence loop bumps its row), so a Mac that is asleep, shut down or quit drops out even though its row still says `running`. `runtime_id` is this runtime's id.
+- **The person's other Macs, from cloud-api.** A run on a cloud computer has no Mac rows in its own allternit-api, so it asks cloud-api `GET /api/v1/runtime-presence/computers?kind=this_device&online=true`, relay-signed like `/api/v1/runtime/events` (signed over `GET`, the path without the query, and an empty body). cloud-api answers the runtime owner's other Allternit Desktop runtimes on macOS whose 60 s heartbeat is under two minutes old: `{ "computers": [ { computer_id, runtime_id, name, last_seen } ] }`, where `computer_id` is the runtime id. It is asked only when the runtime is paired to the run's owner, and a slow or failed answer (4 s) leaves the local list.
+
+The person answers:
 
 ```http
 POST /api/v1/computers/:id/block-resolve
@@ -195,13 +200,40 @@ POST /api/v1/computers/:id/block-resolve
 
 - `continue`: they dealt with it. The call reads the page again and returns the fresh read; the same domain and kind won't hold this run again.
 - `stop`: the run ends here. The call returns an error result (`run_stopped`) telling the model to stop.
-- `rerun`: the run ends here (`rerun_elsewhere`), and **the client** starts a new run on `rerun_target` with `rerun_of` set to the old run id (the route answers it as `run_id`). The server never moves a run between computers, and cloud sign-ins don't carry over to the Mac.
+- `rerun`: the run ends here (`rerun_elsewhere`), and **the client** starts a new run on `rerun_target` with `rerun_of` set to the old run id (the route answers it as `run_id`), through [`POST /api/v1/computers/:id/runs`](#start-a-run-on-a-computer) on that Mac's runtime (`runtime_id`). The server never moves a run between computers, and cloud sign-ins don't carry over to the Mac.
 
 The answer is `{ ok, action, run_id, domain, kind, rerun_target }`; `409 no_block_pending` when nothing is waiting, `400 invalid_rerun_target` for a computer not in `rerun_targets`. A hold nobody answers in 10 minutes lets the run go on with a note telling the model to call `request_human`: detection is a heuristic with false positives and misses, so it pauses and asks but never ends a run by itself. `computer.block_resolved` (`{ run_id, computer_id, domain, kind, action, rerun_target }`, `action` also `timed_out`) closes the hold.
 
+### Start a run on a computer
+
+```http
+POST /api/v1/computers/:id/runs
+{ "task": "Book the 7 pm table at Nonna's", "rerun_of": "ses_123", "bot_id": "bot_7f3a" }
+```
+
+This starts an agent run the same way `POST /api/aci/run` does: the same safety gate and handoff, the planning loop, the run buffer (`GET /api/aci/stream/:run_id`) and the run cards. The engine's toolset calls go to this computer. `:id` is a computer id, `this-device`, or the runtime's own runtime id (what a `rerun_targets` entry from cloud-api carries). Only `task` is required. The answer is `{ sessionId, run_id, adapterId, computer_id, rerun_of }`; `202 handoff_required` (the `/api/aci/run` body) when the task needs approval first; `404 computer_unavailable` for a computer the caller can't use; `400 invalid_rerun_of`. `POST /api/aci/run` also takes `rerunOf` (or `rerun_of`) and now answers `run_id`, `computer_id` and `rerun_of` too.
+
 ### Re-runs
 
-A toolset call may carry `rerun_of: "<run id>"`. The link is recorded on the run's audit rows (`rerun_of=<id>`) and on its `computer.action` events (`rerun_of`), so history can show "re-run of" a blocked cloud run.
+A run started with `rerun_of` (above), or a toolset call that carries `rerun_of: "<run id>"`, records the link on the run's audit rows (`rerun_of=<id>`) and on its `computer.action` events (`rerun_of`), so history can show "re-run of" a blocked cloud run. A re-run starts fresh: no sign-ins carry over.
+
+### Safari windows on this Mac
+
+A browser run on this device (macOS), started with `POST /api/aci/run` or `POST /api/v1/computers/:id/runs`, gets its own Safari window in the "Allternit Agent" profile on its first toolset call: allternit-api asks the local driver for `safari_window {op: "open"}` and keeps the returned window (`pid`, `window_id`) for the run (`cmd/allternit-api/src/computer_safari_window.rs`). A `read_ui` of that run that names no `app`, `pid` or `window_id` reads that window, so the agent's element ids (and its `act` calls on them) stay in its own window and never touch the person's. See [Safari on this Mac](/tools/allternit-driver#safari-on-this-mac).
+
+- **Run end.** The window closes (`safari_window {op: "close"}`; the driver closes only windows it opened) when the run finishes or is stopped, when the person stops it or re-runs it at a blocked page, or after 15 minutes without a call: the same places the Linux agent display stops.
+- **No agent profile.** When Safari has no "Allternit Agent" profile and the driver can't make one by script, it answers `profile_missing` with setup `steps`. The run holds like `request_human`: `computer.human_requested` with `reason: "Set up the Allternit Agent Safari profile"`, `kind: "safari_profile"`, the driver's `steps` and `setup_reason`, plus an `aci_human` push. Desktop and the phones show the steps; the person sets the profile up and taps Continue (`POST /api/v1/computers/:id/human-done`). The window is then opened again. If the profile is still missing, the call returns an error result `safari_profile_missing` telling the model to stop, and the run doesn't drive the person's own Safari windows.
+- **Other refusals.** Without the arc engine or the driver sidecar, the run goes on as before, with no window of its own.
+
+### Control
+
+The live view's Take over and Give back buttons, and the phones', use the control lease:
+
+| Route | Behavior |
+|---|---|
+| `GET /api/v1/computers/:id/control` | `{ "control": { computer_id, holder: { kind, id, label, device_id }, acquired_at, expires_at } \| null, "handoffs": [...] }` |
+| `POST /api/v1/computers/:id/control/take` | The caller takes control, or renews it (`kind: "user"`; the device from the `x-allternit-device-id` header). `{ "control": {...} }`. A lease lasts 120 s without a renew. A person may take over from an agent; another person holding it answers `423 computer_controlled_elsewhere` with `control`. On this device, holding control is how a person lets agents drive their own screen. |
+| `POST /api/v1/computers/:id/control/release` | Hands control back. `{ "released": true \| false, "control": null }` |
 
 ### Masked secret box
 
@@ -311,6 +343,10 @@ The same stream carries the run's gates, so a client that shows the live view ca
 | `computer.human_requested` / `computer.human_resumed` | `{ computer_id, run_id, reason, live_view, input_enabled, … }` ([Human hand-off](#human-hand-off)) | `aci_human` |
 | `computer.block_detected` / `computer.block_resolved` | see [Blocked pages](#blocked-pages) | `aci_blocked` |
 | `computer.agent_display` | `{ run_id, computer_id, agent_id, display, vnc_port, state: "started" \| "stopped" }`: a run on a Linux cloud computer got (or gave back) its own X display and browser ([Agent displays](#agent-displays-on-linux-cloud-computers)) | none |
+
+`computer.human_requested` with `kind: "safari_profile"` carries `steps` (and `setup_reason`): show them as a setup card ([Safari windows on this Mac](#safari-windows-on-this-mac)).
+
+`GET /api/v1/computers/:id/screenshot?run_id=<run>` answers one PNG of that run's own display (see below); without `run_id`, the one run on that computer with its own display, else the shared desktop.
 
 Approve a `computer.confirmation_required` with `POST /api/aci/handoff/:approval_id/approve` (optional `{ "scope": "run" }` for a credential, see [Allow for this run](/tools/computer-credentials#allow-for-this-run)); the agent then resends the call with the grant. Only the run's owner (the user the approval was raised for, the computer's owner, or the Desktop app on this device) may approve or deny; anyone else gets `403 not_run_owner`.
 

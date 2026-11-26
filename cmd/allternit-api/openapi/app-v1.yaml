@@ -428,6 +428,210 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BlockResolveResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/runs:
+    post:
+      operationId: startComputerRun
+      summary: Start an agent run on one computer ("Re-run on my Mac" from a blocked page)
+      description: |
+        Starts an agent run the same way `POST /api/aci/run` does (safety
+        gate, handoff, planning loop, run buffer, run cards), with the
+        engine's toolset calls aimed at this computer. `rerun_of` records the
+        blocked run this one re-runs: the new run's audit rows and
+        `computer.action` events carry it. A re-run starts fresh (no logins
+        carried over). `{id}` is a computer id, `this-device`, or the target
+        runtime's own runtime id (a `rerun_targets` entry listed from
+        cloud-api carries `runtime_id`; address that runtime). Stream the run
+        with `GET /api/aci/stream/{run_id}`. A run on this device (macOS)
+        opens its own Safari window on its first call; a missing agent
+        profile shows as `computer.human_requested` with `kind:
+        "safari_profile"`. 202 `handoff_required` (same body as
+        `/api/aci/run`) when the task needs approval first; 404
+        `computer_unavailable`; 400 `invalid_rerun_of`.
+      x-base: api
+      x-handler: cmd/allternit-api/src/aci_routes.rs start_computer_run
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComputerRunRequest" }
+      responses:
+        "200":
+          description: The run started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AciRunStarted" }
+        "202":
+          description: "`handoff_required`: approve `approval_id`, then send the same body again with it."
+          content:
+            application/json:
+              schema: { type: object, x-kotlin-raw: true }
+        default: { $ref: "#/components/responses/Error" }
+  /api/aci/run:
+    post:
+      operationId: startAciRun
+      summary: Start an agent browser run on this runtime
+      description: |
+        Mounted at `/api/aci/...` on the same host, not under `/api/v1`.
+        camelCase body (`goal`, `botId`, `threadId`, `allowedSites`,
+        `credentialNames`, `approvalId`, `targetDevice`, ...). `rerunOf` (or
+        `rerun_of`) records the blocked run this one re-runs, the same as on
+        `POST /computers/{id}/runs`. The answer now also carries `run_id`,
+        `computer_id` and `rerun_of`.
+      x-base: instance
+      x-handler: cmd/allternit-api/src/aci_routes.rs aci_run
+      tags: [Computers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AciRunRequest" }
+      responses:
+        "200":
+          description: The run started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AciRunStarted" }
+        "202":
+          description: "`handoff_required`."
+          content:
+            application/json:
+              schema: { type: object, x-kotlin-raw: true }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control:
+    get:
+      operationId: getComputerControl
+      summary: Who controls this computer now, and pending control handoffs
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs get_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The current lease (null when nobody holds control) and pending handoffs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlState" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control/take:
+    post:
+      operationId: takeComputerControl
+      summary: Take over (or renew) control of a computer
+      description: |
+        The caller becomes the holder (`kind: user`; the device from the
+        `x-allternit-device-id` header). A lease lasts 120 s without a renew,
+        so a surface that keeps control calls this again before it ends. A
+        person may take over from an agent (the agent's next action answers
+        423 and it can `request_human`); 423 `computer_controlled_elsewhere`
+        (with `control`) when another person holds it. On this device, taking
+        control is how a person lets agents drive their own screen.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs take_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The caller holds control.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlTaken" }
+        "423":
+          description: "`computer_controlled_elsewhere`: someone else holds control."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlHeld" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control/release:
+    post:
+      operationId: releaseComputerControl
+      summary: Hand control back
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs release_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: "`released` is false when the caller wasn't holding control."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlReleased" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/secret:
+    post:
+      operationId: supplyComputerSecret
+      summary: Answer the masked secret box (`request_human` with `secret`)
+      description: |
+        `{ "text", "save_as"? }` sends the value; the waiting call writes it
+        into the field and the agent never sees it. `{ "cancel": true }`
+        cancels. Owner auth only. 409 `no_secret_request` when no request is
+        pending (never asked, answered, cancelled or expired); 400
+        `invalid_secret` for an empty or over-long (4096) value; 502
+        `secret_failed` when writing it failed. `save_as` stores the value in
+        the vault under that name, bound to the request's domain.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs post_secret
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComputerSecretRequest" }
+      responses:
+        "200":
+          description: Delivered (or cancelled).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+        "409":
+          description: "`no_secret_request`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      operationId: getComputerSecretPending
+      summary: Is a masked secret box waiting (for a surface that connected late)?
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs get_secret
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Never carries a value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerSecretPending" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/screenshot:
+    get:
+      operationId: getComputerScreenshot
+      summary: One PNG of the computer's screen (or one agent run's own display)
+      description: |
+        `run_id` shows that run's own display on a Linux cloud computer (see
+        `computer.agent_display`). Without it: the one run on that computer
+        that has its own display, else the shared desktop. 409 for a paired
+        computer (view it live instead).
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs computer_screenshot
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: run_id, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: The screenshot.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        default: { $ref: "#/components/responses/Error" }
   /api/aci/handoff/{id}/approve:
     post:
       operationId: approveAciHandoff
@@ -831,13 +1035,22 @@ components:
         resumed: { type: boolean }
         timed_out: { type: boolean }
         held_by: { type: [string, "null"] }
+        kind: { type: string, enum: [safari_profile], description: "`safari_profile`: a browser run on this Mac needs the \"Allternit Agent\" Safari profile; show `steps`, then Continue (`human-done`)." }
+        steps: { type: array, items: { type: string }, description: "With `kind: safari_profile`: the driver's setup steps." }
+        setup_reason: { type: string, description: "With `kind: safari_profile`: why the driver couldn't make the profile." }
     RerunTarget:
       type: object
-      description: One of the person's online Macs (this-device computers) a blocked run can be re-run on.
+      description: |
+        One of the person's online Macs a blocked run can be re-run on: a
+        this-device computer of the same allternit-api, or (from cloud-api
+        `GET /api/v1/runtime-presence/computers`) a Desktop runtime on macOS
+        whose heartbeat is under two minutes old. Start the re-run with
+        `POST /computers/{computer_id}/runs` on the runtime `runtime_id`.
       required: [computer_id, name]
       properties:
-        computer_id: { type: string }
+        computer_id: { type: string, description: "A computer id, or a runtime id for a Mac listed from cloud-api." }
         name: { type: string }
+        runtime_id: { type: [string, "null"], description: The runtime that Mac's allternit-api is paired as. }
     ComputerBlockDetectedEventData:
       type: object
       description: computer_block.rs `hold`. The run waits until `POST /computers/{computer_id}/block-resolve` (or `timeout_ms`, after which it goes on with a note). Also pushed as `aci_blocked`.
@@ -887,6 +1100,93 @@ components:
         domain: { type: [string, "null"] }
         kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
         rerun_target: { type: [string, "null"] }
+    ComputerRunRequest:
+      type: object
+      required: [task]
+      properties:
+        task: { type: string, description: The task in plain words. }
+        rerun_of: { type: string, description: "The blocked run this run re-runs (`run_id` from `block-resolve` or `computer.block_detected`)." }
+        bot_id: { type: string, description: The bot the run is for (names the agent cursor). }
+    AciRunRequest:
+      type: object
+      required: [goal]
+      properties:
+        goal: { type: string }
+        model: { type: string }
+        botId: { type: string }
+        threadId: { type: string }
+        allowedSites: { x-kotlin-raw: true, description: "A host or a list of hosts." }
+        credentialNames: { type: array, items: { type: string } }
+        approvalId: { type: string }
+        targetDevice: { type: string, description: "`app:<phoneId>` for the iPhone app's browser; absent = this runtime." }
+        rerunOf: { type: string, description: "Also accepted as `rerun_of`." }
+    AciRunStarted:
+      type: object
+      required: [sessionId, run_id, adapterId]
+      properties:
+        sessionId: { type: string, description: The run id (older name). }
+        run_id: { type: string }
+        adapterId: { type: string, enum: [browser, phone-browser] }
+        computer_id: { type: [string, "null"], description: The computer the run drives; null = this device. }
+        rerun_of: { type: [string, "null"] }
+    ControlHolder:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string, enum: [user, agent, session, bot] }
+        id: { type: string }
+        label: { type: [string, "null"] }
+        device_id: { type: [string, "null"] }
+    ControlLease:
+      type: object
+      required: [computer_id, holder, acquired_at, expires_at]
+      properties:
+        computer_id: { type: string }
+        holder: { $ref: "#/components/schemas/ControlHolder" }
+        acquired_at: { type: string }
+        expires_at: { type: string }
+    ComputerControlState:
+      type: object
+      required: [control, handoffs]
+      properties:
+        control: { oneOf: [{ $ref: "#/components/schemas/ControlLease" }, { type: "null" }] }
+        handoffs: { type: array, items: { type: object, x-kotlin-raw: true }, description: "Pending control handoffs (`{id, computer_id, direction, from, to, note, created_at, expires_at}`)." }
+    ComputerControlTaken:
+      type: object
+      required: [control]
+      properties:
+        control: { $ref: "#/components/schemas/ControlLease" }
+    ComputerControlHeld:
+      type: object
+      required: [error, message, control]
+      properties:
+        error: { type: string, const: computer_controlled_elsewhere }
+        message: { type: string }
+        control: { $ref: "#/components/schemas/ControlLease" }
+    ComputerControlReleased:
+      type: object
+      required: [released]
+      properties:
+        released: { type: boolean }
+        control: { type: "null" }
+    ComputerSecretRequest:
+      type: object
+      properties:
+        text: { type: string, description: The value. Required unless `cancel`. }
+        save_as: { type: string, description: Store it in the vault under this name. }
+        cancel: { type: boolean }
+    ComputerSecretPending:
+      type: object
+      required: [pending]
+      properties:
+        pending: { type: boolean }
+        label: { type: string }
+        waiting_s: { type: integer }
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
     HandoffApproveRequest:
       type: object
       properties:
