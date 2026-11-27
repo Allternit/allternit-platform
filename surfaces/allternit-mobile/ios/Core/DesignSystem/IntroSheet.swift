@@ -122,7 +122,7 @@ private struct IntroContinueStyle: ButtonStyle {
 /// it (`.onPreferenceChange(IntroShowingKey.self)`) to hide its floating
 /// buttons and mute its header so nothing sits above the scrim.
 struct IntroShowingKey: PreferenceKey {
-    static var defaultValue = false
+    static let defaultValue = false
     static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
 }
 

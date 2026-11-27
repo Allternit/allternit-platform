@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Item frames of the open pill, in the orb's own coordinate space.
 private struct ModeItemFrames: PreferenceKey {
-    static var defaultValue: [ShellMode: CGRect] = [:]
+    static let defaultValue: [ShellMode: CGRect] = [:]
     static func reduce(value: inout [ShellMode: CGRect], nextValue: () -> [ShellMode: CGRect]) {
         value.merge(nextValue()) { $1 }
     }

@@ -10,17 +10,21 @@ import SwiftUI
 /// spinner, an offline glyph, a warning). Remote-control state
 /// (`rc.state` connected / reconnecting / offline / off) is not read by the
 /// iOS client yet, so rows show their type glyph until it is.
-struct QuietSessionRow<Leading: View, Status: View>: View {
-    enum Metrics {
-        /// A session, bot or group row.
-        case session
-        /// A drawer section row (Projects, Artifacts, ...): larger, no time.
-        case nav
+/// Row sizing. Top level (not nested in the generic row) so every
+/// `QuietSessionRow<Leading, Status>` and `QuietSessionGlyph` share one type.
+enum QuietSessionRowMetrics {
+    /// A session, bot or group row.
+    case session
+    /// A drawer section row (Projects, Artifacts, ...): larger, no time.
+    case nav
 
-        var height: CGFloat { self == .nav ? 50 : 44 }
-        var titleSize: CGFloat { self == .nav ? 17 : 16.5 }
-        var gap: CGFloat { self == .nav ? 14 : 12 }
-    }
+    var height: CGFloat { self == .nav ? 50 : 44 }
+    var titleSize: CGFloat { self == .nav ? 17 : 16.5 }
+    var gap: CGFloat { self == .nav ? 14 : 12 }
+}
+
+struct QuietSessionRow<Leading: View, Status: View>: View {
+    typealias Metrics = QuietSessionRowMetrics
 
     let title: String
     var time: String = ""
@@ -72,7 +76,7 @@ extension QuietSessionRow where Leading == QuietSessionGlyph {
 /// The type glyph at the row's left.
 struct QuietSessionGlyph: View {
     let name: String
-    var metrics: QuietSessionRow<EmptyView, EmptyView>.Metrics = .session
+    var metrics: QuietSessionRowMetrics = .session
 
     var body: some View {
         Image(systemName: name)
