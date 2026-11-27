@@ -15,6 +15,7 @@ import { ComputersCommand } from "@/cli/commands/computers"
 import { StartCommand } from "@/cli/commands/start"
 import { FilesCommand } from "@/cli/commands/files"
 import { MeetingsCommand } from "@/cli/commands/meetings"
+import { SleepCommand } from "@/cli/commands/sleep"
 import { PhoneCommand } from "@/cli/commands/phone"
 import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
@@ -133,6 +134,7 @@ export const COMMANDS: RegisteredCommand[] = [
   // Files drive: your computers' files (ls, put, share, mount …), contracts/files-drive.
   FilesCommand,
   MeetingsCommand,
+  SleepCommand,
   PhoneCommand,
   TeleportCommand,
   LoginCommand,

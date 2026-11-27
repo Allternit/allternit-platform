@@ -38,3 +38,12 @@ export const computers = {
   isEnabled: () => consoleEnabled(),
   load: () => import('./computers.js'),
 } satisfies Command
+
+/** The Sleep tab of the work views. Reached from the work views, not listed as its own slash command (D11). */
+export const sleep = {
+  type: 'local-jsx',
+  name: 'sleep',
+  description: 'Allternit Sleep: last and next run, last report (n run now · p pause/resume)',
+  isHidden: true,
+  load: () => import('./sleep.js'),
+} satisfies Command
