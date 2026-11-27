@@ -281,6 +281,8 @@ pub const ERASE: &[(&str, &str)] = &[
     // counted stay in credit_transactions and inference_usage (RETAIN, finance).
     ("user_open_allowance", USER),
     ("open_lane_blocks", USER),
+    // Start anywhere per-user start options (migration 170).
+    ("runtime_start_options", USER),
     // Apps + MCP 2026 (migrations 161, 162, 164). share_link_usage* cascade
     // from share_links; vendor apps an org owns have no owner_user_id.
     ("app_handoffs", USER),
