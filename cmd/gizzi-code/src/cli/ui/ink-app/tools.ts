@@ -19,6 +19,7 @@ import { LookupTool } from './tools/LookupTool/LookupTool.js'
 import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from './tools/ThreadReadTool/ThreadReadTool.js'
 import { ResourceTool } from './tools/ResourceTool/ResourceTool.js'
 import { FolderAccessTool } from './tools/FolderAccessTool/FolderAccessTool.js'
+import { StartSessionTool } from './tools/StartSessionTool/StartSessionTool.js'
 import { BrowserTasksTool } from './tools/BrowserTasksTool/BrowserTasksTool.js'
 import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
@@ -219,6 +220,7 @@ export function getAllBaseTools(): Tools {
     ThreadWaitTool,
     ResourceTool,
     FolderAccessTool,
+    StartSessionTool,
     BrowserTasksTool,
     SendUserMessageTool,
     AutomationTool,
