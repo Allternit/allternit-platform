@@ -230,6 +230,7 @@ The Memory Kernel is experimental: it builds as a workspace member but has no li
 - **Memory Agent** (`services/memory/agent`) is the TypeScript long-term memory service with vector search and LLM-driven consolidation.
 - **Memory Kernel** (`services/memory/data/memory-kernel`) is the structured, three-layer semantic model that future surfaces can use when they need typed entities and versioned facts.
 - **[Memory Drive](/core/memory-drive)** is where each user's agent memory is stored today: a private git repo in the open Agent Memory Repo format, with allternit-api's `memory_facts` rebuilt from it as a search index.
+- **Raw turn log** (allternit-api `memory_observations`) is what production uses for the event layer's job: every user, assistant and tool turn is stored for everyone, cut into dated windows and searched by raw search. The Dream marks stale lines `superseded` rather than deleting them, the same idea as fact supersession here. See [Raw retrieval](/core/memory-drive#raw-retrieval).
 
 ## Related docs
 

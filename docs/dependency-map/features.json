@@ -664,6 +664,10 @@
         {
           "on": "2026-11-17",
           "note": "Wave D: memory entries have versions; append, replace and stale-edit refusal; two-device edits keep a conflict_of copy and show N memories need a look. thread_read, thread_recent and thread_wait read past chats in every session; resource reads large tool output and MCP resources by ref."
+        },
+        {
+          "on": "2026-11-27",
+          "note": "Raw-turn retrieval and the knowledge factory grew out of Memory Drive; see feature:raw-memory-retrieval and feature:knowledge-factory."
         }
       ],
       "evidence": [
@@ -673,7 +677,8 @@
         "allternit/surfaces/docs/tools/past-chats.mdx",
         "allternit/surfaces/docs/tools/resources.mdx",
         "allternit/surfaces/docs/tools/connectors.mdx",
-        "allternit/surfaces/docs/tools/settings.mdx"
+        "allternit/surfaces/docs/tools/settings.mdx",
+        "allternit/surfaces/docs/guides/knowledge-factory.mdx"
       ]
     },
     {
@@ -5706,6 +5711,84 @@
         "allternit/cmd/allternit-cloud-api/openapi/sign-requests.yaml",
         "allternit/sdk/apps-bridge/src/allternit.ts"
       ]
+    },
+    {
+      "id": "feature:raw-memory-retrieval",
+      "label": "Raw past-chat retrieval",
+      "product": "product:memory-drive",
+      "status": "building",
+      "description": "Every user, assistant and tool turn is stored raw for everyone (secrets redacted on tool text), cut into dated overlapping windows, and searched by hybrid search plus a local reranker (BAAI/bge-reranker-v2-m3 on the embed sidecar, off under 8 GB RAM). POST /api/v1/memory/v2/raw-search and GET /api/v1/memory/v2/turns/{id}/neighbors serve it. On every chat turn Gizzi adds a dated 'From past chats' block on all surfaces (Settings, Memory, Search and reference chats or the memory_search flag turns it off); memory_recall gains from, to, session, skip_sessions and neighbors_of; replies show 'From past chats' refs on web, iOS and Android. Agency context and thread_search use it. Forget-by-source also deletes raw turns and windows. Dream marks lines superseded instead of deleting.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/memory_capture.rs",
+        "allternit/cmd/allternit-api/src/memory_index.rs",
+        "allternit/cmd/allternit-api/src/memory_retrieve",
+        "allternit/cmd/allternit-api/src/memory_routes.rs",
+        "allternit/cmd/allternit-api/src/memory_drive_service.rs",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/allternit-api/src/thread_bot_tools.rs",
+        "allternit/cmd/allternit-api/src/agency_api/memory_context.rs",
+        "allternit/tools/system-one-local/laya/serve-embed.py",
+        "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/memory-recall.ts",
+        "allternit-ai/src/components/chat/MemoryRefsChip.tsx",
+        "allternit-ai/src/lib/agents/mode-session-store.ts",
+        "allternit-ai/src/views/settings",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/MemoryRefsChip.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/chat",
+        "allternit/surfaces/allternit-mobile/android/feature/settings"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Eoj approved raw-log retrieval (gap fixes A1-A8): store every turn for everyone, search raw windows, rerank locally, Gizzi owns the per-turn past-chats block for every surface (web client recall keeps saved memories only). Platform PRs #3163 capture and forget, #3164 windows, #3165 rerank, #3166 Dream supersede, #3170 raw search; ai #1444 web refs."
+        },
+        {
+          "on": "2026-11-27",
+          "note": "memory_capture.rs is mapped here (it was the unmapped path in the plan): it owns raw capture, redaction and forget-by-source."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/memory.mdx",
+        "allternit/surfaces/docs/guides/memory-drive.mdx",
+        "allternit/surfaces/docs/core/memory-drive.mdx",
+        "allternit/surfaces/docs/api/memory.mdx",
+        "allternit/surfaces/docs/tools/memory.mdx"
+      ]
+    },
+    {
+      "id": "feature:knowledge-factory",
+      "label": "Knowledge factory",
+      "product": "product:memory-drive",
+      "status": "building",
+      "description": "Agents call knowledge_flag when knowledge is missing, wrong or stale. After the nightly Dream (only with Dreaming on) a curator turns flags and the day's turns into proposals that cite their evidence. The person approves or rejects in Settings, Memory, Knowledge (web, Desktop, PWA, iOS, Android) or with gizzi knowledge and /knowledge. Approved domain and data-access guides are written to knowledge/domain/ and knowledge/data-access/<connection>.md in Memory Drive; approved skills activate through Gizzi's skill_manage ask. Tables knowledge_flags and knowledge_proposals (migration V298), routes under /api/v1/knowledge. First workflow: data-access guides per connection.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/memory_dream.rs",
+        "allternit/cmd/allternit-api/src/memory_drive_service.rs",
+        "allternit/cmd/allternit-api/migrations",
+        "allternit/cmd/allternit-api/openapi/app-v1.yaml",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/registry.ts",
+        "allternit/cmd/gizzi-code/src/runtime/skills",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/memory",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySettingsView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/settings/src/main/java/com/allternit/feature/settings/MemoryPages.kt"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Eoj approved the knowledge factory from the Harrison Chase article: start with one workflow (data-access guides). The curator proposes only, never approves, and writes no transcripts. PRs: #3167 contract, #3168 tool and /knowledge, #3169 approve writes the drive, #3173 curator, #3171 iOS review; Android, skill-growth sync and web review in progress."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/knowledge-factory.mdx",
+        "allternit/surfaces/docs/api/knowledge.mdx",
+        "allternit/surfaces/docs/cli/knowledge.mdx",
+        "allternit/surfaces/docs/core/skills.mdx"
+      ]
     }
   ],
   "journeys": [
@@ -6441,6 +6524,68 @@
       "evidence": [
         "allternit/surfaces/docs/guides/island-bar.mdx",
         "allternit/surfaces/docs/guides/team-map.mdx"
+      ]
+    },
+    {
+      "id": "journey:past-chat-recall",
+      "label": "Gizzi remembers an earlier conversation",
+      "description": "A turn from last week is stored raw, windowed and found again on a new chat turn, with the source shown under the reply.",
+      "steps": [
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_capture.rs",
+          "says": "Each user, assistant and tool turn is stored raw, with secrets redacted from tool text."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_index.rs",
+          "says": "The turn is cut into dated overlapping windows and embedded."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/session/prompt.ts",
+          "says": "On a later chat turn Gizzi asks raw search for past chats, unless the person turned Search and reference chats off or the chat is incognito."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_retrieve",
+          "says": "Raw search runs hybrid search, reranks on the sidecar (falling back to search order), and returns whole turns inside a token budget."
+        },
+        {
+          "at": "allternit-ai/src/components/chat/MemoryRefsChip.tsx",
+          "says": "The reply shows the turns it used under 'From past chats' with their dates (same on iOS and Android)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/memory.mdx",
+        "allternit/surfaces/docs/api/memory.mdx"
+      ]
+    },
+    {
+      "id": "journey:knowledge-flag-to-guide",
+      "label": "A knowledge gap becomes an approved guide",
+      "description": "An agent flags stale knowledge, the curator proposes a fix after the nightly Dream, and the person approves it into Memory Drive.",
+      "steps": [
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/registry.ts",
+          "says": "An agent calls knowledge_flag when knowledge is missing, wrong or stale."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/migrations",
+          "says": "allternit-api stores the flag (knowledge_flags, V298)."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_dream.rs",
+          "says": "After the nightly Dream, with Dreaming on, the curator turns open flags and the day's turns into proposals."
+        },
+        {
+          "at": "allternit-ai/src/views/settings",
+          "says": "The person reviews the proposal in Settings, Memory, Knowledge and approves or rejects it (iOS and Android have the same review; gizzi knowledge does it in the terminal)."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_drive_service.rs",
+          "says": "Approving writes knowledge/domain/ or knowledge/data-access/<connection>.md to Memory Drive as one commit; skills wait for Gizzi's skill_manage ask."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/knowledge-factory.mdx",
+        "allternit/surfaces/docs/api/knowledge.mdx"
       ]
     }
   ]

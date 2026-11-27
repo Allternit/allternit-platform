@@ -66,10 +66,12 @@ A correction from you ("I moved to Denver") replaces the old memory, as it alway
 
 ## Privacy
 
-- With Sleep on, the raw turn log also keeps assistant replies and tool calls, in full. With Sleep off, it keeps less.
+- Allternit keeps every turn (your messages, assistant replies and tool calls) whether Sleep is on or off. Sleep does not change what is stored.
 - Incognito chats are never recorded.
-- Tool output is stored as-is today. There is no filter for secrets in tool output yet, so avoid running tools that print secrets in a chat while Sleep is on.
+- Credentials in tool input and output (API keys, tokens, private keys, `password=` style pairs) are replaced with `[redacted]` before storing. The filter works on known shapes, so still avoid printing secrets in a chat.
 - Sleep runs on your own computer and your own model quota, up to your cap.
+
+Sleep's Dream step marks lines out of date and never deletes them, and the [Knowledge factory](/guides/knowledge-factory) curator runs after the nightly Dream.
 
 ## Related
 

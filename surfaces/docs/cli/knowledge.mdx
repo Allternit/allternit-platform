@@ -1,0 +1,39 @@
+---
+title: gizzi knowledge
+description: "Review what the knowledge curator proposed, from the terminal: list, show, approve, reject and dismiss."
+---
+
+The [knowledge factory](/guides/knowledge-factory) turns what agents flag into proposals you review. `gizzi knowledge` and the `/knowledge` command in the terminal UI do the same review as **Settings, Memory, Knowledge** in the apps. They need you to be signed in (`gizzi login`) and the Allternit runtime running.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `gizzi knowledge` / `gizzi knowledge list` | Proposals waiting for review, then open flags. |
+| `gizzi knowledge show <id>` | One proposal: title, the change as a diff against the current file (or the new text), and the evidence it cites. |
+| `gizzi knowledge approve <id>` | Approve a proposal. Domain and data-access guides are written to your Memory Drive. |
+| `gizzi knowledge reject <id>` | Reject a proposal. |
+| `gizzi knowledge dismiss <id>` | Dismiss a flag. |
+
+In the terminal UI the same subcommands run as `/knowledge`, `/knowledge show <id>`, `/knowledge approve <id>`, `/knowledge reject <id>` and `/knowledge dismiss <id>`.
+
+```text
+Proposals to review (1)
+  kprop_3f2a  data_access/github  GitHub: default branch  [curator]
+
+Open flags (1)
+  kflag_91bc  stale data_access/github  The guide says master; it is main.
+```
+
+## Skills
+
+Approving a skill proposal does not write the file. Gizzi lists approved skills the next time you use a skill tool and asks for `skill_manage` permission before it writes `SKILL.md`. Until then the status is approved, not active.
+
+## The tool agents use
+
+Agents call the `knowledge_flag` tool (`kind`, `target_kind`, optional `target_ref`, `evidence`, optional `suggested_fix`) when knowledge is missing, wrong or stale. Nothing changes until you approve a proposal.
+
+## Related
+
+- [Knowledge factory](/guides/knowledge-factory)
+- [gizzi memory](/cli/memory)

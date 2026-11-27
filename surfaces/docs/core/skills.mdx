@@ -48,6 +48,10 @@ Three rules keep the model honest about skills:
 - **Built-ins aren't skills.** Slash commands such as `/help` are built-in commands, not skills, so the skill tool is not used for them.
 - **No reload.** If a skill's text is already loaded in the conversation, the assistant follows it and does not load it again.
 
+## Skills that grow
+
+Gizzi can propose a new or improved skill from your work. Skill-growth proposals and skills the knowledge curator proposes are reviewed in **Settings, Memory, Knowledge** or with `gizzi knowledge`. Approving a skill does not write the file. Gizzi picks up approved skills on its next skill call and asks for `skill_manage` permission before it writes `SKILL.md`, then marks the proposal active. A proposal can be rolled back. See [Knowledge factory](/guides/knowledge-factory).
+
 ## Built-in skills
 
 Allternit ships with skills such as `allternit/powerpoint` for presentation creation. See [Build a tool](/tools/build-a-tool) to add custom tools to a skill.
