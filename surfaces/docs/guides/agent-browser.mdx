@@ -1,0 +1,79 @@
+---
+title: Agent browser
+description: How a bot browses the web for you on a Mac, a Linux cloud computer or a Windows cloud computer, and how you stay in charge when it needs a login, an approval or a hand.
+---
+
+When a bot needs the web, it opens a real browser, looks at the page and clicks, the same way you would. You can watch it, step in at any moment, and it asks before it signs in to anything.
+
+## Where the bot browses
+
+| Target | Browser | What it gets |
+| --- | --- | --- |
+| Your Mac | Safari, in its own window, in a separate profile named **Allternit Agent** | Your own Safari windows and tabs are not touched. The agent profile has its own logins. |
+| Linux cloud computer | Headed Chrome | Each bot (each agent) gets its own screen and keeps its own Chrome profile between runs, so two bots can work side by side. |
+| Windows cloud computer | Microsoft Edge | One agent at a time. A second run waits for the first. |
+
+On a Mac the first run asks you to set up the **Allternit Agent** Safari profile. The card lists the steps, and in Allternit Desktop it opens the setup for you. You do this once.
+
+If you use Chrome, the [Chrome extension](/surfaces/extensions) lets a bot work in your own Chrome. When it needs you, it pauses and Allternit Desktop shows the same card. Continue sends it back to the task.
+
+## Approvals
+
+The bot never types a login on its own. Before it fills one, you see:
+
+> Fill your **GitHub** login on **github.com**?
+
+- **Approve** fills it once.
+- **Allow for this run** lets the same login on the same site fill again until this run ends. Nothing is remembered after that, and it does not carry to other sites or other runs.
+- **Deny** says no. The bot carries on without it or stops.
+
+On a phone, **Approve** asks for Face ID or your fingerprint. **Deny** works from the lock screen without it. Only the person who owns the run can answer; anyone else gets a refusal and the approval stays waiting.
+
+## Needs you
+
+Some steps are yours: a code sent to your phone, a captcha, a one-off form. The bot stops and shows a card such as **Scout needs you** with the reason. Do the step in the live view, then press **Continue**. **Stop** ends the run.
+
+When the bot needs a password or code typed, a masked box opens. What you type goes straight into the field on that device and never reaches the model. If the field refuses it, the box shows why.
+
+## Blocked sites
+
+Some sites turn a cloud browser away. The card reads like **example.com blocked Scout** and offers:
+
+- **Continue**, once you have fixed it in the live view.
+- **Re-run on my Mac**, one button per Mac that is online. This starts a fresh run in Safari on that Mac. Logins do not carry over from the blocked run, so the Mac run may ask for its own approvals. If no Mac is online, open Allternit Desktop and try again.
+- **Stop**.
+
+Allternit always asks before it re-runs on your Mac.
+
+## Take over
+
+Press **Take over** at any time. The bot pauses and the screen is yours. When you give control back, it carries on from where the screen is now.
+
+## The pill
+
+On a Mac, Allternit Desktop shows a small pill while a bot works: **Scout is working, step 3**, with **Take over** and **Stop**. The same pill sits over the live view in the app and on the web and phone layouts.
+
+## Push notifications
+
+When a bot is waiting and you are not looking, your phone gets a notice. It never contains a password or code.
+
+| Notice | Buttons |
+| --- | --- |
+| Approval | **Approve** (Face ID or fingerprint), **Deny** |
+| Needs you | **Continue**, **Stop** |
+| Blocked | **Open** |
+
+Tapping a notice opens that computer on the run.
+
+## Privacy
+
+Secrets never reach the model. The bot only sends the name of a credential, such as "GitHub login". Allternit looks the value up on your device or in your vault, and writes it into one field. The value is not in the prompt, the tool result, the run history or the logs, and approval cards and notices never show it.
+
+## Related
+
+- [Computer credentials](/tools/computer-credentials) for the vault and how a login is filled.
+- [Computer toolset](/tools/computer-toolset) for the actions a bot can take on a computer.
+- [Allternit driver](/tools/allternit-driver) for how a bot reads and acts on a screen.
+- [Extensions](/surfaces/extensions) for the Chrome extension.
+- [iPhone app](/guides/iphone-app) and [Android app](/guides/android-app) for approving from your phone.
+- [Computers, ACI, and connected tools](/guides/computers-and-apps) for the computers a bot can use.
