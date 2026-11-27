@@ -727,6 +727,7 @@ fn discover_from(person: &str, panes: Vec<super::backend::LivePane>, terminals: 
     let (machine_id, machine_name) = machine();
     let hooks = read_hooks();
     let now = Utc::now();
+    let bots = pane_bots();
     let mut found: Vec<Found> = Vec::new();
     // The process table (read-only), for holders: which app each process runs under, its tty and start time.
     let rows = super::proc_scan::snapshot();
@@ -837,6 +838,7 @@ fn discover_from(person: &str, panes: Vec<super::backend::LivePane>, terminals: 
         }
         out.push(LiveSession {
             steer: steer_for(terminal_id.as_deref(), status, pane.map(|p| p.session.as_str())).into(),
+            bot_id: pane.and_then(|p| bots.get(&p.session).cloned()),
             terminal_id,
             holders,
             carried_flags: m.carried_flags,
@@ -871,6 +873,7 @@ fn discover_from(person: &str, panes: Vec<super::backend::LivePane>, terminals: 
         let terminal_id = terminals.get(&p.pane_id).cloned();
         out.push(LiveSession {
             steer: steer_for(terminal_id.as_deref(), status, Some(p.session.as_str())).into(),
+            bot_id: bots.get(&p.session).cloned(),
             terminal_id,
             name: format!("{}-{harness}", base_name(&cwd)),
             harness: harness.into(),
@@ -911,6 +914,22 @@ fn discover_from(person: &str, panes: Vec<super::backend::LivePane>, terminals: 
         }
     }
     out
+}
+
+/// Pane session label -> bot id (`local:<slug>`), for panes the Factory registry says a bot owns.
+/// `agents down <slug>` stops such a pane; clients read it from `botId`.
+fn pane_bots() -> HashMap<String, String> {
+    match super::registry::Registry::open_default().load() {
+        Ok(file) => bots_of(&file),
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn bots_of(file: &super::registry::RegistryFile) -> HashMap<String, String> {
+    file.sessions
+        .iter()
+        .filter_map(|(session, e)| e.bot.as_ref().map(|b| (session.clone(), b.id.clone())))
+        .collect()
 }
 
 /// A pane a person opened and started an agent in (not an `ao-` workspace): the pane engine
@@ -1040,6 +1059,21 @@ mod tests {
 
     fn live_pane(session: &str, id: &str, cwd: &str, status: &str) -> super::super::backend::LivePane {
         super::super::backend::LivePane { session: session.into(), pane_id: id.into(), cwd: Some(cwd.into()), agent_status: Some(status.into()) }
+    }
+
+    #[test]
+    fn registered_bot_panes_get_bot_id_and_others_do_not() {
+        let mut file = super::super::registry::RegistryFile::default();
+        file.sessions.insert(
+            "ao-lead-bonsai-lead".into(),
+            super::super::registry::Entry {
+                bot: Some(super::super::registry::BotRef::placeholder("lead-bonsai-lead")),
+                ..Default::default()
+            },
+        );
+        let bots = bots_of(&file);
+        assert_eq!(bots.get("ao-lead-bonsai-lead").map(String::as_str), Some("local:lead-bonsai-lead"));
+        assert_eq!(bots.get("ao-pane-w3:p1"), None);
     }
 
     #[test]
