@@ -93,7 +93,7 @@ For users with the orchestrator off, the old consolidation tick, nightly Dream a
 
 ## Recall monitor and disputes
 
-When the extraction model says a message changes an existing memory, `disputes.rs` classifies it: refinement (replace, no dispute), correction (replace, and a resolved dispute keeps the history) or contradiction (both kept, dispute opened). Dream follows the same rule. `arbiter.rs` then picks with no model call, in order: scope, then weighted support (credence, recency, goal fit when a goal is known), with stakes deciding only whether to ask. A close, high-stakes dispute becomes `needs_user`.
+When the extraction model says a message changes an existing memory, `disputes.rs` classifies it: refinement (replace, no dispute), correction (replace, and a resolved dispute keeps the history) or contradiction (both kept, dispute opened). Dream follows the same rule, and with disputes off it marks the line `superseded` in its file instead of deleting it. `arbiter.rs` then picks with no model call, in order: scope, then weighted support (credence, recency, goal fit when a goal is known), with stakes deciding only whether to ask. A close, high-stakes dispute becomes `needs_user`.
 
 At recall, a result that is a side of an unresolved or both-kept dispute carries a `dispute` field. Results are never removed or reordered. The gizzi side (`dispute-note.ts`) renders the note for the model and asks the person once per dispute per session.
 
@@ -115,7 +115,7 @@ The API writes `sleep.cycle.started`, `sleep.cycle.stage`, `sleep.cycle.finished
 
 ## Flags and config sources
 
-Every stage has one flag, `stage.<name>` in `sleep_config`, all off by default: `labels_live`, `strengths`, `pages`, `router`, `orchestrator`, `disputes`, `checks`, `intentions`, `rem`, `track1`. A stage runs only when the master switch `enabled` and its own flag are both on. The daily spend cap defaults to 0.
+Every stage has one flag, `stage.<name>` in `sleep_config`, all off by default except `disputes`, which defaults on (the Dream and the dispute routes read the flag alone; the update path in memory extraction still needs the master switch): `labels_live`, `strengths`, `pages`, `router`, `orchestrator`, `disputes`, `checks`, `intentions`, `rem`, `track1`. A stage runs only when the master switch `enabled` and its own flag are both on. The daily spend cap defaults to 0.
 
 Each value has a `source`: `default` (code), `fitted` (written by the fitter) or `owner` (the user). The owner wins. The global row (`user_id` empty) applies first and the user's own row overlays it. A writer of `fitted` rows must not replace an `owner` row.
 

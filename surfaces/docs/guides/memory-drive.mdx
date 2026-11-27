@@ -76,6 +76,11 @@ changes and keeps anything you or your agents wrote since. If you edited a line 
 Dream also changed, undo tells you which files to fix by hand. You can turn Dreaming
 off in the same place.
 
+The Dream never deletes a memory. When it thinks an old memory is stale, or two memories
+disagree and Sleep disputes are off, it marks the memory **out of date**: the line stays
+in its file and in the history, but chats stop using it. **Undo** takes the mark off. With
+disputes on (the default), two memories that disagree become a dispute and both stay.
+
 When you select **Run now**, each step shows as it happens: reading your memories and recent
 messages, asking the model what to merge, learn and prune, checking that plan against your
 memories, and saving. Select **Steps** on any past Dream to see the same list; it opens straight into the full trail of steps.

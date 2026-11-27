@@ -504,7 +504,7 @@ async fn resolve_dispute(
         Ok(None) => return err(StatusCode::NOT_FOUND, "Dispute not found"),
         Err(e) => return db_err(e),
     }
-    if !cfg.stage_on(Stage::Disputes) {
+    if !cfg.bool(&config::stage_key(Stage::Disputes)) {
         return refused(&cfg, Stage::Disputes, StatusCode::CONFLICT);
     }
     drop(conn);
@@ -627,7 +627,8 @@ mod tests {
         let (s, v) = call(&app, "GET", STATUS, "user-a", None).await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!((v["available"].clone(), v["enabled"].clone()), (json!(true), json!(false)));
-        assert!(v["stages"].as_object().unwrap().values().all(|f| f == &json!(false)), "{v}");
+        // Every stage is off by default except disputes (it deletes nothing).
+        assert!(v["stages"].as_object().unwrap().iter().all(|(k, f)| f == &json!(k == "disputes")), "{v}");
         assert_eq!(v["stages"].as_object().unwrap().len(), Stage::ALL.len());
         assert_eq!((v["last_cycle"].clone(), v["manifest_id"].clone()), (Value::Null, Value::Null));
         assert_eq!((v["spend_today_usd"].as_f64(), v["daily_spend_cap_usd"].as_f64()), (Some(0.0), Some(0.0)));
@@ -747,6 +748,9 @@ mod tests {
             (json!("User lives in Austin."), json!("User lives in Denver.")));
         assert_eq!(v["disputes"][0]["picked_by"], json!("arbiter"));
 
+        // Disputes are on by default; the owner switches the stage off here.
+        let (s, _) = call(&app, "PUT", "/api/v1/memory/sleep/settings", "user-a", Some(json!({ "stages": { "disputes": false } }))).await;
+        assert_eq!(s, StatusCode::OK);
         // Stage off: refused, nothing changes. Someone else's dispute is not found.
         let (s, v) = call(&app, "POST", RESOLVE, "user-a", Some(json!({ "choice": "a" }))).await;
         assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("sleep_disabled")));
