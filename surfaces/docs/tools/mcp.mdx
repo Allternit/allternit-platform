@@ -356,6 +356,10 @@ If the tool name contains a `.`, the dispatcher first tries the attached MCP ser
 
 For production deployments, prefer remote MCP servers with tunnel-based authentication.
 
+## Reporting a problem with a tool
+
+`POST /api/v1/mcp/connectors/:id/feedback` with `{ "tool": "<name>", "message": "<optional>" }` forwards the report to the server's own `submit_feedback` tool and returns `{ "ok": true }`. Allternit stores nothing. A server that does not list `submit_feedback` gets `422` with `{ "error": "feedback_unsupported" }`, and the app hides "Report a problem" for it.
+
 ## Error codes
 
 | HTTP | Code / Message | Meaning |
@@ -365,6 +369,7 @@ For production deployments, prefer remote MCP servers with tunnel-based authenti
 | 400 | `Invalid MCP callback` | Missing OAuth `code` or `state` |
 | 401 | `Unauthorized` | Missing or invalid session |
 | 404 | `server_not_found` | Attached server ID not found |
+| 422 | `feedback_unsupported` | The server has no `submit_feedback` tool |
 | 502 | `attach_failed` | Could not reach or initialize the remote MCP server |
 | -32001 | `MCP tunnel auth failed` | Tunnel mTLS/OAuth check failed |
 | -32601 | `Method not found` | Unknown JSON-RPC method |

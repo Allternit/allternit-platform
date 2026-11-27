@@ -165,6 +165,8 @@ pub fn connector_events_router_with(ctx: Ctx) -> Router<Arc<AppState>> {
         .route("/skills/prefs", axum::routing::put(skill_prefs_h))
         .route("/watches", get(watches_list_h).post(watch_start_h))
         .route("/watches/:id", delete(watch_stop_h))
+        .route("/watches/:id/lines", get(watch_lines_h))
+        .route("/connectors/:id/feedback", post(crate::mcp_feedback::feedback_h))
         .layer(Extension(ctx))
 }
 
@@ -374,7 +376,7 @@ fn apps_failure(e: mcp_apps::AppsError) -> Failure {
 
 // ---------------------------------------------------------------- connector session
 
-async fn session(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str) -> Result<(Connector, McpClient), Failure> {
+pub(crate) async fn session(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str) -> Result<(Connector, McpClient), Failure> {
     let connector = mcp_apps::load_connector(state, user, connector_id, ctx.allow_private)
         .await
         .map_err(apps_failure)?
@@ -1167,7 +1169,15 @@ async fn delivery_h(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Re
         Err(r) => return r,
     };
     match ingest(&state, &auth.owner, &body).await {
-        Ok(Ingested::Triggered { ticket_id, ledger_id }) => Json(json!({ "status": "triggered", "ticketId": ticket_id, "eventId": ledger_id })).into_response(),
+        Ok(Ingested::Triggered { ticket_id, ledger_id }) => {
+            // Webhook watches tied to a chat session show the event as a line.
+            if let (Some(key), Some(event)) = (body.get("subscriptionKey").and_then(Value::as_str), body.get("event")) {
+                if let Ok(Some(row)) = get_row(&state, key).await {
+                    bump_webhook_watches(&auth.owner, &row.connector_id, &row.name, event);
+                }
+            }
+            Json(json!({ "status": "triggered", "ticketId": ticket_id, "eventId": ledger_id })).into_response()
+        }
         Ok(Ingested::Duplicate) => Json(json!({ "status": "duplicate" })).into_response(),
         Ok(Ingested::Terminated) => Json(json!({ "status": "terminated" })).into_response(),
         // 410: the cloud marks the queued event dead instead of retrying for 24 h.
@@ -1253,10 +1263,64 @@ struct WatchEntry {
     lease_until: Arc<Mutex<Instant>>,
     event_count: Arc<std::sync::atomic::AtomicU64>,
     last_event_at: Arc<Mutex<Option<String>>>,
+    /// `"poll"` or `"webhook"`.
+    delivery: &'static str,
+    /// Latest / first `next_poll_ms` from the server; 0 = no batch yet.
+    poll_ms: Arc<std::sync::atomic::AtomicU64>,
+    first_poll_ms: Arc<std::sync::atomic::AtomicU64>,
+    lines: Arc<Mutex<LineRing>>,
+}
+
+const LINE_RING: usize = 500;
+const LINE_CHARS: usize = 200;
+const LIVE_POLL_MS: u64 = 2000;
+
+/// The last [`LINE_RING`] event lines of one watch; `n` counts from 1.
+#[derive(Default)]
+struct LineRing {
+    total: u64,
+    buf: std::collections::VecDeque<(u64, String, String)>,
+}
+
+impl LineRing {
+    fn push(&mut self, text: String) {
+        self.total += 1;
+        self.buf.push_back((self.total, now(), text));
+        while self.buf.len() > LINE_RING {
+            self.buf.pop_front();
+        }
+    }
+}
+
+/// `data.line ?? data.message ?? data.text ??` compact JSON, cut to 200 chars.
+fn event_line(event: &Value) -> String {
+    let data = event.get("data").unwrap_or(event);
+    let text = ["line", "message", "text"]
+        .iter()
+        .find_map(|k| data.get(*k).and_then(Value::as_str).map(String::from))
+        .unwrap_or_else(|| data.to_string());
+    text.chars().take(LINE_CHARS).collect()
 }
 
 impl WatchEntry {
+    fn mode(&self) -> &'static str {
+        use std::sync::atomic::Ordering::Relaxed;
+        let first = self.first_poll_ms.load(Relaxed);
+        if self.delivery == "webhook" {
+            "webhook"
+        } else if first > 0 && first <= LIVE_POLL_MS {
+            "live"
+        } else {
+            "poll"
+        }
+    }
+
     fn view(&self) -> Value {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (tail, total) = match self.lines.lock() {
+            Ok(l) => (l.buf.iter().rev().take(3).rev().map(|(_, _, t)| t.clone()).collect::<Vec<_>>(), l.total),
+            Err(_) => (Vec::new(), 0),
+        };
         json!({
             "watchId": self.id,
             "server": self.server,
@@ -1266,6 +1330,10 @@ impl WatchEntry {
             "startedAt": self.started_at,
             "eventCount": self.event_count.load(std::sync::atomic::Ordering::Relaxed),
             "lastEventAt": self.last_event_at.lock().ok().and_then(|g| g.clone()),
+            "mode": self.mode(),
+            "pollMs": Some(self.poll_ms.load(Relaxed)).filter(|m| *m > 0 && self.delivery == "poll"),
+            "tail": tail,
+            "lineCount": total,
         })
     }
 }
@@ -1276,7 +1344,7 @@ fn watches() -> &'static Mutex<HashMap<String, WatchEntry>> {
 }
 
 /// The poll loop: runs until `token` is cancelled or the lease lapses.
-async fn poll_loop<P: EventPoller>(mut poller: P, token: CancellationToken, lease_until: Arc<Mutex<Instant>>, sink: Sink) {
+async fn poll_loop<P: EventPoller>(mut poller: P, token: CancellationToken, lease_until: Arc<Mutex<Instant>>, sink: Sink, timing: (Arc<std::sync::atomic::AtomicU64>, Arc<std::sync::atomic::AtomicU64>)) {
     let mut cursor: Option<String> = None;
     let mut delay = Duration::ZERO;
     let mut fails = 0u32;
@@ -1295,6 +1363,9 @@ async fn poll_loop<P: EventPoller>(mut poller: P, token: CancellationToken, leas
         match polled {
             Ok(batch) => {
                 fails = 0;
+                let ms = batch.next_poll_ms.max(1);
+                timing.0.store(ms, std::sync::atomic::Ordering::Relaxed);
+                let _ = timing.1.compare_exchange(0, ms, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed);
                 for e in batch.events {
                     sink(e).await;
                 }
@@ -1319,9 +1390,14 @@ fn spawn_watch<P: EventPoller + 'static>(user_id: &str, server: &str, event: &st
     let lease_until = Arc::new(Mutex::new(Instant::now() + WATCH_LEASE));
     let count = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let last = Arc::new(Mutex::new(None));
+    let lines = Arc::new(Mutex::new(LineRing::default()));
+    let (poll_ms, first_poll_ms) = (Arc::new(std::sync::atomic::AtomicU64::new(0)), Arc::new(std::sync::atomic::AtomicU64::new(0)));
     let counted: Sink = {
-        let (count, last, sink) = (count.clone(), last.clone(), sink);
+        let (count, last, sink, lines) = (count.clone(), last.clone(), sink, lines.clone());
         Arc::new(move |e: Value| {
+            if let Ok(mut l) = lines.lock() {
+                l.push(event_line(&e));
+            }
             count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Ok(mut l) = last.lock() {
                 *l = Some(now());
@@ -1341,18 +1417,70 @@ fn spawn_watch<P: EventPoller + 'static>(user_id: &str, server: &str, event: &st
         lease_until: lease_until.clone(),
         event_count: count,
         last_event_at: last,
+        delivery: "poll",
+        poll_ms: poll_ms.clone(),
+        first_poll_ms: first_poll_ms.clone(),
+        lines,
     };
     if let Ok(mut w) = watches().lock() {
         w.insert(id.clone(), entry);
     }
     let reg_id = id.clone();
     tokio::spawn(async move {
-        poll_loop(poller, token, lease_until, counted).await;
+        poll_loop(poller, token, lease_until, counted, (poll_ms, first_poll_ms)).await;
         if let Ok(mut w) = watches().lock() {
             w.remove(&reg_id);
         }
     });
     id
+}
+
+/// A webhook watch: a session entry with no poller. Deliveries bump it
+/// ([`bump_webhook_watches`]); it lives until the user stops it.
+fn register_webhook_watch(user_id: &str, server: &str, event: &str, arguments: Value, session_id: &str) -> String {
+    let id = format!("wch_{}", uuid::Uuid::new_v4().simple());
+    let entry = WatchEntry {
+        id: id.clone(),
+        user_id: user_id.to_string(),
+        server: server.to_string(),
+        event: event.to_string(),
+        arguments,
+        session_id: session_id.to_string(),
+        started_at: now(),
+        token: CancellationToken::new(),
+        lease_until: Arc::new(Mutex::new(Instant::now() + WATCH_LEASE)),
+        event_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        last_event_at: Arc::new(Mutex::new(None)),
+        delivery: "webhook",
+        poll_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        first_poll_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        lines: Arc::new(Mutex::new(LineRing::default())),
+    };
+    if let Ok(mut w) = watches().lock() {
+        w.insert(id.clone(), entry);
+    }
+    id
+}
+
+/// A delivered event for `(owner, connector, event)`: count it and append its
+/// line on every matching webhook watch. Returns how many watches matched.
+fn bump_webhook_watches(owner: &str, connector_id: &str, event_name: &str, event: &Value) -> usize {
+    let w = watches().lock().unwrap_or_else(|p| p.into_inner());
+    let mut n = 0;
+    for e in w.values().filter(|e| e.delivery == "webhook" && e.user_id == owner && e.server == connector_id && e.event == event_name) {
+        e.event_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut l) = e.last_event_at.lock() {
+            *l = Some(now());
+        }
+        if let Ok(mut l) = e.lines.lock() {
+            l.push(event_line(event));
+        }
+        if let Ok(mut l) = e.lease_until.lock() {
+            *l = Instant::now() + WATCH_LEASE;
+        }
+        n += 1;
+    }
+    n
 }
 
 /// Stop a watch the user owns. `true` when it existed.
@@ -1411,6 +1539,9 @@ struct WatchRequest {
     session_id: String,
     #[serde(default = "empty_object")]
     arguments: Value,
+    /// `"poll"` (default) or `"webhook"`.
+    #[serde(default)]
+    delivery: Option<String>,
 }
 
 /// `POST /api/v1/mcp/watches {server, event, session_id}` → `{watch_id}`.
@@ -1423,10 +1554,16 @@ async fn watch_start_h(State(state): State<Arc<AppState>>, Extension(ctx): Exten
     if !req.arguments.is_object() {
         return err(StatusCode::BAD_REQUEST, "bad_request", "arguments must be an object");
     }
+    let webhook = match req.delivery.as_deref() {
+        None | Some("poll") => false,
+        Some("webhook") => true,
+        Some(_) => return err(StatusCode::BAD_REQUEST, "bad_request", "delivery must be poll or webhook"),
+    };
+    let want = if webhook { "webhook" } else { "poll" };
     {
         let w = watches().lock().unwrap_or_else(|p| p.into_inner());
         if let Some(e) = w.values().find(|e| {
-            e.user_id == user.user_id && e.server == req.server && e.event == req.event && e.session_id == req.session_id && ev::canonical_json(&e.arguments) == ev::canonical_json(&req.arguments)
+            e.user_id == user.user_id && e.server == req.server && e.event == req.event && e.session_id == req.session_id && e.delivery == want && ev::canonical_json(&e.arguments) == ev::canonical_json(&req.arguments)
         }) {
             if let Ok(mut l) = e.lease_until.lock() {
                 *l = Instant::now() + WATCH_LEASE;
@@ -1441,14 +1578,33 @@ async fn watch_start_h(State(state): State<Arc<AppState>>, Extension(ctx): Exten
         Ok((true, events)) => {
             let def = events.iter().find(|e| e.get("name").and_then(Value::as_str) == Some(req.event.as_str()));
             let Some(def) = def else { return err(StatusCode::NOT_FOUND, "event_not_found", "the server has no such event") };
-            let poll_ok = def.get("delivery").and_then(Value::as_array).map_or(true, |d| d.iter().any(|m| m.as_str() == Some("poll")));
-            if !poll_ok {
-                return err(StatusCode::UNPROCESSABLE_ENTITY, "poll_unsupported", "this event is only offered by webhook");
+            let offered = def.get("delivery").and_then(Value::as_array).map_or(true, |d| d.iter().any(|m| m.as_str() == Some(want)));
+            if !offered {
+                return if webhook {
+                    err(StatusCode::UNPROCESSABLE_ENTITY, "webhook_unsupported", "this event is not offered by webhook")
+                } else {
+                    err(StatusCode::UNPROCESSABLE_ENTITY, "poll_unsupported", "this event is only offered by webhook")
+                };
             }
         }
         Ok((false, _)) => return err(StatusCode::UNPROCESSABLE_ENTITY, "unsupported", "the server has no events"),
         Err(f) if f.reason == "connector_not_found" => return err(StatusCode::NOT_FOUND, "connector_not_found", "connector not found"),
         Err(f) => return err(StatusCode::BAD_GATEWAY, &f.reason, &f.message),
+    }
+    if webhook {
+        // Registers through the existing subscribe; the bot is the session's bot.
+        let Some(bot_id) = crate::mcp_user_proxy::session_bot(&state, &req.session_id).await else {
+            return err(StatusCode::UNPROCESSABLE_ENTITY, "no_bot", "this session has no bot to wake");
+        };
+        let sub = SubscribeRequest { name: req.event.clone(), arguments: req.arguments.clone(), bot_id, execution_mode: None, automation: None };
+        if let Err(r) = subscribe(&state, &ctx, &user.user_id, &req.server, sub).await {
+            return match r {
+                Refused::BadRequest(m) => err(StatusCode::BAD_REQUEST, "bad_request", &m),
+                Refused::NotFound(c) => err(StatusCode::NOT_FOUND, c, "not found"),
+            };
+        }
+        let id = register_webhook_watch(&user.user_id, &req.server, &req.event, req.arguments, &req.session_id);
+        return Json(json!({ "watch_id": id })).into_response();
     }
     let poller = ConnectorPoller {
         state: state.clone(),
@@ -1497,6 +1653,27 @@ async fn watch_stop_h(Extension(user): Extension<AuthUser>, Path(id): Path<Strin
 }
 
 #[derive(Deserialize)]
+struct LinesQuery {
+    #[serde(default)]
+    after: u64,
+}
+
+/// `GET /api/v1/mcp/watches/:id/lines?after=<n>` → `{lines: [{n, at, text}], next}`.
+async fn watch_lines_h(Extension(user): Extension<AuthUser>, Path(id): Path<String>, axum::extract::Query(q): axum::extract::Query<LinesQuery>) -> Response {
+    let w = watches().lock().unwrap_or_else(|p| p.into_inner());
+    let Some(e) = w.get(&id).filter(|e| e.user_id == user.user_id) else {
+        return err(StatusCode::NOT_FOUND, "watch_not_found", "watch not found");
+    };
+    Json(lines_after(&e.lines, q.after)).into_response()
+}
+
+fn lines_after(ring: &Mutex<LineRing>, after: u64) -> Value {
+    let l = ring.lock().unwrap_or_else(|p| p.into_inner());
+    let lines: Vec<Value> = l.buf.iter().filter(|(n, _, _)| *n > after).map(|(n, at, text)| json!({ "n": n, "at": at, "text": text })).collect();
+    json!({ "lines": lines, "next": l.total })
+}
+
+#[derive(Deserialize)]
 struct WatchQuery {
     session_id: Option<String>,
 }
@@ -1525,6 +1702,72 @@ mod watch_tests {
         async fn close(&mut self) {
             self.1.fetch_add(1, Ordering::SeqCst);
         }
+    }
+
+    struct Lines(u64, Vec<Value>);
+
+    #[async_trait]
+    impl EventPoller for Lines {
+        async fn poll(&mut self, _cursor: Option<&str>) -> Result<PollBatch, String> {
+            Ok(PollBatch { events: std::mem::take(&mut self.1), cursor: None, next_poll_ms: self.0 })
+        }
+    }
+
+    fn noop_sink() -> Sink {
+        Arc::new(|_| Box::pin(async {}))
+    }
+
+    #[tokio::test]
+    async fn watch_view_has_mode_tail_and_lines() {
+        let long = "x".repeat(300);
+        let events = vec![json!({ "data": { "line": "one" } }), json!({ "data": { "message": "two" } }), json!({ "data": { "text": "three" } }), json!({ "data": { "n": 4 } }), json!({ "data": { "line": long } })];
+        let live = spawn_watch("lines-user", "conn", "log.line", json!({}), "s", Lines(1000, events.clone()), noop_sink());
+        let slow = spawn_watch("lines-user", "conn", "log.other", json!({}), "s", Lines(30_000, vec![]), noop_sink());
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let (view, slow_view, lines) = {
+            let w = watches().lock().unwrap();
+            (w[&live].view(), w[&slow].view(), lines_after(&w[&live].lines, 1))
+        };
+        assert_eq!(view["mode"], "live");
+        assert_eq!(view["pollMs"], 1000);
+        assert_eq!(view["lineCount"], 5);
+        assert_eq!(view["tail"].as_array().unwrap().len(), 3);
+        assert_eq!(view["tail"][0], "three");
+        assert_eq!(view["tail"][1], "{\"n\":4}");
+        assert_eq!(view["tail"][2].as_str().unwrap().chars().count(), 200);
+        assert_eq!(slow_view["mode"], "poll");
+        assert_eq!(slow_view["pollMs"], 30_000);
+        assert_eq!(lines["next"], 5);
+        assert_eq!(lines["lines"].as_array().unwrap().len(), 4, "after=1 skips line 1");
+        assert_eq!(lines["lines"][0]["n"], 2);
+        assert_eq!(lines["lines"][0]["text"], "two");
+        assert!(stop_watch("lines-user", &live) && stop_watch("lines-user", &slow));
+    }
+
+    #[test]
+    fn line_ring_keeps_500() {
+        let mut r = LineRing::default();
+        for i in 0..520 {
+            r.push(format!("l{i}"));
+        }
+        assert_eq!(r.buf.len(), 500);
+        assert_eq!(r.buf.front().unwrap().0, 21);
+        assert_eq!(r.total, 520);
+    }
+
+    #[test]
+    fn webhook_delivery_bumps_only_the_matching_watch() {
+        let id = register_webhook_watch("hook-user", "conn-w", "deploy.done", json!({}), "sess");
+        let other = register_webhook_watch("hook-user", "conn-w", "other.event", json!({}), "sess");
+        assert_eq!(bump_webhook_watches("hook-user", "conn-w", "deploy.done", &json!({ "data": { "message": "shipped" } })), 1);
+        assert_eq!(bump_webhook_watches("someone-else", "conn-w", "deploy.done", &json!({})), 0);
+        let w = watches().lock().unwrap();
+        let v = w[&id].view();
+        assert_eq!((v["mode"].as_str(), v["eventCount"].as_u64(), v["lineCount"].as_u64()), (Some("webhook"), Some(1), Some(1)));
+        assert_eq!(v["tail"][0], "shipped");
+        assert_eq!(w[&other].view()["eventCount"], 0);
+        drop(w);
+        assert!(stop_watch("hook-user", &id) && stop_watch("hook-user", &other));
     }
 
     #[tokio::test]

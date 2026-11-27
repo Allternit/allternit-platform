@@ -149,6 +149,21 @@ curl https://api.allternit.com/api/v1/events/catalog -H "Authorization: Bearer $
 curl -X DELETE https://api.allternit.com/api/v1/mcp/events/subscriptions/sub_3f2a… -H "Authorization: Bearer $CLERK_SESSION"
 ```
 
+## Watches in a chat
+
+`POST /api/v1/mcp/watches` with `{ server, event, session_id, delivery? }` watches one event for a chat session. `delivery` is `"poll"` (default) or `"webhook"`. A webhook watch registers through the same subscription as above and has no poller. Each delivery adds a line to the watch and bumps its event count.
+
+`GET /api/v1/mcp/watches` returns each watch with:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `live` when the server's first poll batch asks for 2 s or less, `poll` otherwise, `webhook` for webhook watches |
+| `pollMs` | The server's `next_poll_ms`, or `null` for webhook watches |
+| `tail` | The last 3 lines |
+| `lineCount` | Lines seen so far |
+
+`GET /api/v1/mcp/watches/:id/lines?after=<n>` returns `{ lines: [{ n, at, text }], next }`. Pass `next` as `after` on the next call. Each watch keeps its last 500 lines. A line is `data.line`, else `data.message`, else `data.text`, else the data as compact JSON, cut to 200 characters. Only the watch's owner can read it.
+
 ## Errors
 
 | Code | Name | When |
