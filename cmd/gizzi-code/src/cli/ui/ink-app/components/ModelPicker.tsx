@@ -259,6 +259,7 @@ export function ModelPicker({
     if (listLock) {
       // A locked row never selects: show how to unlock it.
       setNotice(lockedNotice(listLock, CLOUD_BILLING_URL));
+      if (listLock.action === 'retry') void refreshModelListSections().then(next => setSections(next));
       return;
     }
     if (isCloudLocked(value_0)) {
@@ -399,7 +400,7 @@ export function ModelPicker({
   // no bot list route; /runtime and \`gizzi agents bot\` change it).
   const layerBrain = focusedRow?.value ?? (initial ?? getDefaultMainLoopModel());
   const layerProvider = layerBrain.split('/')[0];
-  const layerRuntime = listRuntimes().find(r => r.tool && r.tool === layerProvider)?.name ?? 'Allternit';
+  const layerRuntime = listRuntimes().find(r => r.tool && r.tool === layerProvider)?.name ?? 'Allternit (Gizzi)'; // native runtime: no sign-in hint
   const layerBot = getActiveBotChat()?.botName;
   const layers = <Box marginBottom={1} flexDirection="column"><Text dimColor={true}>Runtime · <Text bold={true}>{layerRuntime}</Text>  (/runtime to change)</Text><Text dimColor={true}>Brain · <Text bold={true}>{focusedRow?.label ?? 'default'}</Text>{focusedRow?.access ? ` [${focusedRow.access}]` : ''}  (pick below)</Text><Text dimColor={true}>Bot · <Text bold={true}>{layerBot ?? 'none'}</Text>{layerBot ? '  (read-only here)' : '  (no bot in this session)'}</Text></Box>;
   const footerHint = <Box marginBottom={1}><Text dimColor={true}>↑/↓ navigate · Enter select · F2 recent · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'} · gizzi connect to add an account</Text></Box>;

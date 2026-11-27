@@ -59,6 +59,9 @@ describe("picker layers: rows", () => {
     expect(locked.access).toBe("credits")
     expect(lockedNotice(locked.locked!, "https://billing.example")).toContain("https://billing.example")
     expect(lockedNotice({ reason: "Sign in.", action: "sign_in" }, "x")).toContain("gizzi login")
+    expect(lockedNotice({ reason: "Accept the terms.", action: "accept_terms" }, "https://b")).toContain("https://b")
+    expect(lockedNotice({ reason: "Upgrade.", action: "upgrade" }, "https://b")).toContain("https://b")
+    expect(lockedNotice({ reason: "Try again.", action: "retry" }, "https://b")).toContain("Refreshing")
   })
 
   test("offline provider is exactly one row, with no option children", () => {

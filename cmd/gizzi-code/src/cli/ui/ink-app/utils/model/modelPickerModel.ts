@@ -361,6 +361,8 @@ export interface LockedInfo {
 export function lockedNotice(locked: LockedInfo, billingUrl: string): string {
   if (locked.action === 'sign_in') return `${locked.reason} Run: gizzi login`
   if (locked.action === 'add_credits') return `${locked.reason} Add credits: ${billingUrl}`
+  if (locked.action === 'accept_terms' || locked.action === 'upgrade') return `${locked.reason} ${billingUrl}`
+  if (locked.action === 'retry') return `${locked.reason} Refreshing the list...`
   return locked.reason
 }
 
