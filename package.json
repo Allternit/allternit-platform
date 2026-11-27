@@ -27,6 +27,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
+    "check:old-names": "bash scripts/check-old-names.sh",
+    "check:view-switch": "bash scripts/check-view-switch.sh",
     "clean": "pnpm -r clean && rm -rf dist",
     "clean:rust-standalone": "rm -rf cmd/launcher/target rails/target ../../distribution/launcher-desktop/target ../../distribution/launcher-simplified/target",
     "clean:rust-full": "cargo clean",
