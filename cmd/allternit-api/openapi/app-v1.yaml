@@ -487,6 +487,34 @@ paths:
               schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
         "400": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/eval:
+    post:
+      operationId: setKnowledgeProposalEval
+      summary: Attach or replace the evaluation of a proposed proposal (skill growth evaluates after it proposes). 409 once decided
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs set_eval
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eval]
+              properties:
+                eval: { type: object, additionalProperties: true, description: "Skill growth sends {score, report}." }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
   /knowledge/proposals/{id}/approve:
     post:
       operationId: approveKnowledgeProposal

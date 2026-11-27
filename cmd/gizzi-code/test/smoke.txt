@@ -74,6 +74,7 @@ test/session/budget-check.test.ts
 test/shared/agentFileResolver.test.ts
 test/shared/agentHardBans.test.ts
 test/skill/discovery.test.ts
+test/skill/growth-sync.test.ts
 test/snapshot/snapshot.test.ts
 test/storage/json-migration.test.ts
 test/storage/migration-chain.test.ts
