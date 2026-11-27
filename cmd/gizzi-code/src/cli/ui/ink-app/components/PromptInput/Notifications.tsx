@@ -18,7 +18,6 @@ import { calculateTokenWarningState } from '../../services/compact/autoCompact';
 import type { MCPServerConnection } from '../../services/mcp/types';
 import type { Message } from '../../types/message';
 import { getApiKeyHelperElapsedMs, getConfiguredApiKeyHelper, getSubscriptionType } from '../../utils/auth';
-import type { AutoUpdaterResult } from '../../utils/autoUpdater';
 import { getExternalEditor } from '../../utils/editor';
 import { isEnvTruthy } from '../../utils/envUtils';
 import { formatDuration } from '../../utils/format';
@@ -41,14 +40,9 @@ const VoiceIndicator: typeof import('./VoiceIndicator.js').VoiceIndicator = requ
 export const FOOTER_TEMPORARY_STATUS_TIMEOUT = 5000;
 type Props = {
   apiKeyStatus: VerificationStatus;
-  /** Unused since the signed updater (AutoUpdaterWrapper reads Updater status); kept so callers compile. */
-  autoUpdaterResult?: AutoUpdaterResult | null;
-  isAutoUpdating?: boolean;
   debug: boolean;
   verbose: boolean;
   messages: Message[];
-  onAutoUpdaterResult?: (result: AutoUpdaterResult) => void;
-  onChangeIsUpdating?: (isUpdating: boolean) => void;
   ideSelection: IDESelection | undefined;
   mcpClients?: MCPServerConnection[];
   isInputWrapped?: boolean;

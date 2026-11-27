@@ -58,7 +58,6 @@ cli/ui/ink-app/commands/swarm/swarm.tsx
 cli/ui/ink-app/commands/thinkback-play/index.ts
 cli/ui/ink-app/commands/thinkback-play/thinkback-play.ts
 cli/ui/ink-app/commands/ultraplan.tsx
-cli/ui/ink-app/components/AutoUpdater.tsx
 cli/ui/ink-app/components/CustomSelect/use-multi-select-state.ts
 cli/ui/ink-app/components/CustomSelect/use-select-input.ts
 cli/ui/ink-app/components/Feedback.tsx
@@ -69,7 +68,6 @@ cli/ui/ink-app/components/GizziHint/PluginHintMenu.tsx
 cli/ui/ink-app/components/LspRecommendation/LspRecommendationMenu.tsx
 cli/ui/ink-app/components/MarkdownTable.tsx
 cli/ui/ink-app/components/MemoryUsageIndicator.tsx
-cli/ui/ink-app/components/NativeAutoUpdater.tsx
 cli/ui/ink-app/components/OffscreenFreeze.tsx
 cli/ui/ink-app/components/PromptInput/IssueFlagBanner.tsx
 cli/ui/ink-app/components/PromptInput/PromptInput.tsx
@@ -440,7 +438,6 @@ cli/ui/ink-app/utils/mcp/elicitationValidation.ts
 cli/ui/ink-app/utils/mcpValidation.ts
 cli/ui/ink-app/utils/messages/mappers.ts
 cli/ui/ink-app/utils/messages/systemInit.ts
-cli/ui/ink-app/utils/nativeInstaller/download.ts
 cli/ui/ink-app/utils/nativeInstaller/index.ts
 cli/ui/ink-app/utils/nativeInstaller/installer.ts
 cli/ui/ink-app/utils/nativeInstaller/pidLock.ts

@@ -18,6 +18,7 @@ import {
   detectInstallMethod,
   gizziHome,
   packageUninstallCommand,
+  planDesktopUninstall,
   planGizziHome,
   type GizziHomePlan,
   type InstallMethod,
@@ -79,6 +80,31 @@ export const UninstallCommand = {
     UI.println(UI.logo("  "))
     UI.empty()
     prompts.intro("Uninstall GIZZI")
+
+    // Desktop's bundled copy is Desktop's: say so, and offer to remove only the
+    // ~/.local/bin/gizzi symlink. Never delete anything inside the .app.
+    const desktopPlan = planDesktopUninstall({ home: os.homedir() })
+    if (desktopPlan.desktop) {
+      prompts.log.info("Installation method: desktop")
+      prompts.log.message("Allternit Desktop manages this copy of gizzi. Remove it by uninstalling Allternit Desktop.")
+      if (desktopPlan.link) {
+        let remove = args.force || args.yes
+        if (!remove && !args.dryRun && process.stdin.isTTY === true) {
+          const answer = await prompts.confirm({
+            message: `Remove only the shortcut ${shortenPath(desktopPlan.link)}? (Desktop's copy stays)`,
+            initialValue: false,
+          })
+          remove = answer === true
+        }
+        if (args.dryRun) prompts.log.warn(`Dry run: would remove ${shortenPath(desktopPlan.link)} only`)
+        else if (remove) {
+          await fs.unlink(desktopPlan.link).catch((e) => prompts.log.error(`Could not remove ${desktopPlan.link}: ${e.message}`))
+          prompts.log.success(`Removed ${shortenPath(desktopPlan.link)}`)
+        } else prompts.log.info("Left the shortcut in place.")
+      }
+      prompts.outro("Done")
+      return
+    }
 
     // Path/argv detection first (authoritative, no subprocess); fall back to
     // the package-manager probe only when the path is inconclusive.
