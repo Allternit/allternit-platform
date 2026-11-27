@@ -18,5 +18,12 @@
         <receiver
             android:name="com.allternit.feature.push.NotificationActionReceiver"
             android:exported="false" />
+        <!-- Approve on an agent browser push: biometric / screen-lock confirm, then the approve call. -->
+        <activity
+            android:name="com.allternit.feature.push.AciApproveConfirmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

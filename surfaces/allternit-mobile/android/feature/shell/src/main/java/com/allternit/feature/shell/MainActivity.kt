@@ -230,6 +230,14 @@ class MainActivity : ComponentActivity() {
         intent.data = null
     }
 
+    /** Android 8-9 screen-lock confirmation for agent approvals (DeviceAuth). Newer versions use BiometricPrompt. */
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (com.allternit.core.auth.DeviceAuth.onActivityResult(requestCode, resultCode)) return
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     /**
      * A tapped notification (or its Open / Review button) opens what it points at (iOS
      * PushNotificationManager.handleTap → DeepLinkRouter): the inbox item, Decisions for an approval, Settings, or
