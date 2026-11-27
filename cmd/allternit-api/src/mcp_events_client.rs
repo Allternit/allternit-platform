@@ -162,6 +162,7 @@ pub fn connector_events_router_with(ctx: Ctx) -> Router<Arc<AppState>> {
         .route("/connectors/:id/events", get(list_h).post(subscribe_h))
         .route("/connectors/:id/events/subscriptions/:sid", delete(unsubscribe_h))
         .route("/skills", get(skills_h))
+        .route("/skills/prefs", axum::routing::put(skill_prefs_h))
         .route("/watches", get(watches_list_h).post(watch_start_h))
         .route("/watches/:id", delete(watch_stop_h))
         .layer(Extension(ctx))
@@ -1183,36 +1184,36 @@ async fn delivery_h(State(state): State<Arc<AppState>>, auth: RelayedAuth) -> Re
 
 // ---------------------------------------------------------------- skills from connected servers (SEP-2640)
 
-const SKILLS_PER_SERVER_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// `GET /api/v1/mcp/skills` → `[{server, uri, name, description}]`: the
-/// `skill://` resources of every enabled connector. A connector that is down,
+/// `GET /api/v1/mcp/skills` → the user's skill catalog ([`crate::mcp_skills::SkillItem`]:
+/// `{id, source, from, server, connectorId, uri, name, description, enabled, defaultEnabled}`),
+/// the `skill://` resources of every enabled connector. A connector that is down,
 /// needs sign-in or has no skills is left out (the list is a convenience).
 async fn skills_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ctx>, Extension(user): Extension<AuthUser>) -> Response {
-    let uid = user.user_id.clone();
-    let ids = blocking(&state, move |c| {
-        let mut stmt = c.prepare("SELECT id FROM mcp_connectors WHERE user_id = ?1 AND enabled <> 0 ORDER BY created_at, id")?;
-        let rows = stmt.query_map(params![uid], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    })
-    .await
-    .unwrap_or_default();
-    let mut out: Vec<Value> = Vec::new();
-    for id in ids {
-        let listed = tokio::time::timeout(SKILLS_PER_SERVER_TIMEOUT, async {
-            let (connector, client) = session(&state, &ctx, &user.user_id, &id).await.ok()?;
-            let skills = client.list_skills().await.ok();
-            mcp_apps::close_session(client).await;
-            skills.map(|s| (connector.name.clone(), s))
-        })
-        .await
-        .ok()
-        .flatten();
-        if let Some((name, skills)) = listed {
-            out.extend(skills.into_iter().map(|s| json!({ "server": name, "connectorId": id, "uri": s.uri, "name": s.name, "description": s.description })));
+    Json(crate::mcp_skills::catalog_refresh(&state, &ctx, &user.user_id).await).into_response()
+}
+
+#[derive(Deserialize)]
+struct SkillPrefBody {
+    id: String,
+    enabled: bool,
+}
+
+/// `PUT /api/v1/mcp/skills/prefs` `{id, enabled}` → the updated catalog item;
+/// an id not in the caller's catalog → 404 `{"error":"skill_not_found"}`.
+async fn skill_prefs_h(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<Ctx>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<SkillPrefBody>,
+) -> Response {
+    match crate::mcp_skills::set_pref(&state, &ctx, &user.user_id, &body.id, body.enabled).await {
+        Ok(item) => Json(item).into_response(),
+        Err(crate::mcp_skills::PrefError::NotFound) => (StatusCode::NOT_FOUND, Json(json!({ "error": "skill_not_found" }))).into_response(),
+        Err(crate::mcp_skills::PrefError::Db(e)) => {
+            warn!("mcp skills: saving a switch failed: {e}");
+            err(StatusCode::INTERNAL_SERVER_ERROR, "skill_pref_failed", "could not save the switch")
         }
     }
-    Json(Value::Array(out)).into_response()
 }
 
 // ---------------------------------------------------------------- poll watches (SEP-3415 `events/poll`)

@@ -464,6 +464,7 @@ pub fn store_for(conn: &rusqlite::Connection, user_id: &str, mcp_connector_id: O
         }
         Err(e) => return Err(e),
     };
+    crate::mcp_skills::invalidate(user_id, &mcp_id);
     let sealed_tokens = crate::token_crypto::seal(&tokens.to_string());
     let metadata = session_metadata(user_id, cfg).to_string();
     conn.execute(
@@ -515,6 +516,7 @@ pub fn forget(conn: &rusqlite::Connection, user_id: &str, connector_id: &str) ->
         ids
     };
     for id in mcp_ids {
+        crate::mcp_skills::invalidate(user_id, &id);
         conn.execute("DELETE FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1 AND state = ?2", params![id, format!("{SESSION_STATE_PREFIX}{id}")])?;
         // The MCP connector goes too unless another (non-managed) session still signs it in.
         conn.execute(
