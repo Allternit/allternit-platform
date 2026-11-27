@@ -110,6 +110,15 @@ final class ModelStore: ObservableObject {
     @Published private(set) var cloudCatalog: [SetupModelRow] = []
     private var cloudFetchTask: Task<Void, Never>? = nil
 
+    /// Per-model access from the server picker catalog (`/api/v1/picker-catalog`),
+    /// keyed by the full `allternit/<alias>` id. Empty on an older server, which
+    /// keeps the plan-entitlement lock below.
+    @Published private(set) var pickerAccess: [String: PickerAccess] = [:]
+    private var pickerCloudModels: [PickerCloudModel] = []
+    private var pickerEtag: String?
+    private var pickerLoadedCache = false
+    private var pickerUnsupported = false
+
     /// "allternit/glm-5.3" → "glm-5.3"; nil for any other model.
     nonisolated static func cloudAlias(_ id: String?) -> String? {
         guard let id, id.hasPrefix(cloudPrefix) else { return nil }
@@ -126,11 +135,13 @@ final class ModelStore: ObservableObject {
     /// the web and on the US storefront; before that one link row stands in.
     /// An absent `open_models` (older backend) keeps today's list.
     nonisolated static func cloudChatModels(_ catalog: [SetupModelRow], open: OpenModelsEntitlement? = nil,
-                                            usStorefront: Bool = false) -> [RuntimeModel] {
+                                            usStorefront: Bool = false,
+                                            access: [String: PickerAccess] = [:]) -> [RuntimeModel] {
         let listsOpen = OpenModelsGate.listsOpenRows(open, usStorefront: usStorefront)
         let listsResearch = OpenModelsGate.listsResearchRows(open)
         var rows: [RuntimeModel] = catalog.filter { row in
             if row.isHidden { return false }
+            if access[cloudPrefix + row.id]?.state == .hidden { return false }
             if row.lane != "open" { return true }
             return listsOpen && (!row.researchOnly || listsResearch)
         }.map { row in
@@ -155,8 +166,66 @@ final class ModelStore: ObservableObject {
     }
 
     var cloudModels: [RuntimeModel] {
-        Self.cloudChatModels(cloudCatalog, open: AccountPlanStore.shared.openModels,
-                             usStorefront: StorefrontGate.shared.allowsPurchaseLinks)
+        Self.cloudChatModels(effectiveCloudCatalog, open: AccountPlanStore.shared.openModels,
+                             usStorefront: StorefrontGate.shared.allowsPurchaseLinks, access: pickerAccess)
+    }
+
+    /// `/v1/models` rows (they carry price and lane); when that fetch gave
+    /// nothing, the picker catalog's own Cloud rows stand in.
+    private var effectiveCloudCatalog: [SetupModelRow] {
+        if !cloudCatalog.isEmpty || pickerCloudModels.isEmpty { return cloudCatalog }
+        return pickerCloudModels.compactMap { m in
+            guard let alias = Self.cloudAlias(m.id) else { return nil }
+            return SetupModelRow(id: alias, name: m.name, provider: m.provider)
+        }
+    }
+
+    /// Server verdict for one Cloud row, or nil when the catalog does not say.
+    func pickerAccess(for id: String?) -> PickerAccess? {
+        guard let id else { return nil }
+        return pickerAccess[id]
+    }
+
+    /// The reason line a locked row shows: the catalog's, else the plan's.
+    func lockReason(for id: String?) -> String? {
+        if let access = pickerAccess(for: id), access.state == .locked { return access.reason }
+        return nil
+    }
+
+    /// Applies a picker-catalog fetch result. Pure state change, so tests drive it.
+    func applyPickerCatalog(_ body: PickerCatalogBody) {
+        pickerCloudModels = body.cloudModels
+        pickerAccess = body.accessById
+    }
+
+    /// Fetches the picker catalog (ETag + disk cache). 404/old server: access
+    /// is cleared and the `/v1/models` + entitlement path decides, as before.
+    func refreshPickerCatalog() {
+        if !pickerLoadedCache {
+            pickerLoadedCache = true
+            if let cached = PickerCatalogClient.readCache() {
+                pickerEtag = cached.etag
+                applyPickerCatalog(cached.body)
+            }
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            switch await PickerCatalogClient.fetch(etag: self.pickerEtag) {
+            case let .fresh(body, etag):
+                self.pickerUnsupported = false
+                self.pickerEtag = etag
+                self.applyPickerCatalog(body)
+                PickerCatalogClient.writeCache(body: body, etag: etag)
+            case .unsupported:
+                self.pickerUnsupported = true
+                self.pickerEtag = nil
+                self.pickerCloudModels = []
+                self.pickerAccess = [:]
+                PickerCatalogClient.clearCache()
+            case .notModified, .failed:
+                break
+            }
+        }
     }
 
     /// The contract §4 reason for an open row the account can't run yet; nil
@@ -184,11 +253,13 @@ final class ModelStore: ObservableObject {
     /// one of the person's own keys (D5). Unknown entitlement = unlocked (D10).
     func isCloudLocked(_ id: String?) -> Bool {
         guard Self.cloudAlias(id) != nil else { return false }
+        if let access = pickerAccess(for: id) { return access.state == .locked }
         if openLockReason(for: id) != nil { return true }
         return CloudModelsEntitlement.isLocked(AccountPlanStore.shared.cloudModels, provider: cloudRow(for: id)?.provider)
     }
 
     func fetchCloudCatalogIfNeeded(force: Bool = false) {
+        if force || (pickerAccess.isEmpty && !pickerUnsupported) { refreshPickerCatalog() }
         guard force || cloudCatalog.isEmpty, cloudFetchTask == nil else { return }
         cloudFetchTask = Task { [weak self] in
             let rows = await SetupAPI.cloudModelCatalog()
