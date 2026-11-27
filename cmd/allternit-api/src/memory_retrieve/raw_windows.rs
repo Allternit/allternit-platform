@@ -509,6 +509,26 @@ pub async fn search(db: &DbHandle, index: &EmbedClient, user_id: &str, q: RawQue
     Ok(RawResult { turns, knowledge, reranked })
 }
 
+/// [`search`] for a caller that may be in an incognito session: an ephemeral
+/// `calling_session` gets an empty result (no turns, no knowledge), so an
+/// incognito chat never has past chats pulled into it, whatever the client
+/// believes about its own mode.
+pub async fn search_for_session(
+    db: &DbHandle,
+    index: &EmbedClient,
+    user_id: &str,
+    calling_session: Option<&str>,
+    q: RawQuery,
+) -> Result<RawResult, RawError> {
+    if let Some(session) = calling_session.map(str::trim).filter(|s| !s.is_empty()) {
+        // A failed lookup is treated as ephemeral: never leak into a chat we cannot vouch for.
+        if db.is_session_ephemeral(session).unwrap_or(true) {
+            return Ok(RawResult::default());
+        }
+    }
+    search(db, index, user_id, q).await
+}
+
 /// Same-session turns around `observation_id`, in time order (the turn
 /// itself included). `None` when the observation does not exist, is not the
 /// user's, or is in an incognito session.
@@ -935,5 +955,20 @@ mod tests {
         service::apply(&db, USER, &rev, &[Operation::DeleteEntry { id: "k1".into() }], "rollback").unwrap();
         let again = RawQuery { include_knowledge: true, ..q("which warehouse table holds invoices joined on account_id?") };
         assert!(search(&db, &down(), USER, again).await.unwrap().knowledge.iter().all(|k| k.kind != "data_access"));
+    }
+
+    #[tokio::test]
+    async fn an_ephemeral_calling_session_gets_an_empty_result() {
+        let db = DbHandle::new_memory().unwrap();
+        let answer = fixture(&db).await;
+        db.connect().unwrap().execute("INSERT INTO ephemeral_sessions (session_id) VALUES ('ses_incognito')", []).unwrap();
+        let query = RawQuery { include_knowledge: true, ..q("which reranker model did we pick for reranking?") };
+        let r = search_for_session(&db, &down(), USER, Some("ses_incognito"), query.clone()).await.unwrap();
+        assert!(r.turns.is_empty() && r.knowledge.is_empty() && !r.reranked);
+        // The same query from an ordinary session still finds the turn.
+        let ok = search_for_session(&db, &down(), USER, Some("ses_normal"), query.clone()).await.unwrap();
+        assert!(ok.turns.iter().any(|t| t.observation_id == answer));
+        let none = search_for_session(&db, &down(), USER, None, query).await.unwrap();
+        assert!(none.turns.iter().any(|t| t.observation_id == answer));
     }
 }
