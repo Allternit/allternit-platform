@@ -19,8 +19,21 @@ interface NotificationPayload {
   sessionId?: string
 }
 
+/**
+ * The hosted push worker (services/remote-control-push, wrangler route
+ * push.fabrictransport.allternit.com). On by default for cloud-paired runtimes;
+ * it authenticates with the paired device token when no notify secret is set.
+ * Set ALLTERNIT_REMOTE_CONTROL_PUSH_URL to another worker, or to "" to turn it off.
+ */
+export const DEFAULT_PUSH_URL = "https://push.fabrictransport.allternit.com"
+
+export function pushWorkerUrlFrom(configured: string | undefined): string | undefined {
+  if (configured !== undefined) return configured.trim() || undefined
+  return DEFAULT_PUSH_URL
+}
+
 function pushWorkerUrl(): string | undefined {
-  return process.env.ALLTERNIT_REMOTE_CONTROL_PUSH_URL
+  return pushWorkerUrlFrom(process.env.ALLTERNIT_REMOTE_CONTROL_PUSH_URL)
 }
 
 async function notifySubscribers(payload: NotificationPayload) {
