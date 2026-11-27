@@ -182,6 +182,7 @@ struct CodeModeView: View {
             await instanceStore.refreshIfNeeded()
             await loadSessions()
             await loadFolder()
+            openLiveTarget()
             #if DEBUG
             applyDebugArgs()
             #endif
@@ -192,6 +193,9 @@ struct CodeModeView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .codePickView)) { note in
             if let kind = note.object as? CodeViewKind { selectView(kind) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .codeOpenLiveSession)) { _ in
+            openLiveTarget()
         }
         .onReceive(NotificationCenter.default.publisher(for: .codeOpenShell)) { _ in
             // "Open shell" on a computer row in the environment sheet.
@@ -491,6 +495,25 @@ struct CodeModeView: View {
             },
             terminalSessions: terminalSessions
         )
+    }
+
+    /// A blocked pane's push: its terminal opens in the Code shell; a pane
+    /// with no terminal opens "On your computer" with its row.
+    private func openLiveTarget() {
+        guard let target = DeepLinkRouter.shared.takeLiveTarget() else { return }
+        switch target {
+        case .terminal(let id):
+            Task { @MainActor in
+                if await terminalStore.attach(sessionId: id, title: "Terminal") {
+                    closeSessionsView()
+                    shellOpen = true
+                }
+            }
+        case .factorySession:
+            terminalSessions.setActive(true)
+            terminalSessions.pushTarget = target
+            openSessionsView()
+        }
     }
 
     private func openSessionsView(_ opening: CodeSessionsOpening = CodeSessionsOpening()) {
@@ -810,6 +833,8 @@ extension Notification.Name {
     static let codePickView = Notification.Name("allternit.code.pick-view")
     /// "Open shell" on a computer row of the environment sheet.
     static let codeOpenShell = Notification.Name("allternit.code.open-shell")
+    /// A blocked-pane push or link: `DeepLinkRouter.takeLiveTarget()` holds where.
+    static let codeOpenLiveSession = Notification.Name("allternit.code.open-live-session")
 }
 
 /// The Code view switch (bottom right of the composer, or of the shell): one

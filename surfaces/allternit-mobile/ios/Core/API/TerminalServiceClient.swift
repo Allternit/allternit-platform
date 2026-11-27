@@ -302,7 +302,7 @@ struct LiveSession: Decodable, Equatable, Identifiable, Sendable {
     let pid: Int?
     let sessionId: String
     let cwd: String
-    /// busy | idle | offline
+    /// busy | idle | blocked | offline
     let status: String
     let holders: [LiveSessionHolder]
     let carriedFlags: [String]
@@ -316,13 +316,22 @@ struct LiveSession: Decodable, Equatable, Identifiable, Sendable {
     let copyCommand: [String]?
     let newCommand: [String]?
     let move: AdoptJob?
+    /// Factory pane that runs this CLI (w3:p1). nil on an older runtime.
+    let paneId: String?
+    /// The Allternit terminal that shows this pane; opens with the terminal thread.
+    let terminalId: String?
+    /// When a blocked pane started waiting on a person (ISO 8601).
+    let blockedSince: String?
+    /// How to steer it: terminal | delivery | none. `none` on an older runtime.
+    let steer: String
 
     var id: String { sessionId }
 
     init(address: String = "", name: String = "", harness: String = "", machineName: String = "", pid: Int? = nil,
          sessionId: String, cwd: String = "", status: String = "idle", holders: [LiveSessionHolder] = [],
          carriedFlags: [String] = [], canCopy: Bool = false, external: Bool = true, movable: String? = nil,
-         moveCommand: [String]? = nil, copyCommand: [String]? = nil, newCommand: [String]? = nil, move: AdoptJob? = nil) {
+         moveCommand: [String]? = nil, copyCommand: [String]? = nil, newCommand: [String]? = nil, move: AdoptJob? = nil,
+         paneId: String? = nil, terminalId: String? = nil, blockedSince: String? = nil, steer: String = "none") {
         self.address = address
         self.name = name
         self.harness = harness
@@ -340,11 +349,16 @@ struct LiveSession: Decodable, Equatable, Identifiable, Sendable {
         self.copyCommand = copyCommand
         self.newCommand = newCommand
         self.move = move
+        self.paneId = paneId
+        self.terminalId = terminalId
+        self.blockedSince = blockedSince
+        self.steer = steer
     }
 
     private enum CodingKeys: String, CodingKey {
         case address, name, harness, machineName, pid, sessionId, cwd, status, holders
         case carriedFlags, canCopy, external, movable, moveCommand, copyCommand, newCommand, move
+        case paneId, terminalId, blockedSince, steer
     }
 
     init(from decoder: Decoder) throws {
@@ -366,6 +380,10 @@ struct LiveSession: Decodable, Equatable, Identifiable, Sendable {
         copyCommand = try? c.decodeIfPresent([String].self, forKey: .copyCommand)
         newCommand = try? c.decodeIfPresent([String].self, forKey: .newCommand)
         move = try? c.decodeIfPresent(AdoptJob.self, forKey: .move)
+        paneId = try? c.decodeIfPresent(String.self, forKey: .paneId)
+        terminalId = try? c.decodeIfPresent(String.self, forKey: .terminalId)
+        blockedSince = try? c.decodeIfPresent(String.self, forKey: .blockedSince)
+        steer = (try? c.decodeIfPresent(String.self, forKey: .steer)) ?? "none"
     }
 }
 
@@ -399,6 +417,14 @@ final class LiveSessionsClient: @unchecked Sendable {
         if let rows = try? JSONDecoder().decode([LiveSession].self, from: data) { return .items(rows) }
         if let wrapped = try? JSONDecoder().decode(Wrapped.self, from: data) { return .items(wrapped.sessions ?? []) }
         return .items([])
+    }
+
+    /// `POST /api/factory/send {to, text}`: a message to a pane's inbox (steer: delivery).
+    func sendDelivery(to address: String, text: String) async throws {
+        struct Body: Encodable { let to: String; let text: String }
+        let body = try JSONEncoder().encode(Body(to: address, text: text))
+        let (data, status) = try await RuntimeRaw.send(api, path: "api/factory/send", method: "POST", body: body)
+        guard (200...299).contains(status) else { throw RuntimeRaw.error(status: status, data: data, fallback: "Send failed") }
     }
 
     /// `POST /api/v1/live-sessions/adopt`. mode: move | copy | new | cancel.

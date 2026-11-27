@@ -136,9 +136,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Computers console alerts: data = { type: "computer_alert", computerId, rule, value }.
         let type = data?["type"] as? String
         let computerId = data?["computerId"] as? String
+        let openUrl = data?["openUrl"] as? String
         await MainActor.run {
             PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId, sessionId: sessionId,
-                                                     type: type, computerId: computerId)
+                                                     type: type, computerId: computerId, openUrl: openUrl)
         }
     }
 }
