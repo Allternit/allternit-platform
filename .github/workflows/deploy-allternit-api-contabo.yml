@@ -11,6 +11,11 @@ on:
       - 'mcp/protocol/**'
       - '.github/workflows/deploy-allternit-api-contabo.yml'
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip the test suite (build train already tested this tree; boot smoke test still runs)"
+        type: boolean
+        default: false
 
 jobs:
   # One job tests and deploys (2026-10-25). Two jobs on two fresh runners
@@ -84,7 +89,7 @@ jobs:
       # agent merges train/ branches (tools/train-guard.py). Eoj, 2026-11-16. The boot
       # smoke test below still runs on every deploy.
       - name: Test
-        if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') }}
+        if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') && !inputs.skip_tests }}
         # Measured 43.6 min (bench T1). The cap ends a hung run instead of
         # holding the deploy queue; a cold cache still fits.
         timeout-minutes: 90
