@@ -35,6 +35,8 @@ import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
 const TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"] as const
+/** Windows is experimental: a missing Windows asset leaves it out of the feed (with a warning) instead of failing the release. */
+const OPTIONAL_TARGETS = new Set<string>(["win32-x64"])
 type Target = (typeof TARGETS)[number]
 
 const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/
@@ -164,7 +166,7 @@ type Feed = {
   minVersion: string
   paused: boolean
   notes: { url: string; highlights: string[] }
-  artifacts: Record<Target, Artifact>
+  artifacts: Partial<Record<Target, Artifact>>
   packages: { npm: string; brew: string; scoop: string }
 }
 
@@ -203,9 +205,11 @@ export function feedProblems(feed: unknown): string[] {
   }
   if (!isObj(feed.artifacts)) p.push("artifacts is not an object")
   else {
-    exact(feed.artifacts, [...TARGETS], "artifacts")
+    for (const t of TARGETS) if (!OPTIONAL_TARGETS.has(t) && !(t in feed.artifacts)) p.push(`artifacts: missing ${t}`)
+    for (const k of Object.keys(feed.artifacts)) if (!(TARGETS as readonly string[]).includes(k)) p.push(`artifacts: unexpected key ${k}`)
     for (const t of TARGETS) {
       const a = feed.artifacts[t]
+      if (a === undefined && OPTIONAL_TARGETS.has(t)) continue
       if (!isObj(a)) continue
       exact(a, ["url", "sha256", "size"], `artifacts.${t}`)
       httpsUrl(a.url, `artifacts.${t}.url`)
@@ -251,11 +255,17 @@ function build(args: Args): void {
   const out = str(args, "out", ".")
   const sums = parseChecksums(readFileSync(str(args, "checksums"), "utf8"))
 
-  const artifacts = {} as Record<Target, Artifact>
+  const artifacts = {} as Partial<Record<Target, Artifact>>
   for (const t of TARGETS) {
     const name = assetName(version, t)
     const file = join(assetsDir, name)
-    if (!existsSync(file)) fail(`missing release asset ${file} (the feed needs all five targets)`)
+    if (!existsSync(file)) {
+      if (OPTIONAL_TARGETS.has(t)) {
+        console.warn(`warning: no ${t} asset (${name}); the feed leaves ${t} out and those installs keep their version`)
+        continue
+      }
+      fail(`missing release asset ${file} (the feed needs every macOS and Linux target)`)
+    }
     const bytes = readFileSync(file)
     const sha256 = createHash("sha256").update(bytes).digest("hex")
     const listed = sums.get(name)

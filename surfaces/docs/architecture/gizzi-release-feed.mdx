@@ -39,7 +39,7 @@ The release workflow writes both files. The `.sig` file holds a base64 Ed25519 s
 | `minVersion` | An install older than this updates on its next launch. |
 | `paused` | When true, clients do not offer or apply this version. |
 | `notes.highlights` | Up to four short lines, shown once after an update. |
-| `artifacts` | One entry per platform: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win32-x64`. Each has a download URL, a `sha256` and a size. |
+| `artifacts` | One entry per platform: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, and `win32-x64` when the Windows build succeeded. Each has a download URL, a `sha256` and a size. A feed without `win32-x64` leaves Windows installs on their current version. |
 | `packages` | The package names for npm, Homebrew and Scoop. |
 
 The binaries stay on GitHub Releases. The signed `sha256` is what makes the download safe, so the host needs no trust.

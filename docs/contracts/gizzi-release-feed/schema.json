@@ -69,8 +69,7 @@
         "darwin-arm64",
         "darwin-x64",
         "linux-x64",
-        "linux-arm64",
-        "win32-x64"
+        "linux-arm64"
       ],
       "additionalProperties": false,
       "properties": {
@@ -89,7 +88,8 @@
         "win32-x64": {
           "$ref": "#/$defs/artifact"
         }
-      }
+      },
+      "description": "win32-x64 is optional: when the Windows build fails, the feed still ships for macOS and Linux, and Windows installs keep their current version."
     },
     "packages": {
       "type": "object",
