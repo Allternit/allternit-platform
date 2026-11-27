@@ -235,6 +235,8 @@ The live view's Take over and Give back buttons, and the phones', use the contro
 | `POST /api/v1/computers/:id/control/take` | The caller takes control, or renews it (`kind: "user"`; the device from the `x-allternit-device-id` header). `{ "control": {...} }`. A lease lasts 120 s without a renew. A person may take over from an agent; another person holding it answers `423 computer_controlled_elsewhere` with `control`. On this device, holding control is how a person lets agents drive their own screen. |
 | `POST /api/v1/computers/:id/control/release` | Hands control back. `{ "released": true \| false, "control": null }` |
 
+Phones start the re-run with `POST /api/v1/computers/:id/runs` sent to the target's own `runtime_id` (falling back to `computer_id`) and read `run_id` from the answer; `404 computer_unavailable` shows "Your Mac isn't reachable". Gizzi Code reaches only the runtime behind its own API base, so it starts the re-run there using the target's `computer_id`. A `computer.human_requested` with `kind: "safari_profile"` carries `steps` for Safari setup on the Mac; clients list them and offer Continue.
+
 ### Masked secret box
 
 When a site asks for a one-off value that is not saved in the vault (a password, a 2FA code, a card CVC), call `request_human` with a `secret` instead of handing over the whole computer:

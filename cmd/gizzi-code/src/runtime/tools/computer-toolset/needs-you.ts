@@ -107,7 +107,7 @@ export interface Listener {
   /** Ends the waiting call with this error (the person chose Stop). */
   stop(err: Error): void
   /** The person chose "Re-run on my Mac" for this run: where, and the held run's id. */
-  rerun?: { computerId: string; fromRunId: string }
+  rerun?: { computerId: string; fromRunId: string; runtimeId?: string }
 }
 
 interface Watch {
@@ -214,7 +214,13 @@ function stopped(what: string) {
 
 async function onHuman(computerId: string, l: Listener, ev: ComputerEvent) {
   const reason = String(ev.data.reason ?? "").trim().slice(0, 300) || "it needs a hand"
-  const summary = `${l.botName} needs you: ${reason}`
+  // Safari setup on the Mac: show the driver's steps; Continue after the person has done them.
+  const steps: string[] = ev.data.kind === "safari_profile" && Array.isArray(ev.data.steps)
+    ? ev.data.steps.map((x: unknown) => (typeof x === "string" ? x : String((x as any)?.text ?? (x as any)?.title ?? ""))).filter(Boolean)
+    : []
+  const summary =
+    `${l.botName} needs you: ${reason}` +
+    (steps.length ? `\n${steps.map((t, i) => `${i + 1}. ${t}`).join("\n")}\nDo these on your Mac, then choose Continue.` : "")
   const answer = await askButtons(
     l,
     HUMAN_PERMISSION,
@@ -224,7 +230,7 @@ async function onHuman(computerId: string, l: Listener, ev: ComputerEvent) {
       { reply: "once", label: "Continue" },
       { reply: "reject", label: "Stop" },
     ],
-    { kind: "human", reason, computer: computerId, live_view: true },
+    { kind: "human", reason, computer: computerId, live_view: true, ...(steps.length ? { human_kind: "safari_profile", steps } : {}) },
   )
   if (answer === "nobody") return
   // Continue and Stop both release the waiting call; Stop then ends it.
@@ -265,7 +271,7 @@ async function onSecret(computerId: string, l: Listener, ev: ComputerEvent) {
 
 async function onBlock(computerId: string, l: Listener, ev: ComputerEvent) {
   const domain = String(ev.data.domain ?? "this site")
-  const targets: Array<{ computer_id: string; name?: string }> = Array.isArray(ev.data.rerun_targets) ? ev.data.rerun_targets : []
+  const targets: Array<{ computer_id: string; name?: string; runtime_id?: string }> = Array.isArray(ev.data.rerun_targets) ? ev.data.rerun_targets : []
   const target = targets[0]
   const options: ButtonOption[] = [
     { reply: "once", label: "Continue" },
@@ -282,7 +288,13 @@ async function onBlock(computerId: string, l: Listener, ev: ComputerEvent) {
   if (answer === "nobody") return
   if (answer.reply === "task" && target) {
     const res = await l.executor.blockResolve?.(computerId, { action: "rerun", rerun_target: target.computer_id }, l.ctx.abort)
-    if (res?.ok) l.rerun = { computerId: target.computer_id, fromRunId: res.run_id ?? String(ev.data.run_id) }
+    // Gizzi reaches only the runtime behind its own API base (no per-runtime relay), so the
+    // run starts there addressed by the target's computer id; `runtime_id` is kept for when
+    // gizzi can relay to a Mac's own runtime. A 404 computer_unavailable surfaces as the
+    // toolset call's error below.
+    if (res?.ok) {
+      l.rerun = { computerId: target.computer_id, fromRunId: res.run_id ?? String(ev.data.run_id), runtimeId: target.runtime_id }
+    }
     return
   }
   const action = answer.reply === "reject" ? "stop" : "continue"

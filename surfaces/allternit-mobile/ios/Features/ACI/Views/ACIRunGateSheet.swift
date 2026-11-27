@@ -98,6 +98,12 @@ struct ACIRunGateSheet: View {
     private func needsYou(_ request: ACIHumanRequest) -> some View {
         title("\(botName) needs you")
         caption(request.reason)
+        if request.kind == "safari_profile" {
+            ForEach(Array(request.steps.enumerated()), id: \.offset) { index, step in
+                caption("\(index + 1). \(step)")
+            }
+            caption("Do these on your Mac, then tap Continue.")
+        }
         if request.secret {
             SecureField("Secret", text: $secret)
                 .textContentType(.password)

@@ -35,6 +35,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
@@ -498,6 +499,9 @@ enum class AciRunStatus {
 class AciAgentClient(private val backend: ChatBackend) {
     data class Run(val sessionId: String, val adapterId: String?)
 
+    /** 404 `computer_unavailable` from the runs route: the target Mac is offline. */
+    class ComputerUnavailable : Exception("Your Mac isn't reachable")
+
     class NoComputer : Exception("No computer is connected. Pair one in Computers, or wake your cloud computer.")
 
     /** Defaults are the web store's: Sonnet 4.6, no allowlist, links stay in the agent viewport, auto-verify on. */
@@ -630,16 +634,16 @@ class AciAgentClient(private val backend: ChatBackend) {
         backend.runtimeJson("POST", computerPath(computerId, "secret"), buildJsonObject { put("cancel", true) }.toString(), target) is RuntimeCall.Ok
 
     /** Starts a run on a computer: `POST /api/v1/computers/:id/runs {task, rerun_of}`. Returns the new run id. */
-    suspend fun startComputerRun(computerId: String, task: String, rerunOf: String? = null): String? {
+    suspend fun startComputerRun(computerId: String, task: String, rerunOf: String? = null, runtimeId: String? = null): String? {
         val body = buildJsonObject {
             put("task", task)
             if (rerunOf != null) put("rerun_of", rerunOf)
         }.toString()
-        return when (val r = backend.runtimeJson("POST", computerPath(computerId, "runs"), body, computerId)) {
-            is RuntimeCall.Ok -> r.body.obj.let { it.str("run_id") ?: it.str("id") ?: it.str("sessionId") }
+        return when (val r = backend.runtimeJson("POST", computerPath(computerId, "runs"), body, runtimeId ?: computerId)) {
+            is RuntimeCall.Ok -> r.body.obj.let { it.str("run_id") ?: it.str("sessionId") }
+            is RuntimeCall.Http -> if (r.status == 404) throw ComputerUnavailable() else throw IllegalStateException(r.message?.takeIf { it.isNotBlank() } ?: "The computer couldn't start the run (HTTP ${r.status}).")
             RuntimeCall.NoComputer -> throw NoComputer()
             is RuntimeCall.Failed -> throw IllegalStateException(r.message)
-            is RuntimeCall.Http -> throw IllegalStateException(r.message?.takeIf { it.isNotBlank() } ?: "The computer couldn't start the run (HTTP ${r.status}).")
         }
     }
 
@@ -665,7 +669,7 @@ class AciAgentClient(private val backend: ChatBackend) {
 data class AciActor(val agentId: String?, val name: String?, val avatarUrl: String?, val color: String?)
 
 /** A rerun target the computer offers when a site blocks the bot. */
-data class AciRerunTarget(val computerId: String, val name: String)
+data class AciRerunTarget(val computerId: String, val name: String, val runtimeId: String? = null)
 
 /** The computer toolset events in CONTRACT.md (iOS ACIComputerEvent). Each frame's SSE name is `computer.action`; `type` is in the JSON. */
 sealed interface AciComputerEvent {
@@ -684,7 +688,7 @@ sealed interface AciComputerEvent {
         val isCredential: Boolean get() = kind == "credential" && credentialName != null
     }
 
-    data class HumanRequested(override val runId: String?, val reason: String, val secret: Boolean) : AciComputerEvent
+    data class HumanRequested(override val runId: String?, val reason: String, val secret: Boolean, val kind: String? = null, val steps: List<String> = emptyList()) : AciComputerEvent
     data class HumanResumed(override val runId: String?) : AciComputerEvent
     data class BlockDetected(
         override val runId: String?, val computerId: String?, val domain: String, val kind: String, val rerunTargets: List<AciRerunTarget>,
@@ -712,12 +716,15 @@ sealed interface AciComputerEvent {
                     ConfirmationRequired(runId, d.str("computer_id"), d.str("approval_id") ?: return null, d.str("kind") ?: "action",
                         cred?.str("name"), cred?.str("domain"), d.str("message"))
                 }
-                "computer.human_requested" -> HumanRequested(runId, d.str("reason") ?: d.str("message") ?: "", d.str("secret").let { !it.isNullOrEmpty() && it != "false" })
+                "computer.human_requested" -> HumanRequested(runId, d.str("reason") ?: d.str("message") ?: "", d.str("secret").let { !it.isNullOrEmpty() && it != "false" },
+                    d.str("kind"), (d["steps"] as? JsonArray).orEmpty().mapNotNull { st ->
+                        (st as? JsonPrimitive)?.contentOrNull ?: (st as? JsonObject)?.let { it.str("text") ?: it.str("title") ?: it.str("label") }
+                    })
                 "computer.human_resumed" -> HumanResumed(runId)
                 "computer.block_detected" -> BlockDetected(runId, d.str("computer_id"), d.str("domain") ?: return null, d.str("kind") ?: "block_page",
                     (d["rerun_targets"] as? JsonArray).orEmpty().mapNotNull { t ->
                         val o = t as? JsonObject ?: return@mapNotNull null
-                        AciRerunTarget(o.str("computer_id") ?: return@mapNotNull null, o.str("name") ?: "another computer")
+                        AciRerunTarget(o.str("computer_id") ?: return@mapNotNull null, o.str("name") ?: "another computer", o.str("runtime_id"))
                     })
                 "computer.block_resolved" -> BlockResolved(runId, d.str("domain"), d.str("action"))
                 "computer.agent_display" -> AgentDisplay(runId)
