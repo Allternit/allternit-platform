@@ -45,6 +45,13 @@ dependencies {
     // WebViewCompat.addWebMessageListener / addDocumentStartJavaScript.
     implementation(libs.androidx.webkit)
     // Real-PDF signing (PdfSign.kt): keeps the original pages and their text.
-    implementation(libs.pdfbox.android)
+    // PdfBox pulls BouncyCastle *-jdk15to18, which ships the same org.bouncycastle classes as the
+    // bcprov-jdk18on that :core:files, :app and :ondevice use (duplicate-class failure in :app).
+    // Drop its copy and give it the jdk18on build of the same artifacts instead.
+    implementation(libs.pdfbox.android) {
+        exclude(group = "org.bouncycastle")
+    }
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
     testImplementation(libs.junit)
 }
