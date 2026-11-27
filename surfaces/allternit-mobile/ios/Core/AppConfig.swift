@@ -114,8 +114,13 @@ enum AppConfig {
     }()
 
     /// Empty until a real publishable key is provided — AuthManager treats an
-    /// empty key as "Clerk not configured" instead of crashing.
-    static let clerkPublishableKey: String = infoPlistValue("CLERK_PUBLISHABLE_KEY") ?? ""
+    /// empty key as "Clerk not configured" instead of crashing. The example
+    /// file's placeholder counts as empty: TestFlight 1.0.4 (56) shipped with
+    /// `pk_test_your_key_here` and sign-in failed with no message.
+    static let clerkPublishableKey: String = {
+        let key = infoPlistValue("CLERK_PUBLISHABLE_KEY") ?? ""
+        return key.contains("your_key") ? "" : key
+    }()
 
     /// Clerk Frontend API proxy shared with ai.allternit.com and the native
     /// Android app (worker allternit-clerk-proxy). Google sign-in only works

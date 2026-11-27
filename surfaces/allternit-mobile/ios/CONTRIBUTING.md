@@ -13,10 +13,9 @@ Thanks for helping out. This document covers the basics of getting the iOS app r
    ```bash
    xcodegen generate
    ```
-4. Copy the secrets template and add your Clerk publishable key:
+4. Copy the secrets template (it holds the production Clerk publishable key, which is public):
    ```bash
    cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
-   # Edit Config/Secrets.xcconfig
    ```
 
 ## Running the app
@@ -62,7 +61,7 @@ For UI smoke tests we use Maestro:
 ## Secrets and credentials
 
 - Do not commit API keys, tokens, or private certificates.
-- `CLERK_PUBLISHABLE_KEY` is injected through `Config/Secrets.xcconfig` (gitignored). Copy from `Config/Secrets.xcconfig.example`, fill in your Clerk publishable key, and never commit the resulting file.
+- `CLERK_PUBLISHABLE_KEY` is injected through `Config/Secrets.xcconfig` (gitignored). Copy from `Config/Secrets.xcconfig.example` (production publishable key; change it only for your own Clerk instance) and never commit the resulting file.
 - Runtime device tokens and Clerk session tokens are stored in the iOS Keychain and are never logged.
 
 ## License
