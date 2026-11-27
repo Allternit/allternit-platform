@@ -65,22 +65,23 @@ export function getCommandArgumentHint(cmd: Command): string | undefined {
   return undefined
 }
 
-/** Grok user-guide category order. Unknown names fall through to Other. */
+/**
+ * Job groups for /help and the slash menu (overhaul plan step 27), in display
+ * order. Commands with no group fall through to Other.
+ */
 export const SLASH_CATEGORY_ORDER = [
   'Session',
-  'Model and Mode',
-  'Memory',
-  'Extensions',
-  'Workflows',
-  'Agents',
+  'Code',
+  'Workspace',
   'Account',
-  'Configuration',
+  'Settings',
   'Other',
 ] as const
 
 export type SlashCategory = (typeof SLASH_CATEGORY_ORDER)[number]
 
 const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
+  // Session: this conversation, its model and mode, and where it runs.
   clear: 'Session',
   resume: 'Session',
   compact: 'Session',
@@ -91,63 +92,104 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   rename: 'Session',
   rewind: 'Session',
   status: 'Session',
-  dash: 'Session',
-  session: 'Session',
   tag: 'Session',
   branch: 'Session',
   fork: 'Session',
   btw: 'Session',
   history: 'Session',
   'edit-prompt': 'Session',
-  files: 'Session',
-  diff: 'Session',
   share: 'Session',
-  model: 'Model and Mode',
-  effort: 'Model and Mode',
-  'always-approve': 'Model and Mode',
-  auto: 'Model and Mode',
-  vim: 'Model and Mode',
-  plan: 'Model and Mode',
-  think: 'Model and Mode',
-  fast: 'Model and Mode',
-  permissions: 'Model and Mode',
-  sandbox: 'Model and Mode',
-  passes: 'Model and Mode',
-  memory: 'Memory',
-  'memory-search': 'Memory',
-  remember: 'Memory',
-  plugin: 'Extensions',
-  skills: 'Extensions',
-  hooks: 'Extensions',
-  mcp: 'Extensions',
-  'reload-plugins': 'Extensions',
-  'install-github-app': 'Extensions',
-  ide: 'Extensions',
-  loops: 'Workflows',
-  goal: 'Workflows',
-  mission: 'Workflows',
-  tasks: 'Workflows',
-  workflows: 'Workflows',
-  workflow: 'Workflows',
-  agents: 'Agents',
-  swarm: 'Agents',
-  pet: 'Agents',
+  transcript: 'Session',
+  recap: 'Session',
+  queue: 'Session',
+  answer: 'Session',
+  edit: 'Session',
+  runtime: 'Session',
+  remote: 'Session',
+  model: 'Session',
+  effort: 'Session',
+  plan: 'Session',
+  think: 'Session',
+  fast: 'Session',
+  goal: 'Session',
+  mission: 'Session',
+  loops: 'Session',
+  tasks: 'Session',
+  // Code: the repository in front of you.
+  commit: 'Code',
+  'commit-push-pr': 'Code',
+  diff: 'Code',
+  files: 'Code',
+  review: 'Code',
+  'security-review': 'Code',
+  'pr-comments': 'Code',
+  init: 'Code',
+  'add-dir': 'Code',
+  cd: 'Code',
+  find: 'Code',
+  grep: 'Code',
+  fix: 'Code',
+  ide: 'Code',
+  'install-github-app': 'Code',
+  // Workspace: everything beyond this one chat.
+  sessions: 'Workspace',
+  pods: 'Workspace',
+  connections: 'Workspace',
+  sleep: 'Workspace',
+  routines: 'Workspace',
+  memory: 'Workspace',
+  knowledge: 'Workspace',
+  agents: 'Workspace',
+  swarm: 'Workspace',
+  workflows: 'Workspace',
+  workflow: 'Workspace',
+  artifact: 'Workspace',
+  computers: 'Workspace',
+  projects: 'Workspace',
+  decisions: 'Workspace',
+  pr: 'Workspace',
+  bots: 'Workspace',
+  autopilot: 'Workspace',
+  away: 'Workspace',
+  factory: 'Workspace',
+  board: 'Workspace',
+  dashboard: 'Workspace',
+  design: 'Workspace',
+  image: 'Workspace',
+  // Account
   login: 'Account',
   logout: 'Account',
   'privacy-settings': 'Account',
-  config: 'Configuration',
-  theme: 'Configuration',
-  keybindings: 'Configuration',
-  statusline: 'Configuration',
-  color: 'Configuration',
-  timestamps: 'Configuration',
-  doctor: 'Configuration',
-  'terminal-setup': 'Configuration',
-  'release-notes': 'Configuration',
-  help: 'Configuration',
-  feedback: 'Configuration',
-  'import-claude': 'Configuration',
-  init: 'Configuration',
+  passes: 'Account',
+  // Settings: how Gizzi behaves and looks, and what it can reach.
+  config: 'Settings',
+  theme: 'Settings',
+  keybindings: 'Settings',
+  statusline: 'Settings',
+  color: 'Settings',
+  timestamps: 'Settings',
+  doctor: 'Settings',
+  'terminal-setup': 'Settings',
+  'release-notes': 'Settings',
+  help: 'Settings',
+  feedback: 'Settings',
+  'import-claude': 'Settings',
+  vim: 'Settings',
+  'always-approve': 'Settings',
+  auto: 'Settings',
+  permissions: 'Settings',
+  sandbox: 'Settings',
+  plugin: 'Settings',
+  skills: 'Settings',
+  hooks: 'Settings',
+  mcp: 'Settings',
+  'reload-plugins': 'Settings',
+  pet: 'Settings',
+  multiline: 'Settings',
+  voice: 'Settings',
+  customize: 'Settings',
+  advisor: 'Settings',
+  'remote-env': 'Settings',
 }
 
 /**
@@ -166,7 +208,29 @@ export const HIDDEN_ALIAS_OWNERS: Readonly<Record<string, string>> = {
   'keep-going': 'resume',
   'view-plan': 'plan',
   routines: 'loops',
+  session: 'remote',
+  desktop: 'remote',
+  mobile: 'remote',
+  native: 'remote',
+  'memory-search': 'memory',
+  remember: 'memory',
 }
+
+/**
+ * Workspace views listed by name (overhaul S2b). Their commands set isHidden
+ * on their own branches (#3235 sleep, #3238 pods and connections, #3242
+ * sessions); this list makes them visible in the slash menu and /help without
+ * importing them, so a build without one of them simply has nothing to list.
+ */
+export const WORKSPACE_LISTED: ReadonlySet<string> = new Set([
+  'sessions',
+  'pods',
+  'connections',
+  'sleep',
+])
+
+/** Hidden aliases that /help still names under their group (not the slash menu). */
+export const HELP_LISTED_ALIASES: ReadonlySet<string> = new Set(['routines'])
 
 /** True for an old command name that only survives as a hidden alias. */
 export function isHiddenAlias(cmd: Command): boolean {
@@ -175,9 +239,21 @@ export function isHiddenAlias(cmd: Command): boolean {
   return Object.hasOwn(HIDDEN_ALIAS_OWNERS, getCommandName(cmd))
 }
 
+function isBuiltIn(cmd: Command): boolean {
+  return cmd.type === 'local' || cmd.type === 'local-jsx'
+}
+
 /** Commands the slash menu may offer: not hidden, not a merged old name. */
 export function isSlashMenuVisible(cmd: Command): boolean {
-  return !cmd.isHidden && !isHiddenAlias(cmd)
+  if (isHiddenAlias(cmd)) return false
+  if (isBuiltIn(cmd) && WORKSPACE_LISTED.has(getCommandName(cmd))) return true
+  return !cmd.isHidden
+}
+
+/** Commands /help lists: the slash-menu set plus the few aliases it names. */
+export function isHelpVisible(cmd: Command): boolean {
+  if (isBuiltIn(cmd) && HELP_LISTED_ALIASES.has(getCommandName(cmd))) return true
+  return isSlashMenuVisible(cmd)
 }
 
 export function getCommandCategory(cmd: Command): SlashCategory {
@@ -190,4 +266,28 @@ export function compareCommandsForSlashMenu(a: Command, b: Command): number {
   const bCat = SLASH_CATEGORY_ORDER.indexOf(getCommandCategory(b))
   if (aCat !== bCat) return aCat - bCat
   return getCommandName(a).localeCompare(getCommandName(b))
+}
+
+export type CommandGroup = { group: SlashCategory; commands: Command[] }
+
+/**
+ * /help grouped by job: one entry per non-empty group in
+ * SLASH_CATEGORY_ORDER, each sorted by name, one row per command name.
+ */
+export function groupCommandsForHelp(commands: readonly Command[]): CommandGroup[] {
+  const seen = new Set<string>()
+  const byGroup = new Map<SlashCategory, Command[]>()
+  for (const cmd of commands) {
+    const name = getCommandName(cmd)
+    if (seen.has(name)) continue
+    seen.add(name)
+    const group = getCommandCategory(cmd)
+    const list = byGroup.get(group) ?? []
+    list.push(cmd)
+    byGroup.set(group, list)
+  }
+  return SLASH_CATEGORY_ORDER.filter(group => byGroup.has(group)).map(group => ({
+    group,
+    commands: byGroup.get(group)!.sort((a, b) => getCommandName(a).localeCompare(getCommandName(b))),
+  }))
 }

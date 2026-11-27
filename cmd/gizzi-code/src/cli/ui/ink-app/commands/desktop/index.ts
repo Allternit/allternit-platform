@@ -8,6 +8,8 @@ const desktop = {
   aliases: ['app'],
   description: 'Open this live session in Allternit Desktop',
   isEnabled: liveSessionEnabled,
+  // Hidden alias of /remote (overhaul plan D4): still runs when typed; /remote desktop is the listed way.
+  isHidden: true,
   supportsNonInteractive: false,
   load: () => import('./desktop.js'),
 } satisfies Command

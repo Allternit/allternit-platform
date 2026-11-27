@@ -506,6 +506,7 @@
               "cli/mcp",
               "cli/plugin",
               "cli/customize",
+              "cli/slash-commands",
               "cli/session",
               "cli/memory",
               "cli/knowledge",

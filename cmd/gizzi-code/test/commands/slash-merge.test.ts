@@ -17,6 +17,8 @@ import viewPlan from '../../src/cli/ui/ink-app/commands/view-plan/index.ts'
 import goal from '../../src/cli/ui/ink-app/commands/goal.ts'
 import mission from '../../src/cli/ui/ink-app/commands/mission/index.ts'
 import loops from '../../src/cli/ui/ink-app/commands/loops.ts'
+import remote from '../../src/cli/ui/ink-app/commands/remote/index.ts'
+import memory from '../../src/cli/ui/ink-app/commands/memory/index.ts'
 import { routines } from '../../src/cli/ui/ink-app/commands/work/index.ts'
 import { statusTabFromArgs, STATUS_ALIAS_TABS } from '../../src/cli/ui/ink-app/commands/status/tabs.ts'
 import { resumeSubcommand } from '../../src/cli/ui/ink-app/commands/resume/subcommand.ts'
@@ -30,7 +32,8 @@ const hiddenAliases: Command[] = [
   usage, usageTab, cost, costTab, stats, sessionInfo, extraUsage, extraUsageNonInteractive,
   resumeNow, keepGoing, viewPlan, routines,
 ]
-const owners: Command[] = [status, resume, plan, goal, mission, loops]
+// remote and memory own the step 26 aliases (slash-merge-b.test.ts).
+const owners: Command[] = [status, resume, plan, goal, mission, loops, remote, memory]
 const registry: Command[] = [...owners, ...hiddenAliases]
 
 async function openedTab(cmd: Command): Promise<unknown> {

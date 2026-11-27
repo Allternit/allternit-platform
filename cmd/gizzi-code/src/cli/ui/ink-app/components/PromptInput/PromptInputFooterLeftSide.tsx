@@ -6,7 +6,7 @@ const coordinatorModule = feature('COORDINATOR_MODE') ? require('../../coordinat
 import { Box, Text, Link } from '../../ink';
 import * as React from 'react';
 import figures from 'figures';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { VimMode, PromptInputMode } from '../../types/textInputTypes';
 import type { ToolPermissionContext } from '../../Tool';
 import { isVimModeEnabled } from './utils';
@@ -29,7 +29,6 @@ import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint';
 import { Byline } from '../design-system/Byline';
 import { useTerminalSize } from '../../hooks/useTerminalSize';
 import { useTasksV2 } from '../../hooks/useTasksV2';
-import { formatDuration } from '../../utils/format';
 import { VoiceWarmupHint } from './VoiceIndicator';
 import { useVoiceEnabled } from '../../hooks/useVoiceEnabled';
 import { useVoiceState } from '../../context/voice';
@@ -43,12 +42,6 @@ import { PrBadge } from '../PrBadge';
 import { useFactoryBadge } from '../FactoryBadge';
 import { useMissionBadge } from '../MissionBadge';
 
-// Dead code elimination: conditional import for proactive mode
-/* eslint-disable @typescript-eslint/no-require-imports */
-const proactiveModule = feature('PROACTIVE') || feature('KAIROS') ? require('../../proactive/index.js') : null;
-/* eslint-enable @typescript-eslint/no-require-imports */
-const NO_OP_SUBSCRIBE = (_cb: () => void) => () => {};
-const NULL = () => null;
 const MAX_VOICE_HINT_SHOWS = 3;
 type Props = {
   exitMessage: {
@@ -72,37 +65,6 @@ type Props = {
   historyFailedMatch: boolean;
   onOpenTasksDialog?: (taskId?: string) => void;
 };
-function ProactiveCountdown() {
-  const nextTickAt = useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? NO_OP_SUBSCRIBE, proactiveModule?.getNextTickAt ?? NULL, NULL);
-  const [remainingSeconds, setRemainingSeconds] = useState(null);
-  const t0 = () => {
-      if (nextTickAt === null) {
-        setRemainingSeconds(null);
-        return;
-      }
-      const update = function update() {
-        const remaining = Math.max(0, Math.ceil((nextTickAt - Date.now()) / 1000));
-        setRemainingSeconds(remaining);
-      };
-      update();
-      const interval = setInterval(update, 1000);
-      return () => clearInterval(interval);
-    };
-  const t1 = [nextTickAt];
-
-  useEffect(t0, t1);
-  if (remainingSeconds === null) {
-    return null;
-  }
-  const t2 = remainingSeconds * 1000;
-  const t3 = formatDuration(t2, {
-      mostSignificantOnly: true
-    });
-
-  const t4 = <Text dimColor={true}>waiting{" "}{t3}</Text>;
-
-  return t4;
-}
 export function PromptInputFooterLeftSide({
     exitMessage,
     vimMode,
@@ -186,14 +148,12 @@ function ModeIndicator({
   const missionBadge = useMissionBadge(process.cwd());
   // @ts-expect-error TODO(types) verbatim upstream dead comparison ("external" === 'ant' is always false)
   const hasTmuxSession = useAppState(s_4 => "external" === 'ant' && s_4.tungstenActiveSession !== undefined);
-  const nextTickAt = useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? NO_OP_SUBSCRIBE, proactiveModule?.getNextTickAt ?? NULL, NULL);
   // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
   const voiceEnabled = useVoiceEnabled();
   const voiceState = useVoiceState(s_5 => s_5.voiceState);
   const voiceWarmingUp = useVoiceState(s_6 => s_6.voiceWarmingUp);
   const hasSelection = useHasSelection();
   const selGetState = useSelection().getState;
-  const hasNextTick = nextTickAt !== null;
   const isCoordinator = feature('COORDINATOR_MODE') ? coordinatorModule?.isCoordinatorMode() === true : false;
   // @ts-expect-error TODO(types) verbatim upstream dead comparison ("external" === 'ant' is always false)
   const runningTaskCount = useMemo(() => count(Object.values(tasks), t => isBackgroundTask(t) && !("external" === 'ant' && isPanelAgentTask(t))), [tasks]);
@@ -296,8 +256,6 @@ function ModeIndicator({
     parts.push(<Text dimColor key="esc-return">
         <KeyboardShortcutHint shortcut={escShortcut} action="return to team lead" />
       </Text>);
-  } else if ((feature('PROACTIVE') || feature('KAIROS')) && hasNextTick) {
-    parts.push(<ProactiveCountdown key="proactive" />);
   } else if (!hasTeammatePills && showHint) {
     parts.push(...hintParts);
   }

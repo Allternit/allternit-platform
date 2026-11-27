@@ -6,6 +6,7 @@ import { Box, Text } from '../../ink'
 import { useKeybinding } from '../../keybindings/useKeybinding'
 import { getLiveSession, liveLinks, onLiveSessionChange, type LiveLinks } from '../../services/liveSession'
 import type { LocalJSXCommandCall } from '../../types/command'
+import { remoteSubcommand } from './subcommand'
 
 function useLive() {
   const [live, setLive] = useState(() => ({ ...getLiveSession() }))
@@ -113,8 +114,17 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
       )}
       <Box>
         <Text dimColor>Desktop: </Text>
-        <Text color="ide">/desktop</Text>
+        <Text color="ide">/remote desktop</Text>
         <Text dimColor> (it is already in Desktop's session list)</Text>
+      </Box>
+      <Box>
+        <Text dimColor>More: </Text>
+        <Text color="ide">/remote mobile</Text>
+        <Text dimColor> get the app · </Text>
+        <Text color="ide">/remote native</Text>
+        <Text dimColor> pick up another CLI's session · </Text>
+        <Text color="ide">/remote session</Text>
+        <Text dimColor> remote-mode URL</Text>
       </Box>
       <Box marginTop={1}>
         <Text dimColor>Messages, Stop and approvals from any of them reach this terminal at once. (press esc to close)</Text>
@@ -123,6 +133,17 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
   )
 }
 
-export const call: LocalJSXCommandCall = async onDone => {
+export const call: LocalJSXCommandCall = async (onDone, context, args) => {
+  // `/remote session|desktop|mobile|native` (were /session, /desktop, /mobile, /native).
+  const sub = remoteSubcommand(args)
+  if (sub?.view === 'session') return (await import('../session/session')).call(onDone, context, sub.rest)
+  if (sub?.view === 'mobile') return (await import('../mobile/mobile')).call(onDone)
+  if (sub) {
+    const { call: runSub } = sub.view === 'desktop' ? await import('../desktop/desktop') : await import('../native/native')
+    const result = await runSub(sub.rest, context)
+    if (result.type === 'text') onDone(result.value, { display: 'system' })
+    else onDone(undefined, { display: 'skip' })
+    return null
+  }
   return <LiveRemote onDone={() => onDone()} />
 }

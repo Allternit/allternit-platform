@@ -300,13 +300,8 @@ import { isBgSession, updateSessionName, updateSessionActivity } from '../utils/
 import { isInProcessTeammateTask, type InProcessTeammateTaskState } from '../tasks/InProcessTeammateTask/types';
 import { restoreRemoteAgentTasks } from '../tasks/RemoteAgentTask/RemoteAgentTask';
 import { useInboxPoller } from '../hooks/useInboxPoller';
-// Dead code elimination: conditional import for loop mode
 /* eslint-disable @typescript-eslint/no-require-imports */
-const proactiveModule = feature('PROACTIVE') || feature('KAIROS') ? require('../proactive/index.js') : null;
-const PROACTIVE_NO_OP_SUBSCRIBE = (_cb: () => void) => () => {};
-const PROACTIVE_FALSE = () => false;
 const SUGGEST_BG_PR_NOOP = (_p: string, _n: string): boolean => false;
-const useProactive = feature('PROACTIVE') || feature('KAIROS') ? require('../proactive/useProactive.js').useProactive : null;
 const useScheduledTasks = feature('AGENT_TRIGGERS') ? require('../hooks/useScheduledTasks.js').useScheduledTasks : null;
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { isAgentSwarmsEnabled } from '../utils/agentSwarmsEnabled';
@@ -822,9 +817,6 @@ export function REPL({
   // Watch for skill file changes and reload all commands
   useSkillsChange(isRemoteSession ? undefined : getProjectRoot(), setLocalCommands);
 
-  // Track proactive mode for tools dependency - SleepTool filters by proactive state
-  const proactiveActive = React.useSyncExternalStore(proactiveModule?.subscribeToProactiveChanges ?? PROACTIVE_NO_OP_SUBSCRIBE, proactiveModule?.isProactiveActive ?? PROACTIVE_FALSE);
-
   // BriefTool.isEnabled() reads getUserMsgOptIn() from bootstrap state, which
   // /brief flips mid-session alongside isBriefOnly. The memo below needs a
   // React-visible dep to re-run getTools() when that happens; isBriefOnly is
@@ -832,7 +824,7 @@ export function REPL({
   // /brief mid-session leaves the stale tool list (no SendUserMessage) and
   // the model emits plain text the brief filter hides.
   const isBriefOnly = useAppState(s => s.isBriefOnly);
-  const localTools = useMemo(() => getTools(toolPermissionContext), [toolPermissionContext, proactiveActive, isBriefOnly]);
+  const localTools = useMemo(() => getTools(toolPermissionContext), [toolPermissionContext, isBriefOnly]);
   useKickOffCheckAndDisableBypassPermissionsIfNeeded();
   useKickOffCheckAndDisableAutoModeIfNeeded();
   const [dynamicMcpConfig, setDynamicMcpConfig] = useState<Record<string, ScopedMcpServerConfig> | undefined>(initialDynamicMcpConfig);
@@ -1693,9 +1685,6 @@ export function REPL({
       setShowBashesDialog(false);
     }
   }, [ultraplanPendingChoice, showBashesDialog]);
-  const isTerminalFocused = useTerminalFocus();
-  const terminalFocusRef = useRef(isTerminalFocused);
-  terminalFocusRef.current = isTerminalFocused;
   const [theme] = useTheme();
 
   // resetLoadingState runs twice per turn (onQueryImpl tail + onQuery finally).
@@ -2305,11 +2294,6 @@ export function REPL({
     }
     logForDebugging(`[onCancel] focusedInputDialog=${focusedInputDialog} streamMode=${streamMode}`);
 
-    // Pause proactive mode so the user gets control back.
-    // It will resume when they submit their next input (see onSubmit).
-    if (feature('PROACTIVE') || feature('KAIROS')) {
-      proactiveModule?.pauseProactive();
-    }
     queryGuard.forceEnd();
     skipIdleCheckRef.current = false;
 
@@ -2873,10 +2857,6 @@ export function REPL({
         // Bump conversationId so Messages.tsx row keys change and
         // stale memoized rows remount with post-compact content.
         setConversationId(randomUUID());
-        // Compaction succeeded — clear the context-blocked flag so ticks resume
-        if (feature('PROACTIVE') || feature('KAIROS')) {
-          proactiveModule?.setContextBlocked(false);
-        }
       } else if (newMessage.type === 'progress' && isEphemeralToolProgress(newMessage.data.type)) {
         // Replace the previous ephemeral progress tick for the same tool
         // call instead of appending. Sleep/Bash emit a tick per second and
@@ -2929,13 +2909,6 @@ export function REPL({
       // Block ticks on API errors to prevent tick → error → tick
       // runaway loops (e.g., auth failure, rate limit, blocking limit).
       // Cleared on compact boundary (above) or successful response (below).
-      if (feature('PROACTIVE') || feature('KAIROS')) {
-        if (newMessage.type === 'assistant' && 'isApiErrorMessage' in newMessage && newMessage.isApiErrorMessage) {
-          proactiveModule?.setContextBlocked(true);
-        } else if (newMessage.type === 'assistant') {
-          proactiveModule?.setContextBlocked(false);
-        }
-      }
     }, newContent => {
       // setResponseLength handles updating both responseLengthRef (for
       // spinner animation) and apiMetricsRef (endResponseLength/lastTokenTime
@@ -3027,15 +3000,11 @@ export function REPL({
     // or if the user input was an invalid slash command.
     if (!shouldQuery) {
       // Manual /compact sets messages directly (shouldQuery=false) bypassing
-      // handleMessageFromStream. Clear context-blocked if a compact boundary
-      // is present so proactive ticks resume after compaction.
+      // handleMessageFromStream.
       if (newMessages.some(isCompactBoundaryMessage)) {
         // Bump conversationId so Messages.tsx row keys change and
         // stale memoized rows remount with post-compact content.
         setConversationId(randomUUID());
-        if (feature('PROACTIVE') || feature('KAIROS')) {
-          proactiveModule?.setContextBlocked(false);
-        }
       }
       resetLoadingState();
       setAbortController(null);
@@ -3071,9 +3040,6 @@ export function REPL({
     const userContext = {
       ...baseUserContext,
       ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
-      ...((feature('PROACTIVE') || feature('KAIROS')) && proactiveModule?.isProactiveActive() && !terminalFocusRef.current ? {
-        terminalFocus: 'The terminal is unfocused \u2014 the user is not actively watching.'
-      } : {})
     };
     queryCheckpoint('query_context_loading_end');
     const systemPrompt = buildEffectiveSystemPrompt({
@@ -3437,8 +3403,8 @@ export function REPL({
         // The per-turn telemetry line below carries the duration ("Gizzi
         // forged for 3.5s · …") on every turn, so the separate duration line
         // only appears when that line won't (brief mode) or for token budgets.
-        const telemetryLineShown = shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly;
-        if ((turnDurationMs > 30000 || budgetInfo !== undefined) && !(telemetryLineShown && budgetInfo === undefined) && !abortController.signal.aborted && !proactiveActive) {
+        const telemetryLineShown = shouldQuery && !abortController.signal.aborted && !store.getState().isBriefOnly;
+        if ((turnDurationMs > 30000 || budgetInfo !== undefined) && !(telemetryLineShown && budgetInfo === undefined) && !abortController.signal.aborted) {
           const hasRunningSwarmAgents = getAllInProcessTeammateTasks(store.getState().tasks).some(t => t.status === 'running');
           if (hasRunningSwarmAgents) {
             // Only record start time on the first deferred turn
@@ -3459,7 +3425,7 @@ export function REPL({
         // from the last usage-bearing message; tool count from the bootstrap
         // turn counter. Segments with no data are omitted, never zero-filled.
         // Skipped on abort and in loop mode, same as the duration line.
-        if (shouldQuery && !abortController.signal.aborted && !proactiveActive && !store.getState().isBriefOnly) {
+        if (shouldQuery && !abortController.signal.aborted && !store.getState().isBriefOnly) {
           const telemetryBaseline = turnTelemetryBaselineRef.current;
           // A failed or empty turn gets "✕ Stopped after …", never a "Done" line.
           const outcome = turnOutcome(messagesRef.current, telemetryBaseline?.messageCount ?? 0);
@@ -3499,7 +3465,7 @@ export function REPL({
         // Landing before usage limits (P3.17): a turn cut off by a limit
         // pauses the chat until the reset (then continues on its own); a
         // provider window at limits.land_at pauses before the next turn fails.
-        if (shouldQuery && !abortController.signal.aborted && !proactiveActive) {
+        if (shouldQuery && !abortController.signal.aborted) {
           const pauseProvider = resolveQuotaProviderId(mainLoopModelParam) ?? providerOfModel(mainLoopModelParam);
           const pauseFor = (p: { until: number; limit: string }, reason: 'limit_hit' | 'quota') => {
             setAppState(prev => ({ ...prev, replPause: { ...p, providerID: pauseProvider, reason } }));
@@ -3695,10 +3661,6 @@ export function REPL({
       setAppState(prev => prev.replPause ? { ...prev, replPause: undefined } : prev);
     }
 
-    // Resume loop mode if paused
-    if (feature('PROACTIVE') || feature('KAIROS')) {
-      proactiveModule?.resumeProactive();
-    }
 
     // Handle natural language swarm commands
     const lowerInput = input.trim().toLowerCase();
@@ -4633,26 +4595,6 @@ export function REPL({
       onSubmitTask: handleIncomingPrompt
     });
 
-    // Loop mode: auto-tick when enabled (via /job command)
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    // biome-ignore lint/correctness/useHookAtTopLevel: conditional for dead code elimination in external builds
-    useProactive?.({
-      // Suppress ticks while an initial message is pending — the initial
-      // message will be processed asynchronously and a premature tick would
-      // race with it, causing concurrent-query enqueue of expanded skill text.
-      isLoading: isLoading || initialMessage !== null,
-      queuedCommandsLength: queuedCommands.length,
-      hasActiveLocalJsxUI: isShowingLocalJSXCommand,
-      isInPlanMode: toolPermissionContext.mode === 'plan',
-      onSubmitTick: (prompt: string) => handleIncomingPrompt(prompt, {
-        isMeta: true
-      }),
-      onQueueTick: (prompt: string) => enqueue({
-        mode: 'prompt',
-        value: prompt,
-        isMeta: true
-      })
-    });
   }
 
   // Abort the current operation when a 'now' priority message arrives
@@ -5554,11 +5496,6 @@ export function REPL({
               });
             } else {
               setMessages(postCompact);
-            }
-            // Partial compact bypasses handleMessageFromStream — clear
-            // the context-blocked flag so proactive ticks resume.
-            if (feature('PROACTIVE') || feature('KAIROS')) {
-              proactiveModule?.setContextBlocked(false);
             }
             setConversationId(randomUUID());
             runPostCompactCleanup(context.options.querySource);
