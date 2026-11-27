@@ -89,7 +89,7 @@ import com.allternit.feature.artifacts.LibraryField
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibraryLayout
-import com.allternit.feature.artifacts.LibraryLayoutSwitch
+import com.allternit.feature.artifacts.LibraryLayoutButton
 import com.allternit.feature.artifacts.LibraryNewButton
 import com.allternit.feature.artifacts.LibraryRowButton
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -362,7 +362,7 @@ fun ProjectsListScreen(
         LibrarySheet("Filter and layout", "projectsFilterSheet", onDismiss = { filterOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { filterOpen = false }) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
                 FilterLabel("Layout")
-                LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
+                LibraryLayoutButton(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) }
                 FilterLabel("Show")
                 PillRow(listOf<ProjectMode?>(null) + ProjectMode.entries, show, { it?.label ?: "All Projects" }, { "projectsShow${it?.raw ?: "all"}" }) { show = it }
                 FilterLabel("Sort by")

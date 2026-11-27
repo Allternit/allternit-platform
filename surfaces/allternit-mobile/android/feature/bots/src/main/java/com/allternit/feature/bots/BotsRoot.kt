@@ -430,10 +430,10 @@ private fun BotsOptionsSheet(
     val context = LocalContext.current
     var layout by remember { mutableStateOf(rosterLayout(context)) }
     LibrarySheet(title = "Bots options", testTag = "botsOptionsSheet", onDismiss = onDismiss, trailing = LibrarySheetAction("Done", bold = true, onClick = onDismiss)) {
-        PillRow(RosterLayout.entries, layout, { it.label }, { "botsLayout${it.label}" }, Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        com.allternit.feature.artifacts.LayoutCycleButton(RosterLayout.entries, layout, { it.label }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), tag = "botsLayoutCycle", onPick = {
             layout = it
             saveRosterLayout(context, it)
-        }
+        })
         RowGroup(Modifier.padding(vertical = 8.dp)) {
             NavRow("Threads", com.allternit.core.design.R.drawable.ph_list, if (waiting > 0) "$waiting waiting" else null, "botsOptionsThreads", last = false, onClick = onThreads)
             if (onOffice != null) NavRow("Office", com.allternit.core.design.R.drawable.ph_house, null, "botsOptionsOffice", last = false, onClick = onOffice)
