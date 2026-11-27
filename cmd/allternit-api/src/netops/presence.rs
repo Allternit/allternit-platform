@@ -250,8 +250,20 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
 /// job here as a library, so it works with the Factory engine's HTTP down. Move → 202
 /// `{jobId, state}` (the job runs on; it shows on `LiveSession.move`); copy and new → 200
 /// `{terminalId}`; cancel → 200 `{jobId, state, code}`. Errors → `{error: <code>, message}`.
-async fn adopt_route(State(state): State<Arc<AppState>>, body: axum::body::Bytes) -> Response {
+async fn adopt_route(
+    State(state): State<Arc<AppState>>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
     use allternit_factory_engine::agents::adopt::{self, Adopted, CreateFuture, CreateSpec, Creator};
+    // Start anywhere safety switch (D6): with it off, another device may not open a new session
+    // or a copy here (move and cancel act on a session that is already running).
+    if adopt_opens_session(&body) {
+        if let Some(refused) = crate::session_start_routes::refuse_if_off(&headers, peer.map(|c| c.0)) {
+            return refused;
+        }
+    }
     // Parsed here (not with the Json extractor) so a missing content-type or bad body is the same JSON error.
     let req: adopt::AdoptRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -282,6 +294,11 @@ async fn adopt_job_route(Path(job_id): Path<String>) -> Response {
     }
 }
 
+/// Adopt `new` or `copy`: starts a session process (the switch guards these).
+fn adopt_opens_session(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body).is_ok_and(|v| matches!(v["mode"].as_str(), Some("new" | "copy")))
+}
+
 fn adopt_error(status: u16, code: &str, message: &str) -> Response {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(json!({ "error": code, "message": message }))).into_response()
@@ -293,6 +310,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/live-sessions", get(live_sessions_route))
         .route("/live-sessions/adopt", post(adopt_route))
         .route("/live-sessions/adopt/:job_id", get(adopt_job_route))
+        .merge(crate::session_start_routes::router())
 }
 
 /// Send one heartbeat. `Ok(false)` = not paired (nothing to do).
@@ -383,6 +401,8 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
 /// "Re-run on my Mac" offers only Macs seen in the last two minutes
 /// (`computer_block::rerun_targets`).
 pub fn spawn(state: Arc<AppState>) {
+    // Start anywhere (D7): the folder snapshot to cloud-api, on its own 10 min cadence.
+    crate::session_start_routes::spawn_snapshot(state.clone());
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(EVERY).await;
