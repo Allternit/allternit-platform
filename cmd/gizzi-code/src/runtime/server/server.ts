@@ -756,6 +756,17 @@ export namespace Server {
       .then(({ CatalogSync }) => CatalogSync.start())
       .catch((err) => log.warn("subagent catalog sync not started", { error: String(err) }))
 
+    // Paired and Desktop not holding the relay: open the cloud runtime relay
+    // so the phone and the web reach this machine (Start anywhere). No-op when
+    // unpaired, self-hosted, or spawned by Desktop.
+    const relayHost =
+      !opts.hostname || isLoopback(opts.hostname) || opts.hostname === "0.0.0.0" || opts.hostname === "::"
+        ? "127.0.0.1"
+        : server.hostname
+    void import("@/runtime/integrations/relay-connector")
+      .then(({ RelayConnector }) => RelayConnector.start({ engineUrl: `http://${relayHost}:${server.port}` }))
+      .catch((err) => log.warn("cloud relay not started", { error: String(err) }))
+
     // Start runtime heartbeat to keep local/remote runtime status fresh.
     try {
       RuntimeHeartbeat.start()
@@ -842,6 +853,9 @@ export namespace Server {
         InstanceRegistration.stop()
       }
       if (shouldPublishMDNS) MDNS.unpublish()
+      await import("@/runtime/integrations/relay-connector")
+        .then(({ RelayConnector }) => RelayConnector.stop())
+        .catch(() => {})
       try {
         CronService.close()
         log.info("cron service stopped")
