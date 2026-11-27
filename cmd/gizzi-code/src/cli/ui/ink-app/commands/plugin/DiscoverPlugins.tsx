@@ -557,7 +557,7 @@ export function DiscoverPlugins({
   if (availablePlugins.length === 0) {
     return <Box flexDirection="column">
         <Box marginBottom={1}>
-          <Text bold>Discover plugins</Text>
+          <Text bold>Catalog</Text>
         </Box>
         <EmptyStateMessage reason={emptyReason} />
         <Box marginTop={1}>
@@ -572,7 +572,7 @@ export function DiscoverPlugins({
   const visiblePlugins = pagination.getVisibleItems(filteredPlugins);
   return <Box flexDirection="column">
       <Box>
-        <Text bold>Discover plugins</Text>
+        <Text bold>Catalog</Text>
         {pagination.needsPagination && <Text dimColor>
             {' '}
             ({pagination.scrollPosition.current}/
