@@ -32,8 +32,16 @@ export interface RawTurn {
   score?: number
 }
 
+export interface KnowledgeHit {
+  path: string
+  kind: string
+  text: string
+  score?: number
+}
+
 export interface RawSearchResponse {
   turns?: RawTurn[]
+  knowledge?: KnowledgeHit[]
 }
 
 export type RawRequest = (method: "POST" | "GET", path: string, body?: unknown, opts?: { timeoutMs?: number }) => Promise<unknown>
@@ -50,7 +58,10 @@ export namespace PastChats {
   const results = new Map<string, Promise<Built | undefined>>()
 
   export interface Built {
+    /** The `<past-chats>` block; empty when only knowledge matched. */
     block: string
+    /** The separate `<knowledge>` block (approved guides); never mixed into past-chats, never in refs. */
+    knowledge?: string
     refs: PastChatRef[]
   }
 
@@ -81,9 +92,24 @@ export namespace PastChats {
     return t.length > max ? `${t.slice(0, max - 1)}…` : t
   }
 
-  export function format(turns: RawTurn[]): Built | undefined {
-    const usable = turns.filter((t) => t.observation_id && t.text?.trim())
+  export function formatKnowledge(hits: KnowledgeHit[]): string | undefined {
+    const usable = hits.filter((h) => h.text?.trim()).slice(0, 3)
     if (usable.length === 0) return undefined
+    const lines = usable.map((h) => {
+      const name = h.path.split("/").pop()?.replace(/\.md$/, "") ?? h.path
+      return `- [${h.kind} · ${name}] ${clean(h.text, MAX_LINE_CHARS)}`
+    })
+    return [
+      `<knowledge note="Approved guides from this person's Memory Drive (business knowledge and data-access guides). Prefer them over guessing; flag with knowledge_flag if one is wrong or stale.">`,
+      ...lines,
+      `</knowledge>`,
+    ].join("\n")
+  }
+
+  export function format(turns: RawTurn[], hits: KnowledgeHit[] = []): Built | undefined {
+    const usable = turns.filter((t) => t.observation_id && t.text?.trim())
+    const knowledge = formatKnowledge(hits)
+    if (usable.length === 0) return knowledge ? { block: "", knowledge, refs: [] } : undefined
     const lines = usable.map((t) => `[${day(t.timestamp)} · ${t.speaker === "assistant" ? "assistant" : "user"}] ${clean(t.text, MAX_LINE_CHARS)}`)
     const block = [
       `<past-chats note="Earlier conversations with this person that may be relevant. Dated; may be out of date.">`,
@@ -103,7 +129,7 @@ export namespace PastChats {
         session_id: t.session_id,
       })
     }
-    return { block, refs }
+    return { block, knowledge, refs }
   }
 
   export interface BuildInput {
@@ -137,10 +163,11 @@ export namespace PastChats {
           mode: "auto",
           calling_session: input.sessionID,
           exclude_sessions: [input.sessionID],
+          include_knowledge: true,
         },
         { timeoutMs },
       )
-        .then((r) => format((r as RawSearchResponse)?.turns ?? []))
+        .then((r) => format((r as RawSearchResponse)?.turns ?? [], (r as RawSearchResponse)?.knowledge ?? []))
         .catch(() => undefined)
       const out = await Promise.race([fetched, late])
       if (timer) clearTimeout(timer)

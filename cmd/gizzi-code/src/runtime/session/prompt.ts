@@ -2844,14 +2844,17 @@ const message = await createUserMessage(input)
       incognito: flags.incognito,
     })
     if (!built) return
-    user.parts.push({
-      id: Identifier.ascending("part"),
-      messageID: user.info.id,
-      sessionID: user.info.sessionID,
-      type: "text",
-      text: built.block,
-      synthetic: true,
-    })
+    for (const text of [built.block, built.knowledge]) {
+      if (!text) continue
+      user.parts.push({
+        id: Identifier.ascending("part"),
+        messageID: user.info.id,
+        sessionID: user.info.sessionID,
+        type: "text",
+        text,
+        synthetic: true,
+      })
+    }
   }
 
   async function insertReminders(input: { messages: MessageV2.WithParts[]; agent: Agent.Info; session: Session.Info }) {

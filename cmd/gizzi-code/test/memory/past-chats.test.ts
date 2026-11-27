@@ -44,6 +44,21 @@ describe("PastChats.build", () => {
     expect(out!.refs[0]).toMatchObject({ id: "obs_1", session_id: "ses_old1", date: "2026-11-11T14:05:00Z" })
   })
 
+  test("a knowledge hit renders a separate <knowledge> block; past-chats unchanged; no knowledge refs", async () => {
+    const calls: { path: string; body: any }[] = []
+    const request: RawRequest = async (_m, path, body) => {
+      calls.push({ path, body })
+      return { turns: [turn(1)], knowledge: [{ path: "knowledge/data-access/github.md", kind: "data_access", text: "Use the gh CLI.", score: 0.7 }] }
+    }
+    const out = await PastChats.build({ sessionID: "s", text: "which reranker did we pick", request })
+    expect(calls[0].body.include_knowledge).toBe(true)
+    expect(out!.knowledge).toContain("<knowledge note=")
+    expect(out!.knowledge).toContain("- [data_access · github] Use the gh CLI.")
+    expect(out!.block).not.toContain("knowledge")
+    expect(out!.block).toContain("[2026-11-11 · user] we picked bge for reranking 1")
+    expect(out!.refs).toHaveLength(1)
+  })
+
   test("at most 4 refs", async () => {
     const out = await PastChats.build({ sessionID: "s", text: "one two three four", request: fake([1, 2, 3, 4, 5, 6].map((n) => turn(n))) })
     expect(out!.refs).toHaveLength(4)
