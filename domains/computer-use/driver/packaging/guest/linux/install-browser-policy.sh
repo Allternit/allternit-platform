@@ -8,9 +8,10 @@
 # manifest. The extension (surfaces/allternit-extensions/allternit-extension,
 # id chheieepkpbhkiimdmbdjmnhcooclpok from the manifest key in wxt.config.ts)
 # is NOT on the Chrome Web Store (the store's update service answers
-# error-unknownApplication for that id, checked 2026-11-26), and nothing hosts
-# a CRX or an update.xml for it yet. So the policy is written only when both
-# are given:
+# error-unknownApplication for that id, checked 2026-11-26). It is self-hosted:
+# extension-crx.yml packs the CRX and update.xml, published to
+# https://runtime.allternit.com/chrome-extension/ (default below; until that
+# publish happens Chrome cannot fetch it). The policy needs:
 #
 #   ALLTERNIT_EXTENSION_UPDATE_URL  https URL of an update manifest (gupdate
 #                                   XML) whose <updatecheck codebase=...> is a
@@ -25,7 +26,10 @@ set -euo pipefail
 POLICY_DIR=/etc/opt/chrome/policies/managed
 POLICY_FILE="${POLICY_DIR}/allternit.json"
 EXT_ID="${ALLTERNIT_EXTENSION_ID:-chheieepkpbhkiimdmbdjmnhcooclpok}"
-UPDATE_URL="${ALLTERNIT_EXTENSION_UPDATE_URL:-}"
+# Self-hosted default (R2 bucket allternit-runtime). Built by .github/workflows/extension-crx.yml;
+# set ALLTERNIT_EXTENSION_UPDATE_URL=none to install nothing.
+UPDATE_URL="${ALLTERNIT_EXTENSION_UPDATE_URL:-https://runtime.allternit.com/chrome-extension/update.xml}"
+[ "${UPDATE_URL}" = none ] && UPDATE_URL=""
 
 case "${EXT_ID}" in
     *[!a-p]*|"") echo "ERROR: ALLTERNIT_EXTENSION_ID must be 32 letters a-p" >&2; exit 1 ;;
