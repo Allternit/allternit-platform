@@ -367,9 +367,10 @@ struct KnowledgeEvidence: Decodable, Hashable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         flagId = (try? c.decodeIfPresent(String.self, forKey: .flagId)) ?? nil
         observationId = (try? c.decodeIfPresent(String.self, forKey: .observationId)) ?? nil
-        text = ((try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil)
-            ?? ((try? c.decodeIfPresent(String.self, forKey: .excerpt)) ?? nil)
-            ?? ((try? c.decodeIfPresent(String.self, forKey: .evidence)) ?? nil)
+        let textValue: String? = (try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil
+        let excerptValue: String? = (try? c.decodeIfPresent(String.self, forKey: .excerpt)) ?? nil
+        let evidenceValue: String? = (try? c.decodeIfPresent(String.self, forKey: .evidence)) ?? nil
+        text = textValue ?? excerptValue ?? evidenceValue
     }
 }
 

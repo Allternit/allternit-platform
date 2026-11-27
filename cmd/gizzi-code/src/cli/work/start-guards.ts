@@ -37,7 +37,9 @@ export function nextDepth(parentDepth: number | undefined): number {
 }
 
 export type StartGuard =
-  | { ok: true; mode: StartMode; depth: number }
+  // `message?: never` keeps `guard.message` readable after `if (!guard.ok)`:
+  // gizzi-code builds with strict off, which does not narrow on a boolean discriminant.
+  | { ok: true; mode: StartMode; depth: number; message?: never }
   | { ok: false; error: "depth_exceeded" | "mode_not_allowed"; message: string }
 
 /**
