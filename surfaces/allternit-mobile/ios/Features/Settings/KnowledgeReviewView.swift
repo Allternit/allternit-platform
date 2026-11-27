@@ -5,7 +5,7 @@ import SwiftUI
 /// Plain rules for the Knowledge review screen (kept out of the views).
 enum KnowledgeReview {
     static let emptyLine = "Nothing to review. Agents flag missing knowledge while they work; the curator turns flags into proposals overnight."
-    static let skillApproveNote = "Approving only approves it. The skill turns on at your computer when Gizzi asks for permission."
+    static let skillApproveNote = "Approving a skill turns it on the next time Gizzi runs on your computer. Gizzi asks first."
     static let staleLine = "That item changed since you loaded this screen. It has been refreshed."
 
     static func isStale(_ error: Error) -> Bool {
