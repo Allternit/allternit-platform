@@ -484,6 +484,109 @@ pub fn copy_argv(harness: &str, session_id: &str, carried: &[String]) -> Option<
     valid_id(session_id).then(|| expand(t, session_id, carried))
 }
 
+// ---------------------------------------------------------------- session start (Start anywhere)
+
+/// The app's permission mode ids, lowest to highest (`plan < default < auto < bypass`).
+pub const START_MODES: [&str; 4] = ["auto", "default", "plan", "bypass"];
+
+/// The harness row for a runtime registry id (`claude`, `codex-cli`, `antigravity`, …).
+pub fn harness_for_runtime(runtime_id: &str) -> Option<&'static Harness> {
+    let id = runtime_id.trim().to_ascii_lowercase();
+    let id = id.strip_suffix("-cli").unwrap_or(id.as_str());
+    let id = match id {
+        "antigravity" => "agy",
+        "gizzi-code" => "gizzi",
+        "kimi-code" => "kimi",
+        other => other,
+    };
+    harness(id)
+}
+
+fn args(a: &[&str]) -> Vec<String> {
+    a.iter().map(|s| s.to_string()).collect()
+}
+
+/// The launch flags that start a new session of this runtime in an app permission mode
+/// (`auto|default|plan|bypass`). `None`: the CLI has no flag for that mode (or the runtime is
+/// unknown), so the mode is not offered for it. Read from each CLI's `--help` on 2026-11-27:
+///
+/// | harness | auto | default | plan | bypass |
+/// |---|---|---|---|---|
+/// | claude 2.1.332 | `--permission-mode acceptEdits` | `--permission-mode manual` | `--permission-mode plan` | `--permission-mode bypassPermissions` |
+/// | codex 0.171.0 | `-s workspace-write -a on-request` | `-s read-only -a on-request` | none | `--dangerously-bypass-approvals-and-sandbox` |
+/// | grok | `--permission-mode acceptEdits` | `--permission-mode default` | `--permission-mode plan` | `--permission-mode bypassPermissions` |
+/// | kimi | `--yolo` (Ask When Needed) | none | `--plan` | `--auto` (Never Ask) |
+/// | agy | `--mode accept-edits` | none | `--mode plan` | `--dangerously-skip-permissions` |
+/// | qwen | none | none | none | `--yolo` |
+/// | opencode | none | none | none | `--auto` |
+///
+/// The app's `auto` is claude's `acceptEdits` (same mapping as the chat send path). claude
+/// 2.1.332 lists `manual` where older builds said `default`. "none" in the default column: the
+/// CLI has no flag that forces asking, and starting with no flag would use its own config, which
+/// may be higher. gizzi runs as the engine (runtime `allternit`), not through this table.
+pub fn mode_flags(runtime_id: &str, mode: &str) -> Option<Vec<String>> {
+    let h = harness_for_runtime(runtime_id)?;
+    let flags: &[&str] = match (h.id, mode) {
+        ("claude", "auto") | ("grok", "auto") => &["--permission-mode", "acceptEdits"],
+        ("claude", "default") => &["--permission-mode", "manual"],
+        ("grok", "default") => &["--permission-mode", "default"],
+        ("claude", "plan") | ("grok", "plan") => &["--permission-mode", "plan"],
+        ("claude", "bypass") | ("grok", "bypass") => &["--permission-mode", "bypassPermissions"],
+        ("codex", "auto") => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+        ("codex", "default") => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
+        ("codex", "bypass") => &["--dangerously-bypass-approvals-and-sandbox"],
+        ("kimi", "auto") => &["--yolo"],
+        ("kimi", "plan") => &["--plan"],
+        ("kimi", "bypass") => &["--auto"],
+        ("agy", "auto") => &["--mode", "accept-edits"],
+        ("agy", "plan") => &["--mode", "plan"],
+        ("agy", "bypass") => &["--dangerously-skip-permissions"],
+        ("qwen", "bypass") => &["--yolo"],
+        ("opencode", "bypass") => &["--auto"],
+        _ => return None,
+    };
+    Some(args(flags))
+}
+
+/// How a CLI takes a first prompt that starts an interactive session. `None`: it takes none (or
+/// the prompt would read as a flag), so the caller types it into the terminal after start.
+/// claude, codex and grok take it as the positional `[prompt]`; agy as `--prompt-interactive`,
+/// qwen as `-i/--prompt-interactive`, opencode as `--prompt`. kimi's `-p` prints and exits.
+pub fn prompt_args(runtime_id: &str, prompt: &str) -> Option<Vec<String>> {
+    let h = harness_for_runtime(runtime_id)?;
+    if prompt.trim().is_empty() {
+        return None;
+    }
+    match h.id {
+        // A leading `-` would parse as a flag.
+        "claude" | "codex" | "grok" => (!prompt.starts_with('-')).then(|| vec![prompt.to_string()]),
+        "agy" => Some(vec!["--prompt-interactive".to_string(), prompt.to_string()]),
+        "qwen" => Some(vec!["--prompt-interactive".to_string(), prompt.to_string()]),
+        "opencode" => Some(vec!["--prompt".to_string(), prompt.to_string()]),
+        _ => None,
+    }
+}
+
+/// The argv that starts a new session of `runtime_id` in `cwd`'s terminal: the program, the mode
+/// flags (none when `mode` is `None`: the CLI's own default), then the prompt when the CLI takes
+/// one. The bool is true when the prompt is in the argv; false means type it in after start.
+/// `None`: unknown runtime, or a mode the CLI has no flag for.
+pub fn start_argv(runtime_id: &str, mode: Option<&str>, prompt: Option<&str>) -> Option<(Vec<String>, bool)> {
+    let h = harness_for_runtime(runtime_id)?;
+    let mut argv = new_argv(h.id, &[])?;
+    if let Some(mode) = mode {
+        argv.extend(mode_flags(h.id, mode)?);
+    }
+    let in_argv = match prompt.and_then(|p| prompt_args(h.id, p)) {
+        Some(p) => {
+            argv.extend(p);
+            true
+        }
+        None => false,
+    };
+    Some((argv, in_argv))
+}
+
 // ---------------------------------------------------------------- session ids from the stores
 
 /// A process's session id and when its store was last written (a recent write means it is mid-turn).
@@ -767,6 +870,32 @@ mod tests {
         assert_eq!(move_argv("claude", "a b", &[]), None);
         assert_eq!(move_argv("claude", "--help", &[]), None);
         assert_eq!(move_argv("claude", "x;rm", &[]), None);
+    }
+
+    #[test]
+    fn harness_table_mode_flags_and_start_argv() {
+        assert_eq!(mode_flags("claude", "auto"), Some(v(&["--permission-mode", "acceptEdits"])));
+        assert_eq!(mode_flags("claude", "default"), Some(v(&["--permission-mode", "manual"])));
+        assert_eq!(mode_flags("claude", "plan"), Some(v(&["--permission-mode", "plan"])));
+        assert_eq!(mode_flags("claude-cli", "bypass"), Some(v(&["--permission-mode", "bypassPermissions"])));
+        assert_eq!(mode_flags("codex", "auto"), Some(v(&["--sandbox", "workspace-write", "--ask-for-approval", "on-request"])));
+        assert_eq!(mode_flags("codex", "default"), Some(v(&["--sandbox", "read-only", "--ask-for-approval", "on-request"])));
+        assert_eq!(mode_flags("codex-cli", "bypass"), Some(v(&["--dangerously-bypass-approvals-and-sandbox"])));
+        // codex has no plan flag; kimi has nothing that forces asking; unknown modes and runtimes are None.
+        assert_eq!(mode_flags("codex", "plan"), None);
+        assert_eq!(mode_flags("kimi", "default"), None);
+        assert_eq!(mode_flags("antigravity", "plan"), Some(v(&["--mode", "plan"])));
+        assert_eq!(mode_flags("claude", "acceptEdits"), None);
+        assert_eq!(mode_flags("allternit", "auto"), None);
+
+        assert_eq!(start_argv("claude", Some("auto"), Some("fix it")), Some((v(&["claude", "--permission-mode", "acceptEdits", "fix it"]), true)));
+        assert_eq!(start_argv("codex", None, Some("fix it")), Some((v(&["codex", "fix it"]), true)));
+        // A prompt that reads as a flag, or a CLI with no interactive prompt flag: typed in after start.
+        assert_eq!(start_argv("claude", None, Some("--help me")), Some((v(&["claude"]), false)));
+        assert_eq!(start_argv("kimi", Some("plan"), Some("fix it")), Some((v(&["kimi", "--plan"]), false)));
+        assert_eq!(start_argv("opencode", Some("bypass"), Some("go")), Some((v(&["opencode", "--auto", "--prompt", "go"]), true)));
+        assert_eq!(start_argv("codex", Some("plan"), None), None);
+        assert_eq!(start_argv("nope", None, None), None);
     }
 
     #[test]
