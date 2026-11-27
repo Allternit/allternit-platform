@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::api::client::ApiClient;
 use crate::api::schema::{
     AgentViewBuiltinField, AgentViewClearParams, AgentViewField, AgentViewFilter,
-    AgentViewSetParams, AgentViewValue, LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams, PaneReadParams,
+    AgentViewSetParams, AgentViewValue, EmptyParams, LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams, PaneReadParams,
     PaneSendInputParams, ReadFormat, ReadSource, WorkspaceCloseParams, WorkspaceCreateParams,
     WorkspaceTarget,
 };
@@ -111,6 +111,23 @@ fn list_all(client: &ApiClient) -> Result<Vec<LivePane>, CallError> {
         }
     }
     Ok(out)
+}
+
+/// Pane id → Allternit terminal id (`factory.terminal.list`): the terminals
+/// allternit-api's `/terminal` routes serve are panes too, and their id is
+/// what `/terminal/<id>/input` takes. Terminals whose pane is gone are left out.
+fn terminal_ids(client: &ApiClient) -> Result<std::collections::BTreeMap<String, String>, CallError> {
+    let listed = ao::call(client, Method::FactoryTerminalList(EmptyParams::default()))?;
+    Ok(terminal_ids_from(&listed))
+}
+
+fn terminal_ids_from(listed: &Value) -> std::collections::BTreeMap<String, String> {
+    listed["terminals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| Some((t["pane_id"].as_str()?.to_string(), t["terminal_id"].as_str()?.to_string())))
+        .collect()
 }
 
 fn find(client: &ApiClient, session: &str) -> Result<Option<LivePane>, CallError> {
@@ -336,6 +353,14 @@ impl PaneBackend for PaneEngine {
         Ok(())
     }
 
+    fn terminal_ids(&self) -> Result<std::collections::BTreeMap<String, String>> {
+        match terminal_ids(&client()) {
+            Ok(ids) => Ok(ids),
+            Err(CallError::EngineDown) => Ok(Default::default()),
+            Err(e) => Err(err(e)),
+        }
+    }
+
     fn kill(&self, session: &str) -> Result<()> {
         if session.starts_with(ADOPTED_PREFIX) {
             // Not started by the engine: closing its workspace could close a
@@ -420,6 +445,17 @@ pub fn clear_wall_view(team: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_ids_skip_terminals_whose_pane_is_gone() {
+        let listed = serde_json::json!({ "terminals": [
+            { "terminal_id": "7c1e", "pane_id": "w1:p1", "workspace_id": "w1" },
+            { "terminal_id": "dead", "pane_id": null, "workspace_id": null },
+        ]});
+        let ids = terminal_ids_from(&listed);
+        assert_eq!(ids.get("w1:p1").map(String::as_str), Some("7c1e"));
+        assert_eq!(ids.len(), 1);
+    }
 
     #[test]
     fn wall_source_is_a_valid_agent_view_source() {
