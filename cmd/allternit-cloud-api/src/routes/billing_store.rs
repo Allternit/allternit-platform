@@ -1077,9 +1077,11 @@ mod tests {
             CREATE TABLE user_credits (
                 user_id TEXT PRIMARY KEY,
                 balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+                bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            CREATE TABLE user_open_allowance (user_id TEXT PRIMARY KEY, allowance_usd DOUBLE PRECISION NOT NULL DEFAULT 0, used_usd DOUBLE PRECISION NOT NULL DEFAULT 0, period_start TIMESTAMPTZ, grant_key TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
             CREATE TABLE credit_transactions (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,

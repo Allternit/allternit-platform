@@ -331,16 +331,20 @@ pub trait CostService: Send + Sync {
     /// Atomic and idempotent: a single DB transaction writes a
     /// `credit_transactions` ledger row keyed by `stripe-invoice-{invoice_id}`
     /// (ON CONFLICT DO NOTHING — a Stripe retry is a no-op) and applies the
-    /// rollover math `LEAST(current_balance, rollover_cap) + monthly_credits`
-    /// to the balance. Users without a `user_credits` row start fresh with the
-    /// full monthly grant (the cap only clips rolled-over remainder). Returns
-    /// the resulting balance.
+    /// rollover math `bought + LEAST(current_balance - bought, rollover_cap) +
+    /// monthly_credits` to the balance (contract D3: bought credits are never
+    /// clipped). Users without a `user_credits` row start fresh with the full
+    /// monthly grant (the cap only clips rolled-over remainder). The open
+    /// allowance resets to `open_allowance_usd` in the same transaction (see
+    /// [`CostServiceImpl::grant_plan_credits_keyed`]). Returns the resulting
+    /// balance.
     async fn grant_subscription_credits(
         &self,
         user_id: &str,
         invoice_id: &str,
         amount_usd: f64,
         rollover_cap_usd: f64,
+        open_allowance_usd: f64,
     ) -> Result<f64, ApiError>;
 
     /// Debit credits for an explicit wallet transfer (e.g. moving balance to
@@ -358,6 +362,39 @@ pub trait CostService: Send + Sync {
         transaction_id: &str,
         source: &str,
     ) -> Result<f64, ApiError>;
+}
+
+/// The plan credits open models may spend per period (contract D4): half
+/// of the grant on Max (`super`) and Ultra, nothing on Plus (open models run
+/// on bought credits there) or any other plan id.
+pub fn open_allowance_for(plan_id: &str, grant_usd: f64) -> f64 {
+    match plan_id {
+        "super" | "ultra" => (grant_usd * 0.5).max(0.0),
+        _ => 0.0,
+    }
+}
+
+/// How one open-model charge split (contract D5), from
+/// [`CostServiceImpl::debit_open_usage`]. `replayed` = the ledger key was
+/// already settled, so nothing moved and both parts are 0.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct OpenDebit {
+    pub plan_usd: f64,
+    pub bought_usd: f64,
+    pub replayed: bool,
+}
+
+/// The D5 split of one open charge over a locked wallet: plan allowance
+/// first, then bought, then a one-turn overrun from what is left of the plan
+/// part. Nothing beyond the positive balance is taken.
+fn split_open_debit(balance: f64, bought: f64, allowance: f64, used: f64, amount: f64) -> OpenDebit {
+    let positive = balance.max(0.0);
+    let bought = bought.clamp(0.0, positive);
+    let plan_part = positive - bought;
+    let plan_first = amount.min((allowance - used).max(0.0)).min(plan_part);
+    let from_bought = (amount - plan_first).min(bought);
+    let overrun = (amount - plan_first - from_bought).min(plan_part - plan_first).max(0.0);
+    OpenDebit { plan_usd: plan_first + overrun, bought_usd: from_bought, replayed: false }
 }
 
 /// Implementation of CostService using SQLite
@@ -406,6 +443,12 @@ impl CostServiceImpl {
     /// store renewals (`services::store_billing`) use
     /// `apple-<transactionId>` / `google-<orderId>` with their own source, so
     /// the ledger tells who billed each grant.
+    ///
+    /// Allternit Open (CONTRACT-open-tier-2026-11-26.md D3/D4): the cap clips
+    /// only the plan part of the balance, never `bought_usd`, and the same
+    /// transaction resets the user's open allowance to `open_allowance_usd`
+    /// (see [`open_allowance_for`]) with `used_usd = 0`. A replayed key
+    /// changes nothing, the allowance included.
     pub async fn grant_plan_credits_keyed(
         &self,
         user_id: &str,
@@ -413,6 +456,7 @@ impl CostServiceImpl {
         source: &str,
         amount_usd: f64,
         rollover_cap_usd: f64,
+        open_allowance_usd: f64,
     ) -> Result<f64, ApiError> {
         if amount_usd <= 0.0 {
             return self.get_credit_balance(user_id).await;
@@ -445,20 +489,52 @@ impl CostServiceImpl {
             return self.get_credit_balance(user_id).await;
         }
 
-        // Rollover: only the capped remainder carries into the new month, then
-        // the full monthly grant is added on top. A fresh balance row starts at
-        // the grant itself — the cap clips leftovers, never the first grant.
+        // Rollover (D3): bought credits carry over whole; only the capped
+        // remainder of the plan part carries into the new month, then the full
+        // monthly grant is added on top. Bought is read per D1,
+        // LEAST(bought, GREATEST(balance, 0)), and stored back clamped. A
+        // negative balance (chargeback hold) reads as no bought credits, so it
+        // rolls exactly as before: LEAST(balance, cap) + grant. A fresh balance
+        // row starts at the grant itself — the cap clips leftovers, never the
+        // first grant.
         sqlx::query(
             r#"
             INSERT INTO user_credits (user_id, balance_usd)
             VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE SET
-                balance_usd = LEAST(user_credits.balance_usd, $3) + excluded.balance_usd
+                balance_usd = LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
+                    + LEAST(
+                        user_credits.balance_usd
+                            - LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0)),
+                        $3
+                    )
+                    + excluded.balance_usd,
+                bought_usd = LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
             "#,
         )
         .bind(user_id)
         .bind(amount_usd)
         .bind(rollover_cap_usd)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        // Open allowance (D4): a new period starts with this grant.
+        sqlx::query(
+            r#"
+            INSERT INTO user_open_allowance (user_id, allowance_usd, used_usd, period_start, grant_key, updated_at)
+            VALUES ($1, $2, 0, now(), $3, now())
+            ON CONFLICT (user_id) DO UPDATE SET
+                allowance_usd = excluded.allowance_usd,
+                used_usd = 0,
+                period_start = excluded.period_start,
+                grant_key = excluded.grant_key,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(open_allowance_usd.max(0.0))
+        .bind(ledger_key)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::DatabaseError)?;
@@ -471,6 +547,125 @@ impl CostServiceImpl {
             amount_usd, user_id, ledger_key, new_balance
         );
         Ok(new_balance)
+    }
+
+    /// Debit one open-model request (contract D5). One transaction locks the
+    /// wallet row and the open allowance row (`FOR UPDATE`), then takes:
+    ///
+    /// 1. plan credits up to `min(allowance - used, plan part of balance)`,
+    /// 2. then bought credits (`bought_usd` and `balance_usd` both drop),
+    /// 3. then, when the request cost more than both (a one-turn overrun),
+    ///    the rest from plan credits; it counts in `used_usd`, so the
+    ///    entitlement check blocks the next request.
+    ///
+    /// Plan part and bought are read per D1. Like
+    /// [`CostService::deduct_credits_for_usage`] it writes one negative
+    /// `inference` ledger row keyed by `ledger_ref` (a replay touches
+    /// nothing), never drives the balance below zero, leaves an already
+    /// negative balance (chargeback hold) alone, and is a no-op success for a
+    /// user with no `user_credits` row.
+    pub async fn debit_open_usage(
+        &self,
+        user_id: &str,
+        amount_usd: f64,
+        ledger_ref: &str,
+    ) -> Result<OpenDebit, ApiError> {
+        if amount_usd <= 0.0 {
+            return Ok(OpenDebit::default());
+        }
+
+        let mut tx = self.db.begin().await.map_err(ApiError::DatabaseError)?;
+
+        let ledger = sqlx::query(
+            r#"
+            INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
+            VALUES ($1, $2, $3, $4, 'inference', $5)
+            ON CONFLICT (transaction_id) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(user_id)
+        .bind(-amount_usd)
+        .bind(ledger_ref)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        if ledger.rows_affected() == 0 {
+            tx.commit().await.map_err(ApiError::DatabaseError)?;
+            return Ok(OpenDebit { replayed: true, ..OpenDebit::default() });
+        }
+
+        let wallet: Option<(Option<f64>, f64)> = sqlx::query_as(
+            "SELECT balance_usd, bought_usd FROM user_credits WHERE user_id = $1 FOR UPDATE",
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+        let Some((balance, bought)) = wallet else {
+            tx.commit().await.map_err(ApiError::DatabaseError)?;
+            return Ok(OpenDebit::default());
+        };
+
+        let allowance: Option<(f64, f64)> = sqlx::query_as(
+            "SELECT allowance_usd, used_usd FROM user_open_allowance WHERE user_id = $1 FOR UPDATE",
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+        let (allowance_usd, used_usd) = allowance.unwrap_or((0.0, 0.0));
+
+        let split = split_open_debit(balance.unwrap_or(0.0), bought, allowance_usd, used_usd, amount_usd);
+        let taken = split.plan_usd + split.bought_usd;
+
+        if taken > 0.0 {
+            sqlx::query(
+                r#"
+                UPDATE user_credits SET
+                    balance_usd = GREATEST(balance_usd - $1, 0),
+                    bought_usd = GREATEST(LEAST(bought_usd, GREATEST(balance_usd, 0)) - $2, 0)
+                WHERE user_id = $3
+                "#,
+            )
+            .bind(taken)
+            .bind(split.bought_usd)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::DatabaseError)?;
+        }
+
+        if split.plan_usd > 0.0 {
+            sqlx::query(
+                r#"
+                INSERT INTO user_open_allowance (user_id, allowance_usd, used_usd, updated_at)
+                VALUES ($1, 0, $2, now())
+                ON CONFLICT (user_id) DO UPDATE SET
+                    used_usd = user_open_allowance.used_usd + excluded.used_usd,
+                    updated_at = excluded.updated_at
+                "#,
+            )
+            .bind(user_id)
+            .bind(split.plan_usd)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::DatabaseError)?;
+        }
+
+        tx.commit().await.map_err(ApiError::DatabaseError)?;
+
+        let new_balance = self.get_credit_balance(user_id).await?;
+        info!(
+            "Open debit ${:.4} for user {} ({}): plan ${:.4}, bought ${:.4}; new balance ${:.4}",
+            amount_usd, user_id, ledger_ref, split.plan_usd, split.bought_usd, new_balance
+        );
+        if taken > 0.0 {
+            super::auto_topup::spawn_check(self.db.clone(), user_id.to_string(), new_balance);
+        }
+        Ok(split)
     }
 
     /// Send alert notification (placeholder for actual notification logic)
@@ -1211,12 +1406,18 @@ impl CostService for CostServiceImpl {
         .await
         .map_err(ApiError::DatabaseError)?;
 
+        // Every caller of add_credits is a non-plan increase (packs, auto
+        // top-up, transfers in, comps), so the amount is bought credits
+        // (contract D2). Bought is clamped per D1 before adding, so a stale
+        // count left by ordinary debits never inflates it.
         sqlx::query(
             r#"
-            INSERT INTO user_credits (user_id, balance_usd)
-            VALUES ($1, $2)
+            INSERT INTO user_credits (user_id, balance_usd, bought_usd)
+            VALUES ($1, $2, $2)
             ON CONFLICT(user_id) DO UPDATE SET
-                balance_usd = user_credits.balance_usd + excluded.balance_usd
+                balance_usd = user_credits.balance_usd + excluded.balance_usd,
+                bought_usd = LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
+                    + excluded.bought_usd
             "#
         )
         .bind(user_id)
@@ -1356,6 +1557,7 @@ impl CostService for CostServiceImpl {
         invoice_id: &str,
         amount_usd: f64,
         rollover_cap_usd: f64,
+        open_allowance_usd: f64,
     ) -> Result<f64, ApiError> {
         self.grant_plan_credits_keyed(
             user_id,
@@ -1363,6 +1565,7 @@ impl CostService for CostServiceImpl {
             "stripe_subscription",
             amount_usd,
             rollover_cap_usd,
+            open_allowance_usd,
         )
         .await
     }
@@ -1676,6 +1879,10 @@ pub async fn finalize_run_cost_tracking(
 }
 
 #[cfg(test)]
+#[path = "cost_service_open_tests.rs"]
+mod open_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1811,6 +2018,7 @@ mod tests {
         CREATE TABLE user_credits (
                 user_id TEXT PRIMARY KEY,
                 balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0),
+                bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
