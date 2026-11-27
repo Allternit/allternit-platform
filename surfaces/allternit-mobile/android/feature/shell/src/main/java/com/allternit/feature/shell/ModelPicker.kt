@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -80,7 +81,7 @@ private data class ModelGroup(val key: String, val logo: String, val title: Stri
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Unit, onDismiss: () -> Unit) {
+internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Unit, onDismiss: () -> Unit, onSignIn: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -252,7 +253,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                                     Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
                                 }
                                 group.rows.forEachIndexed { i, m ->
-                                    ModelRow(m, models) { creditsRequest = it }
+                                    ModelRow(m, models, onSignIn = { onSignIn?.invoke() ?: onDismiss() }) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
                                 }
                             }
@@ -348,8 +349,10 @@ private fun RowBadge(text: String) {
 }
 
 @Composable
-private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allternit.feature.billing.CloudCreditsRequest) -> Unit = {}) {
+private fun ModelRow(m: PickerModel, models: ModelStore, onSignIn: () -> Unit = {}, onLocked: (com.allternit.feature.billing.CloudCreditsRequest) -> Unit = {}) {
     val c = AllternitTheme.colors
+    val scope = rememberCoroutineScope()
+    val lockedRow = m.access?.locked == true
     val view = LocalView.current
     val selectedRow = models.selectedId == m.id
     val favorite = m.id in models.favorites
@@ -359,10 +362,21 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
             .clip(RoundedCornerShape(14.dp))
             // Panel A: the picked row is filled and its name bold.
             .background(if (selectedRow) c.fillNeutral else Color.Transparent)
+            .alpha(if (lockedRow) 0.5f else 1f)
             .testTag("modelRow${m.id}")
             .clickable(role = Role.Button) {
                 com.allternit.core.design.PolishHaptic.perform(view, com.allternit.core.design.PolishHaptic.Kind.Selection)
                 // iOS ModelPickerSheet.choose: a locked Cloud row opens Cloud credits and keeps the old selection.
+                val access = m.access
+                if (access != null) {
+                    // Server lock state (picker catalog): ok selects; locked routes by its action.
+                    if (!access.locked) models.select(m.id) else when (access.action) {
+                        "retry" -> scope.launch { models.load(force = true) }
+                        "sign_in" -> onSignIn()
+                        else -> onLocked(com.allternit.feature.billing.CloudCreditsRequest(reason = access.reason, modelName = m.name))
+                    }
+                    return@clickable
+                }
                 val locked = if (m.cloudProvider != null || m.id.startsWith(ModelStore.CLOUD_PREFIX)) {
                     com.allternit.feature.billing.CloudCreditsGate.lockedRequest(m.name, m.cloudProvider, m.inputPer1mUsd, m.outputPer1mUsd)
                         ?: if (m.openAccess != null) com.allternit.feature.billing.OpenModelsGate.lockedRequest(m.name, m.inputPer1mUsd, m.outputPer1mUsd) else null
@@ -371,7 +385,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
             }
             .semantics(mergeDescendants = true) {
                 selected = selectedRow
-                contentDescription = listOfNotNull(m.name, "default".takeIf { m.isDefault }).joinToString(", ")
+                contentDescription = listOfNotNull(m.name, "default".takeIf { m.isDefault }, m.access?.takeIf { it.locked }?.let { "locked, ${it.reason ?: "unavailable"}" }).joinToString(", ")
             }
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -383,7 +397,8 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
                 Text(m.name, color = c.textPrimary, fontSize = 14.sp, fontWeight = if (selectedRow) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (m.isDefault) RowBadge("Default")
             }
-            val lock = if (m.openAccess != null) com.allternit.feature.billing.OpenModelsGate.entitlement?.takeIf { !it.allowed }?.reason?.let { com.allternit.feature.billing.OpenModelsCopy.message(it) } else null
+            val lock = m.access?.takeIf { it.locked }?.reason
+                ?: if (m.openAccess != null) com.allternit.feature.billing.OpenModelsGate.entitlement?.takeIf { !it.allowed }?.reason?.let { com.allternit.feature.billing.OpenModelsCopy.message(it) } else null
             Text(lock ?: rowSubtitle(m), color = c.textSecondary, fontSize = 11.sp, maxLines = if (lock != null) 3 else 1, overflow = TextOverflow.Ellipsis)
             m.thinking?.let { t -> RowBadge("${t.termOrDefault} · ${t.levels.size}") }
         }
