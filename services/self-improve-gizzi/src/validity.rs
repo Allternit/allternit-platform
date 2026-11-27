@@ -26,6 +26,9 @@ use std::sync::Mutex;
 /// Where the guard tests run, relative to the candidate checkout.
 pub const GUARD_TEST_DIR: &str = view::GIZZI_DIR;
 
+/// The guard tests may not run longer than this.
+pub const GUARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// The guard tests: byte caps, vendor ban, injection wording, context
 /// breakdown and turn guardrails. Change the list here.
 pub const GUARD_TEST_CMD: &[&str] = &[
@@ -682,16 +685,37 @@ pub struct BunGuardTests;
 impl GuardRunner for BunGuardTests {
     fn run(&self, checkout: &Path) -> anyhow::Result<GuardOutcome> {
         let dir = checkout.join(GUARD_TEST_DIR);
-        let output = Command::new(GUARD_TEST_CMD[0])
+        let log = tempfile::tempfile()?;
+        let mut child = Command::new(GUARD_TEST_CMD[0])
             .args(&GUARD_TEST_CMD[1..])
             .current_dir(&dir)
-            .output()
+            .stdout(log.try_clone()?)
+            .stderr(log.try_clone()?)
+            .spawn()
             .map_err(|err| anyhow::anyhow!("could not start `{}` in {}: {err}", GUARD_TEST_CMD.join(" "), dir.display()))?;
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        let started = std::time::Instant::now();
+        let (passed, timed_out) = loop {
+            if let Some(status) = child.try_wait()? {
+                break (status.success(), false);
+            }
+            if started.elapsed() >= GUARD_TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                break (false, true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+        let mut log = log;
+        std::io::Seek::seek(&mut log, std::io::SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut log, &mut bytes)?;
+        let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<&str> = text.lines().collect();
-        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
-        Ok(GuardOutcome { passed: output.status.success(), output: tail })
+        let mut tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        if timed_out {
+            tail = format!("timed out after {} minutes\n{tail}", GUARD_TIMEOUT.as_secs() / 60);
+        }
+        Ok(GuardOutcome { passed, output: tail })
     }
 }
 
