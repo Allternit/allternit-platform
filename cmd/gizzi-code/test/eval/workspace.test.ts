@@ -91,3 +91,15 @@ test("restoreTo makes an empty dir for a trace-only case", async () => {
   expect(await fs.readdir(dest)).toEqual([])
   await fs.rm(dest, { recursive: true, force: true })
 })
+
+test("a folder that is not a git repo gives not_git", async () => {
+  await using tmp = await tmpdir()
+  await using out = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const ref = await copyOut({ projectID: Instance.project.id }, msg(), out.path)
+      expect(ref).toEqual({ kind: "none", reason: "not_git" })
+    },
+  })
+})

@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { Snapshot } from "@/runtime/session/snapshot/snapshot"
 import { Instance } from "@/runtime/context/project/instance"
+import { Config } from "@/runtime/context/config/config"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 
 export type WorkspaceRef =
@@ -28,8 +29,14 @@ export async function copyOut(
   destDir: string,
   capBytes = 50 * 1024 * 1024,
 ): Promise<WorkspaceRef> {
+  if (Instance.project.id !== sessionInfo.projectID) return { kind: "none", reason: "no_project" }
   const snapshot = firstSnapshot(messages)
-  if (!snapshot || Instance.project.id !== sessionInfo.projectID) return { kind: "none", reason: "no_project" }
+  if (!snapshot) {
+    // No step snapshot: say why, so the UI can tell "not a git repo" from "snapshots off".
+    if (Instance.project.vcs !== "git") return { kind: "none", reason: "not_git" }
+    if ((await Config.get()).snapshot === false) return { kind: "none", reason: "snapshot_off" }
+    return { kind: "none", reason: "no_project" }
+  }
   await fs.mkdir(destDir, { recursive: true })
   const dest = path.join(destDir, ARCHIVE)
   const result = await Snapshot.archive(snapshot, dest)
