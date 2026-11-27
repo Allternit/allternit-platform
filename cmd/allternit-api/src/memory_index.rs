@@ -147,6 +147,12 @@ impl EmbedClient {
         self.url.is_some()
     }
 
+    /// The shared HTTP client. The sidecar's `/v1/rerank` (same base URL)
+    /// reuses it with a per-request timeout (`memory_retrieve::raw_windows`).
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// Embed through the endpoint. Errors when it is disabled, down or bad.
     pub async fn embed_remote(&self, texts: &[String], kind: InputType) -> Result<Embedded, String> {
         let url = self.url.as_ref().ok_or("embedding endpoint disabled")?;

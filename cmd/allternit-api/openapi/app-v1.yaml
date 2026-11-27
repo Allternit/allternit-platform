@@ -862,6 +862,51 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /memory/v2/raw-search:
+    post:
+      operationId: rawSearchPastChats
+      summary: Search the user's raw past chat turns (headed windows, reranked on the local sidecar, expanded to full turns, budgeted)
+      description: |
+        Candidates are the user's turn windows (keyword + vector, RRF); the local sidecar's `/v1/rerank`
+        reorders them (`auto` 600 ms / `search` 1,500 ms timeout; on timeout, error or 503 the fused order
+        stands and `reranked` is false). Incognito sessions and deleted turns never come back. With
+        `calling_session` (or the `x-allternit-session-id` header) the turns returned are recorded in that
+        session's Memory activity as `past_chat` items.
+      x-base: api
+      x-handler: cmd/allternit-api/src/memory_routes.rs raw_search_v2_handler
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RawSearchRequest" }
+      responses:
+        "200":
+          description: Turns best first, a separate knowledge block (empty until knowledge files are indexed), and whether rerank ran.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RawSearchResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/v2/turns/{id}/neighbors:
+    get:
+      operationId: getTurnNeighbors
+      summary: Same-session turns around one past turn, in time order (the turn included). 404 unless it is the caller's
+      x-base: api
+      x-handler: cmd/allternit-api/src/memory_routes.rs turn_neighbors_v2_handler
+      tags: [Memory]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: before, in: query, required: false, schema: { type: integer, default: 2, maximum: 20 } }
+        - { name: after, in: query, required: false, schema: { type: integer, default: 2, maximum: 20 } }
+      responses:
+        "200":
+          description: The turns.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnNeighbors" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -1475,3 +1520,61 @@ components:
       required: [proposal]
       properties:
         proposal: { $ref: "#/components/schemas/KnowledgeProposal" }
+    RawSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        from:
+          type: [string, "null"]
+          description: "YYYY-MM-DD or RFC 3339; inclusive"
+        to:
+          type: [string, "null"]
+          description: "YYYY-MM-DD (includes that whole day) or RFC 3339 (inclusive)"
+        session_id: { type: [string, "null"] }
+        exclude_sessions: { type: array, items: { type: string } }
+        limit:
+          type: [integer, "null"]
+          maximum: 32
+          description: "Windows kept after rerank; default 8 (auto) or 12 (search)"
+        include_knowledge: { type: boolean, default: false }
+        mode: { type: string, enum: [auto, search], default: search }
+        calling_session:
+          type: [string, "null"]
+          description: "The session asking; its activity records the past chats returned"
+    RawTurn:
+      type: object
+      required: [observation_id, speaker, timestamp, text, score, window_ids]
+      properties:
+        observation_id: { type: string }
+        session_id: { type: [string, "null"] }
+        speaker:
+          type: string
+          description: "user, assistant or tool:<name>"
+        timestamp: { type: string, format: date-time }
+        source: { type: [string, "null"] }
+        text:
+          type: string
+          description: "The full turn, clipped at 1,200 chars (marked)"
+        score: { type: number }
+        window_ids: { type: array, items: { type: string } }
+    KnowledgeHit:
+      type: object
+      required: [path, kind, text, score]
+      properties:
+        path: { type: string }
+        kind: { type: string, enum: [domain, data_access] }
+        text: { type: string }
+        score: { type: number }
+    RawSearchResult:
+      type: object
+      required: [turns, knowledge, reranked]
+      properties:
+        turns: { type: array, items: { $ref: "#/components/schemas/RawTurn" } }
+        knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeHit" } }
+        reranked: { type: boolean }
+    TurnNeighbors:
+      type: object
+      required: [turns]
+      properties:
+        turns: { type: array, items: { $ref: "#/components/schemas/RawTurn" } }

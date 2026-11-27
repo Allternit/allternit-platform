@@ -42,6 +42,8 @@ pub fn memory_router() -> Router<Arc<AppState>> {
         .route("/memory/v2/observation", post(record_observation_v2_handler))
         .route("/memory/v2/observations", get(list_observations_v2_handler))
         .route("/memory/v2/recall", post(recall_v2_handler))
+        .route("/memory/v2/raw-search", post(raw_search_v2_handler))
+        .route("/memory/v2/turns/:id/neighbors", get(turn_neighbors_v2_handler))
         .route("/memory/v2/retain", post(retain_turn_v2_handler))
         .route("/memory/v2/facts", get(list_facts_v2_handler))
         .route("/memory/v2/facts/:id", delete(delete_fact_v2_handler).patch(edit_fact_v2_handler))
@@ -1153,6 +1155,101 @@ async fn recall_v2_handler(
             tracing::warn!("Recall error: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
         }
+    }
+}
+
+/// `POST /memory/v2/raw-search` body: the raw-search query plus the session
+/// that is asking (its activity row shows the past chats it was given).
+#[derive(Debug, Deserialize)]
+struct RawSearchRequest {
+    #[serde(flatten)]
+    query: crate::memory_retrieve::raw_windows::RawQuery,
+    #[serde(default)]
+    calling_session: Option<String>,
+}
+
+/// Raw past-chat search (CONTRACT.md "Raw search"): headed turn windows,
+/// reranked on the local sidecar, expanded to full turns.
+async fn raw_search_v2_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<RawSearchRequest>,
+) -> impl axum::response::IntoResponse {
+    use crate::memory_retrieve::raw_windows::{self, RawError};
+    let user = match get_user(&headers) {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Unauthorized"})),
+            )
+        }
+    };
+    let calling_session = payload
+        .calling_session
+        .clone()
+        .or_else(|| headers.get("x-allternit-session-id").and_then(|v| v.to_str().ok()).map(str::to_string))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    match raw_windows::search(&state.db, crate::memory_index::global(), &user.user_id, payload.query).await {
+        Ok(result) => {
+            // Memory Drive → Activity and the chat turn show the past chats used.
+            if let (false, Some(session)) = (result.turns.is_empty(), calling_session) {
+                let (db, owner, turns) = (state.db.clone(), user.user_id.clone(), result.turns.clone());
+                tokio::task::spawn_blocking(move || {
+                    db.connect().ok().and_then(|c| raw_windows::record_past_chats(&c, &owner, &session, &turns))
+                });
+            }
+            (StatusCode::OK, Json(serde_json::to_value(&result).unwrap_or_else(|_| json!({}))))
+        }
+        Err(RawError::BadRequest(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request", "message": message})))
+        }
+        Err(RawError::Internal(e)) => {
+            tracing::warn!("Raw search error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct NeighborsQuery {
+    before: Option<usize>,
+    after: Option<usize>,
+}
+
+/// Same-session turns around one observation, in time order. 404 unless the
+/// observation is the caller's (and not in an incognito session).
+async fn turn_neighbors_v2_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Query(params): Query<NeighborsQuery>,
+) -> impl axum::response::IntoResponse {
+    let user = match get_user(&headers) {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Unauthorized"})),
+            )
+        }
+    };
+    let (db, owner) = (state.db.clone(), user.user_id.clone());
+    let (before, after) = (params.before.unwrap_or(2), params.after.unwrap_or(2));
+    let res = tokio::task::spawn_blocking(move || {
+        db.connect().and_then(|c| crate::memory_retrieve::raw_windows::neighbors(&c, &owner, &id, before, after))
+    })
+    .await;
+    match res {
+        Ok(Ok(Some(turns))) => (StatusCode::OK, Json(json!({"turns": turns}))),
+        Ok(Ok(None)) => (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))),
+        Ok(Err(e)) => {
+            tracing::warn!("Turn neighbors error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
     }
 }
 

@@ -58,6 +58,7 @@ use crate::memory_kernel_service::{self as kernel, RecallResult};
 use crate::memory_relations::S1Client;
 
 pub mod eval;
+pub mod raw_windows;
 #[cfg(test)]
 mod tests;
 
