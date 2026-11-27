@@ -41,6 +41,7 @@ import { ProviderCommand } from "@/cli/commands/provider"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
 import { MemoryCommand } from "@/cli/commands/memory"
+import { KnowledgeCommand } from "@/cli/commands/knowledge"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
@@ -159,6 +160,7 @@ export const COMMANDS: RegisteredCommand[] = [
   AllternitCommand,
   BrainCommand,
   MemoryCommand,
+  KnowledgeCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
   PdfCommand,

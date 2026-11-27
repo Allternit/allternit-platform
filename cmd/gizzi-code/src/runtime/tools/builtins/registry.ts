@@ -58,6 +58,7 @@ import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
 import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
+import { KnowledgeFlagTool } from "@/runtime/tools/builtins/knowledge-flag"
 import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
 import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
@@ -323,6 +324,7 @@ export namespace ToolRegistry {
       NotebookEditTool,
       MdxGraphTool,
       MemoryWriteTool,
+      KnowledgeFlagTool,
       ProjectStatusTool,
       MemoryRecallTool,
       // Wave D recall: memory topics/entries with versions, windowed reads of
