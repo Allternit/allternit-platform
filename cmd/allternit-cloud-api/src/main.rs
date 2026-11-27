@@ -178,8 +178,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("FIREWORKS", Some("https://api.fireworks.ai/inference/v1")),
         ("DEEPINFRA", Some("https://api.deepinfra.com/v1/openai")),
         ("GROQ", Some("https://api.groq.com/openai/v1")),
-        // Open lane (`-open` models): no default host — enabled only when
-        // OPEN_LANE_BASE_URL and OPEN_LANE_API_KEY are both set.
+        // Open-lane hosts (contract D9): no default host, so each is enabled
+        // only when <PREFIX>_BASE_URL and <PREFIX>_API_KEY are both set. The
+        // provider id is the lower-cased prefix (`open_venice`, …), the id
+        // the catalog's open rows name. OPEN_SELF = our own OpenAI-compatible
+        // server (vLLM / SGLang).
+        ("OPEN_VENICE", None),
+        ("OPEN_ABLIT", None),
+        ("OPEN_FEATHERLESS", None),
+        ("OPEN_SELF", None),
+        // Legacy open lane: still registered; serves the two original `-open`
+        // aliases while their host is unset (model_router::ModelRouter::route).
         ("OPEN_LANE", None),
     ];
 

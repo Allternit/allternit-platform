@@ -245,8 +245,8 @@ mod pricing {
     use axum::{body::Body, http::Response};
     use std::sync::{Arc, Mutex};
 
-    /// Guards `INFERENCE_MARKUP` mutation across these tests.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Guards `INFERENCE_MARKUP` / `OPEN_LANE_*` env mutation across these tests.
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Provider stub serving a fixed model list (and recording dispatched
     /// requests for the stream_options test).
@@ -946,5 +946,227 @@ mod plan_turns {
                 assert_eq!(reply["usage"]["completion_tokens"], 2);
             })
             .await;
+    }
+}
+
+/// Open-lane hosts (contract D9/D12): failover before the first byte, the
+/// serving row bills, `OPEN_SELF` serves its rows, legacy `OPEN_LANE`
+/// fallback for the two original aliases. Upstreams are the only fakes.
+mod open_hosts {
+    use super::super::catalog::{
+        starter_catalog, ModelAliasEntry, ModelAliasMap, OPEN_ABLIT_PROVIDER, OPEN_LANE_PROVIDER,
+        OPEN_SELF_PROVIDER, OPEN_VENICE_PROVIDER,
+    };
+    use super::super::generic_openai::{GenericOpenAiConfig, GenericOpenAiProvider};
+    use super::super::{ChatCompletionRequest, Message, ModelInfo, ModelRouter, ModelRouterError, UpstreamProvider};
+    use super::pricing::ENV_LOCK;
+    use axum::{body::Body, http::Response};
+    use std::sync::{Arc, Mutex};
+
+    /// What a fake upstream does with every request.
+    #[derive(Clone, Copy)]
+    enum Behaviour {
+        Ok,
+        Status(u16),
+        ConnectError,
+        /// 200, one SSE chunk, then the stream breaks.
+        StreamThenBreak,
+    }
+
+    struct Upstream {
+        id: &'static str,
+        behaviour: Behaviour,
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl Upstream {
+        fn new(id: &'static str, behaviour: Behaviour) -> Arc<Self> {
+            Arc::new(Self { id, behaviour, seen: Mutex::new(Vec::new()) })
+        }
+        fn seen(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UpstreamProvider for Upstream {
+        fn provider_id(&self) -> &str {
+            self.id
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ModelRouterError> {
+            Ok(Vec::new()) // no live pricing: rows bill host static × OPEN_LANE_MARKUP
+        }
+        async fn chat_completions(&self, request: ChatCompletionRequest) -> Result<Response<Body>, ModelRouterError> {
+            self.seen.lock().unwrap().push(request.model.clone());
+            match self.behaviour {
+                Behaviour::Ok => Ok(Response::new(Body::from("{}"))),
+                Behaviour::Status(status) => Err(ModelRouterError::UpstreamError { status, message: "upstream".into() }),
+                Behaviour::ConnectError => Err(ModelRouterError::UpstreamRequestFailed("connection refused".into())),
+                Behaviour::StreamThenBreak => {
+                    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+                        Ok(bytes::Bytes::from_static(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n")),
+                        Err(std::io::Error::other("upstream reset")),
+                    ];
+                    Ok(Response::new(Body::from_stream(futures::stream::iter(chunks))))
+                }
+            }
+        }
+    }
+
+    fn request(model: &str, stream: bool) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: model.to_string(),
+            messages: vec![Message::text("user", "hello")],
+            temperature: None,
+            max_tokens: None,
+            stream: stream.then_some(true),
+            top_p: None,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    fn clear_open_env() {
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        std::env::remove_var("OPEN_LANE_MODEL_MAP");
+    }
+
+    #[tokio::test]
+    async fn primary_failure_before_first_byte_is_served_and_billed_by_the_failover_row() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_open_env();
+        for failure in [Behaviour::Status(503), Behaviour::Status(500), Behaviour::Status(429), Behaviour::ConnectError] {
+            let venice = Upstream::new(OPEN_VENICE_PROVIDER, failure);
+            let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+            let router = ModelRouter::new(vec![venice.clone(), ablit.clone()], starter_catalog());
+
+            let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", true)).await.unwrap();
+            assert_eq!(served.response.status(), 200);
+            assert_eq!(served.alias, "open-failover-deepseek-v4.1-flash", "the backup row served");
+            assert_eq!(venice.seen(), vec!["e2ee-deepseek-v4-1-flash-1017-abliterated"]);
+            assert_eq!(ablit.seen(), vec!["abliterated-model-large-flash"], "retried exactly once on the backup");
+
+            // Billed at the serving row's own price (host 1.00/2.00 × 2), not
+            // the primary's (0.375/1.50 × 2).
+            let billed = router.retail_prices(&served.alias).await.unwrap();
+            assert_eq!((billed.prompt_per_1m, billed.completion_per_1m), (2.00, 4.00));
+            let primary = router.retail_prices("deepseek-v4.1-flash-open").await.unwrap();
+            assert_eq!((primary.prompt_per_1m, primary.completion_per_1m), (0.75, 3.00));
+        }
+    }
+
+    #[tokio::test]
+    async fn client_errors_and_unset_backups_are_not_retried() {
+        // A 400 is the request's own fault.
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::Status(400));
+        let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![venice, ablit.clone()], starter_catalog());
+        let error = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.err().unwrap();
+        assert!(matches!(error, ModelRouterError::UpstreamError { status: 400, .. }));
+        assert!(ablit.seen().is_empty());
+
+        // The backup's host is unset: the primary's own error comes back.
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::Status(503));
+        let router = ModelRouter::new(vec![venice], starter_catalog());
+        let error = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.err().unwrap();
+        assert!(matches!(error, ModelRouterError::UpstreamError { status: 503, .. }));
+    }
+
+    #[tokio::test]
+    async fn an_error_after_the_first_byte_is_never_retried() {
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::StreamThenBreak);
+        let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![venice, ablit.clone()], starter_catalog());
+
+        let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", true)).await.unwrap();
+        assert_eq!(served.alias, "deepseek-v4.1-flash-open", "the primary row served and bills");
+        // The stream breaks for the client; nothing is replayed elsewhere.
+        assert!(axum::body::to_bytes(served.response.into_body(), 1 << 20).await.is_err());
+        assert!(ablit.seen().is_empty(), "no retry once streaming started");
+    }
+
+    #[tokio::test]
+    async fn open_self_env_registers_a_server_that_serves_its_rows() {
+        use axum::{routing::post, Json, Router};
+        async fn own_server(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "id": "own", "object": "chat.completion", "created": 0, "model": body["model"],
+                "choices": [{ "index": 0, "message": { "role": "assistant", "content": "OK" }, "finish_reason": "stop" }]
+            }))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/chat/completions", post(own_server))).await.unwrap();
+        });
+
+        // The provider main.rs builds from the OPEN_SELF prefix.
+        let config = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            std::env::set_var("OPEN_SELF_BASE_URL", format!("http://{addr}"));
+            std::env::set_var("OPEN_SELF_API_KEY", "own-key");
+            let config = GenericOpenAiConfig::from_env("OPEN_SELF");
+            std::env::remove_var("OPEN_SELF_BASE_URL");
+            std::env::remove_var("OPEN_SELF_API_KEY");
+            config.expect("OPEN_SELF_BASE_URL + OPEN_SELF_API_KEY enable the provider")
+        };
+        assert_eq!(config.provider_id, OPEN_SELF_PROVIDER, "prefix maps to the catalog's provider id");
+
+        let catalog = ModelAliasMap::new(vec![ModelAliasEntry {
+            alias: "own-open".to_string(),
+            provider: OPEN_SELF_PROVIDER.to_string(),
+            upstream_id: "own-open".to_string(),
+            name: "Own Open".to_string(),
+            prompt_price: 0.10,
+            completion_price: 0.20,
+            static_price_is_wholesale: true,
+            lane: "open",
+            ..Default::default()
+        }]);
+        let router = ModelRouter::new(vec![GenericOpenAiProvider::new(config)], catalog);
+        assert!(router.any_open_provider());
+        assert!(router.list_models().await.iter().any(|m| m.id == "own-open"));
+
+        let served = router.chat_completions_with_failover(request("own-open", false)).await.unwrap();
+        assert_eq!(served.alias, "own-open");
+        let body = axum::body::to_bytes(served.response.into_body(), 1 << 20).await.unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(reply["model"], "own-open");
+        assert_eq!(reply["choices"][0]["message"]["content"], "OK");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_open_lane_serves_the_two_old_aliases_when_their_host_is_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_open_env();
+        let legacy = Upstream::new(OPEN_LANE_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![legacy.clone()], starter_catalog());
+        assert!(router.any_open_provider());
+
+        let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.unwrap();
+        assert_eq!(served.alias, "deepseek-v4.1-flash-open");
+        router.chat_completions(request("glm-5.3-flash-open", false)).await.unwrap();
+        // Served under the alias itself, as the legacy lane did before the host rows.
+        assert_eq!(legacy.seen(), vec!["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]);
+        // Billed at the row's own price (host 0.375/1.50 × 2).
+        let billed = router.retail_prices(&served.alias).await.unwrap();
+        assert_eq!((billed.prompt_per_1m, billed.completion_per_1m), (0.75, 3.00));
+
+        // OPEN_LANE_MODEL_MAP still renames them for a third-party server.
+        std::env::set_var("OPEN_LANE_MODEL_MAP", "glm-5.3-flash-open=zai/glm-5.3-flash");
+        router.chat_completions(request("glm-5.3-flash-open", false)).await.unwrap();
+        std::env::remove_var("OPEN_LANE_MODEL_MAP");
+        assert_eq!(legacy.seen().last().map(String::as_str), Some("zai/glm-5.3-flash"));
+
+        // New rows have no legacy route: unlisted and not served.
+        let listed: Vec<String> = router.list_models().await.into_iter().map(|m| m.id).collect();
+        assert!(listed.contains(&"deepseek-v4.1-flash-open".to_string()));
+        assert!(listed.contains(&"glm-5.3-flash-open".to_string()));
+        assert!(!listed.contains(&"glm-4.7-flash-open".to_string()));
+        assert!(!listed.contains(&"open-large-research".to_string()));
+        assert!(matches!(
+            router.chat_completions(request("glm-4.7-flash-open", false)).await,
+            Err(ModelRouterError::ProviderNotConfigured { .. })
+        ));
     }
 }

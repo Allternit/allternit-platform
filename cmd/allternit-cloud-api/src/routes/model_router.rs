@@ -402,10 +402,20 @@ async fn chat_completions_attributed(
         return crate::routes::open_lane::chat_with_handoff(state, user_id, plan, request, pool_id, prices, attribution).await;
     }
 
-    let response = state.model_router.chat_completions(request).await?;
+    // An open row whose host fails before the first byte is retried once on
+    // its failover row; the row that served is the one billed (D9).
+    let served = state.model_router.chat_completions_with_failover(request).await?;
+    let response = served.response;
+    let (alias, prices) = if served.alias == alias {
+        (alias, prices)
+    } else {
+        let prices = state.model_router.retail_prices(&served.alias).await?;
+        (served.alias, prices)
+    };
 
     tracing::info!(
         user_id = %user_id,
+        model = %alias,
         token_id = %auth.user.token_id,
         request_id = attribution.request_id.as_deref().unwrap_or(""),
         status = %response.status(),

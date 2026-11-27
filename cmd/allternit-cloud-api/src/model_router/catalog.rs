@@ -468,6 +468,36 @@ pub const OPEN_ABLIT_PROVIDER: &str = "open_ablit";
 pub const OPEN_FEATHERLESS_PROVIDER: &str = "open_featherless";
 pub const OPEN_SELF_PROVIDER: &str = "open_self";
 
+/// Every provider id that serves open rows (the hosts plus legacy `open_lane`).
+pub const OPEN_PROVIDERS: [&str; 5] = [
+    OPEN_VENICE_PROVIDER,
+    OPEN_ABLIT_PROVIDER,
+    OPEN_FEATHERLESS_PROVIDER,
+    OPEN_SELF_PROVIDER,
+    OPEN_LANE_PROVIDER,
+];
+
+/// The aliases the legacy `OPEN_LANE_*` provider served before the host rows
+/// (contract D12). While a row's own host is unset and `OPEN_LANE` is set,
+/// these two still route to the legacy provider, so a deploy before the host
+/// keys are in never takes them down.
+pub const LEGACY_OPEN_ALIASES: [&str; 2] = ["deepseek-v4.1-flash-open", "glm-5.3-flash-open"];
+
+/// The upstream model id the legacy lane serves an alias as: the alias itself
+/// (our own servers' `--served-model-name`), or the `OPEN_LANE_MODEL_MAP`
+/// override (`alias=upstream,alias=upstream`), exactly as before the host rows.
+pub fn legacy_open_upstream(alias: &str) -> String {
+    std::env::var("OPEN_LANE_MODEL_MAP")
+        .ok()
+        .and_then(|map| {
+            map.split(',').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key.trim() == alias && !value.trim().is_empty()).then(|| value.trim().to_string())
+            })
+        })
+        .unwrap_or_else(|| alias.to_string())
+}
+
 /// Whether a catalog entry belongs to the open lane.
 pub fn is_open_lane(entry: &ModelAliasEntry) -> bool {
     entry.lane == "open"
