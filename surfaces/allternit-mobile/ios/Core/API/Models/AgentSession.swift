@@ -485,15 +485,31 @@ struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
     let title: String?
     /// The raw action; `kind` reads it, unknown values count as recalled.
     let action: String
+    /// `"past_chat"` for a past conversation; absent for a saved memory.
+    let source: String?
+    /// ISO date of the past chat's turn.
+    let date: String?
+    /// The past chat's session id (`session_id` or `sessionId`).
+    let sessionId: String?
+
+    var isPastChat: Bool { source == "past_chat" }
 
     var kind: Action { Action(rawValue: action) ?? .recalled }
 
-    private enum CodingKeys: String, CodingKey { case id, title, action }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, action, source, date
+        case sessionIdSnake = "session_id"
+        case sessionIdCamel = "sessionId"
+    }
 
-    init(id: String, title: String? = nil, action: String) {
+    init(id: String, title: String? = nil, action: String,
+         source: String? = nil, date: String? = nil, sessionId: String? = nil) {
         self.id = id
         self.title = title
         self.action = action
+        self.source = source
+        self.date = date
+        self.sessionId = sessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -501,6 +517,10 @@ struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
         id = try c.decode(String.self, forKey: .id)
         title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
         action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? "recalled"
+        source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
+        date = (try? c.decodeIfPresent(String.self, forKey: .date)) ?? nil
+        sessionId = ((try? c.decodeIfPresent(String.self, forKey: .sessionIdSnake)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .sessionIdCamel)) ?? nil)
     }
 }
 

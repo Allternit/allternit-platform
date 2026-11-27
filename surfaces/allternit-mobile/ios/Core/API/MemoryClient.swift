@@ -38,6 +38,35 @@ final class MemoryClient: @unchecked Sendable {
         let query: String
     }
 
+    // MARK: - Knowledge review (`knowledge_routes.rs`)
+
+    /// `GET /api/v1/knowledge/flags?status=open` -> `{ flags: [] }`.
+    func knowledgeFlags(status: String = "open") async throws -> [KnowledgeFlag] {
+        let r: KnowledgeFlagsResponse = try await client.get(path: "knowledge/flags?status=\(status)")
+        return r.flags.elements
+    }
+
+    /// `GET /api/v1/knowledge/proposals?status=proposed` -> `{ proposals: [] }`.
+    func knowledgeProposals(status: String = "proposed") async throws -> [KnowledgeProposal] {
+        let r: KnowledgeProposalsResponse = try await client.get(path: "knowledge/proposals?status=\(status)")
+        return r.proposals.elements
+    }
+
+    /// `POST /api/v1/knowledge/proposals/{id}/approve`. 409 = no longer proposed.
+    func approveProposal(id: String) async throws {
+        try await client.post(path: "knowledge/proposals/\(settingsPathSegment(id))/approve")
+    }
+
+    /// `POST /api/v1/knowledge/proposals/{id}/reject`. 409 = no longer proposed.
+    func rejectProposal(id: String) async throws {
+        try await client.post(path: "knowledge/proposals/\(settingsPathSegment(id))/reject")
+    }
+
+    /// `POST /api/v1/knowledge/flags/{id}/dismiss`. 409 = already resolved.
+    func dismissFlag(id: String) async throws {
+        try await client.post(path: "knowledge/flags/\(settingsPathSegment(id))/dismiss")
+    }
+
     // MARK: - Allternit Sleep (cmd/allternit-api/src/sleep/routes.rs)
 
     /// `GET /api/v1/memory/sleep/status`. A runtime from before Sleep has no
@@ -265,5 +294,113 @@ struct MemorySleepError: Error, LocalizedError, Equatable, Sendable {
             }
         }
         return MemorySleepError(kind: .server, status: 0)
+    }
+}
+
+// MARK: - Knowledge models
+
+private struct KnowledgeFlagsResponse: Decodable { let flags: LossyArray<KnowledgeFlag> }
+private struct KnowledgeProposalsResponse: Decodable { let proposals: LossyArray<KnowledgeProposal> }
+
+/// What a flag or proposal is about: `skill`, `domain` (business
+/// knowledge) or `data_access`.
+enum KnowledgeTargetKind {
+    static func label(_ raw: String) -> String {
+        switch raw {
+        case "skill": return "Skill"
+        case "domain": return "Business knowledge"
+        case "data_access": return "Data access"
+        default: return "Knowledge"
+        }
+    }
+}
+
+/// An agent's note that knowledge was missing, wrong or stale.
+struct KnowledgeFlag: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let kind: String          // missing | wrong | stale
+    let targetKind: String
+    let targetRef: String?
+    let evidence: String
+    let suggestedFix: String?
+    let status: String
+
+    var kindLabel: String {
+        switch kind {
+        case "missing": return "Missing"
+        case "wrong": return "Wrong"
+        case "stale": return "Out of date"
+        default: return "Flagged"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, evidence, status
+        case targetKind = "target_kind"
+        case targetRef = "target_ref"
+        case suggestedFix = "suggested_fix"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
+        targetKind = (try? c.decode(String.self, forKey: .targetKind)) ?? ""
+        targetRef = (try? c.decodeIfPresent(String.self, forKey: .targetRef)) ?? nil
+        evidence = (try? c.decode(String.self, forKey: .evidence)) ?? ""
+        suggestedFix = (try? c.decodeIfPresent(String.self, forKey: .suggestedFix)) ?? nil
+        status = (try? c.decode(String.self, forKey: .status)) ?? "open"
+    }
+}
+
+/// One citation on a proposal: a flag or a past-chat observation.
+struct KnowledgeEvidence: Decodable, Hashable, Sendable {
+    let flagId: String?
+    let observationId: String?
+    let text: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case flagId = "flag_id", observationId = "observation_id", text, excerpt, evidence
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        flagId = (try? c.decodeIfPresent(String.self, forKey: .flagId)) ?? nil
+        observationId = (try? c.decodeIfPresent(String.self, forKey: .observationId)) ?? nil
+        text = ((try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .excerpt)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .evidence)) ?? nil)
+    }
+}
+
+/// A change the curator or an agent wants to make to the knowledge files.
+struct KnowledgeProposal: Decodable, Identifiable, Hashable, Sendable {
+    let id: String
+    let targetKind: String
+    let targetRef: String
+    let title: String
+    let body: String
+    let base: String?
+    let evidence: [KnowledgeEvidence]
+    let origin: String
+    let status: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, body, base, evidence, origin, status
+        case targetKind = "target_kind"
+        case targetRef = "target_ref"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        targetKind = (try? c.decode(String.self, forKey: .targetKind)) ?? ""
+        targetRef = (try? c.decode(String.self, forKey: .targetRef)) ?? ""
+        title = (try? c.decode(String.self, forKey: .title)) ?? "Untitled"
+        body = (try? c.decode(String.self, forKey: .body)) ?? ""
+        base = (try? c.decodeIfPresent(String.self, forKey: .base)) ?? nil
+        evidence = (try? c.decodeIfPresent(LossyArray<KnowledgeEvidence>.self, forKey: .evidence))??.elements ?? []
+        origin = (try? c.decode(String.self, forKey: .origin)) ?? ""
+        status = (try? c.decode(String.self, forKey: .status)) ?? "proposed"
     }
 }
