@@ -8,11 +8,12 @@ enum OpenModelsCopy {
     static let termsName = "Accept terms on the web"
     static let termsSub = "Open models need terms. Opens ai.allternit.com"
     static let termsURL = URL(string: "https://ai.allternit.com/settings/open-models")!
-    static let contactURL = URL(string: "https://allternit.com/contact")!
+    static let contactURL = URL(string: "https://services.allternit.com")!
 
     static let planRequired = "Open models on Allternit Cloud need a paid plan. On Free, run open models on your own device with Freeweights."
     static let allowanceUsed = "This month's open-model allowance is used. Add credits to keep going."
     static let boughtRequired = "On Plus, open models run on credits you buy. Add credits to use them."
+    static let termsRequired = "Accept the open-model terms on the web to use open models."
     static let researchRequired = "This model is part of Open Research, available by agreement."
 
     /// The contract §4 message for an `open_models.reason`; nil for no lock or
@@ -129,8 +130,9 @@ struct OpenResearchTicketView: View {
             planId: "ultra",
             label: "Open Research",
             price: "By agreement",
-            lines: ["Research models and a higher rate tier, set up with us.",
-                    "Runs on credits you buy, plus plan credits on Max and Ultra."],
+            lines: ["Larger models, higher rate limits",
+                    "For verified security and red teams",
+                    "Open models: all, on agreed credits"],
             current: false,
             actionTitle: "Ask us",
             action: { UIApplication.shared.open(OpenModelsCopy.contactURL) },
