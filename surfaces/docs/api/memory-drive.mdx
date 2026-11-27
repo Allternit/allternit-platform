@@ -239,20 +239,18 @@ Body `{ source: "gizzi", label: "gizzi:session/<id>", text, role?, turn_id?, too
 Gizzi sends the person's message at the end of each turn. The API records it as a `turn_user`
 observation with the label as its source when the `gizzi` switch is on, and runs no extraction,
 because Gizzi saves memories itself. Returns `{ recorded }`, or `{ recorded: false, reason }` when
-nothing was kept (`source_off`, `sleep_off`, `incognito`, `empty`, `repeat`).
+nothing was kept (`source_off`, `incognito`, `empty`, `repeat`).
 
-What is recorded depends on Allternit Sleep:
+Every turn is recorded for everyone, with Allternit Sleep on or off:
 
-- **Sleep off (default).** Only the person's message, clipped to 4000 characters. A request with
-  `role` `assistant` or `tool` records nothing (`sleep_off`). Old clients that send no `role` are
+- The person's message and the assistant's last text reply of the turn (`role: "assistant"`,
+  stored as `turn_assistant`) are kept up to 64,000 characters. Old clients that send no `role` are
   treated as `user`.
-- **Sleep on.** The person's message is kept in full up to 64,000 characters, and Gizzi also sends
-  the assistant's last text reply of the turn (`role: "assistant"`, stored as `turn_assistant`) and
-  each tool call (`role: "tool"`, stored as `turn_tool`). A tool row reads
-  `<tool_name>`, the input clipped to 4000 characters, `---`, then the output clipped to 16,000
-  characters; a clipped part ends with `[truncated N chars]`. Gizzi checks
-  `GET /memory/sleep/status` once per process (cached five minutes) and sends these extra rows only
-  when `enabled` is true. Tool output is sent as is: no Gizzi tool is marked sensitive yet.
+- Each tool call (`role: "tool"`, stored as `turn_tool`) reads `<tool_name>`, the input clipped to
+  4000 characters, `---`, then the output clipped to 16,000 characters; a clipped part ends with
+  `[truncated N chars]`. Credentials in tool input and output (token shapes, private key blocks and
+  `password=`, `token:` style pairs) are replaced with `[redacted]` before storing.
+- Stored turns are cut into dated windows for [raw search](/api/memory#raw-search).
 
 Nothing is recorded for an incognito session, for any role, and every role respects the `gizzi`
 capture switch. A row repeated with the same content in the same session within ten minutes is
@@ -268,6 +266,7 @@ Facts and Dream lessons from these turns cite that label.
 
 Body `{ scheme }`, for example `chatgpt`, `telegram` or `claude-code`. Removes every
 personal-drive entry whose source starts with `<scheme>:` as one commit, up to 2,000 at a time.
+It also deletes the raw turns recorded from that source, with their search windows and vectors.
 Returns `{ revision, removed, more }`.
 
 Incognito sessions are refused by `/memory/v2/retain` and `/memory/v2/observation`, which answer
@@ -426,7 +425,7 @@ push:` and the reason. After an accepted push the index is rebuilt.
 
 `status` is `running`, `applied`, `no_changes`, `failed` or `undone`. `summary` counts
 `merged`, `resolved`, `lessons`, `pruned`, `proposals` and `skipped`. See
-[how Dreaming works](/core/memory-drive#nightly-dream).
+[how Dreaming works](/core/memory-drive#nightly-dream). With Dreaming on, the [knowledge curator](/guides/knowledge-factory) runs after a Dream that applied or made no changes, and its report line, `Curator: N knowledge proposal(s) waiting for review.`, is added to the Dream's report.
 
 ## Questions board
 

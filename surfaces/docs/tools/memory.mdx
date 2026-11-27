@@ -26,6 +26,19 @@ When memory is on, the session also carries a short guide to using it:
 
 Under a reply, ai and iOS show a "Used memory (n)" chip, and the TUI shows a dim "used memory (n)" line. The count comes from the memory tools the turn actually ran (`memory_list`, `memory_recall`, `memory_write`), recorded on the reply as `memory_refs` (up to 10 entries, each with an id, an optional title and the action: recalled, saved and so on). It never comes from the model's own claim that it used memory.
 
+## Past chats in recall
+
+`memory_recall` also returns matching turns from your earlier conversations (date, speaker, observation id and session id) after the memory hits. Four optional parameters narrow it:
+
+| Parameter | Meaning |
+| --- | --- |
+| `from`, `to` | ISO dates; only turns in that window. |
+| `session` | One session id. |
+| `skip_sessions` | Session ids to leave out, for example ones already read. |
+| `neighbors_of` | An observation id. Returns the turns before and after it in the same session instead of searching. |
+
+Past-chat refs on a reply carry `source: "past_chat"`, the turn's `date` and its `session_id`, and the chip lists them under "From past chats".
+
 ## Versions
 
 Every entry has a version: the first 12 hex characters of a SHA-256 hash of its stored line. Any change to the text or metadata changes it. `memory_list` and `memory_recall` return it, and a change to an existing entry must pass it as `if_version`.
