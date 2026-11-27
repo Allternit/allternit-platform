@@ -2133,6 +2133,31 @@
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
         "allternit/surfaces/docs/architecture/session-start.mdx"
       ]
+    },
+    {
+      "source": "allternit-ai/src/lib/agents",
+      "target": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "kind": "planned, not shipped (eval loop): app client eval-api.ts calls allternit-api /api/v1/agent-evals/* (agent_eval_routes.rs, next to the agent-sessions proxy)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/server",
+      "kind": "planned, not shipped (eval loop): agent_eval_routes.rs forwards /api/v1/agent-evals/* to the engine's /v1/eval/* with the same Basic-auth forward as the session proxy",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/server/server.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "planned, not shipped (eval loop): gizzi eval reads and writes test cases and runs in the engine's local store, no HTTP",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
+      ]
     }
   ]
 }
