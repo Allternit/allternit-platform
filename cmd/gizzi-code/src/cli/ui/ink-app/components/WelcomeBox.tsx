@@ -122,8 +122,8 @@ export function Wordmark({ version, compact }: { version: string; compact: boole
 function ArtRows({ rows }: { rows: ArtRow[] }): React.ReactNode {
   return rows.map((segments, i) => (
     <Text key={i}>
-      {segments.map(([t, color, bg], j) => (
-        <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
+      {segments.map(([t, color, bg, inverse], j) => (
+        <Text key={j} color={color || undefined} backgroundColor={bg} inverse={inverse}>{t}</Text>
       ))}
     </Text>
   ))

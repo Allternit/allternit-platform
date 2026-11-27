@@ -17,13 +17,14 @@ function rgbOf(color: string | undefined): [number, number, number] | undefined 
 export function ansiArtRow(row: ArtRow): string {
   const theme = getTheme("dark") as unknown as Record<string, string>
   return row
-    .map(([text, fg, bg]) => {
+    .map(([text, fg, bg, inverse]) => {
       let s: ReturnType<typeof chalk.rgb> | typeof chalk = chalk
       const f = fg ? rgbOf(theme[fg]) : undefined
       const b = bg ? rgbOf(theme[bg]) : undefined
       if (f) s = s.rgb(f[0], f[1], f[2])
       if (b) s = s.bgRgb(b[0], b[1], b[2])
-      return s(text)
+      const out = s(text)
+      return inverse && out !== text ? `\x1b[7m${out}\x1b[27m` : out
     })
     .join("")
 }

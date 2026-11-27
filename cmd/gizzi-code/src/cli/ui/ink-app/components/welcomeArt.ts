@@ -8,8 +8,8 @@ export const SAND = 'gizziSand'
 export const VISOR = 'gizziVisor'
 export const EYE = 'gizziEye'
 
-/** [text, foreground, background?] */
-export type ArtSegment = [text: string, color: string, bg?: string]
+/** [text, foreground, background?, inverse?] */
+export type ArtSegment = [text: string, color: string, bg?: string, inverse?: boolean]
 export type ArtRow = ArtSegment[]
 
 /**
@@ -69,7 +69,7 @@ function mergeRuns(cells: ArtSegment[]): ArtRow {
   const row: ArtRow = []
   for (const cell of cells) {
     const last = row[row.length - 1]
-    if (last && last[1] === cell[1] && last[2] === cell[2]) last[0] += cell[0]
+    if (last && last[1] === cell[1] && last[2] === cell[2] && last[3] === cell[3]) last[0] += cell[0]
     else row.push([...cell] as ArtSegment)
   }
   return row
@@ -79,14 +79,16 @@ function mergeRuns(cells: ArtSegment[]): ArtRow {
  * One cell from its top and bottom pixel colors, gap-free: ▀ starts below the
  * cell top in some fonts (SF Mono), so a split cell is drawn with ▄ (reaches
  * the cell bottom) and the top color as the cell background; a solid cell is a
- * space on a background. No terminal background color is known (only
- * dark/light), so an empty bottom half falls back to ▀ with a small top gap.
+ * space on a background. A top pixel over an empty bottom is a reverse-video ▄
+ * with the top color as foreground: reverse fills the whole cell with that
+ * color and draws the glyph in the terminal's own background, so no terminal
+ * background color needs to be known.
  */
 export function pixelCell(t: string | undefined, b: string | undefined): ArtSegment {
   if (!t && !b) return [' ', '']
   if (t && b) return t === b ? [' ', '', t] : ['▄', b, t]
   if (b) return ['▄', b]
-  return ['▀', t!]
+  return ['▄', t!, undefined, true]
 }
 
 /**

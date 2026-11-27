@@ -95,7 +95,7 @@ describe("half-block mascot", () => {
     expect(rows).toHaveLength(8)
     for (const line of text(rows)) {
       expect(line).toHaveLength(18)
-      expect(line).toMatch(/^[ ▀▄]+$/)
+      expect(line).toMatch(/^[ ▄]+$/)
     }
     const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
     expect([...colors].sort()).toEqual([CORAL, EYE, "gizziSand", "gizziVisor"].sort())
@@ -115,7 +115,7 @@ describe("half-block mascot", () => {
     expect(pixelCell("a", "a")).toEqual([" ", "", "a"]) // same color: space with bg
     expect(pixelCell("a", "b")).toEqual(["▄", "b", "a"]) // split: fg = bottom, bg = top
     expect(pixelCell(undefined, "b")).toEqual(["▄", "b"]) // empty top: no bg
-    expect(pixelCell("a", undefined)).toEqual(["▀", "a"]) // empty bottom: no terminal bg known
+    expect(pixelCell("a", undefined)).toEqual(["▄", "a", undefined, true]) // empty bottom: reverse-video ▄, fg = top
     const all = mascotRows("mid").flat().map(([t]) => t).join("")
     expect(all).not.toContain("█")
   })
