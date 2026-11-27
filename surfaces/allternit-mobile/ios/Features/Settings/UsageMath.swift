@@ -152,7 +152,9 @@ func usageHoursText(usedSeconds: Int, maxHours: Int) -> String {
 /// What "Buy credits" does, from the same two gates every purchase entry
 /// point uses (`ComputeGateView` card C): the In-App Purchase sheet where
 /// the App Store sells packs, else the web billing page where links are
-/// allowed (US storefront), else nothing (the button is hidden).
+/// allowed, else nothing (the button is hidden). The Settings Usage page
+/// passes `allowsPurchaseLinks: false`: it never links out to pay
+/// (App Store 3.1.1, Claude polish i3).
 enum BuyCreditsRoute: Equatable {
     case storeSheet
     case web
@@ -163,4 +165,143 @@ enum BuyCreditsRoute: Equatable {
         if allowsPurchaseLinks { return .web }
         return .hidden
     }
+}
+
+// MARK: - Usage windows and pace (cloud-api #3101, snake_case)
+
+/// One window from `GET /api/v1/me/usage` `windows` (id `5h` / `7d` /
+/// `month`). `limit_usd` and `used_ratio` are null when the plan sets no
+/// limit for that window: the row then shows spend with no bar.
+struct CloudUsageWindow: Decodable, Equatable, Identifiable {
+    let id: String
+    let label: String
+    let usedUsd: Double
+    let limitUsd: Double?
+    let usedRatio: Double?
+    let resetsAt: String
+    let enforced: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, enforced
+        case usedUsd = "used_usd"
+        case limitUsd = "limit_usd"
+        case usedRatio = "used_ratio"
+        case resetsAt = "resets_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        label = (try? c.decode(String.self, forKey: .label)) ?? id
+        usedUsd = (try? c.decode(Double.self, forKey: .usedUsd)) ?? 0
+        limitUsd = try? c.decodeIfPresent(Double.self, forKey: .limitUsd)
+        usedRatio = try? c.decodeIfPresent(Double.self, forKey: .usedRatio)
+        resetsAt = (try? c.decode(String.self, forKey: .resetsAt)) ?? ""
+        enforced = (try? c.decode(Bool.self, forKey: .enforced)) ?? false
+    }
+
+    init(id: String, label: String, usedUsd: Double, limitUsd: Double?, usedRatio: Double?, resetsAt: String, enforced: Bool = false) {
+        self.id = id; self.label = label; self.usedUsd = usedUsd; self.limitUsd = limitUsd
+        self.usedRatio = usedRatio; self.resetsAt = resetsAt; self.enforced = enforced
+    }
+
+    var resetDate: Date? { parseUsageDate(resetsAt) }
+
+    /// The bar's share, nil when the window has no limit (no bar).
+    var barFraction: Double? {
+        guard let limitUsd, limitUsd > 0 else { return nil }
+        return min(1, max(0, usedRatio ?? usedUsd / limitUsd))
+    }
+}
+
+/// `pace` from `GET /api/v1/me/usage`: the burn of the window closest to
+/// its limit. `runs_out_at` is null when that window cannot run out.
+struct CloudUsagePace: Decodable, Equatable {
+    let windowId: String
+    let burnPerHour: Double
+    let runsOutAt: String?
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case windowId = "window_id"
+        case burnPerHour = "burn_per_hour"
+        case runsOutAt = "runs_out_at"
+    }
+
+    var runsOutDate: Date? { runsOutAt.flatMap(parseUsageDate) }
+}
+
+/// The two additive fields of `/me/usage` the Usage page reads. Both are
+/// optional so an older server (no windows yet) decodes to an empty reply.
+struct CloudUsageLimits: Decodable, Equatable {
+    let windows: [CloudUsageWindow]
+    let pace: CloudUsagePace?
+
+    enum CodingKeys: String, CodingKey { case windows, pace }
+
+    init(windows: [CloudUsageWindow], pace: CloudUsagePace?) {
+        self.windows = windows; self.pace = pace
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        windows = (try? c.decodeIfPresent([CloudUsageWindow].self, forKey: .windows)) ?? []
+        pace = try? c.decodeIfPresent(CloudUsagePace.self, forKey: .pace)
+    }
+}
+
+/// RFC 3339 with or without fractional seconds.
+func parseUsageDate(_ text: String) -> Date? {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let d = f.date(from: text) { return d }
+    f.formatOptions = [.withInternetDateTime]
+    return f.date(from: text)
+}
+
+/// Row title per window id, as the web frame (`M1-usage-phone`) reads.
+func cloudWindowTitle(_ window: CloudUsageWindow) -> String {
+    switch window.id {
+    case "5h": return "Current session"
+    case "7d": return "This week"
+    case "month": return "This month"
+    default: return window.label
+    }
+}
+
+/// 5h, then 7d, then month; unknown ids keep server order after them.
+func sortCloudWindows(_ windows: [CloudUsageWindow]) -> [CloudUsageWindow] {
+    let rank = ["5h": 0, "7d": 1, "month": 2]
+    return windows.enumerated()
+        .sorted { a, b in
+            let ra = rank[a.element.id] ?? 3, rb = rank[b.element.id] ?? 3
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }
+        .map(\.element)
+}
+
+/// The pace line, only when `pace.runs_out_at` exists: "Heads up. At this
+/// pace you'll run out tomorrow, before the week resets Sun 7:19 PM."
+func usagePaceLine(_ limits: CloudUsageLimits?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String? {
+    guard let pace = limits?.pace, let out = pace.runsOutDate else { return nil }
+    let when: String
+    if calendar.isDate(out, inSameDayAs: now) {
+        when = "today"
+    } else if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(out, inSameDayAs: tomorrow) {
+        when = "tomorrow"
+    } else {
+        when = usageResetLabel(out, now: now, calendar: calendar, locale: locale)
+    }
+    let window = limits?.windows.first { $0.id == pace.windowId }
+    let noun: String
+    switch pace.windowId {
+    case "5h": noun = "session"
+    case "7d": noun = "week"
+    default: noun = "month"
+    }
+    if let reset = window?.resetDate, reset > out {
+        return "Heads up. At this pace you'll run out \(when), before the \(noun) resets \(usageResetLabel(reset, now: now, calendar: calendar, locale: locale))."
+    }
+    return "Heads up. At this pace you'll run out \(when)."
 }

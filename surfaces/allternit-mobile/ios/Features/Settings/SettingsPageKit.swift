@@ -205,7 +205,8 @@ enum SettingsRootRow: Hashable, Sendable {
     var title: String {
         switch self {
         case .page(let page, let label): return label ?? page.label
-        case .customize: return "Customize"
+        // E8: no "Customize" label anywhere; the row opens the Catalog.
+        case .customize: return "Catalog"
         case .openLinks: return "Open links in"
         case .haptics: return "Haptic feedback"
         case .reduceMotion: return "Reduce motion"
