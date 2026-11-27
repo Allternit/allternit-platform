@@ -67,8 +67,9 @@ enum OpenModelsGate {
     }
 
     /// The single "Accept terms on the web" row, in place of the open rows.
+    /// US storefront only: elsewhere no open rows and no link (D12).
     static func showsTermsLink(_ e: OpenModelsEntitlement?, usStorefront: Bool) -> Bool {
-        e != nil && !listsOpenRows(e, usStorefront: usStorefront)
+        e != nil && usStorefront && e?.termsAccepted != true
     }
 
     /// Research rows only with the flag.
@@ -125,6 +126,9 @@ struct OpenModelsStatusRows: View {
 
 /// Open Research: the fifth plan card, same ticket style, "By agreement".
 struct OpenResearchTicketView: View {
+    /// "Ask us" is a link-out: US storefront only.
+    @ObservedObject private var storefront = StorefrontGate.shared
+
     var body: some View {
         PlanTicketView(
             planId: "ultra",
@@ -134,7 +138,7 @@ struct OpenResearchTicketView: View {
                     "For verified security and red teams",
                     "Open models: all, on agreed credits"],
             current: false,
-            actionTitle: "Ask us",
+            actionTitle: storefront.allowsPurchaseLinks ? "Ask us" : nil,
             action: { UIApplication.shared.open(OpenModelsCopy.contactURL) },
             showsPerMonth: false,
             showsOpenLine: false

@@ -163,7 +163,7 @@ struct ComputeBillingView: View {
             }
 
             // Allternit Open: the allowance meter, once the server reports it.
-            if title != "Usage", let open = plan.openModels, open.plan != nil || open.termsAccepted {
+            if title != "Usage", storefront.allowsPurchaseLinks, let open = plan.openModels, open.plan != nil || open.termsAccepted {
                 Section { OpenModelsStatusRows(entitlement: open) } header: { Text("Status") }
             }
 
