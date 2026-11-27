@@ -4,10 +4,10 @@ import { Provider } from "@/runtime/providers/provider"
 import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { ModelList } from "@/runtime/providers/model-list"
 import { currentDefaultBrain } from "@/runtime/providers/default-brain"
-import { CloudContinue } from "@/runtime/session/cloud-continue"
-import { cloudEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
 import { cloudCreditsDisclosure } from "@/shared/util/provider-error"
 import { cmd } from "@/cli/commands/cmd"
+import { formatProviderLines, jsonRows } from "@/cli/commands/models-rows"
+import { resetPickerCatalog } from "@/runtime/providers/discovery"
 import { UI } from "@/cli/ui"
 import { EOL } from "os"
 import {
@@ -62,7 +62,7 @@ export const ModelsCommand = cmd({
         type: "boolean",
       })
       .option("refresh", {
-        describe: "refresh the models cache from models.dev",
+        describe: "refresh the models cache from models.dev and the picker catalog (bypasses the 6 h cache)",
         type: "boolean",
       })
       .option("all", {
@@ -303,6 +303,8 @@ export const ModelsCommand = cmd({
       await ModelsDev.refresh()
       // Make discovery re-read live CLI model lists instead of the cache.
       process.env.GIZZI_MODELS_REFRESH = "1"
+      // Drop the shared picker catalog lookup so the Cloud rows re-fetch past the 6 h cache.
+      resetPickerCatalog()
       if (!args.json) UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
     }
 
@@ -313,7 +315,7 @@ export const ModelsCommand = cmd({
         const sections = await ModelList.build({ all: Boolean(args.all || args.provider) })
 
         if (args.json) {
-          process.stdout.write(JSON.stringify(sections, null, 2) + EOL)
+          process.stdout.write(JSON.stringify({ rows: jsonRows(sections), sections }, null, 2) + EOL)
           return
         }
 
@@ -329,39 +331,36 @@ export const ModelsCommand = cmd({
         }
 
         const dim = (text: string) => UI.Style.TEXT_DIM + text + UI.Style.TEXT_NORMAL
-        // Cloud rows stay listed; on an account with no Cloud credits they read "needs credits".
-        const listsCloud = sections.some((s) =>
-          s.providers.some((p) => p.id === CloudContinue.PROVIDER_ID && (!args.provider || p.id === args.provider)),
-        )
-        const entitlement = listsCloud ? await cloudEntitlement() : undefined
-        const locked = await CloudContinue.lockCheck(entitlement).catch(() => () => false)
+        // Each row carries its access badge (plan / key / local / credits); locked rows
+        // say why; hidden rows are skipped; an offline provider is one dim line.
         let anyLocked = false
         for (const section of sections) {
           const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
           if (providers.length === 0) continue
           if (!args.provider) UI.println(dim(`# ${section.title}`))
           for (const provider of providers) {
-            for (const row of provider.models) {
-              const tags: string[] = []
-              if (row.default) tags.push("default")
-              if (row.current) tags.push("current")
-              if (provider.signedIn === false) tags.push("not signed in")
-              if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
-                tags.push("needs credits")
-                anyLocked = true
+            const lines = formatProviderLines(section.kind, provider)
+            const visible = provider.models.filter((m) => !m.hidden)
+            lines.forEach((line, i) => {
+              if (line.type === "offline") {
+                process.stdout.write(dim(line.text) + EOL)
+                return
               }
-              const ref = row.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
-              process.stdout.write(ref + (tags.length ? "  " + dim(tags.join(" ")) : "") + EOL)
+              if (line.locked) anyLocked = true
+              const row = visible[i]
+              const rest = line.text.slice(row.ref.length).trim()
+              const ref = line.current ? UI.Style.TEXT_HIGHLIGHT_BOLD + row.ref + UI.Style.TEXT_NORMAL : row.ref
+              process.stdout.write(ref + "  " + dim(rest) + EOL)
               if (args.verbose) {
                 const info = configured[provider.id]?.models?.[row.modelID] ?? modelsDev[provider.id]?.models?.[row.modelID]
                 const detail = info ?? { context: row.context, output: row.output }
                 process.stdout.write(JSON.stringify(detail, null, 2) + EOL)
               }
-            }
+            })
           }
         }
 
-        if (anyLocked) UI.println(dim(cloudCreditsDisclosure(entitlement?.reason)))
+        if (anyLocked) UI.println(dim(cloudCreditsDisclosure(undefined)))
 
         if (!args.provider) {
           const brain = await currentDefaultBrain().catch(() => ({ model: null, reason: "", pinned: false }))
