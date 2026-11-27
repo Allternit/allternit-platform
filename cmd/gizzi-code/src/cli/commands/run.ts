@@ -32,6 +32,7 @@ import { ReviewVerdict } from "@/runtime/review/verdict"
 import { Agent } from "@/runtime/loop/agent"
 import { AgentManager } from "@/runtime/loop/manager"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { CREDENTIAL_PERMISSION, HUMAN_PERMISSION, BLOCK_PERMISSION, credentialWaitingMessage, holdWaitingMessage } from "@/runtime/tools/computer-toolset/needs-you"
 import { Config } from "@/runtime/context/config/config"
 import { ToolPrinter, columns } from "@/cli/commands/run-print"
 import { TurnSummary } from "@/shared/util/turn-summary"
@@ -727,9 +728,14 @@ export const RunCommand = cmd({
                   `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
               )
             }
+            // A login fill or a human/block hold is never auto-approved. Say which
+            // approval is waiting and how to answer it from the app; the message
+            // goes back to the model as the reason. (needs-you.ts)
+            const needsYou = needsYouMessage(permission)
+            if (needsYou) UI.error(needsYou)
             await sdk.permission.reply({
               path: { requestID: permission.id },
-              body: { reply: "reject" },
+              body: needsYou ? { reply: "reject", message: needsYou } : { reply: "reject" },
             }).catch(() => {})
           }
         }
@@ -1029,4 +1035,12 @@ export const ExecCommand = {
       outputFormat: args.outputFormat ?? "text",
       permissionMode: args.permissionMode ?? "dontAsk",
     } as any),
+}
+
+/** The notice for a computer needs-you ask that a run without a TTY cannot answer. */
+function needsYouMessage(ask: { permission: string; metadata?: Record<string, any> }): string | undefined {
+  const m = ask.metadata ?? {}
+  if (ask.permission === CREDENTIAL_PERMISSION) return credentialWaitingMessage(String(m.approval_id ?? "unknown"), m.credential?.name, m.credential?.domain)
+  if (ask.permission === HUMAN_PERMISSION || ask.permission === BLOCK_PERMISSION) return holdWaitingMessage(String(m.summary ?? "A person is needed."))
+  return undefined
 }
