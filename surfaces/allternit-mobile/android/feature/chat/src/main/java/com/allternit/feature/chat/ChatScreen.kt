@@ -178,6 +178,7 @@ fun ChatScreen(
             onShareLink = if (hasSession) callbacks.onShareLink else null,
             onOpenArtifact = callbacks.onOpenArtifact,
             onOpenConnections = callbacks.onOpenConnections,
+            onOpenSession = { sid -> viewModel.loadSession(sid) },
         )
     }
 

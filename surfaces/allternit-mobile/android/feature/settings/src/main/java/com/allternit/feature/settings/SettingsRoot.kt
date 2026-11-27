@@ -233,6 +233,8 @@ fun SettingsRoot(host: SettingsHost) {
             "memory" -> MemoryPage(host, back, push)
             "memory-drive" -> MemoryDrivePage(host, back, push)
             "memory-history" -> MemoryHistoryPage(host, back)
+            "knowledge" -> KnowledgeReviewPage(back, push)
+            "knowledge-proposal" -> KnowledgeProposalPage(back)
             "models" -> ModelsPage(host, back, push)
             "subagents" -> SubagentsPage(host, back)
             "mcp" -> McpPage(host, back)
@@ -285,6 +287,7 @@ private fun crumbIconFor(id: String?): Int? = when (id) {
     null -> null
     "advanced" -> DesignR.drawable.ph_terminal
     "open-links" -> DesignR.drawable.ph_arrow_square_out
+    "knowledge", "knowledge-proposal" -> DesignR.drawable.ph_books
     else -> ALL_PAGES.firstOrNull { it.id == id }?.icon
 }
 

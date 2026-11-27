@@ -702,6 +702,8 @@ class ChatViewModel(
                 it.attachToolImage(event.sourceUri, event.url, event.mimeType) ?: it.copy(artifacts = it.artifacts + ArtifactRecord(event.artifactId, event.kind, event.title, event.url, event.content))
             }
             is ChatStreamEvent.Finish -> {
+                val refs = MemoryRef.parseAll(event.memoryRefs)
+                if (refs.isNotEmpty()) update(id) { it.copy(memoryRefs = refs) }
                 if (event.status != "error") return false
                 flushPending()
                 val raw = event.error ?: "The generation failed."
