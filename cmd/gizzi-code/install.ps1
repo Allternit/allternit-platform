@@ -3,6 +3,7 @@
 # SOURCE OF TRUTH: cmd/gizzi-code/install.ps1 in the Allternit/allternit-platform
 # repo — edit there and copy. The copy served from install.gizziio.com must
 # stay byte-identical.
+# Version and sha256 come from the signed release feed (GIZZI_CHANNEL, default stable).
 
 $ErrorActionPreference = "Stop"
 
@@ -123,18 +124,70 @@ function Get-Architecture {
 # VERSION FUNCTIONS
 # =============================================================================
 
-function Get-LatestVersion {
-    Write-Step "Fetching latest version..."
-    
+# Signed release feed. Same public key as the bash installer.
+$FeedBase = if ($env:GIZZI_FEED_URL) { $env:GIZZI_FEED_URL } else { "https://runtime.allternit.com/gizzi" }
+$Channel = if ($env:GIZZI_CHANNEL) { $env:GIZZI_CHANNEL } else { "stable" }
+if ($Channel -notin @("stable", "latest")) {
+    Write-Host "GIZZI_CHANNEL must be 'stable' or 'latest' (got '$Channel')"
+    exit 1
+}
+$FeedPublicKeyB64 = "MCowBQYDK2VwAyEALAlANLp9v9/gNgi58OKl5N2X2MfeSD4cRGs+ONKmUYQ="
+$script:Feed = $null
+
+function Get-Feed {
+    # Returns the parsed feed, or $null when it is unreachable or fails its signature.
     try {
-        $response = Invoke-RestMethod -Uri "$GithubApi/releases/latest" -UseBasicParsing
-        # Tags look like "gizzi-code/0.2.3" (older ones may be "v0.2.3") — accept both.
-        $tag = $response.tag_name
+        $raw = (Invoke-WebRequest -Uri "$FeedBase/$Channel/latest.json" -UseBasicParsing -TimeoutSec 20).Content
+        if ($raw -is [byte[]]) { $bytes = $raw } else { $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$raw) }
+        $sig = $null
+        try { $sig = ((Invoke-WebRequest -Uri "$FeedBase/$Channel/latest.json.sig" -UseBasicParsing -TimeoutSec 20).Content).ToString().Trim() } catch { }
+        $checked = $false
+        if ($sig) {
+            # Ed25519 needs PowerShell 7+ on .NET 9 / a platform that supports it. Otherwise: not checked.
+            try {
+                $alg = [System.Security.Cryptography.Ed25519]
+                $spki = [Convert]::FromBase64String($FeedPublicKeyB64)
+                $pub = $alg::ImportSubjectPublicKeyInfo($spki)
+                if (-not $pub.VerifyData($bytes, [Convert]::FromBase64String($sig))) {
+                    Write-Error "Release feed signature is invalid; refusing to use it"
+                    return $null
+                }
+                $checked = $true
+            } catch { }
+        }
+        if (-not $checked) {
+            Write-Info "Feed signature not checked on this machine; relying on sha256 from the HTTPS feed"
+        }
+        return ([System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Get-LatestVersion {
+    Write-Step "Fetching latest version ($Channel channel)..."
+
+    $script:Feed = Get-Feed
+    if ($script:Feed -and $script:Feed.version) {
+        if ($script:Feed.paused) {
+            Write-Error "The $Channel channel is paused; nothing to install right now. Use GIZZI_VERSION to pick a version."
+            exit 1
+        }
+        Write-Success "Latest version: $Orange$($script:Feed.version)$Reset"
+        return $script:Feed.version
+    }
+
+    Write-Warning "Release feed unreachable; falling back to GitHub release tags (gizzi-code/v*)"
+    try {
+        # Filter to our own tags: releases/latest may be another product's tag.
+        $releases = Invoke-RestMethod -Uri "$GithubApi/releases?per_page=100" -UseBasicParsing
+        $tag = ($releases | Where-Object { $_.tag_name -like "gizzi-code/v*" } | Select-Object -First 1).tag_name
+        if (-not $tag) { throw "no gizzi-code release found" }
         $version = ($tag -split '/')[-1] -replace '^v', ''
         Write-Success "Latest version: $Orange$version$Reset"
         return $version
     } catch {
-        Write-Error "Failed to fetch latest version"
+        Write-Error "Failed to fetch version information"
         exit 1
     }
 }
@@ -177,6 +230,19 @@ function Install-Binary($Platform, $Arch, $Version) {
     # Normalize the version: accept "0.2.3", "v0.2.3", or "gizzi-code/0.2.3"
     $Version = ($Version -split '/')[-1] -replace '^v', ''
 
+    $ExpectedHash = $null
+    $DownloadUrl = $null
+    $Asset = $null
+    # Prefer the signed feed's win32-x64 entry (URL + sha256) when it matches this version.
+    if ($script:Feed -and $script:Feed.version -eq $Version -and $script:Feed.artifacts.'win32-x64') {
+        $entry = $script:Feed.artifacts.'win32-x64'
+        $DownloadUrl = $entry.url
+        $ExpectedHash = ([string]$entry.sha256).ToLower()
+        $Asset = ($DownloadUrl -split '/')[-1]
+    } elseif ($script:Feed) {
+        Write-Info "No win32-x64 build in the feed for $Version; using the GitHub release tag"
+    }
+
     # Assets are version-named zips: gizzi-code-v<version>-windows-x64.zip.
     # The release workflow also publishes legacy names for one transition
     # release, so keep a fallback to those.
@@ -185,22 +251,23 @@ function Install-Binary($Platform, $Arch, $Version) {
     if ($Arch -ne "x64") {
         Write-Info "No $Arch Windows build published; using the x64 build (emulated on ARM64)"
     }
-    $Asset = "${AssetPrefix}-v${Version}-windows-x64.zip"
-    $DownloadUrl = $null
-    foreach ($tag in @("gizzi-code/v$Version", "gizzi-code/$Version")) {
-        $candidate = "https://github.com/$Repo/releases/download/${tag}/${Asset}"
-        if (Test-Url $candidate) {
-            $DownloadUrl = $candidate
-            break
-        }
-    }
     if (-not $DownloadUrl) {
-        $Asset = "${AssetPrefix}-windows-x64.zip"
+        $Asset = "${AssetPrefix}-v${Version}-windows-x64.zip"
         foreach ($tag in @("gizzi-code/v$Version", "gizzi-code/$Version")) {
             $candidate = "https://github.com/$Repo/releases/download/${tag}/${Asset}"
             if (Test-Url $candidate) {
                 $DownloadUrl = $candidate
                 break
+            }
+        }
+        if (-not $DownloadUrl) {
+            $Asset = "${AssetPrefix}-windows-x64.zip"
+            foreach ($tag in @("gizzi-code/v$Version", "gizzi-code/$Version")) {
+                $candidate = "https://github.com/$Repo/releases/download/${tag}/${Asset}"
+                if (Test-Url $candidate) {
+                    $DownloadUrl = $candidate
+                    break
+                }
             }
         }
     }
@@ -221,32 +288,35 @@ function Install-Binary($Platform, $Arch, $Version) {
         $ProgressPreference = 'Continue'
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempFile -UseBasicParsing
 
-        # Verify sha256 against checksums.txt when the release provides it
-        $ChecksumsUrl = $null
-        foreach ($tag in @("gizzi-code/v$Version", "gizzi-code/$Version")) {
-            $candidate = "https://github.com/$Repo/releases/download/${tag}/checksums.txt"
-            if (Test-Url $candidate) {
-                $ChecksumsUrl = $candidate
-                break
-            }
-        }
-        if ($ChecksumsUrl) {
-            $Checksums = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
-            $Expected = ($Checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($Asset) } | Select-Object -First 1)
-            if ($Expected) {
-                $ExpectedHash = ($Expected -split '\s+')[0].Trim().ToLower()
-                $ActualHash = (Get-FileHash -Path $TempFile -Algorithm SHA256).Hash.ToLower()
-                if ($ActualHash -ne $ExpectedHash) {
-                    Write-Error "SHA256 mismatch for $Asset (expected $ExpectedHash, got $ActualHash)"
-                    return $false
+        # sha256 is mandatory and has no skip switch. The feed path already has the
+        # hash; the tag path must find it in the release's checksums.txt.
+        if (-not $ExpectedHash) {
+            $ChecksumsUrl = $null
+            foreach ($tag in @("gizzi-code/v$Version", "gizzi-code/$Version")) {
+                $candidate = "https://github.com/$Repo/releases/download/${tag}/checksums.txt"
+                if (Test-Url $candidate) {
+                    $ChecksumsUrl = $candidate
+                    break
                 }
-                Write-Success "Verified sha256: $ActualHash"
-            } else {
-                Write-Warning "$Asset not listed in checksums.txt; skipping hash verification"
             }
-        } else {
-            Write-Warning "checksums.txt not found for ${Version}; skipping hash verification"
+            if (-not $ChecksumsUrl) {
+                Write-Error "checksums.txt not found for ${Version}; refusing to install an unverified download"
+                return $false
+            }
+            $Checksums = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
+            $Line = ($Checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($Asset) } | Select-Object -First 1)
+            if (-not $Line) {
+                Write-Error "$Asset is not listed in checksums.txt; refusing to install an unverified download"
+                return $false
+            }
+            $ExpectedHash = ($Line -split '\s+')[0].Trim().ToLower()
         }
+        $ActualHash = (Get-FileHash -Path $TempFile -Algorithm SHA256).Hash.ToLower()
+        if ($ActualHash -ne $ExpectedHash) {
+            Write-Error "SHA256 mismatch for $Asset (expected $ExpectedHash, got $ActualHash)"
+            return $false
+        }
+        Write-Success "Verified sha256: $ActualHash"
 
         Expand-Archive -Path $TempFile -DestinationPath $TempDir -Force
         $Exe = Get-ChildItem -Path $TempDir -Recurse -Filter "gizzi-code.exe" | Select-Object -First 1

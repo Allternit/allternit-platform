@@ -2,6 +2,7 @@
 # SOURCE OF TRUTH: cmd/gizzi-code/install in the Allternit/allternit-platform
 # repo — edit there and copy. The copy served from
 # https://install.gizziio.com/install must stay byte-identical to this file.
+# cli-package/install/install.sh is a thin redirect to this script.
 set -euo pipefail
 APP=gizzi-code
 
@@ -19,6 +20,8 @@ Usage: install.sh [options]
 Options:
     -h, --help              Display this help message
     -v, --version <version> Install a specific version (e.g., 1.0.180)
+                            Default: version from the signed release feed for
+                            GIZZI_CHANNEL (stable or latest; default stable)
     -b, --binary <path>     Install from a local binary instead of downloading
         --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
 
@@ -208,49 +211,157 @@ else
     }
 
     base="https://github.com/Allternit/allternit-platform/releases"
-    if [ -z "$requested_version" ]; then
-        tag=$(curl -s https://api.github.com/repos/Allternit/allternit-platform/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
-
-        if [[ -z "$tag" ]]; then
-            echo -e "${RED}Failed to fetch version information${NC}"
+    api="https://api.github.com/repos/Allternit/allternit-platform"
+    feed_base="${GIZZI_FEED_URL:-https://runtime.allternit.com/gizzi}"
+    channel="${GIZZI_CHANNEL:-stable}"
+    case "$channel" in
+        stable|latest) ;;
+        *)
+            echo -e "${RED}Error: GIZZI_CHANNEL must be 'stable' or 'latest' (got '${channel}')${NC}"
             exit 1
+            ;;
+    esac
+
+    # Public key for the Allternit-signed release feed (Ed25519).
+    FEED_PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEALAlANLp9v9/gNgi58OKl5N2X2MfeSD4cRGs+ONKmUYQ=
+-----END PUBLIC KEY-----'
+
+    # Pull fields out of the flattened feed JSON (no jq needed).
+    feed_version() {
+        printf '%s' "$1" | tr -d '\n\r' | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p'
+    }
+    feed_paused() {
+        printf '%s' "$1" | tr -d '\n\r' | grep -Eq '"paused" *: *true'
+    }
+    feed_artifact_field() { # <json> <platform-key> <url|sha256>
+        local obj
+        obj=$(printf '%s' "$1" | tr -d '\n\r' | sed -n "s/.*\"$2\" *: *{\([^}]*\)}.*/\1/p")
+        printf '%s' "$obj" | sed -n "s/.*\"$3\" *: *\"\([^\"]*\)\".*/\1/p"
+    }
+
+    # Check latest.json.sig (base64 Ed25519 over the exact feed bytes).
+    # Returns 0 = verified, 1 = bad signature, 2 = cannot check here.
+    verify_feed_signature() {
+        local feed_file="$1" sig_file="$2" work out
+        command -v openssl >/dev/null 2>&1 || return 2
+        work=$(mktemp -d "${TMPDIR:-/tmp}/gizzi_sig_XXXXXX")
+        printf '%s\n' "$FEED_PUBLIC_KEY" > "$work/pub.pem"
+        if ! openssl base64 -d -A -in "$sig_file" -out "$work/sig.bin" 2>/dev/null; then
+            rm -rf "$work"; return 1
         fi
-        # Real tags look like "gizzi-code/0.2.3" (older ones may be "v0.2.3") —
-        # accept both, and reduce to the bare version.
-        specific_version="${tag##*/}"
-        specific_version="${specific_version#v}"
+        out=$(openssl pkeyutl -verify -pubin -inkey "$work/pub.pem" -rawin \
+            -in "$feed_file" -sigfile "$work/sig.bin" 2>&1 || true)
+        rm -rf "$work"
+        case "$out" in
+            *"Signature Verified Successfully"*) return 0 ;;
+            *"Signature Verification Failure"*) return 1 ;;
+            *) return 2 ;;
+        esac
+    }
+
+    # --- 1. Try the signed feed ---
+    feed_json=""
+    feed_ver=""
+    feed_dir=$(mktemp -d "${TMPDIR:-/tmp}/gizzi_feed_XXXXXX")
+    if curl -fsSL --max-time 20 -o "$feed_dir/latest.json" "$feed_base/$channel/latest.json" 2>/dev/null; then
+        sig_state=2
+        if curl -fsSL --max-time 20 -o "$feed_dir/latest.json.sig" "$feed_base/$channel/latest.json.sig" 2>/dev/null; then
+            verify_feed_signature "$feed_dir/latest.json" "$feed_dir/latest.json.sig" && sig_state=0 || sig_state=$?
+        fi
+        if [ "$sig_state" = "1" ]; then
+            echo -e "${RED}Error: release feed signature is invalid; refusing to use it${NC}" >&2
+        else
+            feed_json=$(cat "$feed_dir/latest.json")
+            feed_ver=$(feed_version "$feed_json")
+            if [ -z "$feed_ver" ]; then
+                feed_json=""
+            elif [ "$sig_state" = "2" ]; then
+                echo -e "${MUTED}Feed signature not checked on this machine (Ed25519 verify unavailable); relying on sha256 from the HTTPS feed${NC}" >&2
+            fi
+        fi
+    fi
+    rm -rf "$feed_dir"
+
+    if [ -n "$feed_json" ] && feed_paused "$feed_json" && [ -z "$requested_version" ]; then
+        echo -e "${RED}Error: the ${channel} channel is paused; nothing to install right now.${NC}"
+        echo -e "${MUTED}Install a specific version with --version <version> if you need one.${NC}"
+        exit 1
+    fi
+
+    if [ -z "$requested_version" ]; then
+        if [ -n "$feed_ver" ]; then
+            specific_version="$feed_ver"
+        else
+            echo -e "${ORANGE}Release feed unreachable; falling back to GitHub release tags (gizzi-code/v*)${NC}" >&2
+            tag=$(curl -fsSL "$api/releases?per_page=100" 2>/dev/null \
+                | grep -o '"tag_name": *"gizzi-code/v[^"]*"' \
+                | head -n1 | sed 's/.*"gizzi-code\/v\([^"]*\)"/\1/' || true)
+            if [ -z "$tag" ]; then
+                echo -e "${RED}Failed to fetch version information${NC}"
+                exit 1
+            fi
+            specific_version="$tag"
+        fi
     else
         # Accept "0.2.3", "v0.2.3", or "gizzi-code/0.2.3"
         requested_version="${requested_version#gizzi-code/}"
         requested_version="${requested_version#v}"
         specific_version=$requested_version
+    fi
 
-        # Verify the release exists before downloading. Release tags may be
-        # "gizzi-code/<version>" or "gizzi-code/v<version>".
+    # --- 2. Pick the artifact and its expected sha256 ---
+    url=""
+    expected_sha=""
+    print_source=""
+    feed_os="$os"
+    [ "$os" = "windows" ] && feed_os="win32"
+    # The feed lists only the plain builds; baseline and musl builds come from the tag.
+    if [ -n "$feed_json" ] && [ "$feed_ver" = "$specific_version" ] \
+        && [ "$needs_baseline" != "true" ] && [ "$is_musl" != "true" ]; then
+        f_url=$(feed_artifact_field "$feed_json" "$feed_os-$arch" url)
+        f_sha=$(feed_artifact_field "$feed_json" "$feed_os-$arch" sha256)
+        if [ -n "$f_url" ] && [ -n "$f_sha" ]; then
+            url="$f_url"
+            expected_sha=$(echo "$f_sha" | tr '[:upper:]' '[:lower:]')
+            asset="${f_url##*/}"
+            print_source="signed release feed, ${channel}"
+        else
+            echo -e "${MUTED}No ${feed_os}-${arch} build in the feed; using the GitHub release tag${NC}" >&2
+        fi
+    fi
+
+    if [ -z "$url" ]; then
+        # Tag path: the release must exist, and checksums.txt from that release is required.
         if ! release_exists "$specific_version"; then
             echo -e "${RED}Error: Release ${specific_version} not found${NC}"
             echo -e "${MUTED}Available releases: https://github.com/Allternit/allternit-platform/releases${NC}"
             exit 1
         fi
-    fi
-
-    # Assets are version-named: gizzi-code-v<version>-<target>.<ext>.
-    # Tags are `gizzi-code/v<version>` (npm/GitHub Release); older releases
-    # used `gizzi-code/<version>` without the v. Try both, then legacy names.
-    asset="gizzi-code-v${specific_version}-$target$archive_ext"
-    if url="$(resolve_download_url "$asset" "$specific_version")"; then
-        :
-    else
-        asset="$APP-$target$archive_ext"
-        if url="$(resolve_download_url "$asset" "$specific_version")"; then
-            :
-        elif [ -z "$requested_version" ]; then
-            url="$base/latest/download/$asset"
-        else
-            echo -e "${RED}Error: asset ${asset} not found for ${specific_version}${NC}"
-            echo -e "${MUTED}Available releases: https://github.com/Allternit/allternit-platform/releases${NC}"
+        asset="gizzi-code-v${specific_version}-$target$archive_ext"
+        if ! url="$(resolve_download_url "$asset" "$specific_version")"; then
+            asset="$APP-$target$archive_ext"
+            if ! url="$(resolve_download_url "$asset" "$specific_version")"; then
+                echo -e "${RED}Error: asset gizzi-code-v${specific_version}-$target$archive_ext not found for ${specific_version}${NC}"
+                echo -e "${MUTED}Available releases: https://github.com/Allternit/allternit-platform/releases${NC}"
+                exit 1
+            fi
+        fi
+        checksums_url=""
+        for t in "gizzi-code/v${specific_version}" "gizzi-code/${specific_version}"; do
+            candidate="$base/download/${t}/checksums.txt"
+            if url_ok "$candidate"; then checksums_url="$candidate"; break; fi
+        done
+        if [ -z "$checksums_url" ]; then
+            echo -e "${RED}Error: checksums.txt not found for ${specific_version}; refusing to install an unverified download${NC}"
             exit 1
         fi
+        expected_sha=$(curl -fsSL "$checksums_url" | grep -E " \*?${asset}\$|^${asset} " | awk '{print $1}' | head -n1 | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+        if [ -z "$expected_sha" ]; then
+            echo -e "${RED}Error: ${asset} is not listed in checksums.txt; refusing to install an unverified download${NC}"
+            exit 1
+        fi
+        print_source="GitHub release gizzi-code/v${specific_version}"
     fi
     filename="$asset"
 fi
@@ -375,53 +486,41 @@ download_with_progress() {
     return $ret
 }
 
-verify_checksum() {
-    local file="$1"
-    local checksums_url=""
-    for tag in "gizzi-code/v${specific_version}" "gizzi-code/${specific_version}"; do
-        local candidate="https://github.com/Allternit/allternit-platform/releases/download/${tag}/checksums.txt"
-        if url_ok "$candidate"; then
-            checksums_url="$candidate"
-            break
-        fi
-    done
-
-    if [ -z "$checksums_url" ]; then
-        echo -e "${ORANGE}Warning: checksums.txt not found for ${specific_version}; skipping sha256 verification${NC}" >&2
-        return 0
-    fi
-
-    local expected
-    expected=$(curl -fsSL "$checksums_url" | grep -E " ${asset}$|^${asset} " | awk '{print $1}' | head -n1 | tr -d '\r')
-    if [ -z "$expected" ]; then
-        echo -e "${ORANGE}Warning: ${asset} not listed in checksums.txt; skipping sha256 verification${NC}" >&2
-        return 0
-    fi
-
-    local actual
+sha256_of() {
     if command -v shasum >/dev/null 2>&1; then
-        actual=$(shasum -a 256 "$file" | awk '{print $1}')
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
     else
-        actual=$(sha256sum "$file" | awk '{print $1}')
+        echo -e "${RED}Error: no sha256 tool found (need shasum, sha256sum or openssl)${NC}" >&2
+        exit 1
     fi
+}
 
-    if [ "$actual" != "$expected" ]; then
+verify_checksum() {
+    # No flag or environment variable skips this check.
+    local file="$1" actual
+    actual=$(sha256_of "$file")
+    if [ -z "${expected_sha:-}" ] || [ "$actual" != "$expected_sha" ]; then
         echo -e "${RED}Error: sha256 mismatch for ${asset}${NC}" >&2
-        echo -e "${RED}Expected: ${expected}${NC}" >&2
+        echo -e "${RED}Expected: ${expected_sha:-<none>}${NC}" >&2
         echo -e "${RED}Actual:   ${actual}${NC}" >&2
+        rm -rf "$(dirname "$file")"
         exit 1
     fi
     print_message info "${MUTED}Verified sha256: ${NC}$actual"
 }
 
 download_and_install() {
-    print_message info "\n${MUTED}Installing ${NC}gizzi-code ${MUTED}version: ${NC}$specific_version"
+    print_message info "\n${MUTED}Installing ${NC}gizzi-code ${MUTED}version: ${NC}$specific_version ${MUTED}(${print_source})${NC}"
     local tmp_dir="${TMPDIR:-/tmp}/gizzi_install_$$"
     mkdir -p "$tmp_dir"
 
     if [[ "$os" == "windows" ]] || ! [ -t 2 ] || ! download_with_progress "$url" "$tmp_dir/$filename"; then
         # Fallback to standard curl on Windows, non-TTY environments, or if custom progress fails
-        curl -# -L -o "$tmp_dir/$filename" "$url"
+        curl -# -fL -o "$tmp_dir/$filename" "$url"
     fi
 
     verify_checksum "$tmp_dir/$filename"
