@@ -36,15 +36,26 @@ fn catalog_entries_are_primary_aliases_only() {
     let catalog = starter_catalog();
     // Primary models only (one per model, not per alias):
     // 9 OpenRouter + 3 Together AI + 4 Fireworks + 3 DeepInfra + 3 Groq
-    // + 2 open lane = 24.
-    assert_eq!(catalog.entries().len(), 24);
+    // + 7 open lane (4 offered, 3 hidden failover) = 29.
+    assert_eq!(catalog.entries().len(), 29);
     let open: Vec<_> = catalog
         .entries()
         .iter()
         .filter(|e| super::catalog::is_open_lane(e))
         .map(|e| e.alias.as_str())
         .collect();
-    assert_eq!(open, vec!["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]);
+    assert_eq!(
+        open,
+        vec![
+            "glm-4.7-flash-open",
+            "deepseek-v4.1-flash-open",
+            "glm-5.3-flash-open",
+            "open-large-research",
+            "open-failover-glm-4.7-flash",
+            "open-failover-deepseek-v4.1-flash",
+            "open-failover-large-research",
+        ]
+    );
 }
 
 #[test]
@@ -82,8 +93,8 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    // 24 catalog entries minus the 2 open-lane models, hidden while the
-    // open-lane provider is unset. Unlisted aliases are still returned.
+    // 24 non-open entries (open-lane models are hidden while the
+    // provider is unset). Unlisted aliases are still returned.
     assert_eq!(models.len(), 22);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
@@ -471,24 +482,38 @@ mod pricing {
     }
 
     #[tokio::test]
-    async fn open_lane_prices_are_retail_and_not_marked_up() {
+    async fn open_rows_retail_is_exactly_twice_host_price_and_standard_rows_keep_inference_markup() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("INFERENCE_MARKUP");
-        let open_lane = StubProvider::serving(
-            super::super::catalog::OPEN_LANE_PROVIDER,
-            &["deepseek-v4.1-flash-open", "glm-5.3-flash-open"],
-            None,
-        );
-        let router = ModelRouter::new(vec![open_lane], starter_catalog());
-        for (alias, prompt, completion) in
-            [("deepseek-v4.1-flash-open", 0.10, 2.00), ("glm-5.3-flash-open", 0.40, 1.20)]
-        {
-            let prices = router.retail_prices(alias).await.unwrap();
-            assert_eq!((prices.prompt_per_1m, prices.completion_per_1m), (prompt, completion), "{alias}");
-            assert_eq!(prices.wholesale_prompt_per_1m, None, "{alias}");
-        }
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        let venice = StubProvider::serving(super::super::catalog::OPEN_VENICE_PROVIDER, &["olafangensan-glm-4.7-flash-heretic"], None);
+        let router = ModelRouter::new(vec![venice], starter_catalog());
+        let prices = router.retail_prices("glm-4.7-flash-open").await.unwrap();
+        assert_eq!((prices.prompt_per_1m, prices.completion_per_1m), (0.14, 0.80));
+        assert_eq!(prices.wholesale_prompt_per_1m, Some(0.07));
+        assert_eq!(prices.wholesale_completion_per_1m, Some(0.40));
         let models = router.list_models().await;
-        assert!((listed_price(&models, "deepseek-v4.1-flash-open", "prompt_price") - 0.0000001).abs() < 1e-15);
+        assert!((listed_price(&models, "glm-4.7-flash-open", "prompt_price") - 0.00000014).abs() < 1e-15);
+        let row = models.iter().find(|m| m.id == "glm-4.7-flash-open").unwrap();
+        assert_eq!(row.extra["open"]["access"], "plan");
+
+        // A standard row with a wholesale static price still uses INFERENCE_MARKUP (1.5).
+        let standard = ModelRouter::disabled(starter_catalog()).retail_prices("kimi-k3").await.unwrap();
+        assert!((standard.prompt_per_1m - 4.50).abs() < 1e-9);
+        std::env::set_var("INFERENCE_MARKUP", "3.0");
+        let standard = ModelRouter::disabled(starter_catalog()).retail_prices("kimi-k3").await.unwrap();
+        assert!((standard.prompt_per_1m - 9.00).abs() < 1e-9);
+        std::env::remove_var("INFERENCE_MARKUP");
+    }
+
+    #[tokio::test]
+    async fn open_lane_markup_env_is_clamped_to_five() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPEN_LANE_MARKUP", "9");
+        let prices = ModelRouter::disabled(starter_catalog()).retail_prices("open-large-research").await.unwrap();
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        assert!((prices.prompt_per_1m - 15.0).abs() < 1e-9);
+        assert!((prices.completion_per_1m - 25.0).abs() < 1e-9);
     }
 
     fn listed_price(models: &[ModelInfo], alias: &str, key: &str) -> f64 {
@@ -684,6 +709,7 @@ fn default_alias_is_the_flagged_listed_model() {
         upstream_id: format!("up/{alias}"),
         listed,
         default,
+        lane: if provider == super::catalog::OPEN_LANE_PROVIDER { "open" } else { "standard" },
         ..Default::default()
     };
     let open = super::catalog::OPEN_LANE_PROVIDER;
