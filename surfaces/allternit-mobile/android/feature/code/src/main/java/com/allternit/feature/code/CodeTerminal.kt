@@ -216,6 +216,8 @@ class TerminalSession(
     existingId: String? = null,
     /** The terminal id once the computer made one (null when it is gone), for the store to remember. */
     private val onId: (String?) -> Unit = {},
+    /** Start anywhere: the computer a bound chat thread's terminal lives on (null = the picked computer). */
+    private val target: String? = null,
 ) : ShellSession {
     override val screen = VtScreen(80, 24)
     override var state by mutableStateOf(PtyState.Starting); private set
@@ -257,6 +259,11 @@ class TerminalSession(
 
     private suspend fun open() {
         state = PtyState.Starting; message = null; canReattach = true; freshShell = false
+        // A bound chat thread's terminal is the CLI the start made; never open a plain shell in its place.
+        if (terminalId == null && target != null) {
+            state = PtyState.Ended; message = "This session ended on your computer. Start a new chat to run it again."; canReattach = false
+            return
+        }
         val id = terminalId ?: when (val r = CodeApi.createTerminal(backend, size?.first ?: screen.cols, size?.second ?: screen.rows)) {
             CodeResult.NoComputer -> { state = PtyState.Offline; return }
             is CodeResult.Failed -> { state = PtyState.Failed; message = r.message; return }
@@ -275,7 +282,7 @@ class TerminalSession(
         stream = scope.launch {
             try {
                 // Collected on the main thread: each event's output lands on the screen as it arrives.
-                backend.runtimeEvents(CodeApi.terminalStreamPath(id)).collect { e ->
+                backend.runtimeEvents(CodeApi.terminalStreamPath(id), target).collect { e ->
                     if (state == PtyState.Starting) state = PtyState.Live
                     if (replayOpenedAt == 0L) { replayOpenedAt = android.os.SystemClock.uptimeMillis(); replayLastChunkAt = replayOpenedAt }
                     // Keep-alives (`event: ping`) and any other named event are not output.
@@ -301,7 +308,7 @@ class TerminalSession(
 
     /** Resizing doubles as the existence check: the service answers 404 for an unknown terminal. */
     private suspend fun isGone(id: String): Boolean =
-        (CodeApi.resizeTerminal(backend, id, screen.cols, screen.rows) as? CodeResult.Failed)?.status == 404
+        (CodeApi.resizeTerminal(backend, id, screen.cols, screen.rows, target) as? CodeResult.Failed)?.status == 404
 
     private fun exited() {
         // The shell exited; the stream stays open with pings only. Typing goes nowhere now.
@@ -322,7 +329,7 @@ class TerminalSession(
         if (pushed == cols to rows) return
         pushed = cols to rows
         scope.launch {
-            val r = CodeApi.resizeTerminal(backend, id, cols, rows)
+            val r = CodeApi.resizeTerminal(backend, id, cols, rows, target)
             if (r is CodeResult.Failed) {
                 if (pushed == cols to rows) pushed = null // a later identical size retries
                 if (r.status == 404 && terminalId == id) gone()
@@ -351,7 +358,7 @@ class TerminalSession(
         pendingInput.setLength(0)
         sending = true
         scope.launch {
-            val r = CodeApi.terminalInput(backend, id, text)
+            val r = CodeApi.terminalInput(backend, id, text, target)
             sending = false
             if (r is CodeResult.Failed && r.status == 404 && terminalId == id) gone() else flushInput()
         }
@@ -361,7 +368,7 @@ class TerminalSession(
     override fun retry() {
         stream?.cancel(); stream = null
         closed = false
-        if (!canReattach) { terminalId?.let { id -> scope.launch { CodeApi.closeTerminal(backend, id) } }; terminalId = null; onId(null) }
+        if (!canReattach) { terminalId?.let { id -> scope.launch { CodeApi.closeTerminal(backend, id, target) } }; terminalId = null; onId(null) }
         screen.reset(); version++
         start()
     }
@@ -376,7 +383,7 @@ class TerminalSession(
     fun close() {
         closed = true
         stream?.cancel(); stream = null
-        terminalId?.let { id -> scope.launch { CodeApi.closeTerminal(backend, id) } }
+        terminalId?.let { id -> scope.launch { CodeApi.closeTerminal(backend, id, target) } }
     }
 
     private sealed interface StreamOutput {
@@ -714,6 +721,23 @@ private fun TabChip(label: String, selected: Boolean, tag: String, onClick: () -
 }
 
 /** One shell's screen + key bar for another module (Computers console Terminal tab). */
+/**
+ * Start anywhere (step 20): a chat thread bound to a CLI in a pane terminal on [runtimeId]. The thread hosts
+ * the same view as a Code tile: the terminal, the native composer over the agent's input box ([AgentComposer]),
+ * and the key row. The terminal stays on the computer when the view goes away (detach, never close).
+ */
+@Composable
+fun BoundTerminalThread(backend: ChatBackend, runtimeId: String, terminalId: String, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    val session = remember(runtimeId, terminalId) { TerminalSession(backend, scope, existingId = terminalId, target = runtimeId) }
+    val reader = remember(session) { AgentFrameReader(session.screen, scope) }
+    DisposableEffect(session) {
+        session.start()
+        onDispose { session.detach() }
+    }
+    ShellPane(session, onConnect = session::retry, modifier = modifier.testTag("boundTerminalThread"), reader = reader)
+}
+
 @Composable
 fun PtyTerminalView(session: PtySession, modifier: Modifier = Modifier) {
     ShellPane(session, onConnect = {}, modifier = modifier)

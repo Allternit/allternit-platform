@@ -92,6 +92,8 @@ object ChatBackends {
         val client = okHttp ?: ApiClients.okHttp(bearer = AllternitAuth.tokenProvider)
         val config = ApiConfig()
         return ChatBackend(client, api ?: AllternitApi(client, config), config, context.applicationContext)
+            // Start anywhere: the chip (feature/bots) and the + sheet list devices through this backend.
+            .also { if (PendingStart.backend == null) PendingStart.backend = it }
     }
 }
 
@@ -288,6 +290,9 @@ fun ChatScreen(
                     }
                     if (anchorIndex >= 0) {
                         item(key = ANSWER_ROOM_KEY) { Spacer(Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { roomPx.toDp() })) }
+                    }
+                    viewModel.asleepSend?.let { offer ->
+                        item(key = "asleepSend") { AsleepSendCard(backend, offer, onDone = { viewModel.asleepSend = null }) }
                     }
                     if (gate != null) {
                         item(key = "computeGate") {

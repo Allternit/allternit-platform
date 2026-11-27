@@ -89,9 +89,12 @@ class ChatBackend(
         sessionMode: String,
         /** Harness & Bots 2.0: the runtime this chat runs on (`metadata.runtime` + `metadata.botBrain`). */
         botBrain: JsonObject? = null,
+        /** Start anywhere: extra metadata keys (`startBinding`, `gizziSessionId`) for a thread bound to a computer. */
+        extraMetadata: JsonObject? = null,
     ): ApiResult<AgentSession> {
         val metadata = buildJsonObject {
             put("session_mode", sessionMode)
+            extraMetadata?.forEach { (k, v) -> put(k, v) }
             botBrain?.let { bb ->
                 (bb["runtime"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { put("runtime", it) }
                 put("botBrain", bb)
@@ -209,7 +212,7 @@ class ChatBackend(
      * 503 `runtime_warming` waits and retries for up to about 45 s like iOS; an offline
      * computer is marked unreachable for the next pick.
      */
-    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null): RuntimeCall {
+    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null, headers: Map<String, String> = emptyMap()): RuntimeCall {
         // A notification action acts on the computer the push names (iOS NotificationActions runtimeId), not the picked one.
         val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
@@ -223,6 +226,8 @@ class ChatBackend(
             put("headers", buildJsonObject {
                 put("accept", "application/json")
                 if (jsonBody != null) put("content-type", "application/json")
+                // Start anywhere: Idempotency-Key rides the envelope (cloud-api's proxy allowlist keeps it, #3181).
+                headers.forEach { (k, v) -> put(k, v) }
             })
             if (jsonBody != null) put("body", jsonBody)
             put("bodyEncoding", "utf8")
@@ -356,6 +361,7 @@ class ChatBackend(
      * [NoComputerException] or [IllegalStateException] (a friendly sentence) when it can't connect.
      */
     fun runtimeEvents(path: String, targetRuntimeId: String? = null): Flow<RuntimeEvent> = kotlinx.coroutines.flow.flow {
+        // A thread bound to a computer (Start anywhere) streams from that computer, not the auto pick.
         val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
             RelayPick.NoComputer -> throw NoComputerException()

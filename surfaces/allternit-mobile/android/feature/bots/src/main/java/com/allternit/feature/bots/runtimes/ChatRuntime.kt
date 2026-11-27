@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import com.allternit.core.design.R as DesignR
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,6 +117,9 @@ fun ChatRuntimeChip(
     var open by remember { mutableStateOf(false) }
     var blocked by remember { mutableStateOf<Pair<RuntimeEntry, RuntimeCheck>?>(null) }
     var checking by remember { mutableStateOf<String?>(null) }
+    // Start anywhere: the selector's Computer row opens the shared device list in the same sheet.
+    var computerPage by remember { mutableStateOf(false) }
+    var computerCloud by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { RuntimeRegistry.load(context) }
 
     val runtimes = registry.runtimes.ifEmpty { listOf(BUILT_IN_ALLTERNIT) }
@@ -138,8 +142,10 @@ fun ChatRuntimeChip(
     RuntimeBrainChip(
         runtimeKey = current.tool ?: current.id, runtimeName = current.name, brainName = model.brainName,
         background = if (chipBackground == Color.Unspecified) c.bgPrimary else chipBackground, modifier = modifier.testTag("composerRuntimeChip"),
-        dot = dot, warning = model.misfit, iconOnly = iconOnly,
-    ) { blocked = null; open = true }
+        dot = if (com.allternit.feature.chat.PendingStart.asleep) RuntimeDot.NeedsStep else dot, warning = model.misfit, iconOnly = iconOnly,
+        computerName = com.allternit.feature.chat.PendingStart.shownDeviceName ?: com.allternit.feature.chat.PendingStart.bound?.deviceName,
+        computerCloud = computerCloud,
+    ) { blocked = null; computerPage = false; open = true }
 
     if (open) {
         val notice = when (val s = registry) {
@@ -176,6 +182,22 @@ fun ChatRuntimeChip(
                 }
             },
             registryNotice = notice, brainsLoading = false,
+            top = if (com.allternit.feature.chat.PendingStart.backend == null) null else ({
+                com.allternit.feature.chat.PickGroup {
+                    com.allternit.feature.chat.PickRow(
+                        "Computer", icon = if (computerCloud) DesignR.drawable.ph_cloud else DesignR.drawable.ph_desktop,
+                        value = com.allternit.feature.chat.PendingStart.shownDeviceName ?: "Automatic", chevron = true, testTag = "runtimeBrainComputer",
+                    ) { computerPage = true }
+                }
+            }),
+            page = if (!computerPage || com.allternit.feature.chat.PendingStart.backend == null) null else ({
+                com.allternit.feature.chat.DeviceList(com.allternit.feature.chat.PendingStart.backend!!, selectedId = com.allternit.feature.chat.PendingStart.runtimeId, folder = com.allternit.feature.chat.PendingStart.folder) { device, asleep, folder ->
+                    com.allternit.feature.chat.PendingStart.pick(device, asleep)
+                    if (folder != null && device != null) com.allternit.feature.chat.PendingStart.folder = folder
+                    computerCloud = device?.isCloud == true
+                    if (!asleep) computerPage = false
+                }
+            }),
             extra = {
                 checking?.let { id ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.semantics(mergeDescendants = true) {}.testTag("composerRuntimeChecking")) {

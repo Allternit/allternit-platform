@@ -49,6 +49,8 @@ import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.relativeTime
 import com.allternit.feature.chat.ChatBackend
 import com.allternit.feature.chat.RelayDevice
+import com.allternit.feature.chat.DeviceRow
+import com.allternit.feature.chat.sortedForPicker
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -400,14 +402,11 @@ internal fun CodeComputerScreen(host: CodeHost, onBack: () -> Unit) {
                         onClick = { host.backend.relay.selectedRuntimeId = null; selected = null },
                     )
                 }
-                items(list, key = { it.id }) { d ->
-                    CodeRow(
-                        title = d.name.ifEmpty { "Computer" },
-                        detail = listOf(d.runtimeType, d.status).filter { it.isNotEmpty() }.joinToString(" · "),
-                        testTag = "codeComputer-${d.id}",
-                        trailing = if (selected == d.id) ({ Icon(painterResource(DesignR.drawable.ph_check), "Selected", tint = c.accentCode, modifier = Modifier.size(18.dp)) }) else null,
-                        onClick = { host.backend.relay.selectedRuntimeId = d.id; selected = d.id },
-                    )
+                // Start anywhere D1: the same device rows as the chat's + sheet and chip (shared DeviceRow).
+                items(list.sortedForPicker(), key = { it.id }) { d ->
+                    DeviceRow(d, selected = selected == d.id, testTag = "codeComputer-${d.id}") {
+                        host.backend.relay.selectedRuntimeId = d.id; selected = d.id
+                    }
                 }
             }
         }

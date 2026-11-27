@@ -75,13 +75,17 @@ fun RuntimeBrainChip(
     warning: Boolean = false,
     lockedVendor: String? = null,
     iconOnly: Boolean = false,
+    /** Start anywhere: the picked computer, shown as one leading segment only when a computer is picked. */
+    computerName: String? = null,
+    computerCloud: Boolean = false,
     onClick: () -> Unit,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val locked = lockedVendor != null
     val desc = if (locked) "Runtime and brain: run by $lockedVendor, locked"
-    else "Runtime and brain: $runtimeName runtime, $brainName brain, ${dot.label}${if (warning) ", this brain may not fit this runtime" else ""}"
+    else (computerName?.let { "Computer: $it. " } ?: "") +
+        "Runtime and brain: $runtimeName runtime, $brainName brain, ${dot.label}${if (warning) ", this brain may not fit this runtime" else ""}"
     Box(
         modifier.heightIn(min = 48.dp).widthIn(min = 48.dp)
             .clickable(enabled = !locked, role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
@@ -99,13 +103,20 @@ fun RuntimeBrainChip(
                 Text("Run by $lockedVendor", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
             } else {
+                if (computerName != null && !iconOnly) {
+                    Icon(painterResource(if (computerCloud) DesignR.drawable.ph_cloud else DesignR.drawable.ph_desktop), null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+                    Text(computerName, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 90.dp).testTag("composerChip-computer"))
+                    Text("·", color = c.textTertiary, fontSize = 12.sp)
+                }
                 ProviderLogoMark(runtimeKey, 16.dp)
                 if (!iconOnly) {
                     Text(runtimeName, color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 96.dp))
                     Box(Modifier.size(width = 1.dp, height = 12.dp).background(c.borderStrong))
+                    // With a computer segment the brain text shrinks first on overflow (weighted children measure last).
                     Text(brainName, color = c.textSecondary, fontSize = 12.sp, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 96.dp))
+                        overflow = TextOverflow.Ellipsis, modifier = (if (computerName != null) Modifier.weight(1f, fill = false) else Modifier).widthIn(max = 96.dp))
                 }
                 if (warning) Icon(painterResource(DesignR.drawable.ph_warning), null, tint = DotAmber, modifier = Modifier.size(12.dp))
                 if (!iconOnly) Icon(painterResource(DesignR.drawable.ph_caret_down), null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp))
@@ -132,6 +143,10 @@ fun RuntimeBrainSheet(
     onOpenConnections: (() -> Unit)? = null,
     onOpenModelPicker: (() -> Unit)? = null,
     extra: (@Composable () -> Unit)? = null,
+    /** Start anywhere: the Computer row shown first in a plain chat (mockup E). */
+    top: (@Composable () -> Unit)? = null,
+    /** When set, the sheet shows this page (the shared device list) instead of the layers. */
+    page: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     var query by remember { mutableStateOf("") }
@@ -143,12 +158,15 @@ fun RuntimeBrainSheet(
             Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (!plainChat) {
+            if (page != null) {
+                page()
+            } else if (!plainChat) {
                 AgentLayersPicker(
                     model, query, { query = it }, onChange, note, registryNotice = registryNotice, brainsLoading = brainsLoading,
                     onOpenConnections = onOpenConnections, botFace = null, showView = false,
                 )
             } else {
+                top?.invoke()
                 listOf(AgentLayer.Runtime, AgentLayer.Brain).forEach { layer ->
                     Text("${layer.label} · ${layer.hint}", color = c.textSecondary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
                     if (layer == AgentLayer.Runtime) registryNotice?.let { NoticeLine(it.message, "Try again", it.onRetry, warn = true) }
