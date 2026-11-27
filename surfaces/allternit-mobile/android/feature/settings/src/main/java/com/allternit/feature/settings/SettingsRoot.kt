@@ -161,8 +161,8 @@ private sealed interface RootRow {
 
 private val ROOT_GROUPS: List<Pair<String, List<RootRow>>> = listOf(
     "Account" to listOf(RootRow.Page("profile"), RootRow.Page("billing"), RootRow.Page("usage"), RootRow.Page("notifications"), RootRow.Page("privacy"), RootRow.Feedback, RootRow.Changelog),
-    "Assistant" to listOf(RootRow.Customize, RootRow.Page("memory"), RootRow.Page("voice", "Voice and dictation"), RootRow.Page("test-cases")),
-    "Bots and computers" to listOf(RootRow.Page("subscriptions"), RootRow.Page("computers", "Computers and devices"), RootRow.Page("agent-rules")),
+    "Assistant" to listOf(RootRow.Customize, RootRow.Page("memory"), RootRow.Page("voice", "Voice and dictation")),
+    "Bots and computers" to listOf(RootRow.Page("subscriptions"), RootRow.Page("computers", "Computers and devices"), RootRow.Page("agent-rules"), RootRow.Page("test-cases")),
     "App" to listOf(RootRow.OpenLinks, RootRow.Haptics, RootRow.ReduceMotion),
 )
 

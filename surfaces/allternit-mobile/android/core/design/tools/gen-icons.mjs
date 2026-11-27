@@ -47,7 +47,7 @@ const SF = {
   envelope: 'envelope', 'exclamationmark.circle': 'warning-circle', 'exclamationmark.circle.fill': 'warning-circle-fill',
   'exclamationmark.triangle': 'warning', 'exclamationmark.triangle.fill': 'warning-fill', externaldrive: 'hard-drive',
   'externaldrive.badge.exclamationmark': 'hard-drive', eye: 'eye', 'figure.walk.motion': 'person-simple-walk', flag: 'flag',
-  flame: 'flame', 'floppy.disk': 'floppy-disk', folder: 'folder', 'folder.badge.plus': 'folder-plus', gamecontroller: 'game-controller',
+  flame: 'flame', flask: 'flask', 'floppy.disk': 'floppy-disk', folder: 'folder', 'folder.badge.plus': 'folder-plus', gamecontroller: 'game-controller',
   'gamecontroller.fill': 'game-controller-fill', gearshape: 'gear', globe: 'globe', graduationcap: 'graduation-cap',
   'hand.raised': 'hand', 'hand.raised.fill': 'hand-fill', 'hand.tap': 'hand-tap', 'hard.drive': 'hard-drive', hourglass: 'hourglass',
   house: 'house', 'icloud.and.arrow.down': 'cloud-arrow-down', 'info.circle': 'info', iphone: 'device-mobile',
