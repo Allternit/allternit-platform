@@ -53,6 +53,8 @@ tonic = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde_bytes = { workspace = true }
+# Start-anywhere mode flags + start argv (harness_table re-exports them).
+allternit-terminal-service = { workspace = true }
 worktree-manager = { path = "../../worktree-manager" }
 
 [target.'cfg(unix)'.dependencies]

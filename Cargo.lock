@@ -1011,6 +1011,7 @@ dependencies = [
 name = "allternit-factory-engine"
 version = "0.1.0"
 dependencies = [
+ "allternit-terminal-service",
  "anyhow",
  "async-trait",
  "axum",

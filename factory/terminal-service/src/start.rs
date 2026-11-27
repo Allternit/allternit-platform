@@ -12,9 +12,8 @@
 //! - [`StartGuards`] adds the per-device rate limit (6 starts a minute) and the `Idempotency-Key`
 //!   replay (10 minutes) around it.
 //!
-//! The per-CLI flags live in the Factory harness table
-//! (`allternit_factory_engine::agents::harness_table::{mode_flags, start_argv}`). This crate does
-//! not depend on the engine (allternit-node uses it too), so the caller passes those functions in.
+//! The per-CLI flags live in [`crate::harness_modes`] (`mode_flags`, `start_argv`), the one table
+//! allternit-api, allternit-node and the Factory harness table all read.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
@@ -25,6 +24,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+use crate::harness_modes::{mode_flags, start_argv};
 
 /// At most this many folders in the options.
 pub const MAX_FOLDERS: usize = 30;
@@ -73,11 +74,6 @@ impl Mode {
         }
     }
 }
-
-/// `harness_table::mode_flags`: `(runtime id, mode id) -> flags`, `None` when the CLI has no flag.
-pub type ModeFlagsFn = fn(&str, &str) -> Option<Vec<String>>;
-/// `harness_table::start_argv`: `(runtime id, mode id, prompt) -> (argv, prompt is in argv)`.
-pub type StartArgvFn = fn(&str, Option<&str>, Option<&str>) -> Option<(Vec<String>, bool)>;
 
 // ───────────────────────────────────────────────────────────────── options
 
@@ -150,7 +146,6 @@ pub struct OptionsInput {
     pub runtimes: Vec<String>,
     /// Home folder the CLIs' configs are read from.
     pub home: PathBuf,
-    pub mode_flags: ModeFlagsFn,
 }
 
 /// The options a computer offers. Runs `git` up to twice per folder, in parallel, each capped
@@ -171,7 +166,7 @@ pub fn build_options(input: OptionsInput) -> StartOptions {
         let supported = Mode::ALL
             .iter()
             .copied()
-            .filter(|m| (input.mode_flags)(rt, m.as_str()).is_some())
+            .filter(|m| mode_flags(rt, m.as_str()).is_some())
             .collect();
         modes.insert(
             rt.clone(),
@@ -600,8 +595,6 @@ pub struct StartCtx<'a> {
     /// Turns `folder.git` into a folder (a cloud computer clones; `Err(CLONE_FAILED)` on failure).
     /// `None`: match a known folder with the same remote and branch.
     pub git_resolver: Option<&'a dyn Fn(&GitRef) -> Result<PathBuf, StartError>>,
-    /// `harness_table::start_argv`.
-    pub start_argv: StartArgvFn,
 }
 
 /// Checks a start and says how to run it. Stateless: rate limit and idempotency are
@@ -616,7 +609,7 @@ pub fn plan_start(req: &StartRequest, ctx: &StartCtx) -> Result<StartPlan, Start
     let runtime = req.runtime.as_str();
     let engine = runtime == ENGINE_RUNTIME;
     if !ctx.installed.contains(runtime)
-        || (!engine && (ctx.start_argv)(runtime, None, None).is_none())
+        || (!engine && start_argv(runtime, None, None).is_none())
     {
         return Err(StartError::RUNTIME_MISSING);
     }
@@ -632,7 +625,7 @@ pub fn plan_start(req: &StartRequest, ctx: &StartCtx) -> Result<StartPlan, Start
         .unwrap_or(Mode::Default);
     let mode = req.mode.unwrap_or(device_default);
     if let Some(asked) = req.mode {
-        let flags_exist = engine || (ctx.start_argv)(runtime, Some(asked.as_str()), None).is_some();
+        let flags_exist = engine || start_argv(runtime, Some(asked.as_str()), None).is_some();
         if !flags_exist {
             return Err(StartError::MODE_NOT_ALLOWED);
         }
@@ -657,7 +650,7 @@ pub fn plan_start(req: &StartRequest, ctx: &StartCtx) -> Result<StartPlan, Start
     }
     // No asked mode: start with no mode flags, so the CLI uses its own config (= the device default).
     let (argv, prompt_in_argv) =
-        (ctx.start_argv)(runtime, req.mode.map(Mode::as_str), prompt.as_deref())
+        start_argv(runtime, req.mode.map(Mode::as_str), prompt.as_deref())
             .ok_or(StartError::MODE_NOT_ALLOWED)?;
     let folder_name = dir
         .file_name()
@@ -830,47 +823,6 @@ mod tests {
         include_str!("../../../docs/contracts/session-start/start.response.terminal.json");
     const ERRORS: &str = include_str!("../../../docs/contracts/session-start/errors.json");
 
-    /// Test edge for the harness table (this crate does not link the engine; the real mapping
-    /// is tested in `harness_table`): claude with `--permission-mode`, no plan flag for codex.
-    fn fake_mode_flags(rt: &str, mode: &str) -> Option<Vec<String>> {
-        match (rt, mode) {
-            ("claude", "auto") => Some(vec!["--permission-mode".into(), "acceptEdits".into()]),
-            ("claude", "default") => Some(vec!["--permission-mode".into(), "manual".into()]),
-            ("claude", "plan") => Some(vec!["--permission-mode".into(), "plan".into()]),
-            ("claude", "bypass") => {
-                Some(vec!["--permission-mode".into(), "bypassPermissions".into()])
-            }
-            ("codex", "auto") => Some(vec!["--sandbox".into(), "workspace-write".into()]),
-            ("codex", "default") => Some(vec!["--sandbox".into(), "read-only".into()]),
-            ("codex", "bypass") => Some(vec!["--dangerously-bypass-approvals-and-sandbox".into()]),
-            _ => None,
-        }
-    }
-
-    fn fake_start_argv(
-        rt: &str,
-        mode: Option<&str>,
-        prompt: Option<&str>,
-    ) -> Option<(Vec<String>, bool)> {
-        if rt != "claude" && rt != "codex" && rt != "kimi" {
-            return None;
-        }
-        let mut argv = vec![rt.to_string()];
-        if let Some(m) = mode {
-            if rt == "kimi" {
-                return None;
-            }
-            argv.extend(fake_mode_flags(rt, m)?);
-        }
-        match prompt {
-            Some(p) if rt != "kimi" => {
-                argv.push(p.to_string());
-                Some((argv, true))
-            }
-            _ => Some((argv, false)),
-        }
-    }
-
     struct TempDir(PathBuf);
     impl TempDir {
         fn new(name: &str) -> Self {
@@ -945,7 +897,6 @@ mod tests {
                 modes: &self.modes,
                 folders: &self.folders,
                 git_resolver: None,
-                start_argv: fake_start_argv,
             }
         }
     }
@@ -1056,7 +1007,6 @@ mod tests {
             ],
             runtimes: vec!["claude".into(), "codex".into()],
             home: home.path().to_path_buf(),
-            mode_flags: fake_mode_flags,
         });
         assert_eq!(
             options
