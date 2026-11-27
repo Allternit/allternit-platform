@@ -8,7 +8,7 @@ export * from './types';
 export { PDF_THEME_TOKENS, resolveTheme } from './themes';
 export { PDF_TEMPLATE_INFO, PDF_PAGE_POINTS, buildDocument, validateRequest, money } from './templates';
 export { renderHtml } from './html';
-export { renderPdf, sanitizeText, winAnsi, type PdfFontBytes } from './pdf';
+export { renderPdf, renderPdfWithSlots, renderTemplatePdfWithSlots, SIGN_AREA_H, sanitizeText, winAnsi, type PdfFontBytes } from './pdf';
 export { b64ToBytes } from './fonts';
 
 /** Request to print-ready HTML (preview, and Desktop's printToPDF input). */

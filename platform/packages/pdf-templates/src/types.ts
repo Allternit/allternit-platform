@@ -5,7 +5,7 @@
  * in the preview, in Desktop's print-to-PDF and in the server-rendered PDF.
  */
 
-export const PDF_TEMPLATES = ['invoice', 'report', 'ticket', 'minutes', 'receipt'] as const;
+export const PDF_TEMPLATES = ['invoice', 'quote', 'contract', 'report', 'ticket', 'minutes', 'receipt'] as const;
 export type PdfTemplateId = (typeof PDF_TEMPLATES)[number];
 
 export const PDF_THEMES = ['professional', 'minimal', 'executive'] as const;
@@ -62,8 +62,31 @@ export type PdfBlock =
   | { t: 'list'; items: string[]; numbered?: boolean }
   | { t: 'note'; text: string }
   | { t: 'ticket'; event: string; lines: { label: string; value: string }[]; code: string; holder?: string }
+  | { t: 'signatures'; note?: string; slots: PdfSignatureSlot[] }
   | { t: 'rule' }
   | { t: 'space'; h: number };
+
+/** One signer's place in a `signatures` block. `signed_on` prints "Signed <date>" under the line. */
+export interface PdfSignatureSlot {
+  id: string;
+  label: string;
+  name?: string;
+  signed_on?: string;
+}
+
+/**
+ * Where the PDF writer drew a signing area: PDF points, origin bottom-left,
+ * `page` 0-based. Same shape as the sign-requests API `SignSlot`.
+ */
+export interface SignSlot {
+  id: string;
+  label: string;
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export interface PdfDocModel {
   title: string;

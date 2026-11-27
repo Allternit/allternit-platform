@@ -5,6 +5,11 @@ const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const multi = (s: string): string => esc(s).replace(/\n/g, '<br>');
 
+/** Warning mark of the acceptance note (same path as the PDF writer). */
+export const SIGN_WARN = '#E0612F';
+export const SIGN_WARN_TILE = '#FBE6DD';
+const WARN_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1z" fill="${SIGN_WARN}"/><rect x="7.2" y="5.5" width="1.6" height="4.6" rx=".8" fill="#fff"/><circle cx="8" cy="12" r=".9" fill="#fff"/></svg>`;
+
 function block(b: PdfBlock): string {
   switch (b.t) {
     case 'masthead': {
@@ -42,6 +47,20 @@ function block(b: PdfBlock): string {
       return `<section class="ticket"><div class="tk-main"><h2>${esc(b.event)}</h2>${b.holder ? `<p class="holder">${esc(b.holder)}</p>` : ''}<dl>${b.lines
         .map((l) => `<div><dt>${esc(l.label)}</dt><dd>${esc(l.value)}</dd></div>`)
         .join('')}</dl></div><div class="tk-stub"><span>Ticket code</span><b>${esc(b.code)}</b></div></section>`;
+    case 'signatures': {
+      const note = b.note
+        ? `<div class="sig-note"><span class="sig-tile">${WARN_SVG}</span><div><b>Acceptance</b><p>${multi(b.note)}</p></div></div>`
+        : '';
+      const slots = b.slots
+        .map(
+          (s) =>
+            `<div class="sig" data-slot="${esc(s.id)}"><div class="sig-l"><span>${esc(s.label)}</span>${s.name ? `<em>${esc(s.name)}</em>` : ''}</div><div class="sig-area"></div><div class="sig-d">${
+              s.signed_on ? `Signed ${esc(s.signed_on)}` : ''
+            }</div></div>`,
+        )
+        .join('');
+      return `<section class="sigs">${note}<div class="sig-grid">${slots}</div></section>`;
+    }
     case 'rule':
       return '<hr>';
     case 'space':
@@ -57,7 +76,7 @@ export function renderHtml(doc: PdfDocModel): string {
 @page{size:${w}pt ${h}pt;margin:0}
 *{box-sizing:border-box}
 html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{margin:0;background:#fff;color:${t.ink};font:10.5pt/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+body{margin:0;background:#fff;color:${t.ink};font:10.5pt/1.5 "Allternit Sans",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .page{width:${w}pt;min-height:${h}pt;padding:48pt;margin:0 auto}
 h1{font-size:24pt;line-height:1.15;margin:0;letter-spacing:-.01em}
 h2{font-size:12.5pt;margin:20pt 0 6pt;break-after:avoid}
@@ -96,6 +115,16 @@ ul,ol{margin:0 0 6pt;padding-left:16pt}li{margin-bottom:2pt}
 .tk-stub{width:150pt;border-left:1.5pt dashed ${t.line};background:${t.fill};display:flex;flex-direction:column;justify-content:center;align-items:center;padding:12pt;text-align:center}
 .tk-stub span{font-size:8pt;text-transform:uppercase;letter-spacing:.06em;color:${t.muted}}
 .tk-stub b{font:600 12pt ui-monospace,Menlo,Consolas,monospace;margin-top:6pt;word-break:break-all}
+.sigs{margin:18pt 0 8pt;break-inside:avoid}
+.sig-note{display:flex;gap:10pt;align-items:flex-start;background:${t.fill};border-radius:8pt;padding:10pt}
+.sig-tile{flex:none;width:24pt;height:24pt;border-radius:6pt;background:${SIGN_WARN_TILE};display:flex;align-items:center;justify-content:center}
+.sig-note b{display:block;font-size:10pt}.sig-note p{color:${t.muted};font-size:9pt;margin:2pt 0 0}
+.sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:12pt 24pt;margin-top:14pt}
+.sig{break-inside:avoid}
+.sig-l{display:flex;justify-content:space-between;gap:8pt;font-size:10pt}
+.sig-l em{font-style:normal;color:${t.muted};font-size:9pt;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sig-area{height:56pt;border-bottom:.75pt solid ${t.line}}
+.sig-d{min-height:12pt;margin-top:5pt;color:${t.muted};font-size:8.5pt}
 hr{border:0;border-top:.5pt solid ${t.line};margin:12pt 0}
 .foot{margin-top:24pt;padding-top:8pt;border-top:.5pt solid ${t.line};color:${t.muted};font-size:8.5pt}
 @media screen{body{background:#ECECEC}.page{background:#fff;margin:16px auto;box-shadow:0 1px 6px rgba(0,0,0,.12)}}`;
