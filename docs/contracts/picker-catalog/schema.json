@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/picker-catalog/schema.json",
+  "title": "Picker catalog",
+  "type": "object",
+  "required": [
+    "schema",
+    "generatedAt",
+    "runtimes",
+    "brains",
+    "cloudModels",
+    "onDevice"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runtimes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "vendor",
+          "logo",
+          "signIn",
+          "defaultModel",
+          "models"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string"
+          },
+          "signIn": {
+            "type": "string"
+          },
+          "defaultModel": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "aliases",
+                "context",
+                "output"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "aliases": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "context": {
+                  "type": "integer"
+                },
+                "output": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Only from allternit-api, for its own computer."
+          },
+          "signedIn": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Only from allternit-api. null = unknown."
+          }
+        }
+      }
+    },
+    "brains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "access"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "subscription",
+              "api_key",
+              "cloud",
+              "on_device"
+            ]
+          },
+          "access": {
+            "$ref": "#/$defs/access"
+          }
+        }
+      }
+    },
+    "cloudModels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "access"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "access": {
+            "$ref": "#/$defs/access"
+          }
+        }
+      }
+    },
+    "onDevice": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "sizeBytes",
+          "minRamGb",
+          "platforms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer"
+          },
+          "minRamGb": {
+            "type": "number"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "access": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "enum": [
+            "ok",
+            "locked",
+            "hidden"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "description": "What the client offers to fix a locked state, e.g. sign_in or add_credits."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "locked"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

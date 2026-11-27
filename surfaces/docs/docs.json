@@ -257,6 +257,8 @@
               "architecture/facility-campus",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
+              "architecture/gizzi-release-feed",
+              "architecture/picker-catalog",
               "architecture/group-room-brief",
               "architecture/meet-your-bots",
               "architecture/two-machines",

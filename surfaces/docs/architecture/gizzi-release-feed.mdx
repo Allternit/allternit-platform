@@ -1,0 +1,73 @@
+---
+title: Gizzi release feed
+description: The signed file Gizzi Code reads to learn which version to run, and when it must update.
+---
+
+Gizzi Code checks one signed feed for updates. The feed says which version is current. It also says which versions are too old to keep running, and whether a release is paused.
+
+The schema and fixtures live in `docs/contracts/gizzi-release-feed/`.
+
+## Where it lives
+
+```
+GET https://runtime.allternit.com/gizzi/<channel>/latest.json
+GET https://runtime.allternit.com/gizzi/<channel>/latest.json.sig
+```
+
+There are two channels. `stable` is the default. `latest` is for early builds.
+
+The release workflow writes both files. The `.sig` file holds a base64 Ed25519 signature over the exact bytes of `latest.json`. Gizzi uses its own signing key. Desktop uses a different one, so one leak never covers both products.
+
+## Shape
+
+```json
+{
+  "schema": 1,
+  "channel": "stable",
+  "version": "2.24.0",
+  "publishedAt": "2026-11-27T15:00:00Z",
+  "minVersion": "2.20.0",
+  "paused": false,
+  "notes": { "url": "...", "highlights": ["..."] },
+  "artifacts": { "darwin-arm64": { "url": "...", "sha256": "...", "size": 0 } },
+  "packages": { "npm": "@allternit/gizzi-code@2.24.0", "brew": "...", "scoop": "gizzi-code" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `minVersion` | An install older than this updates on its next launch. |
+| `paused` | When true, clients do not offer or apply this version. |
+| `notes.highlights` | Up to four short lines, shown once after an update. |
+| `artifacts` | One entry per platform: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win32-x64`. Each has a download URL, a `sha256` and a size. |
+| `packages` | The package names for npm, Homebrew and Scoop. |
+
+The binaries stay on GitHub Releases. The signed `sha256` is what makes the download safe, so the host needs no trust.
+
+## What a client does
+
+1. Fetch `latest.json` and `latest.json.sig`.
+2. Check the signature. If it fails, do nothing and report it in `gizzi doctor`.
+3. If `paused` is true, stop.
+4. If the running version is older than `minVersion`, update at the next launch.
+5. Otherwise, update to `version` if it is newer.
+
+How the update is applied depends on the install:
+
+| Install | Behavior |
+|---|---|
+| curl | Download in the background, check the hash, swap on exit or next launch. |
+| npm | Run `npm i -g` on exit, using the version from the feed. |
+| Homebrew, Scoop | Print the command. Never replace the binary. |
+| Inside Allternit Desktop | Show "managed by Allternit Desktop". |
+
+The check runs on launch and every six hours. It never blocks the prompt.
+
+## Fixtures
+
+| File | Case |
+|---|---|
+| `stable.json` | A normal stable release. |
+| `latest.json` | A pre-release on the `latest` channel. |
+| `paused.json` | A paused release. |
+| `min-version-forces-update.json` | `minVersion` equals `version`, so every older install must update. |
