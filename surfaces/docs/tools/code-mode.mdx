@@ -13,7 +13,9 @@ The script runs in a sandbox with no files, network or environment of its own. T
 
 Code Mode is offered only when two or more MCP tools are connected. With one tool, a normal call is simpler, so the agent does not get `mcp_script`.
 
-It is on by default. To turn it off, set the flag `mcp.codeMode` to false.
+It is on by default, in the app (Desktop, web, phone) and in the Gizzi terminal app, where it works with the MCP servers you added with `gizzi mcp add`.
+
+Turn it off: set `GIZZI_DISABLE_MCP_CODE_MODE=1` in the environment Gizzi runs in. The agent then gets no `mcp_script` tool and calls MCP tools one at a time.
 
 ## Limits
 
