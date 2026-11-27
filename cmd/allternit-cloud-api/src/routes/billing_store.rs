@@ -1122,6 +1122,17 @@ mod tests {
         .unwrap()
     }
 
+    /// Bought credits as the wallet reads them (contract D1).
+    async fn bought(db: &PgPool, user_id: &str) -> f64 {
+        sqlx::query_scalar(
+            "SELECT COALESCE((SELECT LEAST(bought_usd, GREATEST(balance_usd, 0)) FROM user_credits WHERE user_id = $1), 0)",
+        )
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    }
+
     async fn count(db: &PgPool, sql: &str) -> i64 {
         sqlx::query_scalar(sql).fetch_one(db).await.unwrap()
     }
@@ -1217,6 +1228,7 @@ mod tests {
         let sync = apple_sync(&db, &apple, &[]);
         sync.verify_transaction("user_a", "302").await.unwrap();
         assert_eq!(balance(&db, "user_a").await, 25.0);
+        assert_eq!(bought(&db, "user_a").await, 25.0, "a pack is bought credits");
 
         let mut refunded = paid.clone();
         refunded.revocation_date = Some(chrono::Utc::now().timestamp_millis());
@@ -1232,6 +1244,7 @@ mod tests {
         assert!(!repost.granted);
         assert_eq!(repost.reason, Some("refunded"));
         assert_eq!(balance(&db, "user_a").await, 0.0, "taken back once");
+        assert_eq!(bought(&db, "user_a").await, 0.0, "a pack refund takes its bought credits back");
         assert_eq!(
             count(
                 &db,
@@ -1250,6 +1263,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(balance(&db, "user_a").await, 25.0, "given back once");
+        assert_eq!(bought(&db, "user_a").await, 25.0, "the reversal gives the bought credits back");
         assert_eq!(
             count(&db, &format!("SELECT COUNT(*) FROM credit_transactions WHERE source = '{REFUND_REVERSED_SOURCE}'")).await,
             1
@@ -1801,6 +1815,7 @@ mod tests {
             assert!(outcome.handled);
         }
         assert_eq!(balance(&db, "user_a").await, 0.0, "taken back once");
+        assert_eq!(bought(&db, "user_a").await, 0.0, "a pack refund takes its bought credits back");
         assert_eq!(
             count(
                 &db,
