@@ -69,7 +69,7 @@ The line appears for tool calls Gizzi Code makes itself. A CLI brain calls its o
 | Command | Alias | Description |
 | ------- | ----- | ----------- |
 | `gizzi mcp list` | `ls` | List configured MCP servers and their connection status |
-| `gizzi mcp add` | — | Add a new MCP server interactively |
+| `gizzi mcp add [name] [url]` | `--project` | Add a remote server directly, or run the prompts when no arguments are given |
 | `gizzi mcp remove [name]` | `rm` | Remove an MCP server from config |
 | `gizzi mcp auth [name]` | — | Authenticate with an OAuth-enabled remote MCP server |
 | `gizzi mcp auth list` | `ls` | List OAuth-capable servers and their auth status |
@@ -93,7 +93,15 @@ Each entry displays:
 
 ## Adding a server
 
-Run the interactive wizard to register a server:
+Add a remote server in one command:
+
+```bash
+gizzi mcp add allternit https://mcp.allternit.com
+```
+
+It saves to your global config. Add `--project` to save to the project config instead. Gizzi makes one unauthenticated request to the URL; if the server answers 401 it saves the server with OAuth turned on and tells you to run `gizzi mcp auth <name>`.
+
+To use the interactive wizard instead, run it with no arguments:
 
 ```bash
 gizzi mcp add

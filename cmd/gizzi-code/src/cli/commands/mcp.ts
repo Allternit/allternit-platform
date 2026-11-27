@@ -408,9 +408,44 @@ async function addMcpToConfig(name: string, mcpConfig: Config.Mcp, configPath: s
 }
 
 export const McpAddCommand = cmd({
-  command: "add",
-  describe: "add an MCP server",
-  async handler() {
+  command: "add [name] [url]",
+  describe: "add an MCP server (gizzi mcp add <name> <url> adds a remote server directly)",
+  builder: (yargs) =>
+    yargs
+      .positional("name", { type: "string", describe: "server name" })
+      .positional("url", { type: "string", describe: "remote server URL" })
+      .option("project", { type: "boolean", default: false, describe: "save to the project config instead of the global one" }),
+  async handler(args) {
+    if (args.name && args.url) {
+      await bootstrap(process.cwd(), async () => {
+        if (!URL.canParse(args.url!)) {
+          UI.error(`Invalid URL: ${args.url}`)
+          process.exitCode = 1
+          return
+        }
+        const configPath = args.project
+          ? await resolveConfigPath(Instance.worktree)
+          : await resolveConfigPath(Global.Path.config, true)
+        // A 401 on an unauthenticated probe means the server wants OAuth.
+        let needsOAuth = false
+        try {
+          const res = await fetch(args.url!, {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+            signal: AbortSignal.timeout(5000),
+          })
+          needsOAuth = res.status === 401
+        } catch {}
+        const mcpConfig: Config.Mcp = needsOAuth
+          ? { type: "remote", url: args.url!, oauth: {} }
+          : { type: "remote", url: args.url! }
+        await addMcpToConfig(args.name!, mcpConfig, configPath)
+        UI.println(`MCP server "${args.name}" added to ${configPath}`)
+        if (needsOAuth) UI.println(`It needs sign-in: run gizzi mcp auth ${args.name}`)
+      })
+      return
+    }
     await bootstrap(process.cwd(), async () => {
         UI.empty()
         prompts.intro("Add MCP server")

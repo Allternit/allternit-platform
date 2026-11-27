@@ -374,6 +374,12 @@ For production deployments, prefer remote MCP servers with tunnel-based authenti
 | -32001 | `MCP tunnel auth failed` | Tunnel mTLS/OAuth check failed |
 | -32601 | `Method not found` | Unknown JSON-RPC method |
 
+## Typed results
+
+A server can declare an output schema for a tool and return `structuredContent` next to the text. Allternit keeps that object with the tool result, so the chat shows it as labelled values or, for a list of objects, a small table instead of raw JSON. In the Gizzi terminal app an object shows as aligned key and value lines, and a list of objects as a table of at most 10 rows followed by "+N more". Results without `structuredContent` look the same as before. The model still reads the text content.
+
+When a server also supports feedback, the chat offers a report link on that tool's result. Servers that do not support it show no link.
+
 ## Related pages
 
 - [Native Tool Belt](/tools/tool-belt)

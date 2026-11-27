@@ -637,6 +637,8 @@ export type Tool<
       /** Original tool_use input, when available. Useful for compact result
        * summaries that reference what was requested (e.g. "Sent to #foo"). */
       input?: unknown
+      /** Tool-part metadata (`mcp` typed result, `mcpScript` run record). */
+      metadata?: Record<string, any>
     },
   ): React.ReactNode
   /**
