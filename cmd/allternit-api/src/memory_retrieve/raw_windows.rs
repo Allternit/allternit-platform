@@ -9,6 +9,14 @@
 //! returns knowledge files in their own `knowledge` block (step 17), never
 //! mixed into `turns`.
 //!
+//! **Knowledge (step 17):** approved `knowledge/domain/*.md` and
+//! `knowledge/data-access/*.md` are Memory Drive topic files. The drive's
+//! `index_snapshot` already projects every bullet into `memory_facts` (+
+//! embedding + FTS) and records its file in `memory_drive_entries`, and a
+//! drive write re-projects them (a removed bullet is retired), so no second
+//! index is needed: [`knowledge_hits`] runs its own hybrid search over just
+//! those fact ids (personal drive of the user, `valid_until IS NULL`).
+//!
 //! - **Candidates:** [`memory_index::hybrid_search`] (FTS5 + vector, RRF) over
 //!   `chunk` targets, restricted through `Scope::only_ids` to windows whose
 //!   observation still exists (inner join on `memory_observations`), belongs
@@ -96,7 +104,7 @@ pub struct RawQuery {
     pub exclude_sessions: Vec<String>,
     /// Windows kept after rerank (default: the mode's top, max [`MAX_LIMIT`]).
     pub limit: Option<usize>,
-    /// Step 17 fills `knowledge`; ignored until then.
+    /// Fill `knowledge` with the top approved knowledge files (separate from `turns`).
     pub include_knowledge: bool,
     pub mode: RawMode,
 }
@@ -285,6 +293,44 @@ fn candidates(
         .collect())
 }
 
+/// Most knowledge hits returned.
+pub const KNOWLEDGE_TOP: usize = 3;
+
+/// Top [`KNOWLEDGE_TOP`] approved knowledge bullets for `query`, from a search
+/// of their own (never the turn windows). One hit per bullet; `path` is the
+/// drive file, `kind` is `domain` or `data_access`.
+pub fn knowledge_hits(
+    conn: &Connection,
+    user_id: &str,
+    query: &str,
+    query_embedding: Option<(&str, &[f32])>,
+) -> rusqlite::Result<Vec<KnowledgeHit>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.fact_id, e.file_path FROM memory_drive_entries e
+         JOIN memory_drives d ON d.id = e.drive_id
+         JOIN memory_facts f ON f.id = e.fact_id
+         WHERE d.kind = 'personal' AND d.user_id = ?1 AND f.user_id = ?1 AND f.valid_until IS NULL
+           AND (e.file_path LIKE 'knowledge/domain/%' OR e.file_path LIKE 'knowledge/data-access/%')",
+    )?;
+    let rows: HashMap<String, String> = stmt
+        .query_map(params![user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let allowed: HashSet<String> = rows.keys().cloned().collect();
+    let scope = Scope { scope: user_id, target_types: &["fact"], only_ids: Some(&allowed) };
+    let hits = memory_index::hybrid_search(conn, &scope, query, query_embedding, KNOWLEDGE_TOP)?;
+    let mut out = Vec::new();
+    for h in hits {
+        let Some(path) = rows.get(&h.target_id) else { continue };
+        let text: String = conn.query_row("SELECT fact FROM memory_facts WHERE id = ?1", params![h.target_id], |r| r.get(0))?;
+        let kind = if path.starts_with("knowledge/data-access/") { "data_access" } else { "domain" };
+        out.push(KnowledgeHit { path: path.clone(), kind: kind.into(), text, score: h.score });
+    }
+    Ok(out)
+}
+
 /// `POST {sidecar}/v1/rerank` (CONTRACT.md "Sidecar") on the embed client's
 /// HTTP client and base URL. Returns (document index, relevance), best first.
 /// Errors on a disabled sidecar, timeout, non-2xx (503 = reranker off) or a
@@ -401,17 +447,18 @@ pub async fn search(db: &DbHandle, index: &EmbedClient, user_id: &str, q: RawQue
     }
 
     let emb = index.embed_or_hash(&[query.clone()], InputType::Query).await;
-    let (db2, user, q2, n) = (db.clone(), user_id.to_string(), query.clone(), budget.candidates.max(top));
-    let cands = tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<Candidate>> {
+    let (db2, user, q2, n, want_knowledge) = (db.clone(), user_id.to_string(), query.clone(), budget.candidates.max(top), q.include_knowledge);
+    let (cands, knowledge) = tokio::task::spawn_blocking(move || -> rusqlite::Result<(Vec<Candidate>, Vec<KnowledgeHit>)> {
         let conn = db2.connect()?;
         let vector = emb.vectors.first().filter(|v| !v.is_empty()).map(|v| (emb.model.as_str(), v.as_slice()));
-        candidates(&conn, &user, &q2, &filters, vector, n)
+        let knowledge = if want_knowledge { knowledge_hits(&conn, &user, &q2, vector)? } else { vec![] };
+        Ok((candidates(&conn, &user, &q2, &filters, vector, n)?, knowledge))
     })
     .await
     .map_err(internal)?
     .map_err(internal)?;
     if cands.is_empty() {
-        return Ok(RawResult::default());
+        return Ok(RawResult { knowledge, ..RawResult::default() });
     }
 
     let docs: Vec<String> = cands.iter().map(|c| c.text.clone()).collect();
@@ -459,7 +506,27 @@ pub async fn search(db: &DbHandle, index: &EmbedClient, user_id: &str, q: RawQue
         }
         turns.push(t);
     }
-    Ok(RawResult { turns, knowledge: vec![], reranked })
+    Ok(RawResult { turns, knowledge, reranked })
+}
+
+/// [`search`] for a caller that may be in an incognito session: an ephemeral
+/// `calling_session` gets an empty result (no turns, no knowledge), so an
+/// incognito chat never has past chats pulled into it, whatever the client
+/// believes about its own mode.
+pub async fn search_for_session(
+    db: &DbHandle,
+    index: &EmbedClient,
+    user_id: &str,
+    calling_session: Option<&str>,
+    q: RawQuery,
+) -> Result<RawResult, RawError> {
+    if let Some(session) = calling_session.map(str::trim).filter(|s| !s.is_empty()) {
+        // A failed lookup is treated as ephemeral: never leak into a chat we cannot vouch for.
+        if db.is_session_ephemeral(session).unwrap_or(true) {
+            return Ok(RawResult::default());
+        }
+    }
+    search(db, index, user_id, q).await
 }
 
 /// Same-session turns around `observation_id`, in time order (the turn
@@ -830,5 +897,78 @@ mod tests {
         assert_eq!(detail["item_type"], "past_chat");
         assert_eq!(detail["refs"][0]["id"], "obs_1");
         assert!(detail["items"][0]["text"].as_str().unwrap().starts_with("Nov 20 · "));
+    }
+
+    #[tokio::test]
+    async fn approved_knowledge_files_come_back_in_knowledge_never_in_turns() {
+        use crate::memory_drive::{Entry, Operation};
+        use crate::{memory_drive_service as service, memory_drive_writer as writer};
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        let db = DbHandle::new(base.join("t.db")).unwrap();
+        writer::configure_root(&db, &base.join("brains")).unwrap();
+        let drive = writer::ensure(&db, USER).unwrap().unwrap();
+        let line = |id: &str, text: &str, path: &str, kind: &str| Operation::UpsertEntry {
+            path: path.into(),
+            entry: Entry {
+                id: id.into(),
+                text: text.into(),
+                source: "knowledge:proposal/kprop_1".into(),
+                added: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+                metadata: [("kind".to_string(), kind.to_string())].into(),
+            },
+        };
+        let rev = drive.storage().unwrap().snapshot(None).unwrap().revision;
+        service::apply(
+            &db,
+            USER,
+            &rev,
+            &[
+                line("k1", "Invoices live in the billing warehouse table fct_invoices, joined on account_id.", "knowledge/data-access/billing.md", "data_access"),
+                line("k2", "A churned account means no paid invoice for ninety days.", "knowledge/domain/definitions.md", "domain"),
+                line("k3", "User likes oat milk.", "facts.md", "fact"),
+            ],
+            "approve knowledge",
+        )
+        .unwrap();
+        // A raw turn that talks about the same thing stays a turn.
+        let t = turn(&db, USER, "ses_1", "turn_user", "Where do the invoices table and account_id join live in the warehouse?", "2026-11-20 10:00:00");
+        index(&db).await;
+
+        let query = RawQuery { include_knowledge: true, ..q("which warehouse table holds invoices joined on account_id?") };
+        let r = search(&db, &down(), USER, query.clone()).await.unwrap();
+        assert!(r.knowledge.len() <= KNOWLEDGE_TOP);
+        let top = r.knowledge.first().expect("a knowledge hit");
+        assert_eq!(top.path, "knowledge/data-access/billing.md");
+        assert_eq!(top.kind, "data_access");
+        assert!(top.text.starts_with("Invoices live in the billing warehouse table"));
+        assert!(r.knowledge.iter().all(|k| k.path.starts_with("knowledge/")), "ordinary facts are not knowledge: {:?}", r.knowledge);
+        assert!(r.turns.iter().any(|x| x.observation_id == t));
+        assert!(r.turns.iter().all(|x| !x.text.contains("fct_invoices")), "knowledge never lands in turns");
+
+        // Off by default, and another user sees none of it.
+        assert!(search(&db, &down(), USER, q(&query.query)).await.unwrap().knowledge.is_empty());
+        assert!(search(&db, &down(), "u2", query).await.unwrap().knowledge.is_empty());
+
+        // Removing the bullet from the drive retires it.
+        let rev = service::read(&db, USER, None).unwrap().revision;
+        service::apply(&db, USER, &rev, &[Operation::DeleteEntry { id: "k1".into() }], "rollback").unwrap();
+        let again = RawQuery { include_knowledge: true, ..q("which warehouse table holds invoices joined on account_id?") };
+        assert!(search(&db, &down(), USER, again).await.unwrap().knowledge.iter().all(|k| k.kind != "data_access"));
+    }
+
+    #[tokio::test]
+    async fn an_ephemeral_calling_session_gets_an_empty_result() {
+        let db = DbHandle::new_memory().unwrap();
+        let answer = fixture(&db).await;
+        db.connect().unwrap().execute("INSERT INTO ephemeral_sessions (session_id) VALUES ('ses_incognito')", []).unwrap();
+        let query = RawQuery { include_knowledge: true, ..q("which reranker model did we pick for reranking?") };
+        let r = search_for_session(&db, &down(), USER, Some("ses_incognito"), query.clone()).await.unwrap();
+        assert!(r.turns.is_empty() && r.knowledge.is_empty() && !r.reranked);
+        // The same query from an ordinary session still finds the turn.
+        let ok = search_for_session(&db, &down(), USER, Some("ses_normal"), query.clone()).await.unwrap();
+        assert!(ok.turns.iter().any(|t| t.observation_id == answer));
+        let none = search_for_session(&db, &down(), USER, None, query).await.unwrap();
+        assert!(none.turns.iter().any(|t| t.observation_id == answer));
     }
 }

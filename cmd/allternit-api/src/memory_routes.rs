@@ -1192,7 +1192,7 @@ async fn raw_search_v2_handler(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    match raw_windows::search(&state.db, crate::memory_index::global(), &user.user_id, payload.query).await {
+    match raw_windows::search_for_session(&state.db, crate::memory_index::global(), &user.user_id, calling_session.as_deref(), payload.query).await {
         Ok(result) => {
             // Memory Drive → Activity and the chat turn show the past chats used.
             if let (false, Some(session)) = (result.turns.is_empty(), calling_session) {
