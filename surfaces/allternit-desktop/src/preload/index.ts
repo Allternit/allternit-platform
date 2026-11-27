@@ -1196,6 +1196,17 @@ const remoteStartAPI = {
   },
 };
 
+/** Settings "Stay reachable after you quit" (Desktop keeps running in the menu bar / tray). */
+const backgroundOnQuitAPI = {
+  get: (): Promise<boolean> => ipcRenderer.invoke('background-on-quit:get'),
+  set: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('background-on-quit:set', enabled),
+  onChanged: (cb: (enabled: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, enabled: boolean) => cb(enabled);
+    ipcRenderer.on('background-on-quit:changed', handler);
+    return () => ipcRenderer.removeListener('background-on-quit:changed', handler);
+  },
+};
+
 // ─── MCP Host ────────────────────────────────────────────────────────────────
 
 // ─── Research Backend ────────────────────────────────────────────────────────
@@ -1518,6 +1529,7 @@ const allternitDesktopAPI = {
   // Windows/Linux only: macOS keeps the app in the Dock when windows close, so the setting would do nothing there.
   ...(process.platform === "darwin" ? {} : { tray: trayAPI }),
   remoteStart: remoteStartAPI,
+  backgroundOnQuit: backgroundOnQuitAPI,
   mcp: mcpAPI,
   research: researchAPI,
   worker: workerAPI,

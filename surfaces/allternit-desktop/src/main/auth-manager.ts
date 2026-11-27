@@ -108,6 +108,33 @@ export type RelayHostHandler = (
 /** Start anywhere (D6): a relayed session start just succeeded on this computer. */
 export type RemoteStartListener = (notice: { title: string; body: string }) => void;
 
+/**
+ * One cloud relay per machine (Start anywhere step 10): Desktop holds
+ * `~/.config/allternit/relay.lock` while its relay is up, and gizzi's own
+ * relay connector yields while a live desktop-owned lock exists.
+ */
+export function relayLockPath(): string {
+  return process.env.ALLTERNIT_RELAY_LOCK_PATH || path.join(os.homedir(), '.config', 'allternit', 'relay.lock');
+}
+
+/**
+ * Write `{pid, owner: "desktop", startedAt, connected}` (overwrites any holder),
+ * or with `null` remove it when this process holds it. Never throws.
+ */
+export function writeRelayLock(state: { startedAt: string; connected: boolean } | null, file: string = relayLockPath()): void {
+  try {
+    if (state === null) {
+      const held = JSON.parse(fs.readFileSync(file, 'utf8')) as { pid?: unknown };
+      if (held.pid === process.pid) fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ pid: process.pid, owner: 'desktop', ...state }), { mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') log.warn('[Auth] relay.lock update failed:', error);
+  }
+}
+
 /** Contract `errors.json` body for a start refused because Remote start is off. */
 export const REMOTE_START_OFF_ERROR = {
   error: 'remote_start_off',
@@ -118,13 +145,35 @@ export const REMOTE_START_OFF_ERROR = {
 /**
  * Which session-start route a relayed request is, if any: `POST
  * /api/v1/session-start` starts a session, `GET .../options` lists what a
- * start can pick. The engine also serves both under `/v1/`.
+ * start can pick (the engine also serves both under `/v1/`). With Remote
+ * start off (D6) these are refused too, because each opens something new on
+ * this computer: `terminal` = a new shell (allternit-api `POST
+ * /terminal/create`, also sent as `/api/v1/terminal/create`, and gizzi's
+ * `POST /v1/pty/create`); `adopt` = `POST /api/v1/live-sessions/adopt` with
+ * mode `new` or `copy` (`move` and `cancel` act on an existing session).
+ * Everything else, driving sessions that already run, is not a start.
  */
-export function relayedSessionStartRoute(method: string, requestPath: string): 'start' | 'options' | null {
+export function relayedSessionStartRoute(
+  method: string,
+  requestPath: string,
+  requestBody?: string,
+): 'start' | 'options' | 'terminal' | 'adopt' | null {
   const pathname = requestPath.split('?')[0].replace(/\/+$/, '');
   const route = pathname.replace(/^\/api\/v1\//, '/v1/');
   if (method === 'POST' && route === '/v1/session-start') return 'start';
   if (method === 'GET' && route === '/v1/session-start/options') return 'options';
+  if (method === 'POST' && (route === '/terminal/create' || route === '/v1/terminal/create' || route === '/v1/pty/create')) {
+    return 'terminal';
+  }
+  if (method === 'POST' && route === '/v1/live-sessions/adopt') {
+    let mode: unknown;
+    try {
+      mode = (JSON.parse(requestBody || '{}') as { mode?: unknown })?.mode;
+    } catch {
+      return null; // allternit-api answers a bad body with its own 400.
+    }
+    if (mode === 'new' || mode === 'copy') return 'adopt';
+  }
   return null;
 }
 
@@ -297,6 +346,8 @@ export class DesktopAuthManager {
   private relayHostHandler: RelayHostHandler | null = null;
   /** Settings "Allow new sessions from my other devices" (D6, default on); sent as `remote_start` at relay `authenticate`. */
   private remoteStartEnabled = true;
+  /** relay.lock `startedAt` of the current hold; null = this process does not hold the lock. */
+  private relayLockStartedAt: string | null = null;
   private remoteStartListener: RemoteStartListener | null = null;
   /** Idempotency keys already announced: a replayed start answers 2xx again but is not a new session. */
   private readonly announcedStartKeys: string[] = [];
@@ -1569,6 +1620,7 @@ export class DesktopAuthManager {
       this.relaySocket.close();
       this.relaySocket = null;
     }
+    this.releaseRelayLock();
     fs.rmSync(this.identityPath, { force: true });
     this.removeDaemonIdentity();
   }
@@ -1602,6 +1654,8 @@ export class DesktopAuthManager {
       if (message.type === 'authenticated') {
         this.relayReconnectDelayMs = 1_000;
         log.info('[Auth] Paired runtime relay connected');
+        this.relayLockStartedAt = new Date().toISOString();
+        writeRelayLock({ startedAt: this.relayLockStartedAt, connected: true });
       } else if (message.type === 'request') {
         void this.handleRelayRequest(socket, message);
       } else if (message.type === 'socket_open') {
@@ -1622,6 +1676,8 @@ export class DesktopAuthManager {
       this.stopRelayWatchdog();
       for (const local of this.relayLocalSockets.values()) local.close(1012, 'Relay disconnected');
       this.relayLocalSockets.clear();
+      // Still held while reconnecting, so gizzi does not take the relay meanwhile.
+      if (this.relayLockStartedAt) writeRelayLock({ startedAt: this.relayLockStartedAt, connected: false });
       if (this.session) this.scheduleRelayReconnect();
     });
     socket.addEventListener('error', (error: unknown) => {
@@ -1681,6 +1737,18 @@ export class DesktopAuthManager {
     }
   }
 
+  /** Real quit or unpair: drop relay.lock so gizzi's connector may take the relay. */
+  releaseRelayLock(): void {
+    if (!this.relayLockStartedAt) return;
+    this.relayLockStartedAt = null;
+    writeRelayLock(null);
+  }
+
+  /** The cloud relay is open: other devices can reach this computer now (tray "Reachable from your devices"). */
+  isRelayOpen(): boolean {
+    return Boolean(this.session && this.relaySocket && this.relaySocket.readyState === WebSocket.OPEN);
+  }
+
   /** unified-main shows the "Session started from another device" notification from here. */
   setRemoteStartListener(listener: RemoteStartListener | null): void {
     this.remoteStartListener = listener;
@@ -1713,7 +1781,14 @@ export class DesktopAuthManager {
     if (!isShareGatePath && !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
     // Remote start off: refuse here too, beside cloud-api's capability check
     // (a relay connected before the switch changed must not start sessions).
-    const sessionStartRoute = relayedSessionStartRoute(method, requestPath);
+    // Remote start off also covers a new shell and adopt new/copy (D6).
+    const sessionStartRoute = relayedSessionStartRoute(
+      method,
+      requestPath,
+      method === 'POST' && typeof message.body === 'string'
+        ? (message.body_encoding === 'base64' ? Buffer.from(message.body, 'base64').toString('utf8') : message.body)
+        : undefined,
+    );
     if (sessionStartRoute && !this.remoteStartEnabled) {
       this.sendRelayJson(socket, requestId, 403, REMOTE_START_OFF_ERROR);
       return;
@@ -2074,6 +2149,7 @@ export class DesktopAuthManager {
     }
     for (const socket of this.relayLocalSockets.values()) socket.close(1012, 'Relay reconnecting');
     this.relayLocalSockets.clear();
+    if (this.relayLockStartedAt) writeRelayLock({ startedAt: this.relayLockStartedAt, connected: false });
     this.scheduleRelayReconnect();
   }
 
