@@ -145,6 +145,8 @@ struct MainWorkspaceView: View {
         .overlay { WaitingGamesLayer() }
         // Pet offers: the bot offers help when a run fails off-screen.
         .overlay { PetOfferBannerLayer() }
+        // Long jobs: a quiet capsule above the composer.
+        .overlay { JobBannerLayer() }
         .overlay { sessionLookupCover }
         // Recents and the overviews open an artifact session in its studio,
         // with its editor or pane, not as a plain chat.
