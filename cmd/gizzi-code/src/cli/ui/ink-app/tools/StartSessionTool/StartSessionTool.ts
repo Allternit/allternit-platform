@@ -15,7 +15,7 @@ import {
   isStartMode,
   START_MODES,
 } from '@/cli/work/start-guards'
-import { parentDepth, startSession } from '@/cli/work/start-session'
+import { parentDepth, sessionOrigin, startSession } from '@/cli/work/start-session'
 import { DESCRIPTION, PROMPT, START_SESSION_TOOL_NAME } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
 
@@ -45,6 +45,18 @@ const outputSchema = lazySchema(() =>
 )
 type OutputSchema = ReturnType<typeof outputSchema>
 export type Output = z.infer<OutputSchema>
+
+/**
+ * The caller's cap and parent depth: an engine session's own start record and
+ * permission mode when it has one, else this TUI's mode and the env fallback.
+ */
+async function callerState(context: { getAppState(): { toolPermissionContext: { mode: string } } }) {
+  const origin = await sessionOrigin(String(getSessionId()))
+  return {
+    callerMode: callerStartMode(origin?.mode ?? context.getAppState().toolPermissionContext.mode),
+    parentDepth: origin ? origin.depth : parentDepth(),
+  }
+}
 
 export const StartSessionTool = buildTool({
   name: START_SESSION_TOOL_NAME,
@@ -79,17 +91,16 @@ export const StartSessionTool = buildTool({
     return `${input.device ?? 'this computer'} ${input.folder} ${input.runtime ?? 'allternit'} ${input.mode ?? ''}`
   },
   async validateInput(input, context) {
-    const caller = callerStartMode(context.getAppState().toolPermissionContext.mode)
+    const state = await callerState(context)
     const guard = checkStart({
-      callerMode: caller,
+      callerMode: state.callerMode,
       requestedMode: input.mode && isStartMode(input.mode) ? input.mode : undefined,
-      parentDepth: parentDepth(),
+      parentDepth: state.parentDepth,
     })
     return guard.ok ? { result: true } : { result: false, message: guard.message, errorCode: 1 }
   },
   async checkPermissions(input, context) {
-    const caller = callerStartMode(context.getAppState().toolPermissionContext.mode)
-    const mode = input.mode ?? caller
+    const mode = input.mode ?? (await callerState(context)).callerMode
     return {
       behavior: 'ask',
       message: `Start a ${input.runtime ?? 'allternit'} session on ${input.device ?? `this computer (${hostname()})`} in ${input.folder}, mode ${mode}?${input.prompt ? ` First task: ${input.prompt.slice(0, 200)}` : ''}`,
@@ -103,8 +114,8 @@ export const StartSessionTool = buildTool({
   renderToolUseMessage,
   renderToolResultMessage,
   async call(input, context) {
-    const caller = callerStartMode(context.getAppState().toolPermissionContext.mode)
-    const guard = checkStart({ callerMode: caller, requestedMode: input.mode, parentDepth: parentDepth() })
+    const state = await callerState(context)
+    const guard = checkStart({ callerMode: state.callerMode, requestedMode: input.mode, parentDepth: state.parentDepth })
     if (!guard.ok) throw new Error(guard.message)
     const result = await startSession({
       device: input.device,

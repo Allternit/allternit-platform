@@ -35,10 +35,29 @@ export type StartResult = {
   line: string
 }
 
-/** Depth and parent of the session this process runs in (set by whoever started it; 0 = top level). */
+/** Env fallback for CLI terminals: depth of the session this process runs in (0 = top level). */
 export function parentDepth(): number {
   const n = Number(process.env.ALLTERNIT_SESSION_START_DEPTH)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+}
+
+/**
+ * The calling engine session's own start record (written by the engine's
+ * /v1/session-start under ["session_origin", id]): its depth and the app mode
+ * it was started in, plus the engine's current permission mode for the cap.
+ * Undefined when the session was not started through session-start.
+ */
+export async function sessionOrigin(sessionId: string): Promise<{ depth: number; mode?: string } | undefined> {
+  try {
+    const { Storage } = await import("@/runtime/session/storage/storage")
+    const rec = await Storage.read<{ depth?: number }>(["session_origin", sessionId])
+    const depth = Number(rec?.depth)
+    if (!Number.isFinite(depth) || depth < 0) return undefined
+    const { PermissionNext } = await import("@/runtime/tools/guard/permission/next")
+    return { depth: Math.floor(depth), mode: await PermissionNext.getMode(sessionId).catch(() => undefined) }
+  } catch {
+    return undefined
+  }
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -63,18 +82,18 @@ export async function listStartDevices(): Promise<StartDevice[]> {
     cloudGet<any>("/api/v1/runtime-presence").catch(() => ({})),
     listRuntimes().catch(() => [] as Runtime[]),
   ])
-  const rows: any[] = Array.isArray(presence) ? presence : (presence.presence ?? presence.runtimes ?? [])
+  // runtime_presence.rs: [{runtimeId, name, online, lastSeen, wakeable, nextDue, remoteStart, kind}]
+  const rows: any[] = Array.isArray(presence) ? presence : []
   return (options.devices ?? []).map((d) => {
-    const p = rows.find((r) => r.runtimeId === d.runtimeId || r.id === d.runtimeId)
+    const p = rows.find((r) => r.runtimeId === d.runtimeId)
     const rt = runtimes.find((r) => r.id === d.runtimeId)
-    const status = String(p?.status ?? rt?.status ?? "").toLowerCase()
     return {
       runtimeId: d.runtimeId,
       name: d.name ?? rt?.name ?? d.runtimeId,
-      kind: d.kind ?? p?.kind ?? "desktop",
+      kind: p?.kind ?? d.kind ?? "desktop",
       remoteStart: p?.remoteStart ?? d.remoteStart ?? true,
-      online: p?.online ?? (status === "online" || status === "connected"),
-      lastSeen: p?.lastSeenAt ?? rt?.lastSeenAt ?? d.updatedAt,
+      online: p?.online === true,
+      lastSeen: p?.lastSeen ?? rt?.lastSeenAt,
       folders: d.folders ?? [],
       modes: d.modes ?? {},
     }
