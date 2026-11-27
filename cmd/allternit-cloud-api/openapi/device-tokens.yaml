@@ -93,7 +93,7 @@ paths:
       responses:
         "200": { description: Sent. }
         "401": { $ref: "#/components/responses/Error" }
-        "422": { description: Unknown kind or missing run_id, computer_id or approval_id. }
+        "422": { description: "Unknown kind or missing run_id, computer_id or approval_id." }
 components:
   securitySchemes:
     bearerAuth:
