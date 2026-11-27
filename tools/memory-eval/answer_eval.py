@@ -7,6 +7,9 @@ Arms:
   raw    the full raw conversation history (turns, plus facts if present)
   topk   the incumbent recall top-k (ids from the cargo eval report, resolved
          back to fixture turn / fact text)
+  rawwindows  the raw-windows arm (headed turn windows, fused order with the
+         sidecar down): the turn ids `raw_windows` in the same cargo eval report
+         as topk, resolved back to fixture turn text
   pages  prototype topic page: one brain call per conversation turns the
          turns (+ facts) into short dated atomic claims with source turn ids
 
@@ -187,17 +190,17 @@ def load_questions(fx, sample, seed):
     return items
 
 
-def topk_ids(report, conv, qa):
+def topk_ids(report, conv, qa, field="incumbent"):
     for r in report["per_question"]:
         if r["conversation"] == conv["id"] and r["question"] == qa["question"]:
-            return r["incumbent"]
+            return r.get(field, [])
     return []
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--fixture", required=True)
-    ap.add_argument("--arms", default="none,raw,topk,pages")
+    ap.add_argument("--arms", default="none,raw,topk,pages")  # also: rawwindows (needs the cargo report, like topk)
     ap.add_argument("--topk-report")
     ap.add_argument("--brain", choices=["fake", "cmd"], default="fake")
     ap.add_argument("--brain-cmd", default=os.environ.get("ALLTERNIT_EVAL_BRAIN_CMD"))
@@ -210,13 +213,13 @@ def main():
 
     arms = [x for x in a.arms.split(",") if x]
     for x in arms:
-        if x not in ("none", "raw", "topk", "pages"):
+        if x not in ("none", "raw", "topk", "rawwindows", "pages"):
             sys.exit(f"unknown arm: {x}")
     fx = json.load(open(a.fixture))
     report = None
-    if "topk" in arms:
+    if "topk" in arms or "rawwindows" in arms:
         if not a.topk_report:
-            sys.exit("arm topk needs --topk-report (the cargo eval report; run.sh makes it)")
+            sys.exit("arms topk and rawwindows need --topk-report (the cargo eval report; run.sh makes it)")
         report = json.load(open(a.topk_report))
     items = load_questions(fx, a.sample, a.seed)
     brain = Brain(a.brain, a.brain_cmd)
@@ -232,6 +235,8 @@ def main():
             return raw_context(c)
         if arm == "topk":
             return topk_context(c, topk_ids(report, c, qa))
+        if arm == "rawwindows":
+            return topk_context(c, topk_ids(report, c, qa, "raw_windows"))
         return pages[c["id"]]
 
     if a.dry:

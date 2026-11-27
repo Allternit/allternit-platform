@@ -6,7 +6,8 @@
 #   tools/memory-eval/run.sh /tmp/locomo-fixture.json [k] [out.json]
 #   tools/memory-eval/run.sh <fixture> --arms none,raw,topk,pages [k] [extra answer_eval.py flags]
 #     E1 answer eval (answer_eval.py): fake brain by default; real runs pass
-#     --brain cmd --brain-cmd 'claude -p'. Cargo runs only if topk is an arm.
+#     --brain cmd --brain-cmd 'claude -p'. Cargo runs only if topk or rawwindows
+#     is an arm (rawwindows = raw past-chat windows, sidecar down; same report).
 #
 # Real runs use the live decision runtime and embedder when set:
 #   ALLTERNIT_S1_URL (default http://127.0.0.1:7717), ALLTERNIT_S1_BACKEND (auto)
@@ -22,7 +23,7 @@ if [[ $# -ge 3 && "$2" == "--arms" ]]; then
   arms="$3"; shift 3
   k=10; [[ $# -ge 1 && "$1" =~ ^[0-9]+$ ]] && { k="$1"; shift; }
   extra=()
-  if [[ ",$arms," == *",topk,"* ]]; then
+  if [[ ",$arms," == *",topk,"* || ",$arms," == *",rawwindows,"* ]]; then
     report="$(mktemp -t memory-eval-report).json"
     ALLTERNIT_MEMORY_EVAL_FIXTURE="$fixture" ALLTERNIT_MEMORY_EVAL_K="$k" ALLTERNIT_MEMORY_EVAL_OUT="$report" \
       cargo test -p allternit-api --lib memory_retrieve::tests::memory_eval_fixture -- --ignored --nocapture >&2

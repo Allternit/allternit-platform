@@ -1,6 +1,16 @@
 //! LoCoMo-style long-conversation QA eval for the retrieve path: the
-//! incumbent hybrid recall vs the S1 pipeline ([`super::retrieve`]), scored
-//! on recall@k, evidence precision and latency.
+//! incumbent hybrid recall vs the S1 pipeline ([`super::retrieve`]) vs the
+//! raw-windows arm ([`super::raw_windows::search`]), scored on recall@k,
+//! evidence precision and latency.
+//!
+//! The `raw_windows` arm runs in its own fresh store: the fixture turns become
+//! `turn_user` observations, are chunked into headed windows by
+//! `memory_index::chunk_pending_observations` (via `index_pending`) and
+//! searched with `raw_windows::search`. With a disabled embed client (the unit
+//! test, the mocked-down sidecar) the order is the fused RRF order. Raw search
+//! returns turns only, so this arm is scored on the questions that have a turn
+//! in their gold evidence, against turn-only gold; `incumbent_on_turns` scores
+//! the incumbent on exactly the same questions and gold for a fair comparison.
 //!
 //! Fixture format (JSON; `fixtures/tiny_locomo.json` is the in-repo one):
 //!
@@ -26,6 +36,7 @@ use std::time::Instant;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
+use super::raw_windows::{self, RawQuery};
 use super::{retrieve, RetrieveConfig};
 use crate::db::DbHandle;
 use crate::memory_index::{self, EmbedClient, InputType};
@@ -95,6 +106,8 @@ pub struct QuestionResult {
     pub incumbent: Vec<String>,
     pub pipeline: Vec<String>,
     pub pipeline_steps: Vec<String>,
+    /// Turn ids from the raw-windows arm (empty when the question has no turn gold).
+    pub raw_windows: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,6 +119,10 @@ pub struct EvalReport {
     pub embedding_model: String,
     pub incumbent: ArmScore,
     pub pipeline: ArmScore,
+    /// Raw past-chat windows, turn-gold questions only (see module docs).
+    pub raw_windows: ArmScore,
+    /// The incumbent on the same questions and turn-only gold as `raw_windows`.
+    pub incumbent_on_turns: ArmScore,
     pub per_question: Vec<QuestionResult>,
 }
 
@@ -173,6 +190,43 @@ fn score(rows: &[(Vec<String>, Vec<String>, f64)]) -> ArmScore {
     }
 }
 
+/// Run the raw-windows arm on a fresh store. Returns, per conversation and
+/// question, the raw turn ids (fixture ids) in search order and the latency.
+async fn raw_windows_arm(fixture: &Fixture, embed: &EmbedClient, k: usize) -> Result<Vec<(Vec<String>, f64)>, kernel::MemoryKernelError> {
+    let raw_db = DbHandle::new_memory()?;
+    for c in &fixture.conversations {
+        let user = user_of(&c.id);
+        for t in &c.turns {
+            let text = match &t.speaker {
+                Some(s) => format!("{s}: {}", t.text),
+                None => t.text.clone(),
+            };
+            let conn = raw_db.connect()?;
+            conn.execute(
+                "INSERT INTO memory_observations (id, user_id, session_id, kind, content, source) VALUES (?1, ?2, ?3, 'turn_user', ?4, 'eval')",
+                params![format!("{}::{}", c.id, t.id), user, t.session, text],
+            )?;
+        }
+    }
+    for _ in 0..200 {
+        let r = memory_index::index_pending(&raw_db, embed, 256).await.map_err(kernel::MemoryKernelError::Internal)?;
+        if r.chunked == 0 && r.embedded == 0 {
+            break;
+        }
+    }
+    let mut out = vec![];
+    for c in &fixture.conversations {
+        for qa in &c.qa {
+            let t = Instant::now();
+            let q = RawQuery { query: qa.question.clone(), limit: Some(k), ..Default::default() };
+            let res = raw_windows::search(&raw_db, embed, &user_of(&c.id), q).await.map_err(|e| kernel::MemoryKernelError::Internal(e.to_string()))?;
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            out.push((strip(&c.id, res.turns.into_iter().map(|t| t.observation_id)), ms));
+        }
+    }
+    Ok(out)
+}
+
 /// Run the eval on a fresh store. `embed` embeds queries (hash fallback when
 /// it has no URL; with a URL the stored targets are re-indexed first).
 pub async fn run_eval(db: &DbHandle, fixture: &Fixture, s1: &S1Client, embed: &EmbedClient, k: usize) -> Result<EvalReport, kernel::MemoryKernelError> {
@@ -186,12 +240,17 @@ pub async fn run_eval(db: &DbHandle, fixture: &Fixture, s1: &S1Client, embed: &E
             }
         }
     }
+    let mut raw_results = raw_windows_arm(fixture, embed, k).await?.into_iter();
     let cfg = RetrieveConfig::with_k(k);
     let (mut inc_rows, mut pipe_rows, mut per_question) = (vec![], vec![], vec![]);
+    let (mut raw_rows, mut inc_turn_rows) = (vec![], vec![]);
     let mut model = String::new();
     for c in &fixture.conversations {
         let user = user_of(&c.id);
+        let turn_ids: HashSet<&str> = c.turns.iter().map(|t| t.id.as_str()).collect();
         for (i, qa) in c.qa.iter().enumerate() {
+            let (raw_ids, raw_ms) = raw_results.next().unwrap_or_default();
+            let turn_gold: Vec<String> = qa.evidence.iter().filter(|e| turn_ids.contains(e.as_str())).cloned().collect();
             let q = embed.embed_or_hash(&[qa.question.clone()], InputType::Query).await;
             model = q.model.clone();
             let t = Instant::now();
@@ -202,6 +261,11 @@ pub async fn run_eval(db: &DbHandle, fixture: &Fixture, s1: &S1Client, embed: &E
             let pipe_ids = strip(&c.id, out.evidence.iter().map(|e| e.item.id.clone()));
             inc_rows.push((qa.evidence.clone(), inc_ids.clone(), inc_ms));
             pipe_rows.push((qa.evidence.clone(), pipe_ids.clone(), out.latency_ms as f64));
+            if !turn_gold.is_empty() {
+                let inc_turns: Vec<String> = inc_ids.iter().filter(|x| turn_ids.contains(x.as_str())).cloned().collect();
+                inc_turn_rows.push((turn_gold.clone(), inc_turns, inc_ms));
+                raw_rows.push((turn_gold, raw_ids.clone(), raw_ms));
+            }
             per_question.push(QuestionResult {
                 conversation: c.id.clone(),
                 question: qa.question.clone(),
@@ -209,6 +273,7 @@ pub async fn run_eval(db: &DbHandle, fixture: &Fixture, s1: &S1Client, embed: &E
                 incumbent: inc_ids,
                 pipeline: pipe_ids,
                 pipeline_steps: out.evidence.iter().map(|e| e.step.clone()).collect(),
+                raw_windows: raw_ids,
             });
         }
     }
@@ -220,6 +285,8 @@ pub async fn run_eval(db: &DbHandle, fixture: &Fixture, s1: &S1Client, embed: &E
         embedding_model: model,
         incumbent: score(&inc_rows),
         pipeline: score(&pipe_rows),
+        raw_windows: score(&raw_rows),
+        incumbent_on_turns: score(&inc_turn_rows),
         per_question,
     })
 }
