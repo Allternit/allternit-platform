@@ -1,0 +1,45 @@
+---
+title: 'Your status'
+description: 'GET and PUT /api/v1/me/status: online, autopilot, do not disturb or away, and how a status holds non-urgent pushes.'
+---
+
+A person's status follows them across devices. It is one of four values:
+
+| Status | Meaning |
+|---|---|
+| `online` | The default. Pushes arrive as usual. |
+| `autopilot` | Gizzi keeps working; non-urgent asks wait. |
+| `dnd` | Do not disturb. Non-urgent pushes are held. |
+| `away` | Set by hand; nothing sets it on its own. Non-urgent pushes are held. |
+
+Every status but `online` holds pushes the same way [quiet hours](/api/notifications#quiet-hours) do. See [Status holds pushes](/api/notifications#status-holds-pushes).
+
+## Routes
+
+Clerk session or an `account`-scoped API key. Responses carry `Cache-Control: private, no-store`.
+
+### `GET /api/v1/me/status`
+
+```json
+{ "status": "dnd", "since": "2026-11-26T15:04:05Z" }
+```
+
+`since` is when the status last changed (RFC 3339). With nothing saved, the answer is `{ "status": "online", "since": null }`.
+
+### `PUT /api/v1/me/status`
+
+Body: `{ "status": "online" | "autopilot" | "dnd" | "away" }`. Answers `200` with the same shape as GET. Saving the status you already have keeps its `since`.
+
+| Code | When |
+|---|---|
+| `400` | `{ "error": "status must be online, autopilot, dnd or away" }` for any other value or a body that is not JSON. |
+| `401` | No session or key. |
+
+## Storage
+
+The status is saved in `account_prefs` under the key `user_status` as `{ status, since }`. There is no separate table and no migration.
+
+## Related
+
+- [Notification preferences](/api/notifications)
+- [Settings on desktop](/guides/desktop-settings#your-status)

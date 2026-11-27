@@ -78,6 +78,8 @@ pub mod zoom;
 pub mod account_compute;
 /// Account preferences that follow the person: GET/PUT /api/v1/account/pad-templates.
 pub mod account_prefs;
+/// The person's status (online, autopilot, dnd, away): GET/PUT /api/v1/me/status; holds pushes.
+pub mod me_status;
 pub mod web_search;
 pub mod me_usage;
 pub mod setup_checks;

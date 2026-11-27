@@ -575,6 +575,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Account preferences (project pad templates + per-mode default);
         // Clerk session or `account` API token per-request, never gated on compute.
         .merge(routes::account_prefs::routes())
+        // Status (online / autopilot / dnd / away); dnd, away and autopilot hold non-urgent pushes.
+        .merge(routes::me_status::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())
