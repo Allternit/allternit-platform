@@ -327,6 +327,13 @@ struct ResponseStyleSettingsPage: View {
                 .accessibilityLabel("Style")
             }
 
+            StylePreviewCard(
+                style: preferences.responseStyle,
+                savedStyle: preferences.responseStyle,
+                instructions: instructions,
+                savedInstructions: preferences.customInstructions
+            )
+
             SettingsCardBox {
                 Text("Custom instructions")
                     .font(.system(size: 15, weight: .semibold))

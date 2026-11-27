@@ -300,6 +300,15 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let workdir: String?
         /// This turn's location (the card's Share location). Optional; omitted when nil.
         let client_location: ClientLocation?
+        /// Settings → Response style → Try this style: the style to answer in, unsaved. Omitted when nil.
+        let stylePreview: StylePreview?
+    }
+
+    /// `stylePreview` of a chat send: the on-screen style and custom instructions
+    /// (`response_style` is a `ResponseStyle` raw value).
+    struct StylePreview: Encodable, Sendable, Equatable {
+        let response_style: String
+        let custom_instructions: String
     }
 
     /// `client_location` of a chat send: `at` is RFC 3339 UTC, `time_zone` IANA,
@@ -331,6 +340,32 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// `GET /api/v1/agent-chat/style-preview`: whether this runtime can preview a
+    /// response style, and how many previews are left. Same base and auth as the
+    /// chat stream. A 404 or any other failure throws: the caller hides the card.
+    struct StylePreviewStatus: Decodable, Sendable {
+        let supported: Bool
+        let remaining: Int?
+        let limit: Int?
+    }
+
+    func stylePreviewStatus() async throws -> StylePreviewStatus {
+        guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
+            throw AgentChatClientError.noReachableNode
+        }
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/v1/agent-chat/style-preview"))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.timeoutInterval = 15
+        let (data, response) = try await InstanceConnection.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw APIError.invalidResponse
+        }
+        return try JSONDecoder().decode(StylePreviewStatus.self, from: data)
+    }
+
     /// Sends `text` to the session and streams the response frames.
     ///
     /// `POST /api/agent-chat` on the resolved computer (relay, mesh or
@@ -346,7 +381,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         personInitiated && isForeground ? "person" : nil
     }
 
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil, stylePreview: StylePreview? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -378,7 +413,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         attachments: attachments,
                         metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets", turn: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil), image_prompt: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil) == nil ? nil : imagePrompt.flatMap { (1...16000).contains($0.utf16.count) ? $0 : nil }),
                         workdir: workdir,
-                        client_location: clientLocation
+                        client_location: clientLocation,
+                        stylePreview: stylePreview
                     ))
 
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)
