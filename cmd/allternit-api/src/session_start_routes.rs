@@ -39,7 +39,7 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use allternit_terminal_service::start::{
-    build_options, FolderCandidate, Mode, OptionsInput, Planned, RuntimeModes, StartArgvFn, StartCtx, StartDevice,
+    build_options, FolderCandidate, Mode, OptionsInput, Planned, RuntimeModes, StartCtx, StartDevice,
     StartError, StartFolder, StartGuards, StartOptions, StartPlan, StartRequest, StartResponse, ENGINE_RUNTIME,
 };
 
@@ -115,7 +115,6 @@ pub struct Facts {
     pub signed_out: HashSet<String>,
     pub modes: BTreeMap<String, RuntimeModes>,
     pub folders: Vec<StartFolder>,
-    pub start_argv: StartArgvFn,
 }
 
 fn device() -> StartDevice {
@@ -195,7 +194,7 @@ async fn installed_runtimes(engine_up: bool) -> (HashSet<String>, HashSet<String
             if entry["signedIn"].as_bool() == Some(false) {
                 signed_out.insert(id.clone());
             }
-        } else if allternit_factory_engine::agents::harness_table::start_argv(id, None, None)
+        } else if allternit_terminal_service::harness_modes::start_argv(id, None, None)
             .is_some_and(|(argv, _)| argv.first().is_some_and(|p| on_path(p)))
         {
             installed.insert(id.clone());
@@ -231,7 +230,6 @@ async fn gather(state: &AppState, headers: &HeaderMap) -> (StartOptions, Facts) 
         candidates,
         runtimes,
         home,
-        mode_flags: allternit_factory_engine::agents::harness_table::mode_flags,
     };
     let options = tokio::task::spawn_blocking(move || build_options(input)).await.unwrap_or_else(|_| StartOptions {
         device: dev.clone(),
@@ -245,7 +243,6 @@ async fn gather(state: &AppState, headers: &HeaderMap) -> (StartOptions, Facts) 
         signed_out,
         modes: options.modes.clone(),
         folders: options.folders.clone(),
-        start_argv: allternit_factory_engine::agents::harness_table::start_argv,
     };
     (options, facts)
 }
@@ -325,7 +322,6 @@ where
             modes: &facts.modes,
             folders: &facts.folders,
             git_resolver: None,
-            start_argv: facts.start_argv,
         };
         guards.plan(device_id, idempotency_key, req, &ctx)
     };
@@ -496,23 +492,6 @@ mod tests {
     const REQ_PATH: &str = include_str!("../../../docs/contracts/session-start/start.request.path.json");
     const RES_TERMINAL: &str = include_str!("../../../docs/contracts/session-start/start.response.terminal.json");
 
-    fn fake_start_argv(rt: &str, mode: Option<&str>, prompt: Option<&str>) -> Option<(Vec<String>, bool)> {
-        if rt != "claude" {
-            return None;
-        }
-        let mut argv = vec!["claude".to_string()];
-        if let Some(m) = mode {
-            argv.extend(["--permission-mode".to_string(), m.to_string()]);
-        }
-        Some(match prompt {
-            Some(p) => {
-                argv.push(p.to_string());
-                (argv, true)
-            }
-            None => (argv, false),
-        })
-    }
-
     fn facts(dir: &Path) -> Facts {
         let mut modes = BTreeMap::new();
         modes.insert("claude".to_string(), RuntimeModes { default: Mode::Default, supported: Mode::ALL.to_vec() });
@@ -522,7 +501,6 @@ mod tests {
             signed_out: HashSet::new(),
             modes,
             folders: vec![StartFolder { path: dir.to_string_lossy().into_owned(), name: "x".into(), last_used_at: String::new(), git: None }],
-            start_argv: fake_start_argv,
         }
     }
 
