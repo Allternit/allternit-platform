@@ -19,7 +19,7 @@
  * | none.
  */
 import * as React from 'react'
-import { useState, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Box, Text, useAnimationFrame, useInput } from '../ink'
 import { useMainLoopModel } from '../hooks/useMainLoopModel'
 import { useSettings } from '../hooks/useSettings'
@@ -31,6 +31,8 @@ import { getLogoDisplayData } from '../utils/logoV2Utils'
 import { type ActiveBotChat, getActiveBotChat, getSessionId, onActiveBotChatChange } from '../bootstrap/state'
 import { inlineImageBlock } from '../ink/inlineImage'
 import { CORAL, VISOR, type ArtRow, type MascotSize, mascotRows, wordmarkRows, WORDMARK_VERSION_ROW } from './welcomeArt'
+import { getGlobalConfig, saveGlobalConfig } from '../utils/config'
+import { loadChangelogForWhatsNew, whatsNewHighlights } from '../utils/releaseNotes'
 import { GIZZI_MASCOT_ASPECT, GIZZI_MASCOT_PNG } from './gizziMascotImage'
 
 export type HeaderArt = 'auto' | 'image' | 'blocks' | 'none'
@@ -147,12 +149,42 @@ function BlockMascot({ size, animate }: { size: MascotSize; animate: boolean }):
   )
 }
 
+/**
+ * Highlight lines for the first launch on a new version. The version is
+ * recorded as seen right away, so the next launch shows nothing. Never
+ * blocks the header: lines appear when the changelog has loaded.
+ */
+export function useWhatsNew(version: string, enabled: boolean): string[] {
+  const [lines, setLines] = useState<string[]>([])
+  useEffect(() => {
+    let live = true
+    const lastSeen = getGlobalConfig().lastReleaseNotesSeen
+    if (lastSeen === version) return
+    const record = () => saveGlobalConfig(c => (c.lastReleaseNotesSeen === version ? c : { ...c, lastReleaseNotesSeen: version }))
+    if (!enabled || !lastSeen) {
+      record()
+      return
+    }
+    void loadChangelogForWhatsNew()
+      .then(changelog => {
+        if (live) setLines(whatsNewHighlights(changelog, version, lastSeen, enabled))
+      })
+      .catch(() => {})
+      .finally(record)
+    return () => {
+      live = false
+    }
+  }, [version, enabled])
+  return lines
+}
+
 export function WelcomeBox({ animate = true }: { animate?: boolean }): React.ReactNode {
   const botChat = useSyncExternalStore(onActiveBotChatChange, getActiveBotChat)
   const model = useMainLoopModel()
   const { version, cwd } = getLogoDisplayData()
   const settings = useSettings()
   const { columns, rows: termRows } = useTerminalSize()
+  const whatsNew = useWhatsNew(version, settings.showWhatsNew !== false)
   const mode = headerArtMode(process.env, settings.headerArt)
   const canAnimate = headerCanAnimate(process.env, !!process.stdout.isTTY, settings.prefersReducedMotion ?? false)
 
@@ -187,6 +219,14 @@ export function WelcomeBox({ animate = true }: { animate?: boolean }): React.Rea
             <Text wrap={wrap}>{value}</Text>
           </Box>
         ))}
+        {whatsNew.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor={true}>What's new in {version} (/release-notes for more)</Text>
+            {whatsNew.map((line, i) => (
+              <Text key={i} dimColor={true} wrap="truncate-end">· {line}</Text>
+            ))}
+          </Box>
+        )}
       </Box>
     </Box>
   )
