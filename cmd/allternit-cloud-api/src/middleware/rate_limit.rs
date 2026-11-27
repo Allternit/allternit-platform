@@ -61,6 +61,12 @@ impl RateLimiter {
     /// Check if a request is allowed
     /// Returns Ok(RateLimitInfo) if allowed, Err(RateLimitInfo) if rate limited
     pub async fn check(&self, client_id: &str) -> Result<RateLimitInfo, RateLimitInfo> {
+        self.check_with_limit(client_id, self.config.requests_per_minute).await
+    }
+
+    /// [`Self::check`] with a per-call limit for this window (the open-lane
+    /// limiter gives research accounts a higher one under the same key).
+    pub async fn check_with_limit(&self, client_id: &str, limit: u32) -> Result<RateLimitInfo, RateLimitInfo> {
         let now = Instant::now();
         let mut clients = self.clients.write().await;
 
@@ -79,10 +85,10 @@ impl RateLimiter {
         }
 
         // Check limit
-        if entry.count >= self.config.requests_per_minute {
-            let reset_after = self.config.window - now.duration_since(entry.window_start);
+        if entry.count >= limit {
+            let reset_after = self.config.window.saturating_sub(now.duration_since(entry.window_start));
             let info = RateLimitInfo {
-                limit: self.config.requests_per_minute,
+                limit,
                 remaining: 0,
                 reset_after,
             };
@@ -92,11 +98,11 @@ impl RateLimiter {
         // Allow request
         entry.count += 1;
 
-        let remaining = self.config.requests_per_minute - entry.count;
-        let reset_after = self.config.window - now.duration_since(entry.window_start);
+        let remaining = limit - entry.count;
+        let reset_after = self.config.window.saturating_sub(now.duration_since(entry.window_start));
 
         let info = RateLimitInfo {
-            limit: self.config.requests_per_minute,
+            limit,
             remaining,
             reset_after,
         };
@@ -218,6 +224,78 @@ pub fn create_rate_limiter(config: RateLimitConfig) -> Arc<RateLimiter> {
     limiter
 }
 
+/// Default open-lane requests per minute per user (`OPEN_LANE_RPM`).
+pub const OPEN_LANE_DEFAULT_RPM: u32 = 30;
+/// Research accounts get this many times the open-lane limit unless
+/// `OPEN_LANE_RESEARCH_RPM` sets it.
+pub const OPEN_LANE_RESEARCH_FACTOR: u32 = 4;
+
+/// Per-user open-lane limits: (standard, research) requests per minute.
+/// `OPEN_LANE_RPM` (default 30) and `OPEN_LANE_RESEARCH_RPM` (default 4×
+/// the standard limit). A zero or unparsable value falls back to the default.
+pub fn open_lane_limits() -> (u32, u32) {
+    let read = |name: &str| std::env::var(name).ok().and_then(|v| v.trim().parse::<u32>().ok()).filter(|v| *v > 0);
+    let standard = read("OPEN_LANE_RPM").unwrap_or(OPEN_LANE_DEFAULT_RPM);
+    let research = read("OPEN_LANE_RESEARCH_RPM").unwrap_or(standard.saturating_mul(OPEN_LANE_RESEARCH_FACTOR));
+    (standard, research)
+}
+
+/// The open-lane limiter: one fixed window per user (key `open:<user id>`),
+/// separate from the per-token limiter on every route. Process-wide, so it
+/// needs no `ApiState` field; stale windows are dropped as it grows.
+pub fn open_lane_limiter() -> &'static RateLimiter {
+    static LIMITER: std::sync::OnceLock<RateLimiter> = std::sync::OnceLock::new();
+    LIMITER.get_or_init(|| {
+        RateLimiter::new(RateLimitConfig {
+            requests_per_minute: OPEN_LANE_DEFAULT_RPM,
+            window: Duration::from_secs(60),
+        })
+    })
+}
+
+/// Count one open-lane request for this user. `Err` carries the 429 to send
+/// (before any stream starts).
+pub async fn check_open_lane(limiter: &RateLimiter, user_id: &str, research: bool) -> Result<RateLimitInfo, Response> {
+    check_open_lane_with(limiter, user_id, research, open_lane_limits()).await
+}
+
+async fn check_open_lane_with(
+    limiter: &RateLimiter,
+    user_id: &str,
+    research: bool,
+    (standard, research_limit): (u32, u32),
+) -> Result<RateLimitInfo, Response> {
+    let limit = if research { research_limit } else { standard };
+    if limiter.clients.read().await.len() > 10_000 {
+        limiter.cleanup().await;
+    }
+    limiter
+        .check_with_limit(&format!("open:{user_id}"), limit)
+        .await
+        .map_err(|info| open_rate_limited_response(&info))
+}
+
+/// 429 `open_rate_limited` with `Retry-After` and the rate limit headers.
+pub fn open_rate_limited_response(info: &RateLimitInfo) -> Response {
+    let retry_after = info.reset_after.as_secs().max(1);
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_error",
+            "code": "open_rate_limited",
+            "message": "Too many open-model requests. Try again in a minute.",
+            "retry_after": retry_after,
+        }
+    });
+    let mut response = (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(axum::http::header::RETRY_AFTER, retry_after.to_string())],
+        axum::Json(body),
+    )
+        .into_response();
+    info.add_headers(&mut response);
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +329,36 @@ mod tests {
             "0"
         );
         assert!(response.headers().contains_key("X-RateLimit-Reset"));
+    }
+
+    /// Open-lane limit per user: a research account gets more requests in
+    /// the same minute than a standard one (default 4x), and the refusal is
+    /// the JSON 429 `open_rate_limited`.
+    #[tokio::test]
+    async fn open_lane_limiter_gives_research_accounts_more() {
+        async fn allowed(limiter: &RateLimiter, user: &str, research: bool, limits: (u32, u32)) -> u32 {
+            let mut n = 0;
+            while check_open_lane_with(limiter, user, research, limits).await.is_ok() {
+                n += 1;
+                assert!(n < 1_000, "no limit");
+            }
+            n
+        }
+        if std::env::var("OPEN_LANE_RPM").is_err() && std::env::var("OPEN_LANE_RESEARCH_RPM").is_err() {
+            assert_eq!(open_lane_limits(), (30, 120));
+        }
+        let limiter = RateLimiter::new(RateLimitConfig::default());
+        assert_eq!(allowed(&limiter, "user_std", false, (30, 120)).await, 30);
+        assert_eq!(allowed(&limiter, "user_red", true, (30, 120)).await, 120);
+
+        let response = check_open_lane_with(&limiter, "user_std", false, (30, 120)).await.unwrap_err();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(response.headers().contains_key(axum::http::header::RETRY_AFTER));
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            (body["error"]["type"].as_str(), body["error"]["code"].as_str()),
+            (Some("rate_limit_error"), Some("open_rate_limited"))
+        );
     }
 }

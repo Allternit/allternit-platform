@@ -506,6 +506,30 @@ mod pricing {
         std::env::remove_var("INFERENCE_MARKUP");
     }
 
+    /// D11: Open Research rows (listed and their hidden backup) are left out
+    /// of the model list for an account without the flag, and listed for one
+    /// with it.
+    #[tokio::test]
+    async fn research_rows_are_listed_only_for_research_accounts() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let ablit = StubProvider::serving(super::super::catalog::OPEN_ABLIT_PROVIDER, &["abliterated-model-large-v2"], None);
+        let venice = StubProvider::serving(
+            super::super::catalog::OPEN_VENICE_PROVIDER,
+            &["olafangensan-glm-4.7-flash-heretic", "abliteration-abliterated-model-large-v2"],
+            None,
+        );
+        let router = ModelRouter::new(vec![ablit, venice], starter_catalog());
+        let ids = |models: Vec<ModelInfo>| models.into_iter().map(|m| m.id).collect::<Vec<_>>();
+
+        let public = ids(router.list_models_for(false).await);
+        assert!(public.contains(&"glm-4.7-flash-open".to_string()), "plan open rows stay: {public:?}");
+        assert!(!public.iter().any(|id| id == "open-large-research" || id == "open-failover-large-research"), "{public:?}");
+
+        let research = router.list_models_for(true).await;
+        let row = research.iter().find(|m| m.id == "open-large-research").expect("research row listed");
+        assert_eq!(row.extra["open"]["access"], "research");
+    }
+
     #[tokio::test]
     async fn open_lane_markup_env_is_clamped_to_five() {
         let _guard = ENV_LOCK.lock().unwrap();

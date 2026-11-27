@@ -7,8 +7,9 @@
 //!   terms for the current AUP version (403 `open_lane_terms_required`), the
 //!   Allternit Open entitlement (`services::open_entitlement`: 402
 //!   `open_plan_required` on Free, 402 `open_lane_requires_credits` when the
-//!   allowance or bought credits ran out, 403 `open_research_required`) and
-//!   a clean hard-line check (400
+//!   allowance or bought credits ran out, 403 `open_research_required`), the
+//!   per-user open-lane rate limit (429 `open_rate_limited`; `OPEN_LANE_RPM`,
+//!   research accounts `OPEN_LANE_RESEARCH_RPM`) and a clean hard-line check (400
 //!   `content_policy_hard_line`, or 503 `open_lane_moderation_unavailable`
 //!   when moderation cannot run: fail closed).
 //! - [`plan_handoff`] + [`chat_with_handoff`]: with handoff on, a frontier
@@ -176,6 +177,14 @@ pub async fn guard_open_request(
     }
     if let Some(refused) = open_entitlement::refusal(&open_models) {
         return Ok(Some(refused));
+    }
+    // Per-user open-lane rate limit (research accounts get the higher tier):
+    // 429 `open_rate_limited`, before any stream.
+    let limiter = crate::middleware::rate_limit::open_lane_limiter();
+    if let Err(limited) =
+        crate::middleware::rate_limit::check_open_lane(limiter, user_id, open_models.entitlement.research).await
+    {
+        return Ok(Some(limited));
     }
     Ok(hard_line_gate(state, user_id, request).await.err())
 }

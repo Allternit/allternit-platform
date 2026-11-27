@@ -53,9 +53,13 @@ pub struct ModelListResponse {
 /// `hidden: true` (pickers skip them; saved ids still route). Enriched with
 /// live upstream metadata when providers are healthy. A signed-in person whose
 /// Claude organization is linked also gets `linked/claude/<model>` rows
-/// (`billed_to: "claude_org"`, group `"Claude organization"`), last.
+/// (`billed_to: "claude_org"`, group `"Claude organization"`), last. Open
+/// Research (`research_only`) rows are listed only to a signed-in caller with
+/// the research flag (contract D11).
 pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Json<ModelListResponse>, ApiError> {
-    let mut models = state.model_router.list_models().await;
+    // Open Research rows only for a signed-in caller with the flag (D11).
+    let research = caller_has_open_research(&state, &headers).await;
+    let mut models = state.model_router.list_models_for(research).await;
     // A disabled shared pool is refused by chat_completions. Do not offer its
     // models in the apps' picker either. Unseeded providers keep the existing
     // catalog behavior; this only honors an explicit operator disable.
@@ -73,6 +77,23 @@ pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap)
         object: "list".to_string(),
         data: models,
     }))
+}
+
+/// Whether the caller of `GET /v1/models` has the Open Research flag. No
+/// token, a token that does not resolve, or a failed lookup all mean no.
+async fn caller_has_open_research(state: &ApiState, headers: &HeaderMap) -> bool {
+    if headers.get(axum::http::header::AUTHORIZATION).is_none() {
+        return false;
+    }
+    let Ok(user) = crate::auth::resolve::resolve_user(&state.db, headers).await else {
+        return false;
+    };
+    crate::routes::admin_open_lane::research_enabled(&state.db, &user.id)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::debug!(%error, "open research lookup for the model list failed; listing none");
+            false
+        })
 }
 
 /// Response header naming the request; the same id is on its `inference_usage` row.

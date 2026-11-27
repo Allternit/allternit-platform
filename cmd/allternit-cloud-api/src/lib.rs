@@ -640,6 +640,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::admin_customers::routes())
         // Upstream funding coverage (admin only): provider balances, burn, wallet liability.
         .merge(routes::admin_funding::routes())
+        .merge(routes::admin_open_lane::routes())
         .merge(routes::admin_voice_billing::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that

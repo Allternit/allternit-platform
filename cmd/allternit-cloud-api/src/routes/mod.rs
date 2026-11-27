@@ -27,6 +27,7 @@ pub mod billing_payment_methods;
 pub mod billing_plan_change;
 pub mod admin_customers;
 pub mod admin_funding;
+pub mod admin_open_lane;
 pub mod admin_voice_billing;
 pub mod billing_store;
 pub mod billing_subscriptions;
