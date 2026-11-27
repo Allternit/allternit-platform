@@ -283,6 +283,11 @@ final class ShellSessionsStore: ObservableObject {
         sessions.filter { $0.active && !$0.archived && Self.belongs($0, to: mode) }
     }
 
+    /// Open sessions for the drawer's Recents preview (Home adds code + terminal).
+    func recentSessions(for mode: ShellMode) -> [AgentSession] {
+        sessions.filter { $0.active && !$0.archived && Self.belongsToRecents($0, mode: mode) }
+    }
+
     /// Sessions that belong to a mode's drawer. Bot sessions (with an
     /// `agent_id`) live in Bots; Code and ACI keep their own surfaces;
     /// incognito sessions are excluded server-side.
@@ -298,6 +303,13 @@ final class ShellSessionsStore: ObservableObject {
         case .aci:
             return session.agentId == nil && surface == "browser"
         }
+    }
+
+    /// Home's Recents list: chats plus code and terminal sessions (iOS has no
+    /// extra rail tab for them). Bots, browser and image sessions stay out.
+    static func belongsToRecents(_ session: AgentSession, mode: ShellMode) -> Bool {
+        if mode == .home { return belongs(session, to: .home) || belongs(session, to: .code) }
+        return belongs(session, to: mode)
     }
 
     static func timestamp(of record: AgentSession) -> Date {
