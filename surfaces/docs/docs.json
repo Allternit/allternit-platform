@@ -421,6 +421,7 @@
               "operations/cloud-computer-terminals",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
+              "operations/open-lane-upstreams",
               "operations/claude-linked-billing",
               "operations/database-migrations",
               "operations/store-billing",
