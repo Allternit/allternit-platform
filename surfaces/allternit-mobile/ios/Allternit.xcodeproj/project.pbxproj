@@ -576,6 +576,7 @@
 		921131E004A2FEBF67F0F012 /* ArtifactCollabRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45DC9DCDFA78B094CADB5ABF /* ArtifactCollabRulesTests.swift */; };
 		92683B829B636F17D1B26FED /* OnYourComputer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01952C2C099D7536A35E0A3D /* OnYourComputer.swift */; };
 		92A68179A6DD14F7DE04E682 /* TeamMapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28A41C0D304362E129E9EC6E /* TeamMapSheet.swift */; };
+		9306795F194522E969FA4327 /* OfficeSignRequests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84616454052F81389B49BA32 /* OfficeSignRequests.swift */; };
 		930C1204768B15212990D2E1 /* ArtifactTemplateCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAA96AC0F8A8915F6B702DF /* ArtifactTemplateCatalog.swift */; };
 		9318ED9B6A5A6B72F1240BF6 /* WebhookTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 202DAEFD590DACDF8429BB4A /* WebhookTrigger.swift */; };
 		93268B9EABC62F8BC790B16F /* ArtifactDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15187B0C77E90FFBEE394F9A /* ArtifactDetailsView.swift */; };
@@ -858,6 +859,7 @@
 		D4FEDC20AB6135E84B005FE8 /* ChannelConnectFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769A45F0D8CAFD27DA0864DA /* ChannelConnectFlows.swift */; };
 		D50AD8ED55A115423F584718 /* LiveScreenPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34F590B9CDCC3ED66535CD9 /* LiveScreenPacket.swift */; };
 		D56A02E237B34A8277D1AD67 /* FreeweightsBrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD3451741429A76C898889B /* FreeweightsBrowseView.swift */; };
+		D58739EFEB5D38D565516B44 /* SignFlight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78A5FC76CA6E8D026BFA014D /* SignFlight.swift */; };
 		D642946A4F9D75A64269D90C /* ContextUsageMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69F5A35B9CCBC47EE3A7F17 /* ContextUsageMeter.swift */; };
 		D71588443F0CE7D3B0997286 /* StatusIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17AA47FC9C8EFA2D7A77BEF6 /* StatusIntents.swift */; };
 		D731DA00E2ABCAC5EA9A1FF6 /* ACIComputersPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B32E0565DA7953C599388DC /* ACIComputersPane.swift */; };
@@ -878,6 +880,7 @@
 		D9DFCEE891267CBBCCBF712A /* AgentRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DC1AEC3708DB2C11B17049 /* AgentRecord.swift */; };
 		DA1A2207E7443B91830C5201 /* TreeSitterJSONRunestone in Frameworks */ = {isa = PBXBuildFile; productRef = 4A6959650845F80661F257D9 /* TreeSitterJSONRunestone */; };
 		DA1B9EB7B8E925662446940B /* OutboxStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134EECE81F53DFAD7A3B0703 /* OutboxStore.swift */; };
+		DA45BDD000884D3637DAAF00 /* SignSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EB25DC4E0B5564663EF518A /* SignSheetView.swift */; };
 		DA85BE803EDFBD20EE521CBD /* NativeSessionPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7897BA4CEED5704C356EB36 /* NativeSessionPickerSheet.swift */; };
 		DA8E5E3F97BF180FF12F4236 /* FileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B762E812CA8460287DD6E2 /* FileClient.swift */; };
 		DAB4C4CE148D666956A43236 /* DeviceRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80F54887C9A58E66A39468F9 /* DeviceRuntime.swift */; };
@@ -949,6 +952,7 @@
 		E943C5BA93912B948A764F2B /* AnswerCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E542B079D18F528FE88BF7D5 /* AnswerCardView.swift */; };
 		E949F4453779DBD9E7181285 /* SherpaOnnx.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F1773539996DD0C8EB6E726 /* SherpaOnnx.swift */; };
 		E965F689BBDE53F59EDB6272 /* phone-actions-catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 4D6C3C30CABEDA1115D6754B /* phone-actions-catalog.json */; };
+		E9D86694D15A5DB701F9A123 /* SignRequestsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BDD96161865CCB4BD23045C /* SignRequestsClient.swift */; };
 		EA32C2163D2CF4E1EC5CC82A /* ArtifactCreateTileArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6A3E6D3C429D37B634CA69 /* ArtifactCreateTileArt.swift */; };
 		EA9301995475DDBFA1E030FD /* NSItemProvider+Sendable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 375F39975C2EAC3E0F16B6C6 /* NSItemProvider+Sendable.swift */; };
 		EB20AD81DCE4D386834E7DBF /* AppearanceClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87918A785F9680BF0238ED4D /* AppearanceClientTests.swift */; };
@@ -1238,6 +1242,7 @@
 		1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanUsageViews.swift; sourceTree = "<group>"; };
 		1BBD80F6F20C67C0DDB49E2D /* CloudComputerBackupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudComputerBackupsView.swift; sourceTree = "<group>"; };
 		1BC8E0890D7AD3D1C92BF88E /* OnDeviceChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceChat.swift; sourceTree = "<group>"; };
+		1BDD96161865CCB4BD23045C /* SignRequestsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignRequestsClient.swift; sourceTree = "<group>"; };
 		1BE26B3847C60D42E557B025 /* ProviderQuotaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderQuotaStore.swift; sourceTree = "<group>"; };
 		1C8611909BEA72D6C4B40E84 /* WaitingGamesViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingGamesViews.swift; sourceTree = "<group>"; };
 		1C8B054DE7A97A50E230D1A0 /* TerminalSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionView.swift; sourceTree = "<group>"; };
@@ -1362,6 +1367,7 @@
 		3DB2E3DF6A2107EAB522AD10 /* ConnectedInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectedInventory.swift; sourceTree = "<group>"; };
 		3DB3BAD01993CC3ACFBFC483 /* RoutinesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutinesListView.swift; sourceTree = "<group>"; };
 		3E7C13AD1FFEE08963C96D49 /* FileProviderThumbnails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderThumbnails.swift; sourceTree = "<group>"; };
+		3EB25DC4E0B5564663EF518A /* SignSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignSheetView.swift; sourceTree = "<group>"; };
 		3EC6EDF88BCC99A466446F44 /* DelegateIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DelegateIntents.swift; sourceTree = "<group>"; };
 		3EF3E6CB22B1956772D26915 /* OnYourComputerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnYourComputerTests.swift; sourceTree = "<group>"; };
 		3F0CADD76BDEA330E8EBD079 /* BotProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProfile.swift; sourceTree = "<group>"; };
@@ -1571,6 +1577,7 @@
 		781D0BC4A1B73C4F3B6E657C /* InappCallsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InappCallsClient.swift; sourceTree = "<group>"; };
 		782BFEC21911C78EC0D20C81 /* BotLiveStageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotLiveStageView.swift; sourceTree = "<group>"; };
 		789BAD46979B02B1781A9877 /* SketchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchSheet.swift; sourceTree = "<group>"; };
+		78A5FC76CA6E8D026BFA014D /* SignFlight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignFlight.swift; sourceTree = "<group>"; };
 		78D21F572A23DB068D491E98 /* AndroidScreenPairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AndroidScreenPairingView.swift; sourceTree = "<group>"; };
 		7959298E056A4522F8E31F23 /* VoiceVendorClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceVendorClientTests.swift; sourceTree = "<group>"; };
 		7A793554DC89DC569DC63D16 /* BotThreadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotThreadsView.swift; sourceTree = "<group>"; };
@@ -1607,6 +1614,7 @@
 		83642E860F4B4CCD8717B707 /* StageBackdropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageBackdropView.swift; sourceTree = "<group>"; };
 		8442CAA3F7B05E525E0C0A8B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8459DCBDC8777D04BF8EC4EB /* ReplyItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyItem.swift; sourceTree = "<group>"; };
+		84616454052F81389B49BA32 /* OfficeSignRequests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeSignRequests.swift; sourceTree = "<group>"; };
 		84954A7AD8D9EBD5D88D85BE /* RuntimeOperationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeOperationsView.swift; sourceTree = "<group>"; };
 		84B28CE671F7453200BD7F1D /* PhoneLiveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLiveClient.swift; sourceTree = "<group>"; };
 		84FC33C4E8CA18AFE3DD8E0E /* CoworkSessionWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSessionWorkspaceView.swift; sourceTree = "<group>"; };
@@ -2152,6 +2160,15 @@
 
 /* Begin PBXGroup section */
 		043FE374BFF2397B563A1CFB /* AgentActivity */ = {
+		DBCDE03C105B7155FB7ABA7B /* Sign */ = {
+			isa = PBXGroup;
+			children = (
+				78A5FC76CA6E8D026BFA014D /* SignFlight.swift */,
+				3EB25DC4E0B5564663EF518A /* SignSheetView.swift */,
+			);
+			path = Sign;
+			sourceTree = "<group>";
+		};
 			isa = PBXGroup;
 			children = (
 				08EF65A41B6F1EBDF87CE6E0 /* Views */,
@@ -2679,6 +2696,7 @@
 				911196A39D8A67BB5E5EA66C /* RuntimeRegistryClient.swift */,
 				C0D4BEE0701D19103CFFAD85 /* RuntimeRelayClient.swift */,
 				66D32A152B8E7658FE8E4F00 /* SessionDiffClient.swift */,
+				1BDD96161865CCB4BD23045C /* SignRequestsClient.swift */,
 				50D82FD8AABF7FA6BC2E6191 /* SSHConnectionsClient.swift */,
 				B780878BA183E3FB9A32E88E /* StudioJobsClient.swift */,
 				2FD5CC652F9A69791193C138 /* SubagentTypesClient.swift */,
@@ -3408,6 +3426,7 @@
 				DDFF322C789AF15F6EA00CA3 /* Settings */,
 				E2BF9C779B009F5AE04D3BF5 /* Shared */,
 				4431FD8EF1C83643023BBA51 /* Shell */,
+				DBCDE03C105B7155FB7ABA7B /* Sign */,
 				ACB20C52F9852C15C306DD96 /* WaitingGames */,
 			);
 			path = Features;
@@ -3772,6 +3791,7 @@
 				01B836EFA8893696CDA4226F /* OfficeFloorFeedV2.swift */,
 				F6F22A05812B613CE705297C /* OfficeFloorView.swift */,
 				4605743A1735AEE441B9A314 /* OfficeNeedPill.swift */,
+				84616454052F81389B49BA32 /* OfficeSignRequests.swift */,
 				2172C40650990D8FA263334B /* OfficeThreadSheet.swift */,
 			);
 			path = Floor;
@@ -5157,6 +5177,7 @@
 				7FB27D68215A937A03B4378D /* OfficeFloorFeedV2.swift in Sources */,
 				EB364C73092EBB4B584E3A1A /* OfficeFloorView.swift in Sources */,
 				4AAC09A4BB105F12534E9269 /* OfficeNeedPill.swift in Sources */,
+				9306795F194522E969FA4327 /* OfficeSignRequests.swift in Sources */,
 				1D69E04EEF565FACB38919BE /* OfficeThreadSheet.swift in Sources */,
 				0CE7D148C48E80BCE85CE790 /* OnDeviceBudget.swift in Sources */,
 				F55E828A15258ECDD085BF17 /* OnDeviceChat.swift in Sources */,
@@ -5273,6 +5294,9 @@
 				FCD226BE42D8C4C91A346B22 /* RuntimeRegistryClient.swift in Sources */,
 				6D4EF2351CEB1D78517E7B10 /* RuntimeRelayClient.swift in Sources */,
 				9883113ED00D20A197EDA578 /* RuntimesConnectionsSection.swift in Sources */,
+				D58739EFEB5D38D565516B44 /* SignFlight.swift in Sources */,
+				E9D86694D15A5DB701F9A123 /* SignRequestsClient.swift in Sources */,
+				DA45BDD000884D3637DAAF00 /* SignSheetView.swift in Sources */,
 				F6022FC728BF78F17BBA5896 /* SSEParser.swift in Sources */,
 				F9C4E2F6EB612BA2F911BE62 /* SSHConnectionModels.swift in Sources */,
 				1A2E039435D58C00CA648C59 /* SSHConnectionsClient.swift in Sources */,
