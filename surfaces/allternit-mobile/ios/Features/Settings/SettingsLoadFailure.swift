@@ -101,22 +101,27 @@ struct SettingsFailureView: View {
         case .signedOut:
             SettingsSignedOutView(message: "Sign in to see \(subject).")
         case .computerOffline where failure.isNoComputer:
-            FriendlyInlineStateView(
+            FriendlyStateView(
                 style: .empty,
                 icon: "desktopcomputer",
                 title: CalmCopy.noComputer,
                 message: CalmCopy.noComputerDetail,
                 actionTitle: "Try again",
-                action: retry
+                action: retry,
+                art: .connectScene,
+                size: .panel
             )
         case .computerOffline:
-            FriendlyInlineStateView(
-                style: .offline,
-                icon: "desktopcomputer.trianglebadge.exclamationmark",
+            // The asleep Connect scene (UI feedback I15, I17, I18).
+            FriendlyStateView(
+                style: .empty,
+                icon: "desktopcomputer",
                 title: "Your computer is offline",
                 message: failure.message,
                 actionTitle: "Try again",
-                action: retry
+                action: retry,
+                art: .connectScene,
+                size: .panel
             )
         case .offline:
             FriendlyInlineStateView(

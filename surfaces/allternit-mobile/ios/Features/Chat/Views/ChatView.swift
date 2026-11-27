@@ -377,7 +377,7 @@ struct ChatContentView: View {
         .sheet(isPresented: $isShareLinkPresented) {
             ThreadShareSheet(
                 sessionId: viewModel.currentSessionId,
-                title: ShellSessionsStore.shared.session(id: viewModel.currentSessionId)?.name ?? "Chat",
+                title: ShellSessionsStore.shared.session(id: viewModel.currentSessionId)?.displayTitle ?? "Chat",
                 messages: viewModel.messages
             )
         }

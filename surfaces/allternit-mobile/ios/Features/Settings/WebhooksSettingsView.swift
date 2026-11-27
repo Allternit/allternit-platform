@@ -47,7 +47,8 @@ struct WebhooksSettingsView: View {
     }
 
     var body: some View {
-        List {
+        // Dot title that docks into the bar on scroll (UI feedback I19).
+        DockingTitleList(title: "Webhooks") {
             if let loadError = store.loadError, !store.triggers.isEmpty {
                 Section {
                     HStack(spacing: 8) {
@@ -121,9 +122,6 @@ struct WebhooksSettingsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
         .navigationTitle("Webhooks")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search triggers")
