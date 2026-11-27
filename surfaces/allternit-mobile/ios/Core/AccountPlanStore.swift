@@ -56,17 +56,70 @@ struct CloudModelsEntitlement: Decodable, Equatable, Sendable {
     }
 }
 
+/// `open_models` on the same two routes (CONTRACT-open-tier-2026-11-26 §3).
+/// Absent = a backend from before Allternit Open: open rows stay as today.
+struct OpenModelsEntitlement: Decodable, Equatable, Sendable {
+    var allowed: Bool = false
+    /// `terms_required`, `plan_required`, `allowance_used`,
+    /// `bought_credits_required`, or nil when allowed.
+    var reason: String? = nil
+    var termsAccepted: Bool = false
+    var plan: String? = nil
+    var planAllowanceUsd: Double = 0
+    var usedUsd: Double = 0
+    var planRemainingUsd: Double = 0
+    var boughtBalanceUsd: Double = 0
+    /// RFC 3339; nil without a plan.
+    var periodEnd: String? = nil
+    var research: Bool = false
+
+    init(allowed: Bool = false, reason: String? = nil, termsAccepted: Bool = false, plan: String? = nil,
+         planAllowanceUsd: Double = 0, usedUsd: Double = 0, planRemainingUsd: Double = 0,
+         boughtBalanceUsd: Double = 0, periodEnd: String? = nil, research: Bool = false) {
+        self.allowed = allowed; self.reason = reason; self.termsAccepted = termsAccepted; self.plan = plan
+        self.planAllowanceUsd = planAllowanceUsd; self.usedUsd = usedUsd; self.planRemainingUsd = planRemainingUsd
+        self.boughtBalanceUsd = boughtBalanceUsd; self.periodEnd = periodEnd; self.research = research
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        allowed = try c.decodeIfPresent(Bool.self, forKey: .allowed) ?? false
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        termsAccepted = try c.decodeIfPresent(Bool.self, forKey: .termsAccepted) ?? false
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        planAllowanceUsd = try c.decodeIfPresent(Double.self, forKey: .planAllowanceUsd) ?? 0
+        usedUsd = try c.decodeIfPresent(Double.self, forKey: .usedUsd) ?? 0
+        planRemainingUsd = try c.decodeIfPresent(Double.self, forKey: .planRemainingUsd) ?? 0
+        boughtBalanceUsd = try c.decodeIfPresent(Double.self, forKey: .boughtBalanceUsd) ?? 0
+        periodEnd = try c.decodeIfPresent(String.self, forKey: .periodEnd)
+        research = try c.decodeIfPresent(Bool.self, forKey: .research) ?? false
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case allowed, reason, plan, research
+        case termsAccepted = "terms_accepted"
+        case planAllowanceUsd = "plan_allowance_usd"
+        case usedUsd = "used_usd"
+        case planRemainingUsd = "plan_remaining_usd"
+        case boughtBalanceUsd = "bought_balance_usd"
+        case periodEnd = "period_end"
+    }
+}
+
 /// `GET /api/v1/billing/credits` (cloud-api billing_credits.rs, snake_case).
 struct BillingCredits: Decodable, Equatable, Sendable {
     let balanceUsd: Double
     let monthToDateUsageUsd: Double
     /// Absent on a backend from before credits were required (D10).
     var cloudModels: CloudModelsEntitlement? = nil
+    /// Absent before Allternit Open (contract §3).
+    var openModels: OpenModelsEntitlement? = nil
 
     enum CodingKeys: String, CodingKey {
         case balanceUsd = "balance_usd"
         case monthToDateUsageUsd = "month_to_date_usage_usd"
         case cloudModels = "cloud_models"
+        case openModels = "open_models"
     }
 }
 
@@ -174,6 +227,7 @@ final class AccountPlanStore: ObservableObject {
 
     /// Allternit Cloud entitlement; nil when unknown (not locked, D10).
     var cloudModels: CloudModelsEntitlement? { credits?.cloudModels }
+    var openModels: OpenModelsEntitlement? { credits?.openModels }
 
     /// Plan display name: the subscription's label, else the entitlement's.
     var planName: String? {

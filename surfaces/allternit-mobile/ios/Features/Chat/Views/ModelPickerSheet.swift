@@ -580,7 +580,7 @@ struct ModelPickerSheet: View {
         Haptics.selection()
         // A locked Cloud row opens the credits sheet and keeps the old selection.
         if modelStore.isCloudLocked(model.id) {
-            creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)
+            creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: modelStore.openLockReason(for: model.id) ?? plan.cloudModels?.reason)
             return
         }
         modelStore.userSelectedModel(model.id)
