@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
@@ -1049,6 +1050,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         com.allternit.feature.chat.games.WaitingGamesLayer(racers = {
             botsStore.bots.map { com.allternit.feature.chat.games.WaitingGameRacer(it.displayName, it.accentHex) }
         })
+        // Job banner: one capsule above the composer (bar jobs).
+        com.allternit.core.design.JobBannerHost(
+            Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                .navigationBarsPadding().padding(bottom = 96.dp),
+        )
     }
     }
 }
