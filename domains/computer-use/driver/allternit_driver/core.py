@@ -50,6 +50,9 @@ class Target:
     pid: int
     window_id: int
     app: str  # Bundle id (macOS) or app name: the router's app key.
+    # The X display the window is on (Linux guests with one display per
+    # agent, ":10" and up); None on macOS/Windows and for the unit's own.
+    display: str | None = None
 
     @property
     def key(self) -> str:
@@ -249,6 +252,7 @@ class Driver:
         pid = int(p["pid"]) if p.get("pid") else None
         wid = int(p["window_id"]) if p.get("window_id") else None
         app = str(p.get("app") or "").strip()
+        display = self._display_param(p)
         if self._arc_ok():
             if pid is None:
                 pid = self._mac_pid(app)
@@ -259,14 +263,34 @@ class Driver:
             wins = [w for w in engine.windows(pid) if w.get("is_on_screen", True)]
             if app:
                 wins = [w for w in wins if app.lower() in str(w.get("app_name", "")).lower()]
+            if display:
+                # One agent's display: never fall through to another agent's window.
+                wins = [w for w in wins if w.get("display") == display]
             if wid:
                 wins = [w for w in wins if int(w.get("window_id", 0)) == wid] or wins
             if not wins:
-                raise DriverError("window_not_found", f"no on-screen window for {app or pid or 'the front app'}")
+                where = f" on display {display}" if display else ""
+                raise DriverError("window_not_found", f"no on-screen window for {app or pid or 'the front app'}{where}")
             w = wins[0]
-            t = Target(int(w["pid"]), int(w["window_id"]), str(w.get("app_name") or app or w["pid"]))
+            t = Target(int(w["pid"]), int(w["window_id"]), str(w.get("app_name") or app or w["pid"]),
+                       w.get("display") or display)
         self._targets[t.key] = t
         return t
+
+    def _display_param(self, p: dict[str, Any]) -> str | None:
+        """``display`` (":10") on a Linux guest call; refused elsewhere, where
+        the driver has one screen."""
+        raw = p.get("display")
+        if raw in (None, ""):
+            return None
+        if not self.os.startswith("linux"):
+            raise DriverError("bad_input", "display applies to Linux computers only")
+        from .engines.atspi import check_display
+
+        try:
+            return check_display(raw)
+        except Exception as e:
+            raise DriverError("bad_input", str(e)) from e
 
     def _mac_pid(self, app: str) -> int:
         import AppKit  # type: ignore
@@ -322,7 +346,7 @@ class Driver:
         if version is not None:
             out = self._answer(t, version, info, p)
         else:
-            out = {"window": {"pid": t.pid, "window_id": t.window_id, "app": t.app}, "engine": None, "cached": False}
+            out = {"window": {"pid": t.pid, "window_id": t.window_id, "app": t.app, **({"display": t.display} if t.display else {})}, "engine": None, "cached": False}
         out["source"] = decision.source
         out["source_reason"] = decision.reason
         if decision.source != "ax":
@@ -458,7 +482,8 @@ class Driver:
     def _answer(self, t: Target, version: em.Version, info: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
         meta = version.meta
         out: dict[str, Any] = {
-            "window": {"pid": t.pid, "window_id": t.window_id, "app": meta.get("app") or t.app, "title": meta.get("title")},
+            "window": {"pid": t.pid, "window_id": t.window_id, "app": meta.get("app") or t.app, "title": meta.get("title"),
+                       **({"display": t.display} if t.display else {})},
             "version": version.number,
             "engine": info["engine"],
             "cached": info["cached"],
@@ -887,18 +912,32 @@ class Driver:
     # ---- pixels ------------------------------------------------------------------------
 
     def screenshot(self, p: dict[str, Any]) -> dict[str, Any]:
-        """PNG of a window (app / pid / window_id) or, with none given, the desktop."""
+        """PNG of a window (app / pid / window_id) or, with none given, the
+        desktop; on Linux, ``display`` picks an agent's screen (the live view of
+        that agent's run)."""
         start = time.perf_counter()
         window = any(p.get(k) for k in ("app", "pid", "window_id"))
         t = self.target(p) if window else None
-        capable = self.capable("screenshot") if t else ({CUA} if self.cua.available else set())
+        display = (t.display if t is not None else None) or self._display_param(p)
+        native_name = self.native.name if self.native is not None else ""
+        if t is None and display and self._native_ok():
+            capable = {native_name}
+        else:
+            capable = self.capable("screenshot") if t else ({CUA} if self.cua.available else set())
 
         def run(d: Decision) -> dict[str, Any]:
             if d.engine == ARC and t is not None:
                 png, scale = self.arc.screenshot(t.pid, t.window_id)
                 return {"png": base64.b64encode(png).decode(), "scale": scale}
-            png = self._engine(d.engine).screenshot(t.pid if t else None, t.window_id if t else None)
-            return {"png": base64.b64encode(png).decode()}
+            engine = self._engine(d.engine)
+            if display and engine is self.native:
+                png = engine.screenshot(t.pid if t else None, t.window_id if t else None, display=display)
+            else:
+                png = engine.screenshot(t.pid if t else None, t.window_id if t else None)
+            out = {"png": base64.b64encode(png).decode()}
+            if display:
+                out["display"] = display
+            return out
 
         out = self._routed("screenshot", t.app if t else "desktop", run, capable)
         out["ms"] = _ms(start)
@@ -943,6 +982,8 @@ class Driver:
         guest images)."""
         if tool not in PIXEL_TOOLS:
             raise DriverError("bad_input", f"pixel_{tool} isn't a pixel op")
+        if args.get("display") not in (None, ""):
+            args = {**args, "display": self._display_param(args)}
         args = {"scope": "desktop", **args} if tool not in ("get_cursor_position", "get_screen_size") else args
         reads = tool in ("get_cursor_position", "get_screen_size")
 
@@ -1028,6 +1069,9 @@ class Driver:
             # rules cover the rest, per the computer-safety docs.
             "safety_context": self.os == "darwin" or self._native_ok(),
             "safety_ocr": self.os == "darwin",
+            # Linux guests: one X display per agent (allternit-agent-display);
+            # screenshot / pixel_* / read_ui take ``display``.
+            "displays": self.os.startswith("linux") and self._native_ok(),
         }
         return out
 

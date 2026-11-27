@@ -17,6 +17,7 @@ from typing import Dict, Any, Optional
 import json
 import base64
 import os
+import sys
 import socket
 import subprocess
 import time
@@ -45,15 +46,23 @@ def _launch_chrome(port: int = 9222) -> Optional[subprocess.Popen]:
     chrome_bin = next((c for c in candidates if os.path.exists(c)), None)
     if not chrome_bin:
         return None
+    args = [
+        chrome_bin,
+        f"--remote-debugging-port={port}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        # No code_sign_clone copy per launch on macOS (~0.6 GB each).
+        "--disable-features=MacAppCodeSignClone",
+    ]
+    # Linux cloud computers run the agent browser headed on an X display
+    # (Xvfb counts; sites decline headless Chrome) with extensions on, so the
+    # managed-policy Allternit extension loads. Elsewhere (a Mac, where agents
+    # use Safari, or a Linux box with no display) this auto-launch stays the
+    # headless inspect browser it was, off the user's screen.
+    if not (sys.platform.startswith("linux") and os.environ.get("DISPLAY")):
+        args += ["--disable-extensions", "--headless=new"]
     proc = subprocess.Popen(
-        [
-            chrome_bin,
-            f"--remote-debugging-port={port}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-extensions",
-            "--headless=new",
-        ],
+        args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

@@ -56,6 +56,7 @@ apt-get install -y -qq --no-install-recommends \
     libatk-adaptor \
     libatk-bridge2.0-0 \
     python3-pil \
+    xvfb \
     xdotool \
     scrot \
     dbus-x11 \
@@ -74,6 +75,21 @@ cat > /usr/local/bin/allternit-driver-rpc <<'EOF'
 exec /usr/bin/python3 /opt/allternit-driver/guest-rpc.py "$@"
 EOF
 chmod 0755 /usr/local/bin/allternit-driver-rpc
+
+# One X display + one kept Chrome profile per agent (allternit_driver.agent_display):
+# `allternit-agent-display start <agent_id>` -> {"display": ":10", "pid": ...}.
+cat > /usr/local/bin/allternit-agent-display <<'EOF'
+#!/bin/sh
+# Per-agent Xvfb + headed Chrome; profiles kept in /var/lib/allternit/browser-profiles.
+exec /usr/bin/env PYTHONPATH=/opt/allternit-driver /usr/bin/python3 -m allternit_driver.agent_display "$@"
+EOF
+chmod 0755 /usr/local/bin/allternit-agent-display
+mkdir -p /var/lib/allternit/browser-profiles
+chmod 0700 /var/lib/allternit/browser-profiles
+
+# The Allternit extension by Chrome managed policy, when an update URL is
+# configured (install-browser-policy.sh says what is missing otherwise).
+bash "${SCRIPT_DIR}/install-browser-policy.sh"
 
 if [ -n "${USER_SESSION}" ]; then
     echo "[install-driver] installing a session autostart entry for ${USER_SESSION}"
