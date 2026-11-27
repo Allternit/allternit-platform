@@ -56,6 +56,14 @@ if (Test-Path (Join-Path $installDir "allternit_driver")) {
 Copy-Item -Recurse (Join-Path $DriverDir "allternit_driver") (Join-Path $installDir "allternit_driver")
 Copy-Item (Join-Path $DriverDir "allternit_driver\guest_rpc.py") (Join-Path $installDir "guest-rpc.py")
 
+Write-Host "[allternit-driver] installing the agent browser launcher"
+# allternit-agent-browser start|stop <agent_id>: run it in the desktop session.
+$launcher = "@echo off`r`nset PYTHONPATH=$installDir`r`n$python -m allternit_driver.agent_browser %*`r`n"
+Set-Content -Path (Join-Path $installDir "allternit-agent-browser.cmd") -Value $launcher -Encoding ascii -NoNewline
+New-Item -ItemType Directory -Force -Path "C:\ProgramData\Allternit\browser-profiles","C:\ProgramData\Allternit\browser-state" | Out-Null
+icacls "C:\ProgramData\Allternit\browser-profiles" /grant "BUILTIN\Users:(OI)(CI)M" | Out-Null
+icacls "C:\ProgramData\Allternit\browser-state" /grant "BUILTIN\Users:(OI)(CI)M" | Out-Null
+
 Write-Host "[allternit-driver] writing the state dir, endpoint and token"
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 $tokenBytes = New-Object byte[] 32
