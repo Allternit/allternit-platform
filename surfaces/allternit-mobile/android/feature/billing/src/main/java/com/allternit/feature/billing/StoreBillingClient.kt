@@ -132,7 +132,45 @@ sealed interface StoreResult<out T> {
 data class HostedEntitlement(val planDisplayName: String, val maxHoursMonthly: Int, val usedSecondsMonthly: Int)
 
 /** `GET /api/v1/billing/credits`. */
-data class BillingCredits(val balanceUsd: Double, val monthToDateUsageUsd: Double, val cloudModels: CloudModelsEntitlement? = null)
+data class BillingCredits(
+    val balanceUsd: Double,
+    val monthToDateUsageUsd: Double,
+    val cloudModels: CloudModelsEntitlement? = null,
+    val openModels: OpenModelsEntitlement? = null,
+)
+
+/**
+ * Allternit Open: `open_models` on `/billing/credits` and `/me/usage` (CONTRACT-open-tier §3). Absent (older backend) is
+ * null, and the phone then lists no open rows, as it does today. [reason] is `terms_required`, `plan_required`,
+ * `allowance_used`, `bought_credits_required` or null.
+ */
+data class OpenModelsEntitlement(
+    val allowed: Boolean,
+    val reason: String?,
+    val termsAccepted: Boolean,
+    val plan: String?,
+    val planAllowanceUsd: Double,
+    val usedUsd: Double,
+    val planRemainingUsd: Double,
+    val boughtBalanceUsd: Double,
+    val periodEnd: String?,
+    val research: Boolean,
+)
+
+internal fun parseOpenModels(root: JsonObject): OpenModelsEntitlement? = (root["open_models"] as? JsonObject)?.let { o ->
+    OpenModelsEntitlement(
+        allowed = o.bool("allowed") ?: false,
+        reason = o.str("reason"),
+        termsAccepted = o.bool("terms_accepted") ?: false,
+        plan = o.str("plan"),
+        planAllowanceUsd = o.num("plan_allowance_usd") ?: 0.0,
+        usedUsd = o.num("used_usd") ?: 0.0,
+        planRemainingUsd = o.num("plan_remaining_usd") ?: 0.0,
+        boughtBalanceUsd = o.num("bought_balance_usd") ?: 0.0,
+        periodEnd = o.str("period_end"),
+        research = o.bool("research") ?: false,
+    )
+}
 
 /** iOS CloudModelsEntitlement: `cloud_models` on `/billing/credits`. Absent (older backend) means not locked. */
 data class CloudModelsEntitlement(val allowed: Boolean, val reason: String?, val byokProviders: List<String>) {
@@ -140,7 +178,7 @@ data class CloudModelsEntitlement(val allowed: Boolean, val reason: String?, val
 }
 
 /** `GET /api/v1/me/usage`: the monthly Allternit Cloud allowance (iOS UsageSnapshot). */
-data class UsageSnapshot(val weeklyUsed: Double, val weeklyLimit: Double, val resetsAt: String?, val credits: Double?)
+data class UsageSnapshot(val weeklyUsed: Double, val weeklyLimit: Double, val resetsAt: String?, val credits: Double?, val openModels: OpenModelsEntitlement? = null)
 
 /** The calls the purchase manager and the Billing page make, on the account token (same route as iOS APIClient.shared). */
 object StoreBillingClient {
@@ -219,6 +257,7 @@ object StoreBillingClient {
                     byokProviders = (o["byok_providers"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: emptyList(),
                 )
             },
+            parseOpenModels(it),
         )
     }
 
@@ -227,7 +266,7 @@ object StoreBillingClient {
     }
 
     suspend fun usage(): UsageSnapshot? = ((get("me/usage") as? StoreResult.Ok)?.value as? JsonObject)?.let {
-        UsageSnapshot(it.num("weeklyUsed") ?: 0.0, it.num("weeklyLimit") ?: 0.0, it.str("resetsAt"), it.num("credits"))
+        UsageSnapshot(it.num("weeklyUsed") ?: 0.0, it.num("weeklyLimit") ?: 0.0, it.str("resetsAt"), it.num("credits"), parseOpenModels(it))
     }
 
     // Wire

@@ -38,6 +38,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import com.allternit.feature.billing.AccountPlan
+import com.allternit.feature.billing.OpenModelsStatusRow
+import com.allternit.feature.billing.OpenResearchCard
 import com.allternit.feature.billing.PlayPurchases
 import com.allternit.feature.billing.StoreBilledByView
 import com.allternit.feature.billing.StoreKind
@@ -105,7 +107,10 @@ internal fun BillingPage(host: SettingsHost, back: () -> Unit) {
         // Google Play Billing: plan tickets priced by Play, while no plan is billed on the web or by Apple (D5).
         if (PlayPurchases.showsStoreButtons(StoreKind.Plan) && PlayPurchases.planPurchaseAllowed(sub)) {
             SLabel(if (sub?.isPaid == true) "Change plan" else "Choose a plan")
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { for (item in PlayPurchases.plans) StorePlanTicket(item) }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (item in PlayPurchases.plans) StorePlanTicket(item)
+                OpenResearchCard()
+            }
         }
         if (PlayPurchases.showsStoreButtons(StoreKind.Pack)) {
             SLabel("Buy credits")
@@ -176,6 +181,7 @@ private fun PlanUsageRows(showCredits: Boolean = true) {
             Text(usage.credits.toString(), color = c.textSecondary, fontSize = 15.sp)
         }
     }
+    if (showCredits) OpenModelsStatusRow()
     if ((usage == null || usage.weeklyLimit <= 0) && fraction == null && (credits == null || !showCredits)) {
         if (AccountPlan.isLoading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

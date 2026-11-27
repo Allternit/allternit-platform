@@ -111,12 +111,15 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
             val rows = rankOrdered(matches.filter { it.provider == pid })
             if (rows.isEmpty()) continue
             if (pid == "allternit") {
-                val vendors = rows.map { ModelProviderNames.inferVendor(it) }.distinct()
+                val standardRows = rows.filter { it.openAccess == null }
+                val vendors = standardRows.map { ModelProviderNames.inferVendor(it) }.distinct()
                     .sortedBy { if (it == "other") "Allternit" else ModelProviderNames.name(it) }
                 for (v in vendors) {
                     val name = if (v == "other") "Allternit" else ModelProviderNames.name(v)
-                    add(ModelGroup("allternit:$v", if (v == "other") "allternit" else v, "$name · via Allternit Cloud", rows.filter { ModelProviderNames.inferVendor(it) == v }))
+                    add(ModelGroup("allternit:$v", if (v == "other") "allternit" else v, "$name · via Allternit Cloud", standardRows.filter { ModelProviderNames.inferVendor(it) == v }))
                 }
+                rows.filter { it.openAccess != null }.takeIf { it.isNotEmpty() }
+                    ?.let { add(ModelGroup("allternit:open", "allternit", com.allternit.feature.billing.OpenModelsCopy.GROUP, it)) }
             } else {
                 add(ModelGroup(pid, pid, if (pid == "ondevice") "On this phone" else ModelProviderNames.name(pid), rows))
             }
@@ -244,6 +247,10 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                         }
                         item(key = "g-${group.key}") {
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.5f))) {
+                                if (group.key == "allternit:open") {
+                                    com.allternit.feature.billing.OpenModelsStatusRow(Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+                                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
+                                }
                                 group.rows.forEachIndexed { i, m ->
                                     ModelRow(m, models) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
@@ -251,6 +258,9 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                             }
                         }
                     }
+                }
+                if (models.showsOpenTermsRow && pick == PickerScope.All && q.isEmpty()) {
+                    item(key = "openTerms") { com.allternit.feature.billing.OpenTermsRow(Modifier.padding(top = 14.dp)) }
                 }
                 item(key = "foot") { Box(Modifier.navigationBarsPadding().height(24.dp)) }
             }
@@ -355,6 +365,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
                 // iOS ModelPickerSheet.choose: a locked Cloud row opens Cloud credits and keeps the old selection.
                 val locked = if (m.cloudProvider != null || m.id.startsWith(ModelStore.CLOUD_PREFIX)) {
                     com.allternit.feature.billing.CloudCreditsGate.lockedRequest(m.name, m.cloudProvider, m.inputPer1mUsd, m.outputPer1mUsd)
+                        ?: if (m.openAccess != null) com.allternit.feature.billing.OpenModelsGate.lockedRequest(m.name, m.inputPer1mUsd, m.outputPer1mUsd) else null
                 } else null
                 if (locked != null) onLocked(locked) else models.select(m.id)
             }
@@ -372,7 +383,8 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
                 Text(m.name, color = c.textPrimary, fontSize = 14.sp, fontWeight = if (selectedRow) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (m.isDefault) RowBadge("Default")
             }
-            Text(rowSubtitle(m), color = c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val lock = if (m.openAccess != null) com.allternit.feature.billing.OpenModelsGate.entitlement?.takeIf { !it.allowed }?.reason?.let { com.allternit.feature.billing.OpenModelsCopy.message(it) } else null
+            Text(lock ?: rowSubtitle(m), color = c.textSecondary, fontSize = 11.sp, maxLines = if (lock != null) 3 else 1, overflow = TextOverflow.Ellipsis)
             m.thinking?.let { t -> RowBadge("${t.termOrDefault} · ${t.levels.size}") }
         }
         if (selectedRow) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(13.dp))

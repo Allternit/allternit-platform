@@ -46,8 +46,8 @@ object CloudCreditsCopy {
     const val NOT_NOW = "Not now"
     const val OK = "OK"
 
-    fun title(reason: String?): String = if (reason == "credits_exhausted") TITLE_EXHAUSTED else TITLE_REQUIRED
-    fun line(reason: String?): String = if (reason == "credits_exhausted") LINE_EXHAUSTED else LINE_REQUIRED
+    fun title(reason: String?): String = OpenModelsCopy.title(reason) ?: if (reason == "credits_exhausted") TITLE_EXHAUSTED else TITLE_REQUIRED
+    fun line(reason: String?): String = OpenModelsCopy.message(reason) ?: if (reason == "credits_exhausted") LINE_EXHAUSTED else LINE_REQUIRED
 
     fun priceLine(model: String?, input: Double?, output: Double?): String? {
         if (model == null || input == null || output == null) return null
@@ -62,6 +62,7 @@ object CloudCreditsCopy {
      */
     fun reason(text: String?): String? {
         val t = text?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        OpenModelsCopy.reason(t)?.let { return it }
         if ("credits_exhausted" in t || "credits are used up" in t) return "credits_exhausted"
         if ("credits_required" in t || "need credits" in t || "needs credits" in t || "payment required" in t || Regex("""\b402\b""").containsMatchIn(t)) {
             return "credits_required"
@@ -114,7 +115,7 @@ fun CloudCreditsSheet(request: CloudCreditsRequest, onDismiss: () -> Unit) {
             }
             Text(CloudCreditsCopy.title(request.reason), color = c.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
             if (storePacks || storePlans) {
-                Text(CloudCreditsCopy.BODY_STORE, color = c.textSecondary, fontSize = 15.sp)
+                Text(OpenModelsCopy.message(request.reason) ?: CloudCreditsCopy.BODY_STORE, color = c.textSecondary, fontSize = 15.sp)
                 CloudCreditsCopy.priceLine(request.modelName, request.inputPer1mUsd, request.outputPer1mUsd)?.let {
                     Text(it, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
