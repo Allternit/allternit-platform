@@ -181,6 +181,11 @@ export function ModelsPage() {
                     <td className="px-4 py-3 font-medium text-[var(--text-primary)]">
                       {model.name}
                       <span className="ml-2 text-[11px] text-[var(--text-tertiary)]">{model.id}</span>
+                      {model.lane && (
+                        <span className="ml-2 inline-flex rounded-full bg-[var(--bg-tertiary)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                          {model.lane === "research" ? "research" : "open"}
+                        </span>
+                      )}
                       {model.isDefault && (
                         <span className="ml-2 inline-flex rounded-full bg-[var(--accent-primary)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
                           Default

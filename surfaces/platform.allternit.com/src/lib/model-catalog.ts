@@ -14,6 +14,8 @@ export interface CatalogModel {
   capabilities: string[];
   /** Formatted retirement date, only when the row has a non-null `expiration_date`. */
   retires?: string;
+  /** "open" for open-weight rows, "research" for Open Research rows; unset otherwise. */
+  lane?: "open" | "research";
 }
 
 export interface LiveModelInfo {
@@ -30,6 +32,8 @@ export interface LiveModelInfo {
   context_length?: number;
   /** "standard" or "open" (open-weight models with far fewer refusals). */
   lane?: string;
+  /** Open rows: `access` is "plan" (any paid plan) or "research" (by agreement). */
+  open?: { access?: "plan" | "research" };
   /** True on the one recommended model; the API lists it first. */
   default?: boolean;
   /** Still routes (saved ids keep working) but is not offered in pickers. */
@@ -137,6 +141,12 @@ export function liveModelToCatalog(model: LiveModelInfo): CatalogModel {
     isDefault: (model.default ?? model.extra?.default) === true,
     capabilities: modelCapabilities(model),
     retires: retireDate(model.expiration_date),
+    lane:
+      model.open?.access === "research"
+        ? "research"
+        : model.lane === "open" || model.open
+          ? "open"
+          : undefined,
   };
 }
 

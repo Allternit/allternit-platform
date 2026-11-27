@@ -39,6 +39,8 @@ interface Plan {
   bonus: boolean;
   hero: boolean;
   features: string[];
+  /** The "Open models" line, one per plan. */
+  openLine: string;
   art: string;
 }
 
@@ -106,6 +108,7 @@ const PLANS: Plan[] = [
       "STANDARD RATE LIMITS",
       "$0 MONTHLY CREDITS",
     ],
+    openLine: "OPEN MODELS: ON YOUR DEVICE",
     art: "/billing/card-free.jpg",
   },
   {
@@ -121,6 +124,7 @@ const PLANS: Plan[] = [
       "HOSTED TOOL USAGE",
       "HIGH RATE LIMITS",
     ],
+    openLine: "OPEN MODELS: WITH CREDITS YOU BUY",
     art: "/billing/card-plus.jpg",
   },
   {
@@ -136,6 +140,7 @@ const PLANS: Plan[] = [
       "HOSTED TOOL USAGE",
       "HIGH RATE LIMITS",
     ],
+    openLine: "OPEN MODELS: UP TO $55/MO OF PLAN CREDITS",
     art: "/billing/card-max.jpg",
   },
   {
@@ -151,6 +156,7 @@ const PLANS: Plan[] = [
       "HOSTED TOOL USAGE",
       "HIGH RATE LIMITS",
     ],
+    openLine: "OPEN MODELS: UP TO $110/MO OF PLAN CREDITS",
     art: "/billing/card-ultra.jpg",
   },
 ];
@@ -292,6 +298,7 @@ export function PlanPicker({
                   {plan.features.map((feature) => (
                     <li key={feature}>{feature}</li>
                   ))}
+                  <li>{plan.openLine}</li>
                   {freeweights?.status === "offered" &&
                     (freeweights.plans?.[plan.id] ?? []).map((line) => (
                       <li key={`fw-${line.key}`}>{formatPerkLine(line)}</li>
@@ -308,6 +315,32 @@ export function PlanPicker({
         })}
       </div>
 
+      <article
+        aria-label="Open Research"
+        className="flex min-h-[110px] overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-primary)]"
+      >
+        <div className="min-w-0 flex-1 px-4 py-3.5">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono rounded-[3px] bg-[var(--text-primary)] px-1.5 py-0.5 text-[11px] font-bold tracking-[0.14em] text-[var(--bg-primary)]">OPEN RESEARCH</span>
+            <span className="ml-auto font-mono text-[14px]">BY AGREEMENT</span>
+          </div>
+          <ul className="mt-3 space-y-1 text-[11px] font-medium tracking-[0.06em]">
+            <li>LARGER MODELS, HIGHER RATE LIMITS</li>
+            <li>FOR VERIFIED SECURITY AND RED TEAMS</li>
+            <li>OPEN MODELS: ALL, ON AGREED CREDITS</li>
+          </ul>
+        </div>
+        <div className="flex w-[150px] shrink-0 items-end border-l-[1.5px] border-dashed border-[var(--border-default)] p-2.5">
+          <a
+            href="https://services.allternit.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full rounded-[11px] bg-[var(--text-primary)] px-2 py-2 text-center text-[10.5px] font-semibold tracking-[0.12em] text-[var(--bg-primary)] transition-opacity hover:opacity-90"
+          >
+            ASK US
+          </a>
+        </div>
+      </article>
     </section>
   );
 }
