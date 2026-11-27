@@ -56,3 +56,10 @@ describe("connections modes", () => {
     expect(footer("list", true)).toContain("m more")
   })
 })
+
+test("pod detail shows the bot name when the floor state carries one", () => {
+  const state = { mainBotId: "b1", pods: [{ id: "p1", name: "Chief", kind: "chief", botIds: ["b1", "b2"] }], bots: [{ id: "b1", name: "Gizzi", status: "working" }, { id: "b2", status: "idle" }] }
+  const lines = podDetail(state, state.pods[0]!)
+  expect(lines[0]).toStartWith("Gizzi (chief of staff)")
+  expect(lines[1]).toStartWith("b2")
+})

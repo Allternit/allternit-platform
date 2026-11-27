@@ -4,7 +4,7 @@
  * A pod is the Chief, a project or the Team; each lists its bots with their
  * state. Bots carry only an id on this route, so the view shows ids.
  */
-export type PodBot = { id: string; status?: string; lastText?: string; needs?: Record<string, number>; updatedAt?: number }
+export type PodBot = { id: string; name?: string; status?: string; lastText?: string; needs?: Record<string, number>; updatedAt?: number }
 export type Pod = { id: string; name: string; color?: string; kind?: string; botIds?: string[] }
 export type FloorState = { v?: number; mainBotId?: string | null; pods?: Pod[]; bots?: PodBot[] }
 
@@ -48,6 +48,6 @@ export function podDetail(state: FloorState, pod: Pod): string[] {
     const n = needsCount(b)
     const mark = b.id === state.mainBotId ? ' (chief of staff)' : ''
     const tail = [b.status ?? 'idle', n ? `${n} need you` : '', b.lastText ? `"${b.lastText.slice(0, 60)}"` : ''].filter(Boolean).join(' · ')
-    return `${b.id}${mark}  ${tail}`
+    return `${b.name ?? b.id}${mark}  ${tail}`
   })
 }
