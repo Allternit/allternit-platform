@@ -56,7 +56,10 @@ export function WorkPane<T>({
   notice,
   blockTitle,
   header,
+  modal,
 }: {
+  /** A pane-owned text entry is open: every key (esc, backspace, enter) goes to onKey and nothing closes or moves. */
+  modal?: boolean
   header?: React.ReactNode
   blockTitle?: boolean
   title: string
@@ -67,7 +70,7 @@ export function WorkPane<T>({
   hint: string
   renderRow: (item: T, selected: boolean) => React.ReactNode
   detail?: (item: T) => React.ReactNode
-  onKey?: (input: string, item: T | undefined, index: number) => void
+  onKey?: (input: string, item: T | undefined, index: number, key?: { escape: boolean; backspace: boolean; delete: boolean }) => void
   onClose: () => void
   notice?: string
 }): React.ReactNode {
@@ -75,6 +78,10 @@ export function WorkPane<T>({
   const count = items?.length ?? 0
   const at = Math.min(index, Math.max(0, count - 1))
   useInput((input, key) => {
+    if (modal) {
+      if (key.ctrl || key.meta) return
+      return onKey?.(key.return ? '\r' : input, items?.[at], at, { escape: key.escape, backspace: key.backspace, delete: key.delete })
+    }
     if (key.escape) return onClose()
     if (key.upArrow) return setIndex(i => Math.max(0, Math.min(i, count - 1) - 1))
     if (key.downArrow) return setIndex(i => Math.min(count - 1, i + 1))

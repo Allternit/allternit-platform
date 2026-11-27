@@ -26,6 +26,8 @@ import { FileEditPermissionRequest } from './FileEditPermissionRequest/FileEditP
 import { FilesystemPermissionRequest } from './FilesystemPermissionRequest/FilesystemPermissionRequest';
 import { FileWritePermissionRequest } from './FileWritePermissionRequest/FileWritePermissionRequest';
 import { NotebookEditPermissionRequest } from './NotebookEditPermissionRequest/NotebookEditPermissionRequest';
+import { isNeedsYouPermission } from '../../utils/needsYou';
+import { NeedsYouPermissionRequest } from './NeedsYouPermissionRequest';
 import { PowerShellPermissionRequest } from './PowerShellPermissionRequest/PowerShellPermissionRequest';
 import { SkillPermissionRequest } from './SkillPermissionRequest/SkillPermissionRequest';
 import { WebFetchPermissionRequest } from './WebFetchPermissionRequest/WebFetchPermissionRequest';
@@ -35,6 +37,7 @@ import type { z } from 'zod/v4';
 import type { PermissionUpdate } from '../../utils/permissions/PermissionUpdateSchema';
 import type { WorkerBadgeProps } from './WorkerBadge';
 function permissionComponentForTool(tool: Tool): React.ComponentType<PermissionRequestProps> {
+  if (isNeedsYouPermission(tool.name)) return NeedsYouPermissionRequest;
   switch (tool) {
     case FileEditTool:
       return FileEditPermissionRequest;
@@ -114,6 +117,8 @@ export type ToolUseConfirm<Input extends AnyObject = AnyObject> = {
   onDismissCheckmark?(): void;
   onAllow(updatedInput: z.infer<Input>, permissionUpdates: PermissionUpdate[], feedback?: string, contentBlocks?: ContentBlockParam[]): void;
   onReject(feedback?: string, contentBlocks?: ContentBlockParam[]): void;
+  /** Agent-browser needs-you prompts: the button pressed ("task" = the second button) and a masked answer. */
+  onNeedsYou?(reply: 'once' | 'task', answer?: string): void;
   recheckPermission(): Promise<void>;
 };
 function getNotificationMessage(toolUseConfirm: ToolUseConfirm): string {
