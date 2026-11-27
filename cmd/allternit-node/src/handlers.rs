@@ -714,42 +714,6 @@ const START_WORKSPACES: &str = "workspaces";
 /// How long a CLI gets to draw its prompt before a prompt it takes no flag for is typed in.
 const START_TYPE_PROMPT_AFTER: Duration = Duration::from_millis(2500);
 
-/// The CLIs cloud images ship and their mode flags. This crate cannot reach the Factory harness
-/// table (no factory-engine dependency), so this mirrors its rows for claude and codex
-/// (`factory/engine/src/agents/harness_table.rs::mode_flags`); keep the two in step.
-pub fn node_mode_flags(runtime_id: &str, mode: &str) -> Option<Vec<String>> {
-    let flags: &[&str] = match (runtime_id, mode) {
-        ("claude", "auto") => &["--permission-mode", "acceptEdits"],
-        ("claude", "default") => &["--permission-mode", "manual"],
-        ("claude", "plan") => &["--permission-mode", "plan"],
-        ("claude", "bypass") => &["--permission-mode", "bypassPermissions"],
-        ("codex", "auto") => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
-        ("codex", "default") => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
-        ("codex", "bypass") => &["--dangerously-bypass-approvals-and-sandbox"],
-        _ => return None,
-    };
-    Some(flags.iter().map(|f| f.to_string()).collect())
-}
-
-/// `harness_table::start_argv` for [`node_mode_flags`]' CLIs: program, mode flags, then the
-/// prompt as the positional (both take one; a leading `-` would read as a flag).
-pub fn node_start_argv(runtime_id: &str, mode: Option<&str>, prompt: Option<&str>) -> Option<(Vec<String>, bool)> {
-    if runtime_id != "claude" && runtime_id != "codex" {
-        return None;
-    }
-    let mut argv = vec![runtime_id.to_string()];
-    if let Some(mode) = mode {
-        argv.extend(node_mode_flags(runtime_id, mode)?);
-    }
-    match prompt.filter(|p| !p.trim().is_empty() && !p.starts_with('-')) {
-        Some(p) => {
-            argv.push(p.to_string());
-            Some((argv, true))
-        }
-        None => Some((argv, false)),
-    }
-}
-
 fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
@@ -810,6 +774,8 @@ async fn node_start_facts(state: &Arc<DaemonState>) -> NodeStartFacts {
         }
     }
     candidates.push(FolderCandidate { path: home.clone(), last_used: None });
+    // The CLIs cloud images ship; their mode flags and start argv come from
+    // `terminal_service::harness_modes`, the table allternit-api reads too.
     let mut installed: std::collections::HashSet<String> =
         ["claude", "codex"].into_iter().filter(|p| on_path(p)).map(str::to_string).collect();
     let mut runtimes: Vec<String> = installed.iter().cloned().collect();
@@ -829,7 +795,7 @@ async fn node_start_facts(state: &Arc<DaemonState>) -> NodeStartFacts {
         os: "linux".to_string(),
         remote_start: true,
     };
-    let input = OptionsInput { device, candidates, runtimes, home, mode_flags: node_mode_flags };
+    let input = OptionsInput { device, candidates, runtimes, home };
     let options = tokio::task::spawn_blocking(move || build_options(input))
         .await
         .expect("options builder does not panic");
@@ -968,7 +934,6 @@ async fn session_start(state: &Arc<DaemonState>, request: &InboundRequest) -> Ha
                 modes: &facts.options.modes,
                 folders: &facts.options.folders,
                 git_resolver: Some(resolver),
-                start_argv: node_start_argv,
             };
             (start_guards().plan(&device_id, idem.as_deref(), &req, &ctx), req)
         })
@@ -1616,14 +1581,5 @@ mod tests {
         let flag = terminal_service::GitRef { remote, branch: "--upload-pack=x".into(), head: None };
         assert_eq!(clone_for_start(&home, &flag).unwrap_err().error, "clone_failed");
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn session_start_node_argv_mirrors_the_harness_table() {
-        let (argv, in_argv) = node_start_argv("claude", Some("default"), Some("fix it")).unwrap();
-        assert_eq!(argv, ["claude", "--permission-mode", "manual", "fix it"]);
-        assert!(in_argv);
-        assert!(node_start_argv("codex", Some("plan"), None).is_none(), "codex has no plan flag");
-        assert!(node_start_argv("kimi", None, None).is_none());
     }
 }
