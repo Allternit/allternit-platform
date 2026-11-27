@@ -1,0 +1,9 @@
+Ask the user to sign a PDF. You give a title, a short summary and the PDF path; the tool uploads the document, files a signature request and returns at once with a request id and a link. The user reviews and signs on Desktop or their phone, in their own time. You never wait on it.
+
+Only the user can sign. There is no way for you to sign, approve or decline, and you never see the signature image. If they decline or let it expire, you are not told until you check.
+
+Create: pass `title`, `document_path` (a PDF, up to 20 MB) and optionally `summary`, `details` (up to 8 label/value rows shown above the document) and `send_to` (an email address to send the signed copy to once signed). The result is `{id, status: "pending", sign_url}`. Tell the user the link and carry on with other work.
+
+Check: pass only `id`. The result is the status (pending, signed, declined, cancelled, expired), and when signed the signer's name and the time. Check only when the user says they signed, or when you need the signed file to continue.
+
+Needs a signed-in Allternit account: set ALLTERNIT_API_TOKEN. If it is missing, the tool says so; tell the user, do not try another route.
