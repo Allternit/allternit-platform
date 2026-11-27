@@ -15,6 +15,10 @@
 //!   [`RELEASE_SOURCE`], keyed `stripe-{event_id}`, once per dispute.
 //! - Lost: the hold stays; only the row status changes.
 //!
+//! Bought credits (contract D1/D2, `user_credits.bought_usd`): the hold
+//! lowers them by the held amount (never below zero) and the release raises
+//! them by it, in the same statements as the balance change.
+//!
 //! The row insert, ledger row, balance change and auto top-up switch happen
 //! in one database transaction, so a crash never leaves half a hold.
 
@@ -254,13 +258,21 @@ pub async fn open(db: &PgPool, dispute: &OpenedDispute) -> Result<HoldOutcome, A
         .map_err(ApiError::DatabaseError)?;
         if ledger.rows_affected() > 0 {
             // No clamp at zero: the person must not keep spending credits
-            // whose payment is being pulled back.
+            // whose payment is being pulled back. Bought credits (contract
+            // D1) drop by the hold too, never below zero, so the release
+            // below gives back what the hold took instead of counting the
+            // same dollars as bought twice.
             sqlx::query(
                 r#"
                 INSERT INTO user_credits (user_id, balance_usd)
                 VALUES ($1, $2)
                 ON CONFLICT (user_id) DO UPDATE SET
                     balance_usd = user_credits.balance_usd + excluded.balance_usd,
+                    bought_usd = GREATEST(
+                        LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
+                            + excluded.balance_usd,
+                        0
+                    ),
                     updated_at = now()
                 "#,
             )
@@ -355,12 +367,16 @@ pub async fn close(
             .await
             .map_err(ApiError::DatabaseError)?;
             if ledger.rows_affected() > 0 {
+                // A release is a non-plan increase: it raises bought
+                // credits in the same statement (contract D2).
                 sqlx::query(
                     r#"
-                    INSERT INTO user_credits (user_id, balance_usd)
-                    VALUES ($1, $2)
+                    INSERT INTO user_credits (user_id, balance_usd, bought_usd)
+                    VALUES ($1, $2, $2)
                     ON CONFLICT (user_id) DO UPDATE SET
                         balance_usd = user_credits.balance_usd + excluded.balance_usd,
+                        bought_usd = LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
+                            + excluded.bought_usd,
                         updated_at = now()
                     "#,
                 )
@@ -476,5 +492,59 @@ mod tests {
         assert_eq!(parsed.customer_id.as_deref(), Some("cus_2"));
         assert_eq!(parsed.charged_cents, Some(1000));
         assert_eq!(DisputedPayment::from_object(&json!("pi_1")), None, "a bare id is not expanded");
+    }
+
+    /// Contract D1/D2: a won dispute gives back the bought credits its hold
+    /// took, without counting the plan credits beside them as bought.
+    #[tokio::test]
+    async fn won_dispute_restores_bought_credits_without_inflating_them() {
+        let db = crate::routes::test_support::test_pool().await;
+        // Migration 106 as written, minus `public.` so it lands in the
+        // test's own schema.
+        let disputes = include_str!("../../migrations_pg/106_billing_disputes.sql").replace("public.", "");
+        sqlx::raw_sql(&format!(
+            "{}{disputes}",
+            "CREATE TABLE user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION DEFAULT 0,
+                 bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT NOW());
+             CREATE TABLE credit_transactions (id TEXT PRIMARY KEY, user_id TEXT, amount_usd DOUBLE PRECISION,
+                 transaction_id TEXT UNIQUE, source TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+             CREATE TABLE billing_auto_topup (user_id TEXT PRIMARY KEY, enabled BOOLEAN, status TEXT,
+                 last_error TEXT, updated_at TIMESTAMPTZ);",
+        ))
+        .execute(&db)
+        .await
+        .unwrap();
+        // 20 plan credits beside a 10 credit pack.
+        sqlx::query("INSERT INTO user_credits (user_id, balance_usd, bought_usd) VALUES ('u1', 30, 10)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let wallet = |db: PgPool| async move {
+            sqlx::query_as::<_, (f64, f64)>(
+                "SELECT balance_usd, LEAST(bought_usd, GREATEST(balance_usd, 0)) FROM user_credits WHERE user_id = 'u1'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        };
+
+        let dispute = OpenedDispute {
+            event_id: "evt_open".into(),
+            dispute_id: "dp_1".into(),
+            user_id: Some("u1".into()),
+            charge_id: None,
+            payment_intent_id: None,
+            customer_id: None,
+            amount_cents: 1000,
+            currency: None,
+            reason: None,
+            stripe_status: None,
+            hold_usd: 10.0,
+        };
+        open(&db, &dispute).await.unwrap();
+        assert_eq!(wallet(db.clone()).await, (20.0, 0.0), "the hold takes the pack's bought credits");
+
+        close(&db, "dp_1", DisputeOutcome::Won, "won", "evt_won").await.unwrap();
+        assert_eq!(wallet(db.clone()).await, (30.0, 10.0), "the release gives back 10 bought, not 20");
     }
 }

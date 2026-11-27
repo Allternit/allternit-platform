@@ -1153,6 +1153,7 @@ async fn take_back_refund(
                 -credits,
                 &format!("{grant_key}-refund"),
                 REFUND_SOURCE,
+                matches!(item, StoreItem::Pack(_)),
             )
             .await?;
             tracing::warn!(user_id = %owner, %grant_key, credits, "apple refund: credits taken back");
@@ -1171,20 +1172,20 @@ async fn give_back_reversed_refund(
     transaction_id: &str,
 ) -> Result<(), AppleSyncError> {
     let mut dbtx = db.begin().await?;
-    let reversed: Option<(Option<String>, f64)> = sqlx::query_as(
+    let reversed: Option<(Option<String>, f64, String)> = sqlx::query_as(
         r#"
         UPDATE billing_store_transactions
         SET state = CASE WHEN credits_granted_usd > 0 THEN 'granted' ELSE 'pending' END,
             refund_reversed_at = NOW(), updated_at = NOW()
         WHERE provider = 'apple' AND transaction_id = $1
           AND state = 'refunded' AND refund_reversed_at IS NULL
-        RETURNING user_id, credits_granted_usd
+        RETURNING user_id, credits_granted_usd, kind
         "#,
     )
     .bind(transaction_id)
     .fetch_optional(&mut *dbtx)
     .await?;
-    if let Some((Some(owner), credits)) = reversed {
+    if let Some((Some(owner), credits, kind)) = reversed {
         if credits > 0.0 {
             let grant_key = store_billing::grant_key(StoreProvider::Apple, transaction_id);
             move_credits(
@@ -1193,6 +1194,7 @@ async fn give_back_reversed_refund(
                 credits,
                 &format!("{grant_key}-refund-reversed"),
                 REFUND_REVERSED_SOURCE,
+                kind == "pack",
             )
             .await?;
             tracing::info!(user_id = %owner, %grant_key, credits, "apple refund reversed: credits given back");
@@ -1204,12 +1206,21 @@ async fn give_back_reversed_refund(
 
 /// One keyed cloud-wallet ledger row and its balance change, in the caller's
 /// database transaction. A key already used changes nothing.
+///
+/// Callers are store refunds (negative) and reversed refunds (positive),
+/// never a plan renewal (renewals go through `grant_plan_credits_keyed`).
+/// `bought` = the transaction was a credit pack (`kind = 'pack'`): the change
+/// moves `bought_usd` too, in the same statement (contract D2), read clamped
+/// per D1 and never below zero, so a pack refund takes back bought credits
+/// and its reversal gives them back. A plan transaction's refund or reversal
+/// moves only the plan part.
 pub(crate) async fn move_credits(
     dbtx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: &str,
     amount_usd: f64,
     ledger_key: &str,
     source: &str,
+    bought: bool,
 ) -> Result<(), sqlx::Error> {
     let ledger = sqlx::query(
         r#"
@@ -1228,15 +1239,21 @@ pub(crate) async fn move_credits(
     if ledger.rows_affected() > 0 {
         sqlx::query(
             r#"
-            INSERT INTO user_credits (user_id, balance_usd)
-            VALUES ($1, $2)
+            INSERT INTO user_credits (user_id, balance_usd, bought_usd)
+            VALUES ($1, $2, CASE WHEN $3::boolean THEN GREATEST($2::float8, 0) ELSE 0 END)
             ON CONFLICT (user_id) DO UPDATE SET
                 balance_usd = user_credits.balance_usd + excluded.balance_usd,
+                bought_usd = CASE WHEN $3::boolean THEN GREATEST(
+                        LEAST(user_credits.bought_usd, GREATEST(user_credits.balance_usd, 0))
+                            + excluded.balance_usd,
+                        0
+                    ) ELSE user_credits.bought_usd END,
                 updated_at = now()
             "#,
         )
         .bind(user_id)
         .bind(amount_usd)
+        .bind(bought)
         .execute(&mut **dbtx)
         .await?;
     }
