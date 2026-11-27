@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "channel": "latest",
+  "version": "2.25.0-beta.3",
+  "publishedAt": "2026-11-27T15:00:00Z",
+  "minVersion": "2.20.0",
+  "paused": false,
+  "notes": {
+    "url": "https://docs.allternit.com/gizzi/release-notes",
+    "highlights": [
+      "Preview of the new sessions view"
+    ]
+  },
+  "artifacts": {
+    "darwin-arm64": {
+      "url": "https://github.com/Allternit/allternit/releases/download/gizzi-v2.25.0-beta.3/gizzi-darwin-arm64.tar.gz",
+      "sha256": "0101010101010101010101010101010101010101010101010101010101010101",
+      "size": 48000000
+    },
+    "darwin-x64": {
+      "url": "https://github.com/Allternit/allternit/releases/download/gizzi-v2.25.0-beta.3/gizzi-darwin-x64.tar.gz",
+      "sha256": "0202020202020202020202020202020202020202020202020202020202020202",
+      "size": 48000001
+    },
+    "linux-x64": {
+      "url": "https://github.com/Allternit/allternit/releases/download/gizzi-v2.25.0-beta.3/gizzi-linux-x64.tar.gz",
+      "sha256": "0303030303030303030303030303030303030303030303030303030303030303",
+      "size": 48000002
+    },
+    "linux-arm64": {
+      "url": "https://github.com/Allternit/allternit/releases/download/gizzi-v2.25.0-beta.3/gizzi-linux-arm64.tar.gz",
+      "sha256": "0404040404040404040404040404040404040404040404040404040404040404",
+      "size": 48000003
+    },
+    "win32-x64": {
+      "url": "https://github.com/Allternit/allternit/releases/download/gizzi-v2.25.0-beta.3/gizzi-win32-x64.zip",
+      "sha256": "0505050505050505050505050505050505050505050505050505050505050505",
+      "size": 48000004
+    }
+  },
+  "packages": {
+    "npm": "@allternit/gizzi-code@2.25.0-beta.3",
+    "brew": "allternit/tap/gizzi-code",
+    "scoop": "gizzi-code"
+  }
+}
