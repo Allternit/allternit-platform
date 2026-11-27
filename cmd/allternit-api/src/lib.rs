@@ -381,6 +381,9 @@ pub mod memory_drive_text_import;
 pub mod memory_drive_agent_import;
 pub mod memory_drive_chat_import;
 pub mod memory_capture;
+/// Knowledge factory: flags and proposals (`/api/v1/knowledge`, V298).
+pub mod knowledge_store;
+pub mod knowledge_routes;
 pub mod memory_activity;
 pub mod vendor_memory;
 pub mod ledger;
