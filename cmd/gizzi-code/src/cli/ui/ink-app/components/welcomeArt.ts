@@ -122,71 +122,58 @@ export function renderPixelArt(
 }
 
 /**
- * Pixel fonts for the GIZZI CODE dot-matrix wordmark, 5 pixels tall.
- * FONT35 letters are 3 wide, FONT45 letters 4 wide (G, Z, C, O, D, E).
+ * GIZZI CODE wordmark "R2": 4 x 4 pixel letters condensed from the real Gizzi
+ * Code wordmark. 'C' in the G is the coral core block.
  */
-export const FONT35: Record<string, string[]> = {
-  G: ['.##', '#..', '#.#', '#.#', '.##'], I: ['###', '.#.', '.#.', '.#.', '###'],
-  Z: ['###', '..#', '.#.', '#..', '###'], C: ['.##', '#..', '#..', '#..', '.##'],
-  O: ['.#.', '#.#', '#.#', '#.#', '.#.'], D: ['##.', '#.#', '#.#', '#.#', '##.'],
-  E: ['###', '#..', '##.', '#..', '###'], ' ': ['..', '..', '..', '..', '..'],
-}
-export const FONT45: Record<string, string[]> = {
-  G: ['.###', '#...', '#.##', '#..#', '.###'], I: ['###', '.#.', '.#.', '.#.', '###'],
-  Z: ['####', '..#.', '.#..', '#...', '####'], C: ['.###', '#...', '#...', '#...', '.###'],
-  O: ['.##.', '#..#', '#..#', '#..#', '.##.'], D: ['###.', '#..#', '#..#', '#..#', '###.'],
-  E: ['####', '#...', '###.', '#...', '####'], ' ': ['..', '..', '..', '..', '..'],
+export const WORDMARK_LETTERS: Record<string, string[]> = {
+  G: ['.###', '#...', '#.C#', '.###'], I: ['###', '.#.', '.#.', '###'],
+  Z: ['####', '..#.', '.#..', '####'], C: ['.###', '#...', '#...', '.###'],
+  O: ['.##.', '#..#', '#..#', '.##.'], D: ['###.', '#..#', '#..#', '###.'],
+  E: ['####', '#...', '###.', '####'],
 }
 
-/** Eoj's wordmark pick (b2, 2026-11-09): the font, whether the first G is coral, and the braille row the version sits on. */
-export const WORDMARK_FONT = FONT35
-export const WORDMARK_CORAL_G = true
+/** The version sits after the wordmark on its one row. */
 export const WORDMARK_VERSION_ROW = 0
 
-/** A word as a pixel grid, one blank column between letters. */
-export function wordGrid(word: string, font: Record<string, string[]>): string[] {
-  return Array.from({ length: 5 }, (_, r) =>
-    [...word].map(ch => font[ch]![r]!).join('.'),
-  )
-}
-
-// Braille dot bits for [dx, dy] inside a 2x4 cell.
-const BRAILLE_BITS: Array<[number, number, number]> = [
-  [0, 0, 0x01], [0, 1, 0x02], [0, 2, 0x04], [1, 0, 0x08],
-  [1, 1, 0x10], [1, 2, 0x20], [0, 3, 0x40], [1, 3, 0x80],
-]
-
-/** Pixels as braille dots (U+2800-U+28FF): 2x4 pixels per one-column cell. */
-export function brailleRows(grid: string[]): string[] {
-  const w2 = Math.ceil(grid[0]!.length / 2) * 2
-  const h4 = Math.ceil(grid.length / 4) * 4
-  const g = Array.from({ length: h4 }, (_, r) => (grid[r] ?? '').padEnd(w2, '.'))
-  const out: string[] = []
-  for (let by = 0; by < h4; by += 4) {
-    let line = ''
-    for (let bx = 0; bx < w2; bx += 2) {
-      let v = 0
-      for (const [dx, dy, bit] of BRAILLE_BITS) if (g[by + dy]![bx + dx] !== '.') v |= bit
-      line += v ? String.fromCharCode(0x2800 + v) : ' '
+/** A word as a 4-row pixel grid: one empty column between letters, two between words. */
+export function wordGrid(text: string, font: Record<string, string[]> = WORDMARK_LETTERS): string[] {
+  const rows = ['', '', '', '']
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    const next = text[i + 1]
+    for (let r = 0; r < 4; r++) {
+      if (ch === ' ') rows[r] += '..'
+      else rows[r] += font[ch]![r]! + (next && next !== ' ' ? '.' : '')
     }
-    out.push(line)
   }
-  return out
+  return rows
 }
 
-/**
- * The GIZZI CODE wordmark as 2 rows of braille. With `coralG` the first G
- * (and the gap after it) is its own run in coral; the rest takes `ink`.
- */
-export function wordmarkRows(
-  font: Record<string, string[]> = WORDMARK_FONT,
-  coralG: boolean = WORDMARK_CORAL_G,
-  ink = 'text',
-): ArtRow[] {
-  const grid = wordGrid('GIZZI CODE', font)
-  if (!coralG) return brailleRows(grid).map(t => [[t, ink]])
-  const gw = font.G![0]!.length + 1
-  const g = brailleRows(grid.map(r => r.slice(0, gw)))
-  const rest = brailleRows(grid.map(r => r.slice(gw)))
-  return g.map((t, i) => [[t, CORAL], [rest[i]!, ink]])
+// Braille dot bit for [dy][dx] inside a 2x4 cell.
+const BRAILLE_BIT = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
+
+/** One row of braille (1 dot per pixel); a cell holding a 'C' pixel is coral, the rest `ink`. */
+export function brailleWordRow(grid: string[], ink = 'text'): ArtRow {
+  const width = Math.ceil(grid[0]!.length / 2) * 2
+  const cells: ArtSegment[] = []
+  for (let cx = 0; cx < width; cx += 2) {
+    let bits = 0
+    let coral = false
+    for (let dy = 0; dy < 4; dy++) {
+      for (let dx = 0; dx < 2; dx++) {
+        const p = grid[dy]?.[cx + dx]
+        if (p && p !== '.') {
+          bits |= BRAILLE_BIT[dy]![dx]!
+          if (p === 'C') coral = true
+        }
+      }
+    }
+    cells.push(bits ? [String.fromCharCode(0x2800 + bits), coral ? CORAL : ink] : [' ', ''])
+  }
+  return mergeRuns(cells)
+}
+
+/** The GIZZI CODE wordmark: one braille row, no seam. */
+export function wordmarkRows(ink = 'text'): ArtRow[] {
+  return [brailleWordRow(wordGrid('GIZZI CODE'), ink)]
 }

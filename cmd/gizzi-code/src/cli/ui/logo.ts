@@ -1,5 +1,5 @@
 import chalk from "@/shared/util/chalk"
-import { mascotRows, type ArtRow } from "@/cli/ui/ink-app/components/welcomeArt"
+import { mascotRows, wordmarkRows, type ArtRow } from "@/cli/ui/ink-app/components/welcomeArt"
 import { getTheme } from "@/cli/ui/ink-app/utils/theme"
 
 export const marks = "·•◦"
@@ -29,11 +29,10 @@ export function ansiArtRow(row: ArtRow): string {
     .join("")
 }
 
-/** The `--help` banner: the approved mascot (18 x 8 cells) and one line, GIZZI CODE with a coral G. */
+/** The `--help` banner: the approved mascot (18 x 8 cells) and the one-row GIZZI CODE wordmark. */
 export function helpBannerLines(): string[] {
-  const coral = rgbOf((getTheme("dark") as unknown as Record<string, string>).gizzi)!
   const lines = mascotRows("mid").map(ansiArtRow)
   lines.push("")
-  lines.push(chalk.bold(chalk.rgb(coral[0], coral[1], coral[2])("G") + "IZZI CODE"))
+  lines.push(...wordmarkRows().map(ansiArtRow))
   return lines
 }

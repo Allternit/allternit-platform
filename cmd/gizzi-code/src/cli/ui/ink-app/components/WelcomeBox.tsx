@@ -98,9 +98,9 @@ export function welcomeRows(cwd: string, sessionId: string, modelDisplayName: st
 }
 
 /**
- * The name slot: the GIZZI CODE braille dot-matrix wordmark (2 rows) with the
+ * The name slot: the GIZZI CODE braille wordmark (1 row) with the
  * version on row WORDMARK_VERSION_ROW, or bold "Gizzi Code" on one row when the
- * terminal is small. Font and coral G are WORDMARK_FONT / WORDMARK_CORAL_G.
+ * terminal is small. The G core block is coral.
  */
 export function Wordmark({ version, compact }: { version: string; compact: boolean }): React.ReactNode {
   const ver = <Text dimColor={true}>v{version}</Text>
@@ -113,7 +113,7 @@ export function Wordmark({ version, compact }: { version: string; compact: boole
   }
   return wordmarkRows().map((segments, i) => (
     <Text key={i} wrap="truncate-end">
-      {segments.map(([t, color], j) => <Text key={j} color={color}>{t}</Text>)}
+      {segments.map(([t, color], j) => <Text key={j} color={color || undefined}>{t}</Text>)}
       {i === WORDMARK_VERSION_ROW && <>{'  '}{ver}</>}
     </Text>
   ))
