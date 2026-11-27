@@ -1,0 +1,31 @@
+---
+title: Refreshing the CLI catalog
+description: Run one script before a train that ships Gizzi, so the model rows match what each installed CLI really offers.
+---
+
+The model rows in `cli-catalog.json` go stale when a CLI adds or retires a model. This script asks each installed CLI for its own model list and updates the rows.
+
+## When to run it
+
+Run it by hand before a train that ships Gizzi. There is no scheduled job on purpose.
+
+## Run it
+
+From `cmd/gizzi-code`:
+
+```bash
+bun script/refresh-catalog.ts --dry-run   # default: print the diff, write nothing
+bun script/refresh-catalog.ts --write     # update the catalog, then regenerate the picker snapshot
+```
+
+## What it does
+
+- It checks every catalog tool that has a list command. It runs only that list command, with a 15 second limit, and never sends a prompt to a model, so no paid turn happens.
+- A CLI that is not installed, not signed in, or prints nothing it can read is skipped, with one line each.
+- For every other tool it prints what was added, what was removed and whether the default changed.
+- `--write` rewrites only the `models` array of a changed tool. The default marker lives in that array. Every other field stays as it was. The script then runs `gen-picker-snapshot.ts` so the snapshot matches.
+- Rows the CLI still lists keep their curated name and limits. New rows take what the CLI printed.
+
+## After a write
+
+Review the diff, then commit `cli-catalog.json` and the regenerated snapshot together. An old model id that people may still have saved goes in the tool's `retired` map by hand.

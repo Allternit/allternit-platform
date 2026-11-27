@@ -444,7 +444,8 @@
               "dev/computers-console-contract",
               "dev/computer-pairing",
               "dev/aci-image-jobs",
-              "dev/shared-art"
+              "dev/shared-art",
+              "dev/refresh-catalog"
             ],
             "icon": "/icons/book.svg"
           },
