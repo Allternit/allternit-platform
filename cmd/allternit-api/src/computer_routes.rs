@@ -1509,10 +1509,19 @@ async fn this_device_screenshot(_state: &Arc<AppState>, _computer_id: &str) -> R
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ScreenshotQuery {
+    /// The agent run whose own display to show (Linux guests, see
+    /// `computer_agent_display`). Without it, the one run on this computer
+    /// that has its own display, else the shared desktop display.
+    run_id: Option<String>,
+}
+
 async fn computer_screenshot(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
+    Query(q): Query<ScreenshotQuery>,
 ) -> impl IntoResponse {
     let computer = match fetch_computer(&state, &user, &id).await {
         Ok(Some(c)) => c,
@@ -1546,9 +1555,12 @@ async fn computer_screenshot(
     let capture_cmd = if record.os == "windows" {
         crate::bot_desktop_windows::screenshot_command()
     } else {
-        let display = desktop_display(&record.provider);
+        // The live view follows the agent run's own display when it has one
+        // (validated `:N` from the launcher).
+        let run_display = crate::computer_agent_display::live_view_display(&computer.id, q.run_id.as_deref());
+        let display: String = run_display.unwrap_or_else(|| desktop_display(&record.provider).to_string());
         let mut env_vars = std::collections::HashMap::new();
-        env_vars.insert("DISPLAY".to_string(), display.to_string());
+        env_vars.insert("DISPLAY".to_string(), display.clone());
         CommandSpec {
             command: vec![
                 "sh".to_string(),

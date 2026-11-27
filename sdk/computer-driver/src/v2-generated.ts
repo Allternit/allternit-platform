@@ -50,9 +50,9 @@ export type ComputerV2RunBatchInput = { app?: string | null; pid?: number | null
 /** Check bounded conditions on the current UI without acting: role, name, text, gone, value, enabled. Each check is {id?, role?, name?, text?, gone?, value?, enabled?}; all given parts must hold. Returns one ok per check. Use after act/run_batch, or to poll with timeout_ms. */
 export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; window_id?: number | null; checks: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null }>; timeout_ms?: number | null };
 /** Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. Pass secret to ask for a one-off secret in a masked box instead of handing over control. */
-export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null; secret?: { label: string; field?: string | null; domain?: string | null } | null };
-/** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run. */
-export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
+export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null; secret?: { label: string; field?: string | null; domain?: string | null; element_id?: string | null } | null };
+/** Write a vault credential into one field. The value never enters the model context, prompts or logs. On this computer (the person's own Mac or PC) pass element_id: the id of the password or text field from read_ui. The value is written straight into that element, with no focus change and no typing, so it can't land in another window; without element_id the call is refused. On cloud computers element_id is optional (without it the value is typed into the focused field of the run's own screen). kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run. */
+export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null; element_id?: string | null };
 /** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. With api_options, an MCP/API call you hold is offered ahead of GUI steps (status use_api hands it back to you). With best_of N and computers, N rollouts run on N sandbox computers and a judge picks one by step narratives. */
 export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; cache?: "auto" | "off" | "refresh" | null; save_as?: string | null; api_options?: Array<{ tool: string; description?: string | null }> | null; best_of?: number | null; computers?: Array<string> | null; max_cost_usd?: number | null };
 /** Run independent bounded subtasks on separate computers at the same time (one run_subtask per computer, each under its own computer's control lease), and get every result back in order. Each subtask names its computer (default: this one) and takes run_subtask's fields. One computer never runs two subtasks at once: a repeated computer, or one another subtask is already driving, is refused. Limits: max_parallel subtasks at once, a total budget_ms, and max_cost_usd on decision spend; subtasks that can't start inside them come back skipped. One approval covers the whole call when any subtask targets a non-sandbox computer. */
@@ -758,7 +758,7 @@ export const COMPUTER_V2_TOOL_SCHEMAS = {
       },
       "secret": {
         "type": "object",
-        "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes straight into the focused field and never reaches you, the logs or the transcript. Focus the field first. The result only says the field was filled.",
+        "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes into the field and never reaches you, the logs or the transcript. On this computer pass element_id (the field's id from read_ui): the value is written straight into that element, and without it the request is refused. On cloud computers it goes into the element when given, else into the focused field of the run's own screen. The result only says the field was filled.",
         "properties": {
           "label": {
             "type": "string",
@@ -771,6 +771,10 @@ export const COMPUTER_V2_TOOL_SCHEMAS = {
           "domain": {
             "type": "string",
             "description": "Optional app or site domain the secret is for. If the person chooses to save it to the vault, it is bound there."
+          },
+          "element_id": {
+            "type": "string",
+            "description": "The field's element id from read_ui. Required on this computer; optional on cloud computers."
           }
         },
         "required": [
@@ -810,6 +814,10 @@ export const COMPUTER_V2_TOOL_SCHEMAS = {
       "domain": {
         "type": "string",
         "description": "The app or domain the credential is being typed into; checked against the credential's binding."
+      },
+      "element_id": {
+        "type": "string",
+        "description": "The field's element id from read_ui (e.g. 'e12'). Required on this computer; optional on cloud computers. Vision elements ('v…') are refused: a secret is never typed at a screen position."
       }
     },
     "required": [
@@ -1399,13 +1407,13 @@ export const COMPUTER_V2_STRUCTURED_MEMBERS = [
   },
   {
     "name": "use_credential",
-    "description": "Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run.",
+    "description": "Write a vault credential into one field. The value never enters the model context, prompts or logs. On this computer (the person's own Mac or PC) pass element_id: the id of the password or text field from read_ui. The value is written straight into that element, with no focus change and no typing, so it can't land in another window; without element_id the call is refused. On cloud computers element_id is optional (without it the value is typed into the focused field of the run's own screen). kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run.",
     "risk": "risky",
     "default_enabled": true,
     "needs_confirm": true,
     "confirm": "always",
     "result_kind": "none",
-    "ack_text": "Credential {name} typed.",
+    "ack_text": "Credential {name} written.",
     "scale_fields": {}
   },
   {

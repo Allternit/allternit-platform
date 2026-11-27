@@ -239,12 +239,20 @@ class ArcEngine:
             if target is None:
                 err, current = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
                 target = f"{current or ''}{value}"
-            if AS.AXUIElementSetAttributeValue(ref, "AXValue", target) == 0 and self._kept(AS, ref, target):
+            wrote = AS.AXUIElementSetAttributeValue(ref, "AXValue", target) == 0
+            if wrote and self._kept(AS, ref, target):
                 if not macos_safari.is_safari(pid):
                     return True
                 # A page can reset a value it did not see typed: read it again a moment later.
                 time.sleep(0.15)
                 if self._kept(AS, ref, target):
+                    return True
+            elif wrote and focus is False:
+                # A password field (AXSecureTextField) hides its value from
+                # accessibility, so the read-back can't confirm a write it
+                # accepted (use_credential's no-focus path).
+                _, subrole = AS.AXUIElementCopyAttributeValue(ref, "AXSubrole", None)
+                if str(subrole or "") == "AXSecureTextField":
                     return True
             if focus and not focused:
                 raise ValueError(f"{native} takes neither focus nor a value write")

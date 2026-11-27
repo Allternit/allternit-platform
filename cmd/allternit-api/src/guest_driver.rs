@@ -106,6 +106,7 @@ pub async fn guest_driver_op(target: &Target, member: &str, params: &Value, time
 /// `context`, ...). Prefer `guest_driver_op` for the structured members so
 /// the member set stays greppable.
 pub async fn guest_driver_raw(target: &Target, method: &str, params: Value, timeout: Duration) -> Result<Value, Fail> {
+    let params = with_run_display(target, method, params);
     let reply = rpc(target, json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }), timeout).await
         .map_err(Fail::from)?;
     if let Some(err) = reply.get("error") {
@@ -113,6 +114,25 @@ pub async fn guest_driver_raw(target: &Target, method: &str, params: Value, time
         return Err(Fail::from(format!("the computer's driver refused {method}: {message}")));
     }
     Ok(reply.get("result").cloned().unwrap_or(Value::Null))
+}
+
+/// A run with its own display on a Linux guest (`Target::Guest::agent_display`,
+/// set by `computer_agent_display`): every driver call but `hello` names that
+/// display, so reads, element actions, pixel input and screenshots stay on
+/// the run's screen. A caller's own `display` wins. Windows guests have one
+/// screen and the driver refuses `display` there, so nothing is added.
+pub fn with_run_display(target: &Target, method: &str, mut params: Value) -> Value {
+    let Target::Guest { os, agent_display: Some(display), .. } = target else { return params };
+    if os == "windows" || method == "hello" || !crate::computer_agent_display::display_ok(display) {
+        return params;
+    }
+    if params.is_null() {
+        params = json!({});
+    }
+    if let Some(obj) = params.as_object_mut() {
+        obj.entry("display").or_insert_with(|| json!(display));
+    }
+    params
 }
 
 /// The guest screen size from the driver, without a screenshot.

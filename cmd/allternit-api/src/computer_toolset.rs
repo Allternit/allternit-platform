@@ -803,6 +803,11 @@ pub enum Target {
         handle: allternit_driver_interface::ExecutionHandle,
         os: String,
         display: &'static str,
+        /// This run's own X display on a Linux guest (`:10`, ...), from
+        /// `allternit-agent-display start` (`computer_agent_display`). Set,
+        /// the guest driver's reads, input and screenshots and the xdotool
+        /// fallback all go to it instead of the shared desktop display.
+        agent_display: Option<String>,
     },
     /// A Playwright session in the ACU gateway. `public_only`: the browser
     /// runs for a cloud target, so loopback/private/metadata hosts are refused.
@@ -960,9 +965,11 @@ pub(crate) async fn guest_exec(target: &Target, script: &str) -> Result<String, 
 
 /// `guest_exec` with a custom timeout (driver calls may wait on conditions).
 pub(crate) async fn guest_exec_timed(target: &Target, script: &str, timeout: Duration) -> Result<String, String> {
-    let Target::Guest { driver, handle, display, .. } = target else {
+    let Target::Guest { driver, handle, display, agent_display, .. } = target else {
         return Err("not a guest target".into());
     };
+    // The run's own display when it has one (validated `:N` only).
+    let display: &str = agent_display.as_deref().filter(|d| crate::computer_agent_display::display_ok(d)).unwrap_or(*display);
     let mut env_vars = HashMap::new();
     env_vars.insert("DISPLAY".to_string(), display.to_string());
     let spec = allternit_driver_interface::CommandSpec {
@@ -1868,6 +1875,7 @@ pub(crate) async fn build_target(state: &Arc<AppState>, user: &AuthUser, compute
         handle,
         os: record.os.clone(),
         display: crate::bot_desktop_input::desktop_display(&record.provider),
+        agent_display: None,
     })
 }
 
@@ -1971,7 +1979,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         return (status, body);
     }
 
-    let target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
+    let mut target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
         Ok(t) => t,
         Err((status, message)) => {
             settle(false);
@@ -1995,6 +2003,24 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         if let Err((status, code, message)) = lease_check(state, user, &computer, &target, req.run_id.as_deref()).await {
             settle(false);
             return respond(status, error_result(code, message, None));
+        }
+        // 2b. A named run on a Linux guest gets its own X display + headed
+        // Chrome on its first call (computer_agent_display); every driver
+        // call of the run then names that display. A computer with no room
+        // for another agent browser refuses the run here.
+        if let Some(run) = req.run_id.as_deref().filter(|r| !r.is_empty()) {
+            match crate::computer_agent_display::ensure(&target, &computer.id, run, req.agent_id.as_deref()).await {
+                Ok(Some(display)) => {
+                    if let Target::Guest { agent_display, .. } = &mut target {
+                        *agent_display = Some(display);
+                    }
+                }
+                Ok(None) => {}
+                Err(refused) => {
+                    settle(false);
+                    return respond(StatusCode::CONFLICT, error_result("display_limit", refused.message(), None));
+                }
+            }
         }
     }
 

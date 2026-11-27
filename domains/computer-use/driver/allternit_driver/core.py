@@ -515,9 +515,25 @@ class Driver:
         """Act on an element id: click, double_click, right_click, set_value,
         type, select, press (key), focus; or ``menu`` with ``path`` and a window.
         ``version`` pins the map the action was planned on: an older one is
-        refused with the fresh map."""
+        refused with the fresh map.
+
+        ``focus: false`` (``set_value`` only) writes the value through
+        accessibility on that element and nothing else: no focus step and no
+        key-typing fallback. Focusing a field in a window that isn't key makes
+        that window key, and the person's typing then goes into it (Safari
+        spike, 2026-11-26), so ``use_credential`` uses this on the person's
+        own computer. A field that refuses the write answers ``value_rejected``."""
         start = time.perf_counter()
         op = str(p.get("op") or "click")
+        focus = _focus_arg(p)
+        if focus is False:
+            if op not in ("set_value", "type"):
+                raise DriverError("bad_input", "focus: false applies to set_value and type only")
+            if str(p.get("id") or "").startswith("v"):
+                # A vision element is a pixel position: writing to it means
+                # clicking and typing at the screen, which is exactly what
+                # focus: false must never do.
+                raise DriverError("bad_input", "focus: false needs an accessibility element id from read_ui, not a vision element")
         if op == "menu":
             out = self._menu(self.target(p), p.get("path"))
             out["ms"] = _ms(start)
@@ -538,7 +554,7 @@ class Driver:
         except em.StaleVersion:
             fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id})
             return {"status": "stale_version", "map": fresh, "ms": _ms(start)}
-        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"), focus=_focus_arg(p))
+        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"), focus=focus)
         out["ms"] = _ms(start)
         return out
 
@@ -553,7 +569,19 @@ class Driver:
             start = time.perf_counter()
             d = Decision(cur.engine, "map")
             try:
-                if op == "press" and cur.engine == ARC and self.cua.available:
+                if focus is False and cur.engine != ARC:
+                    # Value write only (see act) on the engines without arc's
+                    # no-focus AXValue path (below): their direct value setter
+                    # (AT-SPI text, UIA ValuePattern), never focus, never keys.
+                    # Cua has no proven focus-free setter, so it refuses.
+                    writer = getattr(self._engine(cur.engine), "write_value_only", None)
+                    if writer is None or op != "set_value":
+                        raise DriverError("unsupported_op", f"the {cur.engine} engine can't {op} without focusing the field")
+                    if not writer(t.pid, t.window_id, element.native, "" if value is None else str(value)):
+                        raise DriverError("value_rejected", "the field rejected the value, and focus:false allows no typing")
+                    status, settled = "done", None
+                    cur, _ = self._read(t, fresh=True)
+                elif op == "press" and cur.engine == ARC and self.cua.available:
                     # arc's Skylight key posting can take the whole sidecar
                     # down (SIGSEGV in the private SPI path on macOS 14).
                     # Key input runs on the Cua engine instead — the same
@@ -616,7 +644,11 @@ class Driver:
         out: dict[str, Any] = {"status": status, "version": cur.number, "engine": d.engine}
         if settled is not None:
             out["settled"] = {"reacted": settled.reacted, "timed_out": settled.timed_out, "ms": settled.elapsed_ms}
-        if status == "done":
+        if status == "done" and focus is False:
+            # A value-only write carries secrets (use_credential): the reply
+            # never echoes the element diff, which would hold the new value.
+            pass
+        elif status == "done":
             diff = self.maps.window(t.key).diff(before)
             if diff is not None:
                 out["changes"] = diff

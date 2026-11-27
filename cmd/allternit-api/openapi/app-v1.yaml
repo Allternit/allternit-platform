@@ -380,6 +380,7 @@ paths:
         - `computer.human_requested` / `computer.human_resumed`: `ComputerHumanEventData`
         - `computer.block_detected`: `ComputerBlockDetectedEventData`
         - `computer.block_resolved`: `ComputerBlockResolvedEventData`
+        - `computer.agent_display`: `ComputerAgentDisplayEventData`
         The SSE `event:` name is `computer.action` on every frame (kept for
         older listeners), so read `type` from the JSON. Clients ignore types
         they don't know. The same frames go out on the computer's events
@@ -439,6 +440,10 @@ paths:
         same run skip the prompt. It lives in memory only and ends with the
         run; nothing is remembered per site. Any other approval is single-use
         and answers `scope: "once"`. Deny is `POST /api/aci/handoff/{id}/deny`.
+        Only the run's owner may approve or deny: the user the approval was
+        raised for, the owner of the computer it names, or the Desktop app on
+        this device (its local access token, not relayed). Anyone else gets
+        403 `not_run_owner` and the approval stays pending.
       x-base: instance
       x-handler: cmd/allternit-api/src/aci_routes.rs aci_handoff_approve
       tags: [Computers]
@@ -455,6 +460,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HandoffApproveResponse" }
+        "403":
+          description: "`not_run_owner`: the caller doesn't own this run or computer."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
         default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
@@ -753,7 +763,7 @@ components:
       properties:
         type:
           type: string
-          enum: [computer.action, computer.confirmation_required, computer.human_requested, computer.human_resumed, computer.block_detected, computer.block_resolved]
+          enum: [computer.action, computer.confirmation_required, computer.human_requested, computer.human_resumed, computer.block_detected, computer.block_resolved, computer.agent_display]
         ts: { type: string }
         data:
           type: object
@@ -850,6 +860,17 @@ components:
         kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
         action: { type: string, enum: [continue, stop, rerun, timed_out] }
         rerun_target: { type: [string, "null"] }
+    ComputerAgentDisplayEventData:
+      type: object
+      description: computer_agent_display.rs, when a run on a Linux cloud computer gets (`started`) or gives back (`stopped`) its own X display and browser. Point the run's live view at `display` (VNC on `vnc_port` on the desktop image; `GET /api/v1/computers/{id}/screenshot?run_id=`).
+      required: [run_id, computer_id, agent_id, display, state]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        agent_id: { type: string }
+        display: { type: string, description: "`:N`" }
+        vnc_port: { type: [integer, "null"] }
+        state: { type: string, enum: [started, stopped] }
     BlockResolveRequest:
       type: object
       required: [action]
