@@ -1,0 +1,90 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_session_guardrail",
+  "suite": "shared.v1",
+  "title": "Find every TODO in the repo",
+  "label": "bad",
+  "note": "Synthetic. A guardrail stopped the run at the step limit.",
+  "split": "dev",
+  "origin": {
+    "session_id": "ses_shared_guardrail",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Find every TODO in the repo"
+    }
+  ],
+  "workspace": {
+    "kind": "none",
+    "reason": "no_project"
+  },
+  "checks": [],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "stopped_at",
+      "step": "max_steps"
+    }
+  ],
+  "k": 1,
+  "pass_rule": "all_of_k",
+  "recorded": {
+    "trajectory": {
+      "status": "stopped",
+      "verifier": null,
+      "stopped_at": "max_steps",
+      "steps": [
+        {
+          "node": "main",
+          "primitive": "grep",
+          "ok": true
+        },
+        {
+          "node": "main",
+          "primitive": "grep",
+          "ok": true
+        },
+        {
+          "node": "main",
+          "primitive": "grep",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "cost_usd": 0.006,
+      "tokens": 3290,
+      "latency_ms": 1500
+    },
+    "grades": [
+      {
+        "type": "status",
+        "pass": false,
+        "detail": "status stopped, wanted completed"
+      },
+      {
+        "type": "stopped_at",
+        "pass": true,
+        "detail": "stopped at max_steps"
+      }
+    ],
+    "passed": false
+  },
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  },
+  "quick_check": [
+    "too_slow"
+  ]
+}

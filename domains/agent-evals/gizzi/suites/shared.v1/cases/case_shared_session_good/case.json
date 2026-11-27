@@ -1,0 +1,93 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_session_good",
+  "suite": "shared.v1",
+  "title": "Which functions call load_items?",
+  "label": "good",
+  "note": "Synthetic. A short read-only answer that passes every grader.",
+  "split": "dev",
+  "origin": {
+    "session_id": "ses_shared_good",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Which functions call load_items?"
+    }
+  ],
+  "workspace": {
+    "kind": "none",
+    "reason": "no_project"
+  },
+  "checks": [],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "cost_ceiling",
+      "max_usd": 0.008
+    },
+    {
+      "type": "latency_ceiling",
+      "max_ms": 4000
+    }
+  ],
+  "k": 1,
+  "pass_rule": "all_of_k",
+  "recorded": {
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "main",
+          "primitive": "read",
+          "ok": true
+        },
+        {
+          "node": "main",
+          "primitive": "grep",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [
+        "load_items is called by summary and low_stock."
+      ],
+      "cost_usd": 0.004,
+      "tokens": 2040,
+      "latency_ms": 2000
+    },
+    "grades": [
+      {
+        "type": "status",
+        "pass": true,
+        "detail": "status completed"
+      },
+      {
+        "type": "cost_ceiling",
+        "pass": true,
+        "detail": "cost 0.004 <= 0.008"
+      },
+      {
+        "type": "latency_ceiling",
+        "pass": true,
+        "detail": "latency 2000 <= 4000"
+      }
+    ],
+    "passed": true
+  },
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}
