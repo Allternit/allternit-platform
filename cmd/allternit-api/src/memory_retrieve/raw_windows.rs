@@ -918,7 +918,7 @@ mod tests {
                 metadata: [("kind".to_string(), kind.to_string())].into(),
             },
         };
-        let rev = drive.storage().unwrap().snapshot(None).unwrap().revision;
+        let rev = drive.storage().unwrap().snapshot(None).unwrap().revision.expect("initialized drive");
         service::apply(
             &db,
             USER,
@@ -951,7 +951,7 @@ mod tests {
         assert!(search(&db, &down(), "u2", query).await.unwrap().knowledge.is_empty());
 
         // Removing the bullet from the drive retires it.
-        let rev = service::read(&db, USER, None).unwrap().revision;
+        let rev = service::read(&db, USER, None).unwrap().revision.expect("initialized drive");
         service::apply(&db, USER, &rev, &[Operation::DeleteEntry { id: "k1".into() }], "rollback").unwrap();
         let again = RawQuery { include_knowledge: true, ..q("which warehouse table holds invoices joined on account_id?") };
         assert!(search(&db, &down(), USER, again).await.unwrap().knowledge.iter().all(|k| k.kind != "data_access"));
