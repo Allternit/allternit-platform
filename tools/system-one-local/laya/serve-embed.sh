@@ -13,6 +13,8 @@
 # EmbeddingGemma 2 needs sentence-transformers>=6.1, transformers>=5.19, torchvision and pillow
 # (its processor imports both even for text), which we
 # `uv pip install` into it when missing or too old.
+# Rerank: POST /v1/rerank serves BAAI/bge-reranker-v2-m3 (~2.3 GB, lazy-loaded on first call,
+# pinned RERANK_REVISION; off under 8 GB RAM or RERANK_DISABLE=1). Same deps, no new pip packages.
 # Weights (~1.5 GB; the text path uses 270M params) download from Hugging Face on
 # first start, then run locally.
 set -euo pipefail
@@ -31,5 +33,7 @@ fi
 if [ -z "${EMBED_DEVICE:-}" ] && [ "$(uname -sm)" = "Darwin arm64" ]; then export EMBED_DEVICE=mps; fi
 export EMBED_MODEL="${EMBED_MODEL:-google/embeddinggemma-2}"
 export EMBED_REVISION="${EMBED_REVISION:-914f7f89142e33e77833254d9c9b90c3cef7303b}"
+export RERANK_MODEL="${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}"
+export RERANK_REVISION="${RERANK_REVISION:-953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e}"
 export EMBED_HOST=127.0.0.1 EMBED_PORT="${EMBED_PORT:-7719}"
 exec "$PY" "$HERE/serve-embed.py"

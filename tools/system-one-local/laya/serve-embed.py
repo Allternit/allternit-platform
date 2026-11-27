@@ -20,15 +20,27 @@ Env: EMBED_MODEL (repo id or local path), EMBED_REVISION (pinned HF revision),
      EMBED_HOST (127.0.0.1), EMBED_PORT (7719), EMBED_DEVICE (mps/cuda/cpu, auto),
      EMBED_MAX_TOKENS (2048), EMBED_BATCH (32),
      EMBED_DIM (768; 512/256/128 truncate via Matryoshka and re-normalize).
+
+Also serves POST /v1/rerank (local cross-encoder, default BAAI/bge-reranker-v2-m3):
+  Request:  {"query": "...", "documents": ["...", ...], "top_n": 12}     # top_n optional
+  Response: {"model": ..., "results": [{"index": 3, "relevance_score": 0.91}, ...]}  # best first
+Loads on the first call (thread-safe). At most 256 documents, each cut to 2,048 chars.
+Disabled (503) when RAM < 8 GB or RERANK_DISABLE=1; /health reports
+"rerank": {"model", "loaded", "enabled"}.
+Env: RERANK_MODEL, RERANK_REVISION (pinned HF revision), RERANK_DEVICE (default: EMBED device),
+     RERANK_BATCH (32), RERANK_MAX_TOKENS (512), RERANK_DISABLE (1 = off).
+
 Text-only: the vision and audio encoders are not loaded (270M effective).
 Needs torch + sentence-transformers>=6.1 + transformers>=5.19 + fastapi + uvicorn.
 """
 import os
+import threading
 import time
 
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -77,6 +89,44 @@ DIM = int(model.get_embedding_dimension())
 SERVED_MODEL = MODEL_ID if not TRUNCATE_DIM else f"{MODEL_ID}@{DIM}"
 app = FastAPI()
 
+RERANK_MODEL = os.environ.get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_REVISION = os.environ.get("RERANK_REVISION") or None
+RERANK_BATCH = int(os.environ.get("RERANK_BATCH", "32"))
+RERANK_MAX_TOKENS = int(os.environ.get("RERANK_MAX_TOKENS", "512"))
+RERANK_MAX_DOCS = 256
+RERANK_MAX_CHARS = 2048
+RERANK_MIN_RAM = 8 * 1024**3
+_reranker = None
+_rerank_lock = threading.Lock()
+
+
+def total_ram() -> int | None:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def rerank_enabled() -> bool:
+    if os.environ.get("RERANK_DISABLE", "").lower() in ("1", "true", "yes"):
+        return False
+    ram = total_ram()
+    return ram is None or ram >= RERANK_MIN_RAM
+
+
+def get_reranker():
+    global _reranker
+    with _rerank_lock:
+        if _reranker is None:
+            from sentence_transformers import CrossEncoder
+            _reranker = CrossEncoder(
+                RERANK_MODEL,
+                revision=RERANK_REVISION,
+                device=os.environ.get("RERANK_DEVICE") or DEVICE,
+                max_length=RERANK_MAX_TOKENS,
+            )
+        return _reranker
+
 
 class EmbedRequest(BaseModel):
     input: str | list[str]
@@ -101,7 +151,9 @@ def embed(texts: list[str], prompt: str) -> tuple[list[list[float]], int]:
 @app.get("/health")
 @app.get("/healthz")
 def health():
-    return {"status": "ok", "model": SERVED_MODEL, "dim": DIM, "device": DEVICE}
+    return {"status": "ok", "model": SERVED_MODEL, "dim": DIM, "device": DEVICE,
+            "rerank": {"model": RERANK_MODEL, "loaded": _reranker is not None,
+                       "enabled": rerank_enabled()}}
 
 
 @app.post("/v1/embeddings")
@@ -118,6 +170,37 @@ def embeddings(req: EmbedRequest):
         "usage": {"prompt_tokens": tokens, "total_tokens": tokens},
         "latency_ms": int((time.time() - t0) * 1000),
     }
+
+
+class RerankRequest(BaseModel):
+    query: str
+    documents: list[str]
+    top_n: int | None = None
+    model: str | None = None
+
+
+@app.post("/v1/rerank")
+def rerank(req: RerankRequest):
+    if not rerank_enabled():
+        return JSONResponse(status_code=503, content={
+            "error": "rerank disabled (RAM below 8 GB or RERANK_DISABLE=1)"})
+    if not req.documents:
+        raise HTTPException(400, "documents must not be empty")
+    if len(req.documents) > RERANK_MAX_DOCS:
+        raise HTTPException(400, f"at most {RERANK_MAX_DOCS} documents per request")
+    docs = [d[:RERANK_MAX_CHARS] for d in req.documents]
+    try:
+        reranker = get_reranker()
+        with torch.inference_mode():
+            scores = reranker.predict([(req.query, d) for d in docs], batch_size=RERANK_BATCH,
+                                      convert_to_numpy=True, show_progress_bar=False)
+    except Exception as e:  # model download / load / OOM: caller falls back to its own order
+        return JSONResponse(status_code=503, content={"error": f"rerank failed: {e}"})
+    ranked = sorted(range(len(docs)), key=lambda i: float(scores[i]), reverse=True)
+    if req.top_n and req.top_n > 0:
+        ranked = ranked[:req.top_n]
+    return {"model": RERANK_MODEL,
+            "results": [{"index": i, "relevance_score": float(scores[i])} for i in ranked]}
 
 
 if __name__ == "__main__":
