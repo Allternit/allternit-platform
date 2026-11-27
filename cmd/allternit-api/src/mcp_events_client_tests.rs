@@ -664,3 +664,100 @@ async fn event_runs_through_real_bot_session_and_permission_requests(){
     let status:String=fx.state.db.connect().unwrap().query_row("SELECT status FROM bot_threads WHERE id=?1",params![h["runs"][0]["threadId"].as_str().unwrap()],|r|r.get(0)).unwrap();assert_eq!(status,"done");
     server.abort();
 }
+
+// ---------------------------------------------------------------- webhook watch wakes its chat (decision C)
+
+#[tokio::test]
+async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
+    let fx = fixture().await;
+    // Fake gizzi: the watched session is open; each turn is recorded.
+    let turns = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen = turns.clone();
+    let app = Router::new()
+        .route("/v1/session/:id", get(|Path(id): Path<String>| async move { Json(json!({ "id": id, "time": { "created": 1 } })) }))
+        .route(
+            "/v1/session/:id/message",
+            post(move |Path(sid): Path<String>, Json(body): Json<Value>| {
+                let seen = seen.clone();
+                async move {
+                    if sid == "ses_refused" {
+                        return (StatusCode::BAD_GATEWAY, "runtime refused the turn").into_response();
+                    }
+                    seen.lock().unwrap().push(body);
+                    Json(json!({ "info": { "id": "reply-w", "sessionID": "ses_watch", "role": "assistant" }, "parts": [{ "type": "text", "text": "Seen it" }] })).into_response()
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let gizzi = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    struct EnvRestore(Option<String>);
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("TERMINAL_SERVER_URL", v),
+                None => std::env::remove_var("TERMINAL_SERVER_URL"),
+            }
+        }
+    }
+    let _restore = EnvRestore(std::env::var("TERMINAL_SERVER_URL").ok());
+    std::env::set_var("TERMINAL_SERVER_URL", format!("http://{addr}"));
+    fx.state.db.set_session_metadata("ses_watch", &json!({ "isBot": true, "agentId": "bot-a" })).unwrap();
+
+    let (status, body) = call(&fx, OWNER, "POST", "/watches", Some(json!({
+        "server": "conn-1", "event": "email.received", "session_id": "ses_watch",
+        "arguments": { "label": "inbox" }, "delivery": "webhook", "instruction": "Reply with the subject."
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["watch_id"].as_str().unwrap().to_string();
+
+    // First event: one turn in the chat.
+    assert_eq!(fx.server.emit("email.received", "w-1", json!({ "message": "New mail: Hello" })).await, vec![200]);
+    for _ in 0..250 {
+        if !turns.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Second event inside the minute: a line only.
+    assert_eq!(fx.server.emit("email.received", "w-2", json!({ "message": "New mail: Again" })).await, vec![200]);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let sent = turns.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "exactly one turn: {sent:?}");
+    let text = sent[0]["parts"][0]["text"].as_str().unwrap();
+    assert!(text.starts_with("Event email.received from Fake Mail: New mail: Hello"), "{text}");
+    assert!(text.contains("untrusted data") && text.ends_with("Reply with the subject."), "{text}");
+
+    let (_, list) = call(&fx, OWNER, "GET", "/watches?session_id=ses_watch", None).await;
+    let view = &list["watches"][0];
+    assert_eq!(view["lineCount"], 2, "{view}");
+    assert!(view["lastWokeAt"].is_string(), "{view}");
+    assert!(view["lastWakeError"].is_null(), "{view}");
+
+    // Stop removes the subscription the watch created.
+    let (status, _) = call(&fx, OWNER, "DELETE", &format!("/watches/{id}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(fx.server.methods().iter().any(|m| m == "events/unsubscribe"));
+    assert!(fx.server.subs().is_empty());
+    assert_eq!(fx.cloud.removed().len(), 1);
+
+    // A refused turn: the watch says why in plain words.
+    fx.state.db.set_session_metadata("ses_refused", &json!({ "isBot": true, "agentId": "bot-a" })).unwrap();
+    let (status, body) = call(&fx, OWNER, "POST", "/watches", Some(json!({
+        "server": "conn-1", "event": "email.received", "session_id": "ses_refused", "arguments": { "label": "inbox" }, "delivery": "webhook"
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(fx.server.emit("email.received", "w-3", json!({ "message": "New mail: Refused" })).await, vec![200]);
+    let mut error = Value::Null;
+    for _ in 0..250 {
+        let (_, list) = call(&fx, OWNER, "GET", "/watches?session_id=ses_refused", None).await;
+        error = list["watches"][0]["lastWakeError"].clone();
+        if !error.is_null() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(error.as_str().is_some_and(|e| e.starts_with("Couldn't start: ")), "{error}");
+    assert_eq!(turns.lock().unwrap().len(), 1, "the refused wake ran no turn");
+    gizzi.abort();
+}
