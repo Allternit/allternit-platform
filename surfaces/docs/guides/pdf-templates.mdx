@@ -5,12 +5,14 @@ description: Make an invoice, report, event ticket, meeting minutes or receipt a
 
 ## What you get
 
-Five document templates, each with three themes, turn plain data into a
+Seven document templates, each with three themes, turn plain data into a
 print-ready PDF with real text and clean page breaks:
 
 | Template | Use it for | Header styles |
 |---|---|---|
 | Invoice | Line items, tax, totals | classic, minimal, modern |
+| Quote | Line items, scope, terms, valid-until date, signature lines | classic, minimal, modern |
+| Contract | Parties, intro, numbered clauses, signature lines | classic, minimal, modern |
 | Report | Headline numbers, then sections with text, bullets and tables | classic, minimal, modern |
 | Event ticket | One admission ticket with a stub code | classic, minimal, modern |
 | Meeting minutes | Attendees, agenda, decisions, action items | classic, minimal |
@@ -93,6 +95,42 @@ The reply is `application/pdf`. A bad request returns JSON with `error` and
 needs a computer that runs it (your Desktop or cloud computer); cloud-api only
 relays it there. The apps do not use this route. No headless browser is involved.
 
+## Signature lines
+
+Quote and contract PDFs end with a `signatures` block: an acceptance note, then
+signing areas side by side, each with a label, a 56 pt signing area and a date
+line. Invoices have none unless you ask.
+
+- **Quote.** Two slots, "Service provider" and "Client", named from `from` and `to`.
+- **Contract.** One slot per entry in `parties`, labelled with its `role`.
+- **Turn them off or change them.** In the data, `signatures: true` uses the
+  defaults (quote and contract do this when the key is missing) and
+  `signatures: false` removes them. Pass an array of slots, or an object, to set
+  your own:
+
+```json
+{
+  "signatures": {
+    "note": "By signing, the client accepts this quote.",
+    "slots": [
+      { "id": "provider", "label": "Service provider", "name": "Northwind Studio" },
+      { "id": "client", "label": "Client", "name": "Harbor Coffee Co.", "signed_on": "Dec 1, 2026" }
+    ]
+  }
+}
+```
+
+Each slot has an `id` (kept unique), a `label`, an optional `name` and an
+optional `signed_on`, which prints "Signed DATE" under the line. An invoice gets
+the same two slots as a quote when you pass `signatures: true`.
+
+In the Doc **PDF from template** dialog, **Add signature lines** adds the block to
+the data. The signature lines are where you sign afterwards with the Sign action;
+see [Review and sign](/guides/review-and-sign).
+
+Template PDFs with signature lines are always drawn by the built-in PDF writer,
+never by Chromium print, so each signing area is exactly where the slot says.
+
 ## Limits
 
 - PDFs made by the CLI, the API and the browser embed Noto Sans (regular and
@@ -105,6 +143,17 @@ relays it there. The apps do not use this route. No headless browser is involved
 - Android uses the m.allternit.com app, so it has the same picker.
 
 ## For developers
+
+`renderTemplatePdfWithSlots(req)` returns `{ pdf, slots }`. `pdf` is the same
+bytes as `renderTemplatePdf`, and `slots` lists where each signing area was drawn:
+
+```ts
+{ id, label, page /* 0-based */, x, y, w, h }  // PDF points, origin bottom-left
+```
+
+Pass the slots to a sign request so the signature lands in its slot.
+`renderTemplatePdf` is unchanged.
+
 
 - Shared source: `allternit/platform/packages/pdf-templates` (`templates.ts`
   builds a list of layout blocks; `html.ts` and `pdf.ts` draw them; `fonts.ts`

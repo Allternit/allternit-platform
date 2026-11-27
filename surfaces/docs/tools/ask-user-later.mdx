@@ -47,3 +47,16 @@ When the terminal is attached to an engine as a live session, it files the ask t
 | Answer arrives | In the same turn | As a new turn |
 | Lives | In memory, with the session | Saved, until answered, dismissed or 7 days |
 | Use when | You are here and the agent is stuck | You are away and a good guess is enough |
+
+## `request_signature`
+
+`request_signature` is the same idea for a PDF that needs your signature: the agent files a request and keeps working.
+
+| | |
+|---|---|
+| Parameters | `title`, `document_path` (a PDF, up to 20 MB), optional `summary`, `details` (up to 8 label/value rows) and `send_to` (an email address). Pass only `id` to check a request. |
+| Result | `{ id, status: "pending", sign_url }` on create. A check returns the status (`pending`, `signed`, `declined`, `cancelled`, `expired`) and, when signed, the signer's name and the time. |
+| Needs | A signed-in Allternit account: set `ALLTERNIT_API_TOKEN`. Without it the tool says so. |
+| Cannot | Sign, approve or decline. There is no such parameter, and the agent never sees the signature image. |
+
+The terminal shows an **Awaiting your signature** card with the link. Sign on Desktop or your phone; the terminal cannot sign. See [Review and sign](/guides/review-and-sign).

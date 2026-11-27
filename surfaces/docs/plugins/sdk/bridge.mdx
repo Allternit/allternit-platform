@@ -57,6 +57,20 @@ if (allternit?.supports("x-allternit/saveArtifact")) {
 }
 ```
 
+To ask the user to sign a PDF, call `requestSignature`. It needs extension version 3, and the host answers with `signed`, `declined` or `cancelled`. The app gets nothing until the user taps **Sign & send**, and never gets strokes or the signature image.
+
+```ts
+if (allternit?.supports("x-allternit/requestSignature")) {
+  const r = await allternit.requestSignature({
+    title: "Service agreement",
+    document: { name: "agreement.pdf", mime_type: "application/pdf", data_base64 },
+  });
+  // r.status: "signed" | "declined" | "cancelled"
+}
+```
+
+Parameters (`slots`, `details` up to 8, `send_to`, `file_id`, the 20 MB limit) and errors `-32602` and `-32000` are in the [reference](/plugins/reference/window-allternit).
+
 The script that installs `window.allternit` is `@allternit/apps-bridge/allternit-ext.js`, a single dependency-free file. `view()` from [`apps-server`](/plugins/sdk/server) inlines it for you; if you write your own HTML, inline it in a `<script>` tag (the View CSP allows inline scripts). Methods and confirmation behavior are in the [`window.allternit` reference](/plugins/reference/window-allternit).
 
 ## Compatibility shim
