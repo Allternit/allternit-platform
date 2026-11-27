@@ -59,6 +59,41 @@ paths:
         "200":
           description: Removed (the body is not read by the app).
         default: { $ref: "#/components/responses/Error" }
+  /push/notify/{runtime_id}:
+    post:
+      operationId: notifyAciPush
+      summary: Agent-browser push (aci_approval, aci_human, aci_blocked)
+      description: |
+        allternit-api forwards these from a runtime (`internal_routes.rs` notify_push). Auth is the
+        runtime relay signature (`x-allternit-runtime-id`, `-ts`, `-sig`; the signed path is this one).
+        The data is rebuilt from an allowlist: a credential value never reaches a device.
+        APNs categories `ACI_APPROVAL` (APPROVE needs auth, DENY destructive), `ACI_HUMAN` (CONTINUE, STOP)
+        and `ACI_BLOCKED` (OPEN). Web push and FCM carry the same ids in `data.actions`.
+      x-base: cloud
+      x-handler: cmd/allternit-cloud-api/src/routes/aci_push.rs notify_route
+      tags: [Push]
+      security: []
+      parameters:
+        - { name: runtime_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                bot_name: { type: string }
+                data:
+                  oneOf:
+                    - { $ref: "#/components/schemas/AciApprovalPush" }
+                    - { $ref: "#/components/schemas/AciHumanPush" }
+                    - { $ref: "#/components/schemas/AciBlockedPush" }
+                  discriminator: { propertyName: kind }
+      responses:
+        "200": { description: Sent. }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { description: Unknown kind or missing run_id, computer_id or approval_id. }
 components:
   securitySchemes:
     bearerAuth:
@@ -71,6 +106,46 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/DeviceTokenError" }
   schemas:
+    AciApprovalPush:
+      type: object
+      description: Title "<bot> needs your OK"; body "Fill your <name> login on <domain>?" or `message`. Never carries a credential value.
+      required: [kind, run_id, computer_id, approval_id, approval_kind, message]
+      properties:
+        kind: { type: string, enum: [aci_approval] }
+        run_id: { type: string }
+        computer_id: { type: string }
+        approval_id: { type: string }
+        approval_kind: { type: string, enum: [action, credential] }
+        credential:
+          type: object
+          required: [name, domain]
+          properties:
+            name: { type: string }
+            domain: { type: string }
+        message: { type: string }
+    AciHumanPush:
+      type: object
+      description: Title "<bot> needs you"; body is `reason`.
+      required: [kind, run_id, computer_id, reason, secret]
+      properties:
+        kind: { type: string, enum: [aci_human] }
+        run_id: { type: string }
+        computer_id: { type: string }
+        reason: { type: string }
+        secret: { type: boolean }
+    AciBlockedPush:
+      type: object
+      description: Title "<domain> blocked <bot>"; body "Open to continue, stop or run it on your Mac".
+      required: [kind, run_id, computer_id, domain, block_kind, rerun_targets]
+      properties:
+        kind: { type: string, enum: [aci_blocked] }
+        run_id: { type: string }
+        computer_id: { type: string }
+        domain: { type: string }
+        block_kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        rerun_targets:
+          type: array
+          items: { type: string }
     DeviceTokenError:
       type: object
       required: [error]

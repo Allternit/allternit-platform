@@ -128,6 +128,7 @@ pub mod channel_onboarding;
 pub mod paired_computers;
 pub mod computers_console;
 pub mod computer_alerts;
+pub mod aci_push;
 pub mod computer_metrics;
 pub mod computers_host;
 pub mod computer_snippets;

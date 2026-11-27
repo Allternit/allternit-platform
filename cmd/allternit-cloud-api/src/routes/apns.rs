@@ -264,7 +264,7 @@ impl Focus {
     /// True when this alert (its `data`) goes out muted on the filtered device.
     pub fn mutes(&self, data: &Value) -> bool {
         let category = data.get("category").and_then(Value::as_str).unwrap_or("");
-        let approval = category.starts_with("APPROVAL_") || data.get("event").and_then(Value::as_str) == Some("approval.requested");
+        let approval = category.starts_with("APPROVAL_") || category == "ACI_APPROVAL" || data.get("event").and_then(Value::as_str) == Some("approval.requested");
         if approval && self.allow_approvals {
             return false;
         }

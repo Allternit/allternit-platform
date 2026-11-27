@@ -695,6 +695,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computer_metrics::routes())
         // Computers console alert rules + incidents (step 2.8).
         .merge(routes::computer_alerts::routes())
+        // Agent-browser pushes forwarded by allternit-api (relay-signed in the handler).
+        .merge(routes::aci_push::routes())
         // Computers console live host data, approvals and port forwards through
         // the runtime relay; never wakes a computer (same caller rule).
         .merge(routes::computers_host::routes())

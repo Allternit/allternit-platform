@@ -590,6 +590,9 @@ fn static_kind(kind: &str) -> &'static str {
         "channel_message" => "channel_message",
         "call" => "call",
         "missed_call" => "missed_call",
+        "aci_approval" => "aci_approval",
+        "aci_human" => "aci_human",
+        "aci_blocked" => "aci_blocked",
         _ => "event",
     }
 }
