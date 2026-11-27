@@ -99,6 +99,15 @@ class ChatViewModel(
 
     var sessionContext = SessionContext()
 
+    /**
+     * Start anywhere (step 20): the computer this thread is bound to, from `metadata.startBinding`. Engine
+     * threads send every turn to that computer in that folder; terminal threads show the CLI's terminal.
+     */
+    var binding by mutableStateOf<StartBinding?>(null)
+        private set
+    /** One key per first send, so a retried start never starts twice (Idempotency-Key). */
+    private var startKey: String? = null
+
     private var streamJob: Job? = null
     private var permissionJob: Job? = null
     private var streamingMessageId: String? = null
@@ -297,6 +306,8 @@ class ChatViewModel(
         branches = emptyList()
         editedVersions = emptyMap()
         currentSessionId = null
+        binding = null
+        startKey = null
     }
 
     /** Opens a history chat: `GET agent-sessions/:id/messages`, then its branches. */
@@ -307,6 +318,7 @@ class ChatViewModel(
         transientError = null
         computeGate = null
         currentSessionId = sessionId
+        binding = null
         messages = emptyList()
         branches = emptyList()
         editedVersions = emptyMap()
@@ -323,6 +335,10 @@ class ChatViewModel(
                     messages = localImages?.merge(sessionId, r.value.map(MessageRecord::fromWire), browserImages?.request?.call) ?: r.value.map(MessageRecord::fromWire)
                     loadBranches()
                     refreshPermissions()
+                    // A thread started on a computer keeps running there (metadata.startBinding).
+                    (backend.api.getAgentSession(sessionId) as? ApiResult.Ok)?.value?.let { s ->
+                        if (currentSessionId == sessionId) binding = StartBinding.read(s.metadata)
+                    }
                 }
                 else -> if (r is ApiResult.HttpError && ChatErrors.isComputeGate(r.status, r.code, r.message)) {
                     computeGate = ComputeGateReason.NoComputer
@@ -547,15 +563,28 @@ class ChatViewModel(
                 if (currentSessionId?.startsWith("android-local-") == true) {
                     throw SendException("This chat contains images saved on this phone. Choose Image for another picture, or start a new chat for a computer-backed model.")
                 }
+                // Start anywhere: the first message with a picked computer starts a session there and
+                // binds this thread to it; a bound thread keeps going to the same computer.
+                val bound = binding ?: if (currentSessionId == null) startOnPicked(text) else null
+                if (bound?.isTerminal == true) {
+                    // The CLI got the message as its prompt; the thread now shows its terminal (ChatPage).
+                    ensureSessionId(agentModeId, bound)
+                    isCreatingSession = false
+                    binding = bound
+                    update(assistantId) { it.copy(content = "Started ${bound.runtime} in ${bound.folder.trimEnd('/').substringAfterLast('/')} on ${bound.deviceName}.") }
+                    finishStreaming(assistantId)
+                    return@launch
+                }
                 // Find the computer before creating the session, so a no-computer send leaves
                 // no empty chat behind.
-                val runtimeId = when (val pick = backend.relay.resolve()) {
+                val runtimeId = bound?.runtimeId ?: when (val pick = backend.relay.resolve()) {
                     is RelayPick.Computer -> pick.runtimeId
                     RelayPick.NoComputer -> throw GateException(ComputeGateReason.NoComputer)
                     RelayPick.Unreachable -> throw GateException(ComputeGateReason.Unreachable)
                     is RelayPick.Failed -> if (pick.gate) throw GateException(ComputeGateReason.NoComputer) else throw SendException(pick.message)
                 }
-                val sessionId = ensureSessionId(agentModeId)
+                val sessionId = ensureSessionId(agentModeId, bound)
+                binding = bound
                 isCreatingSession = false
                 requestStartedAt = System.currentTimeMillis()
                 firstDeltaAt = null
@@ -571,6 +600,8 @@ class ChatViewModel(
                     runtimeModelId = runtimeModelId,
                     effort = effort,
                     attachments = refs.ifEmpty { null },
+                    // A bound engine thread works in the folder it was started in.
+                    workdir = bound?.folder?.takeIf { it.isNotBlank() },
                     metadata = AgentChatMetadata(
                         tools = tools,
                         formFactor = "phone",
@@ -768,17 +799,64 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun ensureSessionId(agentModeId: String?): String {
+    /**
+     * Starts the picked computer's session for the first message (`POST /api/v1/session-start` through the
+     * relay to THAT computer). Gizzi (`allternit`) is an engine session the chat drives; any other CLI is a
+     * pane terminal that gets [text] as its prompt. Null when no computer is picked (today's path).
+     */
+    private suspend fun startOnPicked(text: String): StartBinding? {
+        val runtimeId = PendingStart.runtimeId ?: return null
+        val deviceName = PendingStart.deviceName ?: "your computer"
+        val runtime = (sessionContext.botBrain?.get("runtime") as? JsonPrimitive)?.content ?: "allternit"
+        val engine = runtime == "allternit"
+        val folder = PendingStart.folder ?: run {
+            val opts = PendingStart.options ?: (SessionStartClient.options(backend, runtimeId) as? StartResult.Ok)?.value
+            opts?.folders?.firstOrNull()?.let { StartFolderRef.Path(it.path) }
+        } ?: throw SendException(
+            if (PendingStart.asleep) asleepLine(deviceName) else "Pick a folder on $deviceName first: + › Folder.",
+        )
+        val picked = PendingStart.mode
+        val origin = StartOrigin(surface = "android", deviceName = android.os.Build.MODEL ?: "Android phone", depth = 0)
+        val key = startKey ?: UUID.randomUUID().toString().also { startKey = it }
+        val request = StartRequest(folder = folder, runtime = runtime, mode = picked, prompt = if (engine) null else strippedText(text), origin = origin)
+        val binding = when (val r = SessionStartClient.start(backend, runtimeId, request, key)) {
+            is StartResult.Ok -> when (val v = r.value) {
+                is StartResponse.Engine -> StartBinding(runtimeId, deviceName, v.directory.ifEmpty { (folder as? StartFolderRef.Path)?.path.orEmpty() }, runtime,
+                    picked ?: PendingStart.defaultMode ?: StartMode.Default, "engine", sessionId = v.sessionId, origin = origin)
+                is StartResponse.Terminal -> StartBinding(runtimeId, deviceName, v.cwd, v.agent.ifEmpty { runtime },
+                    picked ?: PendingStart.defaultMode ?: StartMode.Default, "terminal", terminalId = v.terminalId, origin = origin)
+            }
+            is StartResult.Refused -> throw SendException(r.error.sentence)
+            is StartResult.Unreachable -> throw SendException(if (PendingStart.asleep) asleepLine(deviceName) else r.message)
+        }
+        startKey = null
+        PendingStart.clear()
+        return binding
+    }
+
+    /** "Pick it anyway" on an asleep computer: a plain line, and the cloud offer is one tap away again. */
+    private fun asleepLine(name: String) =
+        "$name is asleep, so the session didn't start. Open + › Computer to use a cloud computer, or wake $name and send again."
+
+    private suspend fun ensureSessionId(agentModeId: String?, bound: StartBinding? = null): String {
         currentSessionId?.let { return it }
         val ctx = sessionContext
+        val extra = bound?.let { b ->
+            buildJsonObject {
+                put(StartBinding.KEY, b.toJson())
+                b.sessionId?.let { put("gizziSessionId", it) }
+            }
+        }
         val name = when (ctx.originSurface) {
             "cowork" -> "New Cowork"
             "code" -> "New Code Thread"
             else -> "New Chat"
         }
-        return when (val r = backend.createSession(name, ctx.originSurface, ctx.agentId, ctx.agentName, agentModeId ?: ctx.agentModeId, ctx.permissionMode, ctx.sessionMode, botBrain = ctx.botBrain)) {
+        return when (val r = backend.createSession(name, ctx.originSurface, ctx.agentId, ctx.agentName, agentModeId ?: ctx.agentModeId, bound?.mode?.id ?: PendingStart.mode?.id ?: ctx.permissionMode, ctx.sessionMode, botBrain = ctx.botBrain, extraMetadata = extra)) {
             is ApiResult.Ok -> {
                 currentSessionId = r.value.id
+                // The + sheet's Permission pick was for this chat only.
+                PendingStart.mode = null
                 onSessionsChanged()
                 r.value.id
             }

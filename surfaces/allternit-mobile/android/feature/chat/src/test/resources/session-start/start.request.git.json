@@ -1,0 +1,7 @@
+{
+  "folder": { "git": { "remote": "https://github.com/example-org/allternit.git", "branch": "main" } },
+  "runtime": "allternit",
+  "mode": "default",
+  "prompt": "Find why the sidebar flickers on resize and fix it.",
+  "origin": { "surface": "ios", "deviceName": "Eoj's iPhone", "depth": 0 }
+}

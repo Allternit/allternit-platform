@@ -20,8 +20,12 @@ data class RelayDevice(
     val preferred: Boolean,
     val wakeable: Boolean,
     val relayConnections: Int,
+    /** Last heartbeat (ISO-8601) for "Asleep · last seen …"; null when the list has none. */
+    val lastSeenAt: String? = null,
 ) {
     val isOnline: Boolean get() = status == "online" || status == "busy"
+    /** A cloud computer (hosted / provisioned): it wakes on the first request (presence `kind: "cloud"`). */
+    val isCloud: Boolean get() = runtimeType.lowercase() in setOf("hosted", "provisioned", "cloud")
 }
 
 /** What the relay found when the chat asked for a computer. */
@@ -101,6 +105,7 @@ class RuntimeRelay(private val okHttp: OkHttpClient, private val config: ApiConf
                         preferred = o.bool("preferred") == true,
                         wakeable = o.bool("wakeable") == true,
                         relayConnections = o.arr("relayConnections").size,
+                        lastSeenAt = o.str("lastHeartbeatAt") ?: o.str("lastSeenAt") ?: o.str("last_seen_at"),
                     )
                 }.filter { it.runtimeType.lowercase() !in NON_COMPUTER_TYPES }
                 lastError = null

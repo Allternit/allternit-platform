@@ -156,7 +156,22 @@ internal fun ChatPage(
                 }
             },
         )
-        ChatScreen(
+        // Start anywhere (step 20): a thread bound to a CLI in a pane terminal shows that terminal with the
+        // Code terminal composer; engine-bound threads stay in the chat feed (approvals, Stop).
+        val bound = chat.binding
+        androidx.compose.runtime.DisposableEffect(bound) {
+            com.allternit.feature.chat.PendingStart.bound = bound
+            onDispose { com.allternit.feature.chat.PendingStart.bound = null }
+        }
+        val boundTerminal = if (bound?.isTerminal == true) bound.terminalId else null
+        if (bound != null && boundTerminal != null) {
+            Text(
+                "${bound.runtime} · ${bound.folder.trimEnd('/').substringAfterLast('/')} · ${bound.deviceName}",
+                color = c.textSecondary, fontSize = 12.sp, maxLines = 1,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("boundThreadLine"),
+            )
+            com.allternit.feature.code.BoundTerminalThread(backend, bound.runtimeId, boundTerminal, Modifier.weight(1f))
+        } else ChatScreen(
             viewModel = chat,
             backend = backend,
             callbacks = callbacks,

@@ -87,6 +87,8 @@ object ChatBackends {
         val client = okHttp ?: ApiClients.okHttp(bearer = AllternitAuth.tokenProvider)
         val config = ApiConfig()
         return ChatBackend(client, api ?: AllternitApi(client, config), config, context.applicationContext)
+            // Start anywhere: the chip (feature/bots) and the + sheet list devices through this backend.
+            .also { if (PendingStart.backend == null) PendingStart.backend = it }
     }
 }
 

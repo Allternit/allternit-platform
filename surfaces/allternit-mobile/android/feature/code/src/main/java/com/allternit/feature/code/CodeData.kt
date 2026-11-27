@@ -280,21 +280,21 @@ internal object CodeApi {
         }
 
     /** `POST /terminal/:id/input {content}`: raw bytes for the pty (a real pty reads '\r' as Enter). 404 = the terminal is gone. */
-    suspend fun terminalInput(b: ChatBackend, id: String, content: String): CodeResult<Unit> {
+    suspend fun terminalInput(b: ChatBackend, id: String, content: String, target: String? = null): CodeResult<Unit> {
         val body = buildJsonObject { put("session_id", id); put("content", content) }.toString()
-        return b.codeCall("POST", "/terminal/${encode(id)}/input", body, "send the keys").map { }
+        return b.codeCall("POST", "/terminal/${encode(id)}/input", body, "send the keys", target).map { }
     }
 
     /** `POST /terminal/:id/resize {cols, rows}`. 404 = the terminal is gone. */
-    suspend fun resizeTerminal(b: ChatBackend, id: String, cols: Int, rows: Int): CodeResult<Unit> {
+    suspend fun resizeTerminal(b: ChatBackend, id: String, cols: Int, rows: Int, target: String? = null): CodeResult<Unit> {
         val body = buildJsonObject { put("session_id", id); put("cols", cols); put("rows", rows) }.toString()
-        return b.codeCall("POST", "/terminal/${encode(id)}/resize", body, "resize the shell").map { }
+        return b.codeCall("POST", "/terminal/${encode(id)}/resize", body, "resize the shell", target).map { }
     }
 
     /** `POST /terminal/:id/close`: ends the shell on the computer (an unknown id is fine). */
-    suspend fun closeTerminal(b: ChatBackend, id: String) {
+    suspend fun closeTerminal(b: ChatBackend, id: String, target: String? = null) {
         val body = buildJsonObject { put("session_id", id) }.toString()
-        b.codeCall("POST", "/terminal/${encode(id)}/close", body, "close the shell")
+        b.codeCall("POST", "/terminal/${encode(id)}/close", body, "close the shell", target)
     }
 
     /** `GET /terminal/:id/stream`: the SSE path (scrollback replay, then live output, then `exit`). */
