@@ -227,6 +227,17 @@ async fn spawn_cloud(state: &Arc<AppState>) -> FakeCloud {
 
 // ---------------------------------------------------------------- fixture
 
+/// Held by every test that delivers `email.received` for OWNER on conn-1
+/// through the relay. Webhook watches live in a process-wide map and
+/// `bump_webhook_watches` matches them by owner, connector and event, so a
+/// concurrent delivery from another test would add lines (or the wake) to the
+/// watch test's watch. Take it first, before `terminal_url_env_lock`.
+static OWNER_EVENTS: StdMutex<()> = StdMutex::new(());
+
+fn owner_events_lock() -> std::sync::MutexGuard<'static, ()> {
+    OWNER_EVENTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct Fx {
     state: Arc<AppState>,
     server: FakeServer,
@@ -287,6 +298,7 @@ async fn call(fx: &Fx, as_user: &str, method: &str, path: &str, body: Option<Val
 
 #[tokio::test]
 async fn subscribe_verify_deliver_wakes_the_bot_with_a_ticket() {
+    let _events = owner_events_lock();
     let fx = fixture().await;
     // REST: the server's events + no subscriptions yet.
     let (status, list) = call(&fx, OWNER, "GET", "/connectors/conn-1/events", None).await;
@@ -410,6 +422,7 @@ async fn a_server_without_events_is_reported_unsupported() {
 
 #[tokio::test]
 async fn refresh_rotates_the_secret_and_events_keep_flowing() {
+    let _events = owner_events_lock();
     let fx = fixture().await;
     let a = subscribe(&fx.state, &fx.ctx, OWNER, "conn-1", req("email.received", "bot-a")).await.unwrap();
     // Not due: nothing happens.
@@ -642,6 +655,7 @@ async fn stable_ticket_recovers_when_ledger_append_was_lost(){
 
 #[tokio::test]
 async fn event_runs_through_real_bot_session_and_permission_requests(){
+    let _events=owner_events_lock();
     use crate::mcp_event_automations as a;
     let fx=fixture().await;
     let captured=Arc::new(Mutex::new(Vec::<Value>::new()));
@@ -670,6 +684,7 @@ async fn event_runs_through_real_bot_session_and_permission_requests(){
 
 #[tokio::test]
 async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
+    let _events = owner_events_lock();
     let fx = fixture().await;
     // Fake gizzi: the watched session is open; each turn is recorded.
     let turns = Arc::new(Mutex::new(Vec::<Value>::new()));
