@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.24.0 (2026-11-27)
+
+- **Start anywhere.** `gizzi start` (and `--list` for your computers) and the StartSession tool start a session on another computer or folder, after you approve it. A session can't start one in a higher mode than its own, and only three levels deep. `POST /v1/session-start` reaches the engine through the cloud relay, even when Desktop is quit, and a paired engine opens the relay itself.
+- **Knowledge.** The `knowledge_flag` tool and `/knowledge` flag wrong or stale facts and turn skills on. Approved knowledge and a "From past chats" block ride each turn (never in incognito), skill-growth ideas sync as proposals, and `memory_recall` takes date, session and neighbor filters.
+- **Code Mode.** The `mcp_script` tool runs a short script over your connected apps' tools in a QuickJS sandbox, in the terminal too, and runs your PreToolUse/PostToolUse hooks. `gizzi mcp add <name> <url>`; typed MCP results show as rows.
+- **Agent browser.** Needs-you prompts (fill a credential, hand off to you, masked secrets) show in the TUI and ACP; re-runs go through the target computer's own runtime.
+- **Signatures.** `request_signature` asks a person to sign and shows a card; the agent can never sign.
+- **TUI.** Tool rows get a glyph per kind and a check when done; job toasts; usage windows and pace; readable session titles; per-session Remote Control state; Allternit Open in the model list.
+- **Approvals.** Approval push is on by default; skill approvals reach you at session start. Tools your account blocks are refused.
+
 ## 2.23.0 (2026-11-25)
 
 - **`gizzi do`.** Run one tool from a connected app from the terminal, the Island bar's terminal door. It talks to the runtime (local first, then the cloud relay), fills the tool's blanks and shows the review and receipt. The Island bar is off until the `bar.island` flag is on.
