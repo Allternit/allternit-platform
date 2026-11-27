@@ -445,6 +445,17 @@ impl ModelRouter {
         models
     }
 
+    /// [`Self::list_models`] for one caller (contract D11): Open Research
+    /// (`research_only`) rows, listed or hidden backups, are left out unless
+    /// the caller has the research flag. Public callers pass `false`.
+    pub async fn list_models_for(&self, research: bool) -> Vec<ModelInfo> {
+        let mut models = self.list_models().await;
+        if !research {
+            models.retain(|model| !self.alias_map.resolve(&model.id).is_some_and(|entry| entry.research_only));
+        }
+        models
+    }
+
     /// The model Allternit Cloud recommends, as `GET /v1/models` flags it: the
     /// catalog's default model, else its first listed one. Open-lane models
     /// (they need their own terms and credits) and models `GET /v1/models`

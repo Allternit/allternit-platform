@@ -39,6 +39,10 @@ pub struct CustomerRow {
     pub stripe_customer_id: Option<String>,
     pub computer_status: Option<String>,
     pub emails_sent: Vec<String>,
+    /// Open Research record (`routes::admin_open_lane`), snake_case like
+    /// contract §6: `{ enabled, contract_ref, set_at }`; null when never set.
+    #[serde(rename = "open_research")]
+    pub open_research: Option<crate::routes::admin_open_lane::OpenResearchSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -127,6 +131,8 @@ pub async fn customer_rows(db: &PgPool) -> Result<Vec<CustomerRow>, ApiError> {
         emails_by_user.entry(user).or_default().push(kind);
     }
 
+    let mut research = crate::routes::admin_open_lane::research_by_user(db).await?;
+
     Ok(users
         .iter()
         .filter_map(|user| {
@@ -148,6 +154,7 @@ pub async fn customer_rows(db: &PgPool) -> Result<Vec<CustomerRow>, ApiError> {
                 stripe_customer_id: subscription.and_then(|(_, _, _, customer)| customer.clone()),
                 computer_status: computers.get(&user_id).cloned(),
                 emails_sent: emails_by_user.remove(&user_id).unwrap_or_default(),
+                open_research: research.remove(&user_id),
                 user_id,
             })
         })
@@ -283,6 +290,7 @@ mod tests {
             stripe_customer_id: None,
             computer_status: computer.map(str::to_string),
             emails_sent: vec![],
+            open_research: None,
         }
     }
 
