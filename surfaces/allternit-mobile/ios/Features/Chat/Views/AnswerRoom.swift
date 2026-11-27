@@ -39,6 +39,26 @@ enum AnswerRoom {
     }
 }
 
+/// Whether a thread follows new text: only while the reader is at the bottom,
+/// and only the reader's own drag up releases it. Programmatic scrolls, growth
+/// and layout never release it. While released, new text sets `hasNew` so the
+/// "New text" pill can show; reaching the bottom, jumping or sending re-follows.
+struct TailFollow: Equatable {
+    var follows = true
+    var hasNew = false
+
+    /// The reader dragged toward earlier messages.
+    mutating func userScrolledUp() { follows = false }
+    /// The end of the thread is back in view.
+    mutating func reachedBottom() { follows = true; hasNew = false }
+    /// New text arrived. Counts as unseen only when not following.
+    mutating func grew() { if !follows { hasNew = true } }
+    /// The reader tapped the jump button.
+    mutating func jumped() { follows = true; hasNew = false }
+    /// The reader sent a message.
+    mutating func sent() { follows = true; hasNew = false }
+}
+
 /// The anchored turn's height and the scroll view's height, read by two backgrounds.
 struct AnswerRoomTurnHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0

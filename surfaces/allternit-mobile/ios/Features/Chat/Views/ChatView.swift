@@ -243,6 +243,8 @@ struct ChatContentView: View {
     @ObservedObject var viewModel: ChatViewModel
     /// Scroll-to-bottom button: the transcript is more than one screen above its end.
     @State private var jumpFar = false
+    /// Follow new text only while the reader is at the bottom.
+    @State private var tail = TailFollow()
     @ReducedMotion private var reducedMotion
     /// Chat wait B: the sent message held at the top while the answer grows (see `AnswerRoom`).
     @State private var answerAnchorId: String?
@@ -595,22 +597,12 @@ struct ChatContentView: View {
         #if DEBUG
         if launchArgumentEnabled(LaunchArgument.calmJumpButton) { return true }
         #endif
-        return jumpFar
+        return jumpFar || tail.hasNew
     }
 
     /// The 40 pt glass scroll-to-bottom button. Smooth scroll, instant under reduced motion.
     private func jumpButton(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(width: 40, height: 40)
-                .glassSurface(cornerRadius: 20)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Scroll to latest message")
-        .accessibilityIdentifier("chatJumpToBottom")
+        TailJumpButton(hasNew: tail.hasNew, action: action)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -621,6 +613,7 @@ struct ChatContentView: View {
         } else {
             withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(lastId, anchor: .bottom) }
         }
+        tail.jumped()
     }
 
     /// One thread row (terminal or chat).
@@ -691,6 +684,9 @@ struct ChatContentView: View {
                                 .onAppear { jumpFar = false }
                                 .onDisappear { jumpFar = true }
                         }
+                        // The end of the thread is in view: follow again (all iOS versions).
+                        Color.clear.frame(height: 1)
+                            .onAppear { tail.reachedBottom() }
                     }
                     .padding(.vertical, 16)
                 }
@@ -703,6 +699,7 @@ struct ChatContentView: View {
                     guard !isTerminal,
                           let id = AnswerRoom.anchorId(wasStreaming: was, isStreaming: now, messages: viewModel.messages) else { return }
                     answerAnchorId = id
+                    tail.sent()
                     DispatchQueue.main.async {
                         if reducedMotion {
                             scrollProxy.scrollTo(id, anchor: .top)
@@ -717,6 +714,7 @@ struct ChatContentView: View {
                     answerTurnHeight = 0
                 }
                 .modifier(JumpDistanceTracker(far: $jumpFar))
+                .modifier(TailFollowTracker(tail: $tail))
                 .overlay(alignment: .bottom) {
                     if showJumpButton {
                         jumpButton { scrollToBottom(scrollProxy) }
@@ -730,7 +728,11 @@ struct ChatContentView: View {
                     // the view model's ~50ms flush coalescing bounds the rate.
                     guard let lastId = viewModel.messages.last?.id else { return }
                     // An anchored turn keeps the sent message at the top while it answers.
-                    guard AnswerRoom.followsBottom(anchored: answerAnchorId != nil, streaming: viewModel.isStreaming) else { return }
+                    guard tail.follows,
+                          AnswerRoom.followsBottom(anchored: answerAnchorId != nil, streaming: viewModel.isStreaming) else {
+                        tail.grew()
+                        return
+                    }
                     // Animated scroll lags behind rapid streaming deltas.
                     if viewModel.isStreaming {
                         scrollProxy.scrollTo(lastId, anchor: .bottom)
@@ -1695,5 +1697,82 @@ private struct JumpDistanceTracker: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// Releases `TailFollow` only on the reader's own drag toward earlier messages,
+/// and re-follows at the bottom. iOS 18 reads scroll phase and offset; iOS 17
+/// reads a drag gesture, and the thread's end marker re-follows.
+struct TailFollowTracker: ViewModifier {
+    @Binding var tail: TailFollow
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.modifier(TailFollowTracker18(tail: $tail))
+        } else {
+            content.simultaneousGesture(
+                DragGesture(minimumDistance: 8).onChanged { value in
+                    // Finger moving down: the content scrolls toward earlier messages.
+                    if value.translation.height > 0, tail.follows { tail.userScrolledUp() }
+                }
+            )
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct TailFollowTracker18: ViewModifier {
+    @Binding var tail: TailFollow
+    @State private var byReader = false
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollPhaseChange { _, phase in
+                byReader = phase == .interacting || phase == .decelerating
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { old, new in
+                // Offset getting smaller while the reader drags or coasts: toward earlier messages.
+                if byReader, new < old, tail.follows { tail.userScrolledUp() }
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height <= 4
+            } action: { _, atBottom in
+                if atBottom { tail.reachedBottom() }
+            }
+    }
+}
+
+/// The scroll-to-bottom button: a 40 pt glass circle, or a "New text" capsule
+/// when text arrived while the reader was away from the bottom.
+struct TailJumpButton: View {
+    let hasNew: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            if hasNew {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("New text")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 14)
+                .frame(height: 40)
+                .glassSurface(cornerRadius: 20)
+                .contentShape(Capsule())
+            } else {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .glassSurface(cornerRadius: 20)
+                    .contentShape(Circle())
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(hasNew ? "New text below, jump to latest" : "Scroll to latest message")
+        .accessibilityIdentifier("chatJumpToBottom")
     }
 }
