@@ -35,9 +35,9 @@ export function PausedBar(): React.ReactNode {
   }
   const label = limitLabel({ until: pause.until, limit: pause.limit, providerID: pause.providerID });
   const s = pause.suggest;
-  const alt = s ? ` · /resume-now to continue on ${s.label}${s.headroom !== undefined ? ` (${Math.round(s.headroom * 100)}% left)` : ''}` : '';
+  const alt = s ? ` · /resume now to continue on ${s.label}${s.headroom !== undefined ? ` (${Math.round(s.headroom * 100)}% left)` : ''}` : '';
   const c = pause.cloud;
-  const cloud = c ? c.funds.kind === 'none' ? ' · /keep-going to add Cloud credits' : ` · /keep-going on Allternit Cloud (${c.label} · ${CloudContinue.fundsLabel(c.funds)})` : '';
+  const cloud = c ? c.funds.kind === 'none' ? ' · /resume keep-going to add Cloud credits' : ` · /resume keep-going on Allternit Cloud (${c.label} · ${CloudContinue.fundsLabel(c.funds)})` : '';
   return <Box paddingX={2}>
       <Text wrap="wrap">
         <Text color="warning">⏸ Paused until {untilLabel(pause.until, now)}</Text>

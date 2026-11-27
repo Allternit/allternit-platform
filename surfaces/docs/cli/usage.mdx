@@ -9,6 +9,22 @@ The `/usage` command is an inline command available inside an interactive Gizzi 
 
 The footer shows your credit balance next to the context meter, for example `credits $41.20 · context: 12% (24k/200k)`. It is hidden when you are not signed in. **Settings › Usage** shows the same plan and limits.
 
+## /status tabs
+
+`/status` holds four tabs: **Status**, **Usage**, **Cost** and **Stats**. Press Tab or the left and right arrow keys to switch. `/status usage`, `/status cost` and `/status stats` open that tab directly.
+
+The old commands still work for one release as hidden aliases. They no longer appear in `/help` or the slash menu:
+
+| Old command | Opens |
+|---|---|
+| `/usage` | `/status`, Usage tab |
+| `/cost` | `/status`, Cost tab |
+| `/stats` | `/status`, Stats tab (press `m` for Overview or Models) |
+| `/session-info` | `/status`, Status tab (press `c` to copy the session id) |
+| `/extra-usage` | `/status`, Usage tab, with the extra-usage result on top |
+
+In print mode (`gizzi -p`), `--remote` sessions and Remote Control, `/usage` and `/cost` still print the text summary described below, because those places cannot show tabs.
+
 Use it when you want to:
 
 - Check how much of the model's context window is occupied
@@ -43,7 +59,8 @@ The table shows requests, prompt tokens, completion tokens and cost in USD per g
 
 | Command | Description |
 |---------|-------------|
-| `/usage` | Show your Allternit plan, credits and CLI-brain limits, plus this session's tokens and cost |
+| `/status usage` | Open the Usage tab: your Allternit plan, credits and CLI-brain limits |
+| `/usage` | Hidden alias of `/status usage`; prints the text summary in non-interactive sessions |
 
 `/usage` works in both interactive and non-interactive sessions. It does not modify session state and can be run any number of times.
 

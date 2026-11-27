@@ -18,7 +18,7 @@ import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
 import config from './commands/config/index.js'
 import { context, contextNonInteractive } from './commands/context/index.js'
-import cost from './commands/cost/index.js'
+import cost, { costTab } from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
@@ -82,7 +82,7 @@ const agentsPlatform =
 /* eslint-enable @typescript-eslint/no-require-imports */
 import securityReview from './commands/security-review.js'
 import terminalSetup from './commands/terminalSetup/index.js'
-import usage from './commands/usage/index.js'
+import usage, { usageTab } from './commands/usage/index.js'
 import theme from './commands/theme/index.js'
 import vim from './commands/vim/index.js'
 import voice from './commands/voice/index.js'
@@ -215,6 +215,9 @@ const COMMANDS = memoize((): Command[] => [
   design,
   context,
   contextNonInteractive,
+  // The tab twin comes first so the terminal UI opens /status on its tab;
+  // print mode drops local-jsx and --remote keeps only the text form.
+  costTab,
   cost,
   dash,
   dashboard,
@@ -287,6 +290,7 @@ const COMMANDS = memoize((): Command[] => [
   terminalSetup,
   extraUsage,
   extraUsageNonInteractive,
+  usageTab,
   usage,
   vim,
   ...(forkCmd ? [forkCmd] : []),

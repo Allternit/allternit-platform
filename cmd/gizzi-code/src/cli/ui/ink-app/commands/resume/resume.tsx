@@ -1,4 +1,5 @@
 import chalk from '@/shared/util/chalk'
+import { resumeSubcommand } from './subcommand';
 import type { UUID } from 'crypto';
 import figures from 'figures';
 import * as React from 'react';
@@ -178,6 +179,19 @@ export const call: LocalJSXCommandCall = async (onDone, context, args) => {
     }
   };
   const arg = args?.trim();
+
+  // `/resume now` and `/resume keep-going` (were /resume-now and /keep-going).
+  const sub = resumeSubcommand(arg);
+  if (sub) {
+    const { call: runSub } = sub === 'now' ? await import('../resume-now/resume-now') : await import('../keep-going/keep-going');
+    const result = await runSub('', context);
+    if (result.type === 'text') {
+      onDone(result.value);
+    } else {
+      onDone(undefined, { display: 'skip' });
+    }
+    return null;
+  }
 
   // No argument provided - show picker
   if (!arg) {

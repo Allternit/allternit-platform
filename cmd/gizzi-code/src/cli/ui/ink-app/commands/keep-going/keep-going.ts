@@ -24,7 +24,7 @@ export const call: LocalCommandCall = async (_args, context) => {
     context.setAppState(prev => (prev.replPause ? { ...prev, replPause: { ...prev.replPause, cloud: offer } } : prev))
     return {
       type: 'text',
-      value: `${cloudCreditsDisclosure(offer.funds.reason)}${opened ? ' Billing is open in your browser.' : ''} Then run /keep-going again.`,
+      value: `${cloudCreditsDisclosure(offer.funds.reason)}${opened ? ' Billing is open in your browser.' : ''} Then run /resume keep-going again.`,
     }
   }
   context.setAppState(prev => ({

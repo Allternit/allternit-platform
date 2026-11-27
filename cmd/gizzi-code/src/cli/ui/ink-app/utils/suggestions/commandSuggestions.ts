@@ -7,6 +7,7 @@ import {
 import type { SuggestionItem } from '../../components/PromptInput/PromptInputFooterSuggestions.js'
 import {
   compareCommandsForSlashMenu,
+  isSlashMenuVisible,
   getCommandArgumentHint,
   getCommandSourceTag,
 } from './commandSource.js'
@@ -37,7 +38,7 @@ function getCommandFuse(commands: Command[]): Fuse<CommandSearchItem> {
   }
 
   const commandData: CommandSearchItem[] = commands
-    .filter(cmd => !cmd.isHidden)
+    .filter(isSlashMenuVisible)
     .map(cmd => {
       const commandName = getCommandName(cmd)
       const parts = commandName.split(SEPARATORS).filter(Boolean)
@@ -306,7 +307,7 @@ export function generateCommandSuggestions(
 
   // When just typing '/' without additional text
   if (query === '') {
-    const visibleCommands = commands.filter(cmd => !cmd.isHidden)
+    const visibleCommands = commands.filter(isSlashMenuVisible)
 
     // Find recently used skills (only prompt commands have usage tracking)
     const recentlyUsed: Command[] = []

@@ -35,6 +35,11 @@ type Props = {
   onClose: (result?: string, options?: {
     display?: CommandResultDisplay;
   }) => void;
+  /**
+   * Rendered as the Stats tab of /status: the parent owns Esc, Ctrl+C and
+   * Tab/←/→, so Overview/Models switches with `m` and there is no own Pane.
+   */
+  embedded?: boolean;
 };
 type StatsResult = {
   type: 'success';
@@ -80,20 +85,22 @@ function createAllTimeStatsPromise(): Promise<StatsResult> {
   });
 }
 export function Stats({
-    onClose
+    onClose,
+    embedded = false
 }: Props) {
   const t1 = createAllTimeStatsPromise();
 
   const allTimePromise = t1;
   const t2 = <Box marginTop={1}><Spinner /><Text> Loading your Gizzi Code stats…</Text></Box>;
 
-  const t3 = <Suspense fallback={t2}><StatsContent allTimePromise={allTimePromise} onClose={onClose} /></Suspense>;
+  const t3 = <Suspense fallback={t2}><StatsContent allTimePromise={allTimePromise} onClose={onClose} embedded={embedded} /></Suspense>;
 
   return t3;
 }
 type StatsContentProps = {
   allTimePromise: Promise<StatsResult>;
   onClose: Props['onClose'];
+  embedded?: boolean;
 };
 
 /**
@@ -102,7 +109,8 @@ type StatsContentProps = {
  */
 function StatsContent({
     allTimePromise,
-    onClose
+    onClose,
+    embedded = false
 }: StatsContentProps) {
   const allTimeResult = use(allTimePromise);
   const [dateRange, setDateRange] = useState<StatsDateRange>("all");
@@ -151,17 +159,18 @@ function StatsContent({
 
   const handleClose = t4;
   const t5 = {
-      context: "Confirmation"
+      context: "Confirmation",
+      isActive: !embedded
     };
 
   useKeybinding("confirm:no", handleClose, t5);
   const t6 = (input, key) => {
-      if (key.ctrl && (input === "c" || input === "d")) {
+      if (!embedded && key.ctrl && (input === "c" || input === "d")) {
         onClose("Stats dialog dismissed", {
           display: "system"
         });
       }
-      if (key.tab) {
+      if (embedded ? input === "m" && !key.ctrl && !key.meta : key.tab) {
         setActiveTab(_temp);
       }
       if (input === "r" && !key.ctrl && !key.meta) {
@@ -192,12 +201,12 @@ function StatsContent({
 
   const t8 = <Tab title="Models"><ModelsTab stats={displayStats} dateRange={dateRange} isLoading={isLoadingFiltered} /></Tab>;
 
-  const t9 = <Box flexDirection="row" gap={1} marginBottom={1}><Tabs title="" color="gizzi" defaultTab="Overview">{t7}{t8}</Tabs></Box>;
+  const t9 = <Box flexDirection="row" gap={1} marginBottom={1}>{embedded ? <Tabs title="" color="gizzi" selectedTab={activeTab} disableNavigation={true}>{t7}{t8}</Tabs> : <Tabs title="" color="gizzi" defaultTab="Overview">{t7}{t8}</Tabs>}</Box>;
 
   const t10 = copyStatus ? ` · ${copyStatus}` : "";
-  const t11 = <Box paddingLeft={2}><Text dimColor={true}>Esc to cancel · r to cycle dates · ctrl+s to copy{t10}</Text></Box>;
+  const t11 = <Box paddingLeft={2}><Text dimColor={true}>{embedded ? "m for Overview/Models" : "Esc to cancel"} · r to cycle dates · ctrl+s to copy{t10}</Text></Box>;
 
-  const t12 = <Pane color="gizzi">{t9}{t11}</Pane>;
+  const t12 = embedded ? <Box flexDirection="column">{t9}{t11}</Box> : <Pane color="gizzi">{t9}{t11}</Pane>;
 
   return t12;
 }

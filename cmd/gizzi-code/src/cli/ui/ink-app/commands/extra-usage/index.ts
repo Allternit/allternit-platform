@@ -14,6 +14,8 @@ export const extraUsage = {
   type: 'local-jsx',
   name: 'extra-usage',
   description: 'Configure extra usage to keep working when limits are hit',
+  // Hidden alias of /status: shows its result on the Usage tab (plan D4).
+  isHidden: true,
   isEnabled: () => isExtraUsageAllowed() && !getIsNonInteractiveSession(),
   load: () => import('./extra-usage.js'),
 } satisfies Command
@@ -24,8 +26,6 @@ export const extraUsageNonInteractive = {
   supportsNonInteractive: true,
   description: 'Configure extra usage to keep working when limits are hit',
   isEnabled: () => isExtraUsageAllowed() && getIsNonInteractiveSession(),
-  get isHidden() {
-    return !getIsNonInteractiveSession()
-  },
+  isHidden: true,
   load: () => import('./extra-usage-noninteractive.js'),
 } satisfies Command

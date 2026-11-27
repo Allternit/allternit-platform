@@ -3,9 +3,10 @@ import type { Command } from '../../commands'
 const status = {
   type: 'local-jsx',
   name: 'status',
-  aliases: ['session-info', 'info'],
+  aliases: ['info'],
   description:
-    'Show Gizzi Code status including version, model, account, API connectivity, and tool statuses',
+    'Status, usage, cost and stats in one place (Tab or ←/→ switches tabs)',
+  argumentHint: '[usage|cost|stats|--json|--inline]',
   immediate: true,
   load: () => import('./status.js'),
 } satisfies Command

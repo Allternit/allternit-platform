@@ -99,9 +99,6 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   btw: 'Session',
   history: 'Session',
   'edit-prompt': 'Session',
-  'view-plan': 'Session',
-  usage: 'Session',
-  cost: 'Session',
   files: 'Session',
   diff: 'Session',
   share: 'Session',
@@ -128,7 +125,7 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   ide: 'Extensions',
   loops: 'Workflows',
   goal: 'Workflows',
-  routines: 'Workflows',
+  mission: 'Workflows',
   tasks: 'Workflows',
   workflows: 'Workflows',
   workflow: 'Workflows',
@@ -138,7 +135,6 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   login: 'Account',
   logout: 'Account',
   'privacy-settings': 'Account',
-  'extra-usage': 'Account',
   config: 'Configuration',
   theme: 'Configuration',
   keybindings: 'Configuration',
@@ -152,7 +148,36 @@ const COMMAND_CATEGORIES: Record<string, SlashCategory> = {
   feedback: 'Configuration',
   'import-claude': 'Configuration',
   init: 'Configuration',
-  stats: 'Configuration',
+}
+
+/**
+ * Merged commands (overhaul plan D4, Eoj E3): each old name still runs, as a
+ * hidden alias of its owner for one release, and is never offered in the
+ * slash menu, /help or typeahead. The commands carry `isHidden: true`; this
+ * map is the single list of them and the owner each one opens.
+ */
+export const HIDDEN_ALIAS_OWNERS: Readonly<Record<string, string>> = {
+  stats: 'status',
+  'session-info': 'status',
+  'extra-usage': 'status',
+  usage: 'status',
+  cost: 'status',
+  'resume-now': 'resume',
+  'keep-going': 'resume',
+  'view-plan': 'plan',
+  routines: 'loops',
+}
+
+/** True for an old command name that only survives as a hidden alias. */
+export function isHiddenAlias(cmd: Command): boolean {
+  // Built-ins only: a user skill that happens to be named `stats` stays listed.
+  if (cmd.type !== 'local' && cmd.type !== 'local-jsx') return false
+  return Object.hasOwn(HIDDEN_ALIAS_OWNERS, getCommandName(cmd))
+}
+
+/** Commands the slash menu may offer: not hidden, not a merged old name. */
+export function isSlashMenuVisible(cmd: Command): boolean {
+  return !cmd.isHidden && !isHiddenAlias(cmd)
 }
 
 export function getCommandCategory(cmd: Command): SlashCategory {
