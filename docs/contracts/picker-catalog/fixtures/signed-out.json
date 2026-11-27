@@ -155,13 +155,26 @@
   ],
   "onDevice": [
     {
-      "id": "bonsai-2",
-      "name": "Bonsai 2",
-      "sizeBytes": 1200000000,
+      "id": "gemma-4-e2b-local",
+      "name": "Gemma 4 E2B",
+      "sizeBytes": 3200000000,
       "minRamGb": 8,
       "platforms": [
-        "darwin-arm64",
-        "linux-x64"
+        "web",
+        "macos",
+        "windows",
+        "linux"
+      ]
+    },
+    {
+      "id": "local-brain-llama-3.2-3b",
+      "name": "Local Brain",
+      "sizeBytes": 2000000000,
+      "minRamGb": 4,
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
       ]
     }
   ]

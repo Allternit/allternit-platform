@@ -6,7 +6,7 @@
   "minVersion": "2.20.0",
   "paused": true,
   "notes": {
-    "url": "https://docs.allternit.com/gizzi/release-notes",
+    "url": "https://docs.allternit.com/release-notes",
     "highlights": [
       "Clearer model picker",
       "Updates check the signed feed"
