@@ -14,8 +14,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -32,6 +39,7 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.allternit.core.design.AllternitSerif
 import com.allternit.core.design.AllternitTheme
 
 /**
@@ -213,6 +221,25 @@ internal object MarkdownParser {
     }
 }
 
+/**
+ * Response font saved by Settings (SharedPreferences "allternit_settings", key "allternit.responseFont", default "serif").
+ * feature/chat cannot import feature/settings, so it reads the same file and key here and follows changes live.
+ */
+@Composable
+private fun rememberResponseFont(): FontFamily? {
+    val context = LocalContext.current
+    fun read(): Boolean = context.getSharedPreferences("allternit_settings", Context.MODE_PRIVATE)
+        .getString("allternit.responseFont", "serif") != "sans"
+    var serif by remember { mutableStateOf(read()) }
+    DisposableEffect(context) {
+        val prefs = context.getSharedPreferences("allternit_settings", Context.MODE_PRIVATE)
+        val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key -> if (key == "allternit.responseFont") serif = read() }
+        prefs.registerOnSharedPreferenceChangeListener(l)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(l) }
+    }
+    return if (serif) AllternitSerif else null
+}
+
 /** Renders assistant markdown at 15sp (iOS AssistantContent). Selectable, links open in the browser. */
 @Composable
 fun MarkdownText(text: String, modifier: Modifier = Modifier) {
@@ -220,6 +247,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     val blocks = remember(text) { MarkdownParser.parse(text) }
     val codeBg = c.fillNeutral
     val link = c.accentPrimary
+    val prose = rememberResponseFont()
     SelectionContainer(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             blocks.forEach { block ->
@@ -228,10 +256,11 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                         MarkdownParser.inline(block.text, codeBg, link),
                         color = c.textPrimary,
                         fontWeight = FontWeight.SemiBold,
+                        fontFamily = prose,
                         fontSize = when (block.level) { 1 -> 22.sp; 2 -> 19.sp; 3 -> 17.sp; else -> 15.sp },
                         lineHeight = when (block.level) { 1 -> 28.sp; 2 -> 25.sp; else -> 22.sp },
                     )
-                    is MdBlock.Paragraph -> Text(MarkdownParser.inline(block.text, codeBg, link), color = c.textPrimary, fontSize = 15.sp, lineHeight = 22.sp)
+                    is MdBlock.Paragraph -> Text(MarkdownParser.inline(block.text, codeBg, link), color = c.textPrimary, fontSize = 15.sp, lineHeight = 22.sp, fontFamily = prose)
                     is MdBlock.Bullet -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         block.items.forEachIndexed { index, item ->
                             Row {
@@ -242,7 +271,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                                     lineHeight = 22.sp,
                                     modifier = Modifier.width(if (block.ordered) 26.dp else 16.dp),
                                 )
-                                Text(MarkdownParser.inline(item, codeBg, link), color = c.textPrimary, fontSize = 15.sp, lineHeight = 22.sp)
+                                Text(MarkdownParser.inline(item, codeBg, link), color = c.textPrimary, fontSize = 15.sp, lineHeight = 22.sp, fontFamily = prose)
                             }
                         }
                     }
@@ -251,6 +280,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                         Text(
                             MarkdownParser.inline(block.text, codeBg, link),
                             color = c.textSecondary,
+                            fontFamily = prose,
                             fontSize = 15.sp,
                             lineHeight = 22.sp,
                             modifier = Modifier.padding(start = 10.dp),
