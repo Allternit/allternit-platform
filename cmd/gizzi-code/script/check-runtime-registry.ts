@@ -86,6 +86,10 @@ for (const r of runtimes) {
   if (r.look?.[r.look.default] == null && r.id !== "allternit") errors.push(`runtime "${r.id}": look.default has no tokens`)
 }
 
+// Gizzi reads the generated snapshot, not cli-catalog.json: it must match the source.
+const snapCheck = Bun.spawnSync({ cmd: [process.execPath, path.join(here, "gen-picker-snapshot.ts"), "--check"], stderr: "pipe" })
+if (snapCheck.exitCode !== 0) errors.push(`catalog.snapshot.gen.json is stale: run bun script/gen-picker-snapshot.ts`)
+
 if (errors.length) {
   console.error(`check-runtime-registry: ${errors.length} problem(s)`)
   for (const e of errors) console.error(`  - ${e}`)

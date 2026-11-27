@@ -10,6 +10,8 @@
  *   also reads (Settings → Connections → Coding tools, install, sign-in). A CLI
  *   that answers a one-shot prompt needs only `adapter: "text"` + `headless`;
  *   one that speaks a streaming protocol gets an adapter in local-cli-driver.ts.
+ *   Then run `bun script/gen-picker-snapshot.ts`: gizzi reads the generated
+ *   catalog.snapshot.gen.json, not the source file.
  *   Tools a user adds themselves arrive through customCliFile().
  */
 
@@ -20,7 +22,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
-import catalog from "./cli-catalog.json"
+import { loadRuntimeSnapshot } from "./runtime-registry"
 import { liveModels } from "./live-models"
 import { cliSignedIn } from "./sign-in"
 
@@ -94,7 +96,7 @@ export interface CatalogLiveModels {
   parser: "codex-json" | "tsv" | "grok" | "ollama"
 }
 
-export const CLI_CATALOG: CatalogTool[] = (catalog as { tools: CatalogTool[] }).tools
+export const CLI_CATALOG: CatalogTool[] = loadRuntimeSnapshot().tools as unknown as CatalogTool[]
 
 /** A retired model id mapped to its current one (catalog `retired`), else the id unchanged. */
 export function retiredModelId(providerID: string, modelID: string): string {

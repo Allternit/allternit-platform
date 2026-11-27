@@ -16,8 +16,8 @@ import os from "node:os"
 import path from "node:path"
 import { cacheGet, cachePut, defaultCacheFile, refreshRequested, runForStdout } from "./live-models"
 import type { SubprocessSpec } from "./subprocess"
-// Read directly (not through subprocess.ts, which imports this file).
-import catalog from "./cli-catalog.json"
+// Through the registry, not subprocess.ts (which imports this file).
+import { loadRuntimeSnapshot } from "./runtime-registry"
 
 const SIGN_IN_TTL_MS = 10 * 60 * 1000
 const SIGN_IN_TIMEOUT_MS = 5000
@@ -97,7 +97,7 @@ export async function cliSignedIn(
   }
 
   if (spec.custom) return undefined
-  const tools = (catalog as unknown as { tools: Array<{ id: string; auth?: CatalogAuth | null }> }).tools
+  const tools = loadRuntimeSnapshot().tools as unknown as Array<{ id: string; auth?: CatalogAuth | null }>
   const tool = tools.find((t) => t.id === spec.id)
   const auth = tool?.auth
   const files = auth?.files ?? []
