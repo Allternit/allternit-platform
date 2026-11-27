@@ -5,7 +5,9 @@ import { SessionRow, SessionTile } from "../../src/cli/ui/ink-app/screens/sessio
 import {
   blockedNoticeBytes,
   confirmMatches,
+  splitArgvFor,
   steerSession,
+  stopPlanFor,
   toRow,
   toRows,
   type LiveSessionRow,
@@ -171,5 +173,40 @@ describe("steer", () => {
   test("a session with steer none is refused without a request", async () => {
     await expect(steerSession(row({ steer: "none" }), "hi")).rejects.toThrow("can't be steered")
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe("stop path per row kind", () => {
+  const over = (o: Partial<LiveSessionRow>) => row({ botId: null, paneId: null, terminalId: null, ...o })
+
+  test("swarm worker uses the swarm stop", () => {
+    expect(stopPlanFor(over({ botId: "local:w1", paneId: "w1:p2" }), true)).toEqual({ via: "swarm" })
+  })
+  test("pane bot stops by its real slug", () => {
+    expect(stopPlanFor(over({ botId: "local:api-claude-t1", paneId: "w1:p2" }), false)).toEqual({ via: "agents-down", slug: "api-claude-t1" })
+  })
+  test("a plain pane session closes its pane", () => {
+    const p = stopPlanFor(over({ paneId: "w1:p3", terminalId: "term_1" }), false)
+    expect(p.via).toBe("pane-close")
+    if (p.via === "pane-close") expect(p.argv.slice(-3)).toEqual(["pane", "close", "w1:p3"])
+  })
+  test("a terminal row closes through the terminal route", () => {
+    expect(stopPlanFor(over({ terminalId: "term_9" }), false)).toEqual({ via: "terminal-close", terminalId: "term_9" })
+  })
+  test("a gizzi session in another app is not stopped from here", () => {
+    const p = stopPlanFor(over({ app: "iTerm2" }), false)
+    expect(p.via).toBe("none")
+    if (p.via === "none") expect(p.reason).toContain("iTerm2")
+  })
+})
+
+describe("split argv", () => {
+  test("pane sessions split right or down on their pane", () => {
+    const r = splitArgvFor({ paneId: "w1:p2" }, "right")!
+    expect(r.slice(-4, -1)).toEqual(["w1:p2", "--direction", "right"])
+    expect(splitArgvFor({ paneId: "w1:p2" }, "down")).toContain("down")
+  })
+  test("a session with no pane does not split", () => {
+    expect(splitArgvFor({ paneId: null }, "right")).toBeNull()
   })
 })

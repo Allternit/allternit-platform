@@ -9,6 +9,7 @@
  * Free of React and Ink so bun tests can drive it with a stubbed fetch.
  */
 import path from 'node:path'
+import { paneSessionArgs } from '@/cli/factory/engine'
 import { findEngineUrl, lastMeaningfulLines } from '@/cli/factory/live'
 import { fetchWithPlatformToken } from '@/runtime/bots/platform-api'
 import { gatewayBase } from '@/shared/constants/allternitGateway'
@@ -268,4 +269,43 @@ export function parseNewSession(line: string): { cli: string; prompt: string } |
 /** The shell form of `gizzi spawn`, shown when the command can't run from here. */
 export function spawnCommandText(cli: string, prompt: string): string {
   return `gizzi spawn ${cli}${prompt ? ` ${JSON.stringify(prompt)}` : ''} --window`
+}
+
+// ---------------------------------------------------------------- stop / split
+
+export type SplitDirection = 'right' | 'down'
+
+/**
+ * Engine argv that splits a pane session's pane (`|` = right, `-` = down), or
+ * null when the session has no Allternit pane. The pane server owns the layout;
+ * this is its `pane.split` call, the same one `allternit-factory pane pane split` makes.
+ */
+export function splitArgvFor(row: Pick<LiveSessionRow, 'paneId'>, dir: SplitDirection): string[] | null {
+  if (!row.paneId) return null
+  return ['pane', ...paneSessionArgs(), 'pane', 'split', row.paneId, '--direction', dir, '--focus']
+}
+
+/** How the engine stops each kind of row. */
+export type StopPlan =
+  | { via: 'swarm' }
+  | { via: 'agents-down'; slug: string }
+  | { via: 'pane-close'; argv: string[] }
+  | { via: 'terminal-close'; terminalId: string }
+  | { via: 'none'; reason: string }
+
+/**
+ * Pick the stop path from what the engine says about the row.
+ *  - swarm worker: the swarm's own stop (it knows the worker's real slug).
+ *  - bot (`botId` = `local:<slug>`): `agents down <slug>`, which also clears the registry.
+ *  - any other Allternit pane: close the pane (`pane close <paneId>`).
+ *  - session in Terminal/iTerm2 with a terminal id: `/terminal/:id/close`.
+ *  - otherwise: nothing safe to call; say where to stop it.
+ */
+export function stopPlanFor(row: LiveSessionRow, isWorker: boolean): StopPlan {
+  if (isWorker) return { via: 'swarm' }
+  const slug = row.botId?.startsWith('local:') ? row.botId.slice('local:'.length) : null
+  if (slug) return { via: 'agents-down', slug }
+  if (row.paneId) return { via: 'pane-close', argv: ['pane', ...paneSessionArgs(), 'pane', 'close', row.paneId] }
+  if (row.terminalId) return { via: 'terminal-close', terminalId: row.terminalId }
+  return { via: 'none', reason: `${row.name} runs in ${row.app ?? 'another terminal'}; stop it there` }
 }
