@@ -521,6 +521,8 @@ pub fn attribution(
         billed_to: Some(inference_settlement::BILLED_TO_USER_WALLET),
         oauth_app_id: Some(app_id),
         oauth_grant_id: Some(grant_id),
+        // Apps never run open models (D16): standard settlement.
+        lane: None,
     }
 }
 

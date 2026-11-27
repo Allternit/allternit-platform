@@ -350,6 +350,8 @@ async fn hand_off(
         }
     };
     let header_value = open_lane::handoff_header_value(&plan.from, &plan.to);
+    // The handed-off answer runs on the open model: it settles as open spend (D5).
+    let attribution = &attribution.clone().with_lane(state.model_router.is_open_lane_alias(&plan.to));
 
     if streaming {
         let metered = inference_settlement::meter_stream_response(

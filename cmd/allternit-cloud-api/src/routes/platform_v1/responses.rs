@@ -1420,6 +1420,15 @@ mod billing_tests {
         for sql in [include_str!("../../../migrations_pg/007_inference_usage.sql"), include_str!("../../../migrations_pg/009_inference_pools.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
         }
+        // The usage-row lane columns (migrations_pg/169): the router tags every catalog call's lane.
+        sqlx::raw_sql(
+            "ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS lane text;
+             ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS open_plan_usd double precision;
+             ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS open_bought_usd double precision;",
+        )
+        .execute(&state.db)
+        .await
+        .expect("169 usage columns apply");
         let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
         let gateway = Router::new()
             .route("/v1/chat/completions", axum::routing::post(crate::routes::model_router::chat_completions))
