@@ -14,6 +14,7 @@ import SwiftUI
 /// - invite  → the web invite page in-app
 /// - computers → the Computers list (Settings → Devices) in a sheet
 /// - decisions → Decisions in a sheet
+/// - computerRun → the live agent browser run on that computer, in a sheet
 /// - phoneRun → that run's status, steps and Review in a sheet
 /// - bar     → the in-app bar, filled in (`DeepLinkRouter.barRequest`)
 struct DeepLinkHost: ViewModifier {
@@ -29,10 +30,17 @@ struct DeepLinkHost: ViewModifier {
     @State private var isInboxPresented = false
     @State private var routineSheet: Routine?
     @State private var runSheet: PhoneRunLink?
+    @State private var agentRun: AgentRunLink?
     @State private var inviteURL: IdentifiableURL?
     @State private var linkError: String?
     @State private var isResolving = false
     @State private var meetingsLink: MeetingsLink?
+
+    struct AgentRunLink: Identifiable {
+        let computerId: String
+        let runId: String
+        var id: String { "\(computerId)/\(runId)" }
+    }
 
     struct MeetingsLink: Identifiable {
         let id = UUID()
@@ -116,6 +124,9 @@ struct DeepLinkHost: ViewModifier {
                         }
                 }
             }
+            .sheet(item: $agentRun) { link in
+                ACIAgentRunView(goal: "", computerId: link.computerId, runId: link.runId, onExit: { agentRun = nil })
+            }
             .sheet(item: $runSheet) { link in
                 PhoneRunSheet(runId: link.id)
             }
@@ -144,6 +155,7 @@ struct DeepLinkHost: ViewModifier {
         isInboxPresented = false
         routineSheet = nil
         runSheet = nil
+        agentRun = nil
         inviteURL = nil
         meetingsLink = nil
         switch link {
@@ -172,6 +184,8 @@ struct DeepLinkHost: ViewModifier {
             isComputersPresented = true
         case .computerConsole(let id):
             consoleComputer = ConsoleComputerLink(id: id)
+        case .computerRun(let computerId, let runId):
+            agentRun = AgentRunLink(computerId: computerId, runId: runId)
         case .decisions:
             isDecisionsPresented = true
         case .inbox:

@@ -403,6 +403,18 @@ Notifications from your bots, threads and calls arrive as iPhone notifications. 
 
 Links to ai.allternit.com and m.allternit.com open in the app when it is installed: a bot (`/b/…`), an invite (`/i/…`), Settings (`/settings`) or a chat (`?session=…`).
 
+## Agent browser runs: approvals and push actions
+
+When a bot drives a browser on one of your computers, the run view shows its pointer on the screen with a badge that names the bot and its step. A line under the screen reads "BOT is working · step N" (BOT is the bot's name) with **Take over** and **Stop**. **Take over** is not available on the iPhone yet, so it shows dimmed; **Stop** ends the run.
+
+When the bot needs you, a sheet opens over the run:
+
+- **Fill your NAME login on DOMAIN?** has **Approve**, **Allow for this run** and **Deny**. Approve and Allow ask for Face ID or your passcode first. Allow for this run covers that login on that site for this run only; nothing is remembered for later runs. The password never shows on screen or in the log.
+- **BOT needs you** gives the reason and a **Continue** button once you have done your part, plus **Stop**. When the bot asks for a secret, a masked field is shown.
+- **DOMAIN blocked BOT** has **Continue**, **Stop** and **Re-run on** each other computer for each other computer you could use. A re-run starts fresh and no logins carry over. With no other computer ready, the sheet says so.
+
+The same questions arrive as notifications with buttons. A credential or action approval has **Approve** (needs the phone unlocked) and **Deny** (works from the lock screen). A bot that needs you has **Continue** and **Stop**. A blocked site has **Open**. Tapping any of them opens the run through a `/computers/ID?run=RUN_ID` link. A notification never contains the password.
+
 ## Phone tasks: Review, status cards and Run on my phone
 
 When a bot asks to do something sensitive on your linked phone, the item in **Needs you** says **Review**, not Approve. Tap it, or the **Review** button on the notification, to open the Review pane. It shows the phone's screen at that step, the goal and the action. **Approve** turns on only after the screen has loaded; **Deny** always works. If the screen moved since the bot asked, the pane says it changed and asks again. If nobody answered in 5 minutes, it says the task expired and nothing was done.
