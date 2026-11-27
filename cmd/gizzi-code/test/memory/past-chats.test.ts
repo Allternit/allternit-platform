@@ -80,4 +80,11 @@ describe("PastChats.build", () => {
     expect((await PastChats.refsFor("msg_u1"))[0].id).toBe("obs_1")
     expect(await PastChats.refsFor("msg_other")).toEqual([])
   })
+
+  test("a 2-step turn puts the past-chat refs on exactly one assistant message", async () => {
+    await PastChats.forUserMessage("msg_u2", { sessionID: "s", text: "which reranker did we pick", request: fake([turn(1)]) })
+    const step1 = await PastChats.refsFor("msg_u2")
+    const step2 = await PastChats.refsFor("msg_u2")
+    expect([step1.length, step2.length]).toEqual([1, 0])
+  })
 })

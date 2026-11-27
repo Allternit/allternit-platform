@@ -46,6 +46,7 @@ export namespace PastChats {
 
   type Flags = { memorySearch?: boolean; incognito?: boolean }
   const turnFlags = new Map<string, Flags>()
+  const taken = new Set<string>()
   const results = new Map<string, Promise<Built | undefined>>()
 
   export interface Built {
@@ -157,20 +158,29 @@ export namespace PastChats {
     results.set(userMessageID, p)
     if (results.size > 64) {
       const oldest = results.keys().next().value
-      if (oldest !== undefined) results.delete(oldest)
+      if (oldest !== undefined) {
+        results.delete(oldest)
+        taken.delete(oldest)
+      }
     }
     return p
   }
 
-  /** Refs for the assistant message that answers this user message (read by the processor). */
+  /**
+   * Refs for the assistant message that answers this user message (read by the
+   * processor). Handed out once: the first assistant message of the turn gets
+   * them, later steps get none.
+   */
   export async function refsFor(userMessageID: string): Promise<PastChatRef[]> {
     const hit = results.get(userMessageID)
-    if (!hit) return []
+    if (!hit || taken.has(userMessageID)) return []
+    taken.add(userMessageID)
     return (await hit)?.refs ?? []
   }
 
   export function resetForTests() {
     results.clear()
+    taken.clear()
     turnFlags.clear()
   }
 }

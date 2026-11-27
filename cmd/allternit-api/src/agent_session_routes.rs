@@ -1724,6 +1724,10 @@ async fn send_message(
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // An incognito chat never searches past chats.
+    if state.db.is_session_ephemeral(&session_id).unwrap_or(false) {
+        payload["memory_search"] = json!(false);
+    }
     // A plain chat created on a runtime (Claude Code, Codex, …) runs every
     // turn on that runtime's CLI, whatever model the client sends.
     let asked = payload.get("model").and_then(|m| {
