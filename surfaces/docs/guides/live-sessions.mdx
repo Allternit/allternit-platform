@@ -202,3 +202,7 @@ Errors are JSON: `{"error": "<code>", "message": "…"}`. On a running Move the 
 | 502 | `start_failed` | The terminal did not start; `message` has the command to run by hand |
 
 A runtime older than this answers `404` for the route: keep today's behavior and hide Move, Copy and New.
+
+## Blocked push
+
+When a session turns `blocked` (the agent waits on you), a paired computer sends one push through the Remote Control push worker, the same path Factory approvals use: title "`<name>` needs you", body the `doing` line, and an open link (`/terminal/<terminalId>` for a terminal pane, else `/factory/sessions/<address>`). One push per blocked stretch, none while it stays blocked, and none for sessions already blocked when the API starts. Turn it off with `ALLTERNIT_BLOCKED_PUSH=off`; it also stays off wherever approval push is off (no push worker URL, or the computer is not paired). In Gizzi, `/remote` lists the other pane sessions with their status and whether phone, web and Desktop can steer them or they are view only.
