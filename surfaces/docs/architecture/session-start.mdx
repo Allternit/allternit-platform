@@ -37,8 +37,8 @@ One round trip returns everything a picker needs. It does not list installed too
 |---|---|
 | `device` | `runtimeId`, `name`, `os`, `remoteStart` |
 | `folders` | Up to 30 recent folders: `path`, `name`, `lastUsedAt`, and optional `git` with `remote`, `branch`, `head`, `dirty`, `ahead` |
-| `modes` | Per runtime id: `default` mode and `supported` modes |
-| `defaultRuntime` | `gizzi` |
+| `modes` | Per runtime id (the runtime registry ids, for example `allternit` for the Gizzi engine): `default` mode and `supported` modes |
+| `defaultRuntime` | `allternit` (the Gizzi engine) |
 
 Mode ids are the app's own ids: `auto`, `default` (ask before actions), `plan` (read-only) and `bypass`.
 
@@ -62,7 +62,7 @@ The call returns 201 with one of two shapes, chosen by runtime.
 ```
 
 ```json
-{ "kind": "terminal", "terminalId": "term_7c1e9a40", "cwd": "/Users/dev/code/allternit", "agent": "claude-cli" }
+{ "kind": "terminal", "terminalId": "term_7c1e9a40", "cwd": "/Users/dev/code/allternit", "agent": "claude" }
 ```
 
 ### Errors

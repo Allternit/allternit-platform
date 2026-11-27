@@ -17,9 +17,9 @@
     { "path": "/Users/dev/Desktop/scratch", "name": "scratch", "lastUsedAt": "2026-11-18T18:30:00Z" }
   ],
   "modes": {
-    "gizzi": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
-    "claude-cli": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
+    "allternit": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
+    "claude": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
     "codex": { "default": "auto", "supported": ["auto", "default", "plan"] }
   },
-  "defaultRuntime": "gizzi"
+  "defaultRuntime": "allternit"
 }
