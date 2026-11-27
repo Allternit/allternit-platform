@@ -128,6 +128,8 @@ pub(crate) async fn inference_attribution(
         billed_to: None,
         oauth_app_id: None,
         oauth_grant_id: None,
+        // Set once the alias is resolved (`with_lane` in the dispatch paths).
+        lane: None,
     }
 }
 
@@ -387,6 +389,9 @@ async fn chat_completions_attributed(
     )?;
     let pool_id = pool.map(|pool| pool.id);
 
+    // Open-lane rows settle as open spend (plan allowance, then bought; D5).
+    let attribution = attribution.with_lane(state.model_router.is_open_lane_alias(&alias));
+
     if let Some(plan) = handoff {
         return crate::routes::open_lane::chat_with_handoff(state, user_id, plan, request, pool_id, prices, attribution).await;
     }
@@ -575,6 +580,8 @@ async fn byok_chat_completions(
         .expect("BYOK branch only runs for registered providers");
 
     let alias = request.model.clone();
+    // The row's lane only; a BYOK call is never charged (charge_user false).
+    let attribution = attribution.with_lane(state.model_router.is_open_lane_alias(&alias));
 
     let streaming = request.is_streaming();
     let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();

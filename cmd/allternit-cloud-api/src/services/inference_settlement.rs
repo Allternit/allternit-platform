@@ -14,7 +14,9 @@
 //!   the catalog providers the account brings its own key for;
 //! - `settle_inference`: always writes an `inference_usage` row (the audit
 //!   trail), then deducts the cost via `CostService::deduct_credits_for_usage`
-//!   when the user has a credits row. Settlement failures are logged
+//!   when the user has a credits row (an open-lane row instead goes through
+//!   `CostServiceImpl::debit_open_usage`, plan allowance first, then bought,
+//!   and records the split; CONTRACT-open-tier D5). Settlement failures are logged
 //!   REVENUE-CRITICAL and swallowed — a metering hiccup must never fail the
 //!   user's response;
 //! - `meter_json_response`: non-streaming settlement (buffer, parse `usage`,
@@ -80,7 +82,20 @@ pub struct InferenceAttribution {
     /// The app and grant of an app's call (migrations_pg/151).
     pub oauth_app_id: Option<Uuid>,
     pub oauth_grant_id: Option<Uuid>,
+    /// `inference_usage.lane` (migrations_pg/169, CONTRACT-open-tier D5):
+    /// [`LANE_OPEN`] or [`LANE_STANDARD`], set by the model router from the
+    /// resolved catalog entry ([`InferenceAttribution::with_lane`]). An open
+    /// row is debited through `CostServiceImpl::debit_open_usage` (plan
+    /// allowance first, then bought) and records the split. None leaves the
+    /// column NULL and settles as standard (internal callers and every row
+    /// before 169).
+    pub lane: Option<&'static str>,
 }
+
+/// `inference_usage.lane` for an open-lane catalog row.
+pub const LANE_OPEN: &str = "open";
+/// `inference_usage.lane` for every other catalog row.
+pub const LANE_STANDARD: &str = "standard";
 
 /// `inference_usage.billed_to` for an app's call billed to the person's wallet.
 pub const BILLED_TO_USER_WALLET: &str = "user_wallet";
@@ -224,6 +239,18 @@ impl StreamCapture {
 }
 
 impl InferenceAttribution {
+    /// Tag the lane of the model that serves this completion: pass
+    /// `ModelRouter::is_open_lane_alias(alias)` (the catalog's `is_open_lane`).
+    pub fn with_lane(mut self, open_lane: bool) -> Self {
+        self.lane = Some(if open_lane { LANE_OPEN } else { LANE_STANDARD });
+        self
+    }
+
+    /// Whether settlement bills this completion as open spend (D5).
+    pub fn is_open_lane(&self) -> bool {
+        self.lane == Some(LANE_OPEN)
+    }
+
     fn latency_ms(&self) -> Option<i64> {
         self.started_at
             .map(|started| i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX))
@@ -408,23 +435,24 @@ pub async fn settle_inference(
     let ref_id = format!("inference-{}", Uuid::new_v4().simple());
 
     // The payer columns (migrations_pg/151) are written only when the call
-    // names a payer, so every other call keeps the pre-151 statement.
-    let sql = if attribution.billed_to.is_some() {
-        r#"
-        INSERT INTO inference_usage (
-            id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id,
-            project_id, key_id, client, request_id, latency_ms, billed_to, oauth_app_id, oauth_grant_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-        "#
-    } else {
-        r#"
-        INSERT INTO inference_usage (
-            id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id,
-            project_id, key_id, client, request_id, latency_ms
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        "#
-    };
-    let mut insert = sqlx::query(sql)
+    // names a payer, and `lane` (migrations_pg/169) only when the router
+    // tagged one, so every other call keeps the earlier statement.
+    let mut columns = String::from(
+        "id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id, \
+         project_id, key_id, client, request_id, latency_ms",
+    );
+    let mut placeholders = 14;
+    if attribution.billed_to.is_some() {
+        columns.push_str(", billed_to, oauth_app_id, oauth_grant_id");
+        placeholders += 3;
+    }
+    if attribution.lane.is_some() {
+        columns.push_str(", lane");
+        placeholders += 1;
+    }
+    let values = (1..=placeholders).map(|n| format!("${n}")).collect::<Vec<_>>().join(", ");
+    let sql = format!("INSERT INTO inference_usage ({columns}) VALUES ({values})");
+    let mut insert = sqlx::query(&sql)
         .bind(&usage_id)
         .bind(user_id)
         .bind(model)
@@ -442,6 +470,9 @@ pub async fn settle_inference(
     if let Some(billed_to) = attribution.billed_to {
         insert = insert.bind(billed_to).bind(attribution.oauth_app_id).bind(attribution.oauth_grant_id);
     }
+    if let Some(lane) = attribution.lane {
+        insert = insert.bind(lane);
+    }
     if let Err(error) = insert.execute(db).await {
         error!(
             "REVENUE-CRITICAL: failed to record inference usage for user {} (model {}, ${:.6}, ref {}): {}",
@@ -451,6 +482,9 @@ pub async fn settle_inference(
     }
 
     match (credit_balance_row(db, user_id).await, charge_user) {
+        (Ok(Some(_)), true) if attribution.is_open_lane() => {
+            settle_open_debit(db, user_id, &usage_id, &ref_id, cost_usd).await;
+        }
         (Ok(Some(_)), true) => {
             let cost_service = CostServiceImpl::new(db.clone());
             if let Err(error) = cost_service
@@ -481,6 +515,39 @@ pub async fn settle_inference(
                 user_id, ref_id, error
             );
         }
+    }
+}
+
+/// Open-lane deduction (CONTRACT-open-tier D5): `debit_open_usage` takes
+/// plan allowance first, then bought credits, under the same ledger ref an
+/// ordinary deduction would use, and the split goes onto the usage row. A
+/// replayed ref moved nothing, so the row keeps NULL parts (no second write).
+async fn settle_open_debit(db: &PgPool, user_id: &str, usage_id: &str, ref_id: &str, cost_usd: f64) {
+    let debit = match CostServiceImpl::new(db.clone()).debit_open_usage(user_id, cost_usd, ref_id).await {
+        Ok(debit) => debit,
+        Err(error) => {
+            error!(
+                "REVENUE-CRITICAL: failed to debit ${:.6} open inference credits from user {} ({}): {}",
+                cost_usd, user_id, ref_id, error
+            );
+            return;
+        }
+    };
+    if debit.replayed {
+        debug!(user_id, ref_id, "open debit already settled; usage row left as is");
+        return;
+    }
+    if let Err(error) = sqlx::query("UPDATE inference_usage SET open_plan_usd = $1, open_bought_usd = $2 WHERE id = $3")
+        .bind(debit.plan_usd)
+        .bind(debit.bought_usd)
+        .bind(usage_id)
+        .execute(db)
+        .await
+    {
+        error!(
+            "REVENUE-CRITICAL: open debit for user {} ({}) took plan ${:.6} + bought ${:.6} but the usage row {} was not updated: {}",
+            user_id, ref_id, debit.plan_usd, debit.bought_usd, usage_id, error
+        );
     }
 }
 
@@ -806,7 +873,11 @@ mod tests {
                 key_id TEXT,
                 client TEXT,
                 request_id TEXT,
-                latency_ms BIGINT
+                latency_ms BIGINT,
+                -- migrations_pg/169: lane and the open split.
+                lane TEXT,
+                open_plan_usd DOUBLE PRECISION,
+                open_bought_usd DOUBLE PRECISION
             )
             "#,
         )
@@ -822,10 +893,21 @@ mod tests {
             CREATE TABLE user_credits (
                 user_id TEXT PRIMARY KEY,
                 balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0),
+                bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // migrations_pg/169: the open allowance (D4/D5).
+        sqlx::raw_sql(
+            "DROP TABLE IF EXISTS user_open_allowance CASCADE;
+             CREATE TABLE user_open_allowance (user_id TEXT PRIMARY KEY, allowance_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+                 used_usd DOUBLE PRECISION NOT NULL DEFAULT 0, period_start TIMESTAMPTZ, grant_key TEXT,
+                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now());",
         )
         .execute(&pool)
         .await
@@ -948,6 +1030,103 @@ mod tests {
                 .await
                 .unwrap();
         assert!((balance - 25.0).abs() < 1e-9, "balance untouched: {balance}");
+    }
+
+    /// Max (`super`) wallet: a $110 plan grant ($55 open allowance) and
+    /// `bought` dollars of packs on top.
+    async fn max_wallet(pool: &PgPool, user: &str, bought: f64) -> CostServiceImpl {
+        let service = CostServiceImpl::new(pool.clone());
+        service
+            .grant_plan_credits_keyed(
+                user,
+                &format!("stripe-invoice-{user}"),
+                "stripe_subscription",
+                110.0,
+                50.0,
+                crate::services::cost_service::open_allowance_for("super", 110.0),
+            )
+            .await
+            .unwrap();
+        if bought > 0.0 {
+            service.add_credits(user, bought, &format!("stripe-evt-{user}"), "stripe").await.unwrap();
+        }
+        service
+    }
+
+    /// (balance, bought read per D1, open allowance used).
+    async fn open_wallet(pool: &PgPool, user: &str) -> (f64, f64, f64) {
+        sqlx::query_as(
+            "SELECT c.balance_usd, LEAST(c.bought_usd, GREATEST(c.balance_usd, 0)), COALESCE(a.used_usd, 0)
+             FROM user_credits c LEFT JOIN user_open_allowance a ON a.user_id = c.user_id WHERE c.user_id = $1",
+        )
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// $60 for 1M prompt tokens.
+    fn sixty_dollar_prices() -> RetailPrices {
+        RetailPrices { prompt_per_1m: 60.0, completion_per_1m: 0.0, wholesale_prompt_per_1m: None, wholesale_completion_per_1m: None }
+    }
+
+    // Contract D2 regression: a standard (non-open) request on a balance made
+    // only of plan credits debits the exact cost as before, never touches the
+    // open allowance, and records lane `standard` with no open split.
+    #[tokio::test]
+    async fn standard_request_on_plan_only_balance_settles_as_before() {
+        let pool = test_pool().await;
+        max_wallet(&pool, "plan_only", 0.0).await;
+        let attribution = InferenceAttribution::default().with_lane(false);
+        settle_inference(&pool, "plan_only", "gpt-4o", None, true, &sixty_dollar_prices(), 1_000_000, 0, false, &attribution).await;
+
+        let (balance, bought, used) = open_wallet(&pool, "plan_only").await;
+        assert!((balance - 50.0).abs() < 1e-9, "exact $60 off $110: {balance}");
+        assert!(bought.abs() < 1e-9 && used.abs() < 1e-9, "bought {bought} used {used}");
+        let (lane, plan, from_bought): (Option<String>, Option<f64>, Option<f64>) =
+            sqlx::query_as("SELECT lane, open_plan_usd, open_bought_usd FROM inference_usage WHERE user_id = 'plan_only'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(lane.as_deref(), Some(LANE_STANDARD));
+        assert_eq!((plan, from_bought), (None, None));
+        let (amount, source): (f64, String) =
+            sqlx::query_as("SELECT amount_usd, source FROM credit_transactions WHERE amount_usd < 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!((amount + 60.0).abs() < 1e-9);
+        assert_eq!(source, "inference");
+    }
+
+    // D5: a $60 open request on Max with $20 bought takes the $55 allowance
+    // from plan credits, the other $5 from bought, and records both parts.
+    #[tokio::test]
+    async fn open_request_on_max_splits_plan_then_bought_and_records_both() {
+        let pool = test_pool().await;
+        max_wallet(&pool, "max_user", 20.0).await;
+        let attribution = InferenceAttribution::default().with_lane(true);
+        settle_inference(&pool, "max_user", "glm-5.3-flash-open", None, true, &sixty_dollar_prices(), 1_000_000, 0, false, &attribution).await;
+
+        let (balance, bought, used) = open_wallet(&pool, "max_user").await;
+        assert!((balance - 70.0).abs() < 1e-9, "$60 off $130: {balance}");
+        assert!((bought - 15.0).abs() < 1e-9, "bought {bought}");
+        assert!((used - 55.0).abs() < 1e-9, "allowance used {used}");
+        let (lane, cost, plan, from_bought): (Option<String>, f64, Option<f64>, Option<f64>) = sqlx::query_as(
+            "SELECT lane, cost_usd, open_plan_usd, open_bought_usd FROM inference_usage WHERE user_id = 'max_user'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(lane.as_deref(), Some(LANE_OPEN));
+        assert!((cost - 60.0).abs() < 1e-9);
+        assert!(plan.is_some_and(|p| (p - 55.0).abs() < 1e-9), "plan part {plan:?}");
+        assert!(from_bought.is_some_and(|b| (b - 5.0).abs() < 1e-9), "bought part {from_bought:?}");
+        let debits: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM credit_transactions WHERE amount_usd < 0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(debits, 1, "one ledger row per settlement");
     }
 
     #[tokio::test]
