@@ -59,8 +59,8 @@ export type GradeResult = z.infer<typeof GradeResult>
 // ── checks (run against the workspace after a live attempt) ─────────────────
 export const Check = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tests"), command: z.string().min(1), files: z.record(z.string(), z.string()).optional() }),
-  z.object({ type: z.literal("contains"), path: z.string().min(1), text: z.string() }),
-  z.object({ type: z.literal("absent"), path: z.string().min(1), text: z.string() }),
+  z.object({ type: z.literal("contains"), path: z.string().min(1), text: z.string(), any: z.array(z.string()).optional(), ignore_case: z.boolean().optional() }),
+  z.object({ type: z.literal("absent"), path: z.string().min(1), text: z.string(), any: z.array(z.string()).optional(), ignore_case: z.boolean().optional() }),
   z.object({ type: z.literal("unchanged"), path: z.string().min(1) }),
   z.object({ type: z.literal("exists"), path: z.string().min(1) }),
 ])
@@ -116,7 +116,7 @@ export const Case = z.object({
   graders: z.array(GraderSpec).max(MAX_GRADERS_PER_CASE),
   k: z.number().int().min(1).max(MAX_K).default(1),
   pass_rule: PassRule.default("all_of_k"),
-  recorded: z.object({ trajectory: Trajectory, grades: z.array(GradeResult), passed: z.boolean() }),
+  recorded: z.object({ trajectory: Trajectory, grades: z.array(GradeResult), passed: z.boolean() }).nullable().optional(),
   needs_check: z.boolean().default(false),
   redaction: z.object({ secrets: z.number().int(), paths: z.number().int(), entries_dropped: z.number().int() }),
 })

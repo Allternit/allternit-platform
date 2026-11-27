@@ -1,0 +1,60 @@
+[
+  {
+    "sequence": 1,
+    "sessionID": "ses_shared_bad",
+    "kind": "request.started",
+    "messageID": "msg_a1",
+    "data": {
+      "requestID": "msg_u1",
+      "agent": "main"
+    },
+    "time": 1000
+  },
+  {
+    "sequence": 2,
+    "sessionID": "ses_shared_bad",
+    "kind": "part.updated",
+    "messageID": "msg_a1",
+    "data": {
+      "type": "tool",
+      "tool": "read",
+      "state": {
+        "status": "completed"
+      }
+    },
+    "time": 1800,
+    "partID": "prt_1"
+  },
+  {
+    "sequence": 3,
+    "sessionID": "ses_shared_bad",
+    "kind": "part.updated",
+    "messageID": "msg_a1",
+    "data": {
+      "type": "tool",
+      "tool": "edit",
+      "state": {
+        "status": "error"
+      }
+    },
+    "time": 2600,
+    "partID": "prt_2"
+  },
+  {
+    "sequence": 4,
+    "sessionID": "ses_shared_bad",
+    "kind": "request.failed",
+    "messageID": "msg_a1",
+    "data": {
+      "requestID": "msg_u1",
+      "providerID": "demo",
+      "modelID": "demo-small",
+      "attempt": 1,
+      "error": {
+        "name": "ToolError",
+        "message": "edit failed: old text not found"
+      }
+    },
+    "time": 3200
+  }
+]

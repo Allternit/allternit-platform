@@ -1,0 +1,58 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_plan_then_build",
+  "suite": "shared.v1",
+  "title": "Add an optional discount: `order_total(items, discount=0.0)` where discount is a",
+  "label": "good",
+  "note": "Ported from the subagent task 'plan-then-build' (skill: planning).",
+  "split": "dev",
+  "origin": {
+    "session_id": "plan-then-build",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Add an optional discount: `order_total(items, discount=0.0)` where discount is a fraction from 0 to 1 (reject anything outside that with ValueError), `summary(path, discount=0.0)`, and a `--discount` CLI flag that passes it through. Add tests."
+    }
+  ],
+  "workspace": {
+    "kind": "archive",
+    "path": "workspace.tar.gz",
+    "bytes": 1392,
+    "snapshot": "140a9fa9513c99dd0c5ed912394d4a4cc3517b95"
+  },
+  "checks": [
+    {
+      "type": "tests",
+      "command": "python3 -m unittest discover -s tests -p \"test_hidden_*.py\"",
+      "files": {
+        "tests/test_hidden_discount.py": "import io, json, unittest, contextlib\nfrom inventory.pricing import order_total\nfrom inventory.cli import main\nITEMS = [{\"sku\": \"a\", \"qty\": 2, \"price\": 1.0}, {\"sku\": \"b\", \"qty\": 3, \"price\": 2.0}]\nclass H(unittest.TestCase):\n    def test_total(self): self.assertAlmostEqual(order_total(ITEMS, discount=0.25), 6.0)\n    def test_default(self): self.assertAlmostEqual(order_total(ITEMS), 8.0)\n    def test_bad(self):\n        with self.assertRaises(ValueError): order_total(ITEMS, discount=1.5)\n    def test_cli(self):\n        out = io.StringIO()\n        with contextlib.redirect_stdout(out): main([\"items.json\", \"--json\", \"--discount\", \"0.5\"])\n        self.assertAlmostEqual(json.loads(out.getvalue())[\"total\"], 9.0)\n"
+      }
+    }
+  ],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "verifier_pass"
+    }
+  ],
+  "k": 3,
+  "pass_rule": {
+    "n_of_k": 2
+  },
+  "recorded": null,
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}

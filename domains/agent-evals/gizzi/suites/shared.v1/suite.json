@@ -1,0 +1,99 @@
+{
+  "schema": "allternit.eval_suite.v1",
+  "id": "shared.v1",
+  "title": "Shared Gizzi suite",
+  "runner": "gizzi",
+  "cases": [
+    {
+      "id": "case_shared_debug_failing_test",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_debug_failing_test/case.json"
+      }
+    },
+    {
+      "id": "case_shared_debug_from_log",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_debug_from_log/case.json"
+      }
+    },
+    {
+      "id": "case_shared_plan_only",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_plan_only/case.json"
+      }
+    },
+    {
+      "id": "case_shared_plan_then_build",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_plan_then_build/case.json"
+      }
+    },
+    {
+      "id": "case_shared_docs_cli_flag",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_docs_cli_flag/case.json"
+      }
+    },
+    {
+      "id": "case_shared_summarize_handoff",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_summarize_handoff/case.json"
+      }
+    },
+    {
+      "id": "case_shared_search_callers",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_search_callers/case.json"
+      }
+    },
+    {
+      "id": "case_shared_parallel_two_modules",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_parallel_two_modules/case.json"
+      }
+    },
+    {
+      "id": "case_shared_review_diff",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_review_diff/case.json"
+      }
+    },
+    {
+      "id": "case_shared_verify_and_fix",
+      "source": {
+        "kind": "workspace_task",
+        "path": "cases/case_shared_verify_and_fix/case.json"
+      }
+    },
+    {
+      "id": "case_shared_session_good",
+      "source": {
+        "kind": "session",
+        "path": "cases/case_shared_session_good/case.json"
+      }
+    },
+    {
+      "id": "case_shared_session_bad",
+      "source": {
+        "kind": "session",
+        "path": "cases/case_shared_session_bad/case.json"
+      }
+    },
+    {
+      "id": "case_shared_session_guardrail",
+      "source": {
+        "kind": "session",
+        "path": "cases/case_shared_session_guardrail/case.json"
+      }
+    }
+  ]
+}
