@@ -4,7 +4,7 @@ import {
   APIError,
 } from '@allternit/gizzi-sdk/providers/allternit'
 import { describeProviderError, formatProviderErrorHelp, subscriptionAlternative } from './providerErrors.js'
-import { cloudCreditsRefusal } from '@/shared/util/provider-error'
+import { cloudCreditsRefusal, cloudOpenRefusal } from '@/shared/util/provider-error'
 import type {
   BetaMessage,
   BetaStopReason,
@@ -156,7 +156,7 @@ export const CREDIT_BALANCE_TOO_LOW_ERROR_MESSAGE = 'Credit balance is too low'
  */
 export function cloudRefusalHelp(status: number | undefined, message: string, now?: Date): string | undefined {
   // A credits refusal is known by its code (credits_required / credits_exhausted), whatever the status.
-  const credits = cloudCreditsRefusal(message) !== undefined
+  const credits = cloudCreditsRefusal(message) !== undefined || cloudOpenRefusal(message, status) !== undefined
   if (!credits && status !== 402 && status !== 403 && status !== 429) return undefined
   if (!credits && status !== 402 && !/plan|monthly limit|verified email/i.test(message)) return undefined
   const help = describeProviderError({

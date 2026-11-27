@@ -29,6 +29,8 @@ export type AllternitAccount = {
   monthToDateUsd: number
   /** `cloud_models`: whether Cloud models may run. Absent = the server sent none (not locked). */
   cloudModels?: CloudContinue.Entitlement
+  /** `open_models`: Allternit Open entitlement and allowance. Absent = the server sent none. */
+  openModels?: CloudContinue.OpenEntitlement
   /** `billing_provider` from `GET /api/v1/billing/subscription`. Absent on older servers or Free. */
   billingProvider?: BillingProvider
 }
@@ -66,6 +68,7 @@ export function parseAccountUsage(payload: unknown): AllternitAccount | undefine
     resetsAt: typeof p.resetsAt === 'string' ? p.resetsAt : undefined,
     monthToDateUsd: num(p.monthToDateUsageUsd),
     cloudModels: CloudContinue.entitlementFrom(p),
+    openModels: CloudContinue.openEntitlementFrom(p),
   }
 }
 
@@ -91,6 +94,12 @@ export function storeBilledNote(provider: 'apple' | 'google'): string {
 export async function cloudEntitlement(opts: { fetchImpl?: typeof fetch } = {}): Promise<CloudContinue.Entitlement | undefined> {
   const result = await getAllternitAccount(opts).catch(() => undefined)
   return result?.status === 'ok' ? result.account.cloudModels : undefined
+}
+
+/** The Allternit Open entitlement of the signed-in account, or undefined (none sent = not locked). */
+export async function openEntitlement(opts: { fetchImpl?: typeof fetch } = {}): Promise<CloudContinue.OpenEntitlement | undefined> {
+  const result = await getAllternitAccount(opts).catch(() => undefined)
+  return result?.status === 'ok' ? result.account.openModels : undefined
 }
 
 async function credentials(): Promise<string[]> {
@@ -197,6 +206,7 @@ export function accountLines(result: AccountResult, bar: (ratio: number) => stri
       `  Monthly  ${bar(ratio)}  ${formatUsd(a.monthlyUsed)} of ${formatUsd(a.monthlyLimit)}${resets ? ` · resets in ${resets}` : ''}`,
     )
   }
+  if (a.openModels) lines.push(`  ${CloudContinue.openUsageLine(a.openModels)}`)
   if (a.cloudModels && !a.cloudModels.allowed) lines.push(`  Cloud models: ${cloudCreditsDisclosure(a.cloudModels.reason)}`)
   lines.push(`  This month: ${formatUsd(a.monthToDateUsd)} spent from credits`)
   if (!paid) lines.push('  Plans: Plus, Max, Ultra · https://ai.allternit.com/settings/billing')

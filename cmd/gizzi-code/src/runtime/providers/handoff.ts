@@ -19,6 +19,7 @@
 
 import { Log } from "@/shared/util/log"
 import { cloudAuthToken, cloudOrigin } from "./discovery/allternit-cloud"
+import { CloudContinue } from "@/runtime/session/cloud-continue"
 
 const log = Log.create({ service: "provider.handoff" })
 
@@ -133,6 +134,8 @@ type OpenLaneSettings = {
   available?: boolean
   models?: unknown[]
   terms_accepted?: boolean
+  /** Allternit Open entitlement (contract §3); absent on an older server = as today. */
+  open_models?: { allowed?: boolean }
   handoff_enabled?: boolean
   default_handoff_model?: string
 }
@@ -156,6 +159,20 @@ async function openLaneSettings(token: string): Promise<OpenLaneSettings | null>
   return settings
 }
 
+/** `open_models` from `/api/v1/billing/credits` (contract §3); undefined when absent or unreachable (= as today). */
+async function openEntitlementOf(token: string): Promise<{ allowed?: boolean } | undefined> {
+  try {
+    const res = await fetch(`${cloudOrigin()}/api/v1/billing/credits`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return undefined
+    return CloudContinue.openEntitlementFrom(await res.json())
+  } catch {
+    return undefined
+  }
+}
+
 export function clearHandoffCache(): void {
   cached = undefined
   recorded.clear()
@@ -172,6 +189,9 @@ export async function handoffTarget(): Promise<{ providerID: string; modelID: st
   if (!token) return undefined
   const settings = await openLaneSettings(token)
   if (!settings?.available || !settings.terms_accepted || !settings.handoff_enabled) return undefined
+  // Hand off only when the account may run open models; otherwise skip silently.
+  const open = settings.open_models ?? (await openEntitlementOf(token))
+  if (open && open.allowed !== true) return undefined
   const modelID = settings.default_handoff_model || "deepseek-v4.1-flash-open"
   return { providerID: CLOUD_PROVIDER_ID, modelID }
 }

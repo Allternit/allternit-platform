@@ -10,7 +10,7 @@
  * stays a leaf the API layer can import without pulling in the runtime.
  */
 
-import { cloudCreditsDisclosure, cloudCreditsRefusal } from '@/shared/util/provider-error'
+import { cloudCreditsDisclosure, cloudCreditsRefusal, cloudOpenDisclosure, cloudOpenRefusal } from '@/shared/util/provider-error'
 
 export type ProviderFailure = {
   /** Provider id ("allternit", "openrouter", "claude-cli", "local-mlx"…). */
@@ -81,6 +81,14 @@ export function describeProviderError(f: ProviderFailure): ProviderErrorHelp | u
 
   // Allternit Cloud: no credits (402 `credits_required`) or credits used up
   // (402 `credits_exhausted`). Matched by the body's code, not its text.
+  // Allternit Open refusals come first: they are 402/403 too but name their own fix.
+  const open = isCloud(f) ? cloudOpenRefusal(f.text, f.status) : undefined
+  if (open) {
+    return {
+      message: cloudOpenDisclosure(open),
+      commands: [switchHint(f), { command: '/usage', why: 'see your open-model allowance' }],
+    }
+  }
   const credits = isCloud(f) ? cloudCreditsRefusal(f.text) : undefined
   if (credits) {
     return {
