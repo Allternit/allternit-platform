@@ -636,6 +636,20 @@ fn step(conn: &Connection, owner: &str, run: &str, title: String, extra: Value) 
 }
 
 pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
+    let Some(row) = run_dream(db.clone(), owner.clone(), date, complete).await? else { return Ok(None) };
+    if !matches!(row.status.as_str(), "applied" | "no_changes") {
+        return Ok(Some(row));
+    }
+    // Knowledge curator (step 15), after the Dream's own commit, only when
+    // Dreaming is on. It writes proposals only and never fails the Dream; its
+    // line is appended to the report.
+    if crate::knowledge_curator::after_dream(&db, &owner, &row.id, None).await.is_none() {
+        return Ok(Some(row));
+    }
+    Ok(db.connect().ok().and_then(|c| get(&c, &owner, &row.id).ok().flatten()).or(Some(row)))
+}
+
+async fn run_dream(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
     let date_s = date.format("%Y-%m-%d").to_string();
     let (drive, id, base, shown, turns) = {
         let (db, owner, date_s) = (db.clone(), owner.clone(), date_s.clone());
