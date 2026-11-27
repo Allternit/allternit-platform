@@ -83,7 +83,7 @@ struct BoundTerminalThread: View {
             return
         }
         attached = nil
-        RuntimeRelayStore.shared.select(binding.runtimeId)
-        attached = await store.attach(sessionId: terminalId, title: title)
+        // Addressed to the bound computer directly; the app's relay choice stays.
+        attached = await store.attach(sessionId: terminalId, title: title, runtimeId: binding.runtimeId)
     }
 }

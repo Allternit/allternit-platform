@@ -1111,12 +1111,20 @@ private struct StartComputerRow: View {
     @ObservedObject private var store = SessionStartStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
 
+    private var value: String {
+        switch store.pick(for: nil) {
+        case .computer(let id): return store.name(of: id) ?? "Computer"
+        case .noComputer: return StartDeviceRows.noComputerTitle
+        case .automatic: return StartDeviceRows.automaticTitle
+        }
+    }
+
     var body: some View {
         NavigationLink {
             StartComputerPage()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: store.row(for: store.pickedRuntimeId)?.icon ?? "desktopcomputer")
+                Image(systemName: store.row(for: store.pickedRuntimeId(for: nil))?.icon ?? "desktopcomputer")
                     .font(.system(size: 16))
                     .foregroundColor(Color("TextPrimary"))
                     .frame(width: 24)
@@ -1125,7 +1133,7 @@ private struct StartComputerRow: View {
                     .font(.system(size: 15))
                     .foregroundColor(Color("TextPrimary"))
                 Spacer(minLength: 8)
-                Text(store.name(of: store.pickedRuntimeId) ?? "No computer")
+                Text(value)
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))
                     .lineLimit(1)

@@ -184,7 +184,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// D9) or the server refuses it for credits (402): ChatView shows the sheet.
     @Published var cloudCreditsRequest: CloudCreditsRequest? = nil
 
-    private let chatClient: AgentChatClient
+    /// The chat's session client: the app's current computer, or, for a
+    /// thread bound to a computer (Start anywhere), that computer directly.
+    private var chatClient: AgentChatClient
+    private let defaultChatClient: AgentChatClient
 
     /// Current composer mode/agent context for the next session create —
     /// set by ChatView from the mode/agent stores (see SessionContext).
@@ -215,7 +218,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     private var streamFirstDeltaAt: Date? = nil
 
     init(apiClient: APIClient = .shared) {
-        self.chatClient = AgentChatClient(client: apiClient)
+        self.defaultChatClient = AgentChatClient(client: apiClient)
+        self.chatClient = defaultChatClient
     }
 
     // MARK: - Sessions
@@ -263,6 +267,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         editedVersions = [:]
         currentSessionId = nil
         SessionStartStore.shared.currentBinding = nil
+        pinChat(to: nil)
         hasLocalPersonTurns = false
         resetPlanThread()
         isIncognito = ephemeral
@@ -272,10 +277,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     func loadSession(_ sessionId: String) {
         if currentSessionId == sessionId, browserImageTask != nil { return }
         stopStreaming(cancelBrowserImage: false)
-        // A thread started on a picked computer keeps pointing at it.
+        // A thread started on a picked computer keeps talking to it
+        // (binding.sessionId on binding.runtimeId), whatever computer the
+        // app picks for other chats.
         let binding = SessionStartStore.shared.binding(for: sessionId)
         SessionStartStore.shared.currentBinding = binding
-        if let binding { RuntimeRelayStore.shared.select(binding.runtimeId) }
+        pinChat(to: binding)
         // Opening a real conversation exits temporary mode.
         discardTemporaryBackingSession()
         isTemporaryChat = false
@@ -582,7 +589,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         let location = clientLocation ?? PendingClientLocation.take()
         // Start anywhere: a new plain chat with a picked computer starts a
         // real session there first (the + sheet's Computer + Folder rows).
-        if currentSessionId == nil, sessionContext.agentId == nil, SessionStartStore.shared.pickedRuntimeId != nil {
+        let start = SessionStartStore.shared
+        if sessionContext.agentId == nil, start.pickedRuntimeId != nil,
+           start.pickApplies(to: currentSessionId, hasMessages: messages.count > 1),
+           start.binding(for: currentSessionId) == nil {
             startOnPickedComputer(text: trimmed, streamText: streamText, attachments: attachments, runtimeModelId: runtimeModelId,
                                   effort: effort, userMessageId: userMessageId, clientLocation: location,
                                   personInitiated: personInitiated, imagePrompt: imagePrompt)
@@ -603,27 +613,34 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         let store = SessionStartStore.shared
         let chipRuntime = ChatRuntimeStore.shared.runtimeId
         let promptInStart = SessionStartClient.contractRuntime(chipRuntime) != "allternit"
-        let mode = ChatPermissionStore.shared.startMode(computerDefault: store.computerDefaultMode(chipRuntimeId: chipRuntime))
+        // Sent only when picked by hand for this chat; else the computer's own default applies.
+        let explicitMode = ChatPermissionStore.shared.explicitMode(for: currentSessionId)
+        let priorSessionId = currentSessionId
         transientError = nil
         draftToRestore = nil
         isCreatingSession = true
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let binding = try await store.startPicked(chipRuntimeId: chipRuntime, mode: mode, prompt: promptInStart ? text : nil)
+                let binding = try await store.startPicked(chipRuntimeId: chipRuntime, explicitMode: explicitMode, prompt: promptInStart ? text : nil)
                 let chatSessionId: String
                 if binding.kind == .engine, let engineSession = binding.sessionId {
-                    // The engine session IS the chat's session on that computer.
+                    // The engine session IS the chat's session on that computer:
+                    // later turns, approvals and Stop go to it, never a second one.
                     chatSessionId = engineSession
+                    self.pinChat(to: binding)
                     self.currentSessionId = engineSession
                 } else {
                     chatSessionId = try await self.ensureSessionId()
                 }
                 self.isCreatingSession = false
-                store.bind(binding, chatSessionId: chatSessionId)
+                // The pick is cleared here: it was for this first message only.
+                store.bind(binding, chatSessionIds: [chatSessionId] + (priorSessionId.map { [$0] } ?? []))
+                let mode = ChatPermissionMode(rawValue: binding.mode) ?? .ask
                 ChatPermissionStore.shared.bind(sessionId: chatSessionId, mode: mode)
                 let client = self.chatClient
-                Task { try? await client.updateSessionBinding(sessionId: chatSessionId, binding: binding, permissionMode: mode.rawValue) }
+                Task { try? await client.updateSessionBinding(sessionId: chatSessionId, binding: binding,
+                                                              permissionMode: binding.mode, explicit: explicitMode != nil) }
                 if binding.kind == .engine && !promptInStart {
                     self.startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments,
                                      userMessageId: userMessageId, clientLocation: clientLocation,
@@ -637,6 +654,16 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 self.draftToRestore = text
                 self.transientError = Self.startErrorText(error, deviceName: store.name(of: store.pickedRuntimeId))
             }
+        }
+    }
+
+    /// Points the chat client at a bound engine session's computer, or back
+    /// at the app's current computer.
+    private func pinChat(to binding: StartBinding?) {
+        if let binding, binding.kind == .engine {
+            chatClient = AgentChatClient.bound(to: binding.runtimeId)
+        } else {
+            chatClient = defaultChatClient
         }
     }
 
@@ -802,6 +829,16 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) || routesCloudDirect(modelId) {
             startPersonStream(text: trimmed, modelId: modelId,
                               hasAttachments: !stagedAttachments.isEmpty || !(preparedRefs ?? []).isEmpty)
+            return
+        }
+        // "No computer" picked for this chat: only plan chats run.
+        if sessionContext.agentId == nil, SessionStartStore.shared.pick == .noComputer,
+           SessionStartStore.shared.pickApplies(to: currentSessionId, hasMessages: messages.count > 1) {
+            if let userMessageId {
+                messages.removeAll { $0.id == userMessageId }
+                draftToRestore = ToolOptionsStore.shared.strippedText(trimmed)
+            }
+            transientError = "This chat has no computer. Pick a plan model, or pick a computer in + › Computer."
             return
         }
         if ACILocalImageStore.isLocal(currentSessionId) {

@@ -48,6 +48,8 @@ final class ChatPermissionStore: ObservableObject {
     /// The pending mode was picked by hand. Until then a chat on a picked
     /// computer uses that computer's own default (Start anywhere D4).
     @Published private(set) var pendingChosen = false
+    /// Chats whose mode was picked by hand (sent to a computer as `mode`).
+    @Published private(set) var explicitSessions: Set<String> = []
     @Published private(set) var modeBySession: [String: ChatPermissionMode]
 
     private let defaults = UserDefaults.standard
@@ -79,6 +81,7 @@ final class ChatPermissionStore: ObservableObject {
             return
         }
         remember(mode, for: sessionId)
+        explicitSessions.insert(sessionId)
         Task {
             try? await AgentChatClient().updateSessionMetadata(
                 sessionId: sessionId,
@@ -87,10 +90,16 @@ final class ChatPermissionStore: ObservableObject {
         }
     }
 
-    /// The mode a new chat starts with: the hand pick, else the picked
-    /// computer's default, else the pending mode.
-    func startMode(computerDefault: ChatPermissionMode?) -> ChatPermissionMode {
-        pendingChosen ? pendingMode : (computerDefault ?? pendingMode)
+    /// The mode this chat shows: the hand pick, else the picked computer's
+    /// default, else the stored or pending mode.
+    func startMode(computerDefault: ChatPermissionMode?, sessionId: String? = nil) -> ChatPermissionMode {
+        explicitMode(for: sessionId) ?? computerDefault ?? mode(for: sessionId)
+    }
+
+    /// Only a mode picked by hand for this chat (nil = the computer's own default applies).
+    func explicitMode(for sessionId: String?) -> ChatPermissionMode? {
+        guard let sessionId else { return pendingChosen ? pendingMode : nil }
+        return explicitSessions.contains(sessionId) ? modeBySession[sessionId] : nil
     }
 
     private func remember(_ mode: ChatPermissionMode, for sessionId: String) {

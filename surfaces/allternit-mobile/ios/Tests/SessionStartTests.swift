@@ -105,4 +105,22 @@ final class SessionStartTests: XCTestCase {
             return XCTFail("expected no offer without a snapshot")
         }
     }
+
+    /// A computer pick belongs to the chat it was made in, or (made on the
+    /// new-chat screen) to a chat with no messages yet; never an old chat.
+    @MainActor
+    func testPickStaysInItsChat() {
+        let store = SessionStartStore.shared
+        defer { store.choose(.automatic, chatId: nil) }
+        store.choose(.noComputer, chatId: nil)
+        XCTAssertTrue(store.pickApplies(to: nil, hasMessages: false))
+        XCTAssertFalse(store.pickApplies(to: "old-chat", hasMessages: true))
+        XCTAssertEqual(store.pick(for: "old-chat"), .automatic)
+        store.choose(.noComputer, chatId: "chat-a")
+        XCTAssertTrue(store.pickApplies(to: "chat-a", hasMessages: true))
+        XCTAssertFalse(store.pickApplies(to: "chat-b", hasMessages: false))
+        XCTAssertFalse(store.pickApplies(to: nil, hasMessages: false))
+        store.choose(.automatic, chatId: "chat-a")
+        XCTAssertFalse(store.pickApplies(to: "chat-a", hasMessages: true))
+    }
 }

@@ -340,15 +340,14 @@ struct ComposerPlusSheet: View {
                 }
                 PlusDivider()
                 PlusRow(
-                    icon: startStore.row(for: startStore.pickedRuntimeId)?.icon ?? "desktopcomputer",
+                    icon: startStore.row(for: startStore.pickedRuntimeId(for: sessionId))?.icon ?? "desktopcomputer",
                     title: "Computer",
-                    value: startStore.name(of: startStore.pickedRuntimeId)
-                        ?? computerRowValue(chipStore.state, activeName: relay.activeDevice?.displayName),
+                    value: computerValue,
                     chevron: true,
                     showsDot: chipStore.showsDot
                 ) { go(.computer) }
                 // Start anywhere: the folder the next message runs in, once a computer is picked.
-                if sessionId == nil, startStore.pickedRuntimeId != nil {
+                if startStore.pickedRuntimeId(for: sessionId) != nil {
                     PlusDivider()
                     PlusRow(icon: "folder.badge.gearshape", title: "Folder",
                             value: startStore.effectiveFolder?.displayName ?? "Choose",
@@ -569,11 +568,11 @@ struct ComposerPlusSheet: View {
             }
 
             StartDeviceList(
-                selected: startStore.pickedRuntimeId,
+                selected: startStore.pick(for: sessionId),
                 folderPath: startStore.effectiveFolderPath,
                 onSelect: { pickComputer($0) },
                 onUseCloud: { id, git in
-                    startStore.useCloud(runtimeId: id, git: git)
+                    startStore.useCloud(runtimeId: id, git: git, chatId: sessionId)
                     chipStore.restore()
                     returnToRoot()
                 }
@@ -594,28 +593,42 @@ struct ComposerPlusSheet: View {
         .task { await relay.refresh() }
     }
 
-    private func pickComputer(_ id: String?) {
-        startStore.pick(id)
+    /// The pick is for this chat only (the new-chat screen when no chat yet).
+    private func pickComputer(_ pick: StartPick) {
+        startStore.choose(pick, chatId: sessionId)
         chipStore.restore()
         returnToRoot()
+    }
+
+    private var computerValue: String {
+        switch startStore.pick(for: sessionId) {
+        case .computer(let id): return startStore.name(of: id) ?? "Computer"
+        case .noComputer: return StartDeviceRows.noComputerTitle
+        case .automatic: return computerRowValue(chipStore.state, activeName: relay.activeDevice?.displayName)
+        }
     }
 
     // MARK: - Permission default (Start anywhere D4)
 
     /// The picked computer's own default, for a chat that has not started.
+    private var computerPicked: Bool { startStore.pickedRuntimeId(for: sessionId) != nil }
+
     private var computerDefaultMode: ChatPermissionMode? {
-        sessionId == nil ? startStore.computerDefaultMode(chipRuntimeId: chatRuntime.runtimeId) : nil
+        computerPicked ? startStore.computerDefaultMode(chipRuntimeId: chatRuntime.runtimeId) : nil
     }
 
     private var effectivePermission: ChatPermissionMode {
-        sessionId == nil
-            ? permissionStore.startMode(computerDefault: computerDefaultMode)
+        computerPicked
+            ? permissionStore.startMode(computerDefault: computerDefaultMode, sessionId: sessionId)
             : permissionStore.mode(for: sessionId)
     }
 
-    /// "Ask · default" while the computer's default applies; the pick once changed.
+    /// "Ask · default" while the computer's own default applies (no mode is
+    /// sent then); the hand pick once changed for this chat.
     private var permissionRowValue: String {
-        if let d = computerDefaultMode, !permissionStore.pendingChosen { return "\(d.shortLabel) · default" }
+        if computerPicked, permissionStore.explicitMode(for: sessionId) == nil {
+            return computerDefaultMode.map { "\($0.shortLabel) · default" } ?? "Computer default"
+        }
         return effectivePermission.shortLabel
     }
 

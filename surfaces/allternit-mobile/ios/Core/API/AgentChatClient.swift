@@ -104,9 +104,29 @@ enum AgentChatClientError: Error, LocalizedError {
 /// with `AgentChatClientError.noReachableNode`.
 final class AgentChatClient: ObservableObject, @unchecked Sendable {
     private let client: APIClient
+    /// Set for a chat bound to one computer (Start anywhere): turns stream
+    /// there instead of to the app's current computer.
+    private let streamBaseURL: URL?
 
-    init(client: APIClient = .shared) {
+    init(client: APIClient = .shared, streamBaseURL: URL? = nil) {
         self.client = client
+        self.streamBaseURL = streamBaseURL
+    }
+
+    /// A client for chat sessions on one computer, through the relay: the
+    /// session routes, its turns and Stop all reach `runtimeId`.
+    static func bound(to runtimeId: String) -> AgentChatClient {
+        let relay = RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId)
+        return AgentChatClient(
+            client: APIClient(baseURL: relay.appendingPathComponent("api/v1"),
+                              tokenProvider: { try await AuthManager.shared.getToken() }),
+            streamBaseURL: relay
+        )
+    }
+
+    private func resolvedBaseURL() async -> URL? {
+        if let streamBaseURL { return streamBaseURL }
+        return await InstanceConnection.resolve()?.baseURL
     }
 
     /// Response of `POST /api/v1/uploads` (upload_routes.rs).
@@ -176,11 +196,12 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// merge semantics — web native-agent-api.ts updateSession).
     /// Start anywhere: where this thread runs (`metadata.startBinding`, the
     /// web's binding.ts shape) and the permission it started with.
-    func updateSessionBinding(sessionId: String, binding: StartBinding, permissionMode: String) async throws {
-        struct Metadata: Encodable { let startBinding: StartBinding; let permissionMode: String }
+    func updateSessionBinding(sessionId: String, binding: StartBinding, permissionMode: String, explicit: Bool) async throws {
+        struct Metadata: Encodable { let startBinding: StartBinding; let permissionMode: String; let permissionModeExplicit: Bool }
         struct Body: Encodable { let metadata: Metadata }
         try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))",
-                               body: Body(metadata: Metadata(startBinding: binding, permissionMode: permissionMode)))
+                               body: Body(metadata: Metadata(startBinding: binding, permissionMode: permissionMode,
+                                                             permissionModeExplicit: explicit)))
     }
 
     func updateSessionMetadata(sessionId: String, metadata: [String: String]) async throws {
@@ -359,7 +380,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
+                    guard let baseURL = await self.resolvedBaseURL() else {
                         throw AgentChatClientError.noReachableNode
                     }
                     var request = URLRequest(url: baseURL.appendingPathComponent("api/agent-chat"))
@@ -452,7 +473,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    guard let baseURL = await InstanceConnection.resolve()?.baseURL else {
+                    guard let baseURL = await self.resolvedBaseURL() else {
                         throw AgentChatClientError.noReachableNode
                     }
                     var url = baseURL.appendingPathComponent("api/v1/agent-sessions/sync")

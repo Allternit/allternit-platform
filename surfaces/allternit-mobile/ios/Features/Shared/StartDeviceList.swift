@@ -36,6 +36,8 @@ enum StartAsleepOffer: Equatable, Sendable {
 enum StartDeviceRows {
     static let noComputerTitle = "No computer"
     static let noComputerSub = "Plan chats work without one"
+    static let automaticTitle = "Automatic"
+    static let automaticSub = "Your default computer, else the first one online"
 
     /// Rows from the relay's runtime list plus presence (`kind`, `lastSeen`).
     static func build(_ devices: [RelayRuntimeDevice], presence: [String: StartPresence] = [:], now: Date = Date()) -> [StartDeviceRow] {
@@ -92,15 +94,35 @@ enum StartDeviceRows {
     }
 }
 
-/// The computer + folder a new chat runs on, the per-device options and
+/// A chat's computer choice in the shared list.
+enum StartPick: Equatable, Sendable {
+    /// Today's routing (the account's default computer, else the first one
+    /// online); starts no remote session on its own.
+    case automatic
+    /// No computer at all: only plan chats run.
+    case noComputer
+    /// This computer: the next message starts a real session there.
+    case computer(String)
+}
+
+/// The computer + folder a chat runs on, the per-device options and
 /// snapshots, and each thread's binding. The first send reads it
-/// (`ChatViewModel.startOnPickedComputer`).
+/// (`ChatViewModel.startOnPickedComputer`). A pick belongs to the chat it
+/// was made in (or, made on the new-chat screen, to a chat with no messages
+/// yet) and never moves the app-wide relay choice: starts and bound threads
+/// address their computer directly.
 @MainActor
 final class SessionStartStore: ObservableObject {
     static let shared = SessionStartStore()
 
-    /// The computer picked for the next new chat (nil = no computer: today's chat).
-    @Published private(set) var pickedRuntimeId: String?
+    @Published private(set) var pick: StartPick = .automatic
+    /// The chat the pick was made in; nil = the new-chat screen.
+    @Published private(set) var pickChatId: String?
+    /// The computer picked (nil for Automatic / No computer).
+    var pickedRuntimeId: String? {
+        if case .computer(let id) = pick { return id }
+        return nil
+    }
     /// The folder picked for it (nil = its most recent folder).
     @Published private(set) var pickedFolder: StartFolderPick?
     @Published private(set) var options: [String: StartOptions] = [:]
@@ -129,20 +151,41 @@ final class SessionStartStore: ObservableObject {
 
     // MARK: Picks
 
-    /// A pick in the shared list. The relay follows it, so the chat engine
-    /// and the terminal reach that computer.
-    func pick(_ runtimeId: String?) {
-        pickedRuntimeId = runtimeId
+    /// A pick in the shared list, for chat `chatId` (nil = new-chat screen).
+    /// No pick touches the app's relay choice, so other chats keep running
+    /// where they ran; Automatic just drops this chat's pick.
+    func choose(_ pick: StartPick, chatId: String?) {
+        self.pick = pick
+        pickChatId = pick == .automatic ? nil : chatId
         pickedFolder = nil
         idempotencyKey = nil
-        RuntimeRelayStore.shared.select(runtimeId)
-        if let runtimeId { Task { await loadOptions(runtimeId) } }
+        if case .computer(let id) = pick { Task { await loadOptions(id) } }
     }
 
     /// "Use a cloud computer": the asleep Mac's git folder on a cloud computer.
-    func useCloud(runtimeId: String, git: StartFolderGit) {
-        pick(runtimeId)
+    func useCloud(runtimeId: String, git: StartFolderGit, chatId: String?) {
+        choose(.computer(runtimeId), chatId: chatId)
         pickedFolder = .git(remote: git.remote, branch: git.branch, head: git.head)
+    }
+
+    /// Does the pick belong to this chat? Same chat, or a new-chat-screen
+    /// pick and the chat has no messages yet. Never another chat.
+    func pickApplies(to chatId: String?, hasMessages: Bool) -> Bool {
+        guard pick != .automatic else { return false }
+        if let pickChatId { return pickChatId == chatId }
+        return !hasMessages
+    }
+
+    /// The pick to show in a chat's list and chip: its own pick, else Automatic.
+    func pick(for chatId: String?) -> StartPick {
+        if let pickChatId { return pickChatId == chatId ? pick : .automatic }
+        return chatId == nil ? pick : .automatic
+    }
+
+    /// The picked computer for this chat, nil when the pick is not its own.
+    func pickedRuntimeId(for chatId: String?) -> String? {
+        if case .computer(let id) = pick(for: chatId) { return id }
+        return nil
     }
 
     func pickFolder(_ folder: StartFolderPick) {
@@ -235,7 +278,9 @@ final class SessionStartStore: ObservableObject {
     /// The first send on a picked computer: starts the session there and
     /// returns its binding. The pick is kept on failure so a retry resends
     /// with the same idempotency key.
-    func startPicked(chipRuntimeId: String, mode: ChatPermissionMode, prompt: String?) async throws -> StartBinding {
+    /// `explicitMode` is sent only when the person picked one for this chat;
+    /// without it the computer's own default applies.
+    func startPicked(chipRuntimeId: String, explicitMode: ChatPermissionMode?, prompt: String?) async throws -> StartBinding {
         guard let runtimeId = pickedRuntimeId else { throw StartSessionError(status: 400, code: "no_computer", message: "Pick a computer first.", action: nil) }
         if options[runtimeId] == nil && snapshots[runtimeId] == nil { await loadOptions(runtimeId) }
         guard let folder = effectiveFolder else {
@@ -247,26 +292,29 @@ final class SessionStartStore: ObservableObject {
         idempotencyKey = key
         let runtime = SessionStartClient.contractRuntime(chipRuntimeId)
         let origin = StartOrigin(surface: "ios", deviceName: UIDevice.current.name, depth: 0)
-        let request = StartRequest(folder: folder, runtime: runtime, mode: mode.rawValue, prompt: prompt, origin: origin)
+        let request = StartRequest(folder: folder, runtime: runtime, mode: explicitMode?.rawValue, prompt: prompt, origin: origin)
+        let mode = explicitMode?.rawValue ?? computerDefaultMode(chipRuntimeId: chipRuntimeId)?.rawValue ?? StartMode.default.rawValue
         let result = try await SessionStartClient(runtimeId: runtimeId).start(request, idempotencyKey: key)
         let deviceName = name(of: runtimeId) ?? "Computer"
         switch result {
         case .engine(let sessionId, let directory):
             return StartBinding(runtimeId: runtimeId, deviceName: deviceName, folder: directory.isEmpty ? folder.bindingText : directory,
-                                runtime: runtime, mode: mode.rawValue, kind: .engine, sessionId: sessionId, origin: origin)
+                                runtime: runtime, mode: mode, kind: .engine, sessionId: sessionId, origin: origin)
         case .terminal(let terminalId, let cwd, let agent):
             return StartBinding(runtimeId: runtimeId, deviceName: deviceName, folder: cwd.isEmpty ? folder.bindingText : cwd,
-                                runtime: agent.isEmpty ? runtime : agent, mode: mode.rawValue, kind: .terminal, terminalId: terminalId, origin: origin)
+                                runtime: agent.isEmpty ? runtime : agent, mode: mode, kind: .terminal, terminalId: terminalId, origin: origin)
         }
     }
 
-    /// Saves a thread's binding (local copy; the session metadata holds the truth)
-    /// and clears the pick, so the next new chat starts fresh.
-    func bind(_ binding: StartBinding, chatSessionId: String) {
-        bindings[chatSessionId] = binding
+    /// Saves a thread's binding (local copy; the session metadata holds the
+    /// truth) under each id the chat goes by, and clears the pick: it was for
+    /// this first message only.
+    func bind(_ binding: StartBinding, chatSessionIds: [String]) {
+        for id in Set(chatSessionIds) { bindings[id] = binding }
         currentBinding = binding
         if let data = try? JSONEncoder().encode(bindings) { defaults.set(data, forKey: Self.bindingsKey) }
-        pickedRuntimeId = nil
+        pick = .automatic
+        pickChatId = nil
         pickedFolder = nil
         idempotencyKey = nil
     }
@@ -279,11 +327,11 @@ final class SessionStartStore: ObservableObject {
 /// The shared list: computers by state, then "No computer", and the asleep
 /// offer under them when an asleep computer is tapped.
 struct StartDeviceList: View {
-    let selected: String?
+    let selected: StartPick
     /// The folder on the computer, named in the asleep offer.
     var folderPath: String? = nil
     var showsNoComputer = true
-    let onSelect: (String?) -> Void
+    let onSelect: (StartPick) -> Void
     var onUseCloud: ((String, StartFolderGit) -> Void)? = nil
 
     @ObservedObject private var relay = RuntimeRelayStore.shared
@@ -297,26 +345,33 @@ struct StartDeviceList: View {
                 if rows.isEmpty && relay.isLoading {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 52)
                 }
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 { PlusDivider() }
-                    PlusPickRow(icon: row.icon, title: row.name, subtitle: row.sub, isSelected: selected == row.id) {
+                PlusPickRow(icon: "sparkles", title: StartDeviceRows.automaticTitle,
+                            subtitle: StartDeviceRows.automaticSub, isSelected: selected == .automatic) {
+                    Haptics.selection()
+                    asleepId = nil
+                    onSelect(.automatic)
+                }
+                .accessibilityIdentifier("startDevice-automatic")
+                ForEach(rows) { row in
+                    PlusDivider()
+                    PlusPickRow(icon: row.icon, title: row.name, subtitle: row.sub, isSelected: selected == .computer(row.id)) {
                         Haptics.selection()
-                        if row.state == .asleep && selected != row.id {
+                        if row.state == .asleep && selected != .computer(row.id) {
                             asleepId = row.id
                         } else {
                             asleepId = nil
-                            onSelect(row.id)
+                            onSelect(.computer(row.id))
                         }
                     }
                     .accessibilityIdentifier("startDevice-\(row.id)")
                 }
                 if showsNoComputer {
-                    if !rows.isEmpty { PlusDivider() }
-                    PlusPickRow(icon: "desktopcomputer", title: StartDeviceRows.noComputerTitle,
-                                subtitle: StartDeviceRows.noComputerSub, isSelected: selected == nil) {
+                    PlusDivider()
+                    PlusPickRow(icon: "bubble.left", title: StartDeviceRows.noComputerTitle,
+                                subtitle: StartDeviceRows.noComputerSub, isSelected: selected == .noComputer) {
                         Haptics.selection()
                         asleepId = nil
-                        onSelect(nil)
+                        onSelect(.noComputer)
                     }
                     .accessibilityIdentifier("startDevice-none")
                 }
@@ -364,7 +419,7 @@ struct StartDeviceList: View {
             PlusPickRow(icon: "moon", title: "Pick \(row.name) anyway", subtitle: "Runs when it wakes", isSelected: false) {
                 Haptics.selection()
                 asleepId = nil
-                onSelect(row.id)
+                onSelect(.computer(row.id))
             }
         }
     }
@@ -377,11 +432,12 @@ struct StartComputerPage: View {
 
     var body: some View {
         ScrollView {
+            // Opened from a new chat's chip picker (the row shows only there).
             StartDeviceList(
-                selected: store.pickedRuntimeId,
+                selected: store.pick(for: nil),
                 folderPath: store.effectiveFolderPath,
-                onSelect: { id in store.pick(id); dismiss() },
-                onUseCloud: { id, git in store.useCloud(runtimeId: id, git: git); dismiss() }
+                onSelect: { store.choose($0, chatId: nil); dismiss() },
+                onUseCloud: { id, git in store.useCloud(runtimeId: id, git: git, chatId: nil); dismiss() }
             )
             .padding(16)
         }

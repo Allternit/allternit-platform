@@ -137,7 +137,7 @@ struct ComposerChatChips: View {
             guard let binding = startStore.currentBinding else { return nil }
             return (binding.deviceName, startStore.row(for: binding.runtimeId)?.icon ?? "desktopcomputer")
         }
-        guard let id = startStore.pickedRuntimeId, let name = startStore.name(of: id) else { return nil }
+        guard let id = startStore.pickedRuntimeId(for: nil), let name = startStore.name(of: id) else { return nil }
         return (name, startStore.row(for: id)?.icon ?? "desktopcomputer")
     }
 
