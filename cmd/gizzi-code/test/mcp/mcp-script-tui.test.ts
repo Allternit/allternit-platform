@@ -54,7 +54,7 @@ describe("mcp_script in the terminal", () => {
       bridges: bridgeMcpTools({ tools, context, canUseTool: denyLinear, parentMessage, toolUseID: "toolu_1" }),
     })
     expect(r.ok).toBe(true)
-    expect(JSON.parse(r.result)).toBe("denied after 2: The user rejected permission to use this specific tool call.")
+    expect((r.result)).toBe("denied after 2: The user rejected permission to use this specific tool call.")
     expect(ran).toEqual(["github.list_issues"])
     expect(r.calls.map((c) => [c.server, c.tool, c.ok])).toEqual([
       ["github", "list_issues", true],
@@ -103,7 +103,7 @@ describe("mcp_script in the terminal", () => {
         bridges: bridgeMcpTools({ tools, context, canUseTool: allowAll, parentMessage, toolUseID: "toolu_2" }),
       })
       expect(r.ok).toBe(true)
-      expect(JSON.parse(r.result)).toBe("denied")
+      expect((r.result)).toBe("denied")
       expect(ran).toEqual(["github.list_issues"])
       expect(r.calls.map((c) => c.ok)).toEqual([true, false])
     } finally {

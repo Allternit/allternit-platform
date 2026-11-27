@@ -72,7 +72,7 @@ describe("mcp_script sandbox", () => {
     expect(r.ok).toBe(true)
     expect(JSON.parse(r.result)).toEqual({
       process: "undefined",
-      ctor: "undefined",
+      ctor: "threw",
       import: "threw",
       fetch: "undefined",
       setTimeout: "undefined",
@@ -101,8 +101,8 @@ describe("mcp_script sandbox", () => {
 
   test("declarations come from input and output schemas", () => {
     const d = McpScript.declarations([
-      { key: "a", server: "github", tool: "list_issues", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] }, outputSchema: { type: "object", properties: { n: { type: "integer" } } }, call: async () => 0 },
-      { key: "b", server: "linear", tool: "create-issue", inputSchema: { type: "object", properties: {} }, call: async () => 0 },
+      { server: "github", tool: "list_issues", inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] }, outputSchema: { type: "object", properties: { n: { type: "integer" } } } },
+      { server: "linear", tool: "create-issue", inputSchema: { type: "object", properties: {} } },
     ])
     expect(d).toContain("list_issues(args: { q: string }): Promise<{ n?: number }>")
     expect(d).toContain("create_issue(args: {  }): Promise<unknown>")

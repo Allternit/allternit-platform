@@ -22,13 +22,13 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 
 export namespace ScriptSandbox {
-  export const LIMITS = {
+  export const LIMITS: { calls: number; runMs: number; memoryBytes: number; stackBytes: number; resultBytes: number } = {
     calls: 50,
     runMs: 60_000,
     memoryBytes: 32 * 1024 * 1024,
     stackBytes: 512 * 1024,
     resultBytes: 8 * 1024,
-  } as const
+  }
 
   export interface Bridge {
     server: string
@@ -231,7 +231,7 @@ export namespace ScriptSandbox {
 
       const code = `globalThis.__mcpScriptMain = async function () {\n${input.js}\n};\nglobalThis.__mcpScriptMain();`
       const evaluated = vm.evalCode(code, "mcp-script.js", { type: "global" })
-      if (evaluated.error) {
+      if ("error" in evaluated) {
         const message = errorText(vm, evaluated.error)
         evaluated.error.dispose()
         return finish(false, "", stopReason ?? message)
@@ -260,7 +260,7 @@ export namespace ScriptSandbox {
       } finally {
         clearInterval(watchdog)
       }
-      if (outcome.error) {
+      if ("error" in outcome) {
         const message = errorText(vm, outcome.error)
         outcome.error.dispose()
         return finish(false, "", stopReason ?? message)
