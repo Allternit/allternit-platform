@@ -151,13 +151,36 @@ enum ModeHubSpec {
     // MARK: Timings (contract "Timings and motion")
 
     static let holdDuration: Double = 0.450
-    static let holdPressScale: CGFloat = 0.94
+    /// Orb press swell (was 0.94 before the liquid lens, 2026-11-26, Eoj OK).
+    static let holdPressScale: CGFloat = 1.1
     static let hoverIntent: Double = 0.120
     /// Orb -> pill spring: stiffness 380, damping 30 (mass 1).
     static let pillSpring = Animation.interpolatingSpring(mass: 1, stiffness: 380, damping: 30)
     static let lensSpring = Animation.interpolatingSpring(mass: 0.7, stiffness: 520, damping: 26)
     static let tickSpring = Animation.interpolatingSpring(mass: 0.6, stiffness: 560, damping: 32)
     static let sheetSpring = Animation.interpolatingSpring(mass: 0.9, stiffness: 420, damping: 38)
+
+    // MARK: Liquid lens (2026-11-26, Eoj picked Option B; web contract.ts has the same values)
+
+    /// Travel in points before a press on the orb becomes a slide (and the hold is cancelled).
+    static let slideStart: CGFloat = 6
+    static let lensPressScale: CGFloat = 1.22
+    static let lensMagnifyScale: CGFloat = 1.16
+    /// How far the lens may travel past the first and last item.
+    static let lensOvershoot: CGFloat = 8
+    /// Stretch = 1 + min(speed / lensStretchVelocity, lensStretchMax); the height squashes by lensStretchSquash of it.
+    static let lensStretchVelocity: CGFloat = 2400
+    static let lensStretchMax: CGFloat = 0.3
+    static let lensStretchSquash: CGFloat = 0.5
+    /// Seconds the pill stays open after a lift so the snap and jelly are seen.
+    static let pickSettle: Double = 0.26
+    static let followSpring = Animation.interpolatingSpring(mass: 1, stiffness: 1400, damping: 70)
+    static let swellSpring = Animation.interpolatingSpring(mass: 1, stiffness: 620, damping: 24)
+    static let jellySpring = Animation.interpolatingSpring(mass: 0.8, stiffness: 430, damping: 13)
+    static let stretchSpring = Animation.interpolatingSpring(mass: 1, stiffness: 700, damping: 32)
+    /// iOS 26: the lens is native clear Liquid Glass (`Glass.clear`). Glass-on-glass could not be
+    /// checked without a build, so this is one switch: false = the material lens on every iOS.
+    static let lensUsesNativeGlass = true
 
     // MARK: Haptics (contract "Haptics")
 
