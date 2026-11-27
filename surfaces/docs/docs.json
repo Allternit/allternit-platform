@@ -782,6 +782,8 @@
               "guides/agent-run-tree",
               "guides/subagents",
               "guides/subagent-evals",
+              "guides/gizzi-evals",
+              "guides/test-cases",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

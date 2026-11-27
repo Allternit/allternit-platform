@@ -157,3 +157,5 @@ node scripts/agency-eval-gate.mjs --write-baseline   # refresh the baseline (sam
 ```
 
 Exit codes: `0` pass, `1` regression, `2` usage or infrastructure error. The comparison logic is tested by `node --test scripts/agency-eval-gate.test.mjs`. The gate needs a build of `allternit-api`, which takes well over five minutes on a GitHub-hosted runner, so it is a manual workflow (`.github/workflows/agency-eval-gate.yml`, `workflow_dispatch`), not a required check. The same offline report also runs, and is checked against the baseline, in `cargo test -p allternit-api --lib agency_api`.
+
+Gizzi uses the same suite format and grader vocabulary. See [Gizzi evals](/guides/gizzi-evals).
