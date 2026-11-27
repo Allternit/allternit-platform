@@ -311,7 +311,7 @@ struct SignSheetView: View {
         }
         .buttonStyle(.plain)
         .allowsHitTesting(hasInk && !writing)
-        .accessibilityAddTraits(hasInk ? [] : [.isNotEnabled])
+        .accessibilityRespondsToUserInteraction(hasInk && !writing)
     }
 
     private func pill(_ label: String, filled: Bool, action: @escaping () -> Void) -> some View {
