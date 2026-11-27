@@ -29,6 +29,7 @@ import { AcpCommand } from "@/cli/commands/acp"
 import { WebCommand } from "@/cli/commands/web"
 import { PrCommand } from "@/cli/commands/pr"
 import { SessionCommand } from "@/cli/commands/session"
+import { EvalCommand } from "@/cli/commands/eval"
 import { DbCommand } from "@/cli/commands/db"
 import { PluginCommand } from "@/cli/commands/plugin"
 import { InitCommand } from "@/cli/commands/init"
@@ -147,6 +148,7 @@ export const COMMANDS: RegisteredCommand[] = [
   GithubCommand,
   PrCommand,
   SessionCommand,
+  EvalCommand,
   DbCommand,
   PluginCommand,
   InitCommand,
