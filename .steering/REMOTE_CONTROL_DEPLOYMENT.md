@@ -121,7 +121,7 @@ The GitHub Actions workflow `.github/workflows/deploy-remote-control-cloudflare.
 
 ```yaml
 VITE_ALLTERNIT_API_URL: 'https://ai.allternit.com'
-VITE_REMOTE_CONTROL_PUSH_URL: 'https://push.remotecontrol.allternit.com'
+VITE_REMOTE_CONTROL_PUSH_URL: 'https://push.fabrictransport.allternit.com'
 ```
 
 If the API origin changes, update the workflow.
