@@ -25,11 +25,16 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/deploy-cloud-api-contabo.yml'
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip the test suite (build train already tested this tree)"
+        type: boolean
+        default: false
 
 jobs:
   test:
     # Build-train merges skip the suite: the train ran it on the same tree (Eoj, 2026-11-16).
-    if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') }}
+    if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') && !inputs.skip_tests }}
     # A newer commit supersedes an in-flight test run: cancel the older one.
     concurrency:
       group: deploy-cloud-api-test-${{ github.ref }}
