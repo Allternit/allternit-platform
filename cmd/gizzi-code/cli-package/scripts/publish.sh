@@ -157,20 +157,22 @@ create_github_release() {
     log_success "GitHub release created: $TAG"
 }
 
-# Update Homebrew formula
+# Homebrew formula + Scoop manifest
+# Automated since step 20 of the Gizzi overhaul: the release workflow
+# (.github/workflows/publish-gizzi-code-npm.yml, jobs release-feed, homebrew-tap,
+# scoop-bucket) renders cmd/gizzi-code/packaging/homebrew/gizzi-code.rb and
+# packaging/scoop/gizzi-code.json from the release checksums.txt and pushes them
+# to Allternit/homebrew-tap and Allternit/scoop-bucket, along with the signed
+# update feed at runtime.allternit.com/gizzi/<channel>/.
+# Manual fallback (only when that job skipped for a missing token): take
+# packaging/gizzi-code.rb / gizzi-code.json from the run's gizzi-release-feed
+# artifact, or render them yourself:
+#   bun script/make-release-feed.ts render --template packaging/homebrew/gizzi-code.rb \
+#     --version <v> --checksums checksums.txt --out gizzi-code.rb
+# then commit to Formula/gizzi-code.rb in Allternit/homebrew-tap.
 update_homebrew() {
-    log_info "Updating Homebrew formula..."
-    
-    NEW_VERSION=$(node -p "require('./package.json').version")
-    
-    # Calculate SHA256 for each platform
-    MACOS_SHA=$(shasum -a 256 dist/gizzi-macos | cut -d' ' -f1)
-    LINUX_SHA=$(shasum -a 256 dist/gizzi-linux | cut -d' ' -f1)
-    
-    # Update formula (this would need a separate homebrew-tap repo)
-    log_warn "Homebrew formula update requires manual PR to homebrew-tap repo"
-    log_info "macOS SHA256: $MACOS_SHA"
-    log_info "Linux SHA256: $LINUX_SHA"
+    log_info "Homebrew formula and Scoop manifest are rendered and pushed by the release workflow (publish-gizzi-code-npm.yml)."
+    log_info "Manual fallback: see the comment above update_homebrew in this script."
 }
 
 # Main
