@@ -294,6 +294,7 @@ struct ChatContentView: View {
     /// (`metadata.projectId`) so the Projects feature can group it.
     @StateObject private var projectStore = ProjectStore.shared
     @ObservedObject private var permissionStore = ChatPermissionStore.shared
+    @ObservedObject private var startStore = SessionStartStore.shared
     /// Staged composer attachments — owned here (next to the view model that
     /// uploads them) and handed to the composer for the pickers and previews.
     @StateObject private var attachmentStore = AttachmentStore()
@@ -633,7 +634,19 @@ struct ChatContentView: View {
         }
     }
 
+    /// A thread started on a picked computer with a CLI runtime is that
+    /// computer's terminal; its composer replaces the chat composer.
+    @ViewBuilder
     private var sessionLayout: some View {
+        if !isTerminal, let binding = startStore.binding(for: viewModel.currentSessionId),
+           binding.kind == .terminal, binding.terminalId != nil {
+            BoundTerminalThread(binding: binding)
+        } else {
+            chatSessionLayout
+        }
+    }
+
+    private var chatSessionLayout: some View {
         VStack(spacing: 0) {
             // Transient load/send failure banner (dismissible).
             if let transientError = viewModel.transientError {

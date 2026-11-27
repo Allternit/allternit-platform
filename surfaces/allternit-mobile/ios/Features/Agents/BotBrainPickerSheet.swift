@@ -284,6 +284,8 @@ struct BotBrainPickerSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     header
+                    // Start anywhere: where a new chat runs, atop the picker.
+                    if isChat && !chatHasSession { StartComputerRow() }
                     searchRow
                     rail
                     if let note {
@@ -1100,5 +1102,43 @@ struct BotBrainPickerSheet: View {
     /// `connectedVendor` for a bot record.
     static func connectedVendor(_ agent: AgentRecord) -> String? {
         connectedVendor(agent.config, botKind: agent.botKind)
+    }
+}
+
+/// The chip picker's "Computer" row: the picked computer, opening the shared
+/// device list (StartDeviceList).
+private struct StartComputerRow: View {
+    @ObservedObject private var store = SessionStartStore.shared
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+
+    var body: some View {
+        NavigationLink {
+            StartComputerPage()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: store.row(for: store.pickedRuntimeId)?.icon ?? "desktopcomputer")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text("Computer")
+                    .font(.system(size: 15))
+                    .foregroundColor(Color("TextPrimary"))
+                Spacer(minLength: 8)
+                Text(store.name(of: store.pickedRuntimeId) ?? "No computer")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 48)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("FillNeutral")))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chipPicker-computer")
     }
 }

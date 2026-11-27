@@ -45,6 +45,9 @@ final class ChatPermissionStore: ObservableObject {
     /// The choice for a chat that doesn't exist yet (web usePendingPermissionMode,
     /// default Auto, not persisted).
     @Published var pendingMode: ChatPermissionMode = .auto
+    /// The pending mode was picked by hand. Until then a chat on a picked
+    /// computer uses that computer's own default (Start anywhere D4).
+    @Published private(set) var pendingChosen = false
     @Published private(set) var modeBySession: [String: ChatPermissionMode]
 
     private let defaults = UserDefaults.standard
@@ -62,6 +65,7 @@ final class ChatPermissionStore: ObservableObject {
 
     /// A new session took the pending choice (sent on its create).
     func bind(sessionId: String, mode: ChatPermissionMode) {
+        pendingChosen = false
         guard modeBySession[sessionId] == nil else { return }
         remember(mode, for: sessionId)
     }
@@ -71,6 +75,7 @@ final class ChatPermissionStore: ObservableObject {
     func choose(_ mode: ChatPermissionMode, sessionId: String?) {
         guard let sessionId else {
             pendingMode = mode
+            pendingChosen = true
             return
         }
         remember(mode, for: sessionId)
@@ -80,6 +85,12 @@ final class ChatPermissionStore: ObservableObject {
                 metadata: ["permissionMode": mode.rawValue]
             )
         }
+    }
+
+    /// The mode a new chat starts with: the hand pick, else the picked
+    /// computer's default, else the pending mode.
+    func startMode(computerDefault: ChatPermissionMode?) -> ChatPermissionMode {
+        pendingChosen ? pendingMode : (computerDefault ?? pendingMode)
     }
 
     private func remember(_ mode: ChatPermissionMode, for sessionId: String) {

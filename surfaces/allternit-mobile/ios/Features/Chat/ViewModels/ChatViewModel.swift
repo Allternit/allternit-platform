@@ -262,6 +262,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         branches = []
         editedVersions = [:]
         currentSessionId = nil
+        SessionStartStore.shared.currentBinding = nil
         hasLocalPersonTurns = false
         resetPlanThread()
         isIncognito = ephemeral
@@ -271,6 +272,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     func loadSession(_ sessionId: String) {
         if currentSessionId == sessionId, browserImageTask != nil { return }
         stopStreaming(cancelBrowserImage: false)
+        // A thread started on a picked computer keeps pointing at it.
+        let binding = SessionStartStore.shared.binding(for: sessionId)
+        SessionStartStore.shared.currentBinding = binding
+        if let binding { RuntimeRelayStore.shared.select(binding.runtimeId) }
         // Opening a real conversation exits temporary mode.
         discardTemporaryBackingSession()
         isTemporaryChat = false
@@ -575,7 +580,75 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // A card's Share location parks the fix in PendingClientLocation, then sends a
         // short message; this send picks it up (once, and only while it is fresh).
         let location = clientLocation ?? PendingClientLocation.take()
+        // Start anywhere: a new plain chat with a picked computer starts a
+        // real session there first (the + sheet's Computer + Folder rows).
+        if currentSessionId == nil, sessionContext.agentId == nil, SessionStartStore.shared.pickedRuntimeId != nil {
+            startOnPickedComputer(text: trimmed, streamText: streamText, attachments: attachments, runtimeModelId: runtimeModelId,
+                                  effort: effort, userMessageId: userMessageId, clientLocation: location,
+                                  personInitiated: personInitiated, imagePrompt: imagePrompt)
+            return
+        }
         startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location, personInitiated: personInitiated, imagePrompt: imagePrompt)
+    }
+
+    /// The first message on a picked computer (Start anywhere, plan step 18).
+    /// Gizzi (`allternit`) → an engine session in that folder; this chat then
+    /// streams to it on the usual path (approval cards and Stop as today).
+    /// Any other CLI → a pane terminal started with the message as its
+    /// prompt; the thread shows that terminal's composer (ChatView).
+    /// A refusal puts the text back and shows the computer's message + action.
+    private func startOnPickedComputer(text: String, streamText: String, attachments: [StagedAttachment], runtimeModelId: String?,
+                                       effort: String?, userMessageId: String, clientLocation: AgentChatClient.ClientLocation?,
+                                       personInitiated: Bool, imagePrompt: String?) {
+        let store = SessionStartStore.shared
+        let chipRuntime = ChatRuntimeStore.shared.runtimeId
+        let promptInStart = SessionStartClient.contractRuntime(chipRuntime) != "allternit"
+        let mode = ChatPermissionStore.shared.startMode(computerDefault: store.computerDefaultMode(chipRuntimeId: chipRuntime))
+        transientError = nil
+        draftToRestore = nil
+        isCreatingSession = true
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let binding = try await store.startPicked(chipRuntimeId: chipRuntime, mode: mode, prompt: promptInStart ? text : nil)
+                let chatSessionId: String
+                if binding.kind == .engine, let engineSession = binding.sessionId {
+                    // The engine session IS the chat's session on that computer.
+                    chatSessionId = engineSession
+                    self.currentSessionId = engineSession
+                } else {
+                    chatSessionId = try await self.ensureSessionId()
+                }
+                self.isCreatingSession = false
+                store.bind(binding, chatSessionId: chatSessionId)
+                ChatPermissionStore.shared.bind(sessionId: chatSessionId, mode: mode)
+                let client = self.chatClient
+                Task { try? await client.updateSessionBinding(sessionId: chatSessionId, binding: binding, permissionMode: mode.rawValue) }
+                if binding.kind == .engine && !promptInStart {
+                    self.startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments,
+                                     userMessageId: userMessageId, clientLocation: clientLocation,
+                                     personInitiated: personInitiated, imagePrompt: imagePrompt)
+                }
+            } catch is CancellationError {
+                self.isCreatingSession = false
+            } catch {
+                self.isCreatingSession = false
+                self.messages.removeAll { $0.id == userMessageId }
+                self.draftToRestore = text
+                self.transientError = Self.startErrorText(error, deviceName: store.name(of: store.pickedRuntimeId))
+            }
+        }
+    }
+
+    /// The inline line for a failed start: the computer's message + action,
+    /// or a plain line when it could not be reached.
+    nonisolated static func startErrorText(_ error: Error, deviceName: String?) -> String {
+        if let start = error as? StartSessionError { return start.inline }
+        if let relay = error as? RuntimeRelayError, relay == .unreachable {
+            let name = deviceName ?? "That computer"
+            return "\(name) is asleep or offline. Open + › Computer and use a cloud computer, or try again when it wakes."
+        }
+        return plainErrorText(error)
     }
 
     /// The live voice session, if any (set by VoiceHost); `control` events go to it.

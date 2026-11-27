@@ -127,7 +127,19 @@ struct ComposerChatChips: View {
     @ObservedObject private var store = ChatRuntimeStore.shared
     @ObservedObject private var registry = RuntimeRegistryStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
+    @ObservedObject private var startStore = SessionStartStore.shared
     @State private var isPickerPresented = false
+
+    /// Start anywhere: the computer this chat runs on (the pick for a new
+    /// chat, the binding for one under way); nil = no segment.
+    private var computer: (name: String, icon: String)? {
+        if hasActiveSession {
+            guard let binding = startStore.currentBinding else { return nil }
+            return (binding.deviceName, startStore.row(for: binding.runtimeId)?.icon ?? "desktopcomputer")
+        }
+        guard let id = startStore.pickedRuntimeId, let name = startStore.name(of: id) else { return nil }
+        return (name, startStore.row(for: id)?.icon ?? "desktopcomputer")
+    }
 
     private var runtime: RuntimeEntry? { registry.runtime(store.runtimeId) }
     private var runtimeName: String { runtime?.name ?? "Allternit" }
@@ -157,11 +169,14 @@ struct ComposerChatChips: View {
 
     var body: some View {
         RuntimeBrainChip(runtimeId: store.runtimeId, runtimeName: runtimeName, brainName: brainName,
-                         state: state, warning: misfit) {
+                         state: state, warning: misfit,
+                         computerName: computer?.name, computerIcon: computer?.icon ?? "desktopcomputer") {
             Haptics.selection()
             isPickerPresented = true
         }
-        .fixedSize()
+        // With a computer segment the chip takes the line's width, so it can
+        // drop the brain text instead of overflowing.
+        .fixedSize(horizontal: computer == nil, vertical: true)
         .sheet(isPresented: $isPickerPresented) {
             BotBrainPickerSheet(chat: hasActiveSession)
         }

@@ -174,6 +174,15 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
 
     /// Merges `metadata` into a session (`PATCH /api/v1/agent-sessions/:id`,
     /// merge semantics — web native-agent-api.ts updateSession).
+    /// Start anywhere: where this thread runs (`metadata.startBinding`, the
+    /// web's binding.ts shape) and the permission it started with.
+    func updateSessionBinding(sessionId: String, binding: StartBinding, permissionMode: String) async throws {
+        struct Metadata: Encodable { let startBinding: StartBinding; let permissionMode: String }
+        struct Body: Encodable { let metadata: Metadata }
+        try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))",
+                               body: Body(metadata: Metadata(startBinding: binding, permissionMode: permissionMode)))
+    }
+
     func updateSessionMetadata(sessionId: String, metadata: [String: String]) async throws {
         struct Body: Encodable { let metadata: [String: String] }
         try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: Body(metadata: metadata))

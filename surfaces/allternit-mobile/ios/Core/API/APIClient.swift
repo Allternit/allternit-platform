@@ -544,6 +544,9 @@ final class APIClient: @unchecked Sendable {
         "last-event-id", "x-request-id",
         // D16: a person's own act (plan approval); cloud-api forwards it.
         "x-allternit-human-proof",
+        // Start anywhere: a retried session-start returns the first start
+        // (cloud-api forwards it, runtime_relay.rs `filtered_headers`).
+        "idempotency-key",
     ]
 
     /// Builds the cloud-relay request for an outgoing runtime call
