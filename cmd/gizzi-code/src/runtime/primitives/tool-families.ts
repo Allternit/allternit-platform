@@ -78,7 +78,7 @@ export namespace ToolFamilies {
       "artifact_storage",
       "artifact_check",
     ],
-    "vault-memory": ["memory_write", "memory_recall", "vault_query", "vault_write"],
+    "vault-memory": ["memory_write", "memory_recall", "knowledge_flag", "vault_query", "vault_write"],
     email: ["send_agent_email", "get_agent_email_status"],
     automation: ["automation"],
     "notebook-graph": ["notebook_edit", "mdx_graph"],
