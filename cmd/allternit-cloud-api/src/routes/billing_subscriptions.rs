@@ -155,6 +155,79 @@ pub struct SubscriptionStatusResponse {
     /// Stripe plan and an App Store plan bought on the device). Clients show
     /// "You have two plans. Cancel one."
     conflict: bool,
+    /// Stripe plans: the plan ends at the period end (a pending cancel, so
+    /// the app shows "Resume plan"). False for store plans and free.
+    cancel_at_period_end: bool,
+    /// The same instant as `renews_at`, under the name the plan calls use.
+    current_period_end: Option<String>,
+    /// The plan a scheduled downgrade switches to at the period end; null
+    /// when none, and for store plans.
+    pending_plan_id: Option<String>,
+}
+
+/// What Stripe says about the caller's subscription right now.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct StripeLiveState {
+    pub cancel_at_period_end: bool,
+    pub pending_plan_id: Option<String>,
+}
+
+/// Read the pending cancel and the scheduled downgrade from the Stripe
+/// subscription (and its schedule). `None` when the subscription is not on
+/// `customer_id`. Errors are the caller's to swallow: this read is additive.
+pub(crate) async fn stripe_live_state(
+    stripe: &dyn StripeCheckout,
+    secret_key: &str,
+    subscription_id: &str,
+    customer_id: &str,
+    now: i64,
+) -> Result<Option<StripeLiveState>, ApiError> {
+    let subscription = stripe
+        .get_object(secret_key, &format!("/v1/subscriptions/{subscription_id}"), &[])
+        .await?;
+    let customer = subscription["customer"].as_str().or_else(|| subscription["customer"]["id"].as_str());
+    if customer != Some(customer_id) {
+        return Ok(None);
+    }
+    let schedule_id = subscription["schedule"].as_str().or_else(|| subscription["schedule"]["id"].as_str());
+    let mut pending_plan_id = None;
+    if let Some(schedule_id) = schedule_id.filter(|id| !id.is_empty()) {
+        let schedule = stripe
+            .get_object(secret_key, &format!("/v1/subscription_schedules/{schedule_id}"), &[])
+            .await?;
+        // The first phase that starts after now is the pending change.
+        pending_plan_id = schedule["phases"].as_array().into_iter().flatten().find_map(|phase| {
+            phase["start_date"].as_i64().filter(|start| *start > now)?;
+            let price = &phase["items"][0]["price"];
+            let price_id = price.as_str().or_else(|| price["id"].as_str())?;
+            SUBSCRIPTION_PLANS
+                .iter()
+                .find(|plan| plan_price_id(plan).as_deref() == Some(price_id))
+                .map(|plan| plan.id.to_string())
+        });
+    }
+    Ok(Some(StripeLiveState {
+        cancel_at_period_end: subscription["cancel_at_period_end"].as_bool().unwrap_or(false),
+        pending_plan_id,
+    }))
+}
+
+/// The caller's open Stripe row (subscription id, customer id), if any.
+async fn open_stripe_row(db: &PgPool, user_id: &str) -> Result<Option<(String, String)>, ApiError> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT stripe_subscription_id, stripe_customer_id
+        FROM billing_subscriptions
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+          AND COALESCE(provider, 'stripe') = 'stripe' AND COALESCE(stripe_subscription_id, '') <> ''
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.and_then(|(subscription_id, customer_id)| Some((subscription_id, customer_id.filter(|id| !id.is_empty())?))))
 }
 
 /// One open (`active`, `trialing`, `past_due`, `unpaid`) plan row with who
@@ -210,7 +283,24 @@ async fn get_current_subscription(
     } else {
         open_subscriptions(&state.db, &user_id).await?
     };
-    Ok(Json(subscription_status(plan, &open)))
+    let mut status = subscription_status(plan, &open);
+    if !admin && open.first().is_some_and(|sub| sub.provider == "stripe") {
+        // Additive: a Stripe outage or missing key leaves the defaults.
+        if let (Ok(secret_key), Ok(Some((subscription_id, customer_id)))) =
+            (std::env::var("STRIPE_SECRET_KEY"), open_stripe_row(&state.db, &user_id).await)
+        {
+            let stripe = ReqwestStripeCheckout::new();
+            match stripe_live_state(&stripe, &secret_key, &subscription_id, &customer_id, chrono::Utc::now().timestamp()).await {
+                Ok(Some(live)) => {
+                    status.cancel_at_period_end = live.cancel_at_period_end;
+                    status.pending_plan_id = live.pending_plan_id;
+                }
+                Ok(None) => {}
+                Err(error) => tracing::warn!("billing subscription: Stripe state unavailable: {error}"),
+            }
+        }
+    }
+    Ok(Json(status))
 }
 
 /// The subscription response from the plan and the open rows (newest-first,
@@ -221,6 +311,9 @@ fn subscription_status(plan: CurrentSubscriptionResponse, open: &[OpenSubscripti
         billing_provider: current.map(|sub| sub.provider.clone()),
         manage_url: current.and_then(|sub| crate::services::store_billing::manage_url(&sub.provider, &sub.plan_id)),
         conflict: open.len() > 1,
+        cancel_at_period_end: false,
+        current_period_end: plan.renews_at.clone(),
+        pending_plan_id: None,
         plan,
     }
 }
@@ -1194,6 +1287,8 @@ mod tests {
             "https://play.google.com/store/account/subscriptions?sku=plan_plus&package=com.allternit.app"
         );
         assert_eq!(value["conflict"], true);
+        assert_eq!(value["cancel_at_period_end"], false);
+        assert_eq!(value["pending_plan_id"], serde_json::Value::Null);
     }
 
     #[tokio::test]
@@ -1257,6 +1352,51 @@ mod tests {
             "items": { "data": [ { "price": { "id": "price_other" } } ] },
         });
         assert_eq!(current_subscription_plan(&unknown).unwrap().id, "plus");
+        std::env::remove_var("STRIPE_PRICE_PLUS");
+        std::env::remove_var("STRIPE_PRICE_SUPER");
+    }
+
+    struct LiveStripe(std::collections::HashMap<String, serde_json::Value>);
+
+    #[async_trait::async_trait]
+    impl StripeCheckout for LiveStripe {
+        async fn create_checkout_session(&self, _: &str, _: &[(String, String)]) -> Result<String, ApiError> {
+            Err(ApiError::Internal("not used".into()))
+        }
+        async fn create_billing_portal_session(&self, _: &str, _: &[(String, String)]) -> Result<String, ApiError> {
+            Err(ApiError::Internal("not used".into()))
+        }
+        async fn get_object(&self, _: &str, path: &str, _: &[(String, String)]) -> Result<serde_json::Value, ApiError> {
+            self.0.get(path).cloned().ok_or_else(|| ApiError::Internal("no such object".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn stripe_state_shows_pending_cancel_and_scheduled_downgrade() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("STRIPE_PRICE_PLUS", "price_plus");
+        std::env::set_var("STRIPE_PRICE_SUPER", "price_super");
+        let now = 1_800_000_000;
+        let canceling = serde_json::json!({ "customer": "cus_a", "cancel_at_period_end": true, "schedule": null });
+        let downgrading = serde_json::json!({ "customer": "cus_a", "cancel_at_period_end": false, "schedule": "sub_sched_1" });
+        let schedule = serde_json::json!({ "phases": [
+            { "start_date": now - 100, "items": [{ "price": "price_super" }] },
+            { "start_date": now + 100, "items": [{ "price": { "id": "price_plus" } }] },
+        ] });
+        let stripe = LiveStripe(
+            [
+                ("/v1/subscriptions/sub_cancel".to_string(), canceling),
+                ("/v1/subscriptions/sub_down".to_string(), downgrading),
+                ("/v1/subscription_schedules/sub_sched_1".to_string(), schedule),
+            ]
+            .into(),
+        );
+        let cancel = stripe_live_state(&stripe, "sk_test_fake", "sub_cancel", "cus_a", now).await.unwrap().unwrap();
+        assert_eq!(cancel, StripeLiveState { cancel_at_period_end: true, pending_plan_id: None });
+        let down = stripe_live_state(&stripe, "sk_test_fake", "sub_down", "cus_a", now).await.unwrap().unwrap();
+        assert_eq!(down, StripeLiveState { cancel_at_period_end: false, pending_plan_id: Some("plus".to_string()) });
+        // Another account's subscription reads as nothing.
+        assert_eq!(stripe_live_state(&stripe, "sk_test_fake", "sub_down", "cus_b", now).await.unwrap(), None);
         std::env::remove_var("STRIPE_PRICE_PLUS");
         std::env::remove_var("STRIPE_PRICE_SUPER");
     }
