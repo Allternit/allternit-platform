@@ -509,6 +509,12 @@ final class ArtifactsV2Client: @unchecked Sendable {
         return try await send(path: "api/v2/artifacts", query: items)
     }
 
+    /// `GET /api/v1/artifacts/counts?scope=` (platform #3053). Callers treat
+    /// a failure as "no counts" so an older server shows none.
+    func counts(scope: String) async throws -> ArtifactV2Counts {
+        try await send(path: "api/v1/artifacts/counts", query: [URLQueryItem(name: "scope", value: scope)])
+    }
+
     func get(id: String) async throws -> ArtifactV2 {
         try await send(path: "api/v2/artifacts/\(Self.escape(id))")
     }
@@ -709,4 +715,11 @@ extension APIError {
         if case .httpError(let status, _) = self { return status }
         return nil
     }
+}
+
+
+/// `{total, byKind}` from `GET /api/v1/artifacts/counts`.
+struct ArtifactV2Counts: Decodable, Equatable, Sendable {
+    let total: Int
+    let byKind: [String: Int]
 }

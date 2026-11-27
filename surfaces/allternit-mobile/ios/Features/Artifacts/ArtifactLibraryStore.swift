@@ -65,6 +65,9 @@ final class ArtifactLibraryStore: ObservableObject {
     @Published private(set) var isLoadingMore = false
     @Published private(set) var nextCursor: String?
     @Published private(set) var orgSettings: ArtifactV2OrgSettings?
+    /// Per-kind counts for the current owner scope; nil until the server
+    /// (platform #3053) answers, so an older server shows no counts.
+    @Published private(set) var counts: ArtifactV2Counts?
 
     @Published var scope: Scope = .all
     @Published var kind: ArtifactV2Kind? = nil
@@ -105,6 +108,7 @@ final class ArtifactLibraryStore: ObservableObject {
             artifacts = page.items.map(SavedArtifact.init(summary:))
             nextCursor = page.nextCursor
             phase = .loaded
+            await loadCounts(generation: generation)
         } catch is CancellationError {
             return
         } catch {
@@ -122,6 +126,12 @@ final class ArtifactLibraryStore: ObservableObject {
         if orgSettings == nil, phase == .loaded {
             orgSettings = try? await client.orgSettings()
         }
+    }
+
+    private func loadCounts(generation: Int) async {
+        let fetched = try? await client.counts(scope: scope.rawValue)
+        guard generation == loadGeneration else { return }
+        counts = fetched
     }
 
     func loadMoreIfNeeded(current: SavedArtifact) async {
