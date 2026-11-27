@@ -25,6 +25,19 @@ pub struct InboundRequest {
     /// Path including any query string.
     pub path: String,
     pub body: Vec<u8>,
+    /// Forwarded request headers (cloud-api's allow-list; names as sent, compare
+    /// case-insensitively).
+    pub headers: std::collections::HashMap<String, String>,
+}
+
+impl InboundRequest {
+    /// A forwarded header, any case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// What a handler produced: either a full body or a chunk stream
@@ -135,6 +148,8 @@ pub async fn handle(state: &Arc<DaemonState>, request: &InboundRequest) -> Handl
         ("GET", "/api/v1/node/processes") => processes().await,
         ("POST", "/api/v1/node/processes/kill") => kill_process(&request.body).await,
         ("POST", "/api/v1/node/launch") => launch(state, &request.body).await,
+        ("GET", "/api/v1/session-start/options") => session_start_options(state).await,
+        ("POST", "/api/v1/session-start") => session_start(state, request).await,
         ("POST", "/terminal/create") => terminal_create(state, &request.body).await,
         ("GET", "/terminal/list") => terminal_list(state, query).await,
         ("POST", path) if path.starts_with("/terminal/") && path.ends_with("/input") => {
@@ -690,6 +705,340 @@ async fn terminal_create(state: &Arc<DaemonState>, body: &[u8]) -> HandlerRespon
     }
 }
 
+// ───────────────────────────────────────────────────────────── Start anywhere
+
+/// The Gizzi engine on this computer (the engine kind is forwarded to it).
+const GIZZI_ENGINE: &str = "http://127.0.0.1:4096";
+/// Where `folder.git` starts are cloned (`$HOME/workspaces/<repo>`).
+const START_WORKSPACES: &str = "workspaces";
+/// How long a CLI gets to draw its prompt before a prompt it takes no flag for is typed in.
+const START_TYPE_PROMPT_AFTER: Duration = Duration::from_millis(2500);
+
+/// The CLIs cloud images ship and their mode flags. This crate cannot reach the Factory harness
+/// table (no factory-engine dependency), so this mirrors its rows for claude and codex
+/// (`factory/engine/src/agents/harness_table.rs::mode_flags`); keep the two in step.
+pub fn node_mode_flags(runtime_id: &str, mode: &str) -> Option<Vec<String>> {
+    let flags: &[&str] = match (runtime_id, mode) {
+        ("claude", "auto") => &["--permission-mode", "acceptEdits"],
+        ("claude", "default") => &["--permission-mode", "manual"],
+        ("claude", "plan") => &["--permission-mode", "plan"],
+        ("claude", "bypass") => &["--permission-mode", "bypassPermissions"],
+        ("codex", "auto") => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+        ("codex", "default") => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
+        ("codex", "bypass") => &["--dangerously-bypass-approvals-and-sandbox"],
+        _ => return None,
+    };
+    Some(flags.iter().map(|f| f.to_string()).collect())
+}
+
+/// `harness_table::start_argv` for [`node_mode_flags`]' CLIs: program, mode flags, then the
+/// prompt as the positional (both take one; a leading `-` would read as a flag).
+pub fn node_start_argv(runtime_id: &str, mode: Option<&str>, prompt: Option<&str>) -> Option<(Vec<String>, bool)> {
+    if runtime_id != "claude" && runtime_id != "codex" {
+        return None;
+    }
+    let mut argv = vec![runtime_id.to_string()];
+    if let Some(mode) = mode {
+        argv.extend(node_mode_flags(runtime_id, mode)?);
+    }
+    match prompt.filter(|p| !p.trim().is_empty() && !p.starts_with('-')) {
+        Some(p) => {
+            argv.push(p.to_string());
+            Some((argv, true))
+        }
+        None => Some((argv, false)),
+    }
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+}
+
+fn start_guards() -> &'static terminal_service::StartGuards {
+    static G: std::sync::OnceLock<terminal_service::StartGuards> = std::sync::OnceLock::new();
+    G.get_or_init(terminal_service::StartGuards::new)
+}
+
+fn home_dir() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+}
+
+/// What a start on this cloud computer checks against.
+struct NodeStartFacts {
+    options: terminal_service::StartOptions,
+    installed: std::collections::HashSet<String>,
+}
+
+/// Folders (engine projects, terminal cwds, cloned workspaces, home), installed CLIs and modes.
+/// A cloud computer has no Desktop safety switch: `remoteStart` is always true.
+async fn node_start_facts(state: &Arc<DaemonState>) -> NodeStartFacts {
+    use terminal_service::start::{build_options, FolderCandidate, OptionsInput, StartDevice, ENGINE_RUNTIME};
+    let home = home_dir();
+    let mut candidates: Vec<FolderCandidate> = Vec::new();
+    let engine = async {
+        let res = reqwest::Client::new()
+            .get(format!("{GIZZI_ENGINE}/v1/session-start/options"))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .ok()?;
+        res.status().is_success().then_some(())?;
+        res.json::<Value>().await.ok()
+    }
+    .await;
+    let engine_up = engine.is_some();
+    for f in engine.as_ref().and_then(|e| e["folders"].as_array()).into_iter().flatten() {
+        if let Some(path) = f["path"].as_str() {
+            candidates.push(FolderCandidate { path: path.into(), last_used: None });
+        }
+    }
+    let listed = terminal_list(state, "").await;
+    if let ResponseBody::Full(bytes) = &listed.body {
+        let v: Value = serde_json::from_slice(bytes).unwrap_or_default();
+        for t in v["terminals"].as_array().into_iter().flatten() {
+            if let Some(cwd) = t["cwd"].as_str().filter(|c| !c.is_empty()) {
+                candidates.push(FolderCandidate { path: cwd.into(), last_used: None });
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(home.join(START_WORKSPACES)) {
+        for e in entries.flatten() {
+            candidates.push(FolderCandidate { path: e.path(), last_used: None });
+        }
+    }
+    candidates.push(FolderCandidate { path: home.clone(), last_used: None });
+    let mut installed: std::collections::HashSet<String> =
+        ["claude", "codex"].into_iter().filter(|p| on_path(p)).map(str::to_string).collect();
+    let mut runtimes: Vec<String> = installed.iter().cloned().collect();
+    runtimes.sort();
+    if engine_up {
+        installed.insert(ENGINE_RUNTIME.to_string());
+    }
+    let device = StartDevice {
+        runtime_id: crate::identity::RuntimeIdentity::load(&state.config.identity_path)
+            .map(|i| i.runtime_id)
+            .unwrap_or_else(|_| "cloud".to_string()),
+        name: std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "Cloud computer".to_string()),
+        os: "linux".to_string(),
+        remote_start: true,
+    };
+    let input = OptionsInput { device, candidates, runtimes, home, mode_flags: node_mode_flags };
+    let options = tokio::task::spawn_blocking(move || build_options(input))
+        .await
+        .expect("options builder does not panic");
+    NodeStartFacts { options, installed }
+}
+
+/// `GET /api/v1/session-start/options`.
+async fn session_start_options(state: &Arc<DaemonState>) -> HandlerResponse {
+    let facts = node_start_facts(state).await;
+    HandlerResponse::json(200, serde_json::to_value(&facts.options).unwrap_or_default())
+}
+
+fn start_error(e: terminal_service::StartError) -> HandlerResponse {
+    HandlerResponse::json(e.status, e.body())
+}
+
+/// The workspace folder for a git start: `$HOME/workspaces/<repo>` (with a short suffix when
+/// that name already holds another remote).
+fn workspace_for(home: &std::path::Path, remote: &str) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let clean = terminal_service::start::strip_credentials(remote);
+    let repo: String = clean
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("repo")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .collect();
+    let repo = if repo.is_empty() || repo.starts_with('.') { "repo".to_string() } else { repo };
+    let base = home.join(START_WORKSPACES).join(&repo);
+    let origin = std::process::Command::new("git")
+        .args(["-C", &base.to_string_lossy(), "remote", "get-url", "origin"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| terminal_service::start::strip_credentials(String::from_utf8_lossy(&o.stdout).trim()));
+    if !base.exists() || origin.as_deref() == Some(clean.as_str()) {
+        return base;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    clean.hash(&mut h);
+    home.join(START_WORKSPACES).join(format!("{repo}-{:08x}", h.finish() as u32))
+}
+
+fn git(args: &[&str]) -> bool {
+    std::process::Command::new("git")
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// `folder.git` on a cloud computer: clone the branch (depth 1, the Code cloud-environment
+/// clone, `agent_operations_routes::resolve_gc_workspace`), or bring an existing clone to it.
+/// Any failure is `clone_failed`; a dirty checkout is never overwritten (checkout refuses).
+pub fn clone_for_start(
+    home: &std::path::Path,
+    git_ref: &terminal_service::GitRef,
+) -> Result<std::path::PathBuf, terminal_service::StartError> {
+    let failed = terminal_service::StartError::CLONE_FAILED;
+    if git_ref.remote.trim().is_empty() || git_ref.branch.trim().is_empty() || git_ref.branch.starts_with('-') || git_ref.remote.starts_with('-') {
+        return Err(failed);
+    }
+    let dir = workspace_for(home, &git_ref.remote);
+    let d = dir.to_string_lossy().into_owned();
+    if dir.join(".git").is_dir() {
+        let ok = git(&["-C", &d, "fetch", "--depth", "1", "origin", &git_ref.branch])
+            && git(&["-C", &d, "checkout", "-B", &git_ref.branch, "FETCH_HEAD"]);
+        return if ok { Ok(dir) } else { Err(failed) };
+    }
+    if dir.exists() {
+        return Err(failed);
+    }
+    std::fs::create_dir_all(dir.parent().unwrap_or(home)).map_err(|_| failed)?;
+    if git(&["clone", "--depth", "1", "--branch", &git_ref.branch, "--", &git_ref.remote, &d]) {
+        Ok(dir)
+    } else {
+        let _ = std::fs::remove_dir_all(&dir);
+        Err(failed)
+    }
+}
+
+/// A terminal for a start: the pane engine when it answers, else a PTY.
+async fn create_start_terminal(
+    state: &Arc<DaemonState>,
+    request: terminal_service::CreateTerminalRequest,
+    argv: Vec<String>,
+) -> Result<String, HandlerResponse> {
+    if let Some(engine) = state.engine.get().await {
+        return match engine.create(request, Some(argv)).await {
+            Ok(id) => Ok(id),
+            Err(reply) => Err(engine_reply(state, reply).await),
+        };
+    }
+    state
+        .terminals
+        .create_with(pty_spec(&request))
+        .map(|c| c.session_id)
+        .map_err(|e| HandlerResponse::json(500, json!({ "error": "terminal_failed", "message": format!("unable to create terminal: {e}"), "action": "Try again." })))
+}
+
+/// `POST /api/v1/session-start`: every request here came through the relay. Runtime
+/// `allternit` goes to the Gizzi engine; claude and codex open a terminal. `folder.git` clones.
+async fn session_start(state: &Arc<DaemonState>, request: &InboundRequest) -> HandlerResponse {
+    use terminal_service::start::{Mode, Planned, StartCtx, StartPlan, StartRequest, StartResponse, ENGINE_RUNTIME};
+    let req: StartRequest = match serde_json::from_slice(&request.body) {
+        Ok(r) => r,
+        Err(e) => {
+            return HandlerResponse::json(400, json!({ "error": "bad_request", "message": format!("Expected the session-start body: {e}"), "action": "Send {folder, runtime, origin}." }))
+        }
+    };
+    let idem = request.header("idempotency-key").map(str::to_string);
+    let facts = node_start_facts(state).await;
+    let device_id = facts.options.device.runtime_id.clone();
+    let mode = req
+        .mode
+        .unwrap_or_else(|| facts.options.modes.get(&req.runtime).map(|m| m.default).unwrap_or(Mode::Default));
+    // The plan may clone (blocking git): run it off the async threads.
+    let (planned, req) = {
+        let device_id = device_id.clone();
+        let idem = idem.clone();
+        tokio::task::spawn_blocking(move || {
+            let home = home_dir();
+            let resolver: &dyn Fn(&terminal_service::GitRef) -> Result<std::path::PathBuf, terminal_service::StartError> =
+                &|g| clone_for_start(&home, g);
+            let signed_out = std::collections::HashSet::new();
+            let ctx = StartCtx {
+                remote_start_enabled: true,
+                relayed: true,
+                caller_mode: None,
+                installed: &facts.installed,
+                signed_out: &signed_out,
+                modes: &facts.options.modes,
+                folders: &facts.options.folders,
+                git_resolver: Some(resolver),
+                start_argv: node_start_argv,
+            };
+            (start_guards().plan(&device_id, idem.as_deref(), &req, &ctx), req)
+        })
+        .await
+        .expect("start planning does not panic")
+    };
+    let plan = match planned {
+        Err(e) => return start_error(e),
+        Ok(Planned::Replay(body)) => return HandlerResponse::json(201, body),
+        Ok(Planned::Fresh(plan)) => plan,
+    };
+    let body = match plan {
+        StartPlan::Engine { directory, mode, prompt, origin } => {
+            let mut forward = json!({
+                "folder": { "path": directory.to_string_lossy() },
+                "runtime": ENGINE_RUNTIME,
+                "mode": mode.as_str(),
+                "confirmBypass": req.confirm_bypass,
+                "origin": origin,
+            });
+            if let Some(p) = prompt {
+                forward["prompt"] = json!(p);
+            }
+            let res = match reqwest::Client::new()
+                .post(format!("{GIZZI_ENGINE}/v1/session-start"))
+                .timeout(Duration::from_secs(30))
+                .json(&forward)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => return start_error(terminal_service::StartError::RUNTIME_MISSING),
+            };
+            let status = res.status().as_u16();
+            let reply: Value = res.json().await.unwrap_or_default();
+            if !(200..300).contains(&status) {
+                return HandlerResponse::json(status, reply);
+            }
+            reply
+        }
+        StartPlan::Terminal { argv, cwd, title, agent, send_after_start } => {
+            let cwd = cwd.to_string_lossy().into_owned();
+            let mut create = terminal_service::agent_request(&argv, &cwd, &title, 120, 32);
+            create.env.insert("ALLTERNIT_SESSION_START_DEPTH".into(), req.origin.depth.unwrap_or(0).to_string());
+            create.env.insert("ALLTERNIT_SESSION_START_MODE".into(), mode.as_str().to_string());
+            let terminal_id = match create_start_terminal(state, create, argv).await {
+                Ok(id) => id,
+                Err(failed) => return failed,
+            };
+            if let Some(text) = send_after_start {
+                let state = state.clone();
+                let id = terminal_id.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(START_TYPE_PROMPT_AFTER).await;
+                    for chunk in [text.as_str(), "\r"] {
+                        let body = json!({ "content": chunk }).to_string();
+                        let _ = terminal_action(&state, &format!("/terminal/{id}/input"), "input", body.as_bytes()).await;
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                    }
+                });
+            }
+            serde_json::to_value(StartResponse::Terminal { terminal_id, cwd, agent }).unwrap_or_default()
+        }
+    };
+    if let Some(key) = idem.as_deref() {
+        start_guards().remember(&device_id, key, &body);
+    }
+    HandlerResponse::json(201, body)
+}
+
 /// `?preview=N` from a query string.
 fn preview_param(query: &str) -> Option<u32> {
     query
@@ -965,6 +1314,7 @@ mod tests {
                 method: method.into(),
                 path: path.into(),
                 body: body.to_vec(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1074,6 +1424,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/api/v1/node/health".into(),
                 body: vec![],
+                headers: Default::default(),
             },
         )
         .await;
@@ -1106,6 +1457,7 @@ mod tests {
                     method: method.into(),
                     path: path.into(),
                     body: vec![],
+                    headers: Default::default(),
                 },
             )
             .await;
@@ -1122,6 +1474,7 @@ mod tests {
                 method: "POST".into(),
                 path: "/api/v1/node/exec".into(),
                 body: br#"{"command":"echo","args":["hello-node"]}"#.to_vec(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1143,6 +1496,7 @@ mod tests {
                 method: "POST".into(),
                 path: "/api/v1/node/exec".into(),
                 body: br#"{"command":"sleep","args":["5"],"timeoutMs":200}"#.to_vec(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1165,6 +1519,7 @@ mod tests {
                     "content": "scoped",
                 }))
                 .unwrap(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1176,6 +1531,7 @@ mod tests {
                 method: "POST".into(),
                 path: "/api/v1/node/fs".into(),
                 body: serde_json::to_vec(&json!({ "op": "read", "path": target })).unwrap(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1192,6 +1548,7 @@ mod tests {
                 method: "POST".into(),
                 path: "/api/v1/node/fs".into(),
                 body: serde_json::to_vec(&json!({ "op": "read", "path": "/etc/passwd" })).unwrap(),
+                headers: Default::default(),
             },
         )
         .await;
@@ -1207,6 +1564,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/api/v1/node/processes".into(),
                 body: vec![],
+                headers: Default::default(),
             },
         )
         .await;
@@ -1218,11 +1576,54 @@ mod tests {
                 method: "POST".into(),
                 path: "/api/v1/node/launch".into(),
                 body: br#"{"action":"start"}"#.to_vec(),
+                headers: Default::default(),
             },
         )
         .await;
         // The default desktop command cannot start in CI — the endpoint must
         // still answer deterministically (not panic, not 404).
         assert!(response.status == 200 || response.status == 500);
+    }
+
+    fn git_ok(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    fn session_start_git_folder_clones_into_workspaces_and_reuses_it() {
+        let root = std::env::temp_dir().join(format!("allternit-node-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let src = root.join("src").join("demo");
+        let home = root.join("home");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        git_ok(&src, &["init", "-q", "-b", "main"]);
+        std::fs::write(src.join("README"), "hi").unwrap();
+        git_ok(&src, &["add", "."]);
+        git_ok(&src, &["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "one"]);
+        let remote = format!("file://{}", src.display());
+        let git_ref = terminal_service::GitRef { remote: remote.clone(), branch: "main".into(), head: None };
+
+        let dir = clone_for_start(&home, &git_ref).expect("clone");
+        assert_eq!(dir, home.join("workspaces").join("demo"));
+        assert!(dir.join("README").is_file());
+        // A second start of the same remote reuses the clone.
+        assert_eq!(clone_for_start(&home, &git_ref).expect("reuse"), dir);
+
+        let missing = terminal_service::GitRef { remote: format!("file://{}/nope", root.display()), branch: "main".into(), head: None };
+        assert_eq!(clone_for_start(&home, &missing).unwrap_err().error, "clone_failed");
+        let flag = terminal_service::GitRef { remote, branch: "--upload-pack=x".into(), head: None };
+        assert_eq!(clone_for_start(&home, &flag).unwrap_err().error, "clone_failed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_start_node_argv_mirrors_the_harness_table() {
+        let (argv, in_argv) = node_start_argv("claude", Some("default"), Some("fix it")).unwrap();
+        assert_eq!(argv, ["claude", "--permission-mode", "manual", "fix it"]);
+        assert!(in_argv);
+        assert!(node_start_argv("codex", Some("plan"), None).is_none(), "codex has no plan flag");
+        assert!(node_start_argv("kimi", None, None).is_none());
     }
 }

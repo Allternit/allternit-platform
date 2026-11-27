@@ -452,6 +452,8 @@ pub mod team_skill_routes;
 // Code Mode terminals on the Factory pane engine (Unix socket, or a named
 // pipe on Windows).
 pub mod terminal_routes;
+// Start anywhere: GET/POST /api/v1/session-start (mounted with netops presence).
+pub mod session_start_routes;
 pub mod token_crypto;
 pub mod tool_routes;
 pub mod udemy_routes;

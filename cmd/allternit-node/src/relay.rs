@@ -44,6 +44,10 @@ enum OutboundMessage {
         device_token: String,
         client: String,
         capabilities: Vec<String>,
+        /// Start anywhere (D6): a cloud computer has no Desktop safety switch, so it always
+        /// takes `POST /api/v1/session-start`. Without it cloud-api never matches a woken
+        /// cloud computer for a start and answers "warming".
+        remote_start: bool,
     },
     ResponseStart {
         request_id: String,
@@ -78,6 +82,9 @@ enum InboundMessage {
         body: String,
         #[serde(default)]
         body_encoding: String,
+        /// The allow-listed request headers cloud-api forwards (`Idempotency-Key`, …).
+        #[serde(default)]
+        headers: std::collections::HashMap<String, String>,
     },
     SocketOpen { socket_id: String, path: String },
     Ping,
@@ -168,6 +175,7 @@ async fn serve(
                 .iter()
                 .map(|cap| cap.to_string())
                 .collect(),
+            remote_start: true,
         },
     )
     .await?;
@@ -194,7 +202,7 @@ async fn serve(
                             Ok(InboundMessage::Ping) => {
                                 send(&mut *sink.lock().await, &OutboundMessage::Pong).await?;
                             }
-                            Ok(InboundMessage::Request { request_id, method, path, body, body_encoding }) => {
+                            Ok(InboundMessage::Request { request_id, method, path, body, body_encoding, headers }) => {
                                 let body = if body_encoding == "base64" {
                                     base64_decode(&body)
                                 } else {
@@ -203,7 +211,7 @@ async fn serve(
                                 let state = state.clone();
                                 let sink = sink.clone();
                                 tokio::spawn(async move {
-                                    let request = InboundRequest { method, path, body };
+                                    let request = InboundRequest { method, path, body, headers };
                                     if let Err(error) =
                                         respond(request_id, request, state, sink).await
                                     {

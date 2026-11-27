@@ -405,7 +405,7 @@ pub(crate) async fn caller_is_owner(state: &AppState, headers: &HeaderMap) -> bo
 /// detection the provider rows and `/cli-tools/catalog` use
 /// (`provider_routes::cli_status_by_id`). That detection reads no version, so
 /// `version` is null until it does.
-fn installed_map(status: &std::collections::HashMap<String, (bool, bool)>) -> Value {
+pub(crate) fn installed_map(status: &std::collections::HashMap<String, (bool, bool)>) -> Value {
     let mut out = Map::new();
     for runtime in &runtime_registry().runtimes {
         let (installed, signed_in) = match runtime.tool.as_deref() {
