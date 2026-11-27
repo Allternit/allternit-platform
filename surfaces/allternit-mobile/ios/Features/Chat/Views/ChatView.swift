@@ -641,6 +641,13 @@ struct ChatContentView: View {
         if !isTerminal, let binding = startStore.binding(for: viewModel.currentSessionId),
            binding.kind == .terminal, binding.terminalId != nil {
             BoundTerminalThread(binding: binding)
+        } else if let binding = startStore.binding(for: viewModel.currentSessionId),
+                  binding.kind == .engine, binding.sessionId != nil {
+            // Approvals come from the bound computer, not the app's current one.
+            VStack(spacing: 0) {
+                BoundEngineApprovals(binding: binding)
+                chatSessionLayout
+            }
         } else {
             chatSessionLayout
         }

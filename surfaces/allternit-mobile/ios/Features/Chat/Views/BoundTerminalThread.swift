@@ -87,3 +87,93 @@ struct BoundTerminalThread: View {
         attached = await store.attach(sessionId: terminalId, title: title, runtimeId: binding.runtimeId)
     }
 }
+
+/// Approvals for a chat bound to a Gizzi engine session (Start anywhere,
+/// same as Android's `BoundEngine`): `GET /v1/permission` on the bound
+/// computer through the relay, filtered to `binding.sessionId`, shown with
+/// Code's approval banner and review sheet, and answered with
+/// `POST /v1/permission/:id/reply` on that computer. Read when the thread
+/// opens and again on each permission event from its event stream.
+/// Decisions keeps serving every other chat.
+struct BoundEngineApprovals: View {
+    let binding: StartBinding
+
+    @State private var pending: [PermissionRequest] = []
+    @State private var reviewing: PermissionRequest? = nil
+
+    private var client: PermissionClient {
+        PermissionClient(baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: binding.runtimeId))
+    }
+
+    var body: some View {
+        Group {
+            if let oldest = pending.first {
+                Button {
+                    Haptics.light()
+                    reviewing = oldest
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.shield")
+                            .foregroundColor(Theme.statusWarning)
+                        Text(pending.count == 1
+                             ? "1 request on \(binding.deviceName) awaiting review"
+                             : "\(pending.count) requests on \(binding.deviceName) awaiting review")
+                            .font(.system(size: 14))
+                            .foregroundColor(Color("TextPrimary"))
+                            .lineLimit(2)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 44)
+                    .background(Color("BgPanel"))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("boundEngine-approvals")
+            }
+        }
+        .task(id: "\(binding.runtimeId)/\(binding.sessionId ?? "")") { await follow() }
+        .sheet(item: $reviewing) { request in
+            ChangesetReviewSheet(request: request, onResolved: { resolved in
+                pending.removeAll { $0.id == resolved.id }
+            }, client: client)
+        }
+    }
+
+    /// Reads the pending list, then follows the permission events; after a
+    /// disconnect it reads again and resubscribes every 2 s.
+    private func follow() async {
+        guard let sessionId = binding.sessionId else { return }
+        let client = self.client
+        while !Task.isCancelled {
+            if let all = try? await client.listPending() {
+                pending = all.filter { $0.sessionID == sessionId }.sorted { $0.id < $1.id }
+            }
+            do {
+                for try await event in client.subscribeToEvents() {
+                    try Task.checkCancellation()
+                    switch event {
+                    case .asked(let request):
+                        if request.sessionID == sessionId, !pending.contains(where: { $0.id == request.id }) {
+                            pending.append(request)
+                            pending.sort { $0.id < $1.id }
+                        }
+                    case .replied(let info):
+                        if info.sessionID == sessionId {
+                            pending.removeAll { $0.id == info.requestID }
+                        }
+                    case .ignored:
+                        break
+                    }
+                }
+            } catch {
+                // Stream dropped (the computer slept or the relay closed); read again below.
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
+}
