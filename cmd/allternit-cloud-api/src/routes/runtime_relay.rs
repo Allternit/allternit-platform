@@ -2199,6 +2199,10 @@ fn filtered_headers(headers: HashMap<String, String>) -> HashMap<String, String>
                     | "range"
                     | "if-match"
                     | "x-allternit-unlock"
+                    // Start anywhere (contracts/session-start): a retried
+                    // POST /api/v1/session-start replays the first result
+                    // instead of starting a second session.
+                    | "idempotency-key"
             )
         })
         .collect()
@@ -2629,6 +2633,7 @@ mod tests {
         headers.insert("cookie", "session=secret".parse().unwrap());
         headers.insert("x-request-id", "req_1".parse().unwrap());
         headers.insert("x-allternit-human-proof", "clerk.jwt.sig".parse().unwrap());
+        headers.insert("idempotency-key", "start-1".parse().unwrap());
 
         let forwarded = relay_headers_from_http(&headers);
         // Raw collection carries everything; the allow-list is enforced by
@@ -2644,6 +2649,8 @@ mod tests {
         assert!(filtered.contains_key("accept"));
         // D16: the person's session proof reaches the runtime.
         assert_eq!(filtered["x-allternit-human-proof"], "clerk.jwt.sig");
+        // Start anywhere: the session-start retry key reaches the runtime.
+        assert_eq!(filtered["idempotency-key"], "start-1");
         assert!(!filtered.contains_key("cookie"));
     }
 
