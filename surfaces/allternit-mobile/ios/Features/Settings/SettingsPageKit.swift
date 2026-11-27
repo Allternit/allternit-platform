@@ -248,6 +248,7 @@ enum SettingsRoot {
         ]),
         .group(label: "Bots and computers", rows: [
             .page(.subscriptions), .page(.computers, label: "Computers and devices"), .page(.agentRules),
+            .page(.testCases),
         ]),
         .group(label: "App", rows: [.openLinks, .haptics, .reduceMotion]),
         .appearance,
