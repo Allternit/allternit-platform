@@ -202,7 +202,8 @@ export async function installChromeNativeHostManifest(
     path: manifestBinaryPath,
     type: 'stdio',
     allowed_origins: [
-      `chrome-extension://chheieepkpbhkiimdmbdjmnhcooclpok/`, // ALLTERNIT_EXTENSION_ID
+      `chrome-extension://hkillgnnhkokmjcjjpolpnecmdnilhod/`, // ALLTERNIT_EXTENSION_ID
+      `chrome-extension://chheieepkpbhkiimdmbdjmnhcooclpok/`, // previous key, still accepted
     ],
   }
 

@@ -12,6 +12,13 @@ const __filename = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(__filename);
 const PACKAGE_DIR = resolve(SCRIPT_DIR, '..');
 
+// Published Allternit extension ids. The 2026-11-26 signing key replaced the lost
+// one, so Desktop accepts both: people with the old unpacked extension keep working.
+export const ALLTERNIT_EXTENSION_IDS = [
+  'hkillgnnhkokmjcjjpolpnecmdnilhod', // current signing key
+  'chheieepkpbhkiimdmbdjmnhcooclpok', // previous key (private key lost)
+];
+
 export function normalizeExtensionOrigin(value) {
   if (!value || typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -276,7 +283,12 @@ if (process.argv[1] === __filename) {
       process.exit(0);
     }
 
-    const allowedOrigins = parseAllowedOrigins(args.allowedOriginInputs);
+    const allowedOrigins = Array.from(
+      new Set([
+        ...ALLTERNIT_EXTENSION_IDS.map(normalizeExtensionOrigin),
+        ...parseAllowedOrigins(args.allowedOriginInputs),
+      ]),
+    );
     const result = await installNativeHost({
       allowedOrigins,
       command: args.command,

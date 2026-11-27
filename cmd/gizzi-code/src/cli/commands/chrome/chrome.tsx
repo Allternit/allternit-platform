@@ -10,9 +10,9 @@ import { isChromeExtensionInstalled } from '../../utils/allternitInChrome/setup.
 import { getGlobalConfig, saveGlobalConfig } from '../../../shared/utils/config.js';
 import { env } from '../../../shared/utils/env.js';
 import { isRunningOnHomespace } from '../../../shared/utils/envUtils.js';
-const CHROME_EXTENSION_URL = 'https://chromewebstore.google.com/detail/chheieepkpbhkiimdmbdjmnhcooclpok';
-const CHROME_PERMISSIONS_URL = 'chrome://extensions/?id=chheieepkpbhkiimdmbdjmnhcooclpok';
-const CHROME_RECONNECT_URL = 'chrome-extension://chheieepkpbhkiimdmbdjmnhcooclpok/';
+const CHROME_EXTENSION_URL = 'https://chromewebstore.google.com/detail/hkillgnnhkokmjcjjpolpnecmdnilhod';
+const CHROME_PERMISSIONS_URL = 'chrome://extensions/?id=hkillgnnhkokmjcjjpolpnecmdnilhod';
+const CHROME_RECONNECT_URL = 'chrome-extension://hkillgnnhkokmjcjjpolpnecmdnilhod/';
 type MenuAction = 'install-extension' | 'reconnect' | 'manage-permissions' | 'toggle-default';
 type Props = {
   onDone: (result?: string) => void;

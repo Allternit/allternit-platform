@@ -6,7 +6,7 @@
 #
 # Chrome only force-installs an extension it can fetch from an update
 # manifest. The extension (surfaces/allternit-extensions/allternit-extension,
-# id chheieepkpbhkiimdmbdjmnhcooclpok from the manifest key in wxt.config.ts)
+# id hkillgnnhkokmjcjjpolpnecmdnilhod from the manifest key in wxt.config.ts)
 # is NOT on the Chrome Web Store (the store's update service answers
 # error-unknownApplication for that id, checked 2026-11-26). It is self-hosted:
 # extension-crx.yml packs the CRX and update.xml, published to
@@ -17,7 +17,7 @@
 #                                   XML) whose <updatecheck codebase=...> is a
 #                                   CRX3 of the extension signed with the
 #                                   private key behind the manifest key
-#   ALLTERNIT_EXTENSION_ID          optional; default chheieepkpbhkiimdmbdjmnhcooclpok
+#   ALLTERNIT_EXTENSION_ID          optional; default hkillgnnhkokmjcjjpolpnecmdnilhod
 #
 # Without ALLTERNIT_EXTENSION_UPDATE_URL it removes any old policy file and
 # says what is missing. It never points Chrome at the Web Store for this id.
@@ -25,7 +25,7 @@ set -euo pipefail
 
 POLICY_DIR=/etc/opt/chrome/policies/managed
 POLICY_FILE="${POLICY_DIR}/allternit.json"
-EXT_ID="${ALLTERNIT_EXTENSION_ID:-chheieepkpbhkiimdmbdjmnhcooclpok}"
+EXT_ID="${ALLTERNIT_EXTENSION_ID:-hkillgnnhkokmjcjjpolpnecmdnilhod}"
 # Self-hosted default (R2 bucket allternit-runtime). Built by .github/workflows/extension-crx.yml;
 # set ALLTERNIT_EXTENSION_UPDATE_URL=none to install nothing.
 UPDATE_URL="${ALLTERNIT_EXTENSION_UPDATE_URL:-https://runtime.allternit.com/chrome-extension/update.xml}"
