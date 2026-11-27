@@ -10,7 +10,7 @@ import { SessionTrace } from "@/runtime/session/trace"
 import { Installation } from "@/shared/installation"
 import { redactPrivate, type TraceEntry } from "./redact"
 import { gradeAll, type GraderSpec as RustGrader, type Trajectory as RustTrajectory } from "./graders"
-import { isWriteTool, toTrajectory } from "./trajectory"
+import { toTrajectory } from "./trajectory"
 import { copyOut } from "./workspace"
 import {
   CASE_LIMIT,
@@ -125,15 +125,16 @@ export namespace EvalStore {
   ): GraderSpec[] {
     const slow = label === "bad" && !!quick?.includes("too_slow")
     const mul = slow ? 0.5 : 2
-    const graders: GraderSpec[] = [
-      { type: "status", equals: "completed" },
-      { type: "cost_ceiling", max_usd: t.cost_usd * mul },
-      { type: "latency_ceiling", max_ms: slow ? t.latency_ms * mul : Math.max(t.latency_ms * mul, LATENCY_FLOOR_MS) },
-    ]
-    if (label === "bad" && quick?.includes("broke_file")) {
-      const bad = t.steps.find((s) => !s.ok && isWriteTool(s.primitive))
-      if (bad) graders.push({ type: "forbidden_step", steps: [bad.node] })
-    }
+    const graders: GraderSpec[] = [{ type: "status", equals: "completed" }]
+    // A plan brain records $0, and a $0 ceiling would fail any metered rerun.
+    if (t.cost_usd > 0) graders.push({ type: "cost_ceiling", max_usd: t.cost_usd * mul })
+    graders.push({
+      type: "latency_ceiling",
+      max_ms: slow ? t.latency_ms * mul : Math.max(t.latency_ms * mul, LATENCY_FLOOR_MS),
+    })
+    // "Broke a file" adds no grader: forbidding the write tool would forbid every
+    // edit, and the trace alone cannot tell a bad write from a good one. The case
+    // usually lands as needs_check, and a file check (checks[]) says what "fixed" means.
     return graders
   }
 
