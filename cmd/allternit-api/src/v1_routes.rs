@@ -445,6 +445,7 @@ fn voice_base() -> String {
 pub fn v1_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/ai/chat", post(agent_chat_bridge))
+        .route("/agent-chat/style-preview", get(style_preview_status))
         .route("/health", get(health))
         .route("/models", get(list_available_models))
         .route("/models/recommend", get(recommend_models))
@@ -899,6 +900,21 @@ async fn list_cli_tools_stub() -> impl IntoResponse {
     Json(json!({ "tools": [], "total": 0 }))
 }
 
+/// Body of `GET /api/v1/agent-chat/style-preview`. Clients call it before
+/// showing the preview card; an API without this route answers 404 and the
+/// card stays hidden, so no tools-on turn is ever sent to an old server.
+fn style_preview_status_body(remaining: usize) -> serde_json::Value {
+    json!({
+        "supported": true,
+        "remaining": remaining,
+        "limit": crate::rate_limit::STYLE_PREVIEW_PER_HOUR,
+    })
+}
+
+async fn style_preview_status(Extension(user): Extension<AuthUser>) -> Response {
+    Json(style_preview_status_body(crate::rate_limit::style_preview_remaining(&user.user_id))).into_response()
+}
+
 pub fn agent_chat_router() -> Router<Arc<AppState>> {
     Router::new().route("/agent-chat", any(agent_chat_bridge))
 }
@@ -1052,6 +1068,161 @@ fn gizzi_turn_metadata(body: &serde_json::Value, is_bot_turn: bool) -> Option<se
         }
     }
     meta
+}
+
+/// One-turn style override from the Settings "Try this style" card
+/// (`stylePreview` on the chat bridge body).
+#[derive(Debug, Clone, PartialEq)]
+struct StylePreview {
+    response_style: String,
+    custom_instructions: String,
+}
+
+/// Reads `stylePreview`. `Ok(None)` when the key is absent or null (the old
+/// body shape); `Err` carries the 400 body for a bad value. The style must be
+/// one of the five the agent-preferences PUT accepts; that PUT sets no length
+/// limit on custom instructions, so neither does this.
+fn parse_style_preview(body: &serde_json::Value) -> Result<Option<StylePreview>, serde_json::Value> {
+    let Some(raw) = body.get("stylePreview").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let style = raw
+        .get("response_style")
+        .and_then(|v| v.as_str())
+        .filter(|s| crate::agent_preferences_routes::SUPPORTED_STYLES.contains(s));
+    let Some(style) = style else {
+        return Err(json!({
+            "error": "invalid_response_style",
+            "supported_styles": crate::agent_preferences_routes::SUPPORTED_STYLES,
+        }));
+    };
+    let custom = match raw.get("custom_instructions") {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(_) => return Err(json!({ "error": "invalid_custom_instructions" })),
+    };
+    Ok(Some(StylePreview {
+        response_style: style.to_string(),
+        custom_instructions: custom,
+    }))
+}
+
+/// The saved preferences row with a preview's two values in its place. The
+/// profile stays the account's.
+fn apply_style_preview(
+    saved: (String, String, UserProfile),
+    preview: Option<&StylePreview>,
+) -> (String, String, UserProfile) {
+    match preview {
+        Some(p) => (p.response_style.clone(), p.custom_instructions.clone(), saved.2),
+        None => saved,
+    }
+}
+
+/// Turn metadata for a preview: no tools at all (`toolAccess: "none"`),
+/// whatever the client sent in `metadata.tools`.
+fn style_preview_metadata(meta: Option<serde_json::Value>) -> serde_json::Value {
+    let mut meta = meta.unwrap_or_else(|| json!({}));
+    meta["tools"] = json!({ "toolAccess": "none" });
+    meta
+}
+
+/// Shown when a preview turn reaches a runtime that cannot keep tools off.
+const STYLE_PREVIEW_OLD_RUNTIME: &str =
+    "This computer's runtime is too old to preview a style. Update Allternit and try again.";
+
+/// The strictest permission mode: every call that would ask is refused.
+const STYLE_PREVIEW_PERMISSION_MODE: &str = "dontAsk";
+
+/// Body that answers any `permission.asked` during a preview with reject.
+fn style_preview_reject_body() -> serde_json::Value {
+    json!({ "reply": "reject", "message": "Tools are off in a style preview." })
+}
+
+/// True when a gizzi message part is a tool call of this session: a preview
+/// turn must have none, so an old runtime that ignored `toolAccess: "none"`
+/// is caught here.
+fn style_preview_tool_part(part: &serde_json::Value, session_id: &str) -> bool {
+    part.get("type").and_then(|v| v.as_str()) == Some("tool")
+        && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id)
+}
+
+/// The error frame and the finish frame that end a preview turn the runtime
+/// could not keep tools off for.
+fn style_preview_old_runtime_frames(msg_id: &str) -> [serde_json::Value; 2] {
+    [
+        json!({ "type": "error", "messageId": msg_id, "error": STYLE_PREVIEW_OLD_RUNTIME }),
+        json!({
+            "type": "finish",
+            "messageId": msg_id,
+            "status": "error",
+            "metadata": { "status": "error", "error": STYLE_PREVIEW_OLD_RUNTIME },
+        }),
+    ]
+}
+
+/// The error text for a failed message POST. A preview whose message the
+/// runtime refused outright (400/422: it rejects `toolAccess: "none"`) gets
+/// the old-runtime text, never a tools-on turn.
+fn style_preview_post_error(is_preview: bool, status: Option<u16>, fallback: String) -> String {
+    if is_preview && matches!(status, Some(400) | Some(422)) {
+        STYLE_PREVIEW_OLD_RUNTIME.to_string()
+    } else {
+        fallback
+    }
+}
+
+fn style_preview_cap_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+            "error": "style_preview_rate_limited",
+            "message": "You have tried the style preview too many times this hour. Try again later.",
+        })),
+    )
+        .into_response()
+}
+
+/// Joins the turn to the session's DAG run and marks it running; `None` for a
+/// style preview, which must not create a `cowork_sessions` row (that row is
+/// what the chat list reads).
+fn link_chat_turn(
+    conn: &mut rusqlite::Connection,
+    user_id: &str,
+    chat_id: &str,
+    style_preview: bool,
+) -> Result<Option<crate::cowork::dag::SessionRunLink>, rusqlite::Error> {
+    if style_preview {
+        return Ok(None);
+    }
+    let link = crate::cowork::dag::ensure_session_run(conn, user_id, Some(chat_id), None)?;
+    allternit_cowork_runtime::sqlite_store::update_run_state_record(conn, &link.run_id, "running", None)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    Ok(Some(link))
+}
+
+/// Removes a style preview's throwaway Gizzi session when the stream ends
+/// (finished, errored or dropped by the client).
+struct StylePreviewCleanup {
+    client: reqwest::Client,
+    gizzi: String,
+    chat_id: String,
+    session_id: String,
+}
+
+impl Drop for StylePreviewCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut lock) = GIZZI_CHAT_SESSIONS.lock() {
+            lock.remove(&self.chat_id);
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        let (client, url) = (self.client.clone(), format!("{}/session/{}", self.gizzi, self.session_id));
+        handle.spawn(async move {
+            if let Err(e) = client.delete(url).send().await {
+                warn!(error = %e, "style preview: could not remove its gizzi session");
+            }
+        });
+    }
 }
 
 /// The person-turn hint `metadata.image_prompt`: the raw composer text for an
@@ -1806,11 +1977,27 @@ async fn agent_chat_bridge(
     let body_json: serde_json::Value =
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::Value::Null);
 
-    let chat_id = body_json
-        .get("chatId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    // Style preview: a one-turn override that is never kept (see
+    // `parse_style_preview`). Capped per user per hour.
+    let style_preview = match parse_style_preview(&body_json) {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(err)).into_response(),
+    };
+    if style_preview.is_some() && !crate::rate_limit::style_preview_allowed(&user.user_id) {
+        return style_preview_cap_response();
+    }
+    let is_preview = style_preview.is_some();
+
+    // A preview never uses a client chat id: its session is a fresh throwaway.
+    let chat_id = if is_preview {
+        format!("style-preview-{}", Uuid::new_v4().simple())
+    } else {
+        body_json
+            .get("chatId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let message = body_json
         .get("message")
         .and_then(|v| v.as_str())
@@ -1820,11 +2007,12 @@ async fn agent_chat_bridge(
         .get("systemPrompt")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    // A preview ignores agent_id: the default assistant answers.
     let agent_id = body_json
         .get("agent_id")
         .or_else(|| body_json.get("agentId"))
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && !is_preview)
         .map(str::to_string);
     // Per-request provider routing pin (Hermes-style provider object) from
     // Agent Hub pins; forwarded to gizzi as the top-level `provider` body key
@@ -1850,7 +2038,7 @@ async fn agent_chat_bridge(
 
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
-    let resume = parse_resume(&body_json);
+    let resume = if is_preview { None } else { parse_resume(&body_json) };
     if chat_id.is_empty() || (message.is_empty() && resume.is_none()) {
         return (
             StatusCode::BAD_REQUEST,
@@ -1871,13 +2059,17 @@ async fn agent_chat_bridge(
         Err(code) => return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": code }))).into_response(),
     };
     let agent_id_for_task = agent_id.clone();
+    let preview_for_task = style_preview.clone();
     let gathered = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
 
         let prefs_row = load_preferences_row(&conn, &user_id)?;
-        let (response_style, custom_instructions, profile) = prefs_row
-            .clone()
-            .unwrap_or(("balanced".to_string(), String::new(), UserProfile::default()));
+        let (response_style, custom_instructions, profile) = apply_style_preview(
+            prefs_row
+                .clone()
+                .unwrap_or(("balanced".to_string(), String::new(), UserProfile::default())),
+            preview_for_task.as_ref(),
+        );
         let writing = crate::agent_preferences_routes::load_writing_style(&conn, &user_id)?;
 
         let agent = match agent_id_for_task {
@@ -2016,7 +2208,7 @@ async fn agent_chat_bridge(
             .as_str()
             .map_or(false, |id| crate::agent_session_routes::is_main_bot(&state.db, id))
     });
-    let is_chat_task = applies_cowork_prefs(origin_surface.as_deref(), bot_is_main);
+    let is_chat_task = !is_preview && applies_cowork_prefs(origin_surface.as_deref(), bot_is_main);
     let system_prompt = if is_chat_task {
         let db = state.db.clone();
         let uid = user_id_for_record.clone();
@@ -2164,7 +2356,7 @@ async fn agent_chat_bridge(
                 &client,
                 &gizzi,
                 &chat_id,
-                parse_permission_mode(&body_json),
+                if is_preview { STYLE_PREVIEW_PERMISSION_MODE } else { parse_permission_mode(&body_json) },
                 agent_id.as_deref(),
                 chat_run.as_ref().map(|r| r.run_id.as_str()),
             )
@@ -2173,6 +2365,16 @@ async fn agent_chat_bridge(
     };
     let gizzi_session_id = match resolved_session {
         Ok(id) => id,
+        Err(err) if is_preview => {
+            // The runtime would not take the strictest mode: it cannot keep
+            // tools off, so no preview runs on it.
+            warn!(error = %err, "style preview: runtime refused the strict permission mode");
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "style_preview_runtime_too_old", "message": STYLE_PREVIEW_OLD_RUNTIME })),
+            )
+                .into_response();
+        }
         Err(err) => {
             warn!(error = %err, "Failed to get or create Gizzi session");
             settle_chat_run(&chat_run, false, Some(&err)).await;
@@ -2185,6 +2387,14 @@ async fn agent_chat_bridge(
     };
 
     info!(session_id = %chat_id, gizzi_session_id = %gizzi_session_id, model = %model_label, "agent-chat bridge → gizzi");
+
+    // A preview's session is removed when the stream ends.
+    let preview_cleanup = is_preview.then(|| StylePreviewCleanup {
+        client: client.clone(),
+        gizzi: gizzi.clone(),
+        chat_id: chat_id.clone(),
+        session_id: gizzi_session_id.clone(),
+    });
 
     // Re-sent on every message POST: the session-create above only runs once
     // per chatId (cached in GIZZI_CHAT_SESSIONS), while the agent-event-bridge
@@ -2203,25 +2413,12 @@ async fn agent_chat_bridge(
         let chat_id = chat_id.clone();
         move || {
             let mut conn = db.connect()?;
-            let link = crate::cowork::dag::ensure_session_run(
-                &mut conn,
-                &user_id,
-                Some(&chat_id),
-                None,
-            )?;
-            allternit_cowork_runtime::sqlite_store::update_run_state_record(
-                &conn,
-                &link.run_id,
-                "running",
-                None,
-            )
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            Ok::<_, rusqlite::Error>(link)
+            link_chat_turn(&mut conn, &user_id, &chat_id, is_preview)
         }
     })
     .await;
     let session_link = match session_dag {
-        Ok(Ok(link)) => Some(link),
+        Ok(Ok(link)) => link,
         Ok(Err(e)) => {
             warn!("session DAG ensure failed: {}", e);
             None
@@ -2239,13 +2436,14 @@ async fn agent_chat_bridge(
     let repair_chat = chat_id.clone();
     let skill_chat_id = chat_id.clone();
     let skill_agent_id = agent_id.clone();
-    let repair_note = if resume.is_none() && crate::card_repair::enabled() {
+    let repair_note = if resume.is_none() && !is_preview && crate::card_repair::enabled() {
         crate::card_repair::take(&repair_user, &repair_chat)
     } else {
         None
     };
 
     let stream = async_stream::stream! {
+        let _preview_cleanup = preview_cleanup;
         let msg_id = assistant_message_id.clone();
         let session_id = gizzi_session_id.clone();
         let dag_link = session_link.clone();
@@ -2265,15 +2463,19 @@ async fn agent_chat_bridge(
         };
 
         if !resuming {
-            yield Ok::<Event, Infallible>(sse_frame(trace_cursor).data(
-                json!({
-                    "type": "message_start",
-                    "messageId": msg_id,
-                    "modelId": model_label,
-                    "runtimeModelId": model_label,
-                    "cursor": trace_cursor,
-                }).to_string()
-            ));
+            let mut start_frame = json!({
+                "type": "message_start",
+                "messageId": msg_id,
+                "modelId": model_label,
+                "runtimeModelId": model_label,
+                "cursor": trace_cursor,
+            });
+            // Lets a client tell a runtime that honours `stylePreview` from
+            // an old one that ignored the key.
+            if is_preview {
+                start_frame["stylePreview"] = json!(true);
+            }
+            yield Ok::<Event, Infallible>(sse_frame(trace_cursor).data(start_frame.to_string()));
         }
 
         // Subscribe to the gizzi event stream BEFORE sending the message so we
@@ -2371,7 +2573,10 @@ async fn agent_chat_bridge(
         // `metadata.tools` carries {webSearch, research, toolAccess:
         // "auto"|"on_demand"|"always", disabledConnectors: [app ids]}. gizzi
         // applies them to this turn only (SessionPrompt.resolveTools).
-        if let Some(metadata) = gizzi_turn_metadata(&body_json, bot_marker.is_some()) {
+        if is_preview {
+            gizzi_payload["metadata"] =
+                style_preview_metadata(gizzi_turn_metadata(&body_json, false));
+        } else if let Some(metadata) = gizzi_turn_metadata(&body_json, bot_marker.is_some()) {
             gizzi_payload["metadata"] = metadata;
         }
         if let Some(action_id) = &subscription_action {
@@ -2402,9 +2607,11 @@ async fn agent_chat_bridge(
         // and gizzi's `bot` field), so the team rule gate never has to trust
         // session metadata or a client-sent agent id later.
         let acting_bot = bot_marker.as_ref().and_then(|marker| marker["id"].as_str());
-        if let Some(proxy) =
+        if let Some(proxy) = if is_preview {
+            None
+        } else {
             crate::mcp_user_proxy::proxy_registration(&state, &user_id_for_record, &session_id, acting_bot).await
-        {
+        } {
             gizzi_payload["mcpProxy"] = proxy;
         }
 
@@ -2559,6 +2766,7 @@ async fn agent_chat_bridge(
                             format!("gizzi unavailable: {}", body)
                         }
                     };
+                    let error = style_preview_post_error(is_preview, status.map(|s| s.as_u16()), error);
                     // Pass the runtime's structured error through so clients
                     // can render targeted UI (e.g. a model picker on
                     // ProviderModelNotFoundError) instead of parsing a string.
@@ -2718,6 +2926,15 @@ async fn agent_chat_bridge(
                                 file_frames_sent.insert(part_id.to_string());
                                 yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                             }
+                        }
+                        if is_preview && style_preview_tool_part(part, &session_id) {
+                            // A tool call in a preview: the runtime did not keep
+                            // tools off. Stop the turn and say so.
+                            let _ = client.post(format!("{}/session/{}/abort", gizzi, session_id)).send().await;
+                            for frame in style_preview_old_runtime_frames(&msg_id) {
+                                yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
+                            }
+                            return;
                         }
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
@@ -2935,6 +3152,17 @@ async fn agent_chat_bridge(
                             "messageId": msg_id,
                         }).to_string()));
                     }
+                    "permission.asked" if is_preview => {
+                        // A preview has no tools: refuse whatever asks. The
+                        // tool part that follows ends the turn.
+                        if let Some(request_id) = props.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                            let _ = client
+                                .post(format!("{}/permission/{}/reply", gizzi, request_id))
+                                .json(&style_preview_reject_body())
+                                .send()
+                                .await;
+                        }
+                    }
                     "permission.asked" => {
                         // The tool guard parked the turn on this approval.
                         // Surface it twice: a cowork_approvals row for the
@@ -3097,7 +3325,7 @@ async fn agent_chat_bridge(
         // Interactive answers: check every card this turn wrote against the
         // catalog, tell the app (diagnostics + text fallback per card) and
         // keep the result with the message so a reload shows the same.
-        for (message_id, checks) in card_checks_by_message(&card_texts) {
+        for (message_id, checks) in card_checks_by_message(&card_texts).into_iter().filter(|_| !is_preview) {
             yield Ok(sse_frame(trace_cursor).data(json!({
                 "type": "card_check",
                 "messageId": msg_id,
@@ -3115,7 +3343,7 @@ async fn agent_chat_bridge(
         }
         // Card repair: failed cards go back to the model with the next send
         // (bounded to one retry — a turn that carried a note never queues one).
-        if finish.status != "error" && crate::card_repair::enabled() {
+        if finish.status != "error" && !is_preview && crate::card_repair::enabled() {
             let note = crate::card_repair::repair_note(card_texts.values().map(|(_, text)| text.as_str()));
             if crate::card_repair::should_queue(repair_note.is_some(), &note) {
                 if let Some(note) = note {
@@ -3157,6 +3385,133 @@ mod tests {
 
 
     use serde_json::json;
+
+    fn prefs_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE user_agent_preferences (
+                user_id TEXT PRIMARY KEY, response_style TEXT, custom_instructions TEXT,
+                full_name TEXT, preferred_name TEXT, occupation TEXT, personal_preferences TEXT,
+                updated_at TEXT);
+             INSERT INTO user_agent_preferences
+                (user_id, response_style, custom_instructions, full_name, preferred_name, occupation, personal_preferences)
+             VALUES ('u1', 'detailed', 'saved note', 'Full Name', 'Nick', 'Dev', 'Plain.');
+             CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY, user_id TEXT, title TEXT, status TEXT, mode TEXT, metadata TEXT);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn style_preview_override_wins_and_saves_nothing() {
+        let conn = prefs_conn();
+        let saved = crate::agent_preferences_routes::load_preferences_row(&conn, "u1").unwrap().unwrap();
+        let preview = super::parse_style_preview(&json!({
+            "stylePreview": {"response_style": "concise", "custom_instructions": "preview note"}
+        }))
+        .unwrap();
+        assert!(preview.is_some());
+        let (style, instructions, profile) = super::apply_style_preview(saved.clone(), preview.as_ref());
+        assert_eq!(style, "concise");
+        assert_eq!(instructions, "preview note");
+        // Profile still comes from the account.
+        assert_eq!(profile.preferred_name, "Nick");
+        // The saved row is untouched.
+        let after = crate::agent_preferences_routes::load_preferences_row(&conn, "u1").unwrap().unwrap();
+        assert_eq!(after.0, "detailed");
+        assert_eq!(after.1, "saved note");
+        // No preview: the saved row is used as is.
+        let (style, instructions, _) = super::apply_style_preview(saved, None);
+        assert_eq!((style.as_str(), instructions.as_str()), ("detailed", "saved note"));
+    }
+
+    #[test]
+    fn style_preview_is_validated_like_the_preferences_put() {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
+            assert!(super::parse_style_preview(&json!({"stylePreview": {"response_style": style}}))
+                .unwrap()
+                .is_some());
+        }
+        let bad = super::parse_style_preview(&json!({"stylePreview": {"response_style": "wordy"}})).unwrap_err();
+        assert_eq!(bad["error"], "invalid_response_style");
+        assert!(super::parse_style_preview(&json!({"stylePreview": {}})).is_err());
+        assert!(super::parse_style_preview(&json!({"stylePreview": {"response_style": "custom", "custom_instructions": 5}})).is_err());
+    }
+
+    #[test]
+    fn bodies_without_style_preview_are_unchanged() {
+        assert_eq!(super::parse_style_preview(&json!({"chatId": "c", "message": "hi"})), Ok(None));
+        assert_eq!(super::parse_style_preview(&json!({"stylePreview": null})), Ok(None));
+    }
+
+    #[test]
+    fn a_style_preview_turn_is_not_listed_as_a_chat() {
+        let mut conn = prefs_conn();
+        let link = super::link_chat_turn(&mut conn, "u1", "style-preview-abc", true).unwrap();
+        assert!(link.is_none());
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cowork_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_style_preview_refuses_asks_and_stops_on_a_tool_call() {
+        assert_eq!(super::style_preview_reject_body()["reply"], "reject");
+        assert_eq!(super::STYLE_PREVIEW_PERMISSION_MODE, "dontAsk");
+        let tool = json!({"type": "tool", "sessionID": "ses_1", "callID": "c1"});
+        assert!(super::style_preview_tool_part(&tool, "ses_1"));
+        assert!(!super::style_preview_tool_part(&tool, "ses_2"));
+        assert!(!super::style_preview_tool_part(&json!({"type": "text", "sessionID": "ses_1"}), "ses_1"));
+        let frames = super::style_preview_old_runtime_frames("m1");
+        assert_eq!(frames[0]["type"], "error");
+        assert_eq!(
+            frames[0]["error"],
+            "This computer's runtime is too old to preview a style. Update Allternit and try again."
+        );
+        assert_eq!(frames[1]["status"], "error");
+    }
+
+    #[test]
+    fn a_runtime_that_rejects_tools_none_gets_the_old_runtime_error() {
+        let fallback = || "gizzi message failed (400): bad tools".to_string();
+        assert_eq!(super::style_preview_post_error(true, Some(400), fallback()), super::STYLE_PREVIEW_OLD_RUNTIME);
+        assert_eq!(super::style_preview_post_error(true, Some(422), fallback()), super::STYLE_PREVIEW_OLD_RUNTIME);
+        assert_eq!(super::style_preview_post_error(true, Some(500), fallback()), fallback());
+        assert_eq!(super::style_preview_post_error(false, Some(400), fallback()), fallback());
+    }
+
+    #[test]
+    fn the_style_preview_status_reports_the_remaining_count() {
+        let user = format!("status-test-{}", uuid::Uuid::new_v4());
+        let body = |u: &str| super::style_preview_status_body(crate::rate_limit::style_preview_remaining(u));
+        assert_eq!(body(&user), json!({"supported": true, "remaining": 20, "limit": 20}));
+        assert!(crate::rate_limit::style_preview_allowed(&user));
+        assert!(crate::rate_limit::style_preview_allowed(&user));
+        assert_eq!(body(&user)["remaining"], 18);
+        // Asking does not spend a preview.
+        assert_eq!(body(&user)["remaining"], 18);
+    }
+
+    #[test]
+    fn a_style_preview_runs_with_no_tools() {
+        let meta = super::style_preview_metadata(Some(json!({
+            "tools": {"toolAccess": "always", "computer": true, "webSearch": true},
+            "time_zone": "UTC"
+        })));
+        assert_eq!(meta["tools"], json!({"toolAccess": "none"}));
+        assert_eq!(super::style_preview_metadata(None)["tools"]["toolAccess"], "none");
+    }
+
+    #[test]
+    fn the_style_preview_cap_answers_429() {
+        let user = format!("cap-test-{}", uuid::Uuid::new_v4());
+        for _ in 0..crate::rate_limit::STYLE_PREVIEW_PER_HOUR {
+            assert!(crate::rate_limit::style_preview_allowed(&user));
+        }
+        assert!(!crate::rate_limit::style_preview_allowed(&user));
+        assert_eq!(super::style_preview_cap_response().status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    }
 
     #[test]
     fn resume_requests_need_a_cursor() {
