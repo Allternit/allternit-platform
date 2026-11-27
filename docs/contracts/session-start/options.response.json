@@ -19,7 +19,7 @@
   "modes": {
     "allternit": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
     "claude": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] },
-    "codex": { "default": "auto", "supported": ["auto", "default", "plan"] }
+    "codex": { "default": "auto", "supported": ["auto", "default", "bypass"] }
   },
   "defaultRuntime": "allternit"
 }
