@@ -133,7 +133,7 @@ or a failed run (up to 3 attempts) is retried.
    and twin proposals must cite turn ids that were actually shown; prunes only mark
    entries out of date when they were never used and are at least 30 days old; each
    entry is touched once; text must pass the entry format and secret checks. The Dream
-   never deletes a line: a prune or contradiction fix adds `superseded: <date>` and
+   never deletes a line: a prune, merge or contradiction fix adds `superseded: <date>` and
    `superseded-by: <entry id or dream-prune>` to the entry's metadata. The line stays in
    its topic file and in git history, but it leaves the index and recall (`active()` in
    `memory_drive_service`). With the `disputes` flag on (the default), a contradiction

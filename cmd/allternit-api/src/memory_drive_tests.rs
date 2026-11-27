@@ -346,7 +346,11 @@ async fn dream_applies_one_commit_and_undo_preserves_later_writes() {
     assert_eq!(commits(&f.db, "u1"), before + 1);
     let log = service::resolve(&f.db, "u1").unwrap().storage().unwrap().history(None, 1).unwrap();
     assert_eq!((log[0].message.as_str(), log[0].author.as_str()), ("Dream 2026-10-06", "Dream via Allternit"));
-    assert!(row.report.as_deref().unwrap().contains("**Merged**"));
+    assert!(row.report.as_deref().unwrap().contains("**Merged**") && row.report.as_deref().unwrap().contains("kept as out of date"));
+    // The merged-away duplicate stays in its file, marked, and is out of recall.
+    let dup = line_with(&f.db, "User enjoys tea.").expect("duplicate stays in its file");
+    assert!(dup.contains("superseded:") && dup.contains(&format!("superseded-by: {keep}")), "{dup}");
+    assert!(!active_facts(&f.db, "u1").contains(&"User enjoys tea.".to_string()));
     // Same date again: no second run.
     assert!(crate::memory_dream::run(f.db.clone(), "u1".into(), today, complete).await.unwrap().is_none());
     // A later write survives the undo.

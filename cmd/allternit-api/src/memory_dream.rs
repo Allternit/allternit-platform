@@ -8,7 +8,7 @@
 //!   not taken from the model);
 //! - twin facts are only proposed through the twin owner-review path.
 //!
-//! A prune or contradiction fix never deletes a line. The entry stays in its
+//! A prune, merge or contradiction fix never deletes a line. The entry stays in its
 //! topic file with `superseded: <date>` and `superseded-by: <entry id or
 //! dream-prune>` metadata; the drive index and recall skip it, git history and
 //! the file keep it, and undo restores the Dream's own line.
@@ -432,10 +432,10 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             continue;
         }
         let gone: Vec<String> = drops.iter().map(|d| by_id[d.as_str()].entry.text.clone()).collect();
-        out.report.push(format!("- **Merged** into “{}” (`{}`): {}", entry.text, keep.path, gone.iter().map(|g| format!("“{g}”")).collect::<Vec<_>>().join(", ")));
+        out.report.push(format!("- **Merged** into “{}” (`{}`); kept as out of date: {}", entry.text, keep.path, gone.iter().map(|g| format!("“{g}”")).collect::<Vec<_>>().join(", ")));
         out.ops.push(Operation::UpsertEntry { path: keep.path.clone(), entry });
         for d in drops {
-            out.ops.push(Operation::DeleteEntry { id: d.clone() });
+            out.ops.push(supersede_op(by_id[d.as_str()], today, &keep.entry.id));
         }
         out.summary.merged += 1;
     }
@@ -1122,6 +1122,9 @@ mod tests {
         let c = check(&plan, &shown, &turns, today(), &|s| s == "s1");
         assert_eq!(c.summary, Summary { merged: 1, resolved: 0, lessons: 1, pruned: 1, proposals: 1, skipped: 5 });
         assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { id } if id == "old")), "a prune never deletes");
+        assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { .. })), "no Dream op deletes");
+        assert!(c.ops.iter().any(|o| matches!(o, Operation::UpsertEntry { entry, .. }
+            if entry.id == "b" && entry.metadata.get(SUPERSEDED_BY).map(String::as_str) == Some("a"))), "merge marks the duplicate");
         assert!(c.ops.iter().any(|o| matches!(o, Operation::UpsertEntry { entry, .. }
             if entry.id == "old" && entry.text == "User likes fax machines." && entry.metadata.get(SUPERSEDED).map(String::as_str) == Some("2026-10-06")
                 && entry.metadata.get(SUPERSEDED_BY).map(String::as_str) == Some(PRUNE_BY))));
