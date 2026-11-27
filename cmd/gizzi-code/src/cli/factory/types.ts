@@ -67,4 +67,6 @@ export interface Delivery {
   nodeId?: string | null
   at?: string
   detail?: string | null
+  from?: string | null
+  preview?: string | null
 }

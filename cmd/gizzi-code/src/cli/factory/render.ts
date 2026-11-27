@@ -151,7 +151,9 @@ export function renderDelivery(d: Delivery, opts: RenderOptions = {}): string {
   const tone = d.state === "verified" ? C.green : d.state === "failed" ? C.red : C.yellow
   const ticket = d.ticket ? ` ${d.ticket}` : ""
   const detail = d.detail ? `\n  ${d.detail}` : ""
-  return `${paint(color, tone, d.state)} → ${d.to} via ${d.via}${ticket}${detail}`
+  const who = d.from ? `${d.from} → ${d.to}` : `→ ${d.to}`
+  const preview = d.preview ? `\n  ${d.preview}` : ""
+  return `${paint(color, tone, d.state)} ${who} via ${d.via}${ticket}${detail}${preview}`
 }
 
 function isDelivery(v: any): v is Delivery {

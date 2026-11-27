@@ -84,7 +84,9 @@ Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'c
            ticket: string|null /* 'T-14' */, threadId: string|null,
            messageId: string|null /* the outbound thread message this delivery carried */,
            nodeId: string|null, dagId: string|null /* the DAG of nodeId */,
-           at: string, detail: string|null }
+           at: string, detail: string|null,
+           from?: string /* who sent it; older records show the recorded sender */,
+           preview?: string /* first 280 characters of the text, on one line */ }
 ```
 
 ### Peer routes (another computer's engine)

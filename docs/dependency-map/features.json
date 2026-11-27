@@ -5744,6 +5744,108 @@
         "allternit/surfaces/docs/guides/agent-browser.mdx",
         "allternit/surfaces/docs/tools/computer-credentials.mdx"
       ]
+    },
+    {
+      "id": "feature:delivery-from-preview",
+      "label": "Delivery sender and preview",
+      "product": "product:factory",
+      "status": "building",
+      "description": "Factory deliveries carry from and preview (first 280 characters), filled from the recorded sender for older records; list and SSE delivery both include them.",
+      "touches": [
+        "allternit/factory/engine/src/orchestration/send.rs",
+        "allternit/factory/engine/src/api/factory.rs",
+        "allternit/cmd/gizzi-code/src/cli/factory/render.ts",
+        "allternit/cmd/gizzi-code/src/cli/factory/types.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Part of the x-clips polish program, run G1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/factory/api-reference.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-job-toasts",
+      "label": "Gizzi job toasts",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "tui.showToast takes id and kind; the prompt notification line draws a block glyph per kind and replaces a same-id toast in place.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/event.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/PromptInput/Notifications.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/figures.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Part of the x-clips polish program, run G1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/notifications.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-context-toast",
+      "label": "Gizzi compaction toast",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "A toast with id context shows when the conversation is compacted.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/query.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Part of the x-clips polish program, run G1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/notifications.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-tool-row-icons",
+      "label": "Gizzi tool-row icons",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "The tool loader shows a glyph per tool kind while running and a check mark when done.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/ToolUseLoader.tsx",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/figures.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Part of the x-clips polish program, run G1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/animated-icon.mdx"
+      ]
+    },
+    {
+      "id": "feature:team-replay",
+      "label": "Replay a team",
+      "product": "product:factory",
+      "status": "building",
+      "description": "Replay of bot-to-bot messages reads from and preview on each delivery; Gizzi prints them as from to to with the preview.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/factory/render.ts",
+        "allternit/factory/engine/src/orchestration/send.rs"
+      , "allternit-ai/src/components/factory/views/TeamGraph.tsx", "allternit-ai/src/lib/factory", "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift", "allternit/surfaces/allternit-mobile/android/feature/bots"],
+      "decisions": [
+        {
+          "on": "2026-11-26",
+          "note": "Part of the x-clips polish program, run G1."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/team-map.mdx"
+      ]
     }
   ],
   "journeys": [

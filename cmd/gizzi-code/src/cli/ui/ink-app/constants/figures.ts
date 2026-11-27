@@ -37,3 +37,36 @@ export const BRIDGE_SPINNER_FRAMES = [
 ]
 export const BRIDGE_READY_INDICATOR = '\u00b7\u2714\ufe0e\u00b7'
 export const BRIDGE_FAILED_INDICATOR = '\u00d7'
+
+// Job toasts: one block glyph per kind (tui.showToast `kind`).
+export const TOAST_GLYPHS = {
+  tests: '▤',
+  pr: '▥',
+  deploy: '▲',
+  build: '▦',
+  context: '▧',
+  session: '▨',
+  image: '▩',
+} as const
+export type ToastKind = keyof typeof TOAST_GLYPHS
+
+// Tool-row glyphs, by kind of tool, shown while a tool call is unresolved.
+export const TOOL_GLYPHS = {
+  image: '▣',
+  read: '▭',
+  search: '◌',
+  write: '▰',
+  code: '▸',
+  other: BLACK_CIRCLE,
+} as const
+export type ToolGlyphKind = keyof typeof TOOL_GLYPHS
+
+export function toolGlyphKind(name?: string): ToolGlyphKind {
+  const n = (name ?? '').toLowerCase()
+  if (/image|screenshot|picture|draw/.test(n)) return 'image'
+  if (/grep|glob|search|find|fetch/.test(n)) return 'search'
+  if (/read|view|cat|list|ls/.test(n)) return 'read'
+  if (/write|edit|update|patch|notebook/.test(n)) return 'write'
+  if (/bash|shell|run|code|exec|python|repl/.test(n)) return 'code'
+  return 'other'
+}
