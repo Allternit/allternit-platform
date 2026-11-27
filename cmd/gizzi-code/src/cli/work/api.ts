@@ -64,7 +64,7 @@ function config(): Promise<AllternitApiConfig> {
 }
 
 /** allternit-api (Desktop's gateway, 127.0.0.1:8013 unless ALLTERNIT_API_URL says otherwise). */
-async function gateway<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function gateway<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cfg = await config()
   try {
     return await apiFetchJson<T>(cfg, path, init)
