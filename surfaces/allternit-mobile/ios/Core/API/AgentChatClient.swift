@@ -302,6 +302,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let client_location: ClientLocation?
         /// Settings → Response style → Try this style: the style to answer in, unsaved. Omitted when nil.
         let stylePreview: StylePreview?
+        /// A server skill the person picked with `/<id>`. Omitted when nil.
+        let skill: SkillPick?
     }
 
     /// `stylePreview` of a chat send: the on-screen style and custom instructions
@@ -310,6 +312,9 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let response_style: String
         let custom_instructions: String
     }
+
+    /// `skill: { id, arguments? }` on the turn request (MCP server skills).
+    struct SkillPick: Encodable, Sendable { let id: String; let arguments: String? }
 
     /// `client_location` of a chat send: `at` is RFC 3339 UTC, `time_zone` IANA,
     /// `precision` is "precise" only for a precise share (omitted for approximate).
@@ -381,7 +386,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         personInitiated && isForeground ? "person" : nil
     }
 
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil, stylePreview: StylePreview? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false, imagePrompt: String? = nil, stylePreview: StylePreview? = nil, skill: SkillPick? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -414,7 +419,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets", turn: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil), image_prompt: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil) == nil ? nil : imagePrompt.flatMap { (1...16000).contains($0.utf16.count) ? $0 : nil }),
                         workdir: workdir,
                         client_location: clientLocation,
-                        stylePreview: stylePreview
+                        stylePreview: stylePreview,
+                        skill: skill
                     ))
 
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)

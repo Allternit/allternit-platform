@@ -96,6 +96,17 @@ struct MessageRow: View {
                     toolStatusLine(toolStatus)
                 }
 
+                // load_skill: the skill's steps as a checklist under the turn.
+                ForEach(message.toolCalls) { call in
+                    if SkillResult.isLoadSkill(call.toolName), call.state == .done,
+                       let result = SkillResult.parse(call.output ?? ""), !result.steps.isEmpty {
+                        SkillChecklistCard(
+                            name: SkillNames.name(for: result.id), result: result,
+                            ticks: SkillResult.ticks(steps: result.steps, calls: message.toolCalls)
+                        )
+                    }
+                }
+
                 // media_generate: the generation's progress (pulse, preview or
                 // frame N of M) while it runs, the failure card if it fails.
                 ForEach(message.toolCalls) { call in
