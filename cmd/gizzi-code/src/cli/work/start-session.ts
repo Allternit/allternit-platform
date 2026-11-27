@@ -163,18 +163,23 @@ function parseResult(json: any, device: string, runtime: string, folder: string)
   return { kind: "engine", id, directory: json.directory ?? folder, device, runtime, line: `Started a ${runtime} session on ${device} in ${json.directory ?? folder} (session ${id}).` }
 }
 
+/** The `POST /api/v1/session-start` body for these args (also what `gizzi spawn --dry-run` prints). */
+export function buildStartBody(args: StartArgs) {
+  return {
+    folder: { path: args.folder },
+    runtime: args.runtime ?? "allternit",
+    mode: args.mode,
+    ...(args.prompt ? { prompt: args.prompt } : {}),
+    origin: { surface: "gizzi", deviceName: hostname(), parentSessionId: args.parentSessionId, depth: args.depth },
+  }
+}
+
 export async function startSession(args: StartArgs): Promise<StartResult> {
   const runtime = args.runtime ?? "allternit"
   const device = await resolveDevice(args.device)
   if (device && !device.remoteStart) throw new Error(ERRORS.remote_start_off)
   const deviceName = device?.name ?? hostname()
-  const body = {
-    folder: { path: args.folder },
-    runtime,
-    mode: args.mode,
-    ...(args.prompt ? { prompt: args.prompt } : {}),
-    origin: { surface: "gizzi", deviceName: hostname(), parentSessionId: args.parentSessionId, depth: args.depth },
-  }
+  const body = buildStartBody(args)
   const key = randomUUID()
 
   if (device) {
