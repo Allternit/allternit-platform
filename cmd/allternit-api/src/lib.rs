@@ -380,6 +380,7 @@ pub mod memory_capture;
 /// Knowledge factory: flags and proposals (`/api/v1/knowledge`, V298).
 pub mod knowledge_store;
 pub mod knowledge_routes;
+pub mod knowledge_curator;
 pub mod memory_activity;
 pub mod vendor_memory;
 pub mod ledger;
