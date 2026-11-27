@@ -118,13 +118,35 @@ export const REMOTE_START_OFF_ERROR = {
 /**
  * Which session-start route a relayed request is, if any: `POST
  * /api/v1/session-start` starts a session, `GET .../options` lists what a
- * start can pick. The engine also serves both under `/v1/`.
+ * start can pick (the engine also serves both under `/v1/`). With Remote
+ * start off (D6) these are refused too, because each opens something new on
+ * this computer: `terminal` = a new shell (allternit-api `POST
+ * /terminal/create`, also sent as `/api/v1/terminal/create`, and gizzi's
+ * `POST /v1/pty/create`); `adopt` = `POST /api/v1/live-sessions/adopt` with
+ * mode `new` or `copy` (`move` and `cancel` act on an existing session).
+ * Everything else, driving sessions that already run, is not a start.
  */
-export function relayedSessionStartRoute(method: string, requestPath: string): 'start' | 'options' | null {
+export function relayedSessionStartRoute(
+  method: string,
+  requestPath: string,
+  requestBody?: string,
+): 'start' | 'options' | 'terminal' | 'adopt' | null {
   const pathname = requestPath.split('?')[0].replace(/\/+$/, '');
   const route = pathname.replace(/^\/api\/v1\//, '/v1/');
   if (method === 'POST' && route === '/v1/session-start') return 'start';
   if (method === 'GET' && route === '/v1/session-start/options') return 'options';
+  if (method === 'POST' && (route === '/terminal/create' || route === '/v1/terminal/create' || route === '/v1/pty/create')) {
+    return 'terminal';
+  }
+  if (method === 'POST' && route === '/v1/live-sessions/adopt') {
+    let mode: unknown;
+    try {
+      mode = (JSON.parse(requestBody || '{}') as { mode?: unknown })?.mode;
+    } catch {
+      return null; // allternit-api answers a bad body with its own 400.
+    }
+    if (mode === 'new' || mode === 'copy') return 'adopt';
+  }
   return null;
 }
 
@@ -1681,6 +1703,11 @@ export class DesktopAuthManager {
     }
   }
 
+  /** The cloud relay is open: other devices can reach this computer now (tray "Reachable from your devices"). */
+  isRelayOpen(): boolean {
+    return Boolean(this.session && this.relaySocket && this.relaySocket.readyState === WebSocket.OPEN);
+  }
+
   /** unified-main shows the "Session started from another device" notification from here. */
   setRemoteStartListener(listener: RemoteStartListener | null): void {
     this.remoteStartListener = listener;
@@ -1713,7 +1740,14 @@ export class DesktopAuthManager {
     if (!isShareGatePath && !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
     // Remote start off: refuse here too, beside cloud-api's capability check
     // (a relay connected before the switch changed must not start sessions).
-    const sessionStartRoute = relayedSessionStartRoute(method, requestPath);
+    // Remote start off also covers a new shell and adopt new/copy (D6).
+    const sessionStartRoute = relayedSessionStartRoute(
+      method,
+      requestPath,
+      method === 'POST' && typeof message.body === 'string'
+        ? (message.body_encoding === 'base64' ? Buffer.from(message.body, 'base64').toString('utf8') : message.body)
+        : undefined,
+    );
     if (sessionStartRoute && !this.remoteStartEnabled) {
       this.sendRelayJson(socket, requestId, 403, REMOTE_START_OFF_ERROR);
       return;
