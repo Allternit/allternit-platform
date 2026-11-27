@@ -1185,6 +1185,17 @@ const trayAPI = {
   },
 };
 
+/** Start anywhere: Settings "Allow new sessions from my other devices" (on by default). */
+const remoteStartAPI = {
+  get: (): Promise<boolean> => ipcRenderer.invoke('remote-start:get'),
+  set: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('remote-start:set', enabled),
+  onChanged: (cb: (enabled: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, enabled: boolean) => cb(enabled);
+    ipcRenderer.on('remote-start:changed', handler);
+    return () => ipcRenderer.removeListener('remote-start:changed', handler);
+  },
+};
+
 // ─── MCP Host ────────────────────────────────────────────────────────────────
 
 // ─── Research Backend ────────────────────────────────────────────────────────
@@ -1506,6 +1517,7 @@ const allternitDesktopAPI = {
   startup: startupAPI,
   // Windows/Linux only: macOS keeps the app in the Dock when windows close, so the setting would do nothing there.
   ...(process.platform === "darwin" ? {} : { tray: trayAPI }),
+  remoteStart: remoteStartAPI,
   mcp: mcpAPI,
   research: researchAPI,
   worker: workerAPI,
