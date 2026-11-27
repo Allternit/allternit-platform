@@ -417,6 +417,14 @@ impl ModelRouter {
                     "output_per_1m_usd": retail.completion_per_1m,
                 }),
             );
+            if catalog::is_open_lane(entry) {
+                info.extra.insert(
+                    "open".to_string(),
+                    serde_json::json!({
+                        "access": if entry.research_only { "research" } else { "plan" },
+                    }),
+                );
+            }
             // Set last so upstream extras can never override these flags.
             info.extra.insert(
                 "default".to_string(),
@@ -621,7 +629,7 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
     if let (Some(wholesale_prompt), Some(wholesale_completion)) =
         (per_1m("prompt_price"), per_1m("completion_price"))
     {
-        let markup = inference_markup();
+        let markup = entry_markup(entry);
         return RetailPrices {
             prompt_per_1m: wholesale_prompt * markup,
             completion_per_1m: wholesale_completion * markup,
@@ -631,7 +639,7 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
     }
 
     if entry.static_price_is_wholesale {
-        let markup = inference_markup();
+        let markup = entry_markup(entry);
         return RetailPrices {
             prompt_per_1m: entry.prompt_price * markup,
             completion_per_1m: entry.completion_price * markup,
@@ -657,6 +665,28 @@ pub struct RetailPrices {
     pub completion_per_1m: f64,
     pub wholesale_prompt_per_1m: Option<f64>,
     pub wholesale_completion_per_1m: Option<f64>,
+}
+
+/// Markup for one row: its own `markup` (clamped 1.0..=5.0), else
+/// `OPEN_LANE_MARKUP` for open rows, else `INFERENCE_MARKUP`.
+fn entry_markup(entry: &catalog::ModelAliasEntry) -> f64 {
+    if let Some(markup) = entry.markup {
+        return markup.clamp(1.0, 5.0);
+    }
+    if catalog::is_open_lane(entry) {
+        return open_lane_markup();
+    }
+    inference_markup()
+}
+
+/// `OPEN_LANE_MARKUP` (default 2.0, clamped 1.0..=5.0): retail over host price
+/// for open rows (contract D8).
+fn open_lane_markup() -> f64 {
+    std::env::var("OPEN_LANE_MARKUP")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .map(|value| value.clamp(1.0, 5.0))
+        .unwrap_or(2.0)
 }
 
 /// The retail markup over wholesale pricing: `INFERENCE_MARKUP`, default
