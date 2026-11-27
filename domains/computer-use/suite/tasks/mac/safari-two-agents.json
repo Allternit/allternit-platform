@@ -1,0 +1,76 @@
+{
+  "id": "safari-two-agents",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "safari_window",
+      "name": "A1",
+      "url": "{base_url}/isolation.html?w=A1"
+    },
+    {
+      "do": "safari_window",
+      "name": "A2",
+      "url": "{base_url}/isolation.html?w=A2"
+    },
+    {
+      "do": "safari_window",
+      "name": "B",
+      "url": "{base_url}/isolation.html?w=B&focus=1",
+      "key": true
+    },
+    {
+      "do": "background_agent",
+      "window": "A2",
+      "field": "A2 field",
+      "text": "two-2222222222222222222222",
+      "steps": 12,
+      "delay_ms": 1500
+    }
+  ],
+  "goal": "In Safari, the window titled \"Suite A1\" is yours. Put exactly the text below into its \"A1 field\" with computer_v2 act set_value, targeting that window by its window_id. Another agent is filling the window \"Suite A2\" at the same time, and the person's window \"Suite B\" is key: do not touch either of them.",
+  "inputs": {
+    "window": "Suite A1",
+    "text": "one-1111111111111111111111",
+    "window_id": "{A1_window_id}"
+  },
+  "checker": [
+    {
+      "kind": "background_done",
+      "timeout_ms": 30000
+    },
+    {
+      "kind": "form_log",
+      "route": "iso-A1",
+      "fields": {
+        "value": "one-1111111111111111111111"
+      }
+    },
+    {
+      "kind": "form_log",
+      "route": "iso-A2",
+      "fields": {
+        "value": "two-2222222222222222222222"
+      }
+    },
+    {
+      "kind": "form_absent",
+      "route": "iso-B"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "browser",
+    "isolation",
+    "agent-browser"
+  ],
+  "requires": [
+    "read_ui",
+    "act"
+  ]
+}

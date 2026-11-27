@@ -14,12 +14,15 @@ Each checker returns (ok, detail). A task passes when every checker in its
   verify         {app, checks:[..], timeout_ms?}  app state through the toolset
   clipboard      {equals}
   command_equals {argv:[..], equals | file_equals:path}  value from a read-only command
+  background_done {timeout_ms?}          setup's background steps (a typing person,
+                                         a second agent) finished without an error
 """
 from __future__ import annotations
 
 import json
 import sqlite3
 import subprocess
+import time
 from typing import Tuple
 
 Result = Tuple[bool, str]
@@ -136,6 +139,17 @@ def _command_equals(ctx, s) -> Result:
     return want == s["equals"], f"value={want!r}"
 
 
+def _background_done(ctx, s) -> Result:
+    deadline = time.time() + s.get("timeout_ms", 30000) / 1000
+    for t in ctx.background:
+        t.join(max(0.0, deadline - time.time()))
+    alive = [t.name for t in ctx.background if t.is_alive()]
+    if alive:
+        return False, f"still running: {alive}"
+    errors = list(ctx.background_errors)
+    return not errors, f"errors: {errors}" if errors else f"{len(ctx.background)} background step(s) finished"
+
+
 CHECKERS = {
     "file_equals": _file_equals,
     "file_contains": _file_contains,
@@ -149,4 +163,5 @@ CHECKERS = {
     "verify": _verify,
     "clipboard": _clipboard,
     "command_equals": _command_equals,
+    "background_done": _background_done,
 }

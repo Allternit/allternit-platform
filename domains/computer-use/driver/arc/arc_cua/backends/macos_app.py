@@ -17,6 +17,7 @@ from typing import Any
 from ..errors import TargetUnavailable, UnsupportedDesktopAction
 from ..models import Bounds
 from . import macos_background as background
+from . import macos_safari
 from .macos_ocr import MacOSWindow, on_screen_windows
 from .macos_parking import WindowParking, wait_until
 
@@ -321,6 +322,10 @@ class MacOSApp:
         window = self._input_window(window_id)
         self.ready_for_keys(window.window_id)
         with self.input_scope():
+            if macos_safari.is_safari(self.pid):
+                # Safari's keys go to its key window, whatever window they name: queued.
+                macos_safari.press(self.pid, window.window_id, code, flags)
+                return
             background.press(self.pid, window.window_id, code, flags)
 
     def shortcut(
@@ -344,6 +349,9 @@ class MacOSApp:
         window = self._input_window(window_id)
         self.ready_for_keys(window.window_id)
         with self.input_scope():
+            if macos_safari.is_safari(self.pid):
+                macos_safari.type_text(self.pid, window.window_id, text, check=self.check_running)
+                return
             background.type_text(self.pid, window.window_id, text, check=self.check_running)
 
     def select_all(self) -> bool:

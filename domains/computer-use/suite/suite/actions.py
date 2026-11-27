@@ -11,6 +11,7 @@ from __future__ import annotations
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -43,6 +44,12 @@ class Context:
         self.run_dir = run_dir
         self.running_before: dict = {}
         self.keychain: list = []
+        # Safari isolation fixtures: windows the suite opened, and background
+        # threads (a typing "person", a second agent) the checkers wait for.
+        self.safari_windows: dict = {}
+        self.background: list = []
+        self.background_errors: list = []
+        self.stop = threading.Event()
         self.values: dict = {"scratch": str(scratch), "home": str(Path.home()), "base_url": web.base_url if web else ""}
 
     def fmt(self, obj: Any) -> Any:
@@ -127,13 +134,96 @@ def _run(ctx: Context, s: dict) -> None:
         osa(s["script"])
     elif kind == "wait":
         time.sleep(s["ms"] / 1000)
+    elif kind == "safari_window":
+        # A Safari window of the suite's own, titled "Suite <name>" by the page.
+        title = f"Suite {s['name']}"
+        osa(f'tell application "Safari" to make new document with properties {{URL:"{s["url"]}"}}')
+        wid = _safari_window_id(title)
+        ctx.safari_windows[s["name"]] = wid
+        ctx.values[f"{s['name']}_window_id"] = str(wid)
+        if s.get("key"):  # The person's window: key when setup ends.
+            osa(f'tell application "Safari" to set index of (first window whose name is "{title}") to 1')
+            ctx.focus = "Safari"
+    elif kind == "user_typing":
+        _background(ctx, f"person typing in {s['window']}", _user_typing, ctx, f"Suite {s['window']}", s["text"],
+                    s.get("delay_ms", 1500) / 1000, s.get("interval_ms", 250) / 1000)
+    elif kind == "background_agent":
+        _background(ctx, f"second agent in {s['window']}", _background_agent, ctx, s["window"], s["field"],
+                    s["text"], int(s.get("steps", 10)), s.get("delay_ms", 1500) / 1000)
     else:
         raise ValueError(f"unknown setup step {kind!r}")
+
+
+def _safari_window_id(title: str, timeout: float = 10) -> int:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            out = osa(f'tell application "Safari" to get id of (first window whose name is "{title}")')
+            if out.strip().isdigit():
+                return int(out)
+        except Exception:
+            pass
+        time.sleep(0.25)
+    raise RuntimeError(f"no Safari window titled {title!r}")
+
+
+def _background(ctx: Context, label: str, fn, *args) -> None:
+    def run() -> None:
+        try:
+            fn(*args)
+        except Exception as e:  # reported by the background_done checker
+            ctx.background_errors.append(f"{label}: {e}")
+    t = threading.Thread(target=run, name=label, daemon=True)
+    t.start()
+    ctx.background.append(t)
+
+
+def _user_typing(ctx: Context, title: str, text: str, delay: float, interval: float) -> None:
+    """A person typing real (HID) keys into the suite's own window. It types only
+    while Safari is front and that window is key, so it never types anywhere else;
+    the window losing key focus (an agent stealing it) is reported as a failure."""
+    time.sleep(delay)
+    for ch in text:
+        if ctx.stop.is_set():
+            return
+        state = osa('tell application "Safari" to get {frontmost, name of front window}')
+        if state != f"true, {title}":
+            raise RuntimeError(f"{title} stopped being Safari's key window ({state!r}); typing stopped")
+        esc = ch.replace("\\", "\\\\").replace('"', '\\"')
+        osa(f'tell application "System Events" to keystroke "{esc}"')
+        time.sleep(interval)
+
+
+def _background_agent(ctx: Context, window: str, field: str, text: str, steps: int, delay: float) -> None:
+    """A second agent filling its own Safari window through the executor while the
+    planner works: `steps` growing set_value writes, never focusing the field."""
+    import json
+
+    time.sleep(delay)
+    wid = ctx.safari_windows[window]
+    for i in range(1, steps + 1):
+        if ctx.stop.is_set():
+            return
+        body = ctx.toolset.call("read_ui", {"app": "Safari", "window_id": wid, "query": field})
+        if not ctx.toolset.ok(body):
+            raise RuntimeError(f"read_ui: {ctx.toolset.text(body)[:200]}")
+        elements = json.loads(ctx.toolset.text(body) or "{}").get("elements", [])
+        eid = next((e["id"] for e in elements if field.lower() in str(e.get("name", "")).lower()
+                    and "text" in str(e.get("role", "")).lower()), None)
+        if eid is None:
+            raise RuntimeError(f"no {field!r} text field in window {wid}")
+        value = text[:max(1, round(len(text) * i / steps))]
+        body = ctx.toolset.call("act", {"id": eid, "op": "set_value", "value": value, "focus": False})
+        if not ctx.toolset.ok(body):
+            raise RuntimeError(f"act set_value: {ctx.toolset.text(body)[:200]}")
 
 
 def teardown(ctx: Context) -> list:
     """Restore state; returns the problems it hit (never raises)."""
     problems: list = []
+    ctx.stop.set()
+    for t in ctx.background:
+        t.join(5)
 
     def attempt(label: str, fn) -> None:
         try:

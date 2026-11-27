@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from typing import Any
 
 from ..element_map import RawNode
@@ -208,35 +209,90 @@ class ArcEngine:
                 return self._driver.act(snap, kind, native, value="" if value is None else str(value), settle=True)
             return self._driver.act(snap, kind, native, settle=True)
 
-    def write_value(self, snap: Any, native: str, value: str, replace: bool = True) -> bool:
-        """Focus a text field and write ``value`` through accessibility only
-        (no SkyLight key posting): AXValue, read back. WebKit and AppKit
-        fields take it in ~10 ms and fire their input events. Returns False
-        when the field kept a different value (the caller types instead,
-        into the now-focused, emptied field)."""
+    def write_value(
+        self, snap: Any, native: str, value: str, replace: bool = True, focus: bool | None = None,
+    ) -> bool:
+        """Write ``value`` into a text field through accessibility only (no
+        SkyLight key posting): AXValue, read back. WebKit and AppKit fields take
+        it in ~10 ms and fire their input events. Returns False when the field
+        kept a different value (the caller types instead).
+
+        ``focus``: True focuses the field first, so typing (the fallback) lands
+        there. False never focuses (``use_credential``: a secret only goes to the
+        field the agent picked). None decides: always, except in a Safari window
+        that is not Safari's key window and not its only window, where focusing a
+        web field makes that window key and the person's typing follows it."""
         import ApplicationServices as AS  # type: ignore
+        from arc_cua.backends import macos_safari
 
         with self._lock:
-            app = self._driver._app(snap.context["pid"])
-            ref = getattr(app.backend(snap.context["window_id"]), "_refs", {}).get(native)
+            pid, window = snap.context["pid"], snap.context["window_id"]
+            app = self._driver._app(pid)
+            ref = getattr(app.backend(window), "_refs", {}).get(native)
             if ref is None:
                 raise ValueError(f"{native} is no longer in the window")
-            # Focus first so typing (the fallback) lands here; a field in a
-            # background app may refuse focus but still take a value write.
-            focused = AS.AXUIElementSetAttributeValue(ref, "AXFocused", True) == 0
+            if focus is None:
+                focus = macos_safari.focus_allowed(pid, window)
+            # A field in a background app may refuse focus but still take a value write.
+            focused = bool(focus) and AS.AXUIElementSetAttributeValue(ref, "AXFocused", True) == 0
             target = value if replace else None
             if target is None:
                 err, current = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
                 target = f"{current or ''}{value}"
-            if AS.AXUIElementSetAttributeValue(ref, "AXValue", target) == 0:
-                err, now = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
-                if err == 0 and str(now) == target:
+            if AS.AXUIElementSetAttributeValue(ref, "AXValue", target) == 0 and self._kept(AS, ref, target):
+                if not macos_safari.is_safari(pid):
                     return True
-            if not focused:
+                # A page can reset a value it did not see typed: read it again a moment later.
+                time.sleep(0.15)
+                if self._kept(AS, ref, target):
+                    return True
+            if focus and not focused:
                 raise ValueError(f"{native} takes neither focus nor a value write")
-            if replace:
+            if replace and focused:
                 AS.AXUIElementSetAttributeValue(ref, "AXValue", "")
             return False
+
+    @staticmethod
+    def _kept(AS: Any, ref: Any, target: str) -> bool:
+        err, now = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
+        return err == 0 and str(now) == target
+
+    @staticmethod
+    def is_safari(pid: int) -> bool:
+        from arc_cua.backends import macos_safari
+
+        return macos_safari.is_safari(pid)
+
+    def type_queued(self, snap: Any, native: str, text: str, replace: bool = True) -> None:
+        """Type into a Safari field through the Safari key queue: the field is
+        focused and typed into only while the agent's window is Safari's key
+        window and the person is not using Safari; the key window is handed back
+        after. Raises SafariKeysHeld (code ``keys_held``) when that never holds."""
+        from arc_cua.backends import macos_safari
+
+        pid, window = snap.context["pid"], snap.context["window_id"]
+        with self._lock:
+            ref = getattr(self._driver._app(pid).backend(window), "_refs", {}).get(native)
+        if ref is None:
+            raise ValueError(f"{native} is no longer in the window")
+        # Outside the engine lock: the queue can wait up to 30 s for a safe turn,
+        # and other windows' reads and value writes must not wait behind it.
+        macos_safari.type_text(pid, window, text, field=ref, replace=replace)
+
+    def safari_window(self, op: str, pid: int | None = None, window_id: int | None = None,
+                      create_profile: bool = True) -> dict[str, Any]:
+        """Open (``op`` "open") or close ("close") one agent run's Safari window."""
+        from arc_cua import WindowTarget
+
+        with self._lock:
+            if op == "open":
+                target = self._driver.open_safari_window(create_profile=create_profile)
+                return {"pid": target.pid, "window_id": target.window_id}
+            if op == "close":
+                if not pid or not window_id:
+                    raise ValueError("close needs the pid and window_id that open returned")
+                return {"closed": self._driver.close_safari_window(WindowTarget(int(pid), int(window_id)))}
+        raise ValueError(f"{op} isn't a safari_window op (open, close)")
 
     def _focus(self, snap: Any, native: str) -> Any:
         import ApplicationServices as AS  # type: ignore
