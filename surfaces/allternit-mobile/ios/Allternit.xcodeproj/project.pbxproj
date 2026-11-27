@@ -838,6 +838,8 @@
 		CFE832BB47ED1A93EC90B67D /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B838F3CE8745D8A345684921 /* KokoroSwift */; };
 		D03140127825489A37768513 /* Connector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A28F6341B679B8457003DB /* Connector.swift */; };
 		D088225D9986CDD3881355C4 /* CustomizeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44332C83123F7464F36D69E /* CustomizeViews.swift */; };
+		C47A10C00000000000000001 /* CatalogClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A10C10000000000000001 /* CatalogClient.swift */; };
+		C47A10C00000000000000002 /* CatalogDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A10C10000000000000002 /* CatalogDetailView.swift */; };
 		D092859BCC05615686EFDAA7 /* ModelPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 633FE6BD8A7B1B4D43EF53AF /* ModelPickerSheet.swift */; };
 		D0F0ADDB8B1F6CEA3CE24439 /* ArtifactBodyEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D10E429066BBA9B9A257F43 /* ArtifactBodyEditing.swift */; };
 		D133930E4845E103D2966C80 /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5222EE1EE170C34F038CA47 /* AppGroup.swift */; };
@@ -1942,6 +1944,8 @@
 		E2D911C6455F824C12F55A7B /* RunStatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStatusViews.swift; sourceTree = "<group>"; };
 		E40323844DABB3650485AEC0 /* CloudDeployStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDeployStore.swift; sourceTree = "<group>"; };
 		E44332C83123F7464F36D69E /* CustomizeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomizeViews.swift; sourceTree = "<group>"; };
+		C47A10C10000000000000001 /* CatalogClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogClient.swift; sourceTree = "<group>"; };
+		C47A10C10000000000000002 /* CatalogDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogDetailView.swift; sourceTree = "<group>"; };
 		E44A5FBBCC1751E77BAB353F /* VoiceSettingsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsSheet.swift; sourceTree = "<group>"; };
 		E45511114508EA8F67E67F2E /* AutomationHeartbeatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationHeartbeatViews.swift; sourceTree = "<group>"; };
 		E471B33D6779D3C68395D818 /* InstancesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstancesClient.swift; sourceTree = "<group>"; };
@@ -2721,6 +2725,8 @@
 			children = (
 				34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */,
 				E44332C83123F7464F36D69E /* CustomizeViews.swift */,
+				C47A10C10000000000000001 /* CatalogClient.swift */,
+				C47A10C10000000000000002 /* CatalogDetailView.swift */,
 				66FD35F18B3062FF97F7BF10 /* InboxSheet.swift */,
 				31F59AFBAC6D9F4B90BDD926 /* ModeArrivalView.swift */,
 				AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */,
@@ -4974,6 +4980,8 @@
 				5E95134CE10DBA2F545693AC /* CustomizeScreen.swift in Sources */,
 				07B3C782180BB43EB3CA2812 /* CustomizeSectionHero.swift in Sources */,
 				D088225D9986CDD3881355C4 /* CustomizeViews.swift in Sources */,
+				C47A10C00000000000000001 /* CatalogClient.swift in Sources */,
+				C47A10C00000000000000002 /* CatalogDetailView.swift in Sources */,
 				58F2BAACE73E04941E926B74 /* DayOfWeekSelector.swift in Sources */,
 				707E959BCE63F79BD6D67C06 /* DecideIntents.swift in Sources */,
 				47DDAD805E90667EC3C82355 /* DecisionsDeckView.swift in Sources */,
