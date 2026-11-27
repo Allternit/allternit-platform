@@ -215,6 +215,16 @@ struct MessageRow: View {
                     }
                 }
 
+                // MCP 2027: Code Mode script rows and typed (structuredContent) results,
+                // read from the tool part's `state.metadata.mcpScript` / `.mcp`.
+                ForEach(message.toolCalls) { call in
+                    if let script = McpMetaReader.script(call.metadata) {
+                        McpScriptRowView(meta: script)
+                    } else if let mcp = McpMetaReader.tool(call.metadata), mcp.structured != nil {
+                        McpTypedResultView(meta: mcp)
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {
