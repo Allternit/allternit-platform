@@ -162,6 +162,11 @@ struct ComputeBillingView: View {
                 Text("Usage")
             }
 
+            // Allternit Open: the allowance meter, once the server reports it.
+            if title != "Usage", storefront.allowsPurchaseLinks, let open = plan.openModels, open.plan != nil || open.termsAccepted {
+                Section { OpenModelsStatusRows(entitlement: open) } header: { Text("Status") }
+            }
+
             // In-App Purchase: plan tickets priced by the App Store, while no
             // plan is billed on the web or by Google (D5).
             if title != "Usage" && storefront.showsStoreButtons(for: .plan)
@@ -175,6 +180,10 @@ struct ComputeBillingView: View {
                 } header: {
                     Text(plan.subscription?.isPaid == true ? "Change plan" : "Choose a plan")
                 }
+            }
+
+            if title != "Usage" && plan.openModels != nil {
+                Section { OpenResearchTicketView().listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0)) }
             }
 
             if title != "Usage" && storefront.showsStoreButtons(for: .pack) {

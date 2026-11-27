@@ -117,16 +117,55 @@ final class ModelStore: ObservableObject {
         return alias.isEmpty ? nil : alias
     }
 
-    /// The rows offered with no computer: listed, standard-lane models. The
-    /// open lane has no terms screen here, so the server would refuse it (D14).
-    nonisolated static func cloudChatModels(_ catalog: [SetupModelRow]) -> [RuntimeModel] {
-        catalog.filter { !$0.isHidden && $0.lane != "open" }.map { row in
-            RuntimeModel(id: cloudPrefix + row.id, name: row.name, provider: "allternit",
-                         description: "Allternit Cloud · no computer needed", isDefault: row.isDefault)
+    /// The "Accept terms on the web" row (Allternit Open, D14). Choosing it
+    /// opens the web page; it is never a selectable model.
+    nonisolated static let openTermsLinkId = "allternit-open-terms-link"
+
+    /// The rows offered with no computer: listed, standard-lane models. Open
+    /// lane rows (Allternit Open, D14) list only after terms are accepted on
+    /// the web and on the US storefront; before that one link row stands in.
+    /// An absent `open_models` (older backend) keeps today's list.
+    nonisolated static func cloudChatModels(_ catalog: [SetupModelRow], open: OpenModelsEntitlement? = nil,
+                                            usStorefront: Bool = false) -> [RuntimeModel] {
+        let listsOpen = OpenModelsGate.listsOpenRows(open, usStorefront: usStorefront)
+        let listsResearch = OpenModelsGate.listsResearchRows(open)
+        var rows: [RuntimeModel] = catalog.filter { row in
+            if row.isHidden { return false }
+            if row.lane != "open" { return true }
+            return listsOpen && (!row.researchOnly || listsResearch)
+        }.map { row in
+            var note = "Allternit Cloud · no computer needed"
+            if row.lane == "open" {
+                note = OpenModelsCopy.message(forReason: open?.reason) ?? openPriceLine(row) ?? "Open model · far fewer refusals"
+            }
+            return RuntimeModel(id: cloudPrefix + row.id, name: row.name, provider: "allternit",
+                                description: note, isDefault: row.isDefault)
         }
+        let hasOpenRows = catalog.contains { $0.lane == "open" && !$0.isHidden && !$0.researchOnly }
+        if hasOpenRows && OpenModelsGate.showsTermsLink(open, usStorefront: usStorefront) {
+            rows.append(RuntimeModel(id: openTermsLinkId, name: OpenModelsCopy.termsName, provider: "allternit",
+                                     description: OpenModelsCopy.termsSub, isDefault: false))
+        }
+        return rows
     }
 
-    var cloudModels: [RuntimeModel] { Self.cloudChatModels(cloudCatalog) }
+    private nonisolated static func openPriceLine(_ row: SetupModelRow) -> String? {
+        guard let i = row.inputPer1mUsd, let o = row.outputPer1mUsd else { return nil }
+        return String(format: "$%.2f in · $%.2f out / 1M", i, o)
+    }
+
+    var cloudModels: [RuntimeModel] {
+        Self.cloudChatModels(cloudCatalog, open: AccountPlanStore.shared.openModels,
+                             usStorefront: StorefrontGate.shared.allowsPurchaseLinks)
+    }
+
+    /// The contract §4 reason for an open row the account can't run yet; nil
+    /// for any other row or when it can run.
+    func openLockReason(for id: String?) -> String? {
+        guard cloudRow(for: id)?.lane == "open" else { return nil }
+        let reason = AccountPlanStore.shared.openModels?.reason
+        return OpenModelsCopy.isOpenReason(reason) ? reason : nil
+    }
 
     func cloudRow(for id: String?) -> SetupModelRow? {
         guard let alias = Self.cloudAlias(id) else { return nil }
@@ -145,6 +184,7 @@ final class ModelStore: ObservableObject {
     /// one of the person's own keys (D5). Unknown entitlement = unlocked (D10).
     func isCloudLocked(_ id: String?) -> Bool {
         guard Self.cloudAlias(id) != nil else { return false }
+        if openLockReason(for: id) != nil { return true }
         return CloudModelsEntitlement.isLocked(AccountPlanStore.shared.cloudModels, provider: cloudRow(for: id)?.provider)
     }
 
@@ -201,6 +241,10 @@ final class ModelStore: ObservableObject {
     /// The picker sheet's selection path — marks the choice as manual so
     /// per-agent model defaults stop applying this launch.
     func userSelectedModel(_ id: String?) {
+        if id == Self.openTermsLinkId {
+            UIApplication.shared.open(OpenModelsCopy.termsURL)
+            return
+        }
         selectedModelId = id
         didManuallySelectModel = true
     }

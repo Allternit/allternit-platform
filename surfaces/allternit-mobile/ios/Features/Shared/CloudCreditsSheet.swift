@@ -28,11 +28,13 @@ enum CloudCreditsCopy {
     static let ok = "OK"
 
     static func title(_ reason: String?) -> String {
-        reason == "credits_exhausted" ? titleExhausted : titleRequired
+        if OpenModelsCopy.isOpenReason(reason) { return "Open models need credits" }
+        return reason == "credits_exhausted" ? titleExhausted : titleRequired
     }
 
     static func line(_ reason: String?) -> String {
-        reason == "credits_exhausted" ? lineExhausted : lineRequired
+        if let open = OpenModelsCopy.message(forReason: reason) { return open }
+        return reason == "credits_exhausted" ? lineExhausted : lineRequired
     }
 
     /// "GLM 5.3: $0.90 per 1M input, $3.30 per 1M output"; nil without both prices.
@@ -167,7 +169,7 @@ struct CloudCreditsSheet: View {
 
     @ViewBuilder
     private var purchaseContent: some View {
-        Text(storePacks ? CloudCreditsCopy.bodyStore : CloudCreditsCopy.body)
+        Text(OpenModelsCopy.isOpenReason(request.reason) ? OpenModelsCopy.message(forReason: request.reason) ?? "" : storePacks ? CloudCreditsCopy.bodyStore : CloudCreditsCopy.body)
             .font(.subheadline)
             .foregroundStyle(SetupPalette.sub)
             .fixedSize(horizontal: false, vertical: true)

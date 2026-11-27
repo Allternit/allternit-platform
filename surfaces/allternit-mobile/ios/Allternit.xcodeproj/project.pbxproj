@@ -339,6 +339,7 @@
 		5A0DDF90358B339B17A6FAC3 /* VoiceCaptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81DDEAFDFF4EF41715B9819C /* VoiceCaptionsView.swift */; };
 		5A1972A355710FB2F70DF9C4 /* InappCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29FE97B3BD68DC40DE53819F /* InappCallStore.swift */; };
 		5A1B80EC84635C16BB4FC329 /* PlanCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F892137D2ECA218AF0EF05 /* PlanCardViews.swift */; };
+		A11C0DE0F1000000000000B1 /* OpenModelsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE0F1000000000000F1 /* OpenModelsViews.swift */; };
 		5A25412F48C5BB9F69886BC0 /* CloudInstancesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD574C98131DFBECE1E91F54 /* CloudInstancesClient.swift */; };
 		5AA14012332514A0777AEFF8 /* SetupSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66C69E9837A8CFB56C20C19E /* SetupSignals.swift */; };
 		5AA45949A790BA4C14E7D835 /* FwIdentityFace.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF283EBCA1007FFA2E30C0F /* FwIdentityFace.swift */; };
@@ -1382,6 +1383,7 @@
 		41811AE09D34178A111BBC64 /* CodeComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeComposer.swift; sourceTree = "<group>"; };
 		41E758C5D594CCBDB28AC87F /* AutomationScheduleGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationScheduleGraphView.swift; sourceTree = "<group>"; };
 		41F892137D2ECA218AF0EF05 /* PlanCardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanCardViews.swift; sourceTree = "<group>"; };
+		A11C0DE0F1000000000000F1 /* OpenModelsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenModelsViews.swift; sourceTree = "<group>"; };
 		436B6969DB4C176B2552F0D0 /* MeetYourBotsVisuals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetYourBotsVisuals.swift; sourceTree = "<group>"; };
 		436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadShareClient.swift; sourceTree = "<group>"; };
 		43BFEA6D9AD0DFA2A813D0C9 /* BotProjectSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectSections.swift; sourceTree = "<group>"; };
@@ -3940,6 +3942,7 @@
 				BD73566138019C8E36A7C3E3 /* OrganizationAccessView.swift */,
 				4F3231708C0334B13ACA2FC5 /* PhoneActionsSettingsSection.swift */,
 				41F892137D2ECA218AF0EF05 /* PlanCardViews.swift */,
+				A11C0DE0F1000000000000F1 /* OpenModelsViews.swift */,
 				1BBC678E465D3B17E1016460 /* PlanUsageViews.swift */,
 				7F1CF8BF1B118A14501CAF25 /* PlatformSettingsView.swift */,
 				914FE83348400D7577B8EB07 /* PrewarmManagerView.swift */,
@@ -5238,6 +5241,7 @@
 				ADB1B64FF6E91E1EE2CF24D9 /* PhonesSheet.swift in Sources */,
 				BEC0A6C05EB644F147E6E5F4 /* PixelWordmark.swift in Sources */,
 				5A1B80EC84635C16BB4FC329 /* PlanCardViews.swift in Sources */,
+				A11C0DE0F1000000000000B1 /* OpenModelsViews.swift in Sources */,
 				2346529B63A748FD42A5FE69 /* PlanSheetView.swift in Sources */,
 				EC861DF3232DC6396042B706 /* PlanThreadClient.swift in Sources */,
 				B87CA5FA8D5058713E8EAF49 /* PlanUsageViews.swift in Sources */,

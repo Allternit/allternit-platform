@@ -113,6 +113,8 @@ struct PlanTicketView: View {
     let current: Bool
     let actionTitle: String?
     let action: () -> Void
+    var showsPerMonth = true
+    var showsOpenLine = true
 
     private var tier: PlanTier { PlanTier(planId: planId) }
 
@@ -127,9 +129,10 @@ struct PlanTicketView: View {
                         .background(tier.stampFill, in: RoundedRectangle(cornerRadius: 3))
                     Spacer()
                     Text(price).font(.system(size: 20, design: .monospaced))
-                    Text("/mo").font(.system(size: 10.5)).opacity(0.7)
+                    if showsPerMonth { Text("/mo").font(.system(size: 10.5)).opacity(0.7) }
                 }
                 ForEach(lines, id: \.self) { Text($0).font(.system(size: 12)) }
+                if showsOpenLine { Text(OpenModelsCopy.planLine(forPlan: planId)).font(.system(size: 12)) }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
