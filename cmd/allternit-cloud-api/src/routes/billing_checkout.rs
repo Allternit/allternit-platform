@@ -10,6 +10,21 @@
 //! instead of a broken redirect. Success/cancel URLs default to the platform billing page and can
 //! be overridden with STRIPE_CHECKOUT_SUCCESS_URL / STRIPE_CHECKOUT_CANCEL_URL.
 //!
+//! Embedded checkout (opt-in): a body with `"ui_mode": "embedded"` on `/checkout`
+//! (and `/subscribe` in `routes::billing_subscriptions`) creates the session with
+//! Stripe `ui_mode=embedded`, a `return_url` (the success page plus
+//! `session_id={CHECKOUT_SESSION_ID}`) and `redirect_on_completion=if_required`,
+//! and answers `{ client_secret, session_id }` for Stripe.js to mount in the app.
+//! Without the field (or with `"hosted"`) the reply is the hosted
+//! `{ checkout_url }` exactly as before, so released apps keep working. The
+//! Stripe customer always comes from the signed-in account, never the body.
+//!
+//! `GET /api/v1/billing/config` is public and returns what Stripe.js needs:
+//! `{ publishable_key, mode: "test" | "live", payment_method_types: ["card", "link"] }`.
+//! The key is STRIPE_PUBLISHABLE_KEY; the mode comes from its prefix and must
+//! match STRIPE_SECRET_KEY's, otherwise the route answers 503
+//! billing_not_configured. Card and Link only: no wallets.
+//!
 //! The Checkout Session metadata carries the credit-grant contract that
 //! routes::billing_webhooks consumes when the payment completes
 //! (checkout.session.completed / checkout.session.async_payment_succeeded
@@ -90,9 +105,212 @@ pub struct PacksResponse {
     packs: Vec<PackListing>,
 }
 
+/// The body names only the pack and the ui mode. There is no customer field:
+/// the Stripe customer is always resolved from the signed-in account, and
+/// unknown fields (`customer`, `customer_email`, ...) are ignored.
 #[derive(Debug, Deserialize)]
 pub struct CheckoutRequest {
     pack_id: String,
+    #[serde(default)]
+    ui_mode: Option<UiMode>,
+}
+
+/// How the client shows Stripe Checkout: `hosted` (a redirect to
+/// checkout.stripe.com, the default) or `embedded` (Stripe.js mounts the form
+/// in the app from a client secret).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiMode {
+    #[default]
+    Hosted,
+    Embedded,
+}
+
+impl UiMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Hosted => "hosted",
+            Self::Embedded => "embedded",
+        }
+    }
+}
+
+/// The only payment methods Allternit Cloud checkout offers (decision E4):
+/// pay-now card and Link. No wallets, no buy-now-pay-later, no delayed methods,
+/// since credits and plans are granted on payment. `GET /billing/config`
+/// reports the same list the sessions send.
+pub(crate) const PAYMENT_METHOD_TYPES: [&str; 2] = ["card", "link"];
+
+/// `payment_method_types[i]` form fields for a Checkout Session.
+pub(crate) fn payment_method_fields() -> Vec<(String, String)> {
+    PAYMENT_METHOD_TYPES
+        .iter()
+        .enumerate()
+        .map(|(index, method)| (format!("payment_method_types[{index}]"), method.to_string()))
+        .collect()
+}
+
+/// Where Stripe sends the buyer after checkout, per ui mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CheckoutReturn {
+    /// Hosted page: Stripe redirects to one of the two pages.
+    Hosted { success_url: String, cancel_url: String },
+    /// Embedded form: no cancel page (closing the sheet is the cancel). Stripe
+    /// redirects to `return_url` only when a method needs a redirect.
+    Embedded { return_url: String },
+}
+
+impl CheckoutReturn {
+    /// The return pages for a ui mode: the client's validated page, else env,
+    /// else the platform billing page (see [`checkout_return_urls`]).
+    pub(crate) fn for_mode(ui_mode: UiMode, return_to: &ReturnTo) -> Result<Self, ApiError> {
+        let (success_url, cancel_url) = checkout_return_urls(return_to)?;
+        Ok(match ui_mode {
+            UiMode::Hosted => Self::Hosted { success_url, cancel_url },
+            UiMode::Embedded => Self::Embedded { return_url: embedded_return_url(&success_url) },
+        })
+    }
+
+    pub(crate) fn ui_mode(&self) -> UiMode {
+        match self {
+            Self::Hosted { .. } => UiMode::Hosted,
+            Self::Embedded { .. } => UiMode::Embedded,
+        }
+    }
+
+    /// The Checkout Session form fields for this return. Stripe rejects
+    /// `success_url` / `cancel_url` on an embedded session, so each mode sends
+    /// only its own fields.
+    pub(crate) fn form_fields(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Hosted { success_url, cancel_url } => vec![
+                ("success_url".to_string(), success_url.clone()),
+                ("cancel_url".to_string(), cancel_url.clone()),
+            ],
+            Self::Embedded { return_url } => vec![
+                ("ui_mode".to_string(), "embedded".to_string()),
+                ("return_url".to_string(), return_url.clone()),
+                // Card and Link finish in place (Stripe.js `onComplete`), so the
+                // app refreshes the plan and credits without leaving the sheet.
+                ("redirect_on_completion".to_string(), "if_required".to_string()),
+            ],
+        }
+    }
+}
+
+/// The success page plus Stripe's `{CHECKOUT_SESSION_ID}` placeholder.
+fn embedded_return_url(success_url: &str) -> String {
+    if success_url.contains("{CHECKOUT_SESSION_ID}") {
+        return success_url.to_string();
+    }
+    let separator = if success_url.contains('?') { '&' } else { '?' };
+    format!("{success_url}{separator}session_id={{CHECKOUT_SESSION_ID}}")
+}
+
+/// A created Checkout Session, as the route returns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CheckoutSession {
+    Hosted { url: String },
+    Embedded { client_secret: String, session_id: String },
+}
+
+/// `{ client_secret, session_id }`: the embedded reply Stripe.js mounts from.
+#[derive(Debug, Serialize)]
+struct EmbeddedCheckoutResponse {
+    client_secret: String,
+    session_id: String,
+}
+
+/// The JSON reply for a created session. Hosted keeps today's
+/// `{ checkout_url }` exactly (packs and plans share it).
+pub(crate) fn checkout_session_response(session: CheckoutSession) -> Response {
+    match session {
+        CheckoutSession::Hosted { url } => Json(CheckoutResponse { checkout_url: url }).into_response(),
+        CheckoutSession::Embedded { client_secret, session_id } => {
+            Json(EmbeddedCheckoutResponse { client_secret, session_id }).into_response()
+        }
+    }
+}
+
+/// Create the Checkout Session from a finished form: hosted returns the URL,
+/// embedded returns the session's client secret and id.
+pub(crate) async fn open_checkout_session(
+    checkout: &dyn StripeCheckout,
+    secret_key: &str,
+    form: &[(String, String)],
+    ui_mode: UiMode,
+) -> Result<CheckoutSession, ApiError> {
+    match ui_mode {
+        UiMode::Hosted => checkout
+            .create_checkout_session(secret_key, form)
+            .await
+            .map(|url| CheckoutSession::Hosted { url }),
+        UiMode::Embedded => {
+            let session = checkout.create_checkout_session_object(secret_key, form).await?;
+            let client_secret = session["client_secret"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::Internal("Stripe returned no client secret".to_string()))?;
+            let session_id = session["id"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| ApiError::Internal("Stripe returned no session id".to_string()))?;
+            Ok(CheckoutSession::Embedded {
+                client_secret: client_secret.to_string(),
+                session_id: session_id.to_string(),
+            })
+        }
+    }
+}
+
+/// `GET /api/v1/billing/config`: what Stripe.js needs to mount checkout.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct BillingConfigResponse {
+    publishable_key: String,
+    /// `test` or `live`, from the key prefix.
+    mode: &'static str,
+    payment_method_types: [&'static str; 2],
+}
+
+/// `test` / `live` from a Stripe key prefix (`pk_`, `sk_` or restricted `rk_`).
+fn stripe_key_mode(key: &str, prefixes: &[&str]) -> Option<&'static str> {
+    let key = key.trim();
+    for prefix in prefixes {
+        if key.starts_with(&format!("{prefix}_test_")) {
+            return Some("test");
+        }
+        if key.starts_with(&format!("{prefix}_live_")) {
+            return Some("live");
+        }
+    }
+    None
+}
+
+/// The billing config from the two keys, or `None` when it is not usable:
+/// a missing or malformed key, or a publishable key whose mode differs from
+/// the secret key's (Stripe.js would fail to mount the session).
+fn billing_config_from(publishable_key: Option<&str>, secret_key: Option<&str>) -> Option<BillingConfigResponse> {
+    let publishable_key = publishable_key.map(str::trim).filter(|key| !key.is_empty())?;
+    let mode = stripe_key_mode(publishable_key, &["pk"])?;
+    let secret_mode = stripe_key_mode(secret_key?, &["sk", "rk"])?;
+    if mode != secret_mode {
+        tracing::warn!(publishable = mode, secret = secret_mode, "Stripe publishable and secret keys are in different modes");
+        return None;
+    }
+    Some(BillingConfigResponse {
+        publishable_key: publishable_key.to_string(),
+        mode,
+        payment_method_types: PAYMENT_METHOD_TYPES,
+    })
+}
+
+async fn billing_config() -> Response {
+    let publishable_key = std::env::var("STRIPE_PUBLISHABLE_KEY").ok();
+    let secret_key = std::env::var("STRIPE_SECRET_KEY").ok();
+    match billing_config_from(publishable_key.as_deref(), secret_key.as_deref()) {
+        Some(config) => Json(config).into_response(),
+        None => billing_not_configured_response(),
+    }
 }
 
 /// Optional `?return_url=` on checkout, subscribe and portal: the page Stripe
@@ -163,6 +381,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/billing/packs", get(list_packs))
         .route("/api/v1/billing/checkout", post(create_checkout))
+        .route("/api/v1/billing/config", get(billing_config))
 }
 
 /// The credit pack catalog as `GET /api/v1/billing/packs` returns it. The
@@ -240,8 +459,9 @@ async fn create_checkout(
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
-    let (success_url, cancel_url) = match checkout_return_urls(&return_to) {
-        Ok(urls) => urls,
+    let ui_mode = request.ui_mode.unwrap_or_default();
+    let checkout_return = match CheckoutReturn::for_mode(ui_mode, &return_to) {
+        Ok(checkout_return) => checkout_return,
         Err(error) => return error.into_response(),
     };
     let checkout = ReqwestStripeCheckout::new();
@@ -264,19 +484,18 @@ async fn create_checkout(
         }
     };
 
-    match create_checkout_url(
+    match create_pack_checkout(
         &checkout,
         &secret_key,
         pack,
         &user_id,
         organization_id.as_deref(),
         customer_id.as_deref(),
-        &success_url,
-        &cancel_url,
+        &checkout_return,
     )
     .await
     {
-        Ok(url) => {
+        Ok(session) => {
             crate::services::audit::write_audit_log(
                 &state.db,
                 crate::services::audit::AuditEvent {
@@ -288,12 +507,13 @@ async fn create_checkout(
                     details: Some(serde_json::json!({
                         "pack_id": request.pack_id,
                         "credits_usd": pack.credits_usd,
+                        "ui_mode": ui_mode.as_str(),
                     })),
                     success: true,
                 },
             )
             .await;
-            Json(CheckoutResponse { checkout_url: url }).into_response()
+            checkout_session_response(session)
         }
         Err(error) => billing_upstream_error_response(&error),
     }
@@ -346,6 +566,18 @@ pub trait StripeCheckout: Send + Sync {
         form: &[(String, String)],
     ) -> Result<String, ApiError>;
 
+    /// Create a Checkout Session and return the whole session object. Embedded
+    /// checkout needs its `client_secret` and `id` (a hosted session's `url` is
+    /// null there). Defaults to [`StripeCheckout::post_object`] on
+    /// `/v1/checkout/sessions`.
+    async fn create_checkout_session_object(
+        &self,
+        secret_key: &str,
+        form: &[(String, String)],
+    ) -> Result<Value, ApiError> {
+        self.post_object(secret_key, "/v1/checkout/sessions", None, form).await
+    }
+
     /// Create a Billing Portal Session from the pre-encoded form fields and return the portal URL.
     async fn create_billing_portal_session(
         &self,
@@ -366,7 +598,8 @@ pub trait StripeCheckout: Send + Sync {
     }
 
     /// `POST https://api.stripe.com{path}` with form fields; returns the created object.
-    /// Used only by the Platform API billing plan and meter reporter, which run
+    /// Used by embedded checkout sessions ([`StripeCheckout::create_checkout_session_object`])
+    /// and by the Platform API billing plan and meter reporter, which run
     /// only when their off-by-default flags are on (`platform_v1::stripe_plan`).
     async fn post_object(
         &self,
@@ -391,19 +624,19 @@ pub trait StripeCheckout: Send + Sync {
     }
 }
 
-/// Build the Checkout Session for a validated pack purchase and return its hosted URL.
-async fn create_checkout_url(
+/// Build the Checkout Session for a validated pack purchase: the hosted URL,
+/// or the embedded client secret and session id.
+async fn create_pack_checkout(
     checkout: &dyn StripeCheckout,
     secret_key: &str,
     pack: &CreditPack,
     clerk_user_id: &str,
     organization_id: Option<&str>,
     customer_id: Option<&str>,
-    success_url: &str,
-    cancel_url: &str,
-) -> Result<String, ApiError> {
-    let form = checkout_form_params(pack, clerk_user_id, organization_id, customer_id, success_url, cancel_url);
-    checkout.create_checkout_session(secret_key, &form).await
+    checkout_return: &CheckoutReturn,
+) -> Result<CheckoutSession, ApiError> {
+    let form = checkout_form_params(pack, clerk_user_id, organization_id, customer_id, checkout_return);
+    open_checkout_session(checkout, secret_key, &form, checkout_return.ui_mode()).await
 }
 
 /// Form fields for POST /v1/checkout/sessions: one payment-mode line item at the pack price, with the
@@ -420,17 +653,14 @@ fn checkout_form_params(
     clerk_user_id: &str,
     organization_id: Option<&str>,
     customer_id: Option<&str>,
-    success_url: &str,
-    cancel_url: &str,
+    checkout_return: &CheckoutReturn,
 ) -> Vec<(String, String)> {
-    let mut form = vec![
-        ("mode".to_string(), "payment".to_string()),
-        // Pay-now methods only, as for plans: credits are granted on payment,
-        // so no buy-now-pay-later or delayed methods.
-        ("payment_method_types[0]".to_string(), "card".to_string()),
-        ("payment_method_types[1]".to_string(), "link".to_string()),
-        ("success_url".to_string(), success_url.to_string()),
-        ("cancel_url".to_string(), cancel_url.to_string()),
+    let mut form = vec![("mode".to_string(), "payment".to_string())];
+    // Pay-now methods only, as for plans: credits are granted on payment,
+    // so no buy-now-pay-later or delayed methods.
+    form.extend(payment_method_fields());
+    form.extend(checkout_return.form_fields());
+    form.extend([
         (
             "line_items[0][price_data][currency]".to_string(),
             "usd".to_string(),
@@ -452,7 +682,7 @@ fn checkout_form_params(
             "metadata[allternit_credits_usd]".to_string(),
             format!("{:.2}", pack.credits_usd),
         ),
-    ];
+    ]);
     // The same contract on the PaymentIntent behind the session, so a
     // chargeback (`charge.dispute.created`, which names the intent, not the
     // session) can be traced back to the person. `kind` tells packs apart
@@ -610,6 +840,10 @@ impl StripeCheckout for ReqwestStripeCheckout {
 mod tests {
     use super::*;
 
+    fn hosted(success_url: &str, cancel_url: &str) -> CheckoutReturn {
+        CheckoutReturn::Hosted { success_url: success_url.to_string(), cancel_url: cancel_url.to_string() }
+    }
+
     #[test]
     fn return_url_accepts_allternit_pages_and_rejects_everything_else() {
         assert_eq!(client_return_url(None).unwrap(), None);
@@ -725,7 +959,7 @@ mod tests {
     #[test]
     fn checkout_form_metadata_carries_the_credit_contract() {
         let pack = find_pack("credits_25").unwrap();
-        let form = checkout_form_params(pack, "user_123", Some("org_9"), None, "https://s.example", "https://c.example");
+        let form = checkout_form_params(pack, "user_123", Some("org_9"), None, &hosted("https://s.example", "https://c.example"));
         let field = |key: &str| -> String {
             form.iter()
                 .find(|(k, _)| k == key)
@@ -752,13 +986,13 @@ mod tests {
     #[test]
     fn checkout_form_saves_the_card_when_the_person_has_a_customer() {
         let pack = find_pack("credits_25").unwrap();
-        let form = checkout_form_params(pack, "user_1", None, Some("cus_9"), "s", "c");
+        let form = checkout_form_params(pack, "user_1", None, Some("cus_9"), &hosted("s", "c"));
         assert!(form.contains(&("customer".to_string(), "cus_9".to_string())));
         assert!(form.contains(&(
             "payment_intent_data[setup_future_usage]".to_string(),
             "off_session".to_string()
         )));
-        let without = checkout_form_params(pack, "user_1", None, None, "s", "c");
+        let without = checkout_form_params(pack, "user_1", None, None, &hosted("s", "c"));
         assert!(without
             .iter()
             .all(|(key, _)| key != "customer" && key != "payment_intent_data[setup_future_usage]"));
@@ -772,7 +1006,7 @@ mod tests {
     #[test]
     fn checkout_form_omits_org_metadata_without_an_organization() {
         let pack = find_pack("credits_10").unwrap();
-        let form = checkout_form_params(pack, "user_123", None, None, "s", "c");
+        let form = checkout_form_params(pack, "user_123", None, None, &hosted("s", "c"));
         assert!(
             form.iter().all(|(key, _)| key != "metadata[allternit_org_id]"
                 && key != "payment_intent_data[metadata][allternit_org_id]"),
@@ -797,7 +1031,7 @@ mod tests {
             ("credits_100", "100.00"),
         ] {
             let pack = find_pack(id).unwrap();
-            let form = checkout_form_params(pack, "user_1", None, None, "s", "c");
+            let form = checkout_form_params(pack, "user_1", None, None, &hosted("s", "c"));
             let credits = form
                 .iter()
                 .find(|(k, _)| k == "metadata[allternit_credits_usd]")
@@ -840,10 +1074,13 @@ mod tests {
             last_secret: std::sync::Mutex::new(None),
         };
         let pack = find_pack("credits_50").unwrap();
-        let url = create_checkout_url(&checkout, "sk_test_1", pack, "user_9", Some("org_9"), None, "https://s", "https://c")
+        let url = create_pack_checkout(&checkout, "sk_test_1", pack, "user_9", Some("org_9"), None, &hosted("https://s", "https://c"))
             .await
             .unwrap();
-        assert_eq!(url, "https://checkout.stripe.com/c/pay/test_session");
+        assert_eq!(
+            url,
+            CheckoutSession::Hosted { url: "https://checkout.stripe.com/c/pay/test_session".to_string() }
+        );
         let form = checkout.last_form.lock().unwrap().clone().unwrap();
         assert_eq!(
             *checkout.last_secret.lock().unwrap(),
@@ -878,7 +1115,7 @@ mod tests {
     #[tokio::test]
     async fn checkout_creation_propagates_stripe_errors() {
         let pack = find_pack("credits_10").unwrap();
-        let error = create_checkout_url(&FailingCheckout, "sk_test_1", pack, "user_9", None, None, "s", "c")
+        let error = create_pack_checkout(&FailingCheckout, "sk_test_1", pack, "user_9", None, None, &hosted("s", "c"))
             .await
             .unwrap_err();
         assert!(error.to_string().contains("stripe declined"));
@@ -888,5 +1125,230 @@ mod tests {
     fn default_urls_point_at_the_platform_billing_page() {
         assert_eq!(DEFAULT_SUCCESS_URL, "https://platform.allternit.com/billing?checkout=success");
         assert_eq!(DEFAULT_CANCEL_URL, "https://platform.allternit.com/billing?checkout=cancelled");
+    }
+
+    /// Fake Stripe for embedded sessions: records the form sent to
+    /// `/v1/checkout/sessions` and answers the session object Stripe returns
+    /// for `ui_mode=embedded` (a client secret, no hosted URL).
+    struct EmbeddedStripe {
+        form: std::sync::Mutex<Option<Vec<(String, String)>>>,
+        path: std::sync::Mutex<Option<String>>,
+        session: Value,
+    }
+
+    impl EmbeddedStripe {
+        fn new() -> Self {
+            Self {
+                form: std::sync::Mutex::new(None),
+                path: std::sync::Mutex::new(None),
+                session: serde_json::json!({
+                    "id": "cs_test_embedded_1",
+                    "object": "checkout.session",
+                    "client_secret": "cs_test_embedded_1_secret_abc",
+                    "url": null,
+                    "ui_mode": "embedded",
+                }),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StripeCheckout for EmbeddedStripe {
+        async fn create_checkout_session(&self, _secret_key: &str, _form: &[(String, String)]) -> Result<String, ApiError> {
+            Err(ApiError::Internal("an embedded session must not ask Stripe for a hosted URL".to_string()))
+        }
+
+        async fn create_billing_portal_session(&self, _secret_key: &str, _form: &[(String, String)]) -> Result<String, ApiError> {
+            unimplemented!("portal sessions are stubbed in billing_subscriptions tests")
+        }
+
+        async fn post_object(
+            &self,
+            _secret_key: &str,
+            path: &str,
+            _idempotency_key: Option<&str>,
+            form: &[(String, String)],
+        ) -> Result<Value, ApiError> {
+            *self.path.lock().unwrap() = Some(path.to_string());
+            *self.form.lock().unwrap() = Some(form.to_vec());
+            Ok(self.session.clone())
+        }
+    }
+
+    async fn response_json(response: Response) -> (StatusCode, Value) {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    fn embedded() -> CheckoutReturn {
+        CheckoutReturn::for_mode(
+            UiMode::Embedded,
+            &ReturnTo { return_url: Some("https://ai.allternit.com/settings/billing".to_string()) },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn request_ui_mode_defaults_to_hosted_and_rejects_unknown_modes() {
+        let absent: CheckoutRequest = serde_json::from_str(r#"{"pack_id":"credits_10"}"#).unwrap();
+        assert_eq!(absent.ui_mode.unwrap_or_default(), UiMode::Hosted);
+        let null: CheckoutRequest = serde_json::from_str(r#"{"pack_id":"credits_10","ui_mode":null}"#).unwrap();
+        assert_eq!(null.ui_mode.unwrap_or_default(), UiMode::Hosted);
+        let hosted: CheckoutRequest = serde_json::from_str(r#"{"pack_id":"credits_10","ui_mode":"hosted"}"#).unwrap();
+        assert_eq!(hosted.ui_mode, Some(UiMode::Hosted));
+        let embedded: CheckoutRequest = serde_json::from_str(r#"{"pack_id":"credits_10","ui_mode":"embedded"}"#).unwrap();
+        assert_eq!(embedded.ui_mode, Some(UiMode::Embedded));
+        for bad in ["custom", "EMBEDDED", "elements", ""] {
+            let body = format!(r#"{{"pack_id":"credits_10","ui_mode":"{bad}"}}"#);
+            assert!(serde_json::from_str::<CheckoutRequest>(&body).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_customer_in_the_request_body_never_reaches_stripe() {
+        // A client tries to bill someone else's Stripe customer.
+        let request: CheckoutRequest = serde_json::from_str(
+            r#"{"pack_id":"credits_10","ui_mode":"embedded","customer":"cus_victim","customer_email":"x@example.com","customer_id":"cus_victim"}"#,
+        )
+        .unwrap();
+        let pack = find_pack(&request.pack_id).unwrap();
+        let checkout_return = CheckoutReturn::for_mode(request.ui_mode.unwrap_or_default(), &ReturnTo::default()).unwrap();
+        let stripe = EmbeddedStripe::new();
+        // No server-side customer: the form has none at all.
+        create_pack_checkout(&stripe, "sk_test_1", pack, "user_1", None, None, &checkout_return).await.unwrap();
+        let form = stripe.form.lock().unwrap().clone().unwrap();
+        assert!(form.iter().all(|(key, value)| !key.starts_with("customer") && !value.contains("cus_victim")));
+        // The signed-in account's customer is the only one sent.
+        create_pack_checkout(&stripe, "sk_test_1", pack, "user_1", None, Some("cus_own"), &checkout_return).await.unwrap();
+        let form = stripe.form.lock().unwrap().clone().unwrap();
+        let customers: Vec<&str> = form.iter().filter(|(key, _)| key == "customer").map(|(_, value)| value.as_str()).collect();
+        assert_eq!(customers, vec!["cus_own"]);
+        assert!(form.iter().all(|(_, value)| !value.contains("cus_victim")));
+    }
+
+    #[tokio::test]
+    async fn embedded_pack_checkout_returns_the_client_secret_and_session_id() {
+        let stripe = EmbeddedStripe::new();
+        let pack = find_pack("credits_25").unwrap();
+        let session = create_pack_checkout(&stripe, "sk_test_1", pack, "user_7", Some("org_7"), Some("cus_7"), &embedded())
+            .await
+            .unwrap();
+        assert_eq!(
+            session,
+            CheckoutSession::Embedded {
+                client_secret: "cs_test_embedded_1_secret_abc".to_string(),
+                session_id: "cs_test_embedded_1".to_string(),
+            }
+        );
+        assert_eq!(stripe.path.lock().unwrap().as_deref(), Some("/v1/checkout/sessions"));
+        let form = stripe.form.lock().unwrap().clone().unwrap();
+        let field = |key: &str| form.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        assert_eq!(field("ui_mode").as_deref(), Some("embedded"));
+        assert_eq!(
+            field("return_url").as_deref(),
+            Some("https://ai.allternit.com/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}")
+        );
+        assert_eq!(field("redirect_on_completion").as_deref(), Some("if_required"));
+        assert_eq!(field("success_url"), None, "Stripe rejects success_url on embedded sessions");
+        assert_eq!(field("cancel_url"), None, "Stripe rejects cancel_url on embedded sessions");
+        // Card + Link only, and the same credit contract as hosted.
+        assert_eq!(field("payment_method_types[0]").as_deref(), Some("card"));
+        assert_eq!(field("payment_method_types[1]").as_deref(), Some("link"));
+        assert_eq!(field("payment_method_types[2]"), None, "no wallets or other methods");
+        assert_eq!(field("mode").as_deref(), Some("payment"));
+        assert_eq!(field("metadata[clerk_user_id]").as_deref(), Some("user_7"));
+        assert_eq!(field("metadata[allternit_credits_usd]").as_deref(), Some("25.00"));
+        assert_eq!(field("metadata[allternit_org_id]").as_deref(), Some("org_7"));
+        assert_eq!(field("customer").as_deref(), Some("cus_7"));
+        assert_eq!(field("payment_intent_data[setup_future_usage]").as_deref(), Some("off_session"));
+
+        let (status, body) = response_json(checkout_session_response(session)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!({ "client_secret": "cs_test_embedded_1_secret_abc", "session_id": "cs_test_embedded_1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn hosted_pack_checkout_reply_is_unchanged() {
+        let checkout = RecordingCheckout {
+            last_form: std::sync::Mutex::new(None),
+            last_secret: std::sync::Mutex::new(None),
+        };
+        let pack = find_pack("credits_10").unwrap();
+        let checkout_return = CheckoutReturn::for_mode(UiMode::Hosted, &ReturnTo::default()).unwrap();
+        let session = create_pack_checkout(&checkout, "sk_test_1", pack, "user_1", None, None, &checkout_return)
+            .await
+            .unwrap();
+        let form = checkout.last_form.lock().unwrap().clone().unwrap();
+        assert!(form.iter().all(|(key, _)| key != "ui_mode" && key != "return_url" && key != "redirect_on_completion"));
+        assert!(form.iter().any(|(key, _)| key == "success_url"));
+        assert!(form.iter().any(|(key, _)| key == "cancel_url"));
+        let (status, body) = response_json(checkout_session_response(session)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({ "checkout_url": "https://checkout.stripe.com/c/pay/test_session" }));
+    }
+
+    #[tokio::test]
+    async fn embedded_checkout_without_a_client_secret_is_an_error() {
+        let mut stripe = EmbeddedStripe::new();
+        stripe.session = serde_json::json!({ "id": "cs_test_1", "url": "https://checkout.stripe.com/x" });
+        let pack = find_pack("credits_10").unwrap();
+        let error = create_pack_checkout(&stripe, "sk_test_1", pack, "user_1", None, None, &embedded())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no client secret"));
+    }
+
+    #[test]
+    fn embedded_return_url_adds_the_session_placeholder_once() {
+        assert_eq!(
+            embedded_return_url("https://platform.allternit.com/billing?checkout=success"),
+            "https://platform.allternit.com/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}"
+        );
+        assert_eq!(
+            embedded_return_url("https://platform.allternit.com/billing"),
+            "https://platform.allternit.com/billing?session_id={CHECKOUT_SESSION_ID}"
+        );
+        assert_eq!(
+            embedded_return_url("https://x.example/done?id={CHECKOUT_SESSION_ID}"),
+            "https://x.example/done?id={CHECKOUT_SESSION_ID}"
+        );
+        // A client page outside the allowed hosts is still refused in embedded mode.
+        assert!(CheckoutReturn::for_mode(
+            UiMode::Embedded,
+            &ReturnTo { return_url: Some("https://evil.example.com/".to_string()) }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn billing_config_reports_the_key_mode_and_card_plus_link() {
+        let test = billing_config_from(Some("pk_test_abc"), Some("sk_test_xyz")).unwrap();
+        assert_eq!(
+            serde_json::to_value(&test).unwrap(),
+            serde_json::json!({ "publishable_key": "pk_test_abc", "mode": "test", "payment_method_types": ["card", "link"] })
+        );
+        assert_eq!(billing_config_from(Some(" pk_test_abc "), Some("rk_test_xyz")).unwrap().publishable_key, "pk_test_abc");
+        assert_eq!(billing_config_from(Some("pk_live_abc"), Some("sk_live_xyz")).unwrap().mode, "live");
+    }
+
+    #[test]
+    fn billing_config_is_unavailable_when_keys_are_missing_malformed_or_mismatched() {
+        for (publishable, secret) in [
+            (None, Some("sk_test_xyz")),
+            (Some(""), Some("sk_test_xyz")),
+            (Some("pk_test_abc"), None),
+            (Some("sk_test_abc"), Some("sk_test_xyz")),
+            (Some("pk_abc"), Some("sk_test_xyz")),
+            (Some("pk_test_abc"), Some("pk_test_xyz")),
+            (Some("pk_test_abc"), Some("sk_live_xyz")),
+            (Some("pk_live_abc"), Some("sk_test_xyz")),
+        ] {
+            assert!(billing_config_from(publishable, secret).is_none(), "{publishable:?} / {secret:?}");
+        }
     }
 }
