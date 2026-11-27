@@ -104,6 +104,22 @@ export function loadRuntimeSnapshot(): RuntimeSnapshot {
   return snapshot as unknown as RuntimeSnapshot
 }
 
+let overlay: ((snapshot: RuntimeSnapshot) => RuntimeSnapshot) | undefined
+
+/** picker-catalog.ts installs the live overlay here once the catalog has loaded. */
+export function setSnapshotOverlay(fn: ((snapshot: RuntimeSnapshot) => RuntimeSnapshot) | undefined): void {
+  overlay = fn
+}
+
+/**
+ * The snapshot with the live catalog over it once that has loaded, the
+ * snapshot alone before (and when offline). Synchronous: callers that read
+ * at module load use `loadRuntimeSnapshot`, everyone else reads here.
+ */
+export function currentRuntimeSnapshot(): RuntimeSnapshot {
+  return overlay ? overlay(loadRuntimeSnapshot()) : loadRuntimeSnapshot()
+}
+
 const DATA = loadRuntimeSnapshot()
 
 export const RUNTIME_CATALOG_VERSION: number = DATA.source.catalogVersion

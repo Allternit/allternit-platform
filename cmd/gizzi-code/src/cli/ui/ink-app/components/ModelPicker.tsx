@@ -57,10 +57,10 @@ function loginCommandFor(providerId: string | undefined): string | undefined {
   try {
     const {
       findSubprocessSpec,
-      CLI_CATALOG
+      cliCatalog
     } = require('../../../../runtime/providers/discovery/subprocess.js') as typeof import('../../../../runtime/providers/discovery/subprocess.js');
     const spec = findSubprocessSpec(providerId);
-    const tool = CLI_CATALOG.find(t => t.id === providerId) as {
+    const tool = cliCatalog().find(t => t.id === providerId) as {
       login?: unknown;
     } | undefined;
     const login = Array.isArray(tool?.login) ? tool!.login.filter((a): a is string => typeof a === 'string') : [];

@@ -6,13 +6,14 @@
  * Zero config — if Ollama or LM Studio is running, it appears in /model.
  *
  * Adding a new local server:
- *   Append to LOCAL_SERVERS below. Port, probe path, and model fallback
- *   are the only things needed.
+ *   Append to LOCAL_SERVERS below. Port and probe path are the only things
+ *   needed. A server shows only the models it lists itself: no placeholder
+ *   rows for a server that is up but lists nothing.
  */
 
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
 
-interface LocalServerSpec {
+export interface LocalServerSpec {
   id: string
   name: string
   port: number
@@ -20,8 +21,6 @@ interface LocalServerSpec {
   probe: string
   /** Whether the server has a real /v1/models endpoint */
   modelsEndpoint: boolean
-  /** Fallback models if /v1/models is not available */
-  fallbackModels: DiscoveredModel[]
 }
 
 const LOCAL_SERVERS: LocalServerSpec[] = [
@@ -31,7 +30,6 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 11434,
     probe: "/api/tags",
     modelsEndpoint: false, // uses /api/tags, not /v1/models
-    fallbackModels: [{ id: "llama3.2", name: "Llama 3.2 (Ollama)", context: 128000, output: 8192 }],
   },
   {
     id: "lmstudio",
@@ -39,7 +37,6 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 1234,
     probe: "/v1/models",
     modelsEndpoint: true,
-    fallbackModels: [{ id: "local-model", name: "LM Studio model", context: 32768, output: 4096 }],
   },
   {
     id: "jan",
@@ -47,7 +44,6 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 1337,
     probe: "/v1/models",
     modelsEndpoint: true,
-    fallbackModels: [{ id: "local-model", name: "Jan model", context: 32768, output: 4096 }],
   },
   {
     id: "vllm",
@@ -55,15 +51,13 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 8000,
     probe: "/v1/models",
     modelsEndpoint: true,
-    fallbackModels: [{ id: "local-model", name: "vLLM model", context: 32768, output: 8192 }],
   },
   {
     id: "llamacpp",
     name: "llama.cpp server (local)",
     port: 8080,
-    probe: "/health",
-    modelsEndpoint: false,
-    fallbackModels: [{ id: "local-model", name: "llama.cpp model", context: 32768, output: 4096 }],
+    probe: "/v1/models", // llama-server serves the OpenAI list; /health said "up" and nothing else
+    modelsEndpoint: true,
   },
   {
     id: "textgen-webui",
@@ -71,7 +65,6 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 5000,
     probe: "/v1/models",
     modelsEndpoint: true,
-    fallbackModels: [{ id: "local-model", name: "TextGen model", context: 32768, output: 4096 }],
   },
   {
     id: "gpt4all",
@@ -79,7 +72,6 @@ const LOCAL_SERVERS: LocalServerSpec[] = [
     port: 4891,
     probe: "/v1/models",
     modelsEndpoint: true,
-    fallbackModels: [{ id: "local-model", name: "GPT4All model", context: 32768, output: 4096 }],
   },
 ]
 
@@ -114,17 +106,17 @@ async function probeServer(spec: LocalServerSpec): Promise<DiscoveredModel[] | n
       return list.map((m) => ({ id: m.id, name: m.id, context: 32768, output: 4096 }))
     }
 
-    // Health-only probe — just confirm it's up, use fallback model list
-    return spec.fallbackModels
+    // Up but no way to list models: offer none.
+    return []
   } catch {
     return null
   }
 }
 
-export async function discoverLocalProviders(): Promise<DiscoveredProvider[]> {
+export async function discoverLocalProviders(servers: LocalServerSpec[] = LOCAL_SERVERS): Promise<DiscoveredProvider[]> {
   // LOCAL_SERVERS order, not probe-finish order.
   const found = await Promise.all(
-    LOCAL_SERVERS.map(async (spec): Promise<DiscoveredProvider | undefined> => {
+    servers.map(async (spec): Promise<DiscoveredProvider | undefined> => {
       const listed = await probeServer(spec)
       if (!listed || listed.length === 0) return
       // The server's own order; no default — the server doesn't name one.
@@ -141,4 +133,29 @@ export async function discoverLocalProviders(): Promise<DiscoveredProvider[]> {
   )
 
   return found.filter((p): p is DiscoveredProvider => p !== undefined)
+}
+
+/** localhost / 127.0.0.1 / ::1: a server the user runs on this machine. */
+export function isLocalBaseURL(url: string | undefined): boolean {
+  if (!url) return false
+  try {
+    const host = new URL(url).hostname
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]"
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Does the OpenAI-compatible server at `baseURL` (a config `options.baseURL`,
+ * usually ending in /v1) answer within 1 s? Any HTTP answer counts as up;
+ * only a refused connection or a timeout is offline.
+ */
+export async function localServerAnswers(baseURL: string, timeoutMs = 1000): Promise<boolean> {
+  try {
+    await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { signal: AbortSignal.timeout(timeoutMs) })
+    return true
+  } catch {
+    return false
+  }
 }

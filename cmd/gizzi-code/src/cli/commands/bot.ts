@@ -45,7 +45,7 @@ import {
   type BotBrainLike,
   type RuntimeEntry,
 } from "@/runtime/providers/discovery/runtime-registry"
-import { CLI_CATALOG } from "@/runtime/providers/discovery/subprocess"
+import { cliCatalog } from "@/runtime/providers/discovery/subprocess"
 import {
   ensureCapabilityEpoch,
   openCanonicalChat,
@@ -149,7 +149,7 @@ export function brainFits(r: RuntimeEntry, provider: string): boolean {
  * CLI's default model, which is the runtime's own sign-in.
  */
 export function firstFittingBrain(r: RuntimeEntry): string | undefined {
-  const tool = r.tool ? CLI_CATALOG.find((t) => t.id === r.tool) : undefined
+  const tool = r.tool ? cliCatalog().find((t) => t.id === r.tool) : undefined
   const model = tool?.models?.find((m) => m.default) ?? tool?.models?.[0]
   return tool && model ? `${tool.id}/${model.id}` : undefined
 }
@@ -166,7 +166,7 @@ function brainProvider(brain: string): string {
 function deriveAccess(r: RuntimeEntry, provider: string): AccessKind | undefined {
   let access: AccessKind | undefined
   if (provider === "allternit" || provider === "allternit-cloud") access = "credits"
-  else if (CLI_CATALOG.some((t) => t.id === provider || (t.aliases ?? []).includes(provider))) access = "plan"
+  else if (cliCatalog().some((t) => t.id === provider || (t.aliases ?? []).includes(provider))) access = "plan"
   else if (["ollama", "lmstudio", "llamacpp"].includes(provider)) access = "local"
   else if (r.adapter.kind === "native") access = "key"
   return access && r.access.includes(access) ? access : undefined

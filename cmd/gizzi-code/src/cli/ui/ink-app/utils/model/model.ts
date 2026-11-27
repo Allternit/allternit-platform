@@ -362,7 +362,7 @@ function catalogFirstRankedDefault(): ModelName | null {
     () => require('../../../../../runtime/providers/discovery/subprocess.js') as SubprocessModule,
   )
   if (!sub) return null
-  const tool = sub.CLI_CATALOG
+  const tool = sub.cliCatalog()
     .filter(t => !t.custom && t.defaultRank !== undefined && (t.models?.length ?? 0) > 0)
     .sort((a, b) => a.defaultRank! - b.defaultRank!)[0]
   if (!tool) return null
