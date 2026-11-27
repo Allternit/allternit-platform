@@ -70,14 +70,25 @@ final class CodeTerminalStore: ObservableObject {
     /// id. Nothing new starts on the computer. False when no computer is
     /// reached over the relay (only the terminal service lists sessions).
     @discardableResult
-    func attach(sessionId: String, title: String) async -> Bool {
+    /// `runtimeId` names the computer outright (a chat bound to it, Start
+    /// anywhere) instead of the app's current one; the relay choice stays.
+    func attach(sessionId: String, title: String, runtimeId: String? = nil) async -> Bool {
         if let tile = tiles.first(where: { $0.session.ptyId == sessionId }) {
             selectedId = tile.id
             return true
         }
-        await InstanceStore.shared.refreshIfNeeded()
-        guard let resolved = await InstanceConnection.resolve(from: InstanceStore.shared), resolved.isRelay else {
-            return false
+        let baseURL: URL
+        let instanceName: String?
+        if let runtimeId {
+            baseURL = RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId)
+            instanceName = RuntimeRelayStore.shared.devices.first(where: { $0.id == runtimeId })?.displayName
+        } else {
+            await InstanceStore.shared.refreshIfNeeded()
+            guard let resolved = await InstanceConnection.resolve(from: InstanceStore.shared), resolved.isRelay else {
+                return false
+            }
+            baseURL = resolved.baseURL
+            instanceName = resolved.instanceName
         }
         isOffline = false
         if tiles.count >= Self.maxTiles, let oldest = tiles.first {
@@ -87,8 +98,8 @@ final class CodeTerminalStore: ObservableObject {
             agentNames[oldest.id] = nil
             oldest.session.stop()
         }
-        let session = PtySession(service: TerminalServiceClient(baseURL: resolved.baseURL),
-                                 attachedInstanceName: resolved.instanceName,
+        let session = PtySession(service: TerminalServiceClient(baseURL: baseURL),
+                                 attachedInstanceName: instanceName,
                                  sessionId: sessionId)
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let tile = Tile(name: name.isEmpty ? "Terminal \(nextNumber)" : name, session: session)

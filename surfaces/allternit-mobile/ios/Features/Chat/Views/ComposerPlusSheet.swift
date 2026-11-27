@@ -39,6 +39,10 @@ struct ComposerPlusSheet: View {
     @ObservedObject private var chipStore = ComputerChipStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var startStore = SessionStartStore.shared
+    @ObservedObject private var chatRuntime = ChatRuntimeStore.shared
+    @State private var otherFolderPath = ""
+    @State private var isTypingFolder = false
     @ReducedMotion private var reduceMotion
     @Environment(\.dismiss) private var dismiss
 
@@ -231,6 +235,7 @@ struct ComposerPlusSheet: View {
         case .root: rootPage
         case .permission: permissionPage
         case .computer: computerPage
+        case .folder: folderPage
         case .project: projectPage
         }
     }
@@ -330,7 +335,7 @@ struct ComposerPlusSheet: View {
                     PlusRow(
                         icon: "checkmark.shield",
                         title: "Permission",
-                        value: permissionStore.mode(for: sessionId).shortLabel,
+                        value: permissionRowValue,
                         chevron: true
                     ) { go(.permission) }
                 } else {
@@ -340,12 +345,19 @@ struct ComposerPlusSheet: View {
                 }
                 PlusDivider()
                 PlusRow(
-                    icon: "desktopcomputer",
+                    icon: startStore.row(for: startStore.pickedRuntimeId(for: sessionId))?.icon ?? "desktopcomputer",
                     title: "Computer",
-                    value: computerRowValue(chipStore.state, activeName: relay.activeDevice?.displayName),
+                    value: computerValue,
                     chevron: true,
                     showsDot: chipStore.showsDot
                 ) { go(.computer) }
+                // Start anywhere: the folder the next message runs in, once a computer is picked.
+                if startStore.pickedRuntimeId(for: sessionId) != nil {
+                    PlusDivider()
+                    PlusRow(icon: "folder.badge.gearshape", title: "Folder",
+                            value: startStore.effectiveFolder?.displayName ?? "Choose",
+                            chevron: true, testId: "plus-sheet-folder") { go(.folder) }
+                }
                 PlusDivider()
                 PlusRow(icon: "folder", title: "Project", value: selectedProjectTitle, chevron: true) { go(.project) }
             }
@@ -479,7 +491,7 @@ struct ComposerPlusSheet: View {
     private var permissionPage: some View {
         VStack(alignment: .leading, spacing: 10) {
             PlusGroup {
-                let current = permissionStore.mode(for: sessionId)
+                let current = effectivePermission
                 ForEach(Array(ChatPermissionMode.allCases.enumerated()), id: \.element) { index, option in
                     if index > 0 { PlusDivider() }
                     Button(action: {
@@ -513,7 +525,7 @@ struct ComposerPlusSheet: View {
                     .accessibilityAddTraits(option == current ? [.isSelected] : [])
                 }
             }
-            Text(sessionId == nil ? "Applies when this chat starts." : "Applies to this chat.")
+            Text(computerDefaultMode != nil ? "A change here is for this chat only." : sessionId == nil ? "Applies when this chat starts." : "Applies to this chat.")
                 .font(.system(size: 12))
                 .foregroundColor(Color("TextSecondary"))
                 .padding(.horizontal, 6)
@@ -572,30 +584,16 @@ struct ComposerPlusSheet: View {
                 }
             }
 
-            PlusGroup {
-                if relay.devices.isEmpty {
-                    if relay.isLoading {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                    } else {
-                        PlusPickRow(icon: "desktopcomputer", title: "No computer",
-                                    subtitle: "Plan chats work without one", isSelected: true) {}
-                    }
-                } else {
-                    PlusPickRow(icon: "sparkles", title: "Automatic",
-                                subtitle: "Your default computer, else the first one online",
-                                isSelected: relay.selectedRuntimeId == nil) { pickComputer(nil) }
-                    ForEach(relay.devices) { device in
-                        PlusDivider()
-                        PlusPickRow(
-                            icon: device.isWakeable ? "cloud" : "desktopcomputer",
-                            title: device.displayName,
-                            subtitle: computerStatusLabel(status: device.status, wakeable: device.isWakeable),
-                            isSelected: relay.selectedRuntimeId == device.id
-                        ) { pickComputer(device.id) }
-                    }
+            StartDeviceList(
+                selected: startStore.pick(for: sessionId),
+                folderPath: startStore.effectiveFolderPath,
+                onSelect: { pickComputer($0) },
+                onUseCloud: { id, git in
+                    startStore.useCloud(runtimeId: id, git: git, chatId: sessionId)
+                    chipStore.restore()
+                    returnToRoot()
                 }
-            }
+            )
 
             PlusGroup {
                 PlusRow(icon: "plus", title: "Add a computer", chevron: true) { isConnectComputerPresented = true }
@@ -612,10 +610,110 @@ struct ComposerPlusSheet: View {
         .task { await relay.refresh() }
     }
 
-    private func pickComputer(_ id: String?) {
-        Haptics.selection()
-        relay.select(id)
+    /// The pick is for this chat only (the new-chat screen when no chat yet).
+    private func pickComputer(_ pick: StartPick) {
+        startStore.choose(pick, chatId: sessionId)
         chipStore.restore()
+        returnToRoot()
+    }
+
+    private var computerValue: String {
+        switch startStore.pick(for: sessionId) {
+        case .computer(let id): return startStore.name(of: id) ?? "Computer"
+        case .noComputer: return StartDeviceRows.noComputerTitle
+        case .automatic: return computerRowValue(chipStore.state, activeName: relay.activeDevice?.displayName)
+        }
+    }
+
+    // MARK: - Permission default (Start anywhere D4)
+
+    /// The picked computer's own default, for a chat that has not started.
+    private var computerPicked: Bool { startStore.pickedRuntimeId(for: sessionId) != nil }
+
+    private var computerDefaultMode: ChatPermissionMode? {
+        computerPicked ? startStore.computerDefaultMode(chipRuntimeId: chatRuntime.runtimeId) : nil
+    }
+
+    private var effectivePermission: ChatPermissionMode {
+        computerPicked
+            ? permissionStore.startMode(computerDefault: computerDefaultMode, sessionId: sessionId)
+            : permissionStore.mode(for: sessionId)
+    }
+
+    /// "Ask · default" while the computer's own default applies (no mode is
+    /// sent then); the hand pick once changed for this chat.
+    private var permissionRowValue: String {
+        if computerPicked, permissionStore.explicitMode(for: sessionId) == nil {
+            return computerDefaultMode.map { "\($0.shortLabel) · default" } ?? "Computer default"
+        }
+        return effectivePermission.shortLabel
+    }
+
+    // MARK: - Folder page (Start anywhere)
+
+    /// Recent folders on the picked computer, then a typed path ("Other folder…").
+    private var folderPage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let runtimeId = startStore.pickedRuntimeId
+            let folders = startStore.recentFolders
+            if let runtimeId, startStore.loadingOptions.contains(runtimeId), folders.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 52)
+            }
+            if let runtimeId, let error = startStore.optionsError[runtimeId], folders.isEmpty {
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.horizontal, 6)
+            }
+            PlusGroup {
+                ForEach(Array(folders.enumerated()), id: \.element.id) { index, folder in
+                    if index > 0 { PlusDivider() }
+                    PlusPickRow(icon: "folder", title: folder.name, subtitle: folder.path,
+                                isSelected: startStore.effectiveFolder == .path(folder.path)) {
+                        Haptics.selection()
+                        startStore.pickFolder(.path(folder.path))
+                        returnToRoot()
+                    }
+                }
+                if !folders.isEmpty { PlusDivider() }
+                PlusRow(icon: "ellipsis", title: "Other folder…", chevron: true, testId: "plus-sheet-folder-other") {
+                    isTypingFolder.toggle()
+                }
+            }
+            if isTypingFolder {
+                HStack(spacing: 8) {
+                    TextField("/path/to/folder on this computer", text: $otherFolderPath)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 15))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .accessibilityLabel("Folder path")
+                        .submitLabel(.done)
+                        .onSubmit(useTypedFolder)
+                    Button("Use", action: useTypedFolder)
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(minWidth: 56, minHeight: 44)
+                        .disabled(otherFolderPath.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            Text("Recent folders on \(startStore.name(of: runtimeId) ?? "this computer").")
+                .font(.system(size: 12))
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 6)
+        }
+        .task {
+            if let id = startStore.pickedRuntimeId { await startStore.loadOptions(id) }
+        }
+    }
+
+    private func useTypedFolder() {
+        let path = otherFolderPath.trimmingCharacters(in: .whitespaces)
+        guard !path.isEmpty else { return }
+        Haptics.selection()
+        startStore.pickFolder(.path(path))
+        isTypingFolder = false
         returnToRoot()
     }
 
@@ -806,7 +904,7 @@ struct ComposerPlusSheet: View {
 // MARK: - Grouped list parts (white + neutral fill, never tan)
 
 /// One rounded group of rows (Claude's grouped list).
-private struct PlusGroup<Content: View>: View {
+struct PlusGroup<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -817,7 +915,7 @@ private struct PlusGroup<Content: View>: View {
     }
 }
 
-private struct PlusDivider: View {
+struct PlusDivider: View {
     var body: some View {
         Rectangle()
             .fill(Color("BorderSubtle"))
@@ -827,7 +925,7 @@ private struct PlusDivider: View {
 }
 
 /// Icon, title, an optional value and chevron. The whole row is the button.
-private struct PlusRow: View {
+struct PlusRow: View {
     let icon: String
     let title: String
     var value: String? = nil
@@ -918,7 +1016,7 @@ private struct PlusToggleRow: View {
 }
 
 /// A choice on a sub-page: title, optional subtitle, a check when picked.
-private struct PlusPickRow: View {
+struct PlusPickRow: View {
     let icon: String
     let title: String
     let subtitle: String?

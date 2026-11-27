@@ -17,6 +17,9 @@ struct ChangesetReviewSheet: View {
     /// Invoked after a successful reply so the host view can drop this
     /// request from its pending list immediately, ahead of the next poll.
     var onResolved: (PermissionRequest) -> Void
+    /// Where the answer goes: the app's computer, or a bound chat's own
+    /// computer (Start anywhere, `BoundEngineApprovals`).
+    var client: PermissionClient = .shared
 
     @Environment(\.dismiss) private var dismiss
     @State private var isSubmitting = false
@@ -147,7 +150,7 @@ struct ChangesetReviewSheet: View {
         isSubmitting = true
         errorMessage = nil
         do {
-            try await PermissionClient.shared.reply(requestID: request.id, reply: reply)
+            try await client.reply(requestID: request.id, reply: reply)
             onResolved(request)
             dismiss()
         } catch {

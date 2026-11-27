@@ -17,6 +17,31 @@ final class AgentAskStore: ObservableObject {
 
     private let client: AgentAsksClient
     private var inFlight: Set<String> = []
+    /// Clients for chats bound to one computer (Start anywhere), by runtime id.
+    private var boundClients: [String: AgentAsksClient] = [:]
+
+    /// A chat bound to a Gizzi session on a picked computer: its asks live on
+    /// that computer and show only in that thread, never in the app-wide lists.
+    func isBound(_ sessionId: String?) -> Bool {
+        boundRuntime(sessionId) != nil
+    }
+
+    private func boundRuntime(_ sessionId: String?) -> String? {
+        guard let binding = SessionStartStore.shared.binding(for: sessionId), binding.kind == .engine else { return nil }
+        return binding.runtimeId
+    }
+
+    /// The client for a session: its bound computer's (the same
+    /// `/api/v1/questions` / `/permissions` routes, through the relay), else the app's.
+    private func client(for sessionId: String?) -> AgentAsksClient {
+        guard let runtimeId = boundRuntime(sessionId) else { return client }
+        if let cached = boundClients[runtimeId] { return cached }
+        let relay = RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId)
+        let bound = AgentAsksClient(client: APIClient(baseURL: relay.appendingPathComponent("api/v1"),
+                                                      tokenProvider: { try await AuthManager.shared.getToken() }))
+        boundClients[runtimeId] = bound
+        return bound
+    }
 
     /// Async asks (no waiting turn) per session: kept even when the session
     /// is idle, rebuilt from the pending list on launch and foreground.
@@ -38,11 +63,13 @@ final class AgentAskStore: ObservableObject {
     func refreshAll() async {
         guard let all = try? await client.listQuestions() else { return }
         var bySession: [String: [AgentQuestionRequest]] = [:]
-        for ask in all where !resolvedIds.contains(ask.id) {
+        // Bound threads own their asks: skip them here, keep what their own refresh read.
+        for ask in all where !resolvedIds.contains(ask.id) && !isBound(ask.sessionID) {
             bySession[ask.sessionID, default: []].append(ask)
         }
-        pendingQuestions = bySession
         asyncAsks = bySession.mapValues { $0.filter { $0.isAsync } }.filter { !$0.value.isEmpty }
+        for (session, list) in pendingQuestions where isBound(session) { bySession[session] = list }
+        pendingQuestions = bySession
     }
 
     /// Stream events: `question.asked` adds, `question.replied` / `question.rejected` remove.
@@ -51,7 +78,7 @@ final class AgentAskStore: ObservableObject {
         var list = pendingQuestions[ask.sessionID] ?? []
         if !list.contains(where: { $0.id == ask.id }) { list.append(ask) }
         pendingQuestions[ask.sessionID] = list
-        if ask.isAsync {
+        if ask.isAsync, !isBound(ask.sessionID) {
             var a = asyncAsks[ask.sessionID] ?? []
             if !a.contains(where: { $0.id == ask.id }) { a.append(ask) }
             asyncAsks[ask.sessionID] = a
@@ -85,7 +112,8 @@ final class AgentAskStore: ObservableObject {
     }
 
     func permissions(for sessionId: String?) -> [AgentPermissionAsk] {
-        guard let sessionId else { return [] }
+        // A bound thread shows its approvals in BoundEngineApprovals.
+        guard let sessionId, !isBound(sessionId) else { return [] }
         return (pendingPermissions[sessionId] ?? []).filter { !resolvedIds.contains($0.id) }
     }
 
@@ -95,6 +123,7 @@ final class AgentAskStore: ObservableObject {
         guard !inFlight.contains(sessionId) else { return }
         inFlight.insert(sessionId)
         defer { inFlight.remove(sessionId) }
+        let client = client(for: sessionId)
         if let questions = try? await client.listQuestions(sessionId: sessionId) {
             pendingQuestions[sessionId] = questions
         }
@@ -106,19 +135,19 @@ final class AgentAskStore: ObservableObject {
     // MARK: - Answers
 
     func answer(_ request: AgentQuestionRequest, answers: [AgentAsksClient.ReplyAnswer]) async throws {
-        try await client.replyQuestion(id: request.id, answers: answers)
+        try await client(for: request.sessionID).replyQuestion(id: request.id, answers: answers)
         if request.isAsync { workingSessions.insert(request.sessionID) }
         markResolved(request.id)
     }
 
     func skip(_ request: AgentQuestionRequest) async throws {
-        try await client.rejectQuestion(id: request.id)
+        try await client(for: request.sessionID).rejectQuestion(id: request.id)
         markResolved(request.id)
     }
 
     /// `reply`: "once" | "always" | "reject".
     func reply(_ permission: AgentPermissionAsk, reply: String) async throws {
-        try await client.replyPermission(id: permission.id, reply: reply)
+        try await client(for: permission.sessionID).replyPermission(id: permission.id, reply: reply)
         markResolved(permission.id)
     }
 }

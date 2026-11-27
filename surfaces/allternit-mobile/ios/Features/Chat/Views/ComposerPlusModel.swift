@@ -8,13 +8,14 @@ import Foundation
 /// The pages inside the + sheet. Root is the grouped list; the others push
 /// in from the right with a back button.
 enum ComposerPlusPage: String, CaseIterable, Sendable {
-    case root, permission, computer, project
+    case root, permission, computer, folder, project
 
     var title: String {
         switch self {
         case .root: return "Add to chat"
         case .permission: return "Permission"
         case .computer: return "Computer"
+        case .folder: return "Folder"
         case .project: return "Project"
         }
     }
