@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -16,6 +17,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -79,11 +81,15 @@ fun AciRunGateSheet(
     onStop: () -> Unit,
     onRerun: (AciRerunTarget) -> Unit,
     onDismiss: () -> Unit,
+    /** Typed secret + optional vault name; the sheet clears its field after sending. */
+    onSecret: (String, String?) -> Unit = { _, _ -> },
 ) {
     val c = AllternitTheme.colors
     val activity = LocalContext.current.findActivity()
     var secret by remember(gate.key) { mutableStateOf("") }
     var authFailed by remember(gate.key) { mutableStateOf(false) }
+    var saveToVault by remember(gate.key) { mutableStateOf(false) }
+    var vaultName by remember(gate.key) { mutableStateOf("") }
 
     fun approveWithAuth(scope: String?, reason: String) {
         if (activity == null) { authFailed = true; return }
@@ -127,8 +133,29 @@ fun AciRunGateSheet(
                                 modifier = Modifier.fillMaxWidth().testTag("aciGateSecret"))
                         }
                     }
-                    // Like iOS, the box is for the person to type into the page's own field; it is cleared and never sent.
-                    Primary("Continue", "aciGateContinue") { secret = ""; onContinue() }
+                    if (gate.secret) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Save to vault", color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            Switch(saveToVault, { saveToVault = it }, modifier = Modifier.testTag("aciGateSaveVault"))
+                        }
+                        if (saveToVault) {
+                            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
+                                if (vaultName.isEmpty()) Text("Name", color = c.textTertiary, fontSize = 16.sp)
+                                BasicTextField(vaultName, { vaultName = it }, singleLine = true, textStyle = TextStyle(color = c.textPrimary, fontSize = 16.sp),
+                                    cursorBrush = SolidColor(c.textPrimary), keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                                    modifier = Modifier.fillMaxWidth().testTag("aciGateVaultName"))
+                            }
+                        }
+                        Primary("Send", "aciGateSend") {
+                            val value = secret
+                            val name = if (saveToVault) vaultName.trim() else ""
+                            secret = ""
+                            vaultName = ""
+                            onSecret(value, name.ifEmpty { null })
+                        }
+                    } else {
+                        Primary("Continue", "aciGateContinue", onContinue)
+                    }
                     Destructive("Stop", "aciGateStop", onStop)
                 }
                 is AciRunGate.Blocked -> {

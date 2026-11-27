@@ -285,6 +285,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             ShellModePrefs.save(context, ShellMode.Bots)
             botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot, openSessionId = launch.sessionId)
             page = ShellPage.Home
+        } else if (launch.runId != null && launch.computerId != null) {
+            mode = ShellMode.Aci
+            ShellModePrefs.save(context, ShellMode.Aci)
+            com.allternit.feature.computer.AciNav.openRun(launch.computerId, launch.runId)
+            page = ShellPage.Home
         } else if (launch.tab != null && launch.tab != "settings") {
             if (launch.computerId != null) com.allternit.feature.computer.AciNav.openComputer(launch.computerId)
             launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
@@ -1073,6 +1078,8 @@ internal data class ShellLaunch(
     val sessionId: String? = null,
     /** A computer_alert push or `allternit://computers/<id>`: open that computer's console detail (iOS DeepLink.computerConsole). */
     val computerId: String? = null,
+    /** With [computerId]: the agent browser run a push named; its screen opens in ACI's Agent view. */
+    val runId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

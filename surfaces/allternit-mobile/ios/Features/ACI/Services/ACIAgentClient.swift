@@ -192,13 +192,14 @@ final class ACIAgentClient: @unchecked Sendable {
     /// there is no UI to ask AuthManager. Otherwise the same connection path
     /// as every other `/api/aci/*` call.
     private func send(path: String, runtimeId: String?, bearer: String?,
-                      body: Data? = nil) async throws -> (Data, URLResponse) {
+                      body: Data? = nil, method: String = "POST",
+                      query: [URLQueryItem] = []) async throws -> (Data, URLResponse) {
         let apiRoot = baseURL.deletingLastPathComponent() // .../api
         var request: URLRequest
         if let runtimeId, !runtimeId.isEmpty {
-            request = URLRequest(url: RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId)
-                .appendingPathComponent("api").appendingPathComponent(path))
-            request.httpMethod = "POST"
+            request = URLRequest(url: Self.applying(query, to: RuntimeRelayClient.relayBaseURL(runtimeId: runtimeId)
+                .appendingPathComponent("api").appendingPathComponent(path)))
+            request.httpMethod = method
             request.timeoutInterval = 20
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
@@ -206,10 +207,11 @@ final class ACIAgentClient: @unchecked Sendable {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
         } else if bearer == nil {
-            request = try await client.authorizedRequest(url: url(apiRoot, path), method: "POST")
+            request = try await client.authorizedRequest(
+                url: Self.applying(query, to: url(apiRoot, path)), method: method)
         } else {
-            request = URLRequest(url: url(apiRoot, path))
-            request.httpMethod = "POST"
+            request = URLRequest(url: Self.applying(query, to: url(apiRoot, path)))
+            request.httpMethod = method
             request.timeoutInterval = 20
             request.setValue("Bearer \(bearer ?? "")", forHTTPHeaderField: "Authorization")
         }
@@ -230,6 +232,12 @@ final class ACIAgentClient: @unchecked Sendable {
         }
         try client.validate(response, data: data)
         return (data, response)
+    }
+
+    private static func applying(_ query: [URLQueryItem], to url: URL) -> URL {
+        guard !query.isEmpty, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.queryItems = query
+        return parts.url ?? url
     }
 
     private func url(_ root: URL, _ path: String) -> URL {
@@ -275,6 +283,80 @@ final class ACIAgentClient: @unchecked Sendable {
         _ = try await send(path: "v1/computers/\(Self.escape(computerId))/block-resolve",
                            runtimeId: runtimeId, bearer: bearer,
                            body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    // MARK: - Agent browser: take over, secret, re-run, live view
+
+    /// A person takes control of the computer (`POST .../control/take`). While
+    /// they hold it, the bot's calls are refused.
+    func takeControl(computerId: String, runtimeId: String? = nil) async throws {
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/control/take", runtimeId: runtimeId, bearer: nil)
+    }
+
+    /// Hands it back (`POST .../control/release`).
+    func releaseControl(computerId: String, runtimeId: String? = nil) async throws {
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/control/release", runtimeId: runtimeId, bearer: nil)
+    }
+
+    /// Mouse on a computer you hold control of (`POST .../mouse`), screen pixels.
+    /// `action`: click | doubleclick | rightclick | move | scroll (with `button` + `amount`).
+    func mouse(computerId: String, action: String, x: Int, y: Int,
+               button: String? = nil, amount: Int? = nil, runtimeId: String? = nil) async throws {
+        var body: [String: Any] = ["action": action, "x": x, "y": y]
+        if let button { body["button"] = button }
+        if let amount { body["amount"] = amount }
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/mouse", runtimeId: runtimeId, bearer: nil,
+                           body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// Keyboard on a computer you hold control of (`POST .../keyboard`):
+    /// `type` with `text`, or `key` with a key name.
+    func keyboard(computerId: String, text: String? = nil, key: String? = nil, runtimeId: String? = nil) async throws {
+        let body: [String: String] = text.map { ["action": "type", "text": $0] } ?? ["action": "key", "key": key ?? "Return"]
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/keyboard", runtimeId: runtimeId, bearer: nil,
+                           body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// The masked secret box (`POST .../secret`): the value goes in this one
+    /// request body and nowhere else (never logged, never stored). `saveAs`
+    /// also saves it to the vault under that name. 409 = nothing pending.
+    func submitSecret(computerId: String, text: String, saveAs: String? = nil, runtimeId: String? = nil) async throws {
+        var body: [String: String] = ["text": text]
+        if let saveAs, !saveAs.isEmpty { body["save_as"] = saveAs }
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/secret", runtimeId: runtimeId, bearer: nil,
+                           body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    func cancelSecret(computerId: String, runtimeId: String? = nil) async throws {
+        _ = try await send(path: "v1/computers/\(Self.escape(computerId))/secret", runtimeId: runtimeId, bearer: nil,
+                           body: try JSONSerialization.data(withJSONObject: ["cancel": true]))
+    }
+
+    /// Starts a run on a computer (`POST /api/v1/computers/:id/runs`), the
+    /// route "Re-run on my Mac" uses with `rerun_of`. Returns the new run id.
+    func startComputerRun(computerId: String, task: String, rerunOf: String? = nil) async throws -> String? {
+        var body: [String: String] = ["task": task]
+        if let rerunOf { body["rerun_of"] = rerunOf }
+        let (data, _) = try await send(path: "v1/computers/\(Self.escape(computerId))/runs",
+                                       runtimeId: computerId, bearer: nil,
+                                       body: try JSONSerialization.data(withJSONObject: body))
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return (json?["run_id"] as? String) ?? (json?["id"] as? String) ?? (json?["sessionId"] as? String)
+    }
+
+    /// One frame of the computer's screen (`GET .../screenshot`), or of one
+    /// run's own display on Linux (`?run_id=`). Accepts raw image bytes or
+    /// JSON holding a base64 image.
+    func screenshot(computerId: String, runId: String? = nil, runtimeId: String? = nil) async throws -> Data? {
+        let (data, _) = try await send(path: "v1/computers/\(Self.escape(computerId))/screenshot",
+                                       runtimeId: runtimeId, bearer: nil, method: "GET",
+                                       query: runId.map { [URLQueryItem(name: "run_id", value: $0)] } ?? [])
+        if let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let b64 = (json["image"] as? String) ?? (json["screenshot"] as? String) ?? (json["data"] as? String)
+            guard let b64 else { return nil }
+            return Data(base64Encoded: b64.components(separatedBy: ",").last ?? b64)
+        }
+        return data
     }
 
     /// Live agent events for one computer: SSE
@@ -394,6 +476,8 @@ enum ACIComputerEvent: Sendable, Equatable {
     case humanRequested(ACIHumanRequest)
     case humanResumed(runId: String?)
     case blockDetected(ACIBlock)
+    /// Linux: this run has its own display; follow `screenshot?run_id=`.
+    case agentDisplay(runId: String?)
     /// `action`: continue | stop | rerun | timed_out.
     case blockResolved(runId: String?, domain: String?, action: String?)
 
@@ -445,6 +529,8 @@ enum ACIComputerEvent: Sendable, Equatable {
             self = .blockDetected(ACIBlock(
                 runId: str("run_id"), domain: domain, kind: str("kind") ?? "block_page",
                 rerunTargets: targets, timeoutMs: (d["timeout_ms"] as? NSNumber)?.intValue))
+        case "computer.agent_display":
+            self = .agentDisplay(runId: str("run_id"))
         case "computer.block_resolved":
             self = .blockResolved(runId: str("run_id"), domain: str("domain"), action: str("action"))
         default:

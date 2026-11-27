@@ -405,13 +405,15 @@ Links to ai.allternit.com and m.allternit.com open in the app when it is install
 
 ## Agent browser runs: approvals and push actions
 
-When a bot drives a browser on one of your computers, the run view shows its pointer on the screen with a badge that names the bot and its step. A line under the screen reads "BOT is working · step N" (BOT is the bot's name) with **Take over** and **Stop**. **Take over** is not available on the iPhone yet, so it shows dimmed; **Stop** ends the run.
+When a bot drives a browser on one of your computers, the run view shows its pointer on the screen with a badge that names the bot and its step. A line under the screen reads "BOT is working · step N" (BOT is the bot's name) with **Take over** and **Stop**. **Stop** ends the run.
+
+**Take over** gives you the computer. Tap it and the line changes to "You have control · Hand back". Tap the screen to click there, swipe to scroll, and use the box under the screen to type, with a **Return** key. While you hold control the bot's calls are refused. **Hand back** (or leaving the run) gives the computer back. On a Linux computer the screen shows that run's own display.
 
 When the bot needs you, a sheet opens over the run:
 
 - **Fill your NAME login on DOMAIN?** has **Approve**, **Allow for this run** and **Deny**. Approve and Allow ask for Face ID or your passcode first. Allow for this run covers that login on that site for this run only; nothing is remembered for later runs. The password never shows on screen or in the log.
-- **BOT needs you** gives the reason and a **Continue** button once you have done your part, plus **Stop**. When the bot asks for a secret, a masked field is shown.
-- **DOMAIN blocked BOT** has **Continue**, **Stop** and **Re-run on** each other computer for each other computer you could use. A re-run starts fresh and no logins carry over. With no other computer ready, the sheet says so.
+- **BOT needs you** gives the reason and a **Continue** button once you have done your part, plus **Stop**. When the bot asks for a secret, a masked field is shown with **Send** and a **Save to vault** switch (give it a name to keep it). The value goes to the computer in one request, the field is cleared, and it is never logged.
+- **DOMAIN blocked BOT** has **Continue**, **Stop** and **Re-run on** each other computer for each other computer you could use. A re-run starts fresh and no logins carry over; the run view then opens the new run. With no other computer ready, the sheet says so.
 
 The same questions arrive as notifications with buttons. A credential or action approval has **Approve** (needs the phone unlocked) and **Deny** (works from the lock screen). A bot that needs you has **Continue** and **Stop**. A blocked site has **Open**. Tapping any of them opens the run through a `/computers/ID?run=RUN_ID` link. A notification never contains the password.
 

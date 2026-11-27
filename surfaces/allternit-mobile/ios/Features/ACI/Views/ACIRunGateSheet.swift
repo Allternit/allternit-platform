@@ -38,8 +38,12 @@ struct ACIRunGateSheet: View {
     let onContinue: () -> Void
     let onStop: () -> Void
     let onRerun: (ACIRerunTarget) -> Void
+    /// Typed secret + optional vault name; the sheet clears its field after sending.
+    var onSecret: (String, String?) -> Void = { _, _ in }
 
     @State private var secret = ""
+    @State private var saveToVault = false
+    @State private var vaultName = ""
     @State private var authFailed = false
 
     var body: some View {
@@ -101,10 +105,24 @@ struct ACIRunGateSheet: View {
                 .textInputAutocapitalization(.never)
                 .padding(12)
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
-        }
-        primary("Continue") {
-            secret = ""
-            onContinue()
+            Toggle("Save to vault", isOn: $saveToVault)
+                .font(.system(size: 14))
+            if saveToVault {
+                TextField("Name", text: $vaultName)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
+            }
+            primary("Send") {
+                let value = secret
+                let name = saveToVault ? vaultName.trimmingCharacters(in: .whitespaces) : ""
+                secret = ""
+                vaultName = ""
+                onSecret(value, name.isEmpty ? nil : name)
+            }
+        } else {
+            primary("Continue", action: onContinue)
         }
         destructive("Stop", action: onStop)
     }
