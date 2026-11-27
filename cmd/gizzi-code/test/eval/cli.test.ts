@@ -9,7 +9,7 @@ import { Session } from "../../src/runtime/session"
 import { SessionTrace } from "../../src/runtime/session/trace"
 import { Identifier } from "../../src/shared/id/id"
 import { EvalStore } from "../../src/runtime/eval/store"
-import { runSave, runList, runRemove, runExport, runRun, sampleIds, selectCases, compareReports, baselineFrom, EvalCliError } from "../../src/cli/commands/eval"
+import { runSave, runList, runRemove, runExport, runRun, sampleIds, selectCases, enrichReport, compareReports, baselineFrom, EvalCliError } from "../../src/cli/commands/eval"
 import { parseTestcaseArgs } from "../../src/cli/ui/ink-app/commands/testcase/testcase"
 import { tmpdir } from "../fixture/fixture"
 
@@ -249,5 +249,37 @@ test("a baseline compare names the flipped case and fails; the CLI copy matches 
     await fs.rm(dir, { recursive: true, force: true })
     await fs.rm(base, { recursive: true, force: true })
     await fs.rm(cleanDir, { recursive: true, force: true })
+  }
+})
+
+test("--skip-case removes the case from the selection, and per_case carries split and title", async () => {
+  const dir = await tempSuite((id, c) => {
+    if (id.endsWith("bad")) {
+      c.split = "holdout"
+      c.note = "should not delete files"
+      c.graders = [{ type: "status", equals: "failed" }]
+    }
+  })
+  try {
+    const all = await selectCases({ suiteDir: dir, skipCases: ["case_shared_session_bad"] })
+    expect(all.ids).toEqual(["case_shared_session_good"])
+    const split = await selectCases({ suiteDir: dir, split: "holdout", skipCases: ["case_shared_session_good"] })
+    expect(split.ids).toEqual(["case_shared_session_bad"])
+    await expect(selectCases({ suiteDir: dir, skipCases: ["case_shared_session_good", "case_shared_session_bad"] })).rejects.toThrow("skipped")
+
+    const json = collect()
+    await runRun({ mode: "replay", suiteDir: dir, json: true, skipCases: ["case_shared_session_good"] }, json.out)
+    const report = JSON.parse(json.lines.join("\n"))
+    expect(report.extra.per_case.map((p: any) => p.id)).toEqual(["case_shared_session_bad"])
+    const row = report.extra.per_case[0]
+    expect(row.split).toBe("holdout")
+    expect(typeof row.title).toBe("string")
+    expect(row.title.length).toBeGreaterThan(0)
+    expect(row.note).toBe("should not delete files")
+    expect(Array.isArray(row.grader_details)).toBe(true)
+    expect(typeof row.cost).toBe("number")
+    expect(baselineFrom(report).extra.per_case[0]).toMatchObject({ id: "case_shared_session_bad", split: "holdout", title: row.title })
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
   }
 })

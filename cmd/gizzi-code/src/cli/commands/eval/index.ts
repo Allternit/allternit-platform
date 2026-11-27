@@ -156,7 +156,16 @@ export function baselineFrom(report: any, previous?: any) {
     max_drop_pp: previous?.max_drop_pp ?? 2.0,
     suites,
     // Per-case outcomes so a compare can name each case that flipped. compareReports ignores this.
-    extra: { per_case: (report.extra?.per_case ?? []).map((r: any) => ({ id: r.id, pass: !!r.pass })) },
+    extra: {
+      per_case: (report.extra?.per_case ?? []).map((r: any) => ({
+        id: r.id,
+        pass: !!r.pass,
+        ...(r.split ? { split: r.split } : {}),
+        ...(r.title ? { title: r.title } : {}),
+        ...(r.note ? { note: r.note } : {}),
+        ...(r.grader_details ? { grader_details: r.grader_details } : {}),
+      })),
+    },
   }
 }
 
@@ -178,6 +187,15 @@ export interface SelectArgs {
   split?: Split
   fraction?: number
   seed?: number
+  /** Case ids to drop after the split and fraction picks. */
+  skipCases?: string[]
+}
+
+/** What the report needs to say about each case, read from case.json. */
+export interface CaseInfo {
+  split: string
+  title: string
+  note?: string
 }
 
 /** A seeded sample: the same ids come back for the same ids, fraction and seed. Sorted result. */
@@ -198,7 +216,7 @@ export function sampleIds(ids: string[], fraction: number, seed: number): string
  * of the whole suite also counts cases that are skipped. The engine only applies fraction to replay,
  * so the CLI picks the ids for both modes.
  */
-export async function selectCases(a: SelectArgs): Promise<{ ids?: string[]; labels: Map<string, string> }> {
+export async function selectCases(a: SelectArgs): Promise<{ ids?: string[]; labels: Map<string, string>; info: Map<string, CaseInfo> }> {
   if (!a.suite && !a.suiteDir) throw new EvalCliError("Pick a suite with --suite or --suite-dir.")
   const split = a.split ?? "all"
   if (!["dev", "holdout", "all"].includes(split)) throw new EvalCliError("--split must be dev, holdout or all.")
@@ -208,10 +226,30 @@ export async function selectCases(a: SelectArgs): Promise<{ ids?: string[]; labe
     throw new EvalCliError(e instanceof Error ? e.message : String(e))
   })
   const labels = new Map<string, string>(loaded.cases.map((c) => [c.id, c.case.label]))
-  if (split === "all" && fraction >= 1) return { labels }
+  const info = new Map<string, CaseInfo>(
+    loaded.cases.map((c) => [c.id, { split: (c.case as any).split ?? "dev", title: c.case.title, ...(c.case.note ? { note: c.case.note } : {}) }]),
+  )
+  const skip = new Set(a.skipCases ?? [])
+  if (split === "all" && fraction >= 1 && skip.size === 0) return { labels, info }
   const pool = loaded.cases.filter((c) => split === "all" || c.case.split === split).map((c) => c.id)
   if (pool.length === 0) throw new EvalCliError(`No cases in the ${split} split.`)
-  return { ids: sampleIds(pool, fraction, a.seed ?? 1), labels }
+  const ids = sampleIds(pool, fraction, a.seed ?? 1).filter((id) => !skip.has(id))
+  if (ids.length === 0) throw new EvalCliError("Every selected case was skipped.")
+  return { ids, labels, info }
+}
+
+/** Adds split, title, note and grader_details to each per_case row. Cost is already USD (trace cost_usd). */
+export function enrichReport(report: any, info: Map<string, CaseInfo>) {
+  const rows = report?.extra?.per_case
+  if (!Array.isArray(rows)) return report
+  for (const r of rows) {
+    const i = info.get(r.id)
+    r.split = i?.split ?? "dev"
+    r.title = i?.title ?? r.id
+    if (i?.note) r.note = i.note
+    r.grader_details = (r.grades ?? []).filter((g: any) => !g.pass).map((g: any) => ({ type: g.type, detail: g.detail }))
+  }
+  return report
 }
 
 const fmtTokens = (n: number) => n.toLocaleString("en-US")
@@ -370,6 +408,8 @@ export async function runRun(args: RunArgs, out: Out = stdout, deps: Partial<Run
     }
   }
 
+  enrichReport(report, sel.info)
+
   let ok = true
   let flips: ReturnType<typeof flippedCases> = []
   let cmp: ReturnType<typeof compareReports> | undefined
@@ -415,6 +455,11 @@ export async function runBaselineWrite(args: { run: string; out: string }, out: 
   })
   if (!v.report) throw new EvalCliError(`That run has no report yet (state: ${v.state}).`)
   const previous = await fs.readFile(args.out, "utf8").then((t) => JSON.parse(t), () => undefined)
+  // Best effort: a run of a --suite-dir folder may not resolve by id, then the rows keep what the run stored.
+  if (v.report.extra?.per_case?.some((r: any) => !r.split)) {
+    const sel = await selectCases({ suite: v.suite }).catch(() => undefined)
+    if (sel) enrichReport(v.report, sel.info)
+  }
   const baseline = baselineFrom(v.report, previous)
   if (Object.keys(baseline.suites).length === 0) throw new EvalCliError("That run graded nothing, so there is nothing to save.")
   await fs.mkdir(path.dirname(path.resolve(args.out)), { recursive: true })
@@ -499,6 +544,7 @@ const selectOptions = (y: Argv) =>
     .option("fraction", { type: "number", describe: "share of the cases to run, 0 to 1" })
     .option("seed", { type: "number", describe: "seed for the sample and the report ranges" })
     .option("split", { type: "string", choices: ["dev", "holdout", "all"], describe: "which cases to use" })
+    .option("skip-case", { type: "string", array: true, describe: "leave this case id out (repeatable)" })
     .option("json", { type: "boolean" })
 
 const RunCommand = cmd({
@@ -511,7 +557,7 @@ const RunCommand = cmd({
       .option("record-traces", { type: "boolean", describe: "keep each attempt's redacted trace next to the report" })
       .option("baseline", { type: "string", describe: "compare with this baseline file; exit 1 on a drop" }),
   handler: guarded(async (a: any) => {
-    const r = await runRun({ ...a, suiteDir: a.suiteDir ?? a["suite-dir"], recordTraces: a.recordTraces ?? a["record-traces"] })
+    const r = await runRun({ ...a, suiteDir: a.suiteDir ?? a["suite-dir"], skipCases: a.skipCase ?? a["skip-case"], recordTraces: a.recordTraces ?? a["record-traces"] })
     if (!r.ok) process.exit(1)
   }),
 })
@@ -521,7 +567,7 @@ const EstimateCommand = cmd({
   describe: "show what a live run would cost, without running it",
   builder: (y: Argv) => selectOptions(y),
   handler: guarded(async (a: any) => {
-    await runEstimate({ ...a, suiteDir: a.suiteDir ?? a["suite-dir"] })
+    await runEstimate({ ...a, suiteDir: a.suiteDir ?? a["suite-dir"], skipCases: a.skipCase ?? a["skip-case"] })
   }),
 })
 
