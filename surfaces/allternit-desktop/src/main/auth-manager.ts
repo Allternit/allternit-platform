@@ -108,6 +108,33 @@ export type RelayHostHandler = (
 /** Start anywhere (D6): a relayed session start just succeeded on this computer. */
 export type RemoteStartListener = (notice: { title: string; body: string }) => void;
 
+/**
+ * One cloud relay per machine (Start anywhere step 10): Desktop holds
+ * `~/.config/allternit/relay.lock` while its relay is up, and gizzi's own
+ * relay connector yields while a live desktop-owned lock exists.
+ */
+export function relayLockPath(): string {
+  return process.env.ALLTERNIT_RELAY_LOCK_PATH || path.join(os.homedir(), '.config', 'allternit', 'relay.lock');
+}
+
+/**
+ * Write `{pid, owner: "desktop", startedAt, connected}` (overwrites any holder),
+ * or with `null` remove it when this process holds it. Never throws.
+ */
+export function writeRelayLock(state: { startedAt: string; connected: boolean } | null, file: string = relayLockPath()): void {
+  try {
+    if (state === null) {
+      const held = JSON.parse(fs.readFileSync(file, 'utf8')) as { pid?: unknown };
+      if (held.pid === process.pid) fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ pid: process.pid, owner: 'desktop', ...state }), { mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') log.warn('[Auth] relay.lock update failed:', error);
+  }
+}
+
 /** Contract `errors.json` body for a start refused because Remote start is off. */
 export const REMOTE_START_OFF_ERROR = {
   error: 'remote_start_off',
@@ -319,6 +346,8 @@ export class DesktopAuthManager {
   private relayHostHandler: RelayHostHandler | null = null;
   /** Settings "Allow new sessions from my other devices" (D6, default on); sent as `remote_start` at relay `authenticate`. */
   private remoteStartEnabled = true;
+  /** relay.lock `startedAt` of the current hold; null = this process does not hold the lock. */
+  private relayLockStartedAt: string | null = null;
   private remoteStartListener: RemoteStartListener | null = null;
   /** Idempotency keys already announced: a replayed start answers 2xx again but is not a new session. */
   private readonly announcedStartKeys: string[] = [];
@@ -1591,6 +1620,7 @@ export class DesktopAuthManager {
       this.relaySocket.close();
       this.relaySocket = null;
     }
+    this.releaseRelayLock();
     fs.rmSync(this.identityPath, { force: true });
     this.removeDaemonIdentity();
   }
@@ -1624,6 +1654,8 @@ export class DesktopAuthManager {
       if (message.type === 'authenticated') {
         this.relayReconnectDelayMs = 1_000;
         log.info('[Auth] Paired runtime relay connected');
+        this.relayLockStartedAt = new Date().toISOString();
+        writeRelayLock({ startedAt: this.relayLockStartedAt, connected: true });
       } else if (message.type === 'request') {
         void this.handleRelayRequest(socket, message);
       } else if (message.type === 'socket_open') {
@@ -1644,6 +1676,8 @@ export class DesktopAuthManager {
       this.stopRelayWatchdog();
       for (const local of this.relayLocalSockets.values()) local.close(1012, 'Relay disconnected');
       this.relayLocalSockets.clear();
+      // Still held while reconnecting, so gizzi does not take the relay meanwhile.
+      if (this.relayLockStartedAt) writeRelayLock({ startedAt: this.relayLockStartedAt, connected: false });
       if (this.session) this.scheduleRelayReconnect();
     });
     socket.addEventListener('error', (error: unknown) => {
@@ -1701,6 +1735,13 @@ export class DesktopAuthManager {
       log.info(`[Auth] Remote start turned ${enabled ? 'on' : 'off'}; reconnecting the runtime relay`);
       this.reconnectRuntimeRelay();
     }
+  }
+
+  /** Real quit or unpair: drop relay.lock so gizzi's connector may take the relay. */
+  releaseRelayLock(): void {
+    if (!this.relayLockStartedAt) return;
+    this.relayLockStartedAt = null;
+    writeRelayLock(null);
   }
 
   /** The cloud relay is open: other devices can reach this computer now (tray "Reachable from your devices"). */
@@ -2108,6 +2149,7 @@ export class DesktopAuthManager {
     }
     for (const socket of this.relayLocalSockets.values()) socket.close(1012, 'Relay reconnecting');
     this.relayLocalSockets.clear();
+    if (this.relayLockStartedAt) writeRelayLock({ startedAt: this.relayLockStartedAt, connected: false });
     this.scheduleRelayReconnect();
   }
 

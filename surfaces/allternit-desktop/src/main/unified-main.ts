@@ -3726,6 +3726,8 @@ async function shutdownAllServices(): Promise<void> {
   // open) no backend or job exists to hand off, and the Clerk wait would hold
   // the quit for the full deadline.
   if (authManagerReady && !keychainGateOpen) await handoffInFlightToCloud();
+  // Real quit (background mode never reaches here): gizzi's relay connector may take over (step 10).
+  authManager.releaseRelayLock();
   gizziManager.stop({ reapExternal: true });
   try {
     gizziDaemonManager.stopSync();
