@@ -8,7 +8,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, RawQuery},
+    extract::{Path, RawQuery, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -19,7 +19,75 @@ use std::sync::Arc;
 use tracing::warn;
 
 use crate::agent_session_routes::{gizzi_base, gizzi_client};
+use crate::placement::{self, Target};
 use crate::AppState;
+
+/// A case belongs to the computer that ran its session. When the session is
+/// placed on another server (`session_placements`), save and list its cases
+/// there, the same way `placement::passthrough` relays `/agent-sessions/:id`.
+async fn forward_placed(
+    target: &Target,
+    method: reqwest::Method,
+    rest: &str,
+    query: Option<String>,
+    body: Option<Bytes>,
+) -> Response {
+    let mut url = format!("{}/api/v1{}", target.gateway_url, rest);
+    if let Some(query) = query.filter(|q| !q.is_empty()) {
+        url.push('?');
+        url.push_str(&query);
+    }
+    let mut request = reqwest::Client::new().request(method, &url);
+    if let Some(token) = &target.token {
+        request = request.bearer_auth(token);
+    }
+    if let Some(body) = body.filter(|b| !b.is_empty()) {
+        request = request.header(reqwest::header::CONTENT_TYPE, "application/json").body(body);
+    }
+    match request.send().await {
+        Ok(res) => {
+            let status = StatusCode::from_u16(res.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let content_type = res
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            match res.bytes().await {
+                Ok(bytes) if bytes.is_empty() => status.into_response(),
+                Ok(bytes) => (
+                    status,
+                    [(header::CONTENT_TYPE, content_type.unwrap_or_else(|| "application/json".to_string()))],
+                    bytes,
+                )
+                    .into_response(),
+                Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+            }
+        }
+        Err(error) => {
+            warn!(error = %error, target = %target.name, "eval placement forward failed");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("{} is unreachable", target.name) })),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn session_id_in_query(query: &Option<String>) -> Option<String> {
+    let query = query.as_deref()?;
+    url::form_urlencoded::parse(query.as_bytes())
+        .find(|(k, _)| k == "session_id")
+        .map(|(_, v)| v.into_owned())
+}
+
+fn session_id_in_body(body: &Bytes) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("session_id")?
+        .as_str()
+        .map(str::to_string)
+}
 
 async fn proxy(
     headers: &HeaderMap,
@@ -73,11 +141,21 @@ async fn proxy(
     (status, [(header::CONTENT_TYPE, content_type)], bytes).into_response()
 }
 
-async fn list_cases(headers: HeaderMap, RawQuery(query): RawQuery) -> Response {
+async fn list_cases(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+) -> Response {
+    if let Some(target) = session_id_in_query(&query).and_then(|id| placement::session_target(&state.db, &id)) {
+        return forward_placed(&target, reqwest::Method::GET, "/agent-evals/cases", query, None).await;
+    }
     proxy(&headers, reqwest::Method::GET, "/v1/eval/cases".to_string(), query, None).await
 }
 
-async fn create_case(headers: HeaderMap, body: Bytes) -> Response {
+async fn create_case(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Some(target) = session_id_in_body(&body).and_then(|id| placement::session_target(&state.db, &id)) {
+        return forward_placed(&target, reqwest::Method::POST, "/agent-evals/cases", None, Some(body)).await;
+    }
     proxy(&headers, reqwest::Method::POST, "/v1/eval/cases".to_string(), None, Some(body)).await
 }
 
