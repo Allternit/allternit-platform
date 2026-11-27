@@ -16,8 +16,10 @@ These routes are served by the Allternit API under `/api/v1`, next to the
 normal signed-in session; a request with no user gets `401`.
 
 <Note>
-Every stage is off by default. The `orchestrator` stage (cycles from the unit queue)
-and the `disputes` stage (contradictions kept as disputes) run once you turn them on;
+Every stage is off by default except `disputes`, which is on by default for the Dream
+and the dispute routes (they need no master switch; turn it off with
+`PUT /memory/sleep/settings`). The `orchestrator` stage (cycles from the unit queue)
+runs once you turn it on;
 the other stages are still contract only. Read routes return real empty states, never
 `501`. Write routes that need a later stage check their input, then refuse (see
 [Refused writes](#refused-writes)). The status column below says which stage makes each
@@ -79,7 +81,7 @@ session end, whether Sleep is on or not.
   "available": true,
   "enabled": false,
   "stages": {
-    "checks": false, "disputes": false, "intentions": false, "labels_live": false,
+    "checks": false, "disputes": true, "intentions": false, "labels_live": false,
     "orchestrator": false, "pages": false, "rem": false, "router": false,
     "strengths": false, "track1": false
   },

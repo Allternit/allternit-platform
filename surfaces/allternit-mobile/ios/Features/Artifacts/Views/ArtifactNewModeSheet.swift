@@ -106,21 +106,19 @@ struct ArtifactEmptyKinds: View {
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))
             }
-            LazyVGrid(columns: columns, spacing: 10) {
+            LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(modes) { mode in
                     Button { onPick(mode) } label: {
-                        HStack(spacing: 10) {
-                            Image(mode.icon).resizable().frame(width: 24, height: 24)
+                        VStack(alignment: .leading, spacing: 8) {
+                            // PDF has no studio kind; it shows the page scene.
+                            ArtifactMotionTile(kind: DeckLaunch.kind(for: mode.entry) ?? .docs)
                             Text(mode.label)
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: 15, weight: .medium))
                                 .foregroundColor(Color("TextPrimary"))
                                 .lineLimit(1)
-                            Spacer(minLength: 0)
+                                .padding(.horizontal, 4)
                         }
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 48)
-                        .background(Color("FillNeutral"))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(busy)

@@ -39,7 +39,8 @@ import WRAP_UP from "@/runtime/session/prompt/wrap-up.txt"
 import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
-import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
+import { mcpToolMetadata } from "@/runtime/tools/mcp/apps"
+import { McpScript } from "@/runtime/tools/builtins/mcp-script"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
@@ -57,6 +58,7 @@ import { ConfigMarkdown } from "@/runtime/context/config/markdown"
 import { SessionSummary } from "@/runtime/session/summary"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { fn } from "@/shared/util/fn"
+import { PastChats } from "@/runtime/memory/past-chats"
 import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
@@ -196,6 +198,12 @@ export namespace SessionPrompt {
       .optional()
       .describe(
         "The caller's per-user MCP proxy for this turn ({ server, url, sessionId, token }), sent by allternit-api. Held in memory for the turn only: deliberately not part of `metadata` (which is stored on the user message) because the token must never be written to disk.",
+      ),
+    memory_search: z
+      .boolean()
+      .optional()
+      .describe(
+        "The caller's \"search past chats\" switch. Defaults to true. When false, this turn gets no <past-chats> block.",
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
@@ -434,12 +442,18 @@ const message = await createUserMessage(input)
     // the `turnLocation` field; the `turnSystem` text only when an older API sent no field.
     const location = resolveTurnLocation(input.turnLocation, turnLayer)
     if (location) TurnLocations.set(input.sessionID, location)
+    const eph = input.metadata?.["ephemeral"]
+    const releasePastChats = PastChats.setTurn(input.sessionID, {
+      memorySearch: input.memory_search,
+      incognito: eph === true || eph === "true",
+    })
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
       if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
       return result
     } finally {
       releaseMcpProxy()
+      releasePastChats()
       if (turnLayer && turnSystemLayers.get(input.sessionID) === turnLayer) turnSystemLayers.delete(input.sessionID)
       if (location) TurnLocations.release(input.sessionID, location)
     }
@@ -1200,6 +1214,8 @@ const message = await createUserMessage(input)
         session,
       })
 
+      await insertPastChats(msgs, sessionID)
+
       const processor = SessionProcessor.create({
         assistantMessage: (await Session.updateMessage({
           id: Identifier.ascending("message"),
@@ -1864,6 +1880,8 @@ const message = await createUserMessage(input)
     // mount none until connector_search loads them (non-connector MCP tools
     // always mount). Loaded tools keep their own permission rules below.
     const connectorMounted = Connectors.mountFilter(input.session.id, mcpCatalog.descriptors)
+    // Code Mode (mcp_script): the MCP tools a script may call this turn.
+    const scriptEntries: McpScript.Entry[] = []
     for (const [key, item] of mcpTools) {
       if (!connectorMounted(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
@@ -1906,6 +1924,10 @@ const message = await createUserMessage(input)
           )
         }
 
+        // The account's tool permissions: a blocked tool is refused before
+        // anyone is asked (the dispatcher checks again before it runs).
+        await ToolDispatcher.assertNotBlocked(key, args, ctx.sessionID)
+
         // A tool its server marks destructive still asks in an app session's
         // auto mode (PermissionNext.evaluatePolicy).
         const descriptor = mcpCatalog.descriptors[key]
@@ -1932,7 +1954,8 @@ const message = await createUserMessage(input)
 
         let result: CallToolResult & { metadata?: Record<string, unknown> }
         try {
-          result = await ToolDedupe.execute<CallToolResult & { metadata?: Record<string, unknown> }>({
+          // Code Mode calls skip dedupe (McpScript.dedupe); model calls keep it.
+          result = await McpScript.dedupe<CallToolResult & { metadata?: Record<string, unknown> }>(opts, {
             sessionID: ctx.sessionID,
             messageID: ctx.messageID,
             tool: key,
@@ -1946,6 +1969,7 @@ const message = await createUserMessage(input)
         } finally {
           McpUserProxy.clearApproval(opts.toolCallId)
         }
+        McpScript.noteRaw(opts, result)
 
         await Plugin.trigger(
           "tool.execute.after",
@@ -1992,7 +2016,7 @@ const message = await createUserMessage(input)
           ...(result.metadata ?? {}),
           // MCP Apps: the host needs the untouched result (structuredContent, _meta) and the
           // originating server/tool to render a ui:// resource; the model never sees this.
-          ...mcpAppMetadata(mcpCatalog.descriptors[key], result),
+          ...mcpToolMetadata(mcpCatalog.descriptors[key], result),
           truncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
         }
@@ -2018,7 +2042,25 @@ const message = await createUserMessage(input)
         }
       }
       tools[key] = item
+      // A Code Mode call takes this same wrapped execute, so every gate above
+      // (connector/bot off, ctx.ask, the proxy's approval) applies to it.
+      const wrapped = item.execute as (args: Record<string, unknown>, opts: ToolCallOptions) => Promise<unknown>
+      const descriptor = mcpCatalog.descriptors[key]
+      scriptEntries.push({
+        key,
+        ...McpScript.bridgeName(descriptor, key),
+        description: item.description,
+        inputSchema: jsonSchemaValue.jsonSchema,
+        outputSchema: descriptor?.outputSchema,
+        call: async (args, ctx) => {
+          // ctx.callID is this call's own `<mcp_script call id>:<n>` (McpScript.nestedCallID).
+          const opts = McpScript.callOptions(ctx)
+          await wrapped(args, opts)
+          return McpScript.takeRaw(opts)
+        },
+      })
     }
+    McpScript.attach(tools, input.session.id, scriptEntries)
 
     // Self-hosted Agents Server: the agent's custom tools (metadata.selfhost.custom_tools).
     await addSelfhostCustomTools(tools, { ...input, context, mcpCatalog })
@@ -2272,7 +2314,7 @@ const message = await createUserMessage(input)
   const MobileTools = z.object({
     webSearch: z.boolean().optional(),
     research: z.boolean().optional(),
-    toolAccess: z.enum(["auto", "on_demand", "always"]).optional(),
+    toolAccess: z.enum(["auto", "on_demand", "always", "none"]).optional(),
     disabledConnectors: z.array(z.string()).optional(),
     computer: z.boolean().optional(),
   })
@@ -2280,7 +2322,8 @@ const message = await createUserMessage(input)
   export interface MobileToolOptions {
     webSearch?: boolean
     research?: boolean
-    toolAccess?: "auto" | "on_demand" | "always"
+    /** "none" gives the turn an empty tool set (the style preview). */
+    toolAccess?: "auto" | "on_demand" | "always" | "none"
     /** Connector ids (open-connector app ids, e.g. "github") the user turned
      * off for this session in the composer's + menu. */
     disabledConnectors?: string[]
@@ -2339,6 +2382,11 @@ const message = await createUserMessage(input)
    * @internal Exported for testing
    */
   export function applyMobileToolGating(tools: Record<string, AITool>, options: MobileToolOptions): void {
+    // `toolAccess: "none"`: the model gets no tools at all for this turn.
+    if (options.toolAccess === "none") {
+      for (const key of Object.keys(tools)) delete tools[key]
+      return
+    }
     if (options.webSearch === false || options.research === false) delete tools["websearch"]
     if (options.research === false) delete tools["task"]
   }
@@ -2349,6 +2397,7 @@ const message = await createUserMessage(input)
    *   auto      -> "auto"              (unattended: auto-allow, no questions)
    *   on_demand -> "default"           (normal ask behavior)
    *   always    -> "bypassPermissions" (allow everything without asking)
+   *   none      -> no override (the turn has no tools, so nothing asks)
    */
   function mobileToolAccessMode(
     toolAccess: MobileToolOptions["toolAccess"],
@@ -2810,6 +2859,35 @@ const message = await createUserMessage(input)
     return {
       info,
       parts,
+    }
+  }
+
+  /** Adds the turn's "From past chats" block to the last user message, as a synthetic part (not the system prompt: that would void the prompt cache). */
+  async function insertPastChats(messages: MessageV2.WithParts[], sessionID: string) {
+    const user = messages.findLast((m) => m.info.role === "user")
+    if (!user) return
+    const text = user.parts
+      .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
+      .map((p) => p.text)
+      .join("\n")
+    const flags = PastChats.flagsFor(sessionID)
+    const built = await PastChats.forUserMessage(user.info.id, {
+      sessionID,
+      text,
+      memorySearch: flags.memorySearch,
+      incognito: flags.incognito,
+    })
+    if (!built) return
+    for (const text of [built.block, built.knowledge]) {
+      if (!text) continue
+      user.parts.push({
+        id: Identifier.ascending("part"),
+        messageID: user.info.id,
+        sessionID: user.info.sessionID,
+        type: "text",
+        text,
+        synthetic: true,
+      })
     }
   }
 

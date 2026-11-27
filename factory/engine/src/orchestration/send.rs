@@ -59,6 +59,12 @@ pub struct Delivery {
     /// The `agent_hops` row recorded for this send.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hop_id: Option<String>,
+    /// Who sent it. Filled from the ledger record's sender when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// First 280 characters of the request text, on one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 impl Delivery {
@@ -404,6 +410,8 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
         tier: None,
         note: None,
         hop_id: hop_id.clone(),
+        from: None,
+        preview: Some(req.text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(280).collect()),
     };
     let mut delivery = delivery;
     if tracked {
@@ -777,7 +785,10 @@ pub async fn deliveries(root: &Path, filter: &DeliveryFilter) -> Result<Vec<Deli
     let mut by_id: std::collections::HashMap<String, Delivery> = std::collections::HashMap::new();
     for evt in events {
         let Ok(rec) = serde_json::from_value::<DeliveryRecord>(evt.payload) else { continue };
-        let d = rec.delivery;
+        let mut d = rec.delivery;
+        if d.from.is_none() {
+            d.from = rec.sender;
+        }
         if !by_id.contains_key(&d.id) {
             order.push(d.id.clone());
         }
@@ -801,4 +812,20 @@ async fn find_by_key(root: &Path, key: &str) -> Option<Delivery> {
         let rec = serde_json::from_value::<DeliveryRecord>(evt.payload).ok()?;
         (rec.idempotency_key.as_deref() == Some(key)).then_some(rec.delivery)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deliver_record_without_preview_or_from_parses() {
+        let v = serde_json::json!({
+            "id": "dlv_1", "to": "a", "via": "pane", "state": "queued",
+            "ticket": null, "threadId": null, "messageId": null, "nodeId": null,
+            "dagId": null, "at": "2026-11-26T00:00:00Z", "detail": null
+        });
+        let d: Delivery = serde_json::from_value(v).unwrap();
+        assert!(d.from.is_none() && d.preview.is_none());
+    }
 }

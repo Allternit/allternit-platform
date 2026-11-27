@@ -89,9 +89,12 @@ class ChatBackend(
         sessionMode: String,
         /** Harness & Bots 2.0: the runtime this chat runs on (`metadata.runtime` + `metadata.botBrain`). */
         botBrain: JsonObject? = null,
+        /** Start anywhere: extra metadata keys (`startBinding`, `gizziSessionId`) for a thread bound to a computer. */
+        extraMetadata: JsonObject? = null,
     ): ApiResult<AgentSession> {
         val metadata = buildJsonObject {
             put("session_mode", sessionMode)
+            extraMetadata?.forEach { (k, v) -> put(k, v) }
             botBrain?.let { bb ->
                 (bb["runtime"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { put("runtime", it) }
                 put("botBrain", bb)
@@ -209,7 +212,7 @@ class ChatBackend(
      * 503 `runtime_warming` waits and retries for up to about 45 s like iOS; an offline
      * computer is marked unreachable for the next pick.
      */
-    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null): RuntimeCall {
+    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null, headers: Map<String, String> = emptyMap()): RuntimeCall {
         // A notification action acts on the computer the push names (iOS NotificationActions runtimeId), not the picked one.
         val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
@@ -223,6 +226,8 @@ class ChatBackend(
             put("headers", buildJsonObject {
                 put("accept", "application/json")
                 if (jsonBody != null) put("content-type", "application/json")
+                // Start anywhere: Idempotency-Key rides the envelope (cloud-api's proxy allowlist keeps it, #3181).
+                headers.forEach { (k, v) -> put(k, v) }
             })
             if (jsonBody != null) put("body", jsonBody)
             put("bodyEncoding", "utf8")
@@ -259,8 +264,8 @@ class ChatBackend(
      * A binary GET on the user's computer through the relay (iOS PhoneTaskClient.crop): the
      * status and body as the computer sent them, or null when no computer answers.
      */
-    suspend fun runtimeBytes(path: String, accept: String): Pair<Int, ByteArray>? {
-        val runtimeId = (relay.resolve() as? RelayPick.Computer)?.runtimeId ?: return null
+    suspend fun runtimeBytes(path: String, accept: String, targetRuntimeId: String? = null): Pair<Int, ByteArray>? {
+        val runtimeId = targetRuntimeId?.takeIf { it.isNotBlank() } ?: (relay.resolve() as? RelayPick.Computer)?.runtimeId ?: return null
         val envelope = buildJsonObject {
             put("method", "GET")
             put("path", path)
@@ -355,8 +360,9 @@ class ChatBackend(
      * FactoryPaneClient.screenStream). Emits each event with its data; throws
      * [NoComputerException] or [IllegalStateException] (a friendly sentence) when it can't connect.
      */
-    fun runtimeEvents(path: String): Flow<RuntimeEvent> = kotlinx.coroutines.flow.flow {
-        val runtimeId = when (val pick = relay.resolve()) {
+    fun runtimeEvents(path: String, targetRuntimeId: String? = null): Flow<RuntimeEvent> = kotlinx.coroutines.flow.flow {
+        // A thread bound to a computer (Start anywhere) streams from that computer, not the auto pick.
+        val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
             RelayPick.NoComputer -> throw NoComputerException()
             RelayPick.Unreachable -> throw IllegalStateException(ChatErrors.UNREACHABLE)
@@ -398,7 +404,7 @@ class ChatBackend(
      * [ChatStreamEvent.Failed]: 503 `runtime_warming` (the caller waits and retries),
      * `runtime_offline`, 409 `no_brain`, 428 / `compute_required` (no computer).
      */
-    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false, imagePrompt: String? = null): Flow<ChatStreamEvent> {
+    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false, imagePrompt: String? = null, skill: JsonObject? = null): Flow<ChatStreamEvent> {
         val envelope = buildJsonObject {
             put("method", "POST")
             put("path", "/api/agent-chat")
@@ -413,7 +419,9 @@ class ChatBackend(
                 imagePrompt?.takeIf { it.isNotBlank() && it.length <= 16000 }?.let { put("image_prompt", it) }
             }
             val marked = if (personTurn) JsonObject(encoded + ("metadata" to JsonObject((encoded["metadata"] as? JsonObject).orEmpty() + person))) else encoded
-            put("body", marked.toString())
+            // A picked server skill rides top-level (`skill: {id, arguments?}`); the server adds the one-turn directive.
+            val withSkill = if (skill != null) JsonObject(marked + ("skill" to skill)) else marked
+            put("body", withSkill.toString())
             put("bodyEncoding", "utf8")
         }.toString()
         val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = "text/event-stream")

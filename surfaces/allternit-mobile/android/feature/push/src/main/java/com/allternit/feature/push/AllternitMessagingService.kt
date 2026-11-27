@@ -45,8 +45,42 @@ class AllternitMessagingService : FirebaseMessagingService() {
         }
     }
 
+    /**
+     * Agent browser pushes (CONTRACT.md): `kind` is `aci_approval`, `aci_human` or `aci_blocked`. They get their
+     * category (buttons), one notification per run, the computer id the deep link needs, and plain-words text when
+     * the push has none. Never carries a credential value, only its name and domain.
+     */
+    private fun withAciText(data: Map<String, String>): Map<String, String> {
+        val kind = data["kind"] ?: data["type"]
+        val category = when (kind) {
+            "aci_approval" -> PushNotifications.ACI_APPROVAL
+            "aci_human" -> PushNotifications.ACI_HUMAN
+            "aci_blocked" -> PushNotifications.ACI_BLOCKED
+            else -> return data
+        }
+        val out = data.toMutableMap()
+        out["category"] = category
+        if (out["computerId"].isNullOrBlank()) data["computer_id"]?.let { out["computerId"] = it }
+        if (out["url"].isNullOrBlank() && !data["computer_id"].isNullOrBlank() && !data["run_id"].isNullOrBlank()) {
+            out["url"] = "/computers/${data["computer_id"]}?run=${data["run_id"]}"
+        }
+        if (out["tag"].isNullOrBlank()) out["tag"] = "aci-${data["run_id"].orEmpty()}"
+        val (title, body) = when (category) {
+            PushNotifications.ACI_APPROVAL -> {
+                val name = data["credential_name"] ?: data["credential"]?.takeIf { !it.startsWith("{") }
+                val domain = data["credential_domain"]
+                ("Your bot needs you") to (data["message"] ?: if (name != null && domain != null) "Fill your $name login on $domain?" else "Approve what it wants to do.")
+            }
+            PushNotifications.ACI_HUMAN -> "Your bot needs you" to (data["reason"] ?: "It needs you to do a step.")
+            else -> (data["domain"]?.let { "$it blocked your bot" } ?: "A site blocked your bot") to "Open Allternit to continue, stop or re-run."
+        }
+        if (out["title"].isNullOrBlank()) out["title"] = title
+        if (out["body"].isNullOrBlank()) out["body"] = body
+        return out
+    }
+
     override fun onMessageReceived(message: RemoteMessage) {
-        val data = withComputerAlertText(message.data)
+        val data = withAciText(withComputerAlertText(message.data))
         // Wave I2: every push also refreshes the status snapshot (widget, tiles, shortcuts) and the ongoing run notification.
         refreshSystemSurfaces()
         if (data["event"] == "notification.revoke") {

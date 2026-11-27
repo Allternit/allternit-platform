@@ -51,6 +51,19 @@ object SettingsPrefs {
     fun string(context: Context, key: String): String? = prefs(context).getString("allternit.$key", null)?.takeIf { it.isNotEmpty() }
     fun setString(context: Context, key: String, value: String) = prefs(context).edit().putString("allternit.$key", value).apply()
 
+    /**
+     * Response font for assistant replies (web Settings › Appearance › Response font, iOS twin). "serif" (Allternit
+     * Serif, the default per Eoj E5) or "sans". Saved on this phone, like the theme.
+     */
+    fun responseFont(context: Context): String =
+        if (prefs(context).getString(RESPONSE_FONT_KEY, "serif") == "sans") "sans" else "serif"
+    fun setResponseFont(context: Context, value: String) =
+        prefs(context).edit().putString(RESPONSE_FONT_KEY, if (value == "sans") "sans" else "serif").apply()
+
+    /** The SharedPreferences file and key the chat renderer reads (kept stable: chat reads it without this module). */
+    const val PREFS_FILE = FILE
+    const val RESPONSE_FONT_KEY = "allternit.responseFont"
+
     fun appearance(context: Context): ThemeMode = when (prefs(context).getString("allternit.appearance", "light")) {
         "dark" -> ThemeMode.Dark
         "system" -> ThemeMode.System
@@ -76,5 +89,23 @@ object AppearancePrefs {
     fun set(context: Context, next: ThemeMode) {
         mode = next
         SettingsPrefs.setAppearance(context, next)
+    }
+}
+
+/** The Response font the Appearance row drives; Serif is the default (E5). Compose state so the row updates at once. */
+object ResponseFontPrefs {
+    var serif by mutableStateOf(true)
+        private set
+    private var loaded = false
+
+    fun load(context: Context) {
+        if (loaded) return
+        loaded = true
+        serif = SettingsPrefs.responseFont(context) == "serif"
+    }
+
+    fun set(context: Context, useSerif: Boolean) {
+        serif = useSerif
+        SettingsPrefs.setResponseFont(context, if (useSerif) "serif" else "sans")
     }
 }

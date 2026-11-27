@@ -38,6 +38,8 @@ struct ArtifactsLibraryView: View {
     @State private var showingOfficeDocuments = false
     @State private var choosingNew = false
     @State private var searchDraft = ""
+    @State private var introShowing = false
+    @AppStorage("artifacts.recentSearches") private var recentSearchesRaw = ""
     @State private var searching = false
     @State private var importingPDF = false
     @State private var photoItem: PhotosPickerItem?
@@ -56,15 +58,19 @@ struct ArtifactsLibraryView: View {
                 LibrarySectionHeader(title: nil, onMenu: { openLibraryDrawer($isSidebarOpen) }) {
                     ProjectsPill(searching: $searching, filtersActive: filtersOn, searchLabel: "Search artifacts") { filterPopover }
                 }
+                .blur(radius: introShowing ? PolishTokens.introScrimBlur : 0)
+                .allowsHitTesting(!introShowing)
                 if searching || !searchDraft.isEmpty {
                     ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
                 }
+                if searching, searchDraft.isEmpty, !recentSearches.isEmpty { recentSearchesList }
                 // No nav bar here: the title docks into LibrarySectionHeader's
                 // centre, measured from this page's top (the search field can
                 // sit between them).
                 ACIDockReader { dock in
                     PolishedTabPage(title: "Artifacts", chrome: .overlay(barCenter: dock.barCenter),
                                     introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
+                        kindTitleMenu
                         if let notice { noticeBar(notice) }
                         yourArtifacts
                     }
@@ -80,7 +86,10 @@ struct ArtifactsLibraryView: View {
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
             .hidesOnScroll(barHidden)
+            .opacity(introShowing ? 0 : 1)
+            .allowsHitTesting(!introShowing)
         }
+        .onPreferenceChange(IntroShowingKey.self) { introShowing = $0 }
         .background(Color("BgPrimary").ignoresSafeArea())
         .tracksScrollForHide($barHidden)
         .fullScreenCover(item: $openArtifact) { summary in
@@ -179,6 +188,7 @@ struct ArtifactsLibraryView: View {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             store.searchText = searchDraft
+            rememberSearch(searchDraft)
             await store.reload()
         }
     }
@@ -203,14 +213,82 @@ struct ArtifactsLibraryView: View {
                     }
                 }
                 popoverLabel("Kind")
-                popoverCheck("All kinds", on: store.kind == nil) { setKind(nil) }
+                popoverCheck(countLabel("All kinds", store.counts?.total), on: store.kind == nil) { setKind(nil) }
                 ForEach(ArtifactV2Kind.filterKinds) { kind in
-                    popoverCheck(kind.label, on: store.kind == kind) { setKind(kind) }
+                    popoverCheck(countLabel(kind.label, store.counts?.byKind[kind.rawValue]), on: store.kind == kind) { setKind(kind) }
                 }
             }
             .padding(16)
         }
         .frame(minWidth: 260, maxHeight: 460)
+    }
+
+    private func countLabel(_ title: String, _ count: Int?) -> String {
+        count.map { "\(title) · \($0)" } ?? title
+    }
+
+    /// "Artifacts ⌄": the same kind filter as the pill, from the page title
+    /// (PolishedTabPage takes a plain title string, so it sits just under it).
+    private var kindTitleMenu: some View {
+        Menu {
+            Button { setKind(nil) } label: {
+                Label(countLabel("All kinds", store.counts?.total), systemImage: store.kind == nil ? "checkmark" : "square.grid.2x2")
+            }
+            ForEach(ArtifactV2Kind.filterKinds) { kind in
+                Button { setKind(kind) } label: {
+                    Label(countLabel(kind.label, store.counts?.byKind[kind.rawValue]),
+                          systemImage: store.kind == kind ? "checkmark" : kind.systemImage)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(store.kind?.label ?? "All kinds").font(.system(size: 15, weight: .semibold))
+                Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold))
+            }
+            .foregroundColor(Color("TextSecondary"))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Filter artifacts by kind")
+    }
+
+    // MARK: Recent searches
+
+    private var recentSearches: [String] {
+        recentSearchesRaw.split(separator: "\n").map(String.init)
+    }
+
+    private func rememberSearch(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        var list = recentSearches.filter { $0.caseInsensitiveCompare(t) != .orderedSame }
+        list.insert(t, at: 0)
+        recentSearchesRaw = list.prefix(8).joined(separator: "\n")
+    }
+
+    private var recentSearchesList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Recent").font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary"))
+                Spacer()
+                Button("Clear") { recentSearchesRaw = "" }.font(.caption.weight(.semibold))
+            }
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            ForEach(recentSearches, id: \.self) { term in
+                Button { searchDraft = term } label: {
+                    HStack {
+                        Image(systemName: "clock.arrow.circlepath").foregroundColor(Color("TextTertiary"))
+                        Text(term).foregroundColor(Color("TextPrimary"))
+                        Spacer()
+                    }
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func popoverLabel(_ text: String) -> some View {

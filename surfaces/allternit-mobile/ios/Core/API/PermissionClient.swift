@@ -100,6 +100,10 @@ private struct ReplyRequestBody: Encodable {
 enum PermissionBusEvent: Decodable, Sendable {
     case asked(PermissionRequest)
     case replied(PermissionRepliedInfo)
+    /// gizzi `Question.Event.Asked` (`question.asked`).
+    case questionAsked(AgentQuestionRequest)
+    /// `question.replied` / `question.rejected`.
+    case questionClosed(sessionID: String, requestID: String)
     case ignored
 
     enum CodingKeys: String, CodingKey {
@@ -123,6 +127,12 @@ enum PermissionBusEvent: Decodable, Sendable {
         case "permission.replied":
             let info = try container.decode(PermissionRepliedInfo.self, forKey: .properties)
             self = .replied(info)
+        case "question.asked":
+            self = .questionAsked(try container.decode(AgentQuestionRequest.self, forKey: .properties))
+        case "question.replied", "question.rejected":
+            struct Closed: Decodable { let sessionID: String; let requestID: String }
+            let closed = try container.decode(Closed.self, forKey: .properties)
+            self = .questionClosed(sessionID: closed.sessionID, requestID: closed.requestID)
         default:
             self = .ignored
         }

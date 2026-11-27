@@ -26,7 +26,7 @@ async function _temp() {
   if (!installed && !isRunningOnHomespace()) {
     return {
       key: "chrome-extension-not-detected",
-      jsx: <Text color="warning">Allternit Chrome extension not detected · https://chromewebstore.google.com/detail/chheieepkpbhkiimdmbdjmnhcooclpok to install</Text>,
+      jsx: <Text color="warning">Allternit Chrome extension not detected · https://chromewebstore.google.com/detail/hkillgnnhkokmjcjjpolpnecmdnilhod to install</Text>,
       priority: "immediate",
       timeoutMs: 3000
     };

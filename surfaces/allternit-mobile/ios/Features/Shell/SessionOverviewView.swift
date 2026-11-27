@@ -28,7 +28,6 @@ struct SessionOverviewView: View {
     @State private var barHidden = false
     @State private var optionsOpen = false
     @State private var layoutOpen = false
-    @State private var confirmDelete = false
     @State private var seeded = false
     /// The chosen layout, kept across launches (useOverviewLayout).
     @AppStorage("allternit-phone-overview-layout") private var layoutRaw = Layout.grid.rawValue
@@ -177,14 +176,6 @@ struct SessionOverviewView: View {
             seedForLaunchArguments()
             #endif
         }
-        .confirmationDialog(
-            "Delete \(select.selected.count) \(select.selected.count == 1 ? "item" : "items")? This can't be undone.",
-            isPresented: $confirmDelete,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) { bulkDelete() }
-            Button("Cancel", role: .cancel) {}
-        }
         .background(Color("BgPrimary").ignoresSafeArea())
         .accessibilityIdentifier("phoneOverview")
         .alert("Couldn't update the chat", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
@@ -298,7 +289,7 @@ struct SessionOverviewView: View {
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.name ?? "Untitled")
+                    Text(session.displayTitle)
                         .font(.system(size: 16.5))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -522,7 +513,7 @@ struct SessionOverviewView: View {
             HStack(spacing: 4) {
                 barButton(archivedView ? "Unarchive" : "Archive", icon: archivedView ? "tray.and.arrow.up" : "archivebox", disabled: none) { bulkArchive() }
                 barButton(pinAction == .pin ? "Pin" : "Unpin", icon: pinAction == .pin ? "pin" : "pin.slash", disabled: none) { bulkPin(pinAction) }
-                barButton("Delete", icon: "trash", disabled: none, destructive: true) { confirmDelete = true }
+                holdDeleteButton(count: select.selected.count, disabled: none)
             }
             .padding(6)
             .glassSurface(cornerRadius: 28)
@@ -530,6 +521,27 @@ struct SessionOverviewView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
         .accessibilityIdentifier("overviewSelectBar")
+    }
+
+    /// Delete is press and hold, never a tap or a dialog (Allternit rule).
+    private func holdDeleteButton(count: Int, disabled: Bool) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: "trash").font(.system(size: 18))
+            Text("Hold to delete").font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(Theme.statusError)
+        .frame(maxWidth: .infinity, minHeight: 48)
+        .contentShape(Rectangle())
+        .onLongPressGesture(minimumDuration: 1.0) {
+            guard !disabled else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            bulkDelete()
+        }
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
+        .accessibilityLabel("Hold to delete \(count) \(count == 1 ? "item" : "items")")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { bulkDelete() }
     }
 
     private func barButton(_ text: String, icon: String, disabled: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {
@@ -631,7 +643,7 @@ struct SessionOverviewView: View {
     }
 
     private func accessibilityTitle(_ session: AgentSession) -> String {
-        let name = session.name ?? "Untitled"
+        let name = session.displayTitle
         if store.isStreaming(session.id) { return "\(name), Working" }
         if store.isUnread(session) { return "\(name), New reply" }
         return name
@@ -657,7 +669,7 @@ struct SessionOverviewView: View {
                 .accessibilityLabel("Rename")
                 .frame(maxWidth: .infinity)
         } else {
-            Text(session.name ?? "Untitled")
+            Text(session.displayTitle)
                 .font(.system(size: size, weight: weight))
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(lines)
@@ -685,7 +697,7 @@ struct SessionOverviewView: View {
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel("More for \(session.name ?? "Untitled")")
+        .accessibilityLabel("More for \(session.displayTitle)")
     }
 
     /// Teleport from ⋯: the session keeps its conversation and resumes on the other computer.
@@ -718,7 +730,7 @@ struct SessionOverviewView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Archive \(session.name ?? "Untitled")")
+        .accessibilityLabel("Archive \(session.displayTitle)")
     }
 
     /// Phones: swipe a deck card up to close it.

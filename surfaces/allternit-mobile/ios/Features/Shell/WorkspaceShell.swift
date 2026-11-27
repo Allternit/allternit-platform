@@ -145,6 +145,8 @@ struct MainWorkspaceView: View {
         .overlay { WaitingGamesLayer() }
         // Pet offers: the bot offers help when a run fails off-screen.
         .overlay { PetOfferBannerLayer() }
+        // Long jobs: a quiet capsule above the composer.
+        .overlay { JobBannerLayer() }
         .overlay { sessionLookupCover }
         // Recents and the overviews open an artifact session in its studio,
         // with its editor or pane, not as a plain chat.
@@ -306,8 +308,9 @@ struct MainWorkspaceView: View {
     private func hubItems(_ section: ModeHubSection) -> [ModeHubItem] {
         switch section.id {
         case "recents", "sessions":
-            return hubSessions.openSessions(for: section.mode).prefix(4).map {
-                ModeHubItem(id: $0.id, title: $0.name ?? "Untitled chat")
+            let rows = section.id == "recents" ? hubSessions.recentSessions(for: section.mode) : hubSessions.openSessions(for: section.mode)
+            return rows.prefix(4).map {
+                ModeHubItem(id: $0.id, title: $0.displayTitle)
             }
         case "main-bot", "bots":
             let bots = section.id == "main-bot" ? hubBots.bots.filter(\.isMainBot) : hubBots.bots
@@ -328,7 +331,11 @@ struct MainWorkspaceView: View {
         case .tab(let tab):
             modeStore.selectBarItem(tab)
             if section.id == "recents" || section.id == "sessions" {
-                if let item { selectedSessionId = item.id }
+                if let item {
+                    // A code or terminal session in Home recents opens in Code.
+                    if hubSessions.sessions.first(where: { $0.id == item.id })?.originSurface == "code" { modeStore.selectBarItem(.code) }
+                    selectedSessionId = item.id
+                }
                 else { isOverviewPresented = true }
             }
         case .meetingsSheet:

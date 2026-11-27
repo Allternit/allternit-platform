@@ -67,6 +67,9 @@ write_files:
       xfce4-session >/var/log/allternit-desktop/xfce.log 2>&1 &
 
       # Share the display over VNC (password = allternit for the MVP).
+      # This is the user's screen (:0). Each agent's browser runs on its own
+      # display (:10 and up, `allternit-agent-display start <agent_id>`), with its
+      # own x11vnc on 5900+N for that run's live view.
       x11vnc -display :0 -rfbport 5900 -forever -shared -passwd allternit \
         >/var/log/allternit-desktop/x11vnc.log 2>&1 &
 
@@ -198,6 +201,16 @@ write_files:
       # allternit-api -> guest agent -> this -> the driver's local socket.
       exec /usr/bin/python3 /opt/allternit-driver/guest-rpc.py "$@"
 
+  # One X display (:10 and up) + one kept Chrome profile per agent; prints
+  # {"display": ":10", "pid": ..., "vnc_port": 5910}. Same wrapper as
+  # domains/computer-use/driver/packaging/guest/linux/install-driver.sh.
+  - path: /usr/local/bin/allternit-agent-display
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      exec /usr/bin/env PYTHONPATH=/opt/allternit-driver /usr/bin/python3 -m allternit_driver.agent_display "$@"
+
 runcmd:
   # Install Google Chrome stable for remote CDP browser automation.
   - wget -q -O /usr/share/keyrings/google-chrome.gpg https://dl-ssl.google.com/linux/linux_signing_key.pub
@@ -210,6 +223,7 @@ runcmd:
   - systemctl enable allternit-factory-pane.service
   - systemctl enable allternit-node.service allternit-node.path
   - systemctl enable allternit-driver.service
+  - install -d -m 0700 /var/lib/allternit/browser-profiles
   # Do not start allternit-factory-pane or allternit-node here; the binaries
   # are placed by the CI image pipeline (Phase 15). When present, systemd
   # starts them on next boot (the node once the computer is paired).

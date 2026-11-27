@@ -47,13 +47,13 @@ The structured members. They read and drive the UI through the [Allternit Driver
 | `run_batch` | risky | on non-sandbox targets, when any `act` step enters text | `steps` (1–50): `{act? {id, op, value?, key?}, menu?, pixel? {tool, args}, wait? ms, wait_for?, expect?, timeout_ms?}`; `version?` |
 | `verify` | reversible | no | `checks` (1–20): `{id?, role?, name?, text?, gone?, value?, enabled?}`, `timeout_ms?` |
 | `request_human` | reversible | no | `reason?`, `timeout_ms?` (default 5 min) |
-| `use_credential` | risky | on non-sandbox targets | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
+| `use_credential` | risky | always (every target) | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
 | `run_subtask` | risky | on non-sandbox targets, **once per subtask** (its steps carry that grant) | `goal`, `inputs?` (`[{name, value}]`, the only text it may type), `success?` (1–10 `verify` checks, or `{ask}` for a fuzzy yes/no), `constraints?` (`ops?`, `avoid?`, `allow_irreversible?`), `max_steps?` (default 12, max 40), `budget_ms?` (default 60 000), `app?` / `pid?` / `window_id?`, `query?`, `max_elements?` (default 300), `cache?` (`auto` default, `refresh`, `off`), `save_as?` (save the recording as a named skill), `api_options?` (`[{tool, description?}]`, MCP tools / API actions the planner holds), `best_of?` (2–5) + `computers?` + `max_cost_usd?` for [Best-of-N](/tools/computer-parallel) |
 | `run_parallel` | risky | **once per call** when any subtask targets a non-sandbox computer | `subtasks` (1–8): each `{computer?, …run_subtask fields}`; `max_parallel?` (default 4, max 8), `budget_ms?` (whole call, default 120 000), `max_cost_usd?` (default 0.25). See [Parallel subtasks and Best-of-N](/tools/computer-parallel) |
 | `run_skill` | risky | on non-sandbox targets, **once per run** (like `run_subtask`) | `name`, `inputs?` (a value for each of the skill's input names), `app?` / `pid?` / `window_id?`, `max_steps?`, `budget_ms?` |
 | `skills` | reversible | no | `forget?` (delete this saved skill before listing) |
 
-`run_batch` runs ordered steps in one window. Each step may check `wait_for` (precondition) and `expect` (postcondition); the batch stops at the first failed check and returns one observe read (the fresh element map). `verify` checks bounded conditions — role, name, text, gone, value, enabled — on a fresh read. `request_human` pauses the lease, opens the live view with input enabled, and resumes the same session when the person signals done (`POST /api/v1/computers/:id/human-done`) or the timeout elapses. `use_credential` types a vault secret or a fresh TOTP code into the focused field; the value never enters the model context, the prompts or the logs. See [Computer credentials](/tools/computer-credentials).
+`run_batch` runs ordered steps in one window. Each step may check `wait_for` (precondition) and `expect` (postcondition); the batch stops at the first failed check and returns one observe read (the fresh element map). `verify` checks bounded conditions — role, name, text, gone, value, enabled — on a fresh read. `request_human` pauses the lease, opens the live view with input enabled, and resumes the same session when the person signals done (`POST /api/v1/computers/:id/human-done`) or the timeout elapses. `use_credential` writes a vault secret or a fresh TOTP code into the field named by `element_id` (its id from `read_ui`; required on the person's own computer, where the value is an accessibility write on that element and is never typed into the front window); the value never enters the model context, the prompts or the logs. See [Computer credentials](/tools/computer-credentials).
 
 `run_subtask` hands a bounded step sequence (fill a form, search and pick a result, toggle settings) to the decision loop instead of the planner model. Each step reads the element map, picks one option from the visible elements × allowed ops with a typed decision (`POST /v1/decisions`, about 100–150 ms on a local scorer), runs it through the same lease → policy → audit path as every other call, and checks `success` with `verify`. It returns a step trace (decision, backend, latency, confidence per step) and a status: `done`, `escalated` (with the reason and a compact current screen, so the planner continues from there) or `failed`. A decision under its confidence threshold hands control back instead of guessing. Irreversible elements (the [safety layer](/tools/computer-safety)'s shared classifier) are never options unless `constraints.allow_irreversible` is set, and even then they end the subtask with `needs_confirmation` for the planner to run with the person's approval. Secrets never go in `inputs`: use `use_credential`. With `api_options`, an MCP tool or API action the planner holds is offered ahead of the GUI options on the first step; picking it ends the subtask with status `use_api` and the planner makes that call. See [How computer use decides](/tools/computer-use-decisions) for the loop and measured numbers.
 
@@ -141,7 +141,7 @@ The checks run in this order:
 3. **Policy and approval.** A declarative policy denial returns `403 policy_denied`. A member that needs approval returns `409 approval_required` with an `approval_id`. Approve it with `POST /api/aci/handoff/:approval_id/approve`, then resend the same call with `approval_grant` set to that id. A grant works once, and only for the exact action it was issued for.
 4. **Safety.** Evaluated between the policy check and the approval check of step 3, so its confirmations ride the same approval. The [safety layer](/tools/computer-safety) assesses the step: app/domain lists, host policy and credential binding can deny it (`403 safety_denied`); the per-step monitor can pause it (`safety_paused`); irreversible classes, watch mode and monitor confirmations turn it into `409 approval_required` on every target, with a `safety` object explaining why. On cloud computers a rollback snapshot is taken before the first risky step of a run.
 5. **Audit row.** A row is written to the policy audit log and fsynced before the action runs. If the row can't be written, the action doesn't run.
-6. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway. The v2 structured members answer from the driver's element map (or the human gate, or the credential backends): no screenshot is taken, no coordinates are scaled, and the result is a text block with the driver's JSON (element tree, batch result or verify rows).
+6. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway. The v2 structured members answer from the driver's element map (or the human gate, or the credential backends): no screenshot is taken, no coordinates are scaled, and the result is a text block with the driver's JSON (element tree, batch result or verify rows). On Linux cloud computers each agent's browser runs headed on its own X display with a kept Chrome profile, and the driver's window, screenshot and pixel calls take that `display`; see [Agent browsers on Linux](/tools/allternit-driver#agent-browsers-on-linux-one-display-per-agent).
 
 Every call returns this result shape:
 
@@ -163,17 +163,89 @@ Refusals add an `error` code. Text results that carry screen or page content arr
 POST /api/v1/computers/:id/human-done
 ```
 
-which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again."
+which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again." `computer.human_requested` also goes out as an `aci_human` push (`secret: false`; a masked-box request sends `secret: true`).
+
+### Blocked pages
+
+After every `read_ui` (and a browser `get_page_text` or `read_page`) the executor checks the result for a page the agent can't pass on its own (`cmd/allternit-api/src/computer_block.rs`):
+
+| `kind` | What matched |
+|---|---|
+| `login` | A password field (secure text field) next to sign-in words |
+| `two_factor` | "2-Step Verification", "verification code", "authenticator app" and similar, on a short page |
+| `captcha` | A captcha frame: "I'm not a robot", a reCAPTCHA or hCaptcha challenge, Turnstile, FunCaptcha, GeeTest |
+| `block_page` | A Cloudflare, Akamai, PerimeterX, Incapsula or DataDome challenge or block page, or a short "Access denied" page |
+| `rate_limited` | "429 Too Many Requests", "rate limit exceeded" |
+
+Vendor signatures count on any page. Generic phrases ("access denied", "verification code") count only on short pages, so an article that mentions them is not a wall, and a "protected by reCAPTCHA" line on a sign-in form is a `login`, not a `captcha`. On a match the run holds (like `request_human`; on cloud computers the agent's lease is released so the person can sign in on the live view) and this goes out on the events stream, plus an `aci_blocked` push:
+
+```json
+{ "type": "computer.block_detected", "ts": "2026-11-26T21:00:00Z",
+  "data": { "run_id": "ses_123", "computer_id": "cmp_cloud", "domain": "shop.example.com",
+            "kind": "block_page", "rerun_targets": [ { "computer_id": "cmp_mac", "name": "My MacBook" } ],
+            "timeout_ms": 600000 } }
+```
+
+`rerun_targets` lists the person's Macs seen in the last two minutes, or `[]`. Each entry is `{ computer_id, name, runtime_id }`. The list merges two sources and drops repeats, the run's own computer, and anything older than two minutes:
+
+- **This allternit-api's own Macs.** This-device computers in its database. A Mac counts as seen when Desktop registers it and every 60 s after that while its own allternit-api runs (the runtime-presence loop bumps its row), so a Mac that is asleep, shut down or quit drops out even though its row still says `running`. `runtime_id` is this runtime's id.
+- **The person's other Macs, from cloud-api.** A run on a cloud computer has no Mac rows in its own allternit-api, so it asks cloud-api `GET /api/v1/runtime-presence/computers?kind=this_device&online=true`, relay-signed like `/api/v1/runtime/events` (signed over `GET`, the path without the query, and an empty body). cloud-api answers the runtime owner's other Allternit Desktop runtimes on macOS whose 60 s heartbeat is under two minutes old: `{ "computers": [ { computer_id, runtime_id, name, last_seen } ] }`, where `computer_id` is the runtime id. It is asked only when the runtime is paired to the run's owner, and a slow or failed answer (4 s) leaves the local list.
+
+The person answers:
+
+```http
+POST /api/v1/computers/:id/block-resolve
+{ "action": "continue" | "stop" | "rerun", "rerun_target": "cmp_mac" }
+```
+
+- `continue`: they dealt with it. The call reads the page again and returns the fresh read; the same domain and kind won't hold this run again.
+- `stop`: the run ends here. The call returns an error result (`run_stopped`) telling the model to stop.
+- `rerun`: the run ends here (`rerun_elsewhere`), and **the client** starts a new run on `rerun_target` with `rerun_of` set to the old run id (the route answers it as `run_id`), through [`POST /api/v1/computers/:id/runs`](#start-a-run-on-a-computer) on that Mac's runtime (`runtime_id`). The server never moves a run between computers, and cloud sign-ins don't carry over to the Mac.
+
+The answer is `{ ok, action, run_id, domain, kind, rerun_target }`; `409 no_block_pending` when nothing is waiting, `400 invalid_rerun_target` for a computer not in `rerun_targets`. A hold nobody answers in 10 minutes lets the run go on with a note telling the model to call `request_human`: detection is a heuristic with false positives and misses, so it pauses and asks but never ends a run by itself. `computer.block_resolved` (`{ run_id, computer_id, domain, kind, action, rerun_target }`, `action` also `timed_out`) closes the hold.
+
+### Start a run on a computer
+
+```http
+POST /api/v1/computers/:id/runs
+{ "task": "Book the 7 pm table at Nonna's", "rerun_of": "ses_123", "bot_id": "bot_7f3a" }
+```
+
+This starts an agent run the same way `POST /api/aci/run` does: the same safety gate and handoff, the planning loop, the run buffer (`GET /api/aci/stream/:run_id`) and the run cards. The engine's toolset calls go to this computer. `:id` is a computer id, `this-device`, or the runtime's own runtime id (what a `rerun_targets` entry from cloud-api carries). Only `task` is required. The answer is `{ sessionId, run_id, adapterId, computer_id, rerun_of }`; `202 handoff_required` (the `/api/aci/run` body) when the task needs approval first; `404 computer_unavailable` for a computer the caller can't use; `400 invalid_rerun_of`. `POST /api/aci/run` also takes `rerunOf` (or `rerun_of`) and now answers `run_id`, `computer_id` and `rerun_of` too.
+
+### Re-runs
+
+A run started with `rerun_of` (above), or a toolset call that carries `rerun_of: "<run id>"`, records the link on the run's audit rows (`rerun_of=<id>`) and on its `computer.action` events (`rerun_of`), so history can show "re-run of" a blocked cloud run. A re-run starts fresh: no sign-ins carry over.
+
+### Safari windows on this Mac
+
+A browser run on this device (macOS), started with `POST /api/aci/run` or `POST /api/v1/computers/:id/runs`, gets its own Safari window in the "Allternit Agent" profile on its first toolset call: allternit-api asks the local driver for `safari_window {op: "open"}` and keeps the returned window (`pid`, `window_id`) for the run (`cmd/allternit-api/src/computer_safari_window.rs`). A `read_ui` of that run that names no `app`, `pid` or `window_id` reads that window, so the agent's element ids (and its `act` calls on them) stay in its own window and never touch the person's. See [Safari on this Mac](/tools/allternit-driver#safari-on-this-mac).
+
+- **Run end.** The window closes (`safari_window {op: "close"}`; the driver closes only windows it opened) when the run finishes or is stopped, when the person stops it or re-runs it at a blocked page, or after 15 minutes without a call: the same places the Linux agent display stops.
+- **No agent profile.** When Safari has no "Allternit Agent" profile and the driver can't make one by script, it answers `profile_missing` with setup `steps`. The run holds like `request_human`: `computer.human_requested` with `reason: "Set up the Allternit Agent Safari profile"`, `kind: "safari_profile"`, the driver's `steps` and `setup_reason`, plus an `aci_human` push. Desktop and the phones show the steps; the person sets the profile up and taps Continue (`POST /api/v1/computers/:id/human-done`). The window is then opened again. If the profile is still missing, the call returns an error result `safari_profile_missing` telling the model to stop, and the run doesn't drive the person's own Safari windows.
+- **Other refusals.** Without the arc engine or the driver sidecar, the run goes on as before, with no window of its own.
+
+### Control
+
+The live view's Take over and Give back buttons, and the phones', use the control lease:
+
+| Route | Behavior |
+|---|---|
+| `GET /api/v1/computers/:id/control` | `{ "control": { computer_id, holder: { kind, id, label, device_id }, acquired_at, expires_at } \| null, "handoffs": [...] }` |
+| `POST /api/v1/computers/:id/control/take` | The caller takes control, or renews it (`kind: "user"`; the device from the `x-allternit-device-id` header). `{ "control": {...} }`. A lease lasts 120 s without a renew. A person may take over from an agent; another person holding it answers `423 computer_controlled_elsewhere` with `control`. On this device, holding control is how a person lets agents drive their own screen. |
+| `POST /api/v1/computers/:id/control/release` | Hands control back. `{ "released": true \| false, "control": null }` |
+
+Phones start the re-run with `POST /api/v1/computers/:id/runs` sent to the target's own `runtime_id` (falling back to `computer_id`) and read `run_id` from the answer; `404 computer_unavailable` shows "Your Mac isn't reachable". Gizzi Code reaches only the runtime behind its own API base, so it starts the re-run there using the target's `computer_id`. A `computer.human_requested` with `kind: "safari_profile"` carries `steps` for Safari setup on the Mac; clients list them and offer Continue.
 
 ### Masked secret box
 
 When a site asks for a one-off value that is not saved in the vault (a password, a 2FA code, a card CVC), call `request_human` with a `secret` instead of handing over the whole computer:
 
 ```json
-{ "toolset": "computer", "member": "request_human", "input": { "secret": { "label": "6-digit code from your authenticator", "field": "Verification code", "domain": "example.com" } } }
+{ "toolset": "computer", "member": "request_human", "input": { "secret": { "label": "6-digit code from your authenticator", "field": "Verification code", "domain": "example.com", "element_id": "e31" } } }
 ```
 
-Focus the field first. The live view shows the person a masked box with the label (`computer.secret_requested`, which carries the label, field and domain, never a value). The person types the value; it goes to `POST /api/v1/computers/:id/secret` and the waiting call types it into the focused field through the same path as `use_credential`, then emits `computer.secret_supplied` (`{ saved }` only). The agent keeps control the whole time, and the tool result says only that the field was filled. The value never enters the model context, the events, the audit rows or the transcript, and later screenshots and observations are screened for it like a vault secret. If the person cancels, or 10 minutes pass with no answer, the call returns an error result saying the field is still empty (`computer.secret_cancelled`).
+Pass `element_id`, the field's id from `read_ui`. On this computer it is required: the value is written straight into that element (no focus change, no typing), and a request without it is refused before the box opens. On cloud computers it is optional; without it the value is typed into the focused field of the run's own screen. The live view shows the person a masked box with the label (`computer.secret_requested`, which carries the label, field and domain, never a value). The person types the value; it goes to `POST /api/v1/computers/:id/secret` and the waiting call writes it into the field through the same path as `use_credential` ([where the value goes](/tools/computer-credentials#where-the-value-goes-on-each-computer)), then emits `computer.secret_supplied` (`{ saved }` only). The agent keeps control the whole time, and the tool result says only that the field was filled. The value never enters the model context, the events, the audit rows or the transcript, and later screenshots and observations are screened for it like a vault secret. If the person cancels, or 10 minutes pass with no answer, the call returns an error result saying the field is still empty (`computer.secret_cancelled`).
 
 | Route | Behavior |
 |---|---|
@@ -235,6 +307,25 @@ The calls in one turn (`turn_id`) run in `call_index` order. After a call fails,
 
 A retry of the failed call itself, for example with an approval grant, is allowed.
 
+### Needs-you prompts in gizzi
+
+gizzi answers the three things that stop an agent browser run through its normal permission prompt, never a second one:
+
+| What stops the run | Prompt | Buttons | Call |
+|---|---|---|---|
+| A step that would fill a saved login (`409`/`403` with `kind: "credential"`) | Fill your *name* login on *domain*? | Approve, Allow for this run, Deny | `POST /api/aci/handoff/:approval_id/approve` (`{"scope":"run"}` for the second) or `/deny`, then the call is retried once |
+| `request_human` (`computer.human_requested`) | *bot* needs you: *reason* | Continue, Stop | `POST /api/v1/computers/:id/human-done` |
+| `request_human` with a `secret` (`computer.secret_requested`) | *bot* needs you: *label* | Send, Cancel | The value is typed into a masked input and goes straight to `POST /api/v1/computers/:id/secret`. It is never logged, never in the transcript, never shown to the model. A client with no masked input leaves the box open in the live view. |
+| A held block (`computer.block_detected`) | *domain* blocked *bot* | Continue, Re-run on my Mac, Stop | `POST /api/v1/computers/:id/block-resolve`; Re-run starts a new run on the Mac with `rerun_of`, and later steps in the session follow it |
+
+Stop ends the waiting call. Every fill asks: "Allow for this run" covers one credential name and domain for that run and is never remembered.
+
+`gizzi run` without a terminal never approves a credential. It fails the step with a message naming the approval id and how to approve it from the app (the needs-you card for the run, or the approve route above), and leaves the approval pending. Human and block holds are left for the app the same way.
+
+The terminal UI shows these same prompts everywhere it shows an agent's permission request: the permission dialog in a bot chat, and the `/decisions` list. Each prompt is titled **Needs you** and shows the summary line, then one button per option the run offered. Pick a button with the arrow keys and Enter (or its number in `/decisions`); Esc stops. When the run asks for a secret, choosing Continue opens a hidden field that shows only bullets as you type. Enter sends the value as the answer and Esc cancels. The value is never echoed, never written to the transcript or the prompt history, and never logged. Editors that connect through ACP show the same buttons but cannot take hidden input, so a secret ask there is stopped with a message pointing to the terminal or the app.
+
+*Screenshot description:* the terminal with a "Needs you" heading, the line "Fill your Acme login on example.com?" and below it three buttons, "Approve", "Allow for this run" and "Deny", the first one highlighted. A second screenshot shows "Value (hidden)" with a row of bullets and "Enter send · Esc stop".
+
 ### Model frame and scaling
 
 Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.
@@ -263,7 +354,33 @@ Every action that runs emits this event:
             "step": "Clicking Send" } }
 ```
 
-`x` and `y` are screen pixels. `actor` says who is driving: `agent_id` is the request's `agent_id`, else the computer's bot, and `name` is the request's `agent_name` or `null`. `actor` is `null` when neither an id nor a name is known. `step` is the request's masked step text or `null`. The steps an approved `run_subtask` or `run_skill` runs, and the children of `run_parallel` and `best_of`, carry the actor their parent call named. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+`x` and `y` are screen pixels. `rerun_of` is the run this run re-runs, or `null`. `actor` says who is driving: `agent_id` is the request's `agent_id`, else the computer's bot, and `name` is the request's `agent_name` or `null`. `actor` is `null` when neither an id nor a name is known. `step` is the request's masked step text or `null`. The steps an approved `run_subtask` or `run_skill` runs, and the children of `run_parallel` and `best_of`, carry the actor their parent call named. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+
+The same stream carries the run's gates, so a client that shows the live view can show every card. On the SSE stream every frame's `event:` name is `computer.action` (kept for older listeners): read `type` from the JSON.
+
+| Event | `data` | Push kind |
+|---|---|---|
+| `computer.confirmation_required` | `{ run_id, computer_id, approval_id, kind: "action" \| "credential", credential: { name, domain } \| null, confirmation_class, member, message }` | `aci_approval` |
+| `computer.human_requested` / `computer.human_resumed` | `{ computer_id, run_id, reason, live_view, input_enabled, … }` ([Human hand-off](#human-hand-off)) | `aci_human` |
+| `computer.block_detected` / `computer.block_resolved` | see [Blocked pages](#blocked-pages) | `aci_blocked` |
+| `computer.agent_display` | `{ run_id, computer_id, agent_id, display, vnc_port, state: "started" \| "stopped" }`: a run on a Linux cloud computer got (or gave back) its own X display and browser ([Agent displays](#agent-displays-on-linux-cloud-computers)) | none |
+
+`computer.human_requested` with `kind: "safari_profile"` carries `steps` (and `setup_reason`): show them as a setup card ([Safari windows on this Mac](#safari-windows-on-this-mac)).
+
+`GET /api/v1/computers/:id/screenshot?run_id=<run>` answers one PNG of that run's own display (see below); without `run_id`, the one run on that computer with its own display, else the shared desktop.
+
+Approve a `computer.confirmation_required` with `POST /api/aci/handoff/:approval_id/approve` (optional `{ "scope": "run" }` for a credential, see [Allow for this run](/tools/computer-credentials#allow-for-this-run)); the agent then resends the call with the grant. Only the run's owner (the user the approval was raised for, the computer's owner, or the Desktop app on this device) may approve or deny; anyone else gets `403 not_run_owner`.
+
+### Agent displays on Linux cloud computers
+
+A call that names a `run_id` on a Linux cloud computer gets the run its own X display and headed Chrome on the run's first call: allternit-api runs `allternit-agent-display start <agent_id>` in the guest (the request's `agent_id` when it fits the launcher's id rule, else one made from the run id) and keeps `{display, pid, cdp_port, vnc_port}` for the run (`cmd/allternit-api/src/computer_agent_display.rs`). Every guest driver call of that run then names the display (`read_ui`, `act`, `run_batch`, `verify`, `screenshot`, `pixel_*`, and the screenshot behind each step), and the xdotool fallback runs with `DISPLAY` set to it. See [Agent browsers on Linux](/tools/allternit-driver#agent-browsers-on-linux-one-display-per-agent).
+
+- **Live view.** `computer.agent_display` names the display and its VNC port (desktop image). `GET /api/v1/computers/:id/screenshot?run_id=<run>` shows that run's display; with no `run_id` it shows the one run on that computer that has its own display, else the shared desktop.
+- **Full computer.** When the computer has no memory for another agent browser the launcher exits 3 and the call answers `409 display_limit` with a plain message; nothing runs.
+- **Older images.** An image without the launcher, or one whose launcher fails for another reason (no Chrome, no Xvfb), runs the call on the shared desktop display as before.
+- **Run end.** The display stops (`allternit-agent-display stop`, the profile stays for the agent's next run) when the ACI run finishes or is stopped, when the person stops the run or re-runs it on their Mac at a blocked page, or after 15 minutes without a call. Two runs of the same agent share its display, which stops when the last one ends. Windows cloud computers have one desktop; the control lease keeps one agent on it at a time.
+
+Pushes go from allternit-api to cloud-api `POST /push/notify/:runtime_id`, relay-signed the same way as `/api/v1/runtime/events`, only when the runtime is paired to the run's owner. The body is `{ data, bot_name? }`, where `data` is `{ kind: "aci_approval", run_id, computer_id, approval_id, approval_kind, credential?, message }`, `{ kind: "aci_human", run_id, computer_id, reason, secret }` or `{ kind: "aci_blocked", run_id, computer_id, domain, block_kind, rerun_targets }` (computer ids). cloud-api rebuilds it from an allowlist and fans it out to web push, APNs and FCM. A credential goes by name and domain only. The shapes are in `cmd/allternit-api/openapi/app-v1.yaml`.
 
 ## Adapters
 

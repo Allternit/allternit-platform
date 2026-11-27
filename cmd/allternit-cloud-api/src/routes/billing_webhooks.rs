@@ -990,6 +990,7 @@ async fn grant_subscription_credits_and_respond(
             invoice_id,
             plan.monthly_credits_usd,
             plan.rollover_cap_usd,
+            crate::services::cost_service::open_allowance_for(plan.id, plan.monthly_credits_usd),
         )
         .await
     {
@@ -1811,10 +1812,19 @@ mod tests {
         CREATE TABLE user_credits (
                 user_id TEXT PRIMARY KEY,
                 balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0),
+                bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Open allowance (migration 169), reset by every plan grant.
+        sqlx::query("DROP TABLE IF EXISTS user_open_allowance CASCADE").execute(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE user_open_allowance (user_id TEXT PRIMARY KEY, allowance_usd DOUBLE PRECISION NOT NULL DEFAULT 0, used_usd DOUBLE PRECISION NOT NULL DEFAULT 0, period_start TIMESTAMPTZ, grant_key TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         )
         .execute(&pool)
         .await
@@ -2808,6 +2818,7 @@ mod tests {
                 &invoice_id,
                 plan.monthly_credits_usd,
                 plan.rollover_cap_usd,
+                crate::services::cost_service::open_allowance_for(plan.id, plan.monthly_credits_usd),
             )
             .await
             .unwrap();
@@ -2815,14 +2826,14 @@ mod tests {
 
         // user_2: 15 rolled clips to the 10 cap, then + 22 = 32.
         let balance = cost_service
-            .grant_subscription_credits("user_2", "in_2", 22.0, 10.0)
+            .grant_subscription_credits("user_2", "in_2", 22.0, 10.0, 0.0)
             .await
             .unwrap();
         assert!((balance - 32.0).abs() < 1e-9, "15 clipped to cap 10 + 22 must be 32");
 
         // user_3: no credits row starts fresh with the grant itself.
         let balance = cost_service
-            .grant_subscription_credits("user_3", "in_3", 22.0, 10.0)
+            .grant_subscription_credits("user_3", "in_3", 22.0, 10.0, 0.0)
             .await
             .unwrap();
         assert!((balance - 22.0).abs() < 1e-9, "a fresh row is the grant itself");
@@ -2842,14 +2853,14 @@ mod tests {
         let cost_service = crate::services::CostServiceImpl::new(pool.clone());
 
         let balance = cost_service
-            .grant_subscription_credits("user_1", "in_1", 22.0, 10.0)
+            .grant_subscription_credits("user_1", "in_1", 22.0, 10.0, 0.0)
             .await
             .unwrap();
         assert!((balance - 22.0).abs() < 1e-9);
 
         // Stripe retries the same delivery: the invoice-keyed ledger row dedupes.
         let balance = cost_service
-            .grant_subscription_credits("user_1", "in_1", 22.0, 10.0)
+            .grant_subscription_credits("user_1", "in_1", 22.0, 10.0, 0.0)
             .await
             .unwrap();
         assert!((balance - 22.0).abs() < 1e-9, "replay must not double-grant");

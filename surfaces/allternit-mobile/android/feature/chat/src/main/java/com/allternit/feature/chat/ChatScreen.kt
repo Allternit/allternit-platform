@@ -40,6 +40,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -87,6 +92,8 @@ object ChatBackends {
         val client = okHttp ?: ApiClients.okHttp(bearer = AllternitAuth.tokenProvider)
         val config = ApiConfig()
         return ChatBackend(client, api ?: AllternitApi(client, config), config, context.applicationContext)
+            // Start anywhere: the chip (feature/bots) and the + sheet list devices through this backend.
+            .also { if (PendingStart.backend == null) PendingStart.backend = it }
     }
 }
 
@@ -110,6 +117,21 @@ fun ChatScreen(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
+    // Follow the reply only while the reader is at the bottom; only their own drag releases it.
+    var tail by remember { mutableStateOf(TailFollow()) }
+    val tailConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // A finger drag down moves the content toward earlier messages.
+                // Only a list that can move back releases: a drag at the top of a short thread must not.
+                if (source == NestedScrollSource.UserInput && available.y > 0f && list.canScrollBackward) tail = tail.userScrolledUp()
+                return Offset.Zero
+            }
+        }
+    }
+    LaunchedEffect(list) {
+        snapshotFlow { !list.canScrollForward }.collect { atBottom -> if (atBottom) tail = tail.reachedBottom() }
+    }
     // iOS ChatView .scrollDismissesKeyboard(.interactively): dragging the feed hides the keyboard.
     val feedFocus = LocalFocusManager.current
     // Only a finger drag counts: auto-scroll while a reply streams must not hide the keyboard.
@@ -158,6 +180,7 @@ fun ChatScreen(
             onShareLink = if (hasSession) callbacks.onShareLink else null,
             onOpenArtifact = callbacks.onOpenArtifact,
             onOpenConnections = callbacks.onOpenConnections,
+            onOpenSession = { sid -> viewModel.loadSession(sid) },
         )
     }
 
@@ -205,8 +228,11 @@ fun ChatScreen(
     if (creditsReason != null && last != null && creditsShownFor != last.id) {
         com.allternit.feature.billing.CloudCreditsSheet(com.allternit.feature.billing.CloudCreditsRequest(creditsReason)) { creditsShownFor = last.id }
     }
+    // Sending always re-follows.
+    LaunchedEffect(viewModel.lastUserMessageId) { tail = tail.sent() }
     LaunchedEffect(messages.size, last?.content?.length, last?.toolCalls?.size, viewModel.computeGate) {
         val count = list.layoutInfo.totalItemsCount
+        if (!tail.follows) { tail = tail.grew(); return@LaunchedEffect }
         // An anchored turn that is still running must not drag the view to the bottom (jump button instead).
         if (count > 0 && AnswerRoom.followsBottom(anchorIndex >= 0, viewModel.isStreaming)) {
             if (viewModel.isStreaming) {
@@ -243,7 +269,7 @@ fun ChatScreen(
             } else {
                 LazyColumn(
                     state = list,
-                    modifier = Modifier.fillMaxSize().testTag("chatFeed"),
+                    modifier = Modifier.fillMaxSize().nestedScroll(tailConnection).testTag("chatFeed"),
                     contentPadding = PaddingValues(vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
@@ -265,6 +291,9 @@ fun ChatScreen(
                     if (anchorIndex >= 0) {
                         item(key = ANSWER_ROOM_KEY) { Spacer(Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { roomPx.toDp() })) }
                     }
+                    viewModel.asleepSend?.let { offer ->
+                        item(key = "asleepSend") { AsleepSendCard(backend, offer, onDone = { viewModel.asleepSend = null }) }
+                    }
                     if (gate != null) {
                         item(key = "computeGate") {
                             ComputeGateCard(
@@ -279,14 +308,14 @@ fun ChatScreen(
             }
             // Inside a Box nested in a Column: the plain overload, not ColumnScope's.
             androidx.compose.animation.AnimatedVisibility(
-                visible = far && messages.isNotEmpty(),
+                visible = (far || tail.hasNew) && messages.isNotEmpty(),
                 enter = fadeIn() + scaleIn(initialScale = 0.85f),
                 exit = fadeOut() + scaleOut(targetScale = 0.85f),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
             ) {
-                Box(
+                Row(
                     Modifier
-                        .size(40.dp)
+                        .then(if (tail.hasNew) Modifier.height(40.dp) else Modifier.size(40.dp))
                         .shadow(4.dp, CircleShape)
                         .clip(CircleShape)
                         .background(c.bgPanel)
@@ -296,12 +325,20 @@ fun ChatScreen(
                             Haptics.perform(view, Haptics.Kind.Tap)
                             scope.launch {
                                 val count = list.layoutInfo.totalItemsCount
-                                if (count > 0) list.animateScrollToItem(count - 1)
+                                if (count > 0) {
+                                    // End at the real bottom, not the top of a tall last reply.
+                                    list.scrollToItem(count - 1)
+                                    list.scrollBy(100_000f)
+                                }
+                                tail = tail.jumped()
                             }
                         }
-                        .semantics { contentDescription = "Scroll to latest message" },
-                    contentAlignment = Alignment.Center,
+                        .semantics { contentDescription = if (tail.hasNew) "New text below, jump to latest" else "Scroll to latest message" }
+                        .padding(horizontal = if (tail.hasNew) 14.dp else 0.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                 ) {
+                    if (tail.hasNew) Text("New text", color = c.textPrimary, fontSize = 13.sp)
                     Icon(painterResource(DesignR.drawable.ph_arrow_down), null, tint = c.textPrimary, modifier = Modifier.size(15.dp))
                 }
             }

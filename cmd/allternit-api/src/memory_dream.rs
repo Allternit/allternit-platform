@@ -8,6 +8,11 @@
 //!   not taken from the model);
 //! - twin facts are only proposed through the twin owner-review path.
 //!
+//! A prune, merge or contradiction fix never deletes a line. The entry stays in its
+//! topic file with `superseded: <date>` and `superseded-by: <entry id or
+//! dream-prune>` metadata; the drive index and recall skip it, git history and
+//! the file keep it, and undo restores the Dream's own line.
+//!
 //! Accepted changes land as ONE `Dream YYYY-MM-DD` commit with a report built
 //! from what was applied. Undo writes a new commit that reverses only the
 //! Dream's own lines and refuses (listing files) when later edits touched them.
@@ -206,7 +211,7 @@ pub fn shown_entries(conn: &Connection, drive: &DriveRecord, snapshot: &Snapshot
         if path.starts_with("twin/") || path == crate::memory_drive_scopes::QUESTIONS || path.starts_with("imports/kernel") && entry.metadata.is_empty() {
             continue;
         }
-        if matches!(entry.metadata.get("kind").map(String::as_str), Some("question" | "answer")) {
+        if matches!(entry.metadata.get("kind").map(String::as_str), Some("question" | "answer")) || is_superseded(&entry) {
             continue;
         }
         let uses: i64 = conn
@@ -267,7 +272,7 @@ pub fn prompt(date: &str, shown: &[Shown], evidence: &[Evidence]) -> String {
 - merges: entries that say the same thing. keep = the id to keep, drop = ids to remove, text = optional clearer wording for the kept entry.\n\
 - contradictions: entries that disagree, where the turns show which is true. keep, drop, evidence = turn ids.\n\
 - lessons: at most 5 durable lessons that recur across the turns (how this person likes to work, what failed and why). evidence = turn ids. Convert relative dates to absolute.\n\
-- prune: entries that look stale or no longer useful. Only entries never used and older than 30 days will actually be removed.\n\
+- prune: entries that look stale or no longer useful. Only entries never used and older than 30 days will actually be marked out of date (they stay in the file).\n\
 - twin_proposals: facts about the person that belong in their digital twin. evidence = turn ids. These are only proposed; the person approves them.\n\
 Return empty arrays when nothing should change.",
     );
@@ -359,6 +364,26 @@ pub fn finalize_lessons(conn: &Connection, owner: &str, drive: &DriveRecord, kep
     }
 }
 
+/// Metadata key and by-key of a line the Dream marked out of date.
+pub const SUPERSEDED: &str = "superseded";
+pub const SUPERSEDED_BY: &str = "superseded-by";
+/// `superseded-by` value for a prune (no replacing entry).
+pub const PRUNE_BY: &str = "dream-prune";
+
+/// The operation that marks `s` out of date: the same line with two more
+/// metadata pairs. The text, id and file stay where they are.
+fn supersede_op(s: &Shown, today: chrono::NaiveDate, by: &str) -> Operation {
+    let mut entry = s.entry.clone();
+    entry.metadata.insert(SUPERSEDED.into(), today.to_string());
+    entry.metadata.insert(SUPERSEDED_BY.into(), by.to_string());
+    Operation::UpsertEntry { path: s.path.clone(), entry }
+}
+
+/// True when an entry carries the Dream's out-of-date mark.
+pub fn is_superseded(entry: &Entry) -> bool {
+    entry.metadata.contains_key(SUPERSEDED)
+}
+
 /// One accepted contradiction, kept so the Sleep `disputes` stage can turn
 /// it into disputes instead of deletes.
 #[derive(Debug, Clone)]
@@ -407,10 +432,10 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             continue;
         }
         let gone: Vec<String> = drops.iter().map(|d| by_id[d.as_str()].entry.text.clone()).collect();
-        out.report.push(format!("- **Merged** into “{}” (`{}`): {}", entry.text, keep.path, gone.iter().map(|g| format!("“{g}”")).collect::<Vec<_>>().join(", ")));
+        out.report.push(format!("- **Merged** into “{}” (`{}`); kept as out of date: {}", entry.text, keep.path, gone.iter().map(|g| format!("“{g}”")).collect::<Vec<_>>().join(", ")));
         out.ops.push(Operation::UpsertEntry { path: keep.path.clone(), entry });
         for d in drops {
-            out.ops.push(Operation::DeleteEntry { id: d.clone() });
+            out.ops.push(supersede_op(by_id[d.as_str()], today, &keep.entry.id));
         }
         out.summary.merged += 1;
     }
@@ -427,10 +452,10 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
         }
         let keep = by_id[c.keep.as_str()];
         for d in &drops {
-            out.ops.push(Operation::DeleteEntry { id: (*d).clone() });
+            out.ops.push(supersede_op(by_id[d.as_str()], today, &keep.entry.id));
         }
         out.report.push(format!(
-            "- **Resolved** a contradiction: kept “{}”, removed {} (evidence: {})",
+            "- **Resolved** a contradiction: kept “{}”, marked out of date {} (evidence: {})",
             keep.entry.text,
             drops.iter().map(|d| format!("“{}”", by_id[d.as_str()].entry.text)).collect::<Vec<_>>().join(", "),
             c.evidence.join(", ")
@@ -484,8 +509,8 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             out.summary.skipped += 1;
             continue;
         }
-        out.report.push(format!("- **Pruned** “{}” (`{}`): never used since {}", s.entry.text, s.path, s.entry.added));
-        out.ops.push(Operation::DeleteEntry { id: p.id.clone() });
+        out.report.push(format!("- **Marked out of date** “{}” (`{}`): never used since {}", s.entry.text, s.path, s.entry.added));
+        out.ops.push(supersede_op(s, today, PRUNE_BY));
         out.summary.pruned += 1;
     }
 
@@ -611,6 +636,20 @@ fn step(conn: &Connection, owner: &str, run: &str, title: String, extra: Value) 
 }
 
 pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
+    let Some(row) = run_dream(db.clone(), owner.clone(), date, complete).await? else { return Ok(None) };
+    if !matches!(row.status.as_str(), "applied" | "no_changes") {
+        return Ok(Some(row));
+    }
+    // Knowledge curator (step 15), after the Dream's own commit, only when
+    // Dreaming is on. It writes proposals only and never fails the Dream; its
+    // line is appended to the report.
+    if crate::knowledge_curator::after_dream(&db, &owner, &row.id, None).await.is_none() {
+        return Ok(Some(row));
+    }
+    Ok(db.connect().ok().and_then(|c| get(&c, &owner, &row.id).ok().flatten()).or(Some(row)))
+}
+
+async fn run_dream(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
     let date_s = date.format("%Y-%m-%d").to_string();
     let (drive, id, base, shown, turns) = {
         let (db, owner, date_s) = (db.clone(), owner.clone(), date_s.clone());
@@ -670,7 +709,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     let conn = db.connect()?;
     let session_ok = |s: &str| service::session_is_owned(&conn, owner, s).unwrap_or(false);
     let mut checked = check(plan, shown, turns, date, &session_ok);
-    if crate::sleep::disputes::stage_on(&conn, owner) {
+    if crate::sleep::disputes::flag_on(&conn, owner) {
         dispute_contradictions(&conn, owner, drive, &mut checked);
     }
     let kept_lessons = queue_lessons(&conn, owner, &mut checked, turns);
@@ -724,7 +763,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
                 finish(&conn, id, "applied", Some(&r.revision), Some(&report), &checked.summary, None)?;
                 done(
                     "applied",
-                    format!("Saved: {} merged, {} resolved, {} lessons, {} pruned", sm.merged, sm.resolved, sm.lessons, sm.pruned),
+                    format!("Saved: {} merged, {} resolved, {} lessons, {} marked out of date", sm.merged, sm.resolved, sm.lessons, sm.pruned),
                 );
                 return Ok(());
             }
@@ -764,7 +803,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
 
 /// Sleep `disputes` stage: replace each accepted contradiction's deletes with
 /// disputes (both sides kept). A side that is not in the index is still not
-/// deleted; its report line says so.
+/// marked; its report line says so.
 pub fn dispute_contradictions(conn: &Connection, owner: &str, drive: &DriveRecord, checked: &mut Checked) {
     let fact_of = |entry: &str| -> Option<String> {
         conn.query_row(
@@ -798,7 +837,11 @@ pub fn dispute_contradictions(conn: &Connection, owner: &str, drive: &DriveRecor
         };
         checked.summary.resolved = checked.summary.resolved.saturating_sub(1);
     }
-    checked.ops.retain(|op| !matches!(op, Operation::DeleteEntry { id } if kept.contains(id)));
+    checked.ops.retain(|op| match op {
+        Operation::DeleteEntry { id } => !kept.contains(id),
+        Operation::UpsertEntry { entry, .. } => !(is_superseded(entry) && kept.contains(&entry.id)),
+        _ => true,
+    });
 }
 
 // ─── Undo ───────────────────────────────────────────────────────────────────
@@ -1092,8 +1135,14 @@ mod tests {
         };
         let c = check(&plan, &shown, &turns, today(), &|s| s == "s1");
         assert_eq!(c.summary, Summary { merged: 1, resolved: 0, lessons: 1, pruned: 1, proposals: 1, skipped: 5 });
-        assert!(c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { id } if id == "old")));
-        assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { id } if id == "recent" || id == "used")));
+        assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { id } if id == "old")), "a prune never deletes");
+        assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { .. })), "no Dream op deletes");
+        assert!(c.ops.iter().any(|o| matches!(o, Operation::UpsertEntry { entry, .. }
+            if entry.id == "b" && entry.metadata.get(SUPERSEDED_BY).map(String::as_str) == Some("a"))), "merge marks the duplicate");
+        assert!(c.ops.iter().any(|o| matches!(o, Operation::UpsertEntry { entry, .. }
+            if entry.id == "old" && entry.text == "User likes fax machines." && entry.metadata.get(SUPERSEDED).map(String::as_str) == Some("2026-10-06")
+                && entry.metadata.get(SUPERSEDED_BY).map(String::as_str) == Some(PRUNE_BY))));
+        assert!(!c.ops.iter().any(|o| matches!(o, Operation::UpsertEntry { entry, .. } if entry.id == "recent" || entry.id == "used")));
         let lesson = c.ops.iter().find_map(|o| match o { Operation::UpsertEntry { path, entry } if path == "lessons.md" => Some(entry), _ => None }).unwrap();
         assert_eq!(lesson.source, "/?session=s1");
     }

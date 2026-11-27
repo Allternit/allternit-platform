@@ -42,19 +42,48 @@ final class ACIAgentRunViewModel: ObservableObject {
     @Published private(set) var traceLines: [ACITraceLine] = []
     /// Set when the run POST or the stream fails; drives the retry affordance.
     @Published private(set) var errorMessage: String? = nil
+    /// The bot's latest pointer step (computer toolset events).
+    @Published private(set) var agentAction: ACIAgentAction? = nil
+    /// Set when the run is waiting on the owner; drives ACIRunGateSheet.
+    @Published var gate: ACIRunGate? = nil
 
     let goal: String
+    /// The computer whose toolset events are followed; nil = the active computer.
+    private(set) var computerId: String?
+    /// A run that already exists (push / deep link): follow it, do not start one.
+    private(set) var attachRunId: String?
+    /// True while this person holds control of the computer ("You have control").
+    @Published private(set) var controlHeld = false
+    @Published private(set) var controlBusy = false
+    @Published private(set) var controlError: String? = nil
+    /// Set once the run has its own display (Linux): frames come from `screenshot?run_id=`.
+    private var displayRunId: String?
+    private var frameTask: Task<Void, Never>?
 
     private let client: ACIAgentClient
     private var runId: String? = nil
     private var streamTask: Task<Void, Never>? = nil
+    private var eventsTask: Task<Void, Never>? = nil
+    private var resolvedComputerId: String? = nil
     private var traceCounter = 0
     private var hasStarted = false
 
-    init(goal: String, client: ACIAgentClient = ACIAgentClient()) {
+    init(goal: String, computerId: String? = nil, attachRunId: String? = nil,
+         client: ACIAgentClient = ACIAgentClient()) {
         self.goal = goal
+        self.computerId = computerId
+        self.attachRunId = attachRunId
         self.client = client
+        if let attachRunId {
+            runId = attachRunId
+            status = .running
+        }
     }
+
+    /// Name on the badge and in the working line.
+    var botName: String { agentAction?.actor?.name ?? "Your bot" }
+    /// Step for the working line: the event's own step, else the state frame's.
+    var currentStep: Int? { agentAction?.step ?? stepIndex }
 
     var requiresApproval: Bool { status == .waitingApproval }
 
@@ -75,14 +104,21 @@ final class ACIAgentRunViewModel: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
 
+        startEvents()
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let run = try await self.client.startRun(goal: self.goal)
-                self.runId = run.sessionId
-                if self.adapterId == nil { self.adapterId = run.adapterId }
+                let sessionId: String
+                if let attached = self.attachRunId {
+                    sessionId = attached
+                } else {
+                    let run = try await self.client.startRun(goal: self.goal)
+                    self.runId = run.sessionId
+                    if self.adapterId == nil { self.adapterId = run.adapterId }
+                    sessionId = run.sessionId
+                }
 
-                for try await event in self.client.stream(runId: run.sessionId) {
+                for try await event in self.client.stream(runId: sessionId) {
                     self.apply(event)
                 }
 
@@ -95,8 +131,260 @@ final class ACIAgentRunViewModel: ObservableObject {
             } catch let error as URLError where error.code == .cancelled {
                 // URLSession surfaces task cancellation as URLError.cancelled.
             } catch {
+                // A followed run may not be on the ACI stream (a browser run
+                // from the extension): its computer events still drive the view.
+                if self.attachRunId != nil { return }
                 self.errorMessage = error.localizedDescription
                 self.status = .error
+            }
+        }
+    }
+
+    // MARK: - Agent browser events
+
+    /// Follows `/computers/:id/toolset/events` for the cursor and the gates;
+    /// reconnects after a drop until the view goes away.
+    private func startEvents() {
+        eventsTask?.cancel()
+        eventsTask = Task { [weak self] in
+            guard let self else { return }
+            let computer: String?
+            if let id = self.computerId { computer = id }
+            else { computer = await RuntimeRelayStore.shared.resolveActiveRuntimeId() }
+            guard let computer else { return }
+            self.resolvedComputerId = computer
+            while !Task.isCancelled {
+                do {
+                    for try await event in self.client.computerEvents(computerId: computer, runtimeId: self.computerId) {
+                        self.apply(computerEvent: event)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    // Dropped or not reachable: try again shortly.
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    /// Ignores events of another run when this view follows a known one.
+    private func isThisRun(_ id: String?) -> Bool {
+        guard let id, let runId else { return true }
+        return id == runId
+    }
+
+    func apply(computerEvent event: ACIComputerEvent) {
+        switch event {
+        case .action(let action):
+            guard isThisRun(action.runId) else { return }
+            agentAction = action
+            if status == .idle { status = .running }
+        case .confirmationRequired(let request):
+            guard isThisRun(request.runId) else { return }
+            gate = .approval(request)
+        case .humanRequested(let request):
+            guard isThisRun(request.runId) else { return }
+            gate = .needsYou(request)
+        case .humanResumed(let id):
+            guard isThisRun(id) else { return }
+            if case .needsYou = gate { gate = nil }
+        case .blockDetected(let block):
+            guard isThisRun(block.runId) else { return }
+            gate = .blocked(block)
+        case .blockResolved(let id, _, _):
+            guard isThisRun(id) else { return }
+            if case .blocked = gate { gate = nil }
+        case .agentDisplay(let id):
+            guard isThisRun(id) else { return }
+            displayRunId = id ?? runId
+            startFrames()
+        }
+    }
+
+    // MARK: Gate answers
+
+    func approveGate(scope: String?) {
+        guard case .approval(let request) = gate else { return }
+        gate = nil
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.approveHandoff(approvalId: request.approvalId, scope: scope, runtimeId: runtime) }
+    }
+
+    func denyGate() {
+        guard case .approval(let request) = gate else { return }
+        gate = nil
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.denyHandoff(approvalId: request.approvalId, runtimeId: runtime) }
+    }
+
+    /// Sends the typed secret to the masked box. The value is passed straight
+    /// to the request and never stored or logged here; the caller clears its field.
+    func submitSecret(_ text: String, saveAs: String?) {
+        guard case .needsYou = gate, !text.isEmpty else { return }
+        gate = nil
+        guard let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in
+            try? await client.submitSecret(computerId: computer, text: text, saveAs: saveAs, runtimeId: runtime)
+        }
+    }
+
+    func continueGate() {
+        let current = gate
+        gate = nil
+        guard let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in
+            switch current {
+            case .blocked:
+                try? await client.resolveBlock(computerId: computer, action: "continue", runtimeId: runtime)
+            default:
+                try? await client.humanDone(computerId: computer, runtimeId: runtime)
+            }
+        }
+    }
+
+    func stopFromGate() {
+        let current = gate
+        gate = nil
+        if case .blocked = current, let computer = resolvedComputerId ?? computerId {
+            let client = self.client, runtime = computerId
+            Task { [client] in try? await client.resolveBlock(computerId: computer, action: "stop", runtimeId: runtime) }
+        }
+        if case .needsYou(let request) = current, request.secret, let computer = resolvedComputerId ?? computerId {
+            let client = self.client, runtime = computerId
+            Task { [client] in try? await client.cancelSecret(computerId: computer, runtimeId: runtime) }
+        }
+        stop()
+    }
+
+    /// "Re-run on <target>": a fresh run there with `rerun_of` set. The block
+    /// is answered with `rerun` so this computer's run ends.
+    func rerun(on target: ACIRerunTarget) {
+        guard case .blocked(let block) = gate else { return }
+        gate = nil
+        let client = self.client, runtime = computerId
+        let goal = self.goal, previous = block.runId ?? runId
+        let computer = resolvedComputerId ?? computerId
+        Task { [weak self, client] in
+            if let computer {
+                try? await client.resolveBlock(computerId: computer, action: "rerun",
+                                               rerunTarget: target.computerId, runtimeId: runtime)
+            }
+            do {
+                let newRun = try await client.startComputerRun(computerId: target.computerId, runtimeId: target.runtimeId ?? target.computerId,
+                                                            task: goal, rerunOf: previous)
+                await MainActor.run {
+                    self?.lastMessage = "Re-running on \(target.name)"
+                    if let newRun { self?.open(runId: newRun, on: target.runtimeId ?? target.computerId) }
+                }
+            } catch ACIRunError.computerUnavailable {
+                await MainActor.run { self?.lastMessage = "Your Mac isn't reachable" }
+            } catch {
+                await MainActor.run { self?.lastMessage = "Couldn't start the re-run on \(target.name)" }
+            }
+        }
+    }
+
+    /// Points this view at another run (the re-run) and follows it.
+    private func open(runId newRun: String, on computer: String) {
+        streamTask?.cancel(); streamTask = nil
+        eventsTask?.cancel(); eventsTask = nil
+        frameTask?.cancel(); frameTask = nil
+        if controlHeld, let old = resolvedComputerId ?? computerId {
+            let client = self.client, runtime = computerId
+            Task { [client] in try? await client.releaseControl(computerId: old, runtimeId: runtime) }
+        }
+        controlHeld = false
+        displayRunId = nil
+        computerId = computer
+        resolvedComputerId = computer
+        attachRunId = newRun
+        runId = newRun
+        gate = nil
+        agentAction = nil
+        screenshot = nil
+        traceLines = []
+        errorMessage = nil
+        status = .running
+        hasStarted = false
+        start()
+    }
+
+    // MARK: Take over
+
+    /// Take over: the bot's calls are refused while this person holds control.
+    func takeOver() {
+        guard !controlHeld, !controlBusy, let computer = resolvedComputerId ?? computerId else { return }
+        controlBusy = true
+        controlError = nil
+        let client = self.client, runtime = computerId
+        Task { [weak self, client] in
+            do {
+                try await client.takeControl(computerId: computer, runtimeId: runtime)
+                await MainActor.run { self?.controlHeld = true; self?.controlBusy = false; self?.startFrames() }
+            } catch {
+                await MainActor.run { self?.controlError = "Couldn't take control."; self?.controlBusy = false }
+            }
+        }
+    }
+
+    func handBack() {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        controlHeld = false
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.releaseControl(computerId: computer, runtimeId: runtime) }
+    }
+
+    /// A tap on the live view, as a fraction (0...1) of the screen.
+    func tap(fx: Double, fy: Double) { sendMouse("click", fx: fx, fy: fy) }
+
+    /// A swipe on the live view: "up" scrolls the page down, like a finger.
+    func scroll(fx: Double, fy: Double, up: Bool) {
+        sendMouse("scroll", fx: fx, fy: fy, button: up ? "down" : "up", amount: 3)
+    }
+
+    func type(_ text: String) {
+        guard controlHeld, !text.isEmpty, let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.keyboard(computerId: computer, text: text, runtimeId: runtime) }
+    }
+
+    func press(key: String) {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        let client = self.client, runtime = computerId
+        Task { [client] in try? await client.keyboard(computerId: computer, key: key, runtimeId: runtime) }
+    }
+
+    private func sendMouse(_ action: String, fx: Double, fy: Double, button: String? = nil, amount: Int? = nil) {
+        guard controlHeld, let computer = resolvedComputerId ?? computerId else { return }
+        // The API takes screen pixels: the bot's screen size, else the frame's.
+        let w = agentAction?.screenW ?? Double(screenshot.map { $0.size.width * $0.scale } ?? 0)
+        let h = agentAction?.screenH ?? Double(screenshot.map { $0.size.height * $0.scale } ?? 0)
+        guard w > 1, h > 1 else { return }
+        let x = Int((min(max(fx, 0), 1) * w).rounded()), y = Int((min(max(fy, 0), 1) * h).rounded())
+        let client = self.client, runtime = computerId
+        Task { [client] in
+            try? await client.mouse(computerId: computer, action: action, x: x, y: y,
+                                    button: button, amount: amount, runtimeId: runtime)
+        }
+    }
+
+    /// Polls the computer's screen (or the run's own display on Linux) while the
+    /// live view needs frames the run stream does not carry.
+    private func startFrames() {
+        frameTask?.cancel()
+        frameTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if let computer = self.resolvedComputerId ?? self.computerId,
+                   let data = try? await self.client.screenshot(computerId: computer, runId: self.displayRunId,
+                                                                runtimeId: self.computerId),
+                   let image = UIImage(data: data) {
+                    self.screenshot = image
+                }
+                try? await Task.sleep(for: .milliseconds(self.controlHeld ? 700 : 1500))
             }
         }
     }
@@ -105,6 +393,11 @@ final class ACIAgentRunViewModel: ObservableObject {
     func stop() {
         streamTask?.cancel()
         streamTask = nil
+        eventsTask?.cancel()
+        eventsTask = nil
+        frameTask?.cancel()
+        frameTask = nil
+        handBack()
         guard isActive else { return }
         status = .done
         lastMessage = "Stopped"
@@ -120,9 +413,16 @@ final class ACIAgentRunViewModel: ObservableObject {
     /// EventSource on navigation; we additionally stop the server run so the
     /// agent doesn't keep driving a browser nobody is watching.
     func leave() {
-        guard isActive else {
+        // A run followed from a push or link belongs to someone else's
+        // session: closing the sheet only stops watching.
+        guard isActive, attachRunId == nil else {
             streamTask?.cancel()
             streamTask = nil
+            eventsTask?.cancel()
+            eventsTask = nil
+            frameTask?.cancel()
+            frameTask = nil
+            handBack()
             return
         }
         stop()
@@ -142,7 +442,9 @@ final class ACIAgentRunViewModel: ObservableObject {
     func retry() {
         streamTask?.cancel()
         streamTask = nil
-        runId = nil
+        eventsTask?.cancel()
+        eventsTask = nil
+        runId = attachRunId
         errorMessage = nil
         status = .idle
         hasStarted = false
@@ -211,22 +513,37 @@ struct ACIAgentRunView: View {
 
     private let theme = ModeTheme(mode: .browser)
 
-    init(goal: String, onExit: @escaping () -> Void) {
+    /// `computerId` + `runId` attach to a run that is already going (a push
+    /// or `/computers/<id>?run=<run_id>` link); a goal starts a new one.
+    init(goal: String, computerId: String? = nil, runId: String? = nil, onExit: @escaping () -> Void) {
         self.goal = goal
         self.onExit = onExit
-        _viewModel = StateObject(wrappedValue: ACIAgentRunViewModel(goal: goal))
+        _viewModel = StateObject(wrappedValue: ACIAgentRunViewModel(goal: goal, computerId: computerId, attachRunId: runId))
     }
 
     var body: some View {
         VStack(spacing: 0) {
             topStrip
             viewport
+            workingLine
             traceLog
             controlBar
         }
         .background(Color("BgPrimary"))
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.leave() }
+        .sheet(item: $viewModel.gate) { gate in
+            ACIRunGateSheet(
+                gate: gate,
+                botName: viewModel.botName,
+                onApprove: { viewModel.approveGate(scope: $0) },
+                onDeny: { viewModel.denyGate() },
+                onContinue: { viewModel.continueGate() },
+                onStop: { viewModel.stopFromGate() },
+                onRerun: { viewModel.rerun(on: $0) },
+                onSecret: { viewModel.submitSecret($0, saveAs: $1) }
+            )
+        }
     }
 
     // MARK: - Top strip (ACIComputerUseView.tsx TopStrip)
@@ -338,6 +655,8 @@ struct ACIAgentRunView: View {
                     errorState(errorMessage)
                 } else if let screenshot = viewModel.screenshot {
                     screenshotContent(screenshot, in: geometry.size)
+                } else if let action = viewModel.agentAction {
+                    screenPanel(for: action, in: geometry.size)
                 } else if isConnecting {
                     connectingState
                 } else {
@@ -373,11 +692,150 @@ struct ACIAgentRunView: View {
                 )
                 .offset(x: offsetX, y: offsetY)
 
+            if viewModel.controlHeld {
+                takeOverLayer(frame: CGRect(x: offsetX, y: offsetY, width: displayW, height: displayH))
+            }
+
             if let box = viewModel.currentAction?.boundingBox {
                 highlightBox(box, scale: scale, offsetX: offsetX, offsetY: offsetY)
             }
+
+            // The cursor sits in screen_w x screen_h space; scale it onto the
+            // image as drawn (the image's own pixels may differ from the screen's).
+            if let action = viewModel.agentAction {
+                agentCursor(action, frame: CGRect(x: offsetX, y: offsetY, width: displayW, height: displayH))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// While you hold control: a tap clicks there, a swipe scrolls. `frame` is
+    /// where the screen is drawn; positions go to the API as screen fractions.
+    private func takeOverLayer(frame: CGRect) -> some View {
+        Color.clear
+            .frame(width: frame.width, height: frame.height)
+            .contentShape(Rectangle())
+            .overlay(Rectangle().stroke(PolishTokens.ink.opacity(0.5), lineWidth: 2))
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local).onEnded { value in
+                    let fx = value.location.x / max(frame.width, 1)
+                    let fy = value.location.y / max(frame.height, 1)
+                    if abs(value.translation.height) > 14 {
+                        viewModel.scroll(fx: value.startLocation.x / max(frame.width, 1),
+                                         fy: value.startLocation.y / max(frame.height, 1),
+                                         up: value.translation.height < 0)
+                    } else {
+                        viewModel.tap(fx: fx, fy: fy)
+                    }
+                }
+            )
+            .offset(x: frame.minX, y: frame.minY)
+            .accessibilityLabel("Live screen. Tap to click, swipe to scroll.")
+    }
+
+    /// No video frame yet: a neutral screen-shaped panel so the cursor still
+    /// shows where the bot is working.
+    private func screenPanel(for action: ACIAgentAction, in size: CGSize) -> some View {
+        let scale = min(size.width / action.screenW, size.height / action.screenH)
+        let w = action.screenW * scale, h = action.screenH * scale
+        let frame = CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(PolishTokens.neutralFill)
+                .frame(width: w, height: h)
+                .offset(x: frame.minX, y: frame.minY)
+            Text("No live video yet")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(Color("TextSecondary").opacity(0.6))
+                .frame(width: w, height: h)
+                .offset(x: frame.minX, y: frame.minY)
+            agentCursor(action, frame: frame)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The bot's cursor with a badge (name, step). `frame` is where the
+    /// screen is drawn in the viewport.
+    private func agentCursor(_ action: ACIAgentAction, frame: CGRect) -> some View {
+        let color = action.actor?.color.map { Color(hex: $0) } ?? theme.accent
+        let px = frame.minX + CGFloat(action.x / action.screenW) * frame.width
+        let py = frame.minY + CGFloat(action.y / action.screenH) * frame.height
+        let step = action.step.map { " · step \($0)" } ?? ""
+        return ZStack(alignment: .topLeading) {
+            Image(systemName: "cursorarrow")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(color)
+                .shadow(color: .white, radius: 1)
+                .shadow(color: color.opacity(0.4), radius: 4)
+            Text((action.actor?.name ?? "Bot") + step)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(color))
+                .fixedSize()
+                .offset(x: 14, y: 20)
+        }
+        .offset(x: px, y: py)
+        .animation(.easeOut(duration: 0.25), value: action)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Working line
+
+    /// "<bot> is working · step N" with Take over and Stop.
+    @ViewBuilder
+    private var workingLine: some View {
+        if viewModel.isActive, viewModel.agentAction != nil || viewModel.attachRunId != nil {
+            VStack(spacing: 4) {
+                HStack(spacing: 10) {
+                    Text("\(viewModel.botName) is working" + (viewModel.currentStep.map { " · step \($0)" } ?? ""))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(PolishTokens.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if viewModel.controlHeld {
+                        Button("Hand back") { viewModel.handBack() }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(PolishTokens.ink))
+                    } else {
+                        Button("Take over") { viewModel.takeOver() }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(PolishTokens.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(PolishTokens.neutralFill))
+                            .disabled(viewModel.controlBusy)
+                    }
+                    Button("Stop") { viewModel.stop() }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(hex: "#C0392B"))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(PolishTokens.neutralFill))
+                }
+                if viewModel.controlHeld {
+                    Text("You have control · Hand back")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(PolishTokens.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TakeOverKeys(onType: { viewModel.type($0) }, onKey: { viewModel.press(key: $0) })
+                } else if let error = viewModel.controlError {
+                    Text(error)
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(hex: "#C0392B"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.white)
+            .overlay(alignment: .top) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+        }
     }
 
     /// Element highlight for the current action (ElementHighlight,
@@ -619,5 +1077,37 @@ struct ACIAgentRunView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
         }
+    }
+}
+
+/// Text box and Return for the person who took over: typed text goes to the
+/// computer's keyboard route.
+private struct TakeOverKeys: View {
+    let onType: (String) -> Void
+    let onKey: (String) -> Void
+    @State private var text = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Type to the computer", text: $text)
+                .font(.system(size: 13))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(PolishTokens.neutralFill))
+                .onSubmit(send)
+            Button("Send", action: send)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PolishTokens.ink)
+            Button("Return") { onKey("Return") }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PolishTokens.ink)
+        }
+    }
+
+    private func send() {
+        guard !text.isEmpty else { return }
+        onType(text)
+        text = ""
     }
 }

@@ -17,6 +17,14 @@ enum NotificationCategoryID {
     static let agentMessage = "AGENT_MESSAGE"
     /// A Computers console alert (offline, cpu, disk): tap opens that computer.
     static let computerAlert = "COMPUTER_ALERT"
+    /// An agent browser run wants a credential fill or a gated action approved.
+    static let aciApproval = "ACI_APPROVAL"
+    /// An agent browser run needs the owner (sign in, puzzle, secret).
+    static let aciHuman = "ACI_HUMAN"
+    /// A site blocked the bot; Open shows the choices (continue / stop / re-run).
+    static let aciBlocked = "ACI_BLOCKED"
+
+    static let allACI: Set<String> = [aciApproval, aciHuman, aciBlocked]
 }
 
 /// Button identifiers. Fixed, like the categories.
@@ -28,6 +36,8 @@ enum NotificationActionID: String, Sendable, CaseIterable {
     case open = "OPEN"
     case retry = "RETRY"
     case snooze = "SNOOZE"
+    case continueRun = "CONTINUE"
+    case stop = "STOP"
 }
 
 /// The one strings table for notification buttons and follow-up lines.
@@ -39,6 +49,8 @@ enum NotificationStrings {
     static let open = String(localized: "Open")
     static let retry = String(localized: "Retry")
     static let snooze = String(localized: "Snooze")
+    static let continueRun = String(localized: "Continue")
+    static let stop = String(localized: "Stop")
     static let replyButton = String(localized: "Send")
     static let replyPlaceholder = String(localized: "Message the bot")
     static let replyAgentPlaceholder = String(localized: "Reply to your agent")
@@ -88,6 +100,17 @@ enum NotificationCategories {
             UNNotificationCategory(identifier: NotificationCategoryID.agentMessage,
                                    actions: [reply(NotificationStrings.replyAgentPlaceholder), open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.computerAlert,
+                                   actions: [open], intentIdentifiers: []),
+            // Agent browser. Approve needs the phone unlocked (Face ID or the
+            // passcode); Deny and Stop also work from the lock screen.
+            UNNotificationCategory(identifier: NotificationCategoryID.aciApproval,
+                                   actions: [approve, button(.deny, NotificationStrings.deny, [.destructive])],
+                                   intentIdentifiers: []),
+            UNNotificationCategory(identifier: NotificationCategoryID.aciHuman,
+                                   actions: [button(.continueRun, NotificationStrings.continueRun, auth),
+                                             button(.stop, NotificationStrings.stop, [.destructive])],
+                                   intentIdentifiers: []),
+            UNNotificationCategory(identifier: NotificationCategoryID.aciBlocked,
                                    actions: [open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.needsFix,
                                    actions: [button(.retry, NotificationStrings.retry, auth),
@@ -166,7 +189,61 @@ enum NotificationActions {
             guard let sessionId = sessionId?.nilIfBlank,
                   let text = replyText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else { return nil }
             return .reply(sessionId: sessionId, text: text)
-        case .review, .open: return nil
+        case .review, .open, .continueRun, .stop: return nil
+        }
+    }
+
+    // MARK: Agent browser buttons (ACI_APPROVAL / ACI_HUMAN)
+
+    /// What an agent browser button does. Pure, so it is tested.
+    enum ACIOperation: Equatable, Sendable {
+        case approve(approvalId: String)
+        case deny(approvalId: String)
+        case humanDone(computerId: String)
+        case stop(runId: String)
+    }
+
+    /// The call a button turns into, from the push's `data` (snake_case keys
+    /// from cloud-api; camelCase is read too). nil when the ids it needs are
+    /// missing or the button does not belong to the category.
+    static func aciOperation(category: String, action: NotificationActionID, data: [String: Any]) -> ACIOperation? {
+        func value(_ snake: String, _ camel: String) -> String? {
+            ((data[snake] as? String) ?? (data[camel] as? String))?.nilIfBlank
+        }
+        switch (category, action) {
+        case (NotificationCategoryID.aciApproval, .approve):
+            return value("approval_id", "approvalId").map { .approve(approvalId: $0) }
+        case (NotificationCategoryID.aciApproval, .deny):
+            return value("approval_id", "approvalId").map { .deny(approvalId: $0) }
+        case (NotificationCategoryID.aciHuman, .continueRun):
+            return value("computer_id", "computerId").map { .humanDone(computerId: $0) }
+        case (NotificationCategoryID.aciHuman, .stop):
+            return value("run_id", "runId").map { .stop(runId: $0) }
+        default:
+            return nil
+        }
+    }
+
+    /// Runs an agent browser button against the push's own computer, with the
+    /// background credential (no UI).
+    static func resolveACI(category: String, action: NotificationActionID, data: [String: Any]) async -> Result {
+        guard let op = aciOperation(category: category, action: action, data: data) else { return .invalid }
+        let credential = await BackgroundCredential.current()
+        guard let token = credential.token else { return .signedOut }
+        let runtime = ((data["computer_id"] as? String) ?? (data["computerId"] as? String))?.nilIfBlank
+        let client = ACIAgentClient()
+        do {
+            try await withTimeout(seconds: 25) {
+                switch op {
+                case .approve(let id): try await client.approveHandoff(approvalId: id, runtimeId: runtime, bearer: token)
+                case .deny(let id): try await client.denyHandoff(approvalId: id, runtimeId: runtime, bearer: token)
+                case .humanDone(let computer): try await client.humanDone(computerId: computer, runtimeId: runtime, bearer: token)
+                case .stop(let run): try await client.stopRun(runId: run, runtimeId: runtime, bearer: token)
+                }
+            }
+            return .done
+        } catch {
+            return classify(error)
         }
     }
 
@@ -262,6 +339,15 @@ enum NotificationActions {
         let userInfo = request.content.userInfo
         let data = userInfo["data"] as? [String: Any] ?? [:]
         guard let action = NotificationActionID(rawValue: response.actionIdentifier) else { return }
+        // Agent browser pushes carry their own ids, not an inbox item.
+        let category = request.content.categoryIdentifier
+        if NotificationCategoryID.allACI.contains(category) {
+            let assertion = await BackgroundAssertion.begin(name: "notification-\(action.rawValue)")
+            defer { Task { await assertion.end() } }
+            let result = await resolveACI(category: category, action: action, data: data)
+            await apply(followUp(for: result), request: request, inboxId: "", userInfo: userInfo)
+            return
+        }
         let inboxId = data["inboxId"] as? String ?? ""
         let reply = (response as? UNTextInputNotificationResponse)?.userText
 

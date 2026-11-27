@@ -113,6 +113,8 @@ struct SetupModelRow: Sendable, Equatable, Identifiable {
     /// Retail price per 1M tokens (`pricing`, D11), when the server sends it.
     var inputPer1mUsd: Double? = nil
     var outputPer1mUsd: Double? = nil
+    /// Open Research rows (`research_only`); listed only with the research flag.
+    var researchOnly: Bool = false
 }
 
 struct SetupProviderAuth: Sendable, Equatable {
@@ -358,7 +360,8 @@ enum SetupAPI {
                 isHidden: item.at("hidden")?.jBool == true,
                 lane: item.at("lane")?.jString,
                 inputPer1mUsd: item.at("pricing")?.at("input_per_1m_usd")?.setupNumber,
-                outputPer1mUsd: item.at("pricing")?.at("output_per_1m_usd")?.setupNumber
+                outputPer1mUsd: item.at("pricing")?.at("output_per_1m_usd")?.setupNumber,
+                researchOnly: item.at("research_only")?.jBool == true
             )
         }
     }

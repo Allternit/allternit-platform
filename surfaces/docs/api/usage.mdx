@@ -1,6 +1,6 @@
 ---
 title: 'Usage API'
-description: 'Retrieve metered organization usage summaries for billing and cost analysis.'
+description: 'Retrieve metered organization usage summaries, and read your own usage windows, pace and limits on Allternit Cloud.'
 ---
 
 ## Overview
@@ -92,6 +92,66 @@ Response:
 }
 ```
 
+## Your usage windows
+
+`GET /api/v1/me/usage` (see [Me API](/api/me)) also reports the caller's Allternit Cloud inference spend in three windows, and how fast it is being used. The window fields use snake_case keys. The older weekly fields on the same reply keep their names.
+
+```json
+{
+  "windows": [
+    { "id": "5h", "label": "5-hour", "used_usd": 0.42, "limit_usd": 1.83, "used_ratio": 0.23, "resets_at": "2026-11-26T20:00:00Z", "enforced": true },
+    { "id": "7d", "label": "7-day", "used_usd": 3.10, "limit_usd": 7.33, "used_ratio": 0.42, "resets_at": "2026-12-03T15:00:00Z", "enforced": true },
+    { "id": "month", "label": "This month", "used_usd": 9.80, "limit_usd": 22.0, "used_ratio": 0.45, "resets_at": "2026-12-01T00:00:00Z", "enforced": false }
+  ],
+  "pace": { "window_id": "5h", "burn_per_hour": 0.18, "runs_out_at": null, "status": "ok" },
+  "carry_past_windows": false
+}
+```
+
+| Window | What it covers |
+| --- | --- |
+| `5h` | The last 5 hours, rolling. |
+| `7d` | The last 7 days, rolling. |
+| `month` | The calendar month, UTC. |
+
+- `used_usd` is Cloud inference spend at the price charged to the user (`cost_usd` in `inference_usage`). Hosted computer time is not counted; it keeps its own hour allowance.
+- `limit_usd` and `used_ratio` are `null` when the plan has no limit for that window (for example a no-plan account).
+- `enforced` is `true` for the `5h` and `7d` windows on paid plans. The month window shows the plan's credit grant and is not a stop.
+- `pace.status` is `ok`, `warn` (at the current burn the window runs out before it resets) or `out` (already used up). `runs_out_at` is `null` unless the window will run out. `burn_per_hour` is the spend per hour over the window so far.
+
+### Limits per plan
+
+The limits are USD of Cloud inference spend. The month limit equals the plan's monthly credit grant.
+
+| Plan | 5-hour | 7-day | Month |
+| --- | --- | --- | --- |
+| Plus | 1.83 | 7.33 | 22.00 |
+| Max | 9.17 | 36.67 | 110.00 |
+| Ultra | 18.33 | 73.33 | 220.00 |
+
+A Free account has no plan and no limits. Admin accounts are exempt: no window is enforced for them. Only an `active` or `trialing` Plus, Max or Ultra plan is limited.
+
+### When a window is used up
+
+A Cloud request made while an enforced window is used up is refused with HTTP `429`:
+
+```json
+{ "error": "usage_window_exhausted", "window": "5h", "resets_at": "2026-11-26T20:00:00Z" }
+```
+
+`window` is `5h` or `7d`. `resets_at` is when that window frees up. Clients show a notice with the reset time and never print the raw error. The same check applies to model-router calls billed to the viewer.
+
+The refusal is skipped when the account has turned on `carry_past_windows` and its credit balance is above 0. The request then runs and is billed from the balance. Credits themselves still answer `402 credits_exhausted` at 0.
+
+### Credits carry-over setting
+
+| Method | Path | Body | Reply |
+| --- | --- | --- | --- |
+| GET | `/api/v1/me/usage/settings` | none | `{ "carry_past_windows": false }` |
+| PUT | `/api/v1/me/usage/settings` | `{ "carry_past_windows": true }` | `{ "carry_past_windows": true }` |
+
+`carry_past_windows` is stored on `user_credits` (migration 168) and is `false` until the person turns it on. Off: the 5-hour and 7-day windows are hard stops until they reset. On: work continues past a window and is billed from the credit balance. The Usage page switch saves this value. `GET` reads `false` for an account with no credits row. `PUT` answers `409` ("Add usage credits first.") for an account with no credits row.
+
 ## Error codes
 
 | Status | Code | Description |
@@ -100,6 +160,7 @@ Response:
 | 401 | `unauthorized` | Missing or invalid authentication. |
 | 403 | `inactive_organization` | Requested organization is not the active organization. |
 | 403 | `insufficient_role` | Only organization owners/admins may view metered usage. |
+| 429 | `usage_window_exhausted` | A Cloud request hit an enforced 5-hour or 7-day window (see above). |
 | 500 | `db_error` / `task_join_error` | Database or task error. |
 
 ## Related links
@@ -107,4 +168,6 @@ Response:
 - [Authentication](/api/authentication)
 - [Analytics API](/api/analytics)
 - [Me API](/api/me)
+- [Cloud billing](/api/cloud-billing)
+- [Usage, limits and billing guide](/guides/usage-and-billing)
 - [Admin Spend Limits](/admin/spend-limits)

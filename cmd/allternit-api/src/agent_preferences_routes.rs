@@ -30,7 +30,7 @@ use tracing::warn;
 use crate::auth::AuthUser;
 use crate::AppState;
 
-const SUPPORTED_STYLES: [&str; 5] = ["concise", "balanced", "detailed", "learning", "custom"];
+pub(crate) const SUPPORTED_STYLES: [&str; 5] = ["concise", "balanced", "detailed", "learning", "custom"];
 
 pub fn agent_preferences_router() -> Router<Arc<AppState>> {
     Router::new()

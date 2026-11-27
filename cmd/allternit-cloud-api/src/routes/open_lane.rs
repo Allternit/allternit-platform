@@ -4,8 +4,12 @@
 //!   Settings > Open models state (acceptable use, 18+ confirmation, handoff
 //!   opt-in). Clerk session or an `account` API token.
 //! - [`guard_open_request`]: requests that name an open-lane model need the
-//!   terms (403 `open_lane_terms_required`), credits (402
-//!   `open_lane_requires_credits`) and a clean hard-line check (400
+//!   terms for the current AUP version (403 `open_lane_terms_required`), the
+//!   Allternit Open entitlement (`services::open_entitlement`: 402
+//!   `open_plan_required` on Free, 402 `open_lane_requires_credits` when the
+//!   allowance or bought credits ran out, 403 `open_research_required`), the
+//!   per-user open-lane rate limit (429 `open_rate_limited`; `OPEN_LANE_RPM`,
+//!   research accounts `OPEN_LANE_RESEARCH_RPM`) and a clean hard-line check (400
 //!   `content_policy_hard_line`, or 503 `open_lane_moderation_unavailable`
 //!   when moderation cannot run: fail closed).
 //! - [`plan_handoff`] + [`chat_with_handoff`]: with handoff on, a frontier
@@ -32,9 +36,9 @@ use std::time::Duration;
 use crate::{
     auth,
     error::ApiError,
-    model_router::{catalog::OPEN_LANE_PROVIDER, ChatCompletionRequest, ModelRouterError, RetailPrices},
+    model_router::{ChatCompletionRequest, ModelRouter, ModelRouterError, RetailPrices},
     services::{
-        hard_line, inference_settlement,
+        hard_line, inference_settlement, open_entitlement,
         open_lane::{self, OpenLaneSettings, RequestOptions},
         refusal,
     },
@@ -50,14 +54,24 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route("/api/v1/open-lane", get(get_settings).put(put_settings))
 }
 
+/// The open models this server can serve right now: listed open rows (not
+/// Open Research ones) whose host, or the legacy lane, is configured.
 fn open_models(state: &ApiState) -> Vec<String> {
-    if !state.model_router.has_provider(OPEN_LANE_PROVIDER) {
+    let router = &state.model_router;
+    if !router.any_open_provider() {
         return Vec::new();
     }
-    ["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]
-        .iter()
-        .filter(|alias| state.model_router.is_open_lane_alias(alias))
-        .map(|alias| alias.to_string())
+    router
+        .catalog()
+        .ordered_entries()
+        .into_iter()
+        .filter(|entry| {
+            crate::model_router::catalog::is_open_lane(entry)
+                && entry.listed
+                && !entry.research_only
+                && router.is_routable(&entry.alias)
+        })
+        .map(|entry| entry.alias.clone())
         .collect()
 }
 
@@ -80,7 +94,7 @@ async fn get_settings(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let settings = open_lane::load_settings(&state.db, &user.id).await?;
+    let settings = open_entitlement::load_terms(&state.db, &user.id).await?;
     Ok(Json(settings_body(&state, &settings)))
 }
 
@@ -97,7 +111,9 @@ async fn put_settings(
     Json(update): Json<SettingsUpdate>,
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let current = open_lane::load_settings(&state.db, &user.id).await?;
+    // An acceptance of an older AUP text reads as none, so accepting now
+    // stamps the current version (D18).
+    let current = open_entitlement::load_terms(&state.db, &user.id).await?;
     let next = open_lane::apply_update(
         current,
         update.accept_aup,
@@ -106,7 +122,16 @@ async fn put_settings(
         chrono::Utc::now(),
     )
     .map_err(ApiError::BadRequest)?;
-    open_lane::save_settings(&state.db, &user.id, &next).await?;
+    // Timestamps are written only when this request accepts or withdraws
+    // them; a handoff-only save never NULLs a stored acceptance (D19).
+    open_lane::save_settings(
+        &state.db,
+        &user.id,
+        &next,
+        update.accept_aup.is_some(),
+        update.confirm_age.is_some(),
+    )
+    .await?;
     Ok(Json(settings_body(&state, &next)))
 }
 
@@ -127,11 +152,13 @@ async fn hard_line_gate(state: &ApiState, user_id: &str, request: &ChatCompletio
 }
 
 /// Gate a request that names an open-lane model. `Some(response)` = stop
-/// and answer with it.
+/// and answer with it. Runs after the base Cloud credits gate
+/// (`credits_required` / `credits_exhausted`). Order: terms (current AUP
+/// version), research row without the flag, plan and funds
+/// (`open_entitlement`), then the hard-line check.
 pub async fn guard_open_request(
     state: &ApiState,
     user_id: &str,
-    has_credits: bool,
     request: &ChatCompletionRequest,
 ) -> Result<Option<Response>, ApiError> {
     // Plan and Copilot models never run on the open lane (contract 9.3).
@@ -141,14 +168,31 @@ pub async fn guard_open_request(
     if !state.model_router.is_open_lane_alias(&request.model) {
         return Ok(None);
     }
-    let settings = open_lane::load_settings(&state.db, user_id).await?;
-    if !settings.terms_ok() {
+    let open_models = open_entitlement::load(&state.db, user_id).await?;
+    if !open_models.entitlement.terms_accepted {
         return Ok(Some(open_lane::terms_required_response()));
     }
-    if !has_credits {
-        return Ok(Some(open_lane::credits_required_response()));
+    if research_blocked(&state.model_router, &request.model, open_models.entitlement.research) {
+        return Ok(Some(open_entitlement::research_required_response()));
+    }
+    if let Some(refused) = open_entitlement::refusal(&open_models) {
+        return Ok(Some(refused));
+    }
+    // Per-user open-lane rate limit (research accounts get the higher tier):
+    // 429 `open_rate_limited`, before any stream.
+    let limiter = crate::middleware::rate_limit::open_lane_limiter();
+    if let Err(limited) =
+        crate::middleware::rate_limit::check_open_lane(limiter, user_id, open_models.entitlement.research).await
+    {
+        return Ok(Some(limited));
     }
     Ok(hard_line_gate(state, user_id, request).await.err())
+}
+
+/// An Open Research (`research_only`) row asked for by an account without the
+/// research flag: answered 403 `open_research_required` (contract D10).
+pub fn research_blocked(router: &ModelRouter, alias: &str, research: bool) -> bool {
+    !research && router.catalog().resolve(alias).is_some_and(|entry| entry.research_only)
 }
 
 /// A planned handoff: the model the caller asked for and the open model a
@@ -176,7 +220,7 @@ pub async fn plan_handoff(
     if requested_is_open
         || options.handoff_disabled
         || !has_credits
-        || !state.model_router.has_provider(OPEN_LANE_PROVIDER)
+        || !state.model_router.any_open_provider()
     {
         return Ok(None);
     }
@@ -185,10 +229,19 @@ pub async fn plan_handoff(
         .clone()
         .filter(|m| state.model_router.is_open_lane_alias(m))
         .unwrap_or_else(|| open_lane::DEFAULT_HANDOFF_MODEL.to_string());
-    let target_available = state.model_router.is_open_lane_alias(&to);
-    let settings = open_lane::load_settings(&state.db, user_id).await?;
-    Ok(open_lane::should_hand_off(&settings, options, requested_is_open, has_credits, target_available)
-        .then(|| HandoffPlan { from: alias.to_string(), to }))
+    let target_available = state.model_router.is_open_lane_alias(&to) && state.model_router.is_routable(&to);
+    let settings = open_entitlement::load_terms(&state.db, user_id).await?;
+    if !open_lane::should_hand_off(&settings, options, requested_is_open, has_credits, target_available) {
+        return Ok(None);
+    }
+    // The handed-off answer is open spend: it needs the same plan and funds
+    // as asking the open model directly (contract §2). A blocked account is
+    // simply not handed off; the frontier answer stands.
+    let entitlement = open_entitlement::load(&state.db, user_id).await?.entitlement;
+    if !entitlement.allowed || research_blocked(&state.model_router, &to, entitlement.research) {
+        return Ok(None);
+    }
+    Ok(Some(HandoffPlan { from: alias.to_string(), to }))
 }
 
 fn prompt_chars(request: &ChatCompletionRequest) -> usize {
@@ -337,11 +390,12 @@ async fn hand_off(
     let mut request = original;
     request.model = plan.to.clone();
     let chars = prompt_chars(&request);
-    let prices = state.model_router.retail_prices(&plan.to).await.ok()?;
-    let response = match state.model_router.chat_completions(request).await {
-        Ok(response) if response.status().is_success() => response,
-        Ok(response) => {
-            tracing::warn!(status = %response.status(), to = %plan.to, "open lane handoff upstream error");
+    // The open row may fail over to its backup before the first byte; the
+    // row that served is the one billed (D9).
+    let (response, served) = match state.model_router.chat_completions_with_failover(request).await {
+        Ok(served) if served.response.status().is_success() => (served.response, served.alias),
+        Ok(served) => {
+            tracing::warn!(status = %served.response.status(), to = %plan.to, "open lane handoff upstream error");
             return None;
         }
         Err(error) => {
@@ -349,7 +403,10 @@ async fn hand_off(
             return None;
         }
     };
+    let prices = state.model_router.retail_prices(&served).await.ok()?;
     let header_value = open_lane::handoff_header_value(&plan.from, &plan.to);
+    // The handed-off answer runs on the open model: it settles as open spend (D5).
+    let attribution = &attribution.clone().with_lane(state.model_router.is_open_lane_alias(&plan.to));
 
     if streaming {
         let metered = inference_settlement::meter_stream_response(
@@ -357,7 +414,7 @@ async fn hand_off(
             inference_settlement::StreamSettlement {
                 db: Arc::new(state.db.clone()),
                 user_id: user_id.to_string(),
-                model: plan.to.clone(),
+                model: served.clone(),
                 pool_id: None,
                 charge_user: true,
                 prices,
@@ -375,7 +432,7 @@ async fn hand_off(
     }
 
     let metered = inference_settlement::meter_json_response(
-        &state.db, user_id, &plan.to, None, true, &prices, chars, response, attribution,
+        &state.db, user_id, &served, None, true, &prices, chars, response, attribution,
     )
     .await
     .ok()?;
@@ -510,6 +567,23 @@ mod tests {
         hold.push(format!("data: {event}\n\n").as_bytes());
         assert!(hold.decided());
         assert!(!hold.is_refusal(false));
+    }
+
+    /// A research row without the account's research flag is refused 403
+    /// `open_research_required`; with the flag, or on a plan row, it passes.
+    #[tokio::test]
+    async fn research_row_without_the_flag_is_403_open_research_required() {
+        let router = ModelRouter::disabled(crate::model_router::catalog::starter_catalog());
+        assert!(research_blocked(&router, "open-large-research", false));
+        assert!(research_blocked(&router, "open-failover-large-research", false), "its backup row too");
+        assert!(!research_blocked(&router, "open-large-research", true));
+        assert!(!research_blocked(&router, "deepseek-v4.1-flash-open", false));
+
+        let response = open_entitlement::research_required_response();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "open_research_required", "{body}");
     }
 
     #[test]

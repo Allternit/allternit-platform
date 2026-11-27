@@ -244,7 +244,10 @@ fn validate_provenance(conn: &Connection, owner: &str, entry: &Entry) -> Result<
 }
 
 fn active(entry: &Entry) -> bool {
-    !matches!(entry.metadata.get("status").map(String::as_str),Some("proposed"|"rejected"))
+    // A line the Dream marked out of date stays in its file and in git, but
+    // leaves the index (so recall skips it) until an undo removes the mark.
+    !entry.metadata.contains_key("superseded")
+        && !matches!(entry.metadata.get("status").map(String::as_str),Some("proposed"|"rejected"))
         && entry.metadata.get("memory_type").map(String::as_str)!=Some("not_memory")
         && !entry.metadata.get("scope").map(|s|s.starts_with("twin")).unwrap_or(false)
         && !matches!(entry.metadata.get("kind").map(String::as_str),Some("question"|"answer"))

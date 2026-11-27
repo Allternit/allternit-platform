@@ -86,6 +86,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
                 .post(create_artifact)
                 .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES)),
         )
+        .route("/api/v1/artifacts/counts", get(count_artifacts))
         .route(
             "/api/v2/artifacts/:id",
             get(get_artifact).patch(patch_artifact).delete(delete_artifact),
@@ -630,6 +631,64 @@ fn like_pattern(q: &str) -> String {
     format!("%{escaped}%")
 }
 
+/// The rows `$1` (caller id) may see under `$2` (scope: mine, shared or
+/// all), with `$3` the caller's org and `$4` their email. Shared by the list
+/// and the counts so the two can never disagree.
+fn visible_to_caller() -> &'static str {
+    "(
+             (a.owner_id = $1 AND $2 <> 'shared')
+             OR ($2 <> 'mine' AND a.owner_id <> $1 AND (
+                 (a.visibility = 'org' AND a.org_id IS NOT NULL AND a.org_id = $3)
+                 OR EXISTS (
+                     SELECT 1 FROM artifact_shares s
+                     WHERE s.artifact_id = a.id
+                       AND (s.accepted_at IS NOT NULL OR s.expires_at IS NULL OR s.expires_at > now())
+                       AND ((s.principal_type = 'user' AND s.principal_id = $1)
+                         OR (s.principal_type = 'email' AND s.principal_id = $4)
+                         OR (s.principal_type = 'group' AND s.principal_id = $3))
+                 )
+             ))
+         )"
+}
+
+#[derive(Debug, Deserialize)]
+struct CountsQuery {
+    scope: Option<String>,
+}
+
+/// GET /api/v1/artifacts/counts: how many artifacts of each kind the caller
+/// sees in their (unarchived) list. Plans are in `byKind` but not `total`,
+/// matching the default list, which leaves plans out.
+async fn count_artifacts(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Query(query): Query<CountsQuery>,
+) -> Result<Json<Value>> {
+    let caller = caller(&state, &headers).await?;
+    let scope = query.scope.as_deref().unwrap_or("all");
+    if !["mine", "shared", "all"].contains(&scope) {
+        return Err(ArtifactError::bad_request("scope must be mine, shared or all"));
+    }
+    let visible = visible_to_caller();
+    let sql = format!(
+        "SELECT a.kind, count(*) FROM artifacts a
+         WHERE {visible}
+         AND NOT EXISTS (SELECT 1 FROM artifact_library_archives la
+                         WHERE la.artifact_id = a.id AND la.user_id = $1)
+         GROUP BY a.kind"
+    );
+    let rows: Vec<(String, i64)> = sqlx::query_as(&sql)
+        .bind(&caller.id)
+        .bind(scope)
+        .bind(caller.org_id.as_deref())
+        .bind(caller.email.as_deref())
+        .fetch_all(&state.db)
+        .await?;
+    let total: i64 = rows.iter().filter(|(kind, _)| kind != "plan").map(|(_, n)| n).sum();
+    let by_kind: Map<String, Value> = rows.into_iter().map(|(kind, n)| (kind, json!(n))).collect();
+    Ok(Json(json!({ "total": total, "byKind": by_kind })))
+}
+
 async fn list_artifacts(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -649,22 +708,10 @@ async fn list_artifacts(
     // Non-owned rows count when shared with the caller (user / email / org
     // group, live invites only) or visible to their org. `link` artifacts
     // are never listed for non-owners.
+    let visible = visible_to_caller();
     let sql = format!(
         "SELECT {ARTIFACT_COLUMNS} FROM artifacts a
-         WHERE (
-             (a.owner_id = $1 AND $2 <> 'shared')
-             OR ($2 <> 'mine' AND a.owner_id <> $1 AND (
-                 (a.visibility = 'org' AND a.org_id IS NOT NULL AND a.org_id = $3)
-                 OR EXISTS (
-                     SELECT 1 FROM artifact_shares s
-                     WHERE s.artifact_id = a.id
-                       AND (s.accepted_at IS NOT NULL OR s.expires_at IS NULL OR s.expires_at > now())
-                       AND ((s.principal_type = 'user' AND s.principal_id = $1)
-                         OR (s.principal_type = 'email' AND s.principal_id = $4)
-                         OR (s.principal_type = 'group' AND s.principal_id = $3))
-                 )
-             ))
-         )
+         WHERE {visible}
          -- D11: plans are listed only when asked for (kind=plan), so they
          -- never flood the default list on any client version.
          AND (($5::text IS NULL AND a.kind <> 'plan') OR a.kind = $5)
@@ -1386,6 +1433,8 @@ async fn public_artifact(
 // * `GET /api/v2/artifacts/:id/app` (view) -> `{ app: AppPackage | null }`
 // * `PUT /api/v2/artifacts/:id/app` (owner) `{ name, icon?, tier: browser|app|full,
 //   install_scope?: private|people|org|link, tools?: [..], skill_ref?: "skill://..",
+//   (skill_ref: one of the owner's skills, 422 `skill_ref_not_found` otherwise;
+//   installers get it as skill://app/<slug>/<name>/SKILL.md, mcp_edge_skills)
 //   pinned_version?, export_mcp? }` -> `{ app: AppPackage }`. `export_mcp` lands in
 //   `capability_snapshot.export_mcp` (omitted keeps the stored value). Makes the artifact an app (or
 //   re-publishes it): `app_slug` is minted once and never changes;
@@ -1549,6 +1598,25 @@ async fn put_app(
     if let Some(skill) = req.skill_ref.as_deref() {
         if !skill.starts_with("skill://") || skill.len() <= "skill://".len() || skill.len() > 512 {
             return Err(ArtifactError::unprocessable("invalid_skill_ref", "skill_ref is a skill:// link"));
+        }
+        // Decision 7: skill://user/<name>, skill://org/<org_id>/<name> or
+        // skill://<name>, naming a skill the publisher can read right now.
+        let store = crate::routes::cloud_skills::PgSkillStore { db: &state.db };
+        match crate::routes::mcp_edge_skills::resolve_skill_ref(&store, &caller.id, skill).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(ArtifactError::unprocessable(
+                    "skill_ref_not_found",
+                    "skill_ref must name one of your skills: skill://user/<name> or skill://org/<org_id>/<name>.",
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "put_app: skill_ref check failed");
+                return Err(ArtifactError::unprocessable(
+                    "skill_ref_not_found",
+                    "Could not check that skill right now. Try again in a moment.",
+                ));
+            }
         }
     }
     let pinned_version = match req.pinned_version {

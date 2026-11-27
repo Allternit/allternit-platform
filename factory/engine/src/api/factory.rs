@@ -546,7 +546,9 @@ pub fn factory_event(evt: &AllternitEvent) -> Option<(String, Value)> {
             let mut d = p.clone();
             if let Some(o) = d.as_object_mut() {
                 o.remove("idempotencyKey");
-                o.remove("sender");
+                if let Some(s) = o.remove("sender") {
+                    o.entry("from").or_insert(s);
+                }
             }
             ("delivery", d)
         }

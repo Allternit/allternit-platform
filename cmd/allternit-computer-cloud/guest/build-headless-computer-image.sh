@@ -8,8 +8,10 @@
 # browser toolset), without the desktop session: no XFCE, no window manager,
 # no VNC, no display manager, no printing/avahi/tailscale/subscription
 # gateway. The app runs as a systemd service on a bare Xvfb :0 (1280x800),
-# which is also the screen the computer toolset drives (xdotool/scrot); the
-# browser toolset uses headless Chrome.
+# which is also the screen the computer toolset drives (xdotool/scrot). The
+# agent browser is never headless: each agent gets its own bare Xvfb (:10 and
+# up) with Google Chrome headed on it and a kept profile
+# (allternit-agent-display, step 2d).
 #
 # The app honors ALLTERNIT_HEADLESS=1 (#1429, completed by #1434): no welcome
 # wizard or permission overlay, its windows stay hidden, so the screen a
@@ -43,6 +45,11 @@
 #                  the desktop-image workflow, bakes them in. Step 2c reruns
 #                  install-pane-engine.sh either way, so the pane engine and
 #                  allternit-node units match the other images.)
+#   DRIVER_SRC_DIR - the driver source (default: this checkout's
+#                  domains/computer-use/driver), installed in step 2d
+#   ALLTERNIT_EXTENSION_UPDATE_URL - optional https update manifest for the
+#                  Allternit extension (install-browser-policy.sh); without it
+#                  the extension is not force-installed
 #   KEEP_BUILDER - if set, do not delete the build container
 
 set -euo pipefail
@@ -166,6 +173,28 @@ if [ -n "${NODE_BIN:-}" ]; then
 fi
 incus exec "${BUILD_CONTAINER}" -- bash /root/allternit-engine/install-pane-engine.sh "${ENGINE_ARGS[@]}"
 incus exec "${BUILD_CONTAINER}" -- rm -rf /root/allternit-engine
+
+# 2d. The Allternit Driver from this checkout over the base image's copy, so
+#     the image carries this tree's agent displays (allternit-agent-display:
+#     one bare Xvfb :10+ and one kept, headed Chrome profile per agent) and the
+#     extension policy. No VNC here: an agent run's live view is the driver's
+#     screenshot of that run's display.
+DRIVER_SRC_DIR="${DRIVER_SRC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../domains/computer-use/driver" && pwd)}"
+[ -d "${DRIVER_SRC_DIR}/allternit_driver" ] || { echo "ERROR: DRIVER_SRC_DIR ${DRIVER_SRC_DIR} has no allternit_driver package" >&2; exit 1; }
+log "installing the Allternit Driver from ${DRIVER_SRC_DIR}"
+incus exec "${BUILD_CONTAINER}" -- mkdir -p /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
+incus file push --quiet -r "${DRIVER_SRC_DIR}/allternit_driver" "${BUILD_CONTAINER}/tmp/allternit-driver-pkg/"
+incus file push --quiet -r "${DRIVER_SRC_DIR}/packaging/guest/linux" "${BUILD_CONTAINER}/tmp/allternit-driver-packaging/"
+incus exec "${BUILD_CONTAINER}" --env ALLTERNIT_EXTENSION_UPDATE_URL="${ALLTERNIT_EXTENSION_UPDATE_URL:-}" -- \
+    bash /tmp/allternit-driver-packaging/linux/install-driver.sh /tmp/allternit-driver-pkg
+incus exec "${BUILD_CONTAINER}" -- rm -rf /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
+incus exec "${BUILD_CONTAINER}" -- sh -c '
+    set -e
+    test -x /usr/bin/google-chrome || { echo "the base image has no Google Chrome (agent browsers need it)" >&2; exit 1; }
+    test -x /usr/local/bin/allternit-agent-display
+    mkdir -p /etc/allternit
+    echo "ALLTERNIT_AGENT_DISPLAY_VNC=0" > /etc/allternit/agent-display.env
+'
 
 # 3. The app as a headless service (provisioned mode, no window system).
 #    A shared session bus gives the app, the AT-SPI registry and the

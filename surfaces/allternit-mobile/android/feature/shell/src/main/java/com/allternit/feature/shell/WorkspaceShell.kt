@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
@@ -159,7 +160,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
     // to the home and back. It shares the shell's OkHttp client and API.
-    val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api) }
+    val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api).also { com.allternit.feature.chat.ServerSkillsRepository.attach(it) } }
     val chat = remember(account?.userId) { ChatViewModel(chatBackend, context.contentResolver).also { it.attachBrowserImages(context, account?.userId ?: "signed-out") } }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     com.allternit.feature.chat.BrowserImageHost(chat)
@@ -284,6 +285,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             mode = ShellMode.Bots
             ShellModePrefs.save(context, ShellMode.Bots)
             botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot, openSessionId = launch.sessionId)
+            page = ShellPage.Home
+        } else if (launch.runId != null && launch.computerId != null) {
+            mode = ShellMode.Aci
+            ShellModePrefs.save(context, ShellMode.Aci)
+            com.allternit.feature.computer.AciNav.openRun(launch.computerId, launch.runId)
             page = ShellPage.Home
         } else if (launch.tab != null && launch.tab != "settings") {
             if (launch.computerId != null) com.allternit.feature.computer.AciNav.openComputer(launch.computerId)
@@ -1044,6 +1050,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         com.allternit.feature.chat.games.WaitingGamesLayer(racers = {
             botsStore.bots.map { com.allternit.feature.chat.games.WaitingGameRacer(it.displayName, it.accentHex) }
         })
+        // Job banner: one capsule above the composer (bar jobs).
+        com.allternit.core.design.JobBannerHost(
+            Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                .navigationBarsPadding().padding(bottom = 96.dp),
+        )
     }
     }
 }
@@ -1073,6 +1084,8 @@ internal data class ShellLaunch(
     val sessionId: String? = null,
     /** A computer_alert push or `allternit://computers/<id>`: open that computer's console detail (iOS DeepLink.computerConsole). */
     val computerId: String? = null,
+    /** With [computerId]: the agent browser run a push named; its screen opens in ACI's Agent view. */
+    val runId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

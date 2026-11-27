@@ -1,0 +1,103 @@
+---
+title: Session start
+description: "The contract for starting a real session on a paired computer from any surface or from the StartSession tool: options, start, errors, the safety switch and the asleep-computer git path."
+---
+
+User guide: [Continue a terminal session anywhere](/cli/continue-anywhere). Related: [Live terminal sessions](/architecture/live-terminal-sessions).
+
+## What it is
+
+Session start lets any surface (phone, web, another computer) or the StartSession tool begin a real session on a paired computer, in a folder and permission mode the caller picks. The paired computer does the work. The caller only sends one request and then drives the session through the routes it already knows.
+
+Fixtures for every request, response and error live in `docs/contracts/session-start/` in the platform repo. Surfaces code against those files.
+
+## Routes
+
+Both routes live on the computer and are reached through the cloud relay at `/api/v1/runtime-devices/:id/proxy`.
+
+```text
+GET  /api/v1/session-start/options
+POST /api/v1/session-start        (header Idempotency-Key)
+```
+
+The cloud keeps a snapshot of each computer's options so a surface can show folders while that computer is asleep:
+
+```text
+PUT /api/v1/runtime-devices/:id/start-options   (device credential)
+GET /api/v1/start-options                        (signed-in user)
+```
+
+`GET /api/v1/runtime-presence` gains two additive fields: `remoteStart` (boolean) and `kind` (`desktop`, `cloud` or `server`).
+
+### Options response
+
+One round trip returns everything a picker needs. It does not list installed tools. The app already knows those per computer from its runtime registry.
+
+| Field | Meaning |
+|---|---|
+| `device` | `runtimeId`, `name`, `os`, `remoteStart` |
+| `folders` | Up to 30 recent folders: `path`, `name`, `lastUsedAt`, and optional `git` with `remote`, `branch`, `head`, `dirty`, `ahead` |
+| `modes` | Per runtime id (the runtime registry ids, for example `allternit` for the Gizzi engine): `default` mode and `supported` modes |
+| `defaultRuntime` | `allternit` (the Gizzi engine) |
+
+Mode ids are the app's own ids: `auto`, `default` (ask before actions), `plan` (read-only) and `bypass`.
+
+### Start request
+
+| Field | Meaning |
+|---|---|
+| `folder` | Either `path` on that computer, or `git` with `remote`, `branch` and optional `head` |
+| `runtime` | A runtime id from the options call |
+| `mode` | Optional. Falls back to that runtime's default |
+| `confirmBypass` | Required for `bypass` unless the computer's default is already bypass |
+| `prompt` | Optional first message |
+| `origin` | `surface`, `deviceName`, optional `parentSessionId` and `depth` |
+
+### Start response
+
+The call returns 201 with one of two shapes, chosen by runtime.
+
+```json
+{ "kind": "engine", "sessionId": "ses_01JD4Z8K2Q7W3M9X5T6V1N0B8C", "directory": "/Users/dev/code/allternit" }
+```
+
+```json
+{ "kind": "terminal", "terminalId": "term_7c1e9a40", "cwd": "/Users/dev/code/allternit", "agent": "claude" }
+```
+
+### Errors
+
+Every error body is `{ error, message, action }`.
+
+| Status | error | Meaning |
+|---|---|---|
+| 403 | `remote_start_off` | The safety switch is off on that computer |
+| 403 | `mode_not_allowed` | The mode is above what the caller may grant |
+| 403 | `depth_exceeded` | Nested start depth is over 3 |
+| 404 | `folder_missing` | The folder no longer exists |
+| 404 | `runtime_missing` | The tool is not installed there |
+| 409 | `runtime_signed_out` | The tool is signed out there |
+| 429 | `rate_limited` | More than 6 starts per minute on that computer |
+| 502 | `clone_failed` | The cloud computer could not copy the repository |
+
+## The two kinds
+
+- **Engine session.** Gizzi starts as an engine session with `directory` set to the folder. The existing message, permission, abort and event routes drive it, so approvals arrive as cards.
+- **Pane terminal.** Every other coding CLI starts as a pane terminal. The thread hosts the AgentFrame composer view over that terminal.
+
+## Capability and safety switch
+
+The cloud requires the `runtime:remote_start` capability for `session-start`. That rule is matched first, because later rules match substrings such as workspace, so folder paths travel in the request body only.
+
+The safety switch is on by default. A phone can already open a shell through Code, so on adds no new power and keeps setup at zero. Turning it off drops `runtime:remote_start` and refuses relayed starts, relayed terminal create, and adopt `new` and `copy`. Each remote start shows a notification on the computer.
+
+## Idempotency and guards
+
+- Send an `Idempotency-Key` header. A repeated key returns the first result and starts nothing new.
+- The mode can never be above the caller's own mode.
+- `origin.depth` is at most 3.
+- At most 6 starts per minute per computer.
+
+## Asleep computers
+
+While a computer is online it pushes a folder snapshot to the cloud with the PUT route above. If it is asleep, a surface can offer a cloud computer for the same folder by sending `folder.git`, which the cloud computer clones through the existing Code cloud-environment path. A folder without git cannot move, and the picker says so. Choosing the asleep computer anyway fails with a plain message and shows the cloud offer again.

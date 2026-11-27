@@ -48,6 +48,7 @@ import { Session } from "@/runtime/session"
 import { applyPatch } from "diff"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Flag } from "@/runtime/context/flag/flag"
+import { isNeedsYouPermission, needsYouView } from "@/cli/ui/ink-app/utils/needsYou"
 
 type ModeOption = { id: string; name: string; description?: string }
 type ModelOption = { modelId: string; name: string }
@@ -286,18 +287,41 @@ export namespace ACP {
             .then(async () => {
               const directory = session.cwd
 
+              // Agent-browser needs-you prompts: the runtime's own buttons (never "Always allow").
+              // A hidden value can't be typed through an editor, so a secret ask is stopped with
+              // the way to answer it (the terminal TUI or the Allternit app).
+              const needsYou = isNeedsYouPermission(permission.permission)
+                ? needsYouView(permission.permission, permission.metadata)
+                : undefined
+              if (needsYou?.secret) {
+                await (this.sdk as any).permission.reply({
+                  requestID: permission.id,
+                  reply: "reject",
+                  message: `${needsYou.summary} This needs a hidden value an editor can't take: answer it in gizzi (terminal) or the Allternit app, then run again.`,
+                  directory,
+                })
+                return
+              }
+              const options: PermissionOption[] = needsYou
+                ? needsYou.options.map((o) => ({
+                    optionId: o.reply,
+                    kind: o.reply === "reject" ? "reject_once" : "allow_once",
+                    name: o.label,
+                  }))
+                : this.permissionOptions
+
               const res = await this.connection
                 .requestPermission({
                   sessionId: permission.sessionID,
                   toolCall: {
                     toolCallId: permission.tool?.callID ?? permission.id,
                     status: "pending",
-                    title: permission.permission,
-                    rawInput: permission.metadata,
+                    title: needsYou?.summary ?? permission.permission,
+                    rawInput: needsYou ? { summary: needsYou.summary } : permission.metadata,
                     kind: toToolKind(permission.permission),
                     locations: toLocations(permission.permission, permission.metadata),
                   },
-                  options: this.permissionOptions,
+                  options,
                 })
                 .catch(async (error: unknown) => {
                   log.error("failed to request permission from ACP", {
@@ -341,7 +365,7 @@ export namespace ACP {
 
               await (this.sdk as any).permission.reply({
                 requestID: permission.id,
-                reply: res.outcome.optionId as "once" | "always" | "reject",
+                reply: res.outcome.optionId as "once" | "always" | "task" | "reject",
                 directory,
               })
             })

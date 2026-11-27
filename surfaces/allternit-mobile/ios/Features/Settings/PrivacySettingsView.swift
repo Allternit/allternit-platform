@@ -24,7 +24,8 @@ struct PrivacySettingsView: View {
     }
 
     var body: some View {
-        List {
+        // Dot title that docks into the bar on scroll (UI feedback I13).
+        DockingTitleList(title: "Privacy") {
             Section {
                 Toggle(isOn: Binding(
                     get: { appLock.isEnabled },
@@ -106,9 +107,6 @@ struct PrivacySettingsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Archive all chats?", isPresented: $isArchiveConfirmPresented, titleVisibility: .visible) {

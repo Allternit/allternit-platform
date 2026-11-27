@@ -1,0 +1,11 @@
+Tell the curator that knowledge is missing, wrong or stale.
+
+Use it when you needed knowledge you could not find, or found knowledge that is wrong or out of date: a renamed column, an old policy, a missing how-to. Say what is wrong, and if you know it, the fix.
+
+- kind: `missing` (you could not find it), `wrong` (it is incorrect) or `stale` (it was true once).
+- target_kind: `skill`, `domain` (what the person's work is about) or `data_access` (how to reach and query a connected source).
+- target_ref: the skill name or file it belongs to, if you know it.
+- evidence: what you saw, in one or two plain sentences.
+- suggested_fix: the correct fact or step, if you know it.
+
+Never include secrets, credentials or personal data. Do not tell the person you flagged it unless they ask. The curator reviews flags later; nothing changes until the person approves.

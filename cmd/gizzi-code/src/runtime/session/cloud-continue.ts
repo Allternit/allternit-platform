@@ -31,6 +31,74 @@ export namespace CloudContinue {
     hidden?: boolean
     /** The catalog provider that serves the row ("openrouter"…); a key the person connected for it unlocks the row. */
     provider?: string
+    /** Retail price per 1M tokens, USD. */
+    pricing?: { input_per_1m_usd?: number; output_per_1m_usd?: number }
+    /** Allternit Open rows: `access` "plan" or "research". */
+    open?: { access?: string }
+  }
+
+  export type OpenReason = "terms_required" | "plan_required" | "allowance_used" | "bought_credits_required"
+
+  /** `open_models` on `/api/v1/billing/credits` and `/api/v1/me/usage` (contract §3). */
+  export interface OpenEntitlement {
+    allowed: boolean
+    reason: OpenReason | null
+    termsAccepted: boolean
+    plan: string
+    planAllowanceUsd: number
+    usedUsd: number
+    planRemainingUsd: number
+    boughtBalanceUsd: number
+    periodEnd?: string
+    research: boolean
+  }
+
+  /** The open entitlement in a payload; undefined when absent (= open rows not locked, as today). */
+  export function openEntitlementFrom(payload: any): OpenEntitlement | undefined {
+    const o = payload?.open_models
+    if (!o || typeof o !== "object" || typeof o.allowed !== "boolean") return undefined
+    const reasons: OpenReason[] = ["terms_required", "plan_required", "allowance_used", "bought_credits_required"]
+    const reason = reasons.find((r) => r === o.reason) ?? null
+    return {
+      allowed: o.allowed,
+      reason: o.allowed ? null : reason,
+      termsAccepted: o.terms_accepted !== false,
+      plan: typeof o.plan === "string" ? o.plan : "",
+      planAllowanceUsd: num(o.plan_allowance_usd) ?? 0,
+      usedUsd: num(o.used_usd) ?? 0,
+      planRemainingUsd: num(o.plan_remaining_usd) ?? 0,
+      boughtBalanceUsd: num(o.bought_balance_usd) ?? 0,
+      periodEnd: typeof o.period_end === "string" ? o.period_end : undefined,
+      research: o.research === true,
+    }
+  }
+
+  /** The lock tag for an open row, or undefined when the account may use open models. */
+  export function openLockTag(open: OpenEntitlement | undefined): string | undefined {
+    if (!open || open.allowed) return undefined
+    switch (open.reason) {
+      case "plan_required":
+        return "needs a paid plan"
+      case "allowance_used":
+        return "allowance used"
+      case "bought_credits_required":
+        return "plus: bought credits only"
+      case "terms_required":
+        return "accept terms on the web"
+      default:
+        return "locked"
+    }
+  }
+
+  /** The one usage line for open models. */
+  export function openUsageLine(open: OpenEntitlement): string {
+    const usd = (n: number) => `$${n.toFixed(2)}`
+    if (open.plan === "free" || open.plan === "" || open.reason === "plan_required") return "Open models: need a paid plan"
+    const bought = `bought credits ${usd(open.boughtBalanceUsd)}`
+    if (open.plan === "plus" || open.planAllowanceUsd <= 0) return `Open models: Plus runs on bought credits; ${bought}`
+    const resets = open.periodEnd ? new Date(open.periodEnd) : undefined
+    const date = resets && !Number.isNaN(resets.getTime()) ? `, resets ${resets.toISOString().slice(0, 10)}` : ""
+    return `Open models: ${usd(open.usedUsd)} of ${usd(open.planAllowanceUsd)} plan credits used${date}; ${bought}`
   }
 
   /**
@@ -169,6 +237,10 @@ export namespace CloudContinue {
   }
 
   type Fetch = (url: string, init?: RequestInit) => Promise<Response>
+
+  export async function catalogRows(fetchFn: Fetch = fetch): Promise<CatalogModel[] | undefined> {
+    return catalog(fetchFn)
+  }
 
   async function catalog(fetchFn: Fetch): Promise<CatalogModel[] | undefined> {
     const token = cloudAuthToken()

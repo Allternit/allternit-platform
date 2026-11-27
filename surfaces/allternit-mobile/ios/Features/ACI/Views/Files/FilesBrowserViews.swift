@@ -158,6 +158,11 @@ struct FilesRootsScreen: View {
             FilesFolderScreen(model: model, rootId: root.id, parentId: root.rootItemId, title: root.name)
         }
         .navigationTitle("Files")
+        .toolbarTitleMenu {
+            // The roots screen has no search yet, so no recent searches
+            // (files.recentSearches) are kept here.
+            Button { Task { await model.load() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+        }
         .refreshable { await model.load() }
     }
 

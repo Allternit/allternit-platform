@@ -266,6 +266,18 @@ Rule thresholds live in `computer_alert_rules` (migrations 154 and 157). Built i
 
 Thresholds: `offline` is minutes (1 to 1440, default 10), `cpu` and `disk` are percent (1 to 100, default 90). CPU must stay over for `durationMinutes` (1 to 120, default 5). A computer that is asleep, stopped or starting is not offline. Errors carry `{ error, message }`.
 
+## Agent-browser push
+
+When a browser run needs the person, allternit-api forwards one of three pushes to `POST /push/notify/:runtime_id` on the cloud (runtime relay signature, the owner is the paired user). The cloud rebuilds the data from an allowlist, so a credential value never reaches a device. It goes out through Web Push, APNs and FCM, follows quiet hours at the `needs_you` level, and opens `/computers/COMPUTER_ID?run=RUN_ID`.
+
+| Kind | Data | Title and body | APNs category and actions |
+|---|---|---|---|
+| `aci_approval` | `run_id`, `computer_id`, `approval_id`, `approval_kind` (`action` or `credential`), `credential?` (`name`, `domain`), `message` | `BOT needs your OK`; `Fill your NAME login on DOMAIN?` or the action message | `ACI_APPROVAL`: `APPROVE` (needs device auth), `DENY` (destructive, no auth) |
+| `aci_human` | `run_id`, `computer_id`, `reason`, `secret` | `BOT needs you`; the reason | `ACI_HUMAN`: `CONTINUE`, `STOP` |
+| `aci_blocked` | `run_id`, `computer_id`, `domain`, `block_kind` (`login`, `two_factor`, `captcha`, `block_page`, `rate_limited`), `rerun_targets` (computer ids) | `DOMAIN blocked BOT`; `Open to continue, stop or run it on your Mac` | `ACI_BLOCKED`: `OPEN` |
+
+Every push also carries `kind`, `category`, `actions` (`[{id, auth, destructive}]`), `event: "aci.attention"` and `level: "needs_you"`. Web Push and FCM read the action ids from `actions`. The contract is in `cmd/allternit-cloud-api/openapi/device-tokens.yaml`.
+
 ## Approval, change record and undo
 
 1. The user approves one concrete action in the console. The cloud issues an `approval_id` bound to that action, that computer and that user.

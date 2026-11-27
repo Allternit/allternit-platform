@@ -47,6 +47,8 @@ internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
     agentModeId = agentModeId,
     webSearch = webSearch,
     research = research,
+    skillId = skillId,
+    skillArguments = skillArguments,
 )
 
 /**
@@ -156,7 +158,24 @@ internal fun ChatPage(
                 }
             },
         )
-        ChatScreen(
+        // Start anywhere (step 20): a thread bound to a CLI in a pane terminal shows that terminal with the
+        // Code terminal composer; engine-bound threads stay in the chat feed (approvals, Stop).
+        val bound = chat.binding
+        androidx.compose.runtime.DisposableEffect(bound, chat.currentSessionId) {
+            com.allternit.feature.chat.PendingStart.bound = bound
+            // A computer pick applies only to the chat it was made in (PendingStart.chatId).
+            com.allternit.feature.chat.PendingStart.openChatId = chat.currentSessionId
+            onDispose { com.allternit.feature.chat.PendingStart.bound = null; com.allternit.feature.chat.PendingStart.openChatId = null }
+        }
+        val boundTerminal = if (bound?.isTerminal == true) bound.terminalId else null
+        if (bound != null && boundTerminal != null) {
+            Text(
+                "${bound.runtime} · ${bound.folder.trimEnd('/').substringAfterLast('/')} · ${bound.deviceName}",
+                color = c.textSecondary, fontSize = 12.sp, maxLines = 1,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("boundThreadLine"),
+            )
+            com.allternit.feature.code.BoundTerminalThread(backend, bound.runtimeId, boundTerminal, Modifier.weight(1f))
+        } else ChatScreen(
             viewModel = chat,
             backend = backend,
             callbacks = callbacks,
@@ -170,6 +189,7 @@ internal fun ChatPage(
             composer = {
                 com.allternit.feature.chat.voice.VoiceBarSlot(voiceHost, onEnd = endVoice)
                 Composer(
+                    watchSessionId = chat.currentSessionId,
                     models = models,
                     noComputer = store.noComputer,
                     phoneArmed = false,

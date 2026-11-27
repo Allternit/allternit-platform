@@ -42,48 +42,43 @@ enum OverviewLayout: String, CaseIterable, Identifiable {
     }
 }
 
-/// The overview standard's List · Grid · Deck switch (OverviewLayoutSwitch),
-/// the Bots home look: a filled track with the picked option raised.
+/// The one layout control on every overview: a single icon button that shows
+/// the NEXT view (list -> grid -> deck -> list) and cycles on tap, like the
+/// web's overview switch. `options` is the set of layouts the screen supports
+/// (two or three); the order is the cycle order.
 struct OverviewLayoutSwitch: View {
     @Binding var value: OverviewLayout
+    var options: [OverviewLayout] = OverviewLayout.allCases
+
+    private var next: OverviewLayout {
+        guard let i = options.firstIndex(of: value) else { return options.first ?? value }
+        return options[(i + 1) % options.count]
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(OverviewLayout.allCases) { layout in
-                let on = value == layout
-                Button {
-                    Haptics.selection()
-                    withAnimation(.easeOut(duration: 0.16)) { value = layout }
-                } label: {
-                    Image(systemName: layout.icon)
-                        .font(.system(size: 14, weight: on ? .bold : .regular))
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                        .frame(width: 36, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(on ? Color("BgPanel") : .clear)
-                                .shadow(color: .black.opacity(on ? 0.08 : 0), radius: 1, y: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(layout.label)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.16)) { value = next }
+        } label: {
+            Image(systemName: next.icon)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BorderStrong")))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Layout")
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show as \(next.label.lowercased())")
+        .accessibilityValue(value.label)
     }
 }
 
 extension OverviewLayoutSwitch {
     /// Binds straight to a screen's stored @AppStorage string.
-    init(raw: Binding<String>, fallback: OverviewLayout) {
+    init(raw: Binding<String>, fallback: OverviewLayout, options: [OverviewLayout] = OverviewLayout.allCases) {
         self.init(value: Binding(
             get: { OverviewLayout(stored: raw.wrappedValue) ?? fallback },
             set: { raw.wrappedValue = $0.rawValue }
-        ))
+        ), options: options)
     }
 }
 

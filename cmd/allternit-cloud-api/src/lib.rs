@@ -454,6 +454,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::thread_shares::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
+        // Start anywhere folder snapshot: the computer PUTs its own (device credential,
+        // scoped to :id); GET /api/v1/start-options returns the owner's (Clerk session).
+        .merge(routes::start_options::routes())
         // Team roster + send (agent network phase 2, WP13).
         .merge(routes::team::routes())
         // MCP Events client (P6): public Standard Webhooks receiver for events from a user's
@@ -489,6 +492,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::voice_recordings::routes())
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
+        // Review & sign (migration 167): each handler resolves the caller itself; /sign, /decline and
+        // /signature take an interactive Clerk session only, never an agent, runtime or API key.
+        .merge(routes::sign_requests::routes())
         .merge(routes::runtime_files::routes())
         // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
         // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
@@ -572,6 +578,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Account preferences (project pad templates + per-mode default);
         // Clerk session or `account` API token per-request, never gated on compute.
         .merge(routes::account_prefs::routes())
+        // Status (online / autopilot / dnd / away); dnd, away and autopilot hold non-urgent pushes.
+        .merge(routes::me_status::routes())
         .merge(routes::web_search::routes())
         // Setup checklist: live checks for account, brain, computers, channels.
         .merge(routes::setup_checks::routes())
@@ -637,6 +645,7 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::admin_customers::routes())
         // Upstream funding coverage (admin only): provider balances, burn, wallet liability.
         .merge(routes::admin_funding::routes())
+        .merge(routes::admin_open_lane::routes())
         .merge(routes::admin_voice_billing::routes())
         // Dispatch handoff verifies the Clerk session per-request, like the
         // pairing routes (the token only ever means "this user, that
@@ -692,6 +701,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computer_metrics::routes())
         // Computers console alert rules + incidents (step 2.8).
         .merge(routes::computer_alerts::routes())
+        // Agent-browser pushes forwarded by allternit-api (relay-signed in the handler).
+        .merge(routes::aci_push::routes())
         // Computers console live host data, approvals and port forwards through
         // the runtime relay; never wakes a computer (same caller rule).
         .merge(routes::computers_host::routes())

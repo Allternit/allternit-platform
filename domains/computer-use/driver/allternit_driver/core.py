@@ -50,6 +50,9 @@ class Target:
     pid: int
     window_id: int
     app: str  # Bundle id (macOS) or app name: the router's app key.
+    # The X display the window is on (Linux guests with one display per
+    # agent, ":10" and up); None on macOS/Windows and for the unit's own.
+    display: str | None = None
 
     @property
     def key(self) -> str:
@@ -249,6 +252,7 @@ class Driver:
         pid = int(p["pid"]) if p.get("pid") else None
         wid = int(p["window_id"]) if p.get("window_id") else None
         app = str(p.get("app") or "").strip()
+        display = self._display_param(p)
         if self._arc_ok():
             if pid is None:
                 pid = self._mac_pid(app)
@@ -259,14 +263,34 @@ class Driver:
             wins = [w for w in engine.windows(pid) if w.get("is_on_screen", True)]
             if app:
                 wins = [w for w in wins if app.lower() in str(w.get("app_name", "")).lower()]
+            if display:
+                # One agent's display: never fall through to another agent's window.
+                wins = [w for w in wins if w.get("display") == display]
             if wid:
                 wins = [w for w in wins if int(w.get("window_id", 0)) == wid] or wins
             if not wins:
-                raise DriverError("window_not_found", f"no on-screen window for {app or pid or 'the front app'}")
+                where = f" on display {display}" if display else ""
+                raise DriverError("window_not_found", f"no on-screen window for {app or pid or 'the front app'}{where}")
             w = wins[0]
-            t = Target(int(w["pid"]), int(w["window_id"]), str(w.get("app_name") or app or w["pid"]))
+            t = Target(int(w["pid"]), int(w["window_id"]), str(w.get("app_name") or app or w["pid"]),
+                       w.get("display") or display)
         self._targets[t.key] = t
         return t
+
+    def _display_param(self, p: dict[str, Any]) -> str | None:
+        """``display`` (":10") on a Linux guest call; refused elsewhere, where
+        the driver has one screen."""
+        raw = p.get("display")
+        if raw in (None, ""):
+            return None
+        if not self.os.startswith("linux"):
+            raise DriverError("bad_input", "display applies to Linux computers only")
+        from .engines.atspi import check_display
+
+        try:
+            return check_display(raw)
+        except Exception as e:
+            raise DriverError("bad_input", str(e)) from e
 
     def _mac_pid(self, app: str) -> int:
         import AppKit  # type: ignore
@@ -322,7 +346,7 @@ class Driver:
         if version is not None:
             out = self._answer(t, version, info, p)
         else:
-            out = {"window": {"pid": t.pid, "window_id": t.window_id, "app": t.app}, "engine": None, "cached": False}
+            out = {"window": {"pid": t.pid, "window_id": t.window_id, "app": t.app, **({"display": t.display} if t.display else {})}, "engine": None, "cached": False}
         out["source"] = decision.source
         out["source_reason"] = decision.reason
         if decision.source != "ax":
@@ -458,7 +482,8 @@ class Driver:
     def _answer(self, t: Target, version: em.Version, info: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
         meta = version.meta
         out: dict[str, Any] = {
-            "window": {"pid": t.pid, "window_id": t.window_id, "app": meta.get("app") or t.app, "title": meta.get("title")},
+            "window": {"pid": t.pid, "window_id": t.window_id, "app": meta.get("app") or t.app, "title": meta.get("title"),
+                       **({"display": t.display} if t.display else {})},
             "version": version.number,
             "engine": info["engine"],
             "cached": info["cached"],
@@ -490,9 +515,25 @@ class Driver:
         """Act on an element id: click, double_click, right_click, set_value,
         type, select, press (key), focus; or ``menu`` with ``path`` and a window.
         ``version`` pins the map the action was planned on: an older one is
-        refused with the fresh map."""
+        refused with the fresh map.
+
+        ``focus: false`` (``set_value`` only) writes the value through
+        accessibility on that element and nothing else: no focus step and no
+        key-typing fallback. Focusing a field in a window that isn't key makes
+        that window key, and the person's typing then goes into it (Safari
+        spike, 2026-11-26), so ``use_credential`` uses this on the person's
+        own computer. A field that refuses the write answers ``value_rejected``."""
         start = time.perf_counter()
         op = str(p.get("op") or "click")
+        focus = _focus_arg(p)
+        if focus is False:
+            if op not in ("set_value", "type"):
+                raise DriverError("bad_input", "focus: false applies to set_value and type only")
+            if str(p.get("id") or "").startswith("v"):
+                # A vision element is a pixel position: writing to it means
+                # clicking and typing at the screen, which is exactly what
+                # focus: false must never do.
+                raise DriverError("bad_input", "focus: false needs an accessibility element id from read_ui, not a vision element")
         if op == "menu":
             out = self._menu(self.target(p), p.get("path"))
             out["ms"] = _ms(start)
@@ -513,11 +554,13 @@ class Driver:
         except em.StaleVersion:
             fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id})
             return {"status": "stale_version", "map": fresh, "ms": _ms(start)}
-        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"))
+        out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"), focus=focus)
         out["ms"] = _ms(start)
         return out
 
-    def _act_on(self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None) -> dict[str, Any]:
+    def _act_on(
+        self, t: Target, cur: em.Version, eid: str, op: str, value: Any, key: str | None, focus: bool | None = None,
+    ) -> dict[str, Any]:
         element = cur.elements.get(eid)
         if element is None:
             raise DriverError("element_gone", f"{eid} is not in version {cur.number}")
@@ -526,7 +569,19 @@ class Driver:
             start = time.perf_counter()
             d = Decision(cur.engine, "map")
             try:
-                if op == "press" and cur.engine == ARC and self.cua.available:
+                if focus is False and cur.engine != ARC:
+                    # Value write only (see act) on the engines without arc's
+                    # no-focus AXValue path (below): their direct value setter
+                    # (AT-SPI text, UIA ValuePattern), never focus, never keys.
+                    # Cua has no proven focus-free setter, so it refuses.
+                    writer = getattr(self._engine(cur.engine), "write_value_only", None)
+                    if writer is None or op != "set_value":
+                        raise DriverError("unsupported_op", f"the {cur.engine} engine can't {op} without focusing the field")
+                    if not writer(t.pid, t.window_id, element.native, "" if value is None else str(value)):
+                        raise DriverError("value_rejected", "the field rejected the value, and focus:false allows no typing")
+                    status, settled = "done", None
+                    cur, _ = self._read(t, fresh=True)
+                elif op == "press" and cur.engine == ARC and self.cua.available:
                     # arc's Skylight key posting can take the whole sidecar
                     # down (SIGSEGV in the private SPI path on macOS 14).
                     # Key input runs on the Cua engine instead — the same
@@ -544,9 +599,21 @@ class Driver:
                     # the sidecar on macOS 14 when the app isn't frontmost.
                     # Write the value through accessibility (focus + AXValue,
                     # read back; no SkyLight); a field that refuses it is
-                    # typed into on the Cua engine.
+                    # typed into on the Cua engine. ``focus`` false (use_credential)
+                    # never focuses and never types. Safari fields that refuse
+                    # the value go through the Safari key queue: Safari sends
+                    # keys to its key window whatever window they name.
                     text = "" if value is None else str(value)
-                    if self.arc.write_value(self._snaps[t.key], element.native, text, replace=op == "set_value"):
+                    snap = self._snaps[t.key]
+                    if self.arc.write_value(snap, element.native, text, replace=op == "set_value", focus=focus):
+                        d = Decision(ARC, "map")
+                    elif focus is False:
+                        raise DriverError("value_rejected", "the field rejected the value, and focus:false allows no typing")
+                    elif self.arc.is_safari(t.pid):
+                        try:
+                            self.arc.type_queued(snap, element.native, text, replace=op == "set_value")
+                        except Exception as e:
+                            raise _coded(e) from e
                         d = Decision(ARC, "map")
                     elif self.cua.available:
                         self.cua.act(t.pid, t.window_id, {}, "type", text, None)
@@ -577,7 +644,11 @@ class Driver:
         out: dict[str, Any] = {"status": status, "version": cur.number, "engine": d.engine}
         if settled is not None:
             out["settled"] = {"reacted": settled.reacted, "timed_out": settled.timed_out, "ms": settled.elapsed_ms}
-        if status == "done":
+        if status == "done" and focus is False:
+            # A value-only write carries secrets (use_credential): the reply
+            # never echoes the element diff, which would hold the new value.
+            pass
+        elif status == "done":
             diff = self.maps.window(t.key).diff(before)
             if diff is not None:
                 out["changes"] = diff
@@ -750,7 +821,8 @@ class Driver:
                 elif isinstance(step.get("act"), dict):
                     a = step["act"]
                     cur = wm.current
-                    out = self._act_on(t, cur, str(a.get("id")), str(a.get("op") or "click"), a.get("value"), a.get("key"))
+                    out = self._act_on(t, cur, str(a.get("id")), str(a.get("op") or "click"), a.get("value"), a.get("key"),
+                                       focus=_focus_arg(a))
                     engines_used.add(out["engine"])
                     if out["status"] != "done":
                         raise DriverError(out["status"], f"the window changed before step {i}")
@@ -886,19 +958,53 @@ class Driver:
 
     # ---- pixels ------------------------------------------------------------------------
 
+    def safari_window(self, p: dict[str, Any]) -> dict[str, Any]:
+        """One agent run's own Safari window (macOS): ``op`` "open" opens a window in
+        the "Allternit Agent" profile and returns its ``pid`` + ``window_id``; "close"
+        with those closes it. Only windows this driver opened can be closed. A missing
+        profile that can't be made by script is ``profile_missing`` (data: reason,
+        profile, steps for Desktop's setup card)."""
+        if not self._arc_ok():
+            raise DriverError("engine_unavailable", "Safari agent windows need the arc engine (macOS)")
+        op = str(p.get("op") or "open")
+        try:
+            out = self.arc.safari_window(op, p.get("pid"), p.get("window_id"),
+                                         create_profile=p.get("create_profile", True) is not False)
+        except ValueError as e:
+            raise DriverError("bad_input", str(e)) from e
+        except Exception as e:
+            raise _coded(e) from e
+        if op == "close" and out.get("closed"):
+            self.arc.forget_window(int(p["pid"]))
+        return out
+
     def screenshot(self, p: dict[str, Any]) -> dict[str, Any]:
-        """PNG of a window (app / pid / window_id) or, with none given, the desktop."""
+        """PNG of a window (app / pid / window_id) or, with none given, the
+        desktop; on Linux, ``display`` picks an agent's screen (the live view of
+        that agent's run)."""
         start = time.perf_counter()
         window = any(p.get(k) for k in ("app", "pid", "window_id"))
         t = self.target(p) if window else None
-        capable = self.capable("screenshot") if t else ({CUA} if self.cua.available else set())
+        display = (t.display if t is not None else None) or self._display_param(p)
+        native_name = self.native.name if self.native is not None else ""
+        if t is None and display and self._native_ok():
+            capable = {native_name}
+        else:
+            capable = self.capable("screenshot") if t else ({CUA} if self.cua.available else set())
 
         def run(d: Decision) -> dict[str, Any]:
             if d.engine == ARC and t is not None:
                 png, scale = self.arc.screenshot(t.pid, t.window_id)
                 return {"png": base64.b64encode(png).decode(), "scale": scale}
-            png = self._engine(d.engine).screenshot(t.pid if t else None, t.window_id if t else None)
-            return {"png": base64.b64encode(png).decode()}
+            engine = self._engine(d.engine)
+            if display and engine is self.native:
+                png = engine.screenshot(t.pid if t else None, t.window_id if t else None, display=display)
+            else:
+                png = engine.screenshot(t.pid if t else None, t.window_id if t else None)
+            out = {"png": base64.b64encode(png).decode()}
+            if display:
+                out["display"] = display
+            return out
 
         out = self._routed("screenshot", t.app if t else "desktop", run, capable)
         out["ms"] = _ms(start)
@@ -943,6 +1049,8 @@ class Driver:
         guest images)."""
         if tool not in PIXEL_TOOLS:
             raise DriverError("bad_input", f"pixel_{tool} isn't a pixel op")
+        if args.get("display") not in (None, ""):
+            args = {**args, "display": self._display_param(args)}
         args = {"scope": "desktop", **args} if tool not in ("get_cursor_position", "get_screen_size") else args
         reads = tool in ("get_cursor_position", "get_screen_size")
 
@@ -1028,6 +1136,12 @@ class Driver:
             # rules cover the rest, per the computer-safety docs.
             "safety_context": self.os == "darwin" or self._native_ok(),
             "safety_ocr": self.os == "darwin",
+            # Linux guests: one X display per agent (allternit-agent-display);
+            # screenshot / pixel_* / read_ui take ``display``.
+            "displays": self.os.startswith("linux") and self._native_ok(),
+            # A Safari window per agent run, act's focus option and the Safari
+            # key queue (macOS, arc engine).
+            "safari_window": self._arc_ok(),
         }
         return out
 
@@ -1086,4 +1200,22 @@ def handles_cua_error(e: Exception) -> DriverError:
         return e
     if isinstance(e, CuaError):
         return DriverError(e.code, str(e))
+    return _coded(e)
+
+
+def _coded(e: Exception) -> DriverError:
+    """An arc error keeps its stable code and data (``profile_missing`` with the
+    setup steps, ``keys_held``, ``key_window_busy``); anything else is ``error``."""
+    if isinstance(e, DriverError):
+        return e
+    code = getattr(type(e), "code", None)
+    if isinstance(code, str) and code and type(e).__module__.startswith("arc_cua"):
+        data = getattr(e, "data", None)
+        return DriverError(code, str(e)[:500], data if isinstance(data, dict) else None)
     return DriverError("error", str(e)[:500])
+
+
+def _focus_arg(p: dict[str, Any]) -> bool | None:
+    """``act``'s optional ``focus``: true, false, or absent (the driver decides)."""
+    focus = p.get("focus")
+    return None if focus is None else bool(focus)

@@ -55,5 +55,7 @@ dependencies {
     implementation(project(":feature:push"))
     // In-app Custom Tab for links (iOS SafariView).
     implementation(libs.androidx.browser)
+    // Response style > Try this style reads the chat event stream (SseParser, AgentChatFrames).
+    implementation(project(":core:stream"))
     testImplementation(libs.junit)
 }

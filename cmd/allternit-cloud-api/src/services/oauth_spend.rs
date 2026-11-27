@@ -521,6 +521,8 @@ pub fn attribution(
         billed_to: Some(inference_settlement::BILLED_TO_USER_WALLET),
         oauth_app_id: Some(app_id),
         oauth_grant_id: Some(grant_id),
+        // Apps never run open models (D16): standard settlement.
+        lane: None,
     }
 }
 
@@ -875,6 +877,17 @@ mod tests {
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.expect("migration applies");
         }
+        // The inference_usage columns of migrations_pg/169 (the whole file also
+        // alters user_open_lane, which this schema lacks). The chat route tags
+        // every row with its lane, so the usage insert needs `lane`.
+        sqlx::raw_sql(
+            "ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS lane text;
+             ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS open_plan_usd double precision;
+             ALTER TABLE inference_usage ADD COLUMN IF NOT EXISTS open_bought_usd double precision;",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
         // The wallet tables (migrations_pg/001 + 002) and auto top-up (103), with
         // no CHECK on the balance, so a negative balance would show.
         sqlx::raw_sql(

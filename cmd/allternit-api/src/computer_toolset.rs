@@ -450,6 +450,13 @@ pub struct ToolsetRequest {
     /// `computer_safety::resolve_project_scope`).
     #[serde(default)]
     pub project_id: Option<String>,
+    /// The run this run re-runs (a blocked cloud run started again on the
+    /// person's Mac, `computer.block_detected` → "Re-run on my Mac"). The
+    /// client starts the new run and sends this on its calls; the server
+    /// records the link (audit row, `computer.action` events) and never moves
+    /// a run between computers itself.
+    #[serde(default)]
+    pub rerun_of: Option<String>,
 }
 
 fn empty_object() -> Value {
@@ -706,9 +713,80 @@ pub(crate) fn emit_action(
             "ok": ok,
             "actor": actor.to_json(computer.bot_id.as_deref()),
             "step": actor.step,
+            "rerun_of": run_id.and_then(crate::computer_block::rerun_of),
         }
     });
     let _ = ACTION_EVENTS.send((computer.id.clone(), event));
+}
+
+/// The credential a `use_credential` call asks the person about: its name
+/// and the domain it types into (the declared `domain`, else the vault
+/// binding). Never the value.
+pub(crate) fn credential_ask(user: &AuthUser, input: &Value) -> (String, Option<String>) {
+    let name = input.get("name").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+    let declared = input.get("domain").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+    let domain = declared.or_else(|| crate::aci_credentials::CREDENTIALS.get_metadata(&user.user_id, &name).and_then(|m| m.bind));
+    let domain = domain.map(|d| crate::aci_credentials::normalize_credential_domain(Some(&d))).filter(|d| !d.is_empty());
+    (name, domain)
+}
+
+/// What a confirmation is about, for the stored approval and the 409 body:
+/// `kind` "credential" with `{name, domain}` for use_credential, else
+/// "action".
+fn confirmation_details(user: &AuthUser, computer_id: &str, req: &ToolsetRequest) -> Value {
+    let mut d = json!({ "kind": "action", "computer_id": computer_id, "run_id": req.run_id });
+    if req.member == "use_credential" {
+        let (name, domain) = credential_ask(user, &req.input);
+        d["kind"] = json!("credential");
+        d["credential"] = json!({ "name": name, "domain": domain });
+    }
+    d
+}
+
+/// `computer.confirmation_required` on the toolset events stream (and an
+/// `aci_approval` push), so every surface can show the approval card. It
+/// names a credential by name + domain only.
+pub(crate) fn emit_confirmation_required(user: &AuthUser, computer_id: &str, req: &ToolsetRequest, body: &Value) {
+    let approval_id = body.get("approval_id").cloned().unwrap_or(Value::Null);
+    let kind = body.get("kind").and_then(Value::as_str).unwrap_or("action").to_string();
+    let credential = body.get("credential").cloned().unwrap_or(Value::Null);
+    let class = body.get("confirmation_class").cloned().unwrap_or(Value::Null);
+    let message = match (kind.as_str(), credential.get("name").and_then(Value::as_str)) {
+        ("credential", Some(name)) => match credential.get("domain").and_then(Value::as_str) {
+            Some(domain) => format!("Fill the credential '{name}' into {domain}?"),
+            None => format!("Fill the credential '{name}'?"),
+        },
+        _ => format!("{} needs your approval before it runs.", req.member),
+    };
+    let event = json!({
+        "type": "computer.confirmation_required",
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "data": {
+            "run_id": req.run_id,
+            "computer_id": computer_id,
+            "approval_id": approval_id,
+            "kind": kind,
+            "credential": credential,
+            "confirmation_class": class,
+            "member": req.member,
+            "message": message,
+        }
+    });
+    let _ = ACTION_EVENTS.send((computer_id.to_string(), event));
+    if let Some(id) = approval_id.as_str() {
+        let mut data = json!({
+            "kind": "aci_approval",
+            "run_id": req.run_id,
+            "computer_id": computer_id,
+            "approval_id": id,
+            "approval_kind": kind,
+            "message": message,
+        });
+        if kind == "credential" {
+            data["credential"] = credential;
+        }
+        crate::computer_block::push_to_owner(&user.user_id, data);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -725,6 +803,11 @@ pub enum Target {
         handle: allternit_driver_interface::ExecutionHandle,
         os: String,
         display: &'static str,
+        /// This run's own X display on a Linux guest (`:10`, ...), from
+        /// `allternit-agent-display start` (`computer_agent_display`). Set,
+        /// the guest driver's reads, input and screenshots and the xdotool
+        /// fallback all go to it instead of the shared desktop display.
+        agent_display: Option<String>,
     },
     /// A Playwright session in the ACU gateway. `public_only`: the browser
     /// runs for a cloud target, so loopback/private/metadata hosts are refused.
@@ -882,9 +965,11 @@ pub(crate) async fn guest_exec(target: &Target, script: &str) -> Result<String, 
 
 /// `guest_exec` with a custom timeout (driver calls may wait on conditions).
 pub(crate) async fn guest_exec_timed(target: &Target, script: &str, timeout: Duration) -> Result<String, String> {
-    let Target::Guest { driver, handle, display, .. } = target else {
+    let Target::Guest { driver, handle, display, agent_display, .. } = target else {
         return Err("not a guest target".into());
     };
+    // The run's own display when it has one (validated `:N` only).
+    let display: &str = agent_display.as_deref().filter(|d| crate::computer_agent_display::display_ok(d)).unwrap_or(*display);
     let mut env_vars = HashMap::new();
     env_vars.insert("DISPLAY".to_string(), display.to_string());
     let spec = allternit_driver_interface::CommandSpec {
@@ -1790,6 +1875,7 @@ pub(crate) async fn build_target(state: &Arc<AppState>, user: &AuthUser, compute
         handle,
         os: record.os.clone(),
         display: crate::bot_desktop_input::desktop_display(&record.provider),
+        agent_display: None,
     })
 }
 
@@ -1893,7 +1979,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         return (status, body);
     }
 
-    let target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
+    let mut target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
         Ok(t) => t,
         Err((status, message)) => {
             settle(false);
@@ -1918,6 +2004,32 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             settle(false);
             return respond(status, error_result(code, message, None));
         }
+        // 2b. A named run on a Linux guest gets its own X display + headed
+        // Chrome on its first call (computer_agent_display); every driver
+        // call of the run then names that display. A computer with no room
+        // for another agent browser refuses the run here.
+        if let Some(run) = req.run_id.as_deref().filter(|r| !r.is_empty()) {
+            match crate::computer_agent_display::ensure(&target, &computer.id, run, req.agent_id.as_deref()).await {
+                Ok(Some(display)) => {
+                    if let Target::Guest { agent_display, .. } = &mut target {
+                        *agent_display = Some(display);
+                    }
+                }
+                Ok(None) => {}
+                Err(refused) => {
+                    settle(false);
+                    return respond(StatusCode::CONFLICT, error_result("display_limit", refused.message(), None));
+                }
+            }
+            // 2c. A browser run on this device (macOS) gets its own Safari
+            // window in the "Allternit Agent" profile on its first call
+            // (computer_safari_window). A missing profile holds the run for
+            // the person's setup, like request_human.
+            if let Err(f) = crate::computer_safari_window::ensure(state, user, &computer, &target, run).await {
+                settle(false);
+                return respond(StatusCode::OK, error_result(f.code.unwrap_or("safari_profile_missing"), f.message, None));
+            }
+        }
     }
 
     // 3. Declarative policy, then risk and approval.
@@ -1938,6 +2050,9 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         _ => computer.id.clone(),
     };
     let run_id = req.run_id.clone().unwrap_or_else(|| format!("toolset-{}", uuid::Uuid::new_v4().simple()));
+    if let Some(prior) = crate::computer_block::clean_run_id(req.rerun_of.as_deref()) {
+        crate::computer_block::remember_rerun_of(&run_id, &prior);
+    }
     let map = if v2 {
         None
     } else {
@@ -2009,11 +2124,21 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     // request_access on a sandbox/cloud computer has nothing to grant, so it
     // doesn't ask.
     let access_exempt = crate::computer_access::approval_exempt(&req.member, crate::computer_access::exempt(&target));
-    if safety_confirm
+    // use_credential asks on every target. "Allow for this run" (an approval
+    // with scope "run") covers later fills of the SAME credential into the
+    // SAME domain in this run; watch mode still asks.
+    let run_allowed = req.member == "use_credential"
+        && safety.watch.is_none()
+        && matches!(safety.irreversible, None | Some(crate::computer_safety::Irreversible::Credentials))
+        && req.run_id.as_deref().is_some_and(|run| {
+            let (name, domain) = credential_ask(user, &req.input);
+            crate::aci_credentials::RUN_CREDENTIAL_ALLOWS.allowed(&user.user_id, run, &name, domain.as_deref())
+        });
+    if !run_allowed && (safety_confirm
         || (req.within_subtask.is_none()
             && !access_exempt
             && (needs_approval(spec, target.sandboxed())
-                || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed())))
+                || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed()))))
     {
         let class = if safety.irreversible.is_some() {
             ConfirmationClass::Irreversible
@@ -2023,13 +2148,14 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
                 other => other,
             }
         };
-        if let Err(denial) = crate::aci_safety::enforce_confirmation(
+        if let Err(denial) = crate::aci_safety::enforce_confirmation_with_details(
             &state.approval_store,
             &user.user_id,
             "computer.toolset",
             class,
             &action_descriptor(&computer.id, &req),
             req.approval_grant.as_deref(),
+            &confirmation_details(user, &computer.id, &req),
         ) {
             // Unresolved until the retry with a grant settles it.
             settle(false);
@@ -2046,6 +2172,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             };
             if code == "approval_required" {
                 crate::computer_safety::emit(&computer.id, "confirm", Some(&safety), &req.member, req.run_id.as_deref(), json!({ "approval_id": body.get("approval_id") }));
+                emit_confirmation_required(user, &computer.id, &req, &body);
             }
             body["error"] = json!(code);
             body["is_error"] = json!(true);
@@ -2151,6 +2278,22 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             if let Target::Browser { session_id, .. } = &target {
                 let said = content.iter().find_map(|b| b.get("text").and_then(Value::as_str)).map(str::to_string);
                 crate::computer_safety::remember_browser(session_id, &req.member, said.as_deref(), browser_state.as_ref());
+                // Page text: the same wall check as read_ui (computer_block).
+                if matches!(req.member.as_str(), "get_page_text" | "read_page") {
+                    let url = browser_state.as_ref().and_then(|s| s.get("url")).and_then(Value::as_str);
+                    if let Some(det) = said.as_deref().and_then(|t| crate::computer_block::detect_text(t, url)).filter(|d| crate::computer_block::should_hold(&run_id, d)) {
+                        match crate::computer_block::hold(state, user, &computer, &target, &run_id, &det).await {
+                            Ok(outcome) => {
+                                if let Some(mut ended) = crate::computer_block::ended_result(&outcome, &det) {
+                                    ended.browser_state = browser_state;
+                                    return respond(StatusCode::OK, ended);
+                                }
+                                notes.extend(crate::computer_block::continue_note(&outcome, &det));
+                            }
+                            Err(fail) => warn!(error = %fail.message, "block hold failed; the page text goes back as is"),
+                        }
+                    }
+                }
             }
             if crate::computer_safety::observation_member(&req.member) {
                 crate::computer_safety::mark_untrusted(&req.member, &mut content, &secrets);
@@ -2174,7 +2317,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
 /// approval-required refusal until the call carries a valid single-use grant
 /// bound to `action_descriptor(computer_id, req)`.
 pub(crate) fn approval_gate(state: &Arc<AppState>, user: &AuthUser, computer_id: &str, spec: &MemberSpec, req: &ToolsetRequest) -> Result<(), (StatusCode, Value)> {
-    if let Err(denial) = crate::aci_safety::enforce_confirmation(
+    if let Err(denial) = crate::aci_safety::enforce_confirmation_with_details(
         &state.approval_store,
         &user.user_id,
         "computer.toolset",
@@ -2184,6 +2327,7 @@ pub(crate) fn approval_gate(state: &Arc<AppState>, user: &AuthUser, computer_id:
         },
         &action_descriptor(computer_id, req),
         req.approval_grant.as_deref(),
+        &confirmation_details(user, computer_id, req),
     ) {
         let mut body = denial.body;
         let code = body.get("error").and_then(Value::as_str).unwrap_or("approval_required").to_string();
@@ -2192,6 +2336,9 @@ pub(crate) fn approval_gate(state: &Arc<AppState>, user: &AuthUser, computer_id:
         } else {
             (denial.status, code)
         };
+        if code == "approval_required" {
+            emit_confirmation_required(user, computer_id, req, &body);
+        }
         body["error"] = json!(code);
         body["is_error"] = json!(true);
         body["member"] = json!(req.member);
@@ -2273,7 +2420,10 @@ pub(crate) fn audit(
     // A safety refusal is a denied row of its own; an allowed step carries
     // the safety note in its intent.
     let refused = safety.is_some_and(|a| matches!(a.verdict, crate::computer_safety::Verdict::Deny(_) | crate::computer_safety::Verdict::Pause(_)));
-    let note = safety.map(|a| a.audit_note()).unwrap_or_default();
+    let mut note = safety.map(|a| a.audit_note()).unwrap_or_default();
+    if let Some(prior) = req.run_id.as_deref().and_then(crate::computer_block::rerun_of) {
+        note.push_str(&format!(" rerun_of={prior}"));
+    }
     let audited = match verdict {
         Some(v) if !refused => {
             let mut desc = policy_desc.clone();
@@ -2334,6 +2484,7 @@ pub(crate) async fn execute_step(
         agent_id: None,
         agent_name: None,
         step: None,
+        rerun_of: None,
     };
     lease_check(state, user, computer, target, Some(run_id)).await.map_err(|(_, _, m)| Fail::from(m))?;
     let (policy_desc, verdict) = policy_check(user, computer, &req).map_err(Fail::from)?;
@@ -2396,6 +2547,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/schema", get(get_toolset_schema))
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
+        .route("/computers/:id/block-resolve", post(post_block_resolve))
+        // Start an agent run on this computer (re-run on my Mac): aci_routes.
+        .route("/computers/:id/runs", post(crate::aci_routes::start_computer_run))
         .route("/computers/:id/secret", post(post_secret).get(get_secret))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
         .route("/computers/:id/access", get(crate::computer_access::get_access).delete(crate::computer_access::delete_access))
@@ -2420,6 +2574,64 @@ async fn post_human_done(
     };
     let found = crate::computer_v2::human_gate_done(&computer.id);
     Json(json!({ "ok": true, "window_open": found })).into_response()
+}
+
+/// Body of `POST /computers/:id/block-resolve`.
+#[derive(Debug, Deserialize)]
+struct BlockResolveBody {
+    action: String,
+    #[serde(default)]
+    rerun_target: Option<String>,
+}
+
+/// The person answers a `computer.block_detected` hold: `continue` (they
+/// signed in or solved it; the run goes on), `stop` (the run ends), or
+/// `rerun` (the run ends; the client starts a new run on `rerun_target`, one
+/// of the event's `rerun_targets`, with `rerun_of` = the returned
+/// `run_id`). 409 when no hold is waiting.
+async fn post_block_resolve(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<BlockResolveBody>,
+) -> Response {
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    use crate::computer_block::{BlockAction, ResolveError};
+    let rerun_target = body.rerun_target.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let action = match body.action.as_str() {
+        "continue" => BlockAction::Continue,
+        "stop" => BlockAction::Stop,
+        "rerun" => BlockAction::Rerun { target: rerun_target.clone() },
+        _ => {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_action", "message": "action must be continue, stop or rerun" }))).into_response()
+        }
+    };
+    let name = action.as_str();
+    match crate::computer_block::resolve(&computer.id, action) {
+        Ok(r) => Json(json!({
+            "ok": true,
+            "action": name,
+            "run_id": r.run_id,
+            "domain": r.domain,
+            "kind": r.kind.as_str(),
+            "rerun_target": if name == "rerun" { rerun_target } else { None },
+        }))
+        .into_response(),
+        Err(ResolveError::NoPending) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no_block_pending", "message": "No blocked page is waiting on this computer (it may have been answered or timed out)." })),
+        )
+            .into_response(),
+        Err(ResolveError::UnknownTarget) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid_rerun_target", "message": "rerun_target must be one of the computers listed in rerun_targets." })),
+        )
+            .into_response(),
+    }
 }
 
 /// Body of `POST /computers/:id/secret`. Not `Debug`: `text` is the secret.
@@ -2769,6 +2981,7 @@ mod tests {
             agent_id: None,
             agent_name: None,
             step: None,
+            rerun_of: None,
         };
         let spec = contract(Toolset::Computer).member("type").unwrap();
         assert!(needs_approval(spec, false), "type needs approval on this device");

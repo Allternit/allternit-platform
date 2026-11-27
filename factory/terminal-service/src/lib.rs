@@ -26,9 +26,15 @@
 //! a [`Reply`] (HTTP status + JSON body) or, for the stream, the SSE bytes;
 //! the caller's HTTP layer (axum in allternit-api) sends them as they are.
 
+pub mod harness_modes;
 mod list;
+pub mod start;
 
 pub use list::{last_rows, resolve_title, validate_env, ListQuery};
+pub use start::{
+    build_options, plan_start, FolderCandidate, FolderRef, GitRef, Mode, OptionsInput, Planned, StartCtx, StartError, StartGuards, StartOptions, StartPlan,
+    StartRequest, StartResponse,
+};
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};

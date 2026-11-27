@@ -396,6 +396,29 @@ class Driver:
 
         return read_commands(_pid(where), query=query)
 
+    # ---- Safari windows for agent runs ---------------------------------------
+
+    @staticmethod
+    def open_safari_window(*, profile: str | None = None, create_profile: bool = True) -> WindowTarget:
+        """Open a new Safari window for one agent run, in the "Allternit Agent" profile
+        (File > New Window > New "Allternit Agent" Window), and return it. Safari
+        starts in the background when it isn't running. When the profile is missing
+        and cannot be made by script, raises SafariProfileMissing (code
+        ``profile_missing``, with the setup steps in ``data``)."""
+        from .backends import macos_safari
+
+        return macos_safari.open_window(profile=profile or macos_safari.PROFILE_NAME, create_profile=create_profile)
+
+    def close_safari_window(self, target: WindowTarget) -> bool:
+        """Close a window ``open_safari_window`` opened; True once it is gone. Any other
+        window is refused (InvalidArguments) and left alone."""
+        from .backends import macos_safari
+
+        closed = macos_safari.close_window(target)
+        if closed and target.pid in self._apps:
+            self._apps[target.pid]._backends.pop(target.window_id, None)
+        return closed
+
     # ---- acting ----------------------------------------------------------------
 
     def run_command(

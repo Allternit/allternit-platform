@@ -1295,6 +1295,12 @@ export namespace Config {
         .optional()
         .describe("Browser tool defaults"),
       server: Server.optional().describe("Server configuration for gizzi serve and web commands"),
+      remoteStart: z
+        .boolean()
+        .optional()
+        .describe(
+          "Let your phone and the web start sessions on this computer over the cloud relay (default true; ALLTERNIT_REMOTE_START=0 also turns it off)",
+        ),
       command: z
         .record(z.string(), Command)
         .optional()

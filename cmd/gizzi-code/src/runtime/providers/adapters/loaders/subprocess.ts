@@ -25,6 +25,7 @@ import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store
 import { BrainContextReaders } from "@/runtime/session/brain-context-readers"
 import { Instance } from "@/runtime/context/project/instance"
 import * as BotTurn from "@/runtime/bots/bot-turn"
+import { BlockedTools } from "@/runtime/tools/guard/blocked-tools"
 import { planInstructions } from "@/runtime/drivers/cli-session-flags"
 import { cliDelegationNote } from "@/runtime/agents/builtin-catalog"
 import { configSubagents } from "@/runtime/agents/brain-export"
@@ -226,7 +227,12 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const sessionID = resolveTaskSessionID(options?.headers)
     const vendorSessionId = sessionID ? await VendorSession.get(sessionID, this.providerID) : undefined
     // A plan turn (bots never plan): the CLI runs read-only and hands the plan over through the bridge.
-    const bot = BotTurn.get(sessionID)
+    const marked = BotTurn.get(sessionID)
+    // The account's blocked tools pushed for the session (and the bot
+    // marker's own) go to the CLI, which denies them (claudeDisallowedTools,
+    // and claudeToolDecision for a bot).
+    const sessionBlocked = await BlockedTools.resolve(sessionID, marked?.blockedTools)
+    const bot = marked && sessionBlocked.length > 0 ? { ...marked, blockedTools: sessionBlocked } : marked
     const planFile = sessionID && !bot ? await CliBridge.planFile(sessionID).catch(() => undefined) : undefined
     const plan = planFile ? { file: planFile } : undefined
     const systemText = extractSystemText(options.prompt ?? [])
@@ -279,6 +285,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
       bot,
+      ...(sessionBlocked.length > 0 ? { blockedTools: sessionBlocked } : {}),
       plan,
     })
 

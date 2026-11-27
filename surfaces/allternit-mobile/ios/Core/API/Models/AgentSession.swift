@@ -485,15 +485,31 @@ struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
     let title: String?
     /// The raw action; `kind` reads it, unknown values count as recalled.
     let action: String
+    /// `"past_chat"` for a past conversation; absent for a saved memory.
+    let source: String?
+    /// ISO date of the past chat's turn.
+    let date: String?
+    /// The past chat's session id (`session_id` or `sessionId`).
+    let sessionId: String?
+
+    var isPastChat: Bool { source == "past_chat" }
 
     var kind: Action { Action(rawValue: action) ?? .recalled }
 
-    private enum CodingKeys: String, CodingKey { case id, title, action }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, action, source, date
+        case sessionIdSnake = "session_id"
+        case sessionIdCamel = "sessionId"
+    }
 
-    init(id: String, title: String? = nil, action: String) {
+    init(id: String, title: String? = nil, action: String,
+         source: String? = nil, date: String? = nil, sessionId: String? = nil) {
         self.id = id
         self.title = title
         self.action = action
+        self.source = source
+        self.date = date
+        self.sessionId = sessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -501,5 +517,33 @@ struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
         id = try c.decode(String.self, forKey: .id)
         title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
         action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? "recalled"
+        source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
+        date = (try? c.decodeIfPresent(String.self, forKey: .date)) ?? nil
+        sessionId = ((try? c.decodeIfPresent(String.self, forKey: .sessionIdSnake)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .sessionIdCamel)) ?? nil)
+    }
+}
+
+// MARK: - Display title (UI feedback K4)
+
+extension AgentSession {
+    /// True for a name the runtime made up ("New session - 2026-11-17T...",
+    /// "New thread 2026-11-17", "Untitled"): it must never show as a title.
+    /// Same rule as allternit-ai `session-display-title.ts`.
+    static func isRawDefaultName(_ name: String?) -> Bool {
+        let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if n.isEmpty || n == "untitled" || n == "new session" || n == "new thread" || n == "new chat" { return true }
+        let prefixes = ["new session", "new thread", "new chat", "untitled"]
+        return prefixes.contains { n.hasPrefix($0) } && n.contains { $0.isNumber }
+    }
+
+    /// The name people see: the session's own name, else "New session · Nov 17"
+    /// from its created date. (The list wire carries no first prompt.)
+    var displayTitle: String {
+        if !Self.isRawDefaultName(name) { return (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let date = (try? Date(createdAt, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(createdAt, strategy: Date.ISO8601FormatStyle()))
+        guard let date else { return "New session" }
+        return "New session · " + date.formatted(.dateTime.month(.abbreviated).day())
     }
 }

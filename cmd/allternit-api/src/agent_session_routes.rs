@@ -299,6 +299,10 @@ struct SendMessageBody {
     /// Standing instructions for this turn ("+…" appends to gizzi's own).
     #[serde(default)]
     system: Option<String>,
+    /// The caller's "search past chats" switch. Passed to gizzi unchanged,
+    /// which owns the per-turn past-chats block; absent means gizzi's default (on).
+    #[serde(default)]
+    memory_search: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1720,6 +1724,10 @@ async fn send_message(
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // An incognito chat never searches past chats.
+    if state.db.is_session_ephemeral(&session_id).unwrap_or(false) {
+        payload["memory_search"] = json!(false);
+    }
     // A plain chat created on a runtime (Claude Code, Codex, …) runs every
     // turn on that runtime's CLI, whatever model the client sends.
     let asked = payload.get("model").and_then(|m| {
@@ -1875,6 +1883,14 @@ fn permission_reply_payload(body: &serde_json::Value) -> Option<serde_json::Valu
     let mut payload = json!({ "reply": reply });
     if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
         payload["message"] = json!(message);
+    }
+    // Needs-you prompts (computer.credential / human / block): a masked secret
+    // rides `answer`; never logged here.
+    if let Some(answer) = body.get("answer").and_then(|v| v.as_str()) {
+        payload["answer"] = json!(answer);
+    }
+    if let Some(action) = body.get("humanAction").and_then(|v| v.as_str()) {
+        payload["humanAction"] = json!(action);
     }
     Some(payload)
 }
@@ -2317,6 +2333,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     }
     if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
         payload["system"] = json!(system);
+    }
+    if let Some(flag) = body.memory_search {
+        payload["memory_search"] = json!(flag);
     }
     // Prompt hints the runtime reads (small-screen, spoken-reply and
     // `answer_cards: "widgets"` writing-card blocks, and whether this client
@@ -4634,8 +4653,6 @@ mod tests {
     use tokio::task::JoinHandle;
     use tower::ServiceExt;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn part(part_type: &str, text: &str) -> GizziMessagePart {
         GizziMessagePart {
             id: None,
@@ -5368,7 +5385,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_forwards_selected_model_to_gizzi() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         let (addr, handle, captured) = mock_gizzi_server().await;
         std::env::set_var("TERMINAL_SERVER_URL", format!("http://{}", addr));
 
@@ -5430,7 +5447,7 @@ mod tests {
     /// each removed message the `/messages` shape, ids unchanged.
     #[tokio::test]
     async fn branches_proxy_returns_old_reply_in_messages_shape() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         let seen = Arc::new(Mutex::new(None::<String>));
         let seen_clone = seen.clone();
         let gizzi = Router::new().route(
@@ -5489,7 +5506,7 @@ mod tests {
     async fn owner_chat_turn_counts_for_the_owner_only_phone_rule() {
         use crate::netops::provenance::{label, Trust};
         use crate::phone_guard::TaskCtx;
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         // Nothing may reach a real gizzi from this test.
         std::env::set_var("TERMINAL_SERVER_URL", "http://127.0.0.1:9");
         let temp = tempfile::tempdir().unwrap().keep();

@@ -1,0 +1,73 @@
+---
+title: Review and sign
+description: Review a PDF, draw, type or upload your signature, and Sign & send. What is recorded, where the signed copy goes, and what an agent can and cannot do.
+---
+
+## What you get
+
+One signing flow on every surface: a short peek at what you are signing, a review, a place to sign, a "Signed" confirmation, and the signature landing in its slot on the page. **Sign & send** writes a signing record and a signed PDF.
+
+An agent or an app can ask you to sign. Only you can sign.
+
+## Where Sign appears
+
+| Surface | How you get to it |
+|---|---|
+| PDF editor | The **Sign** tool. Click the spot on the page where the signature goes. See [PDF editor](/guides/pdf-editor). |
+| Office docs | The **Sign** action on a Doc, in the tab bar and the artifact menu. It exports the document to PDF and opens it with the sheet docked at the bottom of the pane. For a template PDF, **Add signature lines** adds the signature block first. |
+| `/sign/<id>` link | Opens a signing request in the browser on ai.allternit.com, Desktop or the phone layout. You must be signed in. |
+| Chat and inbox | A card reads **Awaiting your signature**, with **Review & sign** and **Decline**. Pending requests show in the open thread and at the top of the inbox. |
+| MCP apps | An app can ask you to sign a PDF. The sheet opens over the app. See [window.allternit extensions](/plugins/reference/window-allternit). |
+| iOS and Android | The Office PDF screen has the same sheet. A pending request also shows as an **Awaiting your signature** card on the Office floor. |
+| Gizzi | An agent in the terminal files a request with the `request_signature` tool and shows a card with a link. The terminal cannot sign. See [ask_user_later](/tools/ask-user-later). |
+
+## The flow
+
+1. **Review.** The sheet lists who is asking, a summary and up to 8 detail rows (for example the amount and the due date). If a copy will be emailed, it shows who gets it. A **Preview** pill shows the document without the sheet.
+2. **Sign.** Choose **Draw** or **Type**, or use the small **Upload image** link to place a picture of your signature. **Undo** removes the last stroke.
+3. **Sign & send.** The button is off until there is a signature. The line above it is your consent: "By tapping Sign & send, you agree to sign this document electronically. This adds an image of your signature and a signing record. It is not a certificate-based digital signature."
+4. **Signed.** The signature is written out, flies into its slot on the page, and the sheet shows **Signed** with the date. The page then has a **Signing record** row.
+
+A document with signature lines has dashed **Sign here** slots. A document with no slot asks you to tap where to sign. With Reduce Motion on, the writing and the flight are skipped.
+
+## What is recorded
+
+For every signature made from a request or while signed in:
+
+- the signer, taken from your account (name and email)
+- the time, plus the IP address and user agent
+- the document fingerprint (SHA-256), checked against the document the request was made for; if the file changed you get a "document changed" error and nothing is signed
+- the signed copy of the PDF, with a footer line "Signed electronically by NAME, DATE, record ID"
+- the consent text, version v1
+
+The signature image is kept with the record and only you can fetch it. An agent never receives the image or the strokes.
+
+## Where the signed copy goes
+
+- **Cloud files, always.** The signed PDF is saved to your cloud files. You can open it from the signed request.
+- **Files drive, when Files is on.** A copy is also saved to the `Signed/` folder of your [Files drive](/guides/files-drive).
+- **Email, only if you ask.** If a mail connector is connected, the sheet shows an **Email a copy** switch. It is off. Switch it on and confirm to send a link to the signed copy (valid 7 days). Nothing is emailed otherwise.
+
+If your account is out of storage, signing with a record fails with an error. Free some space and try again.
+
+## Signed out
+
+In the PDF editor, when you are signed out or offline, the same sheet opens with the button **Place signature**. The image is placed on the page and a line says no record is made. Nothing is uploaded.
+
+## Expiry and declining
+
+A request expires after **14 days** by default (the requester can set up to 90). An expired request shows **Expired** and cannot be signed. You can **Decline** a request, and the requester can cancel it. Signed, declined, cancelled and expired are final; a request never changes after that.
+
+## Agents can request, never sign
+
+An agent or an MCP app can file a request and read its status. It cannot sign, decline or fetch the signature. Signing needs your own signed-in session, so a token or API key is refused.
+
+## What this is, and is not
+
+This is an **electronic signature image plus a signing record**. It is not a certificate-based digital signature, and it does not prove identity beyond your signed-in account. If you need a certificate-based signature, sign with a tool that provides one.
+
+## Related
+
+- [PDF from templates](/guides/pdf-templates): quote and contract templates with signature lines
+- [PDF editor](/guides/pdf-editor)
+- [window.allternit extensions](/plugins/reference/window-allternit): `requestSignature` for MCP apps

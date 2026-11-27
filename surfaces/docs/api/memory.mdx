@@ -47,6 +47,8 @@ All endpoints require a valid bearer token in the `Authorization` header. See [A
 | `POST` | `/api/memory/v2/recall` | Recall facts for a query. With the Sleep `disputes` stage on, a fact that is a side of a dispute carries a `dispute` field (see [Disputes](/api/memory-sleep#at-recall)). |
 | `POST` | `/api/memory/v2/retain` | Retain a conversation turn as facts. |
 | `GET` | `/api/memory/v2/facts` | List retained facts. |
+| `POST` | `/api/v1/memory/v2/raw-search` | Search every stored turn, with dates. See [Raw search](#raw-search). |
+| `GET` | `/api/v1/memory/v2/turns/:id/neighbors` | The turns around one turn, in time order. |
 | `DELETE` | `/api/memory/v2/facts/:id` | Delete a fact. |
 | `GET` | `/api/memory/v2/entities` | List v2 entities. |
 | `POST` | `/api/memory/browser-history/visit` | Record a browser visit. |
@@ -59,6 +61,44 @@ All endpoints require a valid bearer token in the `Authorization` header. See [A
 | `POST` | `/api/memory/procedural/:id/use` | Record a use of a procedural memory. |
 | `GET` / `POST` | `/api/memory/notes` | List or create memory notes. |
 | `GET` / `POST` / `DELETE` | `/api/memory/notes/:id` | Get, update, or delete a note. |
+
+## Raw search
+
+Every turn you and your agents have is stored (see [Memory Drive internals](/core/memory-drive#raw-retrieval)). Raw search finds them by words and meaning. These routes are under `/api/v1` and use the signed-in user; incognito sessions and forgotten sources never come back.
+
+### `POST /api/v1/memory/v2/raw-search`
+
+```json
+{ "query": "which reranker did we pick", "mode": "search",
+  "from": "2026-11-01", "to": "2026-11-27", "session_id": null,
+  "exclude_sessions": ["ses_current"], "limit": 12, "include_knowledge": false }
+```
+
+```json
+{ "turns": [ { "observation_id": "obs_1", "session_id": "ses_9", "speaker": "user",
+               "timestamp": "2026-11-20T14:05:00Z", "source": "gizzi:session/ses_9",
+               "text": "The full turn, clipped at 1,200 characters", "score": 0.91,
+               "window_ids": ["w_1"] } ],
+  "knowledge": [ { "path": "knowledge/data-access/github.md", "kind": "data_access", "text": "...", "score": 0.7 } ],
+  "reranked": true }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `search` (default) for tools: 128 candidates, top 12, 1,500 tokens. `auto` for the per-turn Gizzi block: 48 candidates, top 8, 1,200 tokens, a shorter rerank timeout. |
+| `from`, `to` | Dates (or timestamps). Filters on when the turn was recorded. A bad value is `400` with `{ "error": "bad_request" }`. |
+| `session_id` | Only this session. |
+| `exclude_sessions` | Sessions to leave out. The calling session is not left out unless you list it. |
+| `limit` | Capped at 32. |
+| `include_knowledge` | Also return matching approved [knowledge](/guides/knowledge-factory) files. |
+| `calling_session` | Optional (or header `x-allternit-session-id`). Writes a `recalled` row to Memory Drive Activity, "Looked at N turns from past chats". |
+| `reranked` | `false` when the reranker was off, slow or unavailable and the fused search order is returned. |
+
+The reranker is `POST /v1/rerank` on the local embed sidecar (`BAAI/bge-reranker-v2-m3`). It is off on machines with less than 8 GB of RAM (`RERANK_DISABLE=1` also turns it off; `RERANK_MODEL` picks another model).
+
+### `GET /api/v1/memory/v2/turns/:id/neighbors?before=2&after=2`
+
+Returns `{ "turns": [ ... ] }` in the same shape, from the same session, in time order. `before` and `after` are capped at 20. Another person's turn, or an incognito one, is `404`.
 
 ## Health
 

@@ -89,6 +89,7 @@ class BarViewModel internal constructor(private val client: BarClient = BarClien
 
     fun reset() {
         if (step == Step.Live) return
+        jobId?.let { com.allternit.core.design.JobBanners.dismiss(it) }
         step = Step.Apps; query = ""; app = null; tools = emptyList(); intent = null; values.clear(); focusedBlank = null
         review = null; botId = null; errorText = null; noComputer = false; jobId = null; jobState = null
         progressLine = null; receipt = null; jobError = null; pendingValues = emptyMap()
@@ -286,6 +287,10 @@ class BarViewModel internal constructor(private val client: BarClient = BarClien
 
     private fun publish(job: BarJob? = null) {
         val id = jobId ?: return
+        val line = BarWording.stateLine(jobState ?: "working", job?.approverName ?: approverName, receipt, jobError)
+        val label = if (jobTitle.isBlank()) line else "$jobTitle · $line"
+        if ((jobState ?: "") in BarJobState.TERMINAL) com.allternit.core.design.JobBanners.update(id, label, done = true)
+        else com.allternit.core.design.JobBanners.update(id, label, done = false)
         BarJobs.publish(
             BarJobState(
                 jobId = id,

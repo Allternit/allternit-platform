@@ -37,6 +37,8 @@ export const TuiEvent = {
       message: z.string(),
       variant: z.enum(["info", "success", "warning", "error"]),
       duration: z.number().default(5000).optional().describe("Duration in milliseconds"),
+      id: z.string().optional().describe("Same id replaces the earlier toast in place"),
+      kind: z.enum(["tests", "pr", "deploy", "build", "context", "session", "image"]).optional(),
     }),
   ),
   SessionSelect: BusEvent.define(

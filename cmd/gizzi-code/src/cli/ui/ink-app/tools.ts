@@ -4,6 +4,8 @@ import { toolMatchesName, type Tool, type Tools } from './Tool.js'
 import { readGizziEnv } from '@/shared/utils/gizziEnv.js';
 import { AgentTool } from './tools/AgentTool/AgentTool.js'
 import { SkillTool } from './tools/SkillTool/SkillTool.js'
+import { MCPScriptTool } from './tools/MCPScriptTool/MCPScriptTool.js'
+import { shouldOfferMcpScript } from './tools/MCPScriptTool/bridge.js'
 import { BashTool } from './tools/BashTool/BashTool.js'
 import { FileEditTool } from './tools/FileEditTool/FileEditTool.js'
 import { FileReadTool } from './tools/FileReadTool/FileReadTool.js'
@@ -19,11 +21,13 @@ import { LookupTool } from './tools/LookupTool/LookupTool.js'
 import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from './tools/ThreadReadTool/ThreadReadTool.js'
 import { ResourceTool } from './tools/ResourceTool/ResourceTool.js'
 import { FolderAccessTool } from './tools/FolderAccessTool/FolderAccessTool.js'
+import { StartSessionTool } from './tools/StartSessionTool/StartSessionTool.js'
 import { BrowserTasksTool } from './tools/BrowserTasksTool/BrowserTasksTool.js'
 import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
 import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
 import { AskUserLaterTool } from './tools/AskUserLaterTool/AskUserLaterTool.js'
+import { RequestSignatureTool } from './tools/RequestSignatureTool/RequestSignatureTool.js'
 // Primitives Wave B (agent control + context): same tool ids as the runtime builtins.
 import { WaitAgentsTool } from './tools/WaitAgentsTool/WaitAgentsTool.js'
 import { AgentControlTool } from './tools/AgentControlTool/AgentControlTool.js'
@@ -219,10 +223,12 @@ export function getAllBaseTools(): Tools {
     ThreadWaitTool,
     ResourceTool,
     FolderAccessTool,
+    StartSessionTool,
     BrowserTasksTool,
     SendUserMessageTool,
     AutomationTool,
     AskUserLaterTool,
+    RequestSignatureTool,
     WaitAgentsTool,
     AgentControlTool,
     GetContextRemainingTool,
@@ -384,8 +390,16 @@ export function assembleToolPool(
   // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
   // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
   const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)
+  // Code Mode (mcp_script) goes after the MCP tools so it never shifts the
+  // built-in prefix: offered only with 2+ MCP tools and the flag on.
+  const codeMode = shouldOfferMcpScript(allowedMcpTools)
+    ? filterToolsByDenyRules([MCPScriptTool], permissionContext)
+    : []
   return uniqBy(
-    [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
+    [...builtInTools]
+      .sort(byName)
+      .concat(allowedMcpTools.sort(byName))
+      .concat(codeMode),
     'name',
   )
 }

@@ -30,6 +30,7 @@ test/mcp/bundled.test.ts
 test/mcp/catalog.test.ts
 test/mcp/era.test.ts
 test/mcp/headers.test.ts
+test/mcp/mcp-script-tui.test.ts
 test/memory/abort-leak.test.ts
 test/memory/sleep-triggers.test.ts
 test/memory/sleep-cli.test.ts
@@ -74,6 +75,7 @@ test/session/budget-check.test.ts
 test/shared/agentFileResolver.test.ts
 test/shared/agentHardBans.test.ts
 test/skill/discovery.test.ts
+test/skill/growth-sync.test.ts
 test/snapshot/snapshot.test.ts
 test/storage/json-migration.test.ts
 test/storage/migration-chain.test.ts
@@ -144,6 +146,7 @@ test/components/RunTelemetry.test.ts
 test/components/ToolUseCard.test.ts
 test/runtime/bots/platform-api.test.ts
 test/runtime/pairing-approval-url.test.ts
+test/runtime/relay-connector-lock.test.ts
 test/components/routeInternalFetch.test.ts
 test/services/localModel-reasoning.test.ts
 test/components/side-query-provider.test.ts

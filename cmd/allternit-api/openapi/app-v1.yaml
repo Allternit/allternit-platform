@@ -367,6 +367,574 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SleepSettings" }
         default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/toolset/events:
+    get:
+      operationId: streamComputerToolsetEvents
+      summary: Live run events for one computer (SSE), the stream every surface reads for cursors, approvals, human windows and blocked pages
+      description: |
+        Server-sent events, one JSON object per `data:` line, shaped
+        `{ "type": "<event type>", "ts": "<RFC 3339>", "data": { ... } }`.
+        Types and their `data` schemas:
+        - `computer.action`: `ComputerActionEventData`
+        - `computer.confirmation_required`: `ComputerConfirmationRequiredEventData`
+        - `computer.human_requested` / `computer.human_resumed`: `ComputerHumanEventData`
+        - `computer.block_detected`: `ComputerBlockDetectedEventData`
+        - `computer.block_resolved`: `ComputerBlockResolvedEventData`
+        - `computer.agent_display`: `ComputerAgentDisplayEventData`
+        The SSE `event:` name is `computer.action` on every frame (kept for
+        older listeners), so read `type` from the JSON. Clients ignore types
+        they don't know. The same frames go out on the computer's events
+        websocket. The approval, human and block events also have a push
+        kind (see `AciPushNotify`).
+      x-base: api
+      x-stream: sse
+      x-handler: cmd/allternit-api/src/computer_toolset.rs get_toolset_events
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/ComputerRunEvent" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/block-resolve:
+    post:
+      operationId: resolveComputerBlock
+      summary: Answer a `computer.block_detected` hold (continue, stop, or re-run on the person's Mac)
+      description: |
+        `continue`: the person signed in or solved the page; the run goes on and
+        the same domain + kind won't hold this run again. `stop`: the run ends.
+        `rerun`: the run ends here and the CLIENT starts a new run on
+        `rerun_target` (one of the event's `rerun_targets`) with
+        `rerun_of` set to the returned `run_id` on its toolset calls. The server
+        never moves a run between computers. 409 `no_block_pending` when no hold
+        is waiting; 400 `invalid_rerun_target` for a computer not listed.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs post_block_resolve
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlockResolveRequest" }
+      responses:
+        "200":
+          description: The hold was answered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockResolveResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/runs:
+    post:
+      operationId: startComputerRun
+      summary: Start an agent run on one computer ("Re-run on my Mac" from a blocked page)
+      description: |
+        Starts an agent run the same way `POST /api/aci/run` does (safety
+        gate, handoff, planning loop, run buffer, run cards), with the
+        engine's toolset calls aimed at this computer. `rerun_of` records the
+        blocked run this one re-runs: the new run's audit rows and
+        `computer.action` events carry it. A re-run starts fresh (no logins
+        carried over). `{id}` is a computer id, `this-device`, or the target
+        runtime's own runtime id (a `rerun_targets` entry listed from
+        cloud-api carries `runtime_id`; address that runtime). Stream the run
+        with `GET /api/aci/stream/{run_id}`. A run on this device (macOS)
+        opens its own Safari window on its first call; a missing agent
+        profile shows as `computer.human_requested` with `kind:
+        "safari_profile"`. 202 `handoff_required` (same body as
+        `/api/aci/run`) when the task needs approval first; 404
+        `computer_unavailable`; 400 `invalid_rerun_of`.
+      x-base: api
+      x-handler: cmd/allternit-api/src/aci_routes.rs start_computer_run
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComputerRunRequest" }
+      responses:
+        "200":
+          description: The run started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AciRunStarted" }
+        "202":
+          description: "`handoff_required`: approve `approval_id`, then send the same body again with it."
+          content:
+            application/json:
+              schema: { type: object, x-kotlin-raw: true }
+        default: { $ref: "#/components/responses/Error" }
+  /api/aci/run:
+    post:
+      operationId: startAciRun
+      summary: Start an agent browser run on this runtime
+      description: |
+        Mounted at `/api/aci/...` on the same host, not under `/api/v1`.
+        camelCase body (`goal`, `botId`, `threadId`, `allowedSites`,
+        `credentialNames`, `approvalId`, `targetDevice`, ...). `rerunOf` (or
+        `rerun_of`) records the blocked run this one re-runs, the same as on
+        `POST /computers/{id}/runs`. The answer now also carries `run_id`,
+        `computer_id` and `rerun_of`.
+      x-base: instance
+      x-handler: cmd/allternit-api/src/aci_routes.rs aci_run
+      tags: [Computers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AciRunRequest" }
+      responses:
+        "200":
+          description: The run started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AciRunStarted" }
+        "202":
+          description: "`handoff_required`."
+          content:
+            application/json:
+              schema: { type: object, x-kotlin-raw: true }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control:
+    get:
+      operationId: getComputerControl
+      summary: Who controls this computer now, and pending control handoffs
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs get_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The current lease (null when nobody holds control) and pending handoffs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlState" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control/take:
+    post:
+      operationId: takeComputerControl
+      summary: Take over (or renew) control of a computer
+      description: |
+        The caller becomes the holder (`kind: user`; the device from the
+        `x-allternit-device-id` header). A lease lasts 120 s without a renew,
+        so a surface that keeps control calls this again before it ends. A
+        person may take over from an agent (the agent's next action answers
+        423 and it can `request_human`); 423 `computer_controlled_elsewhere`
+        (with `control`) when another person holds it. On this device, taking
+        control is how a person lets agents drive their own screen.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs take_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The caller holds control.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlTaken" }
+        "423":
+          description: "`computer_controlled_elsewhere`: someone else holds control."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlHeld" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/control/release:
+    post:
+      operationId: releaseComputerControl
+      summary: Hand control back
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs release_computer_control
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: "`released` is false when the caller wasn't holding control."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerControlReleased" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/secret:
+    post:
+      operationId: supplyComputerSecret
+      summary: Answer the masked secret box (`request_human` with `secret`)
+      description: |
+        `{ "text", "save_as"? }` sends the value; the waiting call writes it
+        into the field and the agent never sees it. `{ "cancel": true }`
+        cancels. Owner auth only. 409 `no_secret_request` when no request is
+        pending (never asked, answered, cancelled or expired); 400
+        `invalid_secret` for an empty or over-long (4096) value; 502
+        `secret_failed` when writing it failed. `save_as` stores the value in
+        the vault under that name, bound to the request's domain.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs post_secret
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComputerSecretRequest" }
+      responses:
+        "200":
+          description: Delivered (or cancelled).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkResponse" }
+        "409":
+          description: "`no_secret_request`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      operationId: getComputerSecretPending
+      summary: Is a masked secret box waiting (for a surface that connected late)?
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs get_secret
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Never carries a value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerSecretPending" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/screenshot:
+    get:
+      operationId: getComputerScreenshot
+      summary: One PNG of the computer's screen (or one agent run's own display)
+      description: |
+        `run_id` shows that run's own display on a Linux cloud computer (see
+        `computer.agent_display`). Without it: the one run on that computer
+        that has its own display, else the shared desktop. 409 for a paired
+        computer (view it live instead).
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_routes.rs computer_screenshot
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: run_id, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: The screenshot.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        default: { $ref: "#/components/responses/Error" }
+  /api/aci/handoff/{id}/approve:
+    post:
+      operationId: approveAciHandoff
+      summary: Approve a pending approval (`approval_id` from `computer.confirmation_required` or the 409 body)
+      description: |
+        Mounted at `/api/aci/...` on the same host, not under `/api/v1`, so
+        the path is absolute. The body is optional. `{ "scope": "run" }` on a
+        credential approval (`kind: "credential"`) is "Allow for this run":
+        later fills of the same credential name into the same domain in the
+        same run skip the prompt. It lives in memory only and ends with the
+        run; nothing is remembered per site. Any other approval is single-use
+        and answers `scope: "once"`. Deny is `POST /api/aci/handoff/{id}/deny`.
+        Only the run's owner may approve or deny: the user the approval was
+        raised for, the owner of the computer it names, or the Desktop app on
+        this device (its local access token, not relayed). Anyone else gets
+        403 `not_run_owner` and the approval stays pending.
+      x-base: instance
+      x-handler: cmd/allternit-api/src/aci_routes.rs aci_handoff_approve
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HandoffApproveRequest" }
+      responses:
+        "200":
+          description: Approved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandoffApproveResponse" }
+        "403":
+          description: "`not_run_owner`: the caller doesn't own this run or computer."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/flags:
+    get:
+      operationId: listKnowledgeFlags
+      summary: The signed-in user's knowledge flags, newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs list_flags
+      tags: [Knowledge]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, proposed, resolved, dismissed] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: Flags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [flags]
+                properties:
+                  flags: { type: array, items: { $ref: "#/components/schemas/KnowledgeFlag" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createKnowledgeFlag
+      summary: File a flag (knowledge was missing, wrong or stale). Never include secrets
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs create_flag
+      tags: [Knowledge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, target_kind, evidence]
+              properties:
+                kind: { type: string, enum: [missing, wrong, stale] }
+                target_kind: { type: string, enum: [skill, domain, data_access] }
+                target_ref: { type: string }
+                evidence: { type: string, maxLength: 8000 }
+                suggested_fix: { type: string, maxLength: 8000 }
+                session_id: { type: string }
+                turn_id: { type: string }
+                agent_id: { type: string }
+      responses:
+        "200":
+          description: The new flag (status `open`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeFlagResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/flags/{id}/dismiss:
+    post:
+      operationId: dismissKnowledgeFlag
+      summary: Dismiss a flag. A linked proposal is left alone; a resolved flag is 409
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs dismiss_flag
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The flag after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeFlagResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals:
+    get:
+      operationId: listKnowledgeProposals
+      summary: The signed-in user's knowledge proposals, newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs list_proposals
+      tags: [Knowledge]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [proposed, approved, rejected, active, rolled_back] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: Proposals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposals]
+                properties:
+                  proposals: { type: array, items: { $ref: "#/components/schemas/KnowledgeProposal" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createKnowledgeProposal
+      summary: Propose a change (status `proposed`). Cited open flags become `proposed` and link to it; every cited id must be the user's own
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs create_proposal
+      tags: [Knowledge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_kind, target_ref, title, body, origin]
+              properties:
+                target_kind: { type: string, enum: [skill, domain, data_access] }
+                target_ref: { type: string, description: "Slug of letters, digits, '-', '_', '.'; skills may also use ':' and '/'." }
+                title: { type: string, maxLength: 200 }
+                body: { type: string }
+                base: { type: string }
+                evidence: { type: array, items: { $ref: "#/components/schemas/KnowledgeEvidence" } }
+                origin: { type: string, enum: [curator, agent, skill_growth] }
+                eval: { type: object }
+      responses:
+        "200":
+          description: The new proposal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/eval:
+    post:
+      operationId: setKnowledgeProposalEval
+      summary: Attach or replace the evaluation of a proposed proposal (skill growth evaluates after it proposes). 409 once decided
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs set_eval
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eval]
+              properties:
+                eval: { type: object, additionalProperties: true, description: "Skill growth sends {score, report}." }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/approve:
+    post:
+      operationId: approveKnowledgeProposal
+      summary: Approve (proposed → approved). domain/data_access write the knowledge file in the personal Memory Drive (step 16); skill is activated by the client. Linked flags become resolved
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs approve
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/reject:
+    post:
+      operationId: rejectKnowledgeProposal
+      summary: Reject (proposed → rejected). Linked flags become resolved
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs reject
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/activated:
+    post:
+      operationId: markKnowledgeProposalActivated
+      summary: The client turned an approved proposal on (approved → active)
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs activated
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/rollback:
+    post:
+      operationId: rollbackKnowledgeProposal
+      summary: Roll back (approved or active → rolled_back)
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs rollback
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/v2/raw-search:
+    post:
+      operationId: rawSearchPastChats
+      summary: Search the user's raw past chat turns (headed windows, reranked on the local sidecar, expanded to full turns, budgeted)
+      description: |
+        Candidates are the user's turn windows (keyword + vector, RRF); the local sidecar's `/v1/rerank`
+        reorders them (`auto` 600 ms / `search` 1,500 ms timeout; on timeout, error or 503 the fused order
+        stands and `reranked` is false). Incognito sessions and deleted turns never come back. With
+        `calling_session` (or the `x-allternit-session-id` header) the turns returned are recorded in that
+        session's Memory activity as `past_chat` items.
+      x-base: api
+      x-handler: cmd/allternit-api/src/memory_routes.rs raw_search_v2_handler
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RawSearchRequest" }
+      responses:
+        "200":
+          description: Turns best first, a separate knowledge block (empty until knowledge files are indexed), and whether rerank ran.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RawSearchResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/v2/turns/{id}/neighbors:
+    get:
+      operationId: getTurnNeighbors
+      summary: Same-session turns around one past turn, in time order (the turn included). 404 unless it is the caller's
+      x-base: api
+      x-handler: cmd/allternit-api/src/memory_routes.rs turn_neighbors_v2_handler
+      tags: [Memory]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: before, in: query, required: false, schema: { type: integer, default: 2, maximum: 20 } }
+        - { name: after, in: query, required: false, schema: { type: integer, default: 2, maximum: 20 } }
+      responses:
+        "200":
+          description: The turns.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnNeighbors" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -657,3 +1225,384 @@ components:
         reason: { type: string, enum: [sleep_disabled, stage_not_built] }
         stage: { type: string }
         error: { type: string }
+    ComputerRunEvent:
+      type: object
+      description: One toolset-events SSE frame. `data` is one of the `Computer*EventData` schemas, picked by `type`.
+      required: [type, ts, data]
+      properties:
+        type:
+          type: string
+          enum: [computer.action, computer.confirmation_required, computer.human_requested, computer.human_resumed, computer.block_detected, computer.block_resolved, computer.agent_display]
+        ts: { type: string }
+        data:
+          type: object
+          x-kotlin-raw: true
+          description: The event's data; its shape depends on `type`.
+    ComputerActionEventData:
+      type: object
+      description: computer_toolset.rs `emit_action`.
+      required: [toolset, member, ok]
+      properties:
+        toolset: { type: string, enum: [computer, browser] }
+        member: { type: string }
+        x: { type: [integer, "null"] }
+        y: { type: [integer, "null"] }
+        screen_w: { type: [integer, "null"] }
+        screen_h: { type: [integer, "null"] }
+        run_id: { type: [string, "null"] }
+        ok: { type: boolean }
+        actor: { type: [object, "null"], x-kotlin-raw: true, description: "`{agent_id, name}` for the cursor badge." }
+        step: { type: [string, "null"] }
+        rerun_of: { type: [string, "null"], description: "The run this run re-runs, when the client started it with `rerun_of`." }
+    CredentialRef:
+      type: object
+      description: A vault credential named for an approval. Never carries the value.
+      required: [name, domain]
+      properties:
+        name: { type: string }
+        domain: { type: [string, "null"], description: "Where it types (declared `domain`, else the vault binding): lower case, no scheme or `www.`." }
+    ComputerConfirmationRequiredEventData:
+      type: object
+      description: computer_toolset.rs `emit_confirmation_required`. Also pushed as `aci_approval`. Approve with `POST /api/aci/handoff/{approval_id}/approve`, then the agent retries with the grant.
+      required: [computer_id, approval_id, kind, member, message]
+      properties:
+        run_id: { type: [string, "null"] }
+        computer_id: { type: string }
+        approval_id: { type: string }
+        kind: { type: string, enum: [action, credential] }
+        credential: { oneOf: [{ $ref: "#/components/schemas/CredentialRef" }, { type: "null" }], description: "Set when `kind` is `credential`." }
+        confirmation_class: { type: [string, "null"], description: "`risky` or `irreversible`." }
+        member: { type: string }
+        message: { type: string }
+    ConfirmationRequiredBody:
+      type: object
+      description: aci_safety.rs `enforce_confirmation_with_details`. The refusal body the toolset route answers 409 `approval_required` (other ACI routes 403 `confirmation_required`) with, among the toolset result fields.
+      required: [error, approval_id, action_hash, confirmation_class, kind, message]
+      properties:
+        error: { type: string }
+        approval_id: { type: string }
+        action_hash: { type: string }
+        confirmation_class: { type: string }
+        kind: { type: string, enum: [action, credential] }
+        credential: { $ref: "#/components/schemas/CredentialRef" }
+        message: { type: string }
+    ComputerHumanEventData:
+      type: object
+      description: computer_v2.rs `emit_human_event` (`human_requested` / `human_resumed`). `human_requested` is also pushed as `aci_human`. Done is `POST /computers/{id}/human-done`.
+      required: [computer_id, reason, run_id, live_view, input_enabled]
+      properties:
+        computer_id: { type: string }
+        reason: { type: string }
+        run_id: { type: string }
+        live_view: { type: boolean }
+        input_enabled: { type: boolean }
+        timeout_ms: { type: integer }
+        resumed: { type: boolean }
+        timed_out: { type: boolean }
+        held_by: { type: [string, "null"] }
+        kind: { type: string, enum: [safari_profile], description: "`safari_profile`: a browser run on this Mac needs the \"Allternit Agent\" Safari profile; show `steps`, then Continue (`human-done`)." }
+        steps: { type: array, items: { type: string }, description: "With `kind: safari_profile`: the driver's setup steps." }
+        setup_reason: { type: string, description: "With `kind: safari_profile`: why the driver couldn't make the profile." }
+    RerunTarget:
+      type: object
+      description: |
+        One of the person's online Macs a blocked run can be re-run on: a
+        this-device computer of the same allternit-api, or (from cloud-api
+        `GET /api/v1/runtime-presence/computers`) a Desktop runtime on macOS
+        whose heartbeat is under two minutes old. Start the re-run with
+        `POST /computers/{computer_id}/runs` on the runtime `runtime_id`.
+      required: [computer_id, name]
+      properties:
+        computer_id: { type: string, description: "A computer id, or a runtime id for a Mac listed from cloud-api." }
+        name: { type: string }
+        runtime_id: { type: [string, "null"], description: The runtime that Mac's allternit-api is paired as. }
+    ComputerBlockDetectedEventData:
+      type: object
+      description: computer_block.rs `hold`. The run waits until `POST /computers/{computer_id}/block-resolve` (or `timeout_ms`, after which it goes on with a note). Also pushed as `aci_blocked`.
+      required: [run_id, computer_id, domain, kind, rerun_targets, timeout_ms]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        rerun_targets: { type: array, items: { $ref: "#/components/schemas/RerunTarget" }, description: "Empty when no Mac is online." }
+        timeout_ms: { type: integer }
+    ComputerBlockResolvedEventData:
+      type: object
+      description: computer_block.rs `hold`, when the hold ends.
+      required: [run_id, computer_id, domain, kind, action, rerun_target]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        action: { type: string, enum: [continue, stop, rerun, timed_out] }
+        rerun_target: { type: [string, "null"] }
+    ComputerAgentDisplayEventData:
+      type: object
+      description: computer_agent_display.rs, when a run on a Linux cloud computer gets (`started`) or gives back (`stopped`) its own X display and browser. Point the run's live view at `display` (VNC on `vnc_port` on the desktop image; `GET /api/v1/computers/{id}/screenshot?run_id=`).
+      required: [run_id, computer_id, agent_id, display, state]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        agent_id: { type: string }
+        display: { type: string, description: "`:N`" }
+        vnc_port: { type: [integer, "null"] }
+        state: { type: string, enum: [started, stopped] }
+    BlockResolveRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [continue, stop, rerun] }
+        rerun_target: { type: string, description: "With `rerun`: a `computer_id` from the event's `rerun_targets`." }
+    BlockResolveResponse:
+      type: object
+      required: [ok, action, run_id, domain, kind, rerun_target]
+      properties:
+        ok: { type: boolean }
+        action: { type: string, enum: [continue, stop, rerun] }
+        run_id: { type: string, description: "The held run; send it as `rerun_of` on the new run." }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        rerun_target: { type: [string, "null"] }
+    ComputerRunRequest:
+      type: object
+      required: [task]
+      properties:
+        task: { type: string, description: The task in plain words. }
+        rerun_of: { type: string, description: "The blocked run this run re-runs (`run_id` from `block-resolve` or `computer.block_detected`)." }
+        bot_id: { type: string, description: The bot the run is for (names the agent cursor). }
+    AciRunRequest:
+      type: object
+      required: [goal]
+      properties:
+        goal: { type: string }
+        model: { type: string }
+        botId: { type: string }
+        threadId: { type: string }
+        allowedSites: { x-kotlin-raw: true, description: "A host or a list of hosts." }
+        credentialNames: { type: array, items: { type: string } }
+        approvalId: { type: string }
+        targetDevice: { type: string, description: "`app:<phoneId>` for the iPhone app's browser; absent = this runtime." }
+        rerunOf: { type: string, description: "Also accepted as `rerun_of`." }
+    AciRunStarted:
+      type: object
+      required: [sessionId, run_id, adapterId]
+      properties:
+        sessionId: { type: string, description: The run id (older name). }
+        run_id: { type: string }
+        adapterId: { type: string, enum: [browser, phone-browser] }
+        computer_id: { type: [string, "null"], description: The computer the run drives; null = this device. }
+        rerun_of: { type: [string, "null"] }
+    ControlHolder:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string, enum: [user, agent, session, bot] }
+        id: { type: string }
+        label: { type: [string, "null"] }
+        device_id: { type: [string, "null"] }
+    ControlLease:
+      type: object
+      required: [computer_id, holder, acquired_at, expires_at]
+      properties:
+        computer_id: { type: string }
+        holder: { $ref: "#/components/schemas/ControlHolder" }
+        acquired_at: { type: string }
+        expires_at: { type: string }
+    ComputerControlState:
+      type: object
+      required: [control, handoffs]
+      properties:
+        control: { oneOf: [{ $ref: "#/components/schemas/ControlLease" }, { type: "null" }] }
+        handoffs: { type: array, items: { type: object, x-kotlin-raw: true }, description: "Pending control handoffs (`{id, computer_id, direction, from, to, note, created_at, expires_at}`)." }
+    ComputerControlTaken:
+      type: object
+      required: [control]
+      properties:
+        control: { $ref: "#/components/schemas/ControlLease" }
+    ComputerControlHeld:
+      type: object
+      required: [error, message, control]
+      properties:
+        error: { type: string, const: computer_controlled_elsewhere }
+        message: { type: string }
+        control: { $ref: "#/components/schemas/ControlLease" }
+    ComputerControlReleased:
+      type: object
+      required: [released]
+      properties:
+        released: { type: boolean }
+        control: { type: "null" }
+    ComputerSecretRequest:
+      type: object
+      properties:
+        text: { type: string, description: The value. Required unless `cancel`. }
+        save_as: { type: string, description: Store it in the vault under this name. }
+        cancel: { type: boolean }
+    ComputerSecretPending:
+      type: object
+      required: [pending]
+      properties:
+        pending: { type: boolean }
+        label: { type: string }
+        waiting_s: { type: integer }
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+    HandoffApproveRequest:
+      type: object
+      properties:
+        scope: { type: string, enum: [once, run], description: "`run` = Allow for this run (credential approvals only)." }
+    HandoffApproveResponse:
+      type: object
+      required: [approval_id, status, scope]
+      properties:
+        approval_id: { type: string }
+        status: { type: string, const: approved }
+        scope: { type: string, enum: [once, run] }
+    AciPushNotify:
+      type: object
+      description: |
+        computer_block.rs `push_to_owner`: what allternit-api POSTs to cloud-api
+        `POST /push/notify/{runtime_id}` (host root, `routes/aci_push.rs`) for a
+        run event. Relay-signed exactly like `/api/v1/runtime/events` (signed
+        path `/push/notify/{runtime_id}`, `x-allternit-runtime-id` header) and
+        sent only when the runtime is paired to the run's owner. cloud-api
+        rebuilds `data` from an allowlist and fans it out to web push, APNs and
+        FCM (categories ACI_APPROVAL, ACI_HUMAN, ACI_BLOCKED).
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/AciPushData" }
+        bot_name: { type: string, description: "The driving agent's name, when the run named one." }
+    AciPushData:
+      type: object
+      description: "One of three kinds. A credential goes by name + domain only, never its value."
+      required: [kind, run_id, computer_id]
+      properties:
+        kind: { type: string, enum: [aci_approval, aci_human, aci_blocked] }
+        run_id: { type: string }
+        computer_id: { type: string }
+        approval_id: { type: string, description: "aci_approval only." }
+        approval_kind: { type: string, enum: [action, credential], description: "aci_approval only." }
+        credential: { $ref: "#/components/schemas/CredentialRef" }
+        message: { type: string, description: "aci_approval only." }
+        reason: { type: string, description: "aci_human only: what the agent asked for." }
+        secret: { type: boolean, description: "aci_human only: true for a masked-box secret request." }
+        domain: { type: [string, "null"], description: "aci_blocked only." }
+        block_kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited], description: "aci_blocked only." }
+        rerun_targets: { type: array, items: { type: string }, description: "aci_blocked only: computer ids of the person's online Macs." }
+    KnowledgeFlag:
+      type: object
+      description: knowledge_store.rs `Flag` (the `knowledge_flags` row).
+      required: [id, user_id, kind, target_kind, evidence, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        session_id: { type: [string, "null"] }
+        turn_id: { type: [string, "null"] }
+        kind: { type: string, enum: [missing, wrong, stale] }
+        target_kind: { type: string, enum: [skill, domain, data_access] }
+        target_ref: { type: [string, "null"] }
+        evidence: { type: string }
+        suggested_fix: { type: [string, "null"] }
+        status: { type: string, enum: [open, proposed, resolved, dismissed] }
+        proposal_id: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+    KnowledgeFlagResponse:
+      type: object
+      required: [flag]
+      properties:
+        flag: { $ref: "#/components/schemas/KnowledgeFlag" }
+    KnowledgeEvidence:
+      type: object
+      description: Exactly one of the two ids.
+      properties:
+        flag_id: { type: string }
+        observation_id: { type: string }
+    KnowledgeProposal:
+      type: object
+      description: knowledge_store.rs `Proposal` (the `knowledge_proposals` row; `evidence_json` and `eval_json` are returned parsed as `evidence` and `eval`).
+      required: [id, user_id, target_kind, target_ref, title, body, evidence, origin, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        target_kind: { type: string, enum: [skill, domain, data_access] }
+        target_ref: { type: string }
+        title: { type: string }
+        body: { type: string }
+        base: { type: [string, "null"] }
+        evidence: { type: array, items: { $ref: "#/components/schemas/KnowledgeEvidence" } }
+        origin: { type: string, enum: [curator, agent, skill_growth] }
+        eval: { type: [object, "null"] }
+        status: { type: string, enum: [proposed, approved, rejected, active, rolled_back] }
+        decided_at: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+    KnowledgeProposalResponse:
+      type: object
+      required: [proposal]
+      properties:
+        proposal: { $ref: "#/components/schemas/KnowledgeProposal" }
+    RawSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        from:
+          type: [string, "null"]
+          description: "YYYY-MM-DD or RFC 3339; inclusive"
+        to:
+          type: [string, "null"]
+          description: "YYYY-MM-DD (includes that whole day) or RFC 3339 (inclusive)"
+        session_id: { type: [string, "null"] }
+        exclude_sessions: { type: array, items: { type: string } }
+        limit:
+          type: [integer, "null"]
+          maximum: 32
+          description: "Windows kept after rerank; default 8 (auto) or 12 (search)"
+        include_knowledge: { type: boolean, default: false }
+        mode: { type: string, enum: [auto, search], default: search }
+        calling_session:
+          type: [string, "null"]
+          description: "The session asking; its activity records the past chats returned"
+    RawTurn:
+      type: object
+      required: [observation_id, speaker, timestamp, text, score, window_ids]
+      properties:
+        observation_id: { type: string }
+        session_id: { type: [string, "null"] }
+        speaker:
+          type: string
+          description: "user, assistant or tool:<name>"
+        timestamp: { type: string, format: date-time }
+        source: { type: [string, "null"] }
+        text:
+          type: string
+          description: "The full turn, clipped at 1,200 chars (marked)"
+        score: { type: number }
+        window_ids: { type: array, items: { type: string } }
+    KnowledgeHit:
+      type: object
+      required: [path, kind, text, score]
+      properties:
+        path: { type: string }
+        kind: { type: string, enum: [domain, data_access] }
+        text: { type: string }
+        score: { type: number }
+    RawSearchResult:
+      type: object
+      required: [turns, knowledge, reranked]
+      properties:
+        turns: { type: array, items: { $ref: "#/components/schemas/RawTurn" } }
+        knowledge: { type: array, items: { $ref: "#/components/schemas/KnowledgeHit" } }
+        reranked: { type: boolean }
+    TurnNeighbors:
+      type: object
+      required: [turns]
+      properties:
+        turns: { type: array, items: { $ref: "#/components/schemas/RawTurn" } }

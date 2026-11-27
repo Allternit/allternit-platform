@@ -72,7 +72,7 @@ async fn catalog_needs_a_session_refuses_api_tokens_and_caches() {
     assert_eq!(response.headers().get(header::CACHE_CONTROL).unwrap(), "private, max-age=300");
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!((body["version"].as_u64(), body["group"].as_str()), (Some(1), Some("brains")));
+    assert_eq!((body["version"].as_u64(), body["group"].as_str()), (Some(2), Some("brains")));
     let entries = body["entries"].as_array().unwrap();
     assert_eq!(entries.len(), crate::services::connections_catalog::brain_key_count());
     assert!(entries.iter().all(|e| e["group"] == "brains" && e["ways"] == serde_json::json!(["paste"])));
@@ -93,6 +93,50 @@ async fn catalog_needs_a_session_refuses_api_tokens_and_caches() {
     assert_eq!((status, body), (StatusCode::BAD_REQUEST, serde_json::json!({ "error": "unknown_group" })));
     let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?cursor=abc", session, None).await;
     assert_eq!((status, body), (StatusCode::BAD_REQUEST, serde_json::json!({ "error": "bad_cursor" })));
+}
+
+/// Version 2: the detail route, the interactive filter, sort new / trending
+/// and the `bad_sort` 400, on the real snapshot.
+#[tokio::test]
+async fn catalog_v2_detail_filters_and_sorts() {
+    let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    let router = routes().with_state(state);
+    let session = Some(("x-test-session-user", "user_catalog_v2"));
+
+    // Interactive filter: every entry carries the flag; counts follow it.
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?group=brains&interactive=true&limit=60", session, None).await;
+    assert_eq!((status, body["total"].as_u64()), (StatusCode::OK, Some(0)), "brain keys are never interactive");
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?limit=0&interactive=true", session, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let interactive = body["counts"]["apps"].as_u64().unwrap();
+    let (_, all) = send(&router, "GET", "/api/v1/connections/catalog?limit=0", session, None).await;
+    assert!(interactive > 0 && interactive < all["counts"]["apps"].as_u64().unwrap(), "{interactive}");
+    assert_eq!(all["counts"]["skills"], 0, "no skills ship until the cloud can install them");
+
+    // Sort new / trending put the flagged entries first.
+    for (sort, flag) in [("new", "is_new"), ("trending", "trending")] {
+        let uri = format!("/api/v1/connections/catalog?group=apps&sort={sort}&limit=60");
+        let (status, body) = send(&router, "GET", &uri, session, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let flags: Vec<bool> = body["entries"].as_array().unwrap().iter().map(|e| e[flag] == true).collect();
+        assert!(flags.windows(2).all(|w| w[0] || !w[1]), "{sort}: flagged entries come first");
+    }
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?sort=loudest", session, None).await;
+    assert_eq!((status, body), (StatusCode::BAD_REQUEST, serde_json::json!({ "error": "bad_sort" })));
+
+    // Detail: one entry with its v2 fields; a base row, an unknown id and a
+    // missing session are refused.
+    let (_, page) = send(&router, "GET", "/api/v1/connections/catalog?group=apps&interactive=true&limit=1", session, None).await;
+    let id = page["entries"][0]["id"].as_str().unwrap().to_string();
+    let (status, body) = send(&router, "GET", &format!("/api/v1/connections/catalog/{id}"), session, None).await;
+    assert_eq!((status, body["version"].as_u64()), (StatusCode::OK, Some(2)));
+    assert_eq!((body["entry"]["id"].as_str(), body["entry"]["interactive"].as_bool()), (Some(id.as_str()), Some(true)));
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog/anthropic-key", session, None).await;
+    assert_eq!((status, body["entry"]["group"].as_str()), (StatusCode::OK, Some("brains")));
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog/nope-not-here", session, None).await;
+    assert_eq!((status, body), (StatusCode::NOT_FOUND, serde_json::json!({ "error": "not_found" })));
+    let (status, _) = send(&router, "GET", "/api/v1/connections/catalog/anthropic-key", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 /// Accepts keys that start with `good`, rejects the rest.

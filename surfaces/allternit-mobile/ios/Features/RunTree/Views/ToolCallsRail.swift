@@ -105,15 +105,46 @@ struct ToolCallsRail: View {
 
     // MARK: - Header
 
+    /// One symbol per kind of tool.
+    static func toolSymbol(for toolName: String?) -> String {
+        let name = (toolName ?? "").lowercased()
+        if name.contains("image") || name.contains("photo") { return "photo" }
+        if name.contains("read") || name.contains("doc") || name.contains("file") { return "doc.text" }
+        if name.contains("search") || name.contains("grep") || name.contains("glob") || name.contains("fetch") { return "magnifyingglass" }
+        if name.contains("edit") || name.contains("write") || name.contains("patch") { return "square.and.pencil" }
+        if name.contains("bash") || name.contains("shell") || name.contains("terminal") || name.contains("exec") { return "terminal" }
+        return "wrench.and.screwdriver"
+    }
+
+    @ViewBuilder
+    private func headerSymbol(running: Bool, done: Bool) -> some View {
+        let symbol = Self.toolSymbol(for: visibleCalls.last?.toolName)
+        ZStack(alignment: .bottomTrailing) {
+            if #available(iOS 17, *) {
+                Image(systemName: symbol)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+                    .symbolEffect(.pulse, options: .repeating, isActive: running)
+            } else {
+                Image(systemName: symbol)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            if done && !running {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(Color("TextTertiary"))
+            }
+        }
+    }
+
     private func header(count: Int, failed: Int, waiting: Bool, elapsed: TimeInterval?) -> some View {
         HStack(spacing: 6) {
             Group {
                 if isStreaming {
                     WorkingMark(state: WorkingMark.state(forTool: visibleCalls.last?.toolName), size: 16)
                 } else {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.caption)
-                        .foregroundColor(Color("TextSecondary"))
+                    headerSymbol(running: visibleCalls.contains { $0.state == .running }, done: failed == 0 && !visibleCalls.isEmpty)
                 }
             }
             .frame(width: 20, height: 20)

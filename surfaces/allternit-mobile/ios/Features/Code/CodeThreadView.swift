@@ -140,7 +140,7 @@ struct CodeThreadChatView: View {
                         if info.sessionID == sessionId {
                             pendingPermissions.removeAll { $0.id == info.requestID }
                         }
-                    case .ignored:
+                    case .questionAsked, .questionClosed, .ignored:
                         break
                     }
                 }

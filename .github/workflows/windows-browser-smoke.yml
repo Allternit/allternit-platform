@@ -1,0 +1,73 @@
+name: Windows browser smoke
+
+# The agent browser on Windows: install the driver from this checkout, start
+# the launcher for two agent ids one after the other, read each window's UI
+# tree with the UIA engine, and upload a screenshot of each. Never deploys.
+# Run by hand:
+#   gh workflow run windows-browser-smoke.yml -R Allternit/allternit-platform --ref <branch>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: domains/computer-use/driver
+
+      - name: Install the driver from the checkout
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --quiet comtypes
+          $dst = "C:\Program Files\Allternit\Driver"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item -Recurse domains/computer-use/driver/allternit_driver "$dst\allternit_driver"
+          New-Item -ItemType Directory -Force -Path shots | Out-Null
+
+      - name: Two agents, one after the other
+        shell: pwsh
+        env:
+          PYTHONPATH: C:\Program Files\Allternit\Driver
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = @'
+          import json, sys
+          from allternit_driver import agent_browser as ab
+          from allternit_driver.engines.uia import UIAEngine
+          eng = UIAEngine(); eng.start()
+          for agent in ("smoke-a", "smoke-b"):
+              info = ab.start(agent)
+              print("started", json.dumps(info))
+              import time; time.sleep(5)
+              wins = [w for w in eng.windows(info["pid"]) if w["title"]]
+              assert wins, f"no window for pid {info['pid']}"
+              w = wins[0]
+              nodes, meta = eng.read(info["pid"], w["window_id"])
+              print(agent, "title", meta["title"], "nodes", len(nodes))
+              assert len(nodes) > 1, "empty UI tree"
+              # a window of another pid must be refused
+              other = [x for x in eng.windows() if x["pid"] != info["pid"]]
+              if other:
+                  try:
+                      eng.read(info["pid"], other[0]["window_id"])
+                      raise SystemExit("read landed on another pid's window")
+                  except Exception as e:
+                      assert "does not belong" in str(e), e
+              open(f"shots/{agent}.png", "wb").write(eng.screenshot(info["pid"], w["window_id"]))
+              print(json.dumps(ab.stop(agent)))
+              assert ab.state_file(agent) and not ab._alive(info["pid"])
+          '@
+          Set-Content -Path smoke.py -Value $script -Encoding utf8
+          python smoke.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-browser-smoke
+          path: shots/*.png

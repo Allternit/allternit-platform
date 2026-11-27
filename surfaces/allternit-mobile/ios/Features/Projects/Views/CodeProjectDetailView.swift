@@ -183,7 +183,7 @@ struct CodeProjectDetailView: View {
 
     private func row(_ session: AgentSession) -> some View {
         HStack(spacing: 10) {
-            Text(session.name ?? "Untitled session")
+            Text(session.displayTitle)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(Color("TextPrimary"))
                 .lineLimit(1)

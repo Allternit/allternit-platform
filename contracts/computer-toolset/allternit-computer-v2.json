@@ -1052,7 +1052,7 @@
           },
           "secret": {
             "type": "object",
-            "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes straight into the focused field and never reaches you, the logs or the transcript. Focus the field first. The result only says the field was filled.",
+            "description": "Ask the person for a one-off secret (password, 2FA code, card CVC) that is not saved in the vault. They type it into a masked box; it goes into the field and never reaches you, the logs or the transcript. On this computer pass element_id (the field's id from read_ui): the value is written straight into that element, and without it the request is refused. On cloud computers it goes into the element when given, else into the focused field of the run's own screen. The result only says the field was filled.",
             "properties": {
               "label": {
                 "type": "string",
@@ -1065,6 +1065,10 @@
               "domain": {
                 "type": "string",
                 "description": "Optional app or site domain the secret is for. If the person chooses to save it to the vault, it is bound there."
+              },
+              "element_id": {
+                "type": "string",
+                "description": "The field's element id from read_ui. Required on this computer; optional on cloud computers."
               }
             },
             "required": [
@@ -1079,13 +1083,13 @@
     },
     {
       "name": "use_credential",
-      "description": "Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing.",
+      "description": "Write a vault credential into one field. The value never enters the model context, prompts or logs. On this computer (the person's own Mac or PC) pass element_id: the id of the password or text field from read_ui. The value is written straight into that element, with no focus change and no typing, so it can't land in another window; without element_id the call is refused. On cloud computers element_id is optional (without it the value is typed into the focused field of the run's own screen). kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. A person approves each use on every computer (this Mac and cloud computers alike); they can allow the same credential into the same domain for the rest of the run.",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": true,
-      "confirm": "non_sandbox",
+      "confirm": "always",
       "result_kind": "none",
-      "ack_text": "Credential {name} typed.",
+      "ack_text": "Credential {name} written.",
       "scale_fields": {},
       "input_schema": {
         "type": "object",
@@ -1115,6 +1119,10 @@
           "domain": {
             "type": "string",
             "description": "The app or domain the credential is being typed into; checked against the credential's binding."
+          },
+          "element_id": {
+            "type": "string",
+            "description": "The field's element id from read_ui (e.g. 'e12'). Required on this computer; optional on cloud computers. Vision elements ('v…') are refused: a secret is never typed at a screen position."
           }
         },
         "required": [

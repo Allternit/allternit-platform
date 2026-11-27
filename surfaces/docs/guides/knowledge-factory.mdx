@@ -1,0 +1,74 @@
+---
+title: "Knowledge factory"
+description: "Agents flag knowledge that is missing, wrong or stale. A curator writes proposals. You approve or reject each one, and approved guides land in your Memory Drive."
+---
+
+The **knowledge factory** is how your agents get better at your work without changing anything behind your back. When an agent hits a gap, it flags it. After the nightly [Dream](/guides/memory-drive#nightly-dream), a curator reads the flags and the day's conversations and writes **proposals**. Nothing takes effect until you approve it.
+
+## The loop
+
+1. **Flag.** An agent calls the `knowledge_flag` tool when it could not find knowledge it needed, or found knowledge that is wrong or out of date. A flag says what kind of gap it is (`missing`, `wrong` or `stale`), what it is about (a skill, your domain, or a data connection), what the agent saw, and the fix if it knows one. Agents are told never to put secrets in a flag.
+2. **Curate.** The curator runs after each nightly Dream, and only when Dreaming is on. It turns open flags and the day's turns into proposals. Each proposal cites at least one flag or turn it was shown; a proposal that cites nothing is dropped.
+3. **Review.** You see each proposal as a change against the current text, with its evidence, and approve or reject it. You can also dismiss a flag.
+4. **Apply.** Approving a guide writes it into your Memory Drive as one change. Approving a skill lets Gizzi turn it on after it asks you.
+
+The first workflow is **data-access guides per connection**: what lives in a connected source, how to query it, gotchas, and pointers rather than copies.
+
+## Where to review
+
+Open **Settings, Memory, Knowledge**:
+
+- **Desktop, ai.allternit.com (and its phone layout) and m.allternit.com:** Settings, Memory, Knowledge.
+- **iPhone and Android:** Settings, Memory, Knowledge ("Review what agents want to learn").
+- **Terminal:** `gizzi knowledge` and `/knowledge`. See [gizzi knowledge](/cli/knowledge).
+
+Each proposal shows its kind (skill, domain or data access), its name, where it came from (curator, an agent, or skill growth) and the evidence. **Approve** and **Reject** apply to proposals, **Dismiss** to flags.
+
+## What the curator sees and never does
+
+It sees your open flags, the day's messages, replies and tool calls (clipped), the files already in `knowledge/` and your skill list.
+
+It never:
+
+- approves, activates or deactivates anything. Only you do;
+- writes conversation text into your drive. A proposal is a short guide in its own words, not a transcript;
+- reads incognito chats, which are never stored;
+- runs when Dreaming is off.
+
+It makes one proposal per target per night, and none while one for that target is still waiting for you.
+
+## Skills
+
+Approving a skill proposal does not write the file. Gizzi sees the approval on its next skill call and asks for its `skill_manage` permission before it writes `SKILL.md`. Until you allow it the proposal shows as approved, not active. An approved or active proposal can be rolled back.
+
+## Privacy
+
+- Incognito chats are never captured, so they can never become a flag or a proposal.
+- Everything is yours alone: flags and proposals belong to your account.
+- Credentials in tool text are replaced with `[redacted]` before storing, and the curator is told to cite, not copy.
+- **Forget** on a source (Settings, Memory, Where your memories come from) deletes the stored turns from that source, with their search entries, so they can no longer be cited. A guide you already approved stays, like any drive file, and you can delete or edit it in the drive.
+
+## The file format
+
+Approved domain and data-access guides are ordinary [Memory Drive](/guides/memory-drive) topic files:
+
+- `knowledge/domain/<name>.md` for what your work is about.
+- `knowledge/data-access/<connection>.md` for how to reach and query one connection.
+
+A guide may hold `#` headings and one-line `- ` bullets. It has no front matter, code fences or multi-line paragraphs, and no line with `<`, `>` or an image. Each bullet is stored with where it came from and when:
+
+```markdown
+# GitHub
+- Default branch is main. [source: knowledge:proposal/kprop_3f2a; added: 2026-11-27; kind: data_access]
+```
+
+Approving a proposal whose file already exists and that has no base is refused (`409`) unless the text is identical, and rolling back is refused if you edited the file after approving. The Dream marks old lines out of date, never deletes them, and Undo works on guide files like any other.
+
+For the routes, see the [Knowledge API](/api/knowledge).
+
+## Related
+
+- [Memory page](/guides/memory)
+- [Memory Drive](/guides/memory-drive)
+- [Sleep](/guides/sleep)
+- [Skills](/core/skills)

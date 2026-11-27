@@ -76,6 +76,22 @@ export async function setupAutoLaunch(): Promise<void> {
 }
 
 /**
+ * True when macOS opened this launch from Login Items. With background mode
+ * on (Start anywhere D5) unified-main then starts with no window, reachable
+ * from the menu bar. `wasOpenedAtLogin` replaces the deprecated
+ * `openAsHidden`/`wasOpenedAsHidden`, which macOS 13+ ignores.
+ */
+export function macLaunchedAtLogin(): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    return app.getLoginItemSettings().wasOpenedAtLogin === true;
+  } catch (error) {
+    log.warn('[PlatformMacOS] Could not read the login item launch state:', error);
+    return false;
+  }
+}
+
+/**
  * Remove the app from macOS Login Items.
  */
 export async function disableAutoLaunch(): Promise<void> {

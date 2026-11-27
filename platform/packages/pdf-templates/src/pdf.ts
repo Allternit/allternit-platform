@@ -1,8 +1,10 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
-import { PDF_PAGE_POINTS } from './templates';
+import { NOTO_SANS_BOLD_B64, NOTO_SANS_REGULAR_B64, b64ToBytes } from './fonts';
+import { SIGN_WARN, SIGN_WARN_TILE } from './html';
+import { PDF_PAGE_POINTS, buildDocument, validateRequest } from './templates';
 import { hexToRgb01 } from './themes';
-import type { PdfBlock, PdfDocModel } from './types';
+import type { PdfBlock, PdfDocModel, PdfRenderRequest, SignSlot } from './types';
 
 /**
  * Native PDF writer: draws the same block model the HTML renderer draws, with
@@ -13,6 +15,8 @@ import type { PdfBlock, PdfDocModel } from './types';
  */
 
 const MARGIN = 48;
+/** Height of a signing area in a `signatures` block, in points. */
+export const SIGN_AREA_H = 56;
 
 const REPLACE: Record<string, string> = { '\u00A0': ' ' };
 /** Glyphs the embedded font has; set at the start of each render. */
@@ -47,6 +51,8 @@ interface Ctx {
   bold: PDFFont;
   mono: PDFFont;
   doc: PdfDocModel;
+  /** Signing areas drawn so far, in PDF points (origin bottom-left). */
+  slots: SignSlot[];
 }
 
 const col = (hex: string) => {
@@ -95,6 +101,19 @@ function hline(c: Ctx, top: number, color: string, thickness: number, x1 = MARGI
 }
 function rect(c: Ctx, x: number, top: number, w: number, h: number, fill: string): void {
   c.page.drawRectangle({ x, y: c.H - top - h, width: w, height: h, color: col(fill) });
+}
+/** Filled rectangle with rounded corners (pdf-lib rectangles have none). */
+function roundRect(c: Ctx, x: number, top: number, w: number, h: number, r: number, fill: string): void {
+  const path = `M${r} 0H${w - r}Q${w} 0 ${w} ${r}V${h - r}Q${w} ${h} ${w - r} ${h}H${r}Q0 ${h} 0 ${h - r}V${r}Q0 0 ${r} 0Z`;
+  c.page.drawSvgPath(path, { x, y: c.H - top, color: col(fill) });
+}
+/** The acceptance note's warning mark, `size` points square, top-left at (x, top). */
+function warnMark(c: Ctx, x: number, top: number, size: number): void {
+  const s = size / 16;
+  const y = c.H - top;
+  c.page.drawSvgPath('M8 1.5L15 14H1Z', { x, y, scale: s, color: col(SIGN_WARN) });
+  c.page.drawRectangle({ x: x + 7.2 * s, y: y - 10.1 * s, width: 1.6 * s, height: 4.6 * s, color: rgb(1, 1, 1) });
+  c.page.drawCircle({ x: x + 8 * s, y: y - 12 * s, size: 0.9 * s, color: rgb(1, 1, 1) });
 }
 
 function drawBlock(c: Ctx, b: PdfBlock): void {
@@ -272,6 +291,47 @@ function drawBlock(c: Ctx, b: PdfBlock): void {
       c.y += h + 10;
       return;
     }
+    case 'signatures': {
+      const gap = 24;
+      const colW = (inner - gap) / 2;
+      const rowH = 16 + SIGN_AREA_H + 6 + 12; // label, signing area, date line
+      const tile = 24;
+      const noteLines = b.note ? wrap(c.reg, b.note, 9, inner - 20 - tile - 10) : [];
+      const noteH = b.note ? Math.max(tile + 20, 10 + 15 + noteLines.length * 12.5 + 10) : 0;
+      // Keep the note with the first row of slots.
+      ensure(c, 10 + (b.note ? noteH + 14 : 0) + rowH);
+      c.y += 10;
+      if (b.note) {
+        const top = c.y;
+        roundRect(c, MARGIN, top, inner, noteH, 8, t.fill);
+        roundRect(c, MARGIN + 10, top + 10, tile, tile, 6, SIGN_WARN_TILE);
+        warnMark(c, MARGIN + 10 + (tile - 14) / 2, top + 10 + (tile - 14) / 2, 14);
+        const tx = MARGIN + 10 + tile + 10;
+        text(c, 'Acceptance', tx, top + 10, 10, c.bold, t.ink);
+        noteLines.forEach((l, j) => text(c, l, tx, top + 25 + j * 12.5, 9, c.reg, t.muted));
+        c.y += noteH + 14;
+      }
+      for (let i = 0; i < b.slots.length; i += 2) {
+        ensure(c, rowH);
+        const page = c.pdf.getPageCount() - 1;
+        b.slots.slice(i, i + 2).forEach((s, k) => {
+          const x = MARGIN + k * (colW + gap);
+          const label = wrap(c.reg, s.label, 10, colW)[0] ?? '';
+          text(c, label, x, c.y, 10, c.reg, t.ink);
+          if (s.name) {
+            const room = colW - c.reg.widthOfTextAtSize(label, 10) - 8;
+            const name = room > 20 ? wrap(c.reg, s.name, 9, room)[0] ?? '' : '';
+            if (name) text(c, name, 0, c.y + 1, 9, c.reg, t.muted, 'r', x + colW);
+          }
+          const areaTop = c.y + 16;
+          hline(c, areaTop + SIGN_AREA_H, t.line, 0.75, x, x + colW);
+          if (s.signed_on) text(c, `Signed ${s.signed_on}`, x, areaTop + SIGN_AREA_H + 6, 8.5, c.reg, t.muted);
+          c.slots.push({ id: s.id, label: s.label, page, x, y: c.H - areaTop - SIGN_AREA_H, w: colW, h: SIGN_AREA_H });
+        });
+        c.y += rowH + 12;
+      }
+      return;
+    }
     case 'rule':
       ensure(c, 20);
       c.y += 6;
@@ -284,6 +344,11 @@ function drawBlock(c: Ctx, b: PdfBlock): void {
 }
 
 export async function renderPdf(doc: PdfDocModel, fontBytes: PdfFontBytes): Promise<Uint8Array> {
+  return (await renderPdfWithSlots(doc, fontBytes)).bytes;
+}
+
+/** Same as `renderPdf`, plus where each signing area of every `signatures` block was drawn. */
+export async function renderPdfWithSlots(doc: PdfDocModel, fontBytes: PdfFontBytes): Promise<{ bytes: Uint8Array; slots: SignSlot[] }> {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   pdf.setTitle(winAnsi(doc.title));
@@ -296,6 +361,7 @@ export async function renderPdf(doc: PdfDocModel, fontBytes: PdfFontBytes): Prom
     reg: await pdf.embedFont(fontBytes.regular, { subset: true }),
     bold: await pdf.embedFont(fontBytes.bold, { subset: true }),
     mono: null as unknown as PDFFont,
+    slots: [],
   };
   c.mono = c.reg;
   glyphs = new Set(c.reg.getCharacterSet());
@@ -314,5 +380,18 @@ export async function renderPdf(doc: PdfDocModel, fontBytes: PdfFontBytes): Prom
       p.drawText(s, { x: W - MARGIN - c.reg.widthOfTextAtSize(s, 8), y: 24, size: 8, font: c.reg, color: col(doc.theme.muted) });
     });
   }
-  return pdf.save();
+  return { bytes: await pdf.save(), slots: c.slots };
+}
+
+/**
+ * Request to PDF bytes plus its signing slots, always drawn by this writer
+ * (never Chromium print) so each slot matches exactly where its signing area is.
+ * Throws Error with a readable message on a bad request.
+ */
+export async function renderTemplatePdfWithSlots(req: PdfRenderRequest): Promise<{ pdf: Uint8Array; slots: SignSlot[] }> {
+  const bad = validateRequest(req);
+  if (bad) throw new Error(bad);
+  const fonts = { regular: b64ToBytes(NOTO_SANS_REGULAR_B64), bold: b64ToBytes(NOTO_SANS_BOLD_B64) };
+  const { bytes, slots } = await renderPdfWithSlots(buildDocument(req), fonts);
+  return { pdf: bytes, slots };
 }

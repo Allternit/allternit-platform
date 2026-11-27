@@ -742,6 +742,7 @@ private struct CodeEnvironmentSheet: View {
     @State private var showsModels = false
     @StateObject private var environmentStore = EnvironmentStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ObservedObject private var startStore = SessionStartStore.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -778,11 +779,14 @@ private struct CodeEnvironmentSheet: View {
                 if relay.isLoading && relay.devices.isEmpty {
                     row(icon: "arrow.clockwise", title: "Loading runtimes…", subtitle: nil, selected: false, action: nil)
                 } else {
+                    // The shared device list's rows (Start anywhere D1): same icon and
+                    // "Online now" / "Asleep · last seen …" / "Wakes when you send" words.
                     ForEach(relay.devices) { device in
+                        let shared = StartDeviceRows.row(for: device, presence: startStore.presence[device.id])
                         row(
-                            icon: device.runtimeType == "vps" || device.runtimeType == "hosted" ? "cloud" : "desktopcomputer",
+                            icon: shared.icon,
                             title: device.name.isEmpty ? "Allternit runtime" : device.name,
-                            subtitle: device.isOnline ? (device.isPreferred ? "Default" : nil) : "Asleep · wakes on first request",
+                            subtitle: device.isPreferred && shared.state == .online ? "\(shared.sub) · Default" : shared.sub,
                             selected: environmentStore.environment == .cloud && relay.activeRuntimeId == device.id
                         ) {
                             relay.select(device.id)
@@ -823,7 +827,7 @@ private struct CodeEnvironmentSheet: View {
             .padding(.vertical, 20)
         }
         .background(Color("BgPanel"))
-        .task { await relay.refresh() }
+        .task { await startStore.refresh() }
         .sheet(isPresented: $showsModels) {
             if let modelStore { ModelPickerSheet(modelStore: modelStore) }
         }

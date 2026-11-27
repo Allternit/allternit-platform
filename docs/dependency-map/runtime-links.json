@@ -759,6 +759,12 @@
       "label": "Codex CLI image generation",
       "kind": "external",
       "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts"
+    },
+    {
+      "id": "external:runtime-extension-crx",
+      "label": "Allternit Chrome extension CRX (runtime.allternit.com)",
+      "kind": "external",
+      "path": "allternit/surfaces/allternit-extensions/allternit-extension/wxt.config.ts"
     }
   ],
   "edges": [
@@ -2073,6 +2079,59 @@
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "HTTP push path: allternit-api posts an agent-browser attention (approval, needs you, blocked; never a credential value) to cloud-api /push/notify, which sends the phone notification with Approve/Deny, Continue/Stop or Open actions",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/internal_routes.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/computers.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-extensions/native-host",
+      "target": "surface:desktop",
+      "kind": "Chrome native messaging (stdio JSON): extension sends needs_you {kind, url, domain, handoffId}, Desktop answers resume_task {handoffId, approved}; execute_task takes an optional botName",
+      "evidence": [
+        "allternit/surfaces/allternit-extensions/native-host/native-host.ts",
+        "allternit/surfaces/allternit-desktop/src/main/unified-main.ts"
+      ]
+    },
+    {
+      "source": "external:runtime-extension-crx",
+      "target": "allternit/surfaces/allternit-extensions/allternit-extension",
+      "kind": "HTTPS download: the extension CRX is hosted on runtime.allternit.com and installed from there by people on Chrome",
+      "evidence": [
+        "allternit/surfaces/allternit-extensions/allternit-extension/wxt.config.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/agent-card",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "authenticated HTTP through the relay proxy: GET /api/v1/session-start/options and POST /api/v1/session-start (Idempotency-Key); the route needs runtime:remote_start, advertised live by the computer",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit-ai/src/components/agent-card",
+      "kind": "GET /api/v1/runtime-presence adds remoteStart and kind (desktop, cloud, server); GET /api/v1/start-options returns each computer's folder and mode snapshot so an asleep computer still lists folders",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_presence.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "kind": "relayed session-start routes reach the computer's engine server; refused with remote_start_off when the safety switch is off",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
       ]
     }
   ]

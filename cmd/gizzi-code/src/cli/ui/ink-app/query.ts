@@ -1,5 +1,7 @@
 // @ts-nocheck
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
+import { Bus } from '@/shared/bus'
+import { TuiEvent } from './event'
 import { approveCliTool } from './services/api/cliBrain.js'
 import type { CliToolApproval } from '@/runtime/runtime-driver'
 import type {
@@ -457,6 +459,15 @@ async function* queryLoop(
       snipTokensFreed,
     )
     queryCheckpoint('query_autocompact_end')
+    if (compactionResult) {
+      void Bus.publish(TuiEvent.ToastShow, {
+        id: 'context',
+        kind: 'context',
+        message: 'Context compacted',
+        variant: 'success',
+        duration: 3000,
+      }).catch(() => {})
+    }
 
     if (compactionResult) {
       const {

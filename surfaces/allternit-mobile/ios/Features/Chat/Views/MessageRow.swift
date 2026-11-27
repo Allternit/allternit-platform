@@ -96,6 +96,17 @@ struct MessageRow: View {
                     toolStatusLine(toolStatus)
                 }
 
+                // load_skill: the skill's steps as a checklist under the turn.
+                ForEach(message.toolCalls) { call in
+                    if SkillResult.isLoadSkill(call.toolName), call.state == .done,
+                       let result = SkillResult.parse(call.output ?? ""), !result.steps.isEmpty {
+                        SkillChecklistCard(
+                            name: SkillNames.name(for: result.id), result: result,
+                            ticks: SkillResult.ticks(steps: result.steps, calls: message.toolCalls)
+                        )
+                    }
+                }
+
                 // media_generate: the generation's progress (pulse, preview or
                 // frame N of M) while it runs, the failure card if it fails.
                 ForEach(message.toolCalls) { call in
@@ -212,6 +223,16 @@ struct MessageRow: View {
                         toolName: call.toolName, metadata: call.metadata, output: call.output
                     ) {
                         SettingsChangeCardView(result: settingsResult, toolCallId: call.id, autoApply: message.isStreaming)
+                    }
+                }
+
+                // MCP 2027: Code Mode script rows and typed (structuredContent) results,
+                // read from the tool part's `state.metadata.mcpScript` / `.mcp`.
+                ForEach(message.toolCalls) { call in
+                    if let script = McpMetaReader.script(call.metadata) {
+                        McpScriptRowView(meta: script)
+                    } else if let mcp = McpMetaReader.tool(call.metadata), mcp.structured != nil {
+                        McpTypedResultView(meta: mcp)
                     }
                 }
 
@@ -427,7 +448,8 @@ struct MessageRow: View {
                 list.append(pending)
             }
         }
-        return list.filter { !asks.isResolved($0.id) }
+        // A bound thread's approvals show once, in BoundEngineApprovals.
+        return list.filter { !asks.isResolved($0.id) && !asks.isBound(sessionId) }
     }
 
     /// Permissions whose tool call isn't on this reply's rail get a card.

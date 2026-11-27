@@ -186,3 +186,7 @@ What they need on your machine: Node.js, Google Chrome or Chromium (set `CHROME`
 - [Configuration](/cli/configuration)
 - [Permission Profiles](/cli/permission-profiles)
 - [Headless Execution](/cli/headless-execution)
+
+## Server skills
+
+When a connected MCP server lists `skill://` resources, Gizzi Code turns each into a command named `/server:skill`. App skills read "(from the tips app)", your own read "(your skill)", and org skills read "(org skill)". If two sources share a name, the second gets a source prefix such as `app-tips:tips`. When the agent loads one through the app proxy, the row reads "Loaded skill · name · from source". See [Skills from your servers](/guides/skills-from-your-servers).

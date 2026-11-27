@@ -15,7 +15,7 @@ struct ArtifactCreateTileArt: View {
 
     var body: some View {
         Canvas { context, size in
-            let scale = 0.582
+            let scale = size.width / Self.stage.width
             context.scaleBy(x: scale, y: scale)
             let k = kind.tileColor
             // No plate and no dots: the tile's neutral fill shows through.
@@ -251,5 +251,27 @@ extension ArtifactStudioKind {
         case .image: return (Color(hex: "#FBBF24"), Color(hex: "#C2410C"), "I")
         case .video: return (Color(hex: "#FB7185"), Color(hex: "#9F1239"), "V")
         }
+    }
+}
+
+/// A library tile (allternit-ai ArtifactMotionTile): the kind's scene on the
+/// neutral fill, drifting gently on a loop. Holds still under Reduce Motion.
+struct ArtifactMotionTile: View {
+    let kind: ArtifactStudioKind
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lifted = false
+
+    var body: some View {
+        ArtifactCreateTileArt(kind: kind)
+            .aspectRatio(220.0 / 154.0, contentMode: .fit)
+            .offset(y: lifted ? -3 : 3)
+            .frame(maxWidth: .infinity)
+            .background(Color("FillNeutral"))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { lifted = true }
+            }
+            .accessibilityHidden(true)
     }
 }

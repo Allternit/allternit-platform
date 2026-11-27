@@ -393,6 +393,8 @@ export type ToolResult<T> = {
   mcpMeta?: {
     _meta?: Record<string, unknown>
     structuredContent?: Record<string, unknown>
+    /** Code Mode (`mcp_script`) display data: script, call log, result. Never sent to the model. */
+    mcpScript?: Record<string, unknown>
   }
 }
 
@@ -513,7 +515,12 @@ export type Tool<
    * Present on all MCP tools regardless of whether `name` is prefixed (mcp__server__tool)
    * or unprefixed (GIZZI_AGENT_SDK_MCP_NO_PREFIX mode).
    */
-  mcpInfo?: { serverName: string; toolName: string }
+  mcpInfo?: {
+    serverName: string
+    toolName: string
+    /** App-chat tools reached through the user proxy: `_meta["allternit/connector"]`. */
+    connector?: { id?: string; name?: string }
+  }
   readonly name: string
   /**
    * Maximum size in characters for tool result before it gets persisted to disk.
@@ -637,6 +644,8 @@ export type Tool<
       /** Original tool_use input, when available. Useful for compact result
        * summaries that reference what was requested (e.g. "Sent to #foo"). */
       input?: unknown
+      /** Tool-part metadata (`mcp` typed result, `mcpScript` run record). */
+      metadata?: Record<string, any>
     },
   ): React.ReactNode
   /**

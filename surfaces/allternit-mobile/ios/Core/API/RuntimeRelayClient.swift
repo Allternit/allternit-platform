@@ -332,6 +332,9 @@ final class RuntimeRelayClient: @unchecked Sendable {
         // D16: a person's own act (plan approval); cloud-api forwards it.
         "x-allternit-human-proof",
         "x-allternit-device-id", "x-allternit-device-name", "x-allternit-device-platform",
+        // Start anywhere: a retried session-start returns the first start
+        // (cloud-api forwards it, runtime_relay.rs `filtered_headers`).
+        "idempotency-key",
     ]
 
     private func envelopeRequest(for request: URLRequest, runtimeId: String) async throws -> URLRequest {

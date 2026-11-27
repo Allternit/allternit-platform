@@ -262,6 +262,10 @@ pub const ERASE: &[(&str, &str)] = &[
     ("team_members_seen", USER),
     ("floor_shares", USER),
     ("thread_shares", USER),
+    // Review & sign (migration 167): the owner's asks to sign their own
+    // documents. The documents live in user_files and go with it; the signing
+    // record (signature image, name, address, IP) is contact data, not finance.
+    ("sign_requests", USER),
     ("user_files", USER),
     ("user_credits", USER),
     ("user_cost_budgets", USER),
@@ -273,6 +277,9 @@ pub const ERASE: &[(&str, &str)] = &[
     ("user_relay_usage", USER),
     ("user_runtime_quotas", USER),
     ("user_open_lane", USER),
+    // Allternit Open plan allowance meter (migration 169); the open debits it
+    // counted stay in credit_transactions and inference_usage (RETAIN, finance).
+    ("user_open_allowance", USER),
     ("open_lane_blocks", USER),
     // Apps + MCP 2026 (migrations 161, 162, 164). share_link_usage* cascade
     // from share_links; vendor apps an org owns have no owner_user_id.

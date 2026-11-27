@@ -211,6 +211,19 @@ enum ToolDescriber {
         let command = s("command", "cmd", "script")
         let query = s("query", "q", "search", "pattern")
 
+        if SkillResult.isLoadSkill(call.toolName) {
+            let parsed = SkillResult.parse(call.output ?? "")
+            let id = parsed?.id ?? s("id")
+            if call.state == .running { return ToolDescription(verb: "Loading skill \u{00B7} \(id)", detail: "", symbol: "sparkles") }
+            if call.state == .failed {
+                let from = parsed?.from ?? ""
+                let code = SkillResult.code(in: call.error) ?? SkillResult.code(in: call.output) ?? ""
+                return ToolDescription(verb: "Couldn't load skill", detail: SkillResult.reason(code: code, from: from.isEmpty ? "the server" : from), symbol: "sparkles")
+            }
+            let from = parsed?.from ?? ""
+            return ToolDescription(verb: "Loaded skill \u{00B7} \(SkillNames.name(for: id))", detail: from.isEmpty ? "" : "from \(from)", symbol: "sparkles")
+        }
+
         if isAgentTool(call.toolName) {
             let subagent = s("subagent_type", "agent", "subagent", "agent_role", "role", "agent_type")
             let detail = s("description").isEmpty ? String(s("prompt", "message", "task").prefix(80)) : s("description")

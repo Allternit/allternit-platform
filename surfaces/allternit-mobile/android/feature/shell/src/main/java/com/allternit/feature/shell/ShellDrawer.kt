@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.gen.AgentSession
+import kotlinx.coroutines.launch
 import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitRadii
 import com.allternit.core.design.GlassCircleButton
@@ -440,55 +441,28 @@ private fun EmptyStateDrawer(title: String, message: String, newLabel: String, o
 @Composable
 internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    val view = LocalView.current
-    val time = relativeTime(session.timestampMillis)
-    val source = remember { MutableInteractionSource() }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(AllternitRadii.MD))
-            .testTag("recentRow${session.id}")
-            .rowPress(source)
-            .clickable(interactionSource = source, indication = null, role = Role.Button) {
-                Haptics.perform(view, Haptics.Kind.Tap)
-                onClick()
+    com.allternit.core.design.QuietSessionRow(
+        title = session.title,
+        time = relativeTime(session.timestampMillis),
+        testTag = "recentRow${session.id}",
+        onClick = onClick,
+        leading = { com.allternit.core.design.QuietSessionGlyph(if (session.isTerminal || session.originSurface == "code") sessionIcon(session) else com.allternit.core.design.R.drawable.ph_chat_circle) },
+        status = {
+            if (session.isTerminal) {
+                Text(
+                    text = "TERMINAL",
+                    color = c.textSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(c.borderStrong.copy(alpha = c.borderStrong.alpha * 0.5f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
             }
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            painter = painterResource(com.allternit.core.design.R.drawable.ph_chat_circle),
-            contentDescription = null,
-            tint = c.textSecondary,
-            modifier = Modifier.size(18.dp),
-        )
-        Text(
-            text = session.title,
-            color = c.textPrimary,
-            fontSize = 16.5.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (session.isTerminal) {
-            Text(
-                text = "TERMINAL",
-                color = c.textSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(c.borderStrong.copy(alpha = c.borderStrong.alpha * 0.5f))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
-            )
-        }
-        if (time.isNotEmpty()) Text(time, color = c.textTertiary, fontSize = 13.sp)
-    }
+        },
+    )
 }
-
 
 /**
  * `phone-rail-foot` (iOS footer): the account avatar in its ring (Settings), the Phones button
@@ -524,13 +498,58 @@ private fun DrawerFooter(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        GlassCircleButton(
-            onClick = onSettings,
-            contentDescription = "$name. Settings",
-            modifier = Modifier.testTag("drawerSettings"),
-            size = 44.dp,
-        ) {
-            AccountAvatar(account, size = 30)
+        // The account row: "Name · Status" with a dot; the menu holds the 4 statuses and "Account settings" (iOS UserStatusAccountMenu).
+        var statusMenu by remember { mutableStateOf(false) }
+        var status by remember { mutableStateOf(com.allternit.core.api.UserStatus.Online) }
+        val statusClient = remember { com.allternit.core.api.UserStatusClient(ShellApi.okHttp, com.allternit.core.api.ApiConfig().cloudBaseUrl) }
+        val statusScope = androidx.compose.runtime.rememberCoroutineScope()
+        androidx.compose.runtime.LaunchedEffect(account?.userId) {
+            if (account != null) statusClient.get()?.let { status = it }
+        }
+        Box {
+            GlassCircleButton(
+                onClick = { statusMenu = true },
+                contentDescription = "$name, ${status.title}",
+                modifier = Modifier.testTag("drawerSettings"),
+                size = 44.dp,
+            ) {
+                AccountAvatar(account, size = 30)
+            }
+            Box(
+                Modifier.align(Alignment.BottomEnd).padding(4.dp).size(10.dp).clip(CircleShape)
+                    .background(statusColor(status))
+                    .border(1.5.dp, c.bgPrimary, CircleShape),
+            )
+            DropdownMenu(expanded = statusMenu, onDismissRequest = { statusMenu = false }) {
+                androidx.compose.material3.DropdownMenuItem(
+                    enabled = false,
+                    text = { Text("$name · ${status.title}", color = c.textSecondary, fontSize = 13.sp) },
+                    onClick = {},
+                )
+                com.allternit.core.api.UserStatus.entries.forEach { item ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(item.title, color = c.textPrimary, fontSize = 15.sp)
+                                if (item.subline.isNotEmpty()) Text(item.subline, color = c.textSecondary, fontSize = 12.sp)
+                            }
+                        },
+                        leadingIcon = { Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor(item))) },
+                        trailingIcon = if (status == item) ({ Icon(painterResource(DesignR.drawable.ph_check), contentDescription = "Current", tint = c.textPrimary, modifier = Modifier.size(16.dp)) }) else null,
+                        onClick = {
+                            statusMenu = false
+                            val previous = status
+                            status = item
+                            statusScope.launch { if (!statusClient.set(item)) status = previous }
+                        },
+                    )
+                }
+                androidx.compose.material3.HorizontalDivider()
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Account settings", color = c.textPrimary, fontSize = 15.sp) },
+                    onClick = { statusMenu = false; onSettings() },
+                )
+            }
         }
         Box(
             modifier = Modifier
@@ -643,6 +662,14 @@ private fun DrawerFooter(
 
 /** A press-and-hold way to start from the New pill (iOS HistorySidebarView NewOption). */
 internal data class NewOption(val id: String, val label: String, val icon: Int, val action: () -> Unit)
+
+/** Presence dot colours, as iOS UserStatusDot: green, blue, red, gray. */
+private fun statusColor(s: com.allternit.core.api.UserStatus): Color = when (s) {
+    com.allternit.core.api.UserStatus.Online -> Color(0xFF16A34A)
+    com.allternit.core.api.UserStatus.Autopilot -> Color(0xFF2563EB)
+    com.allternit.core.api.UserStatus.Dnd -> Color(0xFFDC2626)
+    com.allternit.core.api.UserStatus.Away -> Color(0xFF9CA3AF)
+}
 
 /** The account initial in a neutral circle (iOS avatarInitial on BorderStrong). */
 @Composable

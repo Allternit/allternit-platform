@@ -34,6 +34,7 @@ import { BROWSER_TASKS_TOOL_NAME } from '../tools/BrowserTasksTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
+import { REQUEST_SIGNATURE_TOOL_NAME } from '../tools/RequestSignatureTool/prompt.js'
 import { WAIT_AGENTS_TOOL_NAME } from '../tools/WaitAgentsTool/prompt.js'
 import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
 import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
@@ -109,6 +110,8 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   SEND_USER_MESSAGE_TOOL_NAME,
   // A question that doesn't block: a worker's ask lands in the main session's thread.
   ASK_USER_LATER_TOOL_NAME,
+  // A signature request returns at once; the user signs on Desktop or phone.
+  REQUEST_SIGNATURE_TOOL_NAME,
   // history_recall stays main-thread: it reads the main session's transcript.
   GET_CONTEXT_REMAINING_TOOL_NAME,
   // Workers can find and load the user's connected apps. connector_suggest and

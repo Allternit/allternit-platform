@@ -29,6 +29,9 @@ object FeatureFlags {
     const val MCP_TASKS = "mcp.tasks"
     const val APPS_SHELF = "apps.shelf"
 
+    /** Server skills (`/` list, Loaded skill row, Customize switches). ON by default, like web. */
+    const val MCP_SKILLS = "mcp.skills"
+
     /** The island bar ("Do with an app", allternit://bar). OFF by default. */
     const val BAR_ISLAND = "bar.island"
 

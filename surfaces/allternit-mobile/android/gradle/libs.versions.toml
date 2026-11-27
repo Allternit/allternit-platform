@@ -16,6 +16,8 @@ composeBom = "2026.06.01"
 datastore = "1.1.7"
 # OkHttp 5 (okhttp + okhttp-sse move together). Clerk resolves 5.4.0 for every module.
 okhttp = "5.4.0"
+# PdfBox for Android (Apache-2.0): Review & sign keeps the PDF's real text.
+pdfbox-android = "2.0.27.0"
 kotlinxSerialization = "1.12.0"
 coroutines = "1.11.0"
 junit = "4.13.2"
@@ -60,6 +62,7 @@ compose-foundation = { group = "androidx.compose.foundation", name = "foundation
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfbox-android" }
 okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }

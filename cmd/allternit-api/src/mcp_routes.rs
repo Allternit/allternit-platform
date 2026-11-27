@@ -606,6 +606,7 @@ pub(crate) async fn delete_connector_with(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
     info!(connector_id = %id, subscriptions_ended = ended, "MCP connector deleted");
+    crate::mcp_skills::invalidate(user, id);
     Ok(true)
 }
 
@@ -629,6 +630,7 @@ async fn create_mcp_connector(
     let id = uuid::Uuid::new_v4().to_string();
     let id2 = id.clone();
     let user_id = user.user_id;
+    crate::mcp_skills::invalidate(&user_id, &id);
     let sealed_client_secret = body
         .oauth_client_secret
         .as_deref()

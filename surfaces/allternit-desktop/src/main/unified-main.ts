@@ -7,10 +7,11 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { setLinuxAutostart, isLinuxAutostartEnabled } from './linux-autostart.js';
+import { setLinuxAutostart, isLinuxAutostartEnabled, launchedHidden } from './linux-autostart.js';
+import { macLaunchedAtLogin } from './platform-macos.js';
 import { noteShortcutResult } from './shortcut-notice.js';
 import { warnIfNoKeyring } from './keyring-notice.js';
-import { app, shell, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, shell, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, powerMonitor, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -42,6 +43,7 @@ import { hudWindowingView, linuxOzoneBackend, resolveHudWindowing } from './hud-
 import { INACTIVE_GAME_OVERLAY, startHudGameOverlayWatch } from './hud-game-overlay.js';
 import { enumerateWindowsFrontToBack, enumerationFailed } from './window-below.js';
 import { installAgentCursorWindow } from './agent-cursor-window.js';
+import { installAgentAttention } from './agent-attention-ipc.js';
 import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { isModelLink, modelLinkTarget } from './model-link.js';
@@ -875,6 +877,14 @@ interface StoreSchema {
   coworkDeviceId?: string;
   /** Settings → Cowork "Open links in the built-in browser", mirrored from the API prefs. */
   openLinksInApp?: boolean;
+  /** Settings "Allow new sessions from my other devices" (Start anywhere D6). Unset = on. */
+  remoteStartEnabled?: boolean;
+  /**
+   * Quit keeps Allternit running in the background, reachable from the
+   * user's other devices (Start anywhere D5). Unset = not asked yet: the
+   * first quit asks once ("Stay reachable" is the default answer).
+   */
+  backgroundOnQuit?: boolean;
   /** Whether the startup onboarding wizard (welcome → sign-in) has been completed or skipped */
   startupWizardCompleted: boolean;
   permissions: {
@@ -990,6 +1000,29 @@ const agentCursorWindow = installAgentCursorWindow({
   preload: join(__dirname, '../preload/index.js'),
 });
 
+// Status pill on the agent's Safari window, Safari profile card, and the
+// native "needs you" notices (also fed by the Chrome extension bridge).
+const agentAttention = installAgentAttention({
+  cursorWindow: () => agentCursorWindow.window(),
+  openRoute: (route) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    if (!route) return;
+    try { void mainWindow.loadURL(new URL(route, activePlatformUrl).toString()); }
+    catch (error) { log.warn('[AgentAttention] bad route', error); }
+  },
+  safariWindows: async () => {
+    const list = await enumerateWindowsFrontToBack(process.pid, false);
+    if (enumerationFailed(list)) return [];
+    return list.filter((w) => /safari/i.test(w.app)).map((w) => w.bounds);
+  },
+  sendToExtension: (message) => sendToExtension(message),
+  broadcast: (channel, payload) => broadcastToMainWindows(channel, payload),
+  isAppSender: (event) => BrowserWindow.fromWebContents(event.sender) === mainWindow,
+});
+
 // Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
 let petHookServer: PetHookServer | null = null;
 // Editors block a close while they hold unsaved work. Electron would cancel it
@@ -1025,6 +1058,143 @@ app.whenReady().then(async () => {
 });
 app.on('will-quit', () => { void petHookServer?.close(); });
 
+// ─── Background mode on quit (Start anywhere D5) ───────────────────────────
+// On a cloud-paired computer with Remote start on, Quit (Cmd+Q, the Dock,
+// the app menu) closes every window, hides the Dock icon and keeps the main
+// process, the local backends (gizzi serve, allternit-api, pane engine) and
+// the cloud relay running, so the user's phone and other computers can still
+// start and drive sessions here. The tray's "Quit and go offline" really
+// quits. Not paired, switch off, or "Quit completely" chosen → normal quit.
+
+/** Set by every quit that must really end the app (updates, restarts, startup failures, OS shutdown, "Quit and go offline"). */
+let quitCompletely = false;
+/** True while running with no app window: after a background quit, or a hidden login start. */
+let backgroundMode = false;
+let backgroundAskOpen = false;
+/** Non-main windows (pet, HUD, …) that were visible when the app went to the background; shown again on return. */
+let hiddenForBackground: BrowserWindow[] = [];
+
+/** Really quit: no background mode, the backends and the relay stop. */
+function quitCompletelyNow(): void {
+  quitCompletely = true;
+  app.quit();
+}
+
+/** Remote start switch (D6) and pairing: the two things background mode keeps reachable. */
+function remoteStartReachable(): boolean {
+  return authManagerReady && authManager.hasSession() && (store.get('remoteStartEnabled') ?? true);
+}
+
+/**
+ * Quit may go to the background: paired with the cloud, Remote start on, a
+ * tray icon to come back from, and a normal user computer (headless and
+ * provisioned cloud computers are services; their quits are real).
+ */
+function backgroundModeAvailable(): boolean {
+  return !quitCompletely && !HEADLESS && !isProvisionedMode() && app.isReady() && appWindowOpened
+    && tray !== null && remoteStartReachable() && store.get('backgroundOnQuit') !== false;
+}
+
+/** Hidden login start: windows made while in background mode stay hidden until the user opens the app. */
+function keepHiddenWhileInBackground<T extends BrowserWindow>(win: T): T {
+  if (!backgroundMode) return win;
+  win.hide();
+  const show = win.show.bind(win);
+  const showInactive = win.showInactive.bind(win);
+  const focus = win.focus.bind(win);
+  win.show = () => { if (!backgroundMode) show(); };
+  win.showInactive = () => { if (!backgroundMode) showInactive(); };
+  win.focus = () => { if (!backgroundMode) focus(); };
+  return win;
+}
+
+function enterBackgroundMode(): void {
+  if (backgroundMode) return;
+  backgroundMode = true;
+  log.info('[Background] Quit: windows closed; backends and the cloud relay keep running (reachable from other devices)');
+  const mainWindows = new Set<BrowserWindow>(listMainWindows().map((entry) => entry.window));
+  hiddenForBackground = [];
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    if (mainWindows.has(win)) {
+      // Closed, not hidden: the renderer's memory goes back while idle; "Open Allternit" makes a new one.
+      win.close();
+    } else if (win.isVisible()) {
+      hiddenForBackground.push(win);
+      win.hide();
+    }
+  }
+  if (isMac) app.dock?.hide();
+  void updateTrayMenu();
+}
+
+/** Back from background mode (tray "Open Allternit", a notification, a relaunch). The caller shows the main window. */
+function leaveBackgroundMode(): void {
+  if (!backgroundMode) return;
+  backgroundMode = false;
+  log.info('[Background] Opening Allternit again');
+  if (isMac && !persistedState.get('prefs').menuBarMode) void app.dock?.show();
+  for (const win of hiddenForBackground) {
+    if (!win.isDestroyed()) win.showInactive();
+  }
+  hiddenForBackground = [];
+  desktopCompanion.start(); // the pet, if it is on and was never made (hidden login start)
+  void updateTrayMenu();
+}
+
+/** Linux autostart Exec carries `--hidden` while background mode is on (macOS reads wasOpenedAtLogin). */
+function refreshLinuxAutostart(enabled: boolean): void {
+  if (process.platform !== 'linux') return;
+  try {
+    setLinuxAutostart(enabled, undefined, undefined, enabled && store.get('backgroundOnQuit') === true);
+  } catch (error) {
+    log.warn('[Background] Could not write the Linux autostart entry:', error);
+  }
+}
+
+/** A quit that may go to the background: ask once, then go to the background or quit completely. */
+async function quitToBackground(): Promise<void> {
+  if (backgroundAskOpen) return;
+  let stay = store.get('backgroundOnQuit');
+  if (stay === undefined) {
+    backgroundAskOpen = true;
+    try {
+      const where = isMac ? 'menu bar' : 'system tray';
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        message: 'Stay reachable from your other devices?',
+        detail: `Allternit keeps running in the ${where} after you quit, so your phone and other computers can start and continue sessions on this computer. To stop it completely, choose Quit and go offline from the Allternit icon in the ${where}.`,
+        buttons: ['Stay reachable', 'Quit completely'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      stay = response === 0;
+      store.set('backgroundOnQuit', stay);
+      log.info(`[Background] First quit: ${stay ? 'stay reachable' : 'quit completely'} (remembered)`);
+      if (process.platform === 'linux' && persistedState.get('prefs').startupOnLogin) refreshLinuxAutostart(true);
+    } finally {
+      backgroundAskOpen = false;
+    }
+  }
+  if (stay && backgroundModeAvailable()) enterBackgroundMode();
+  else quitCompletelyNow();
+}
+
+// OS shutdown or logout, and a service manager's stop, must never be held by background mode.
+// (powerMonitor is usable only once the app is ready.)
+void app.whenReady().then(() => {
+  powerMonitor.on('shutdown', () => {
+    quitCompletely = true;
+  });
+});
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    log.info(`[Main] ${signal}: quitting completely`);
+    quitCompletelyNow();
+  });
+}
+
 /**
  * Bring the main window up, recreating it if it was closed. With the desktop
  * companion (pet) window always open, "no windows" is never true after the
@@ -1032,6 +1202,7 @@ app.on('will-quit', () => { void petHookServer?.close(); });
  * back from the Dock or tray.
  */
 function showOrReopenMainWindow(): void {
+  leaveBackgroundMode();
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -1132,7 +1303,8 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
   // finished loading (cold-start file associations, app-menu clicks).
   window.webContents.on('did-finish-load', () => {
     flushPendingOfficeDeliveries();
-    desktopCompanion.start();
+    // A hidden login start shows the pet when the user opens the app (leaveBackgroundMode).
+    if (!backgroundMode) desktopCompanion.start();
     agentCursorWindow.start();
   });
 
@@ -1243,6 +1415,7 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
   });
   
   keepHiddenIfHeadless(window);
+  keepHiddenWhileInBackground(window);
   // Ensure window is visible and focused
   window.once('ready-to-show', () => {
     log.info('[Main] ready-to-show event fired');
@@ -1466,7 +1639,7 @@ async function initializeBundledMode(): Promise<void> {
   const selfHosted = isSelfHostedBuild();
   const showStartupWizard = !selfHosted && !HEADLESS && (!store.get('startupWizardCompleted') || !authManager.hasSession());
   log.info(`[Main] Startup window: ${showStartupWizard ? 'onboarding wizard' : 'loading only'}${selfHosted ? ' (self-hosted)' : ''}`);
-  splashWindow = keepHiddenIfHeadless(createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' }));
+  splashWindow = keepHiddenWhileInBackground(keepHiddenIfHeadless(createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' })));
   appWindowOpened = true;
   // Device pairing is independent of local service readiness. Start waiting
   // immediately so the user can approve in parallel while the runtime boots.
@@ -2055,7 +2228,7 @@ async function initializeBundledMode(): Promise<void> {
       `Failed to start Allternit Backend:\n${(error as Error).message}\n\nPlease try again or contact support.`
     );
     
-    app.quit();
+    quitCompletelyNow();
   }
 }
 
@@ -2123,7 +2296,7 @@ async function initializeRemoteMode(remoteUrl: string): Promise<void> {
       store.set('backend.mode', 'bundled');
       await initializeBundledMode();
     } else {
-      app.quit();
+      quitCompletelyNow();
     }
   }
 }
@@ -2197,6 +2370,8 @@ function startExtensionBridge(): void {
           const message = JSON.parse(line) as Record<string, unknown>;
           // Forward to renderer
           broadcastToMainWindows('extension:message', message);
+          // A paused task: same in-app "needs you" state plus a notification.
+          agentAttention.handleExtensionMessage(message);
           // Resolve any pending ACU relay request waiting on this id
           const id = message['id'] as string | undefined;
           if (id && pendingRelayResponses.has(id)) {
@@ -2487,7 +2662,8 @@ function createTray(): void {
   tray.on('click', () => {
     const prefs = persistedState.get('prefs');
     if (prefs.menuBarMode) {
-      if (mainWindow?.isVisible()) mainWindow.hide();
+      // The main window is closed (not hidden) in background mode; a destroyed window throws on isVisible().
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide();
       else showOrReopenMainWindow();
       return;
     }
@@ -2646,9 +2822,19 @@ async function updateTrayMenu(): Promise<void> {
       ]
     : [];
 
+  // Start anywhere D5: while Quit keeps the app reachable, the tray says so and offers the real quit.
+  const stayReachable = backgroundModeAvailable();
+  const reachableSection: Electron.MenuItemConstructorOptions[] = stayReachable
+    ? [
+        { label: authManager.isRelayOpen() ? 'Reachable from your devices' : 'Connecting to your devices…', enabled: false },
+        { type: 'separator' },
+      ]
+    : [];
+
   const template: Electron.MenuItemConstructorOptions[] = [
     { label: 'Allternit Desktop', enabled: false },
     { type: 'separator' },
+    ...reachableSection,
     ...islandSection,
     ...meetingsSection,
     ...systemSection,
@@ -2682,7 +2868,9 @@ async function updateTrayMenu(): Promise<void> {
       enabled: false,
     })),
     { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
+    stayReachable
+      ? { label: 'Quit and go offline', click: () => quitCompletelyNow() }
+      : { label: 'Quit', click: () => app.quit() },
   ];
 
   trayMenu = Menu.buildFromTemplate(template);
@@ -2936,11 +3124,8 @@ app.on('second-instance', (_event, argv) => {
   // File-association launch (Windows/Linux pass the file in argv).
   const officeFile = extractOfficeFileArg(argv);
   if (officeFile) openOfficeWithFile(officeFile);
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  // Opening the app again while it runs in the background brings it back.
+  if (backgroundMode || (mainWindow && !mainWindow.isDestroyed())) showOrReopenMainWindow();
 });
 
 // macOS file association ("Open with Allternit").
@@ -3018,7 +3203,7 @@ async function passKeychainGate(): Promise<boolean> {
           'Your sign-in and saved keys are locked in the Keychain. Click Try again, then click Always Allow when macOS asks. Nothing has been changed.',
       });
       if (response !== 0) {
-        app.quit();
+        quitCompletelyNow();
         return false;
       }
     }
@@ -3256,7 +3441,7 @@ app.whenReady().then(async () => {
     app.setLoginItemSettings({ openAtLogin: prefs.startupOnLogin });
     if (prefs.menuBarMode) app.dock?.hide();
   } else if (process.platform === 'linux' && prefs.startupOnLogin) {
-    setLinuxAutostart(true); // refresh Exec after an update; never delete on launch
+    refreshLinuxAutostart(true); // refresh Exec after an update; never delete on launch
   }
   void warnIfNoKeyring(log);
 
@@ -3277,6 +3462,17 @@ app.whenReady().then(async () => {
     workerBus.register('shell-path', new URL('shell-path-worker.js', workerBase));
   }
 
+  // Start anywhere D5: a login launch with background mode on opens no window
+  // (macOS Login Items, Linux autostart `--hidden`); the tray brings it back.
+  if (
+    store.get('backgroundOnQuit') === true && store.get('startupWizardCompleted') && remoteStartReachable()
+    && !HEADLESS && !isProvisionedMode()
+    && (isMac ? macLaunchedAtLogin() : process.platform === 'linux' && launchedHidden())
+  ) {
+    log.info('[Background] Login launch: starting hidden, reachable from other devices');
+    backgroundMode = true;
+    if (isMac) app.dock?.hide();
+  }
   initializeAppOnce();
   installAppMenu();
   onMainWindowsChanged(installAppMenu);
@@ -3320,6 +3516,11 @@ app.whenReady().then(async () => {
   void updateTrayMenu();
 
   app.on('activate', () => {
+    // Background mode: the backends already run; only the window comes back (never a second initializeApp).
+    if (backgroundMode) {
+      showOrReopenMainWindow();
+      return;
+    }
     if (BrowserWindow.getAllWindows().length === 0) {
       initializeAppOnce();
     } else {
@@ -3347,11 +3548,11 @@ app.whenReady().then(async () => {
 }).catch((error) => {
   log.error('[Main] Startup failed:', error);
   if (error instanceof Error && error.message === 'Authentication cancelled') {
-    app.quit();
+    quitCompletelyNow();
     return;
   }
   dialog.showErrorBox('Allternit Desktop Startup Error', error instanceof Error ? error.message : 'Unknown startup failure');
-  app.quit();
+  quitCompletelyNow();
 });
 
 /**
@@ -3363,7 +3564,7 @@ app.whenReady().then(async () => {
 let appWindowOpened = false;
 
 app.on('window-all-closed', () => {
-  if (isMac || !appWindowOpened) return;
+  if (isMac || !appWindowOpened || backgroundMode) return;
   // Keep running in the tray (Windows/Linux, opt-in): live links and app
   // helpers keep serving. Only with a tray icon to reopen from, else the app
   // would be running with no way back in. Quit from the tray still stops
@@ -3448,6 +3649,83 @@ authManager.setRelayHostHandler((method, path, body) => {
   const command = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(path);
   return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
 });
+
+/**
+ * allternit-api's own copy of the switch (platform #3188): it refuses relayed
+ * starts while `remote_start_off_file()` exists. That is Rust
+ * `dirs::data_dir()/allternit/remote-start-off`, the OS data dir, not the
+ * ALLTERNIT_DATA_DIR Desktop passes (macOS ~/Library/Application Support,
+ * Linux $XDG_DATA_HOME or ~/.local/share, Windows %APPDATA%).
+ */
+function apiRemoteStartOffMarker(): string {
+  const home = os.homedir();
+  let base: string;
+  if (process.platform === 'darwin') base = join(home, 'Library', 'Application Support');
+  else if (process.platform === 'win32') base = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+  else {
+    const xdg = process.env.XDG_DATA_HOME;
+    base = xdg && xdg.startsWith('/') ? xdg : join(home, '.local', 'share');
+  }
+  return join(base, 'allternit', 'remote-start-off');
+}
+
+/** Keep allternit-api's marker in step with the pref: present when off, absent when on. */
+function syncApiRemoteStartMarker(enabled: boolean): void {
+  const marker = apiRemoteStartOffMarker();
+  try {
+    if (enabled) {
+      fs.rmSync(marker, { force: true });
+    } else {
+      fs.mkdirSync(dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, 'Remote start is off in Allternit Desktop Settings.\n');
+    }
+  } catch (error) {
+    log.warn('[RemoteStart] Could not update allternit-api marker', marker, error);
+  }
+}
+
+// Start anywhere (D6): the switch is read before authManager.initialize()
+// opens the relay, so the first authenticate already carries it.
+authManager.setRemoteStartEnabled(store.get('remoteStartEnabled') ?? true);
+syncApiRemoteStartMarker(store.get('remoteStartEnabled') ?? true);
+// Held until clicked or closed so the click handler is not garbage collected.
+const remoteStartNotices = new Set<Notification>();
+authManager.setRemoteStartListener(({ title, body }) => {
+  if (!Notification.isSupported()) {
+    log.info(`[RemoteStart] ${title}: ${body}`);
+    return;
+  }
+  const notice = new Notification({ title, body });
+  remoteStartNotices.add(notice);
+  notice.on('click', () => {
+    remoteStartNotices.delete(notice);
+    showOrReopenMainWindow();
+  });
+  notice.on('close', () => remoteStartNotices.delete(notice));
+  notice.show();
+});
+
+ipcMain.handle('remote-start:get', () => store.get('remoteStartEnabled') ?? true);
+
+handleGuarded('remote-start:set', (_event, enabled: unknown) => {
+  const value = enabled === true;
+  store.set('remoteStartEnabled', value);
+  authManager.setRemoteStartEnabled(value);
+  syncApiRemoteStartMarker(value);
+  broadcastToMainWindows('remote-start:changed', value);
+  return value;
+});
+
+// Settings "Stay reachable after you quit". Unset (never asked) reads as on, like quitToBackground().
+ipcMain.handle('background-on-quit:get', () => store.get('backgroundOnQuit') !== false);
+
+handleGuarded('background-on-quit:set', (_event, enabled: unknown) => {
+  const value = enabled === true;
+  store.set('backgroundOnQuit', value);
+  if (process.platform === 'linux' && persistedState.get('prefs').startupOnLogin) refreshLinuxAutostart(true);
+  broadcastToMainWindows('background-on-quit:changed', value);
+  return value;
+});
 featureFlagManager.onChange((key, value) => {
   if (key === 'share.live' && value !== true) void shareManager.disable();
 });
@@ -3500,6 +3778,12 @@ app.on('before-quit', (event) => {
     setImmediate(() => app.exit(0));
     return;
   }
+  // Start anywhere D5: a user quit on a reachable computer goes to the background instead.
+  if (backgroundModeAvailable()) {
+    event.preventDefault();
+    if (!backgroundMode) void quitToBackground();
+    return;
+  }
   event.preventDefault();
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
   void runQuitCleanup().then(() => app.quit());
@@ -3515,6 +3799,8 @@ async function shutdownAllServices(): Promise<void> {
   // open) no backend or job exists to hand off, and the Clerk wait would hold
   // the quit for the full deadline.
   if (authManagerReady && !keychainGateOpen) await handoffInFlightToCloud();
+  // Real quit (background mode never reaches here): gizzi's relay connector may take over (step 10).
+  authManager.releaseRelayLock();
   gizziManager.stop({ reapExternal: true });
   try {
     gizziDaemonManager.stopSync();
@@ -5219,7 +5505,7 @@ handleGuarded('auth:sign-out', async () => {
     log.warn('[Auth] Could not clear mesh node state on sign-out:', error);
   });
   app.relaunch();
-  app.quit();
+  quitCompletelyNow();
 });
 
 // ============================================================================
@@ -5431,7 +5717,7 @@ handleGuarded('connection:set-backend', async (_event, input: { mode: 'bundled' 
   if (restart) {
     setTimeout(() => {
       app.relaunch();
-      app.quit();
+      quitCompletelyNow();
     }, 300);
   }
 });
@@ -5723,7 +6009,7 @@ ipcMain.handle('startup:getOnLogin', () => (process.platform === 'linux' ? isLin
 handleGuarded('startup:setOnLogin', (_event, enabled: boolean) => {
   persistedState.patch('prefs', { startupOnLogin: enabled });
   if (isMac) app.setLoginItemSettings({ openAtLogin: enabled });
-  else if (process.platform === 'linux') setLinuxAutostart(enabled);
+  else if (process.platform === 'linux') setLinuxAutostart(enabled, undefined, undefined, enabled && store.get('backgroundOnQuit') === true);
   return true;
 });
 

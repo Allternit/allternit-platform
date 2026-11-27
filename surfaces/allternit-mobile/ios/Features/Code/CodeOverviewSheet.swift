@@ -379,7 +379,7 @@ struct CodeSessionsOverview: View {
 
     /// A card for Grid and Deck: title, ⋯ menu, the last exchange, its age.
     private func sessionCard(_ session: AgentSession, tall: Bool) -> some View {
-        let title = session.name ?? "Untitled Session"
+        let title = session.displayTitle
         let s = status(session)
         return Button(action: { onOpenSession(session) }) {
             VStack(alignment: .leading, spacing: 6) {
@@ -582,7 +582,7 @@ struct CodeSessionStatusRow: View {
     let status: CodeSessionFilterStatus
     var unread = false
 
-    private var title: String { session.name ?? "Untitled Session" }
+    private var title: String { session.displayTitle }
     private var meta: String {
         [status.label, CodeSessionDates.age(session)].filter { !$0.isEmpty }.joined(separator: " · ")
     }

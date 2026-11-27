@@ -313,7 +313,7 @@ function findMcpServerConnection(
  * Returns the server type (stdio, sse, http, ws, sdk, etc.) for MCP tools,
  * or undefined for built-in tools.
  */
-function getMcpServerType(
+export function getMcpServerType(
   toolName: string,
   mcpClients: MCPServerConnection[],
 ): McpServerType {
@@ -331,7 +331,7 @@ function getMcpServerType(
  * Extracts the MCP server base URL for a tool by looking up its server connection.
  * Returns undefined for stdio servers, built-in tools, or if the server is not connected.
  */
-function getMcpServerBaseUrlFromToolName(
+export function getMcpServerBaseUrlFromToolName(
   toolName: string,
   mcpClients: MCPServerConnection[],
 ): string | undefined {

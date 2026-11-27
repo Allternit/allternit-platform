@@ -22,6 +22,7 @@ pub fn me_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/me", get(get_current_user))
         .route("/me/usage", get(get_my_usage))
+        .route("/me/usage/settings", get(get_my_usage_settings).put(put_my_usage_settings))
         .route("/me/organization", post(create_personal_organization))
 }
 
@@ -163,6 +164,15 @@ struct CloudUsageResponse {
     /// cloud and here; absent means clients do not lock (D10).
     #[serde(rename = "cloud_models")]
     cloud_models: Option<serde_json::Value>,
+    /// Usage windows, pace and carry-past-windows setting (Claude polish
+    /// C1b), passed through unchanged. Keys are snake_case on the cloud and
+    /// here; absent when the cloud predates them.
+    #[serde(rename = "windows")]
+    windows: Option<serde_json::Value>,
+    #[serde(rename = "pace")]
+    pace: Option<serde_json::Value>,
+    #[serde(rename = "carry_past_windows")]
+    carry_past_windows: Option<serde_json::Value>,
 }
 
 impl Default for CloudUsageResponse {
@@ -179,6 +189,9 @@ impl Default for CloudUsageResponse {
             month_to_date_usage_usd: None,
             recent_transactions: None,
             cloud_models: None,
+            windows: None,
+            pace: None,
+            carry_past_windows: None,
         }
     }
 }
@@ -201,7 +214,88 @@ fn usage_json(usage: &CloudUsageResponse) -> serde_json::Value {
     if let Some(cloud_models) = &usage.cloud_models {
         body["cloud_models"] = cloud_models.clone();
     }
+    for (key, value) in [
+        ("windows", &usage.windows),
+        ("pace", &usage.pace),
+        ("carry_past_windows", &usage.carry_past_windows),
+    ] {
+        if let Some(value) = value {
+            body[key] = value.clone();
+        }
+    }
     body
+}
+
+/// Forwards GET/PUT /me/usage/settings to the cloud API with the caller's
+/// auth; the cloud status and body come back unchanged.
+async fn proxy_usage_settings(
+    state: Arc<AppState>,
+    user: AuthUser,
+    headers: HeaderMap,
+    method: reqwest::Method,
+    body: Option<Value>,
+) -> axum::response::Response {
+    let Some(base_url) = state.config.cloud_api_url() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": "usage_metering_unavailable",
+                "message": "Usage metering is not configured on this backend (no cloud API URL).",
+            })),
+        )
+            .into_response();
+    };
+    let url = format!("{}/api/v1/me/usage/settings", base_url.trim_end_matches('/'));
+    let mut request = crate::net_client::client()
+        .request(method, &url)
+        .header("x-allternit-user-id", &user.user_id);
+    if let Some(authorization) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(axum::http::header::AUTHORIZATION, authorization);
+    }
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    match request.send().await {
+        Ok(response) => {
+            let status = StatusCode::from_u16(response.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            match response.json::<Value>().await {
+                Ok(value) => (status, Json(value)).into_response(),
+                Err(_) => status.into_response(),
+            }
+        }
+        Err(e) => {
+            warn!("Usage settings proxy unreachable: {}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": "usage_metering_unreachable",
+                    "message": format!("The usage metering service could not be reached: {e}"),
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_my_usage_settings(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    proxy_usage_settings(state, user, headers, reqwest::Method::GET, None).await
+}
+
+async fn put_my_usage_settings(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    proxy_usage_settings(state, user, headers, reqwest::Method::PUT, Some(body)).await
 }
 
 /// Production may not yet expose `/api/v1/me/usage`. Billing subscription +
@@ -262,6 +356,9 @@ async fn fetch_cloud_billing_usage(
         month_to_date_usage_usd: cred.get("month_to_date_usage_usd").and_then(|v| v.as_f64()),
         recent_transactions: cred.get("recent_transactions").and_then(|v| v.as_array()).cloned(),
         cloud_models: cred.get("cloud_models").cloned(),
+        windows: None,
+        pace: None,
+        carry_past_windows: None,
     })
 }
 

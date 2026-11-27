@@ -1062,6 +1062,8 @@ async fn main() {
         .merge(memory_router())
         // Allternit Sleep (`/memory/sleep/*`, `/memory/disputes*`); every stage off by default.
         .merge(allternit_api::sleep::routes::sleep_router())
+        // Knowledge factory (`/knowledge/flags`, `/knowledge/proposals`); proposals wait for the person's approve.
+        .merge(allternit_api::knowledge_routes::knowledge_router())
         .merge(me_router())
         .merge(setup_router())
         .merge(local_brain_router())
@@ -1083,6 +1085,8 @@ async fn main() {
         .merge(allternit_api::agent_email_routes::agent_email_router())
         .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
+        // Per-user tool permissions (Ask / Allow / Block per connection tool).
+        .merge(allternit_api::tool_policy_routes::tool_policy_router())
         .merge(agent_workspace_router())
         .merge(allternit_api::agent_package_routes::agent_package_router())
         .merge(allternit_api::bot_hub_routes::bot_hub_router())

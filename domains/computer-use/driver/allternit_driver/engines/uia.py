@@ -151,6 +151,22 @@ def _click_at(x: int, y: int, button: str = "left", count: int = 1) -> None:
         user32.mouse_event(down_up[1], 0, 0, 0, 0)
 
 
+def _window_pid(hwnd: int) -> int:
+    pid = ctypes.c_ulong(0)
+    ctypes.windll.user32.GetWindowThreadProcessId(ctypes.c_void_p(int(hwnd)), ctypes.byref(pid))
+    return int(pid.value)
+
+
+def _check_owner(pid: int | None, hwnd: int | None) -> None:
+    """A read/act/screenshot aimed at a pid must land on that pid's window.
+
+    The agent browser is addressed by the pid its launcher printed; a stale or
+    wrong window_id must fail, never touch another window.
+    """
+    if pid and hwnd and _window_pid(int(hwnd)) != int(pid):
+        raise CuaError("window_not_found", f"window {hwnd} does not belong to pid {pid}")
+
+
 def _process_name(pid: int) -> str:
     try:
         kernel32 = ctypes.windll.kernel32
@@ -278,6 +294,7 @@ class UIAEngine:
     # ---- reads (all on the MTA thread) -------------------------------------------
 
     def read(self, pid: int, window_id: int, max_elements: int | None = None, query: str | None = None) -> tuple[list[RawNode], dict[str, Any]]:
+        _check_owner(pid, window_id)
         nodes, title = self._call(lambda: self._read_inner(int(window_id), max_elements))
         meta = {
             "app": _process_name(pid) or "",
@@ -395,11 +412,22 @@ class UIAEngine:
 
         return self._call(work)
 
+    def write_value_only(self, pid: int, window_id: int, native: dict[str, Any], text: str) -> bool:
+        """``act set_value`` with ``focus: false``: ValuePattern.SetValue only.
+        No SetFocus and no SendInput typing."""
+        path = str((native or {}).get("path") or "")
+        if not path:
+            raise CuaError("unknown_element", "this element has no UI Automation handle; call read_ui first")
+        hwnd = int(window_id)
+        el = self._call(lambda: self._find_inner(hwnd, path))
+        return bool(self._invoke_pattern(el, _PATTERN_VALUE, "SetValue", text))
+
     def act(self, pid: int, window_id: int, native: dict[str, Any], op: str, value: Any = None, key: str | None = None) -> None:
         path = str((native or {}).get("path") or "")
         if not path:
             raise CuaError("unknown_element", "this element has no UI Automation handle; call read_ui first")
         hwnd = int(window_id)
+        _check_owner(pid, hwnd)
         el = self._call(lambda: self._find_inner(hwnd, path))
 
         def center() -> tuple[int, int]:
@@ -482,6 +510,7 @@ class UIAEngine:
     def screenshot(self, pid: int | None, window_id: int | None) -> bytes:
         region = None
         if pid is not None and window_id is not None:
+            _check_owner(pid, window_id)
             try:
                 def work() -> tuple[float, float, float, float]:
                     el = self._uia.ElementFromHandle(int(window_id))

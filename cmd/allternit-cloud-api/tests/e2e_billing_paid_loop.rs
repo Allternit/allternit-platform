@@ -59,6 +59,7 @@ async fn create_billing_schema(db: &PgPool) {
         CREATE TABLE user_credits (
             user_id TEXT PRIMARY KEY,
             balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (balance_usd >= 0),
+            bought_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )

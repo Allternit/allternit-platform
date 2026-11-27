@@ -79,8 +79,14 @@ where
 
 async fn create_terminal(
     State(Terminals(store)): State<Terminals>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CreateTerminalRequest>,
-) -> impl IntoResponse {
+) -> Response {
+    // Start anywhere safety switch (D6): off refuses a terminal another device asks for.
+    if let Some(refused) = crate::session_start_routes::refuse_if_off(&headers, peer.map(|c| c.0)) {
+        return refused;
+    }
     match create_with(&store, request, None).await {
         Ok(session_id) => {
             debug!(%session_id, "Terminal session created (factory pane)");
@@ -92,8 +98,9 @@ async fn create_terminal(
                     data: Some(serde_json::json!({ "session_id": session_id })),
                 }),
             )
+                .into_response()
         }
-        Err(err) => err,
+        Err(err) => err.into_response(),
     }
 }
 

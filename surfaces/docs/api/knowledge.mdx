@@ -1,0 +1,68 @@
+---
+title: Knowledge API
+description: "Routes for the knowledge factory: flags agents raise, proposals the curator writes, and approve, reject, activate and roll back."
+---
+
+The [knowledge factory](/guides/knowledge-factory) lets agents flag knowledge that is missing, wrong or stale, a curator turn those flags into proposals, and you approve or reject each one. These routes are served by the Allternit API under `/api/v1`, with the normal signed-in session. Everything is scoped to the signed-in user. A request with no user gets `401`.
+
+## Routes
+
+| Route | What it does |
+| --- | --- |
+| `POST /knowledge/flags` | Raise a flag. |
+| `GET /knowledge/flags?status=open` | List flags. |
+| `POST /knowledge/flags/:id/dismiss` | Dismiss a flag. Leaves any proposal alone. |
+| `GET /knowledge/proposals?status=proposed` | List proposals. |
+| `POST /knowledge/proposals` | Create a proposal. |
+| `POST /knowledge/proposals/:id/approve` | Approve. Domain and data-access proposals are written to your Memory Drive. |
+| `POST /knowledge/proposals/:id/reject` | Reject. |
+| `POST /knowledge/proposals/:id/eval` | Attach an evaluation (only while `proposed`). |
+| `POST /knowledge/proposals/:id/activated` | Mark an approved proposal active (skills). |
+| `POST /knowledge/proposals/:id/rollback` | Roll back an approved or active proposal. |
+
+List routes take `status` (omit it to list all) and `limit` (default 50, maximum 200). Create routes answer `200`. Ids look like `kflag_<uuid>` and `kprop_<uuid>`.
+
+## Flags
+
+```json
+{ "kind": "stale", "target_kind": "data_access", "target_ref": "github",
+  "evidence": "The guide says the default branch is master; it is main.",
+  "suggested_fix": "Default branch is main.", "session_id": "ses_9", "turn_id": "obs_1" }
+```
+
+| Field | Values |
+| --- | --- |
+| `kind` | `missing`, `wrong`, `stale` |
+| `target_kind` | `skill`, `domain`, `data_access` |
+| `target_ref` | Optional: the skill name or file it belongs to. |
+| `status` | `open`, `proposed`, `resolved`, `dismissed` |
+
+The response is `{ "flag": { ... } }` with the stored columns. Never put secrets in `evidence`.
+
+## Proposals
+
+```json
+{ "target_kind": "data_access", "target_ref": "github", "title": "GitHub: default branch",
+  "body": "# GitHub\n- Default branch is main.", "base": null,
+  "evidence": [ { "flag_id": "kflag_1" }, { "observation_id": "obs_1" } ],
+  "origin": "curator", "eval": { "why": "Two sessions hit the old branch name." } }
+```
+
+- `origin` is `curator`, `agent` or `skill_growth`. `status` is `proposed`, `approved`, `rejected`, `active` or `rolled_back`.
+- Every cited `flag_id` and `observation_id` must belong to you (`400` otherwise), and each item carries exactly one of the two. Cited open flags move to `proposed`.
+- `target_ref` allows letters, digits, `-`, `_` and `.`; skills may also use `:` and `/`. No leading `.` or `/`, no `..`.
+- The response is `{ "proposal": { ... } }`, with `evidence` (array) and `eval` (object or null) parsed.
+
+### Approve
+
+For `domain` and `data_access`, approving writes `knowledge/domain/<ref>.md` or `knowledge/data-access/<ref>.md` in your personal Memory Drive as one commit. See [the file format](/guides/knowledge-factory#the-file-format). If the write fails the proposal stays `proposed`. For `skill`, the status becomes `approved` and Gizzi activates it later, then calls `/activated`. Approving or rejecting moves the linked flags to `resolved`.
+
+## Errors
+
+| Status | Meaning |
+| --- | --- |
+| 400 | Invalid input, or evidence that is not yours. |
+| 401 | Not signed in. |
+| 404 | No such flag or proposal for you. |
+| 409 | The proposal is in the wrong state (for example approving a rejected one, or an `eval` after approval), the file already exists with different text and no `base`, or a rollback after the file was edited. |
+| 413, 422 | Body too large or the wrong shape. |

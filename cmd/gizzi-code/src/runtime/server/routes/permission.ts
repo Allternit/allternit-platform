@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "@/runtime/server/openapi"
 import z from "zod/v4"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { BlockedTools } from "@/runtime/tools/guard/blocked-tools"
 import { errors } from "@/runtime/server/error"
 import { lazy } from "@/shared/util/lazy"
 
@@ -18,24 +19,29 @@ export const PermissionRoutes = lazy(() =>
       validator("param", z.object({ sessionID: z.string() })),
       async (c) => {
         const { sessionID } = c.req.valid("param")
-        return c.json({ sessionID, mode: await PermissionNext.getMode(sessionID) })
+        return c.json({ sessionID, mode: await PermissionNext.getMode(sessionID), blockedTools: BlockedTools.get(sessionID) })
       },
     )
     .put(
       "/mode/:sessionID",
       describeRoute({
         summary: "Set session permission mode",
-        description: "Persist manual, plan, unattended auto, or reviewed yolo behavior for a session.",
+        description:
+          "Persist manual, plan, unattended auto, or reviewed yolo behavior for a session. `blockedTools` (optional) replaces the tools the account blocks for the session (an empty list clears it; absent leaves it as it is).",
         operationId: "permission.mode.set",
         responses: { 200: { description: "Permission mode updated", content: { "application/json": { schema: resolver(z.any()) } } }, ...errors(400) },
       }),
       validator("param", z.object({ sessionID: z.string() })),
-      validator("json", z.object({ mode: PermissionNext.Mode })),
+      validator("json", z.object({ mode: PermissionNext.Mode, blockedTools: z.array(z.string()).max(2000).optional() })),
       async (c) => {
         const { sessionID } = c.req.valid("param")
-        const { mode } = c.req.valid("json")
+        const { mode, blockedTools } = c.req.valid("json")
+        // Account tool permissions ride the same push as the mode (allternit-api
+        // v1_routes.rs). Set before the mode so no turn runs with the new mode
+        // and the old list.
+        if (blockedTools !== undefined) BlockedTools.set(sessionID, blockedTools)
         await PermissionNext.setMode(sessionID, mode)
-        return c.json({ sessionID, mode })
+        return c.json({ sessionID, mode, blockedTools: BlockedTools.get(sessionID) })
       },
     )
     .post(

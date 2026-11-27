@@ -27,6 +27,7 @@
 import os from "node:os"
 import path from "node:path"
 import z from "zod/v4"
+import { BlockedTools } from "@/runtime/tools/guard/blocked-tools"
 
 export const BotTurnInfo = z.object({
   /** Platform agent id of the bot. */
@@ -47,6 +48,12 @@ export const BotTurnInfo = z.object({
   allowedMcp: z.array(z.string()).optional(),
   /** Tools a person approves each time (`tool_permissions` = always_ask). */
   askTools: z.array(z.string()).optional(),
+  /**
+   * Tools the account blocks (Settings > Connections > Tool permissions), in
+   * the runtime's name forms (see BlockedTools). Block wins over the
+   * allowlist, ask-each-time and approval gates. Absent = nothing blocked.
+   */
+  blockedTools: z.array(z.string()).optional(),
   /**
    * The bot has approval gates (template `config.approvals`): a tool outside
    * its allowlist goes to the app's approval flow instead of being refused.
@@ -195,6 +202,16 @@ export function legacyBypass(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.GIZZI_BOT_BYPASS_PERMISSIONS === "1" || env.GIZZI_BOT_BYPASS_PERMISSIONS === "true"
 }
 
+/** The tools the account blocks for this bot's turn. */
+export function blockedFor(bot: BotTurnInfo): string[] {
+  return BlockedTools.normalize(bot.blockedTools)
+}
+
+/** Whether the account blocks this tool for the bot's turn (an `execute_action` call is matched on its input). */
+export function blockedForBot(bot: BotTurnInfo, toolName: string, input?: unknown): boolean {
+  return BlockedTools.match(blockedFor(bot), toolName, input) !== undefined
+}
+
 /** True when the bot's tools are restricted (allowlist or approval gates). */
 export function restricted(bot: BotTurnInfo): boolean {
   return Boolean(bot.gated) || (bot.allowedTools?.length ?? 0) > 0 || (bot.askTools?.length ?? 0) > 0
@@ -202,12 +219,14 @@ export function restricted(bot: BotTurnInfo): boolean {
 
 /**
  * Tools the CLI may run without asking: the allowlist minus ask-each-time
- * tools (or, with no allowlist, the read-only set), plus gizzi's bridge.
+ * tools and the tools the account blocks (or, with no allowlist, the
+ * read-only set), plus gizzi's bridge.
  */
 export function claudePreapproved(bot: BotTurnInfo, bridgeName?: string): string[] {
   const ask = new Set(claudeToolNames(bot.askTools))
+  const blocked = blockedFor(bot)
   const base = restricted(bot) ? claudeToolNames(bot.allowedTools) : [...UNRESTRICTED_FREE_TOOLS]
-  const allowed = base.filter((name) => !ask.has(name))
+  const allowed = base.filter((name) => !ask.has(name) && BlockedTools.match(blocked, name) === undefined)
   if (bridgeName) allowed.push(`mcp__${bridgeName}`)
   return [...new Set(allowed)]
 }
@@ -236,7 +255,10 @@ export function claudePreapproved(bot: BotTurnInfo, bridgeName?: string): string
 export function claudeBotFlags(bot: BotTurnInfo, bridgeName?: string): string[] {
   const flags = ["--setting-sources", "", "--disable-slash-commands"]
   if (bridgeName) flags.push("--strict-mcp-config")
-  if (!restricted(bot) && legacyBypass()) {
+  // Legacy bypass never runs a bot the account blocks tools for: every ask
+  // must reach claudeToolDecision. (The blocked names also go to the CLI's
+  // own `--disallowedTools`: cli-session-flags.ts claudeDisallowedTools.)
+  if (!restricted(bot) && legacyBypass() && blockedFor(bot).length === 0) {
     flags.push("--permission-mode", "bypassPermissions")
     return flags
   }
@@ -246,24 +268,40 @@ export function claudeBotFlags(bot: BotTurnInfo, bridgeName?: string): string[] 
   return flags
 }
 
+/**
+ * Blocked names in a form the Claude CLI's `--disallowedTools` takes, which
+ * beats `--allowedTools` (a pre-approved `mcp__<bridge>` prefix included).
+ * `execute_action:` entries are not Claude tool names; gizzi's own tool gate
+ * matches those on the call's input.
+ */
+export function claudeDisallowed(blocked: readonly string[] | undefined): string[] {
+  return BlockedTools.normalize(blocked).filter((name) => !name.toLowerCase().startsWith("execute_action:") && !/[\s,()]/.test(name))
+}
+
 export type ToolDecision = "allow" | "ask" | "deny"
 
 /**
  * What gizzi answers when a bot's Claude CLI asks to use a tool that was not
- * pre-approved: allowlisted (or read-only, for a bot with no allowlist) →
- * allow; ask-each-time, any other tool on a bot with approval gates, or any
- * other tool on a bot with no allowlist → ask a person (the app's approval
- * flow); anything else → deny with a clear reason.
+ * pre-approved: blocked by the account → deny, before anything else;
+ * allowlisted (or read-only, for a bot with no allowlist) → allow;
+ * ask-each-time, any other tool on a bot with approval gates, or any other
+ * tool on a bot with no allowlist → ask a person (the app's approval flow);
+ * anything else → deny with a clear reason. `input` is the call's input, for
+ * matching an `execute_action` block.
  */
-export function claudeToolDecision(bot: BotTurnInfo, toolName: string, bridgeName?: string): ToolDecision {
+export function claudeToolDecision(bot: BotTurnInfo, toolName: string, bridgeName?: string, input?: unknown): ToolDecision {
+  if (blockedForBot(bot, toolName, input)) return "deny"
   if (claudeToolNames(bot.askTools).includes(toolName)) return "ask"
   const allowed = claudePreapproved(bot, bridgeName)
   if (allowed.includes(toolName)) return "allow"
+  // A pre-approved MCP prefix (gizzi's bridge) covers its tools; a blocked
+  // tool under it was already refused above.
   if (allowed.some((name) => name.startsWith("mcp__") && toolName.startsWith(name + "__"))) return "allow"
   if (!restricted(bot)) return "ask"
   return bot.gated ? "ask" : "deny"
 }
 
-export function deniedMessage(bot: BotTurnInfo, toolName: string): string {
+export function deniedMessage(bot: BotTurnInfo, toolName: string, input?: unknown): string {
+  if (blockedForBot(bot, toolName, input)) return BlockedTools.message(toolName)
   return `${toolName} is not in ${bot.name ? `${bot.name}'s` : "this bot's"} allowed tools. Tell the user it needs to be added in the bot's tool settings.`
 }

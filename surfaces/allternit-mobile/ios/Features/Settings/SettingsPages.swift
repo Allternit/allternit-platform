@@ -327,6 +327,13 @@ struct ResponseStyleSettingsPage: View {
                 .accessibilityLabel("Style")
             }
 
+            StylePreviewCard(
+                style: preferences.responseStyle,
+                savedStyle: preferences.responseStyle,
+                instructions: instructions,
+                savedInstructions: preferences.customInstructions
+            )
+
             SettingsCardBox {
                 Text("Custom instructions")
                     .font(.system(size: 15, weight: .semibold))
@@ -373,7 +380,7 @@ struct ResponseStyleSettingsPage: View {
 // MARK: - General
 
 /// Settings → General (SettingsView.tsx renderAppearancePanel, phone):
-/// Appearance (Theme, Chat font, Reduce motion) and Composer.
+/// Appearance (Theme, Response font, Reduce motion) and Composer.
 struct GeneralSettingsPage: View {
     @ObservedObject private var appearance = AppearanceStore.shared
     @ObservedObject private var settings = SettingsStore.shared
@@ -384,10 +391,15 @@ struct GeneralSettingsPage: View {
             SettingsLabeledRow(title: "Theme", detail: "Light, dark, or match your system") {
                 ThemeSegment()
             }
-            SettingsLabeledRow(title: "Chat font", detail: "Font for responses in the transcript") {
+            // Response font (E5): Sans or Serif, Serif by default. A saved
+            // System pick shows as Sans.
+            SettingsLabeledRow(title: "Response font", detail: "Font for answers in the transcript") {
                 Menu {
-                    Picker("Chat font", selection: $appearance.chatFont) {
-                        ForEach(AppearanceStore.ChatFont.allCases) { Text($0.label).tag($0) }
+                    Picker("Response font", selection: Binding(
+                        get: { appearance.chatFont.choice },
+                        set: { appearance.chatFont = $0 }
+                    )) {
+                        ForEach(AppearanceStore.ChatFont.choices) { Text($0.label).tag($0) }
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -405,7 +417,7 @@ struct GeneralSettingsPage: View {
                             .stroke(Color("BorderStrong"), lineWidth: 1)
                     )
                 }
-                .accessibilityLabel("Chat font")
+                .accessibilityLabel("Response font")
             }
             SettingsSwitchRow(title: "Reduce motion",
                               detail: "Turn off animation in streaming responses and other interface elements",

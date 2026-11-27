@@ -149,6 +149,25 @@ curl https://api.allternit.com/api/v1/events/catalog -H "Authorization: Bearer $
 curl -X DELETE https://api.allternit.com/api/v1/mcp/events/subscriptions/sub_3f2a… -H "Authorization: Bearer $CLERK_SESSION"
 ```
 
+## Watches in a chat
+
+`POST /api/v1/mcp/watches` with `{ server, event, session_id, delivery?, instruction? }` watches one event for a chat session. `delivery` is `"poll"` (default) or `"webhook"`. A webhook watch registers through the same subscription as above and has no poller. Each delivery adds a line to the watch and bumps its event count.
+
+`GET /api/v1/mcp/watches` returns each watch with:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `live` when the server's first poll batch asks for 2 s or less, `poll` otherwise, `webhook` for webhook watches |
+| `pollMs` | The server's `next_poll_ms`, or `null` for webhook watches |
+| `tail` | The last 3 lines |
+| `lineCount` | Lines seen so far |
+| `lastWokeAt` | When a webhook watch last started a turn in its chat, or `null` |
+| `lastWakeError` | Why the last wake started no turn, in plain words (for example `Chat is closed`, `This chat's model can't run on its own (subscription model)`, `Couldn't start: 502 Bad Gateway`), or `null`. The next turn that runs clears it. |
+
+`GET /api/v1/mcp/watches/:id/lines?after=<n>` returns `{ lines: [{ n, at, text }], next }`. Pass `next` as `after` on the next call. Each watch keeps its last 500 lines. A line is `data.line`, else `data.message`, else `data.text`, else the data as compact JSON, cut to 200 characters. Only the watch's owner can read it.
+
+**A webhook watch wakes its chat.** When an event arrives, the watch starts one assistant turn in its chat session. The turn starts from the note `Event <name> from <server>: <line>`, then the watch's standing instruction if you gave one (`instruction` on `POST`). The event text is marked as untrusted data. The turn runs on the chat owner's account and is billed like a normal turn. It uses the chat's own permission mode, and tools still ask for approval. A watch starts at most one turn per minute. Events that arrive during that minute only add lines. If the chat is archived, ended or deleted, the event adds a line and starts no turn. Stop the watch (`DELETE /api/v1/mcp/watches/:id`) to end the turns. Stopping a webhook watch also removes the subscription it created (`events/unsubscribe` at the app, removal at the cloud). A subscription you already had before the watch is kept.
+
 ## Errors
 
 | Code | Name | When |

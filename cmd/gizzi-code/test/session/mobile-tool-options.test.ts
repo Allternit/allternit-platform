@@ -66,6 +66,16 @@ describe("session.prompt mobile tool options (metadata.tools)", () => {
       expect(Object.keys(tools).sort()).toEqual(["bash", "read", "task", "websearch"])
     })
 
+    test('toolAccess "none" leaves the turn an empty tool set', () => {
+      const tools = toolset()
+      SessionPrompt.applyMobileToolGating(tools, { toolAccess: "none" })
+      expect(Object.keys(tools)).toEqual([])
+    })
+
+    test('toolAccess "none" parses from metadata.tools', () => {
+      expect(SessionPrompt.parseMobileToolOptions({ tools: { toolAccess: "none" } })).toEqual({ toolAccess: "none" })
+    })
+
     test("missing tools are tolerated (idempotent deletes)", () => {
       const tools = { bash: {} } as unknown as Parameters<typeof SessionPrompt.applyMobileToolGating>[0]
       SessionPrompt.applyMobileToolGating(tools, { webSearch: false, research: false })

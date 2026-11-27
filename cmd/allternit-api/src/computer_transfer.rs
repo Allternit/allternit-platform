@@ -147,6 +147,7 @@ async fn clipboard(target: &Target, text: Option<&str>) -> Result<String, String
             handle,
             os,
             display,
+            ..
         } => {
             let command = if os == "windows" {
                 vec![

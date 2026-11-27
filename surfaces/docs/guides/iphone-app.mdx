@@ -9,7 +9,7 @@ Allternit for iPhone is the native app version of [m.allternit.com](https://m.al
 
 The composer rests on one line and expands when you focus it or enter text. Runtime and Brain chips sit at the top right when it is open. Use the filled **+** for attachments and the sliders button for Tools.
 
-Hold the mode orb above the composer to open the Shelves hub. Each mode has section cards with previews. New sits above the composer when a session is open. Tap its orb for **Quick task** and the current mode’s new item. The drawer keeps its other ways to start. The session overview keeps its bottom New button. Freeweights is in the Home shelves.
+Hold the mode orb above the composer to open the Shelves hub. Press the orb and slide to switch mode in one move; lift to pick. Hold still to open Shelves. Tap opens the pill. The lens is clear glass that follows your finger, swells, stretches and magnifies the mode under it. Reduce motion turns those off. Each mode has section cards with previews. New sits above the composer when a session is open. Tap its orb for **Quick task** and the current mode’s new item. The drawer keeps its other ways to start. The session overview keeps its bottom New button. Freeweights is in the Home shelves.
 
 
 ## Sign in
@@ -45,7 +45,7 @@ Tab titles, first-visit intros, arrivals, glass buttons and haptics are describe
 Use these controls to navigate:
 
 - **Tap** opens the drawer.
-- **Mode hub:** tap the mode orb above the composer to see the mode pill. Hold the orb to open the Shelves hub.
+- **Mode hub:** tap the mode orb above the composer to see the mode pill. Press the orb and slide to switch mode in one move; lift to pick. Hold still to open the Shelves hub.
 - **Bots:** open the Bots shelves to reach your main bot, bots, group chats, Office and projects.
 
 The ☰ button only opens the drawer. The drawer mode icon opens the Shelves hub, including on screens without a composer.
@@ -402,6 +402,20 @@ The app reads nothing outside Allternit for this: it only uses Allternit's own f
 Notifications from your bots, threads and calls arrive as iPhone notifications. Tapping one opens the chat, thread or bot it is about. An approval opens **Decisions**, where you can answer it. Your [notification settings and quiet hours](/guides/notifications) apply to the iPhone too.
 
 Links to ai.allternit.com and m.allternit.com open in the app when it is installed: a bot (`/b/…`), an invite (`/i/…`), Settings (`/settings`) or a chat (`?session=…`).
+
+## Agent browser runs: approvals and push actions
+
+When a bot drives a browser on one of your computers, the run view shows its pointer on the screen with a badge that names the bot and its step. A line under the screen reads "BOT is working · step N" (BOT is the bot's name) with **Take over** and **Stop**. **Stop** ends the run.
+
+**Take over** gives you the computer. Tap it and the line changes to "You have control · Hand back". Tap the screen to click there, swipe to scroll, and use the box under the screen to type, with a **Return** key. While you hold control the bot's calls are refused. **Hand back** (or leaving the run) gives the computer back. On a Linux computer the screen shows that run's own display.
+
+When the bot needs you, a sheet opens over the run:
+
+- **Fill your NAME login on DOMAIN?** has **Approve**, **Allow for this run** and **Deny**. Approve and Allow ask for Face ID or your passcode first. Allow for this run covers that login on that site for this run only; nothing is remembered for later runs. The password never shows on screen or in the log.
+- **BOT needs you** gives the reason and a **Continue** button once you have done your part, plus **Stop**. When the bot asks for a secret, a masked field is shown with **Send** and a **Save to vault** switch (give it a name to keep it). The value goes to the computer in one request, the field is cleared, and it is never logged.
+- **DOMAIN blocked BOT** has **Continue**, **Stop** and **Re-run on** each other computer for each other computer you could use. A re-run starts fresh and no logins carry over; the run view then opens the new run. With no other computer ready, the sheet says so. A Mac listed from a cloud computer is reached through its own runtime, and if it is offline the sheet says "Your Mac isn't reachable". When Safari needs setting up on the Mac, the needs-you sheet lists the steps to do there, then **Continue**.
+
+The same questions arrive as notifications with buttons. A credential or action approval has **Approve** (needs the phone unlocked) and **Deny** (works from the lock screen). A bot that needs you has **Continue** and **Stop**. A blocked site has **Open**. Tapping any of them opens the run through a `/computers/ID?run=RUN_ID` link. A notification never contains the password.
 
 ## Phone tasks: Review, status cards and Run on my phone
 

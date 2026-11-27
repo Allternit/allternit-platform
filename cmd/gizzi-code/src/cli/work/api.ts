@@ -153,8 +153,13 @@ export function rejectQuestion(id: string): Promise<unknown> {
   return engine(`/v1/question/${encodeURIComponent(id)}/reject`, {})
 }
 
-export function answerApproval(id: string, reply: "once" | "always" | "reject"): Promise<unknown> {
-  return engine(`/v1/permission/${encodeURIComponent(id)}/reply`, { reply })
+export function answerApproval(
+  id: string,
+  reply: "once" | "always" | "task" | "reject",
+  /** Needs-you prompts: a typed secret (never logged). */
+  answer?: string,
+): Promise<unknown> {
+  return engine(`/v1/permission/${encodeURIComponent(id)}/reply`, { reply, ...(answer !== undefined ? { answer } : {}) })
 }
 
 /** One-line summary of what an approval is for (file, command or URL first). */
@@ -238,6 +243,59 @@ async function botPauseCall(init: RequestInit = {}): Promise<BotPause> {
     if (/ failed: 404\b/.test(String((e as Error)?.message))) throw new BotPauseUnsupported()
     throw e
   }
+}
+
+// ── tool permissions (read-only) ──────────────────────────────────────────
+
+/** One tool the account blocks (allternit-api `GET /api/v1/tool-policies`, policy "block"). */
+export type AccountToolBlock = { ownerId: string; toolId: string; updatedAt?: string }
+
+/** Thrown when allternit-api has no tool-policies route yet (404 from an older server). */
+export class ToolPoliciesUnsupported extends Error {
+  constructor() {
+    super("This Allternit server does not keep tool permissions on the account yet.")
+  }
+}
+
+/** Thrown when the gateway refuses the call: nobody is signed in on this machine. */
+export class ToolPoliciesSignedOut extends Error {
+  constructor() {
+    super("Sign in to Allternit to see the tool permissions on your account.")
+  }
+}
+
+/**
+ * The tools the account blocks (Settings > Connections > Tool permissions),
+ * shown read-only by `/permissions`. Allow and Ask rows are left out: the
+ * runtime refuses only blocked tools by itself; the server answers the rest.
+ */
+export async function listAccountToolBlocks(): Promise<AccountToolBlock[]> {
+  let body: { policies?: Array<{ owner_id?: unknown; tool_id?: unknown; policy?: unknown; updated_at?: unknown }> }
+  try {
+    body = await gateway("/api/v1/tool-policies")
+  } catch (e) {
+    const message = String((e as Error)?.message)
+    if (/ failed: 404\b/.test(message)) throw new ToolPoliciesUnsupported()
+    if (/ failed: 40[13]\b/.test(message)) throw new ToolPoliciesSignedOut()
+    throw e
+  }
+  return (Array.isArray(body?.policies) ? body.policies : [])
+    .filter((p) => p?.policy === "block" && typeof p.owner_id === "string" && typeof p.tool_id === "string")
+    .map((p) => ({
+      ownerId: p.owner_id as string,
+      toolId: p.tool_id as string,
+      ...(typeof p.updated_at === "string" ? { updatedAt: p.updated_at } : {}),
+    }))
+    .sort((a, b) => a.ownerId.localeCompare(b.ownerId) || a.toolId.localeCompare(b.toolId))
+}
+
+/** "Gmail connector · send_email" style label for one blocked tool (owner ids are `connectors:<id>` or `mcps:<id>`). */
+export function accountToolBlockLabel(block: AccountToolBlock): string {
+  const sep = block.ownerId.indexOf(":")
+  const kind = sep > 0 ? block.ownerId.slice(0, sep) : ""
+  const id = sep > 0 ? block.ownerId.slice(sep + 1) : block.ownerId
+  const what = kind === "connectors" ? "connector" : kind === "mcps" ? "MCP server" : kind
+  return `${id}${what ? ` ${what}` : ""} · ${block.toolId}`
 }
 
 export function getBotPause(): Promise<BotPause> {

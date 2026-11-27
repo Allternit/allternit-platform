@@ -21,6 +21,7 @@ import { appViewFor } from '../../services/mcp/appView';
 import { jsonParse, jsonStringify } from '../../utils/slowOperations';
 import type { inputSchema } from './MCPTool';
 import { formatMessagesResult } from './messagesResult';
+import { alignLines, structuredView } from './structuredResult';
 
 // Threshold for displaying warning about large MCP responses
 const MCP_OUTPUT_WARNING_THRESHOLD_TOKENS = 10_000;
@@ -102,12 +103,29 @@ export function renderToolUseProgressMessage(progressMessagesForMessage: Progres
 }
 export function renderToolResultMessage(output: string | MCPToolResult, _progressMessagesForMessage: ProgressMessage<ToolProgressData>[], {
   verbose,
-  input
+  input,
+  metadata
 }: {
   verbose: boolean;
   input?: unknown;
+  /** part.state.metadata of the tool part (live session path). */
+  metadata?: {
+    mcp?: {
+      structuredContent?: unknown;
+    };
+  };
 }): React.ReactNode {
   const mcpOutput = output as MCPToolResult;
+  // Typed result: aligned key-value lines, or a small table for an array of objects.
+  const structured = structuredView(metadata?.mcp?.structuredContent);
+  if (structured !== null) {
+    const lines = alignLines(structured);
+    return <MessageResponse>
+        <Box flexDirection="column">
+          {lines.map((line, i) => <Text key={i} dimColor={structured.kind === 'table' && (i === 0 || line.startsWith('+'))}>{line}</Text>)}
+        </Box>
+      </MessageResponse>;
+  }
   if (!verbose) {
     const slackSend = trySlackSendCompact(mcpOutput, input);
     if (slackSend !== null) {
@@ -383,6 +401,11 @@ export function trySlackSendCompact(output: string | MCPToolResult, input: unkno
 export function renderToolResultWithAppView(output: string | MCPToolResult, progressMessagesForMessage: ProgressMessage<ToolProgressData>[], options: {
   verbose: boolean;
   input?: unknown;
+  metadata?: {
+    mcp?: {
+      structuredContent?: unknown;
+    };
+  };
 }): React.ReactNode {
   const base = renderToolResultMessage(output, progressMessagesForMessage, options);
   const view = appViewFor(output);

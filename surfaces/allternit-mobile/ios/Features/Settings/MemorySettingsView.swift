@@ -44,6 +44,8 @@ struct MemorySettingsView: View {
             // Allternit Sleep (MemorySleepView.swift): runs on the computer,
             // shown and switched here; no tab of its own.
             MemorySleepSection(refreshToken: refreshToken)
+            // Knowledge review (KnowledgeReviewView.swift): flags and proposals.
+            MemoryKnowledgeRow(refreshToken: refreshToken)
             sectionHeader("Drive")
             if loadError == nil {
                 searchBar

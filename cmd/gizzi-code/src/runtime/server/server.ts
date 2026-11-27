@@ -95,6 +95,7 @@ import { RuntimeHeartbeat } from "@/runtime/runtime-heartbeat"
 import { RuntimeRoutes } from "@/runtime/server/routes/runtime"
 import { RemoteControlRoutes } from "@/runtime/server/routes/remote_control"
 import { TerminalRoutes } from "@/runtime/server/routes/terminal"
+import { SessionStartRoutes } from "@/runtime/server/routes/session-start"
 import { AgentCompatRoutes } from "@/runtime/server/routes/agent-compat"
 import { createHash, randomUUID } from "node:crypto"
 
@@ -501,6 +502,8 @@ export namespace Server {
         // agent brain without allternit-api in the middle.
         .route("/api", AgentCompatRoutes())
         .route("/v1beta/remote-control", RemoteControlRoutes())
+        // Start anywhere: the cloud relay forwards /api/*, so the phone reaches this as /api/v1/session-start.
+        .route("/api/v1/session-start", SessionStartRoutes())
         // /v1/ — versioned API surface (same handlers, new path prefix)
         .route(
           "/v1",
@@ -558,6 +561,7 @@ export namespace Server {
             .route("/runtime", RuntimeRoutes())
             .route("/remote-control", RemoteControlRoutes())
             .route("/terminal", TerminalRoutes())
+            .route("/session-start", SessionStartRoutes())
             .route("/workspace", WorkspaceRoutes()) as unknown as Hono,
         )
         .all("/*", async (c) => {
@@ -756,6 +760,17 @@ export namespace Server {
       .then(({ CatalogSync }) => CatalogSync.start())
       .catch((err) => log.warn("subagent catalog sync not started", { error: String(err) }))
 
+    // Paired and Desktop not holding the relay: open the cloud runtime relay
+    // so the phone and the web reach this machine (Start anywhere). No-op when
+    // unpaired, self-hosted, or spawned by Desktop.
+    const relayHost =
+      !opts.hostname || isLoopback(opts.hostname) || opts.hostname === "0.0.0.0" || opts.hostname === "::"
+        ? "127.0.0.1"
+        : server.hostname
+    void import("@/runtime/integrations/relay-connector")
+      .then(({ RelayConnector }) => RelayConnector.start({ engineUrl: `http://${relayHost}:${server.port}` }))
+      .catch((err) => log.warn("cloud relay not started", { error: String(err) }))
+
     // Start runtime heartbeat to keep local/remote runtime status fresh.
     try {
       RuntimeHeartbeat.start()
@@ -842,6 +857,9 @@ export namespace Server {
         InstanceRegistration.stop()
       }
       if (shouldPublishMDNS) MDNS.unpublish()
+      await import("@/runtime/integrations/relay-connector")
+        .then(({ RelayConnector }) => RelayConnector.stop())
+        .catch(() => {})
       try {
         CronService.close()
         log.info("cron service stopped")

@@ -94,7 +94,7 @@ data class AciHost(
 private sealed interface AciDestination {
     data object Landing : AciDestination
     data class Browser(val url: String) : AciDestination
-    data class Agent(val goal: String) : AciDestination
+    data class Agent(val goal: String, val computerId: String? = null, val runId: String? = null) : AciDestination
 }
 
 /**
@@ -112,6 +112,13 @@ fun AciRoot(host: AciHost) {
     var pairSeen by remember { mutableStateOf(AciOnceNudge.seen(context, "pair-computer")) }
     var teachSeen by remember { mutableStateOf(AciOnceNudge.seen(context, "teach")) }
     val tab = AciNav.tab
+    // An `aci.attention` push opens that run's screen, not the console.
+    AciNav.pendingRun?.let { (computer, run) ->
+        LaunchedEffect(computer, run) {
+            destination = AciDestination.Agent("", computer, run)
+            AciNav.pendingRun = null
+        }
+    }
     val landing = destination == AciDestination.Landing
     LaunchedEffect(host.signedIn) {
         devices = if (host.signedIn) (AciApi.devices() as? AciApi.Result.Ok)?.value.orEmpty() else emptyList()
@@ -180,6 +187,8 @@ fun AciRoot(host: AciHost) {
                     )
                     is AciDestination.Agent -> AciAgentRunView(
                         goal = d.goal,
+                        computerId = d.computerId,
+                        runId = d.runId,
                         controls = { host.composerControls(true) { destination = AciDestination.Landing } },
                         client = remember(host.backend) { AciAgentClient(host.backend) },
                         onExit = { destination = AciDestination.Landing },

@@ -73,23 +73,23 @@ struct AppsShelfView: View {
                     .background(Color("FillNeutral"))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                section("Made by you / your org", rows: model.yours,
+                section("Made by you / your org", rows: model.yours, art: .apps,
+                        emptyTitle: "No apps yet",
                         empty: "Apps you make, or your org shares, show up here.")
-                section("From a connected server", rows: model.servers,
+                section("From a connected server", rows: model.servers, art: .network,
+                        emptyTitle: "No server apps",
                         empty: "Connect an MCP server and its apps show up here.")
                 shareList
             }
         }
     }
 
-    private func section(_ title: String, rows: [AppsShelfRow], empty: String) -> some View {
+    private func section(_ title: String, rows: [AppsShelfRow], art: EmptyArtKind, emptyTitle: String, empty: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextSecondary"))
                 .accessibilityAddTraits(.isHeader)
             if rows.isEmpty {
-                Text(empty).font(.system(size: 14)).foregroundColor(Color("TextTertiary"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
+                EmptyRowCard(art: art, title: emptyTitle, hint: empty)
             } else {
                 ForEach(rows) { row in
                     AppsShelfRowView(row: row, busy: model.busy.contains(row.id),
@@ -109,9 +109,8 @@ struct AppsShelfView: View {
             if let failure = model.linksFailure, model.links.isEmpty {
                 Text("Couldn’t load your links. \(failure)").font(.system(size: 14)).foregroundColor(Color("TextTertiary"))
             } else if model.links.isEmpty {
-                Text("Share an app from Desktop and its link shows up here.")
-                    .font(.system(size: 14)).foregroundColor(Color("TextTertiary"))
-                    .padding(.vertical, 8)
+                EmptyRowCard(art: .flow, title: "No links yet",
+                             hint: "Share an app from Desktop and its link shows up here.")
             } else {
                 ForEach(model.links) { link in
                     AppsShareLinkRow(link: link, busy: model.busy.contains(link.id),

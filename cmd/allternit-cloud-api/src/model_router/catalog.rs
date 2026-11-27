@@ -40,6 +40,17 @@ pub struct ModelAliasEntry {
     /// static price is recorded as the wholesale cost. Set on providers whose
     /// model list carries no pricing (Fireworks).
     pub static_price_is_wholesale: bool,
+    /// Which lane serves this row: "standard" (default) or "open".
+    pub lane: &'static str,
+    /// Per-row retail markup over the host price (clamped 1.0..=5.0 when
+    /// used). None = the lane default (`INFERENCE_MARKUP`, or
+    /// `OPEN_LANE_MARKUP` for open rows).
+    pub markup: Option<f64>,
+    /// Served only to accounts with the Open Research flag (contract D11).
+    pub research_only: bool,
+    /// Alias of a hidden row on another host that serves this one when the
+    /// primary fails before the first byte (contract D9).
+    pub failover: Option<&'static str>,
 }
 
 /// Field defaults for catalog literals (`..Default::default()`): listed, not
@@ -59,6 +70,10 @@ impl Default for ModelAliasEntry {
             listed: true,
             default: false,
             static_price_is_wholesale: false,
+            lane: "standard",
+            markup: None,
+            research_only: false,
+            failover: None,
         }
     }
 }
@@ -418,35 +433,60 @@ pub fn starter_catalog() -> ModelAliasMap {
             context_length: 131_072,
             ..Default::default()
         },
-        // Open lane — open-weight models (stock or our own "-open" variants)
-        // that answer many requests frontier models refuse. Served by the
-        // `open_lane` provider (OPEN_LANE_BASE_URL / OPEN_LANE_API_KEY);
-        // hidden from /v1/models while that provider is unset. Every request
-        // passes the hard-line filter (services::hard_line) first.
-        open_lane_entry(
-            "deepseek-v4.1-flash-open",
-            "DeepSeek V4.1 Flash (Open)",
-            0.10,
-            2.00,
-            1_048_576,
-        ),
-        open_lane_entry("glm-5.3-flash-open", "GLM 5.3 Flash (Open)", 0.40, 1.20, 1_048_576),
+        // Open lane — open-weight models whose upstream refuses less than
+        // frontier models. Each row is served by one host provider
+        // (`open_venice`, `open_ablit`, `open_featherless`, `open_self`; legacy
+        // `open_lane`); a row is hidden from /v1/models while its provider is
+        // unset. Host prices are wholesale; retail = host × OPEN_LANE_MARKUP.
+        // Every request passes the hard-line filter (services::hard_line) first.
+        // Small.
+        open_row("glm-4.7-flash-open", "GLM 4.7 Flash Open", OPEN_VENICE_PROVIDER, "olafangensan-glm-4.7-flash-heretic", 0.07, 0.40, 200_000)
+            .failover("open-failover-glm-4.7-flash"),
+        // Mid.
+        open_row("deepseek-v4.1-flash-open", "DeepSeek V4.1 Flash Open", OPEN_VENICE_PROVIDER, "e2ee-deepseek-v4-1-flash-1017-abliterated", 0.375, 1.50, 1_048_576)
+            .failover("open-failover-deepseek-v4.1-flash"),
+        open_row("glm-5.3-flash-open", "GLM 5.3 Flash Open", OPEN_VENICE_PROVIDER, "z-ai-glm-5-3-flash", 0.15, 0.50, 1_048_576),
+        // Large, Open Research only.
+        open_row("open-large-research", "Open Large Research", OPEN_ABLIT_PROVIDER, "abliterated-model-large-v2", 3.00, 5.00, 1_000_000)
+            .research()
+            .failover("open-failover-large-research"),
+        // Hidden failover rows (another model slot's backup, billed as the serving row).
+        open_row("open-failover-glm-4.7-flash", "GLM 5.3 Flash Open (backup)", OPEN_VENICE_PROVIDER, "glm-5-3-flash-uncensored", 0.165, 0.55, 1_048_576).hidden(),
+        open_row("open-failover-deepseek-v4.1-flash", "Open Large Flash (backup)", OPEN_ABLIT_PROVIDER, "abliterated-model-large-flash", 1.00, 2.00, 1_000_000).hidden(),
+        open_row("open-failover-large-research", "Open Large Research (backup)", OPEN_VENICE_PROVIDER, "abliteration-abliterated-model-large-v2", 3.00, 5.00, 1_000_000).research().hidden(),
     ])
 }
 
 /// Provider id of the open lane (the `OPEN_LANE_*` OpenAI-compatible upstream).
 pub const OPEN_LANE_PROVIDER: &str = "open_lane";
 
-/// Whether a catalog entry belongs to the open lane.
-pub fn is_open_lane(entry: &ModelAliasEntry) -> bool {
-    entry.provider == OPEN_LANE_PROVIDER
-}
+/// Host provider ids of the open lane (contract D9). Env prefixes
+/// `OPEN_VENICE`, `OPEN_ABLIT`, `OPEN_FEATHERLESS`, `OPEN_SELF` are registered
+/// by the provider setup, not here.
+pub const OPEN_VENICE_PROVIDER: &str = "open_venice";
+pub const OPEN_ABLIT_PROVIDER: &str = "open_ablit";
+pub const OPEN_FEATHERLESS_PROVIDER: &str = "open_featherless";
+pub const OPEN_SELF_PROVIDER: &str = "open_self";
 
-/// The upstream model id an open-lane alias is served as. Defaults to the
-/// alias itself (how our own servers name them, e.g. vLLM
-/// `--served-model-name`); `OPEN_LANE_MODEL_MAP` overrides per alias while a
-/// third-party host serves them: `alias=upstream,alias=upstream`.
-fn open_lane_upstream(alias: &str) -> String {
+/// Every provider id that serves open rows (the hosts plus legacy `open_lane`).
+pub const OPEN_PROVIDERS: [&str; 5] = [
+    OPEN_VENICE_PROVIDER,
+    OPEN_ABLIT_PROVIDER,
+    OPEN_FEATHERLESS_PROVIDER,
+    OPEN_SELF_PROVIDER,
+    OPEN_LANE_PROVIDER,
+];
+
+/// The aliases the legacy `OPEN_LANE_*` provider served before the host rows
+/// (contract D12). While a row's own host is unset and `OPEN_LANE` is set,
+/// these two still route to the legacy provider, so a deploy before the host
+/// keys are in never takes them down.
+pub const LEGACY_OPEN_ALIASES: [&str; 2] = ["deepseek-v4.1-flash-open", "glm-5.3-flash-open"];
+
+/// The upstream model id the legacy lane serves an alias as: the alias itself
+/// (our own servers' `--served-model-name`), or the `OPEN_LANE_MODEL_MAP`
+/// override (`alias=upstream,alias=upstream`), exactly as before the host rows.
+pub fn legacy_open_upstream(alias: &str) -> String {
     std::env::var("OPEN_LANE_MODEL_MAP")
         .ok()
         .and_then(|map| {
@@ -458,23 +498,48 @@ fn open_lane_upstream(alias: &str) -> String {
         .unwrap_or_else(|| alias.to_string())
 }
 
-fn open_lane_entry(
+/// Whether a catalog entry belongs to the open lane.
+pub fn is_open_lane(entry: &ModelAliasEntry) -> bool {
+    entry.lane == "open"
+}
+
+/// An open-lane row at the host's (wholesale) price.
+fn open_row(
     alias: &str,
     name: &str,
+    provider: &str,
+    upstream_id: &str,
     prompt_price: f64,
     completion_price: f64,
     context_length: u64,
 ) -> ModelAliasEntry {
     ModelAliasEntry {
         alias: alias.to_string(),
-        provider: OPEN_LANE_PROVIDER.to_string(),
-        upstream_id: open_lane_upstream(alias),
+        provider: provider.to_string(),
+        upstream_id: upstream_id.to_string(),
         aliases: None,
         created: 1761350400, // 2026-10-25
         name: name.to_string(),
         prompt_price,
         completion_price,
         context_length,
+        static_price_is_wholesale: true,
+        lane: "open",
         ..Default::default()
+    }
+}
+
+impl ModelAliasEntry {
+    fn failover(mut self, alias: &'static str) -> Self {
+        self.failover = Some(alias);
+        self
+    }
+    fn research(mut self) -> Self {
+        self.research_only = true;
+        self
+    }
+    fn hidden(mut self) -> Self {
+        self.listed = false;
+        self
     }
 }

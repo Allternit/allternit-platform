@@ -64,3 +64,31 @@ struct GlassContainer<Content: View>: View {
         #endif
     }
 }
+
+/// True when `glassEffect` is available (iOS 26 with the 6.2 compiler).
+enum NativeGlass {
+    static var available: Bool {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { return true }
+        #endif
+        return false
+    }
+}
+
+extension View {
+    /// Clear Liquid Glass lens (`Glass.clear`, not interactive: it takes no touches), tagged
+    /// with a `glassEffectID` so it blends inside a `GlassContainer`. A no-op before iOS 26;
+    /// callers check `NativeGlass.available` and draw their own fallback.
+    @ViewBuilder
+    func clearGlassLens<S: Shape>(in shape: S, id: String, namespace: Namespace.ID) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            self.glassEffect(Glass.clear, in: shape).glassEffectID(id, in: namespace)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+}

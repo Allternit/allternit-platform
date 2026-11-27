@@ -10,10 +10,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import com.allternit.core.design.PolishHaptic
-import com.allternit.core.design.SectionLabel
 import androidx.compose.foundation.border
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
@@ -154,13 +151,15 @@ private fun page(id: String): SPageInfo = ALL_PAGES.first { it.id == id }
 private sealed interface RootRow {
     data class Page(val id: String, val label: String? = null) : RootRow
     data object Customize : RootRow
+    data object Feedback : RootRow
+    data object Changelog : RootRow
     data object OpenLinks : RootRow
     data object Haptics : RootRow
     data object ReduceMotion : RootRow
 }
 
 private val ROOT_GROUPS: List<Pair<String, List<RootRow>>> = listOf(
-    "Account" to listOf(RootRow.Page("profile"), RootRow.Page("billing"), RootRow.Page("usage"), RootRow.Page("notifications"), RootRow.Page("privacy")),
+    "Account" to listOf(RootRow.Page("profile"), RootRow.Page("billing"), RootRow.Page("usage"), RootRow.Page("notifications"), RootRow.Page("privacy"), RootRow.Feedback, RootRow.Changelog),
     "Assistant" to listOf(RootRow.Customize, RootRow.Page("memory"), RootRow.Page("voice", "Voice and dictation")),
     "Bots and computers" to listOf(RootRow.Page("subscriptions"), RootRow.Page("computers", "Computers and devices"), RootRow.Page("agent-rules")),
     "App" to listOf(RootRow.OpenLinks, RootRow.Haptics, RootRow.ReduceMotion),
@@ -177,12 +176,14 @@ private fun advancedItems(section: String): List<SPageInfo> =
     ALL_PAGES.filter { it.id !in rootPageIds && it.section == section }.sortedBy { it.order }
 
 private fun pageLabel(id: String): String =
-    ROOT_GROUPS.flatMap { it.second }.firstNotNullOfOrNull { (it as? RootRow.Page)?.takeIf { r -> r.id == id }?.label } ?: ALL_PAGES.firstOrNull { it.id == id }?.label ?: "Customize"
+    ROOT_GROUPS.flatMap { it.second }.firstNotNullOfOrNull { (it as? RootRow.Page)?.takeIf { r -> r.id == id }?.label } ?: ALL_PAGES.firstOrNull { it.id == id }?.label ?: "Catalog"
 
 private const val TERMS_URL = "https://allternit.com/terms"
 private const val PRIVACY_URL = "https://allternit.com/privacy"
 private const val SUPPORT_URL = "https://allternit.com/support"
 private const val STATUS_URL = "https://status.allternit.com"
+private const val FEEDBACK_URL = "https://allternit.com/feedback"
+private const val CHANGELOG_URL = "https://docs.allternit.com/changelog"
 
 /**
  * Settings (iOS SettingsView, phone calm I13): the root with the Accounts card, Account, Assistant, Bots and
@@ -228,9 +229,12 @@ fun SettingsRoot(host: SettingsHost) {
             "subscriptions" -> host.connections(back)
             "device-access" -> DeviceAccessPage(back)
             "devices" -> DevicePairingPage(host, back)
+            "response-style" -> ResponseStylePage(host, back, push)
             "memory" -> MemoryPage(host, back, push)
             "memory-drive" -> MemoryDrivePage(host, back, push)
             "memory-history" -> MemoryHistoryPage(host, back)
+            "knowledge" -> KnowledgeReviewPage(back, push)
+            "knowledge-proposal" -> KnowledgeProposalPage(back)
             "models" -> ModelsPage(host, back, push)
             "subagents" -> SubagentsPage(host, back)
             "mcp" -> McpPage(host, back)
@@ -283,6 +287,7 @@ private fun crumbIconFor(id: String?): Int? = when (id) {
     null -> null
     "advanced" -> DesignR.drawable.ph_terminal
     "open-links" -> DesignR.drawable.ph_arrow_square_out
+    "knowledge", "knowledge-proposal" -> DesignR.drawable.ph_books
     else -> ALL_PAGES.firstOrNull { it.id == id }?.icon
 }
 
@@ -299,6 +304,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
     var inApp by remember { mutableStateOf(SettingsPrefs.openLinksInApp(context)) }
     var signOutError by remember { mutableStateOf<String?>(null) }
     val account = host.account
+    remember(context) { ResponseFontPrefs.load(context); 0 }
     SPage(
         "Settings", tag = "settingsScreen", animateIn = false,
         leading = { SRoundButton(DesignR.drawable.ph_x, "Close settings", "settingsClose", host.onClose) },
@@ -325,7 +331,12 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
                     Box(Modifier.pressScale98()) {
                     when (row) {
                         is RootRow.Page -> SRow(row.label ?: page(row.id).label, "settingsRow_${row.id}", icon = page(row.id).icon, onClick = { push(row.id) })
-                        RootRow.Customize -> SRow("Customize", "settingsRow_customize", icon = DesignR.drawable.ph_sliders_horizontal, onClick = { push("customize") })
+                        // E8: the row is "Catalog" (nav id stays `customize`); it opens the same screen.
+                        RootRow.Customize -> SRow("Catalog", "settingsRow_customize", icon = DesignR.drawable.ph_sliders_horizontal, onClick = { push("customize") })
+                        RootRow.Feedback -> SRow("Give feedback", "settingsRow_feedback", icon = DesignR.drawable.ph_chat_text, onClick = { openLink(FEEDBACK_URL) })
+                        RootRow.Changelog -> SRow("View changelog", "settingsRow_changelog", icon = DesignR.drawable.ph_list_bullets, onClick = { openLink(CHANGELOG_URL) }, trailing = {
+                            androidx.compose.material3.Icon(androidx.compose.ui.res.painterResource(DesignR.drawable.ph_arrow_up_right), contentDescription = "Opens outside Settings", tint = AllternitTheme.colors.textTertiary, modifier = Modifier.size(14.dp))
+                        })
                         RootRow.OpenLinks -> SRow("Open links in", "settingsRow_openLinks", icon = DesignR.drawable.ph_arrow_square_out, value = if (inApp) "In app" else "Browser", onClick = { push("open-links") })
                         RootRow.Haptics -> SToggleRow("Haptic feedback", "settingsRow_haptics", haptics, icon = DesignR.drawable.ph_vibrate, onChange = { haptics = it; SettingsPrefs.setHapticsOn(context, it); if (it) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
                         RootRow.ReduceMotion -> SToggleRow("Reduce motion", "settingsRow_reduceMotion", reduceMotion, icon = DesignR.drawable.ph_arrows_down_up, onChange = { reduceMotion = it; SettingsPrefs.setReduceMotion(context, it); if (haptics) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
@@ -335,7 +346,14 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
             }
         }
         RootLabel("Appearance")
-        SCard { AppearanceTiles() }
+        SCard {
+            AppearanceTiles()
+            SDivider()
+            // Response font (E5: Serif by default): the face of assistant replies in chat.
+            SRow("Response font", "settingsRow_responseFont", icon = DesignR.drawable.ph_chat_text, chevron = false, trailing = {
+                SSegmented(listOf("Sans", "Serif"), if (ResponseFontPrefs.serif) 1 else 0, "responseFont") { ResponseFontPrefs.set(context, it == 1) }
+            })
+        }
         SCard(Modifier.padding(top = 18.dp)) {
             val count = ADVANCED_SECTIONS.sumOf { advancedItems(it.first).size }
             SRow("Advanced", "settingsAdvancedRow", icon = DesignR.drawable.ph_terminal, value = "$count pages", onClick = { push("advanced") })
@@ -368,11 +386,9 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
     }
 }
 
-/** Root section heading: the shared SectionLabel, keeping the "<label> section" description the old SLabel had. */
+/** Root section heading: the grey 14sp label over a flat group (web phone frame), with its "<label> section" description. */
 @Composable
-private fun RootLabel(text: String) {
-    SectionLabel(text, Modifier.fillMaxWidth().padding(horizontal = 6.dp).semantics { contentDescription = "$text section" })
-}
+private fun RootLabel(text: String) = SLabel(text)
 
 /** Row press feedback (.98) without taking the tap from the row: watches the pointer on the initial pass only. */
 @Composable

@@ -356,6 +356,10 @@ If the tool name contains a `.`, the dispatcher first tries the attached MCP ser
 
 For production deployments, prefer remote MCP servers with tunnel-based authentication.
 
+## Reporting a problem with a tool
+
+`POST /api/v1/mcp/connectors/:id/feedback` with `{ "tool": "<name>", "message": "<optional>" }` forwards the report to the server's own `submit_feedback` tool and returns `{ "ok": true }`. Allternit stores nothing. A server that does not list `submit_feedback` gets `422` with `{ "error": "feedback_unsupported" }`, and the app hides "Report a problem" for it.
+
 ## Error codes
 
 | HTTP | Code / Message | Meaning |
@@ -365,9 +369,16 @@ For production deployments, prefer remote MCP servers with tunnel-based authenti
 | 400 | `Invalid MCP callback` | Missing OAuth `code` or `state` |
 | 401 | `Unauthorized` | Missing or invalid session |
 | 404 | `server_not_found` | Attached server ID not found |
+| 422 | `feedback_unsupported` | The server has no `submit_feedback` tool |
 | 502 | `attach_failed` | Could not reach or initialize the remote MCP server |
 | -32001 | `MCP tunnel auth failed` | Tunnel mTLS/OAuth check failed |
 | -32601 | `Method not found` | Unknown JSON-RPC method |
+
+## Typed results
+
+A server can declare an output schema for a tool and return `structuredContent` next to the text. Allternit keeps that object with the tool result, so the chat shows it as labelled values or, for a list of objects, a small table instead of raw JSON. In the Gizzi terminal app an object shows as aligned key and value lines, and a list of objects as a table of at most 10 rows followed by "+N more". Results without `structuredContent` look the same as before. The model still reads the text content.
+
+When a server also supports feedback, the chat offers a report link on that tool's result. Servers that do not support it show no link.
 
 ## Related pages
 
@@ -395,3 +406,7 @@ MCP Apps has an **Apps** tab next to Installed, Discover and Build. It matches i
 - **Add to home screen** asks the launcher to pin a shortcut with the app's icon. Tapping it opens the app in its own screen.
 
 To turn it off on a debug build, set the boolean `apps.shelf` to false in `shared_prefs/allternit_flags.xml`.
+
+## Skills from MCP servers
+
+A server can publish skills as `skill://` resources, and mcp.allternit.com adds a `load_skill` tool so the agent can load them on a turn. See [Skills from your servers](/guides/skills-from-your-servers) and [MCP skills API](/api/mcp-skills).

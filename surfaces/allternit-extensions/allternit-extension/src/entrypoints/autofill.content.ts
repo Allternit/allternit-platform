@@ -38,6 +38,13 @@ export default defineContentScript({
           .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
         return true;
       }
+      if (message?.type === 'AUTOFILL_RESCAN') {
+        // The person approved filling on this page (agent pause).
+        lastAutofilledHost = null;
+        scanAndAutofill();
+        sendResponse({ ok: true });
+        return undefined;
+      }
       return undefined;
     });
   },

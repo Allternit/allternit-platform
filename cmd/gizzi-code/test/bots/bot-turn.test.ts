@@ -184,6 +184,77 @@ describe("claude-cli bot tool decisions", () => {
   })
 })
 
+describe("the account's blocked tools (Tool permissions)", () => {
+  const mcp = { name: "allternit", url: "http://127.0.0.1:1/mcp", headers: {} }
+  const argv = (ctx: Record<string, unknown>) => cliAdapterArgv("claude-cli", ["claude"], "hi", { taskId: "t1", mcp, ...ctx })
+  const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1]
+  const send = "mcp__proxy__gmail__send_email"
+
+  test("a blocked tool on a bot's allowlist is refused, before ask-each-time and gates", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", allowedTools: [send, "web_search"], askTools: [send], gated: true, blockedTools: [send] }
+    expect(BotTurn.claudeToolDecision(bot, send, "allternit")).toBe("deny")
+    expect(BotTurn.deniedMessage(bot, send)).toContain("Blocked in your tool permissions")
+    // The rest of the allowlist is untouched.
+    expect(BotTurn.claudeToolDecision(bot, "WebSearch", "allternit")).toBe("allow")
+  })
+
+  test("the mcp__ prefix allow does not cover a blocked bridge tool", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", allowedTools: ["file_read"], blockedTools: ["mcp__allternit__run_code"] }
+    expect(BotTurn.claudeToolDecision(bot, "mcp__allternit__run_code", "allternit")).toBe("deny")
+    expect(BotTurn.claudeToolDecision(bot, "mcp__allternit__glance", "allternit")).toBe("allow")
+  })
+
+  test("a blocked tool never reaches --allowedTools and goes to --disallowedTools", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", allowedTools: [send, "file_read"], blockedTools: [send, "execute_action:gmail:send_email"] }
+    expect(BotTurn.claudePreapproved(bot, "allternit")).not.toContain(send)
+    const args = argv({ bot })
+    expect(after(args, "--allowedTools").split(",")).not.toContain(send)
+    expect(after(args, "--allowedTools").split(",")).toContain("Read")
+    const disallowed = after(args, "--disallowedTools").split(",")
+    expect(disallowed).toEqual(expect.arrayContaining(["AskUserQuestion", send]))
+    // Not a Claude tool name: gizzi's own gate matches it on the call's input.
+    expect(disallowed).not.toContain("execute_action:gmail:send_email")
+    expect(args.filter((a) => a === "--disallowedTools")).toHaveLength(1)
+  })
+
+  test("a blocked read-only tool leaves an unrestricted bot's free set", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", blockedTools: ["WebSearch"] }
+    expect(BotTurn.claudePreapproved(bot, "allternit")).not.toContain("WebSearch")
+    expect(BotTurn.claudeToolDecision(bot, "WebSearch", "allternit")).toBe("deny")
+  })
+
+  test("the execute_action form is matched on the call's input", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", allowedTools: ["mcp__connectors"], blockedTools: ["execute_action:gmail:send_email"] }
+    const tool = "mcp__connectors__execute_action"
+    expect(BotTurn.claudeToolDecision(bot, tool, "allternit", { actionId: "gmail.send_email", input: {} })).toBe("deny")
+    expect(BotTurn.claudeToolDecision(bot, tool, "allternit", { actionId: "gmail.search", input: {} })).toBe("allow")
+  })
+
+  test("a bot the account blocks tools for never runs with the legacy bypass", () => {
+    process.env.GIZZI_BOT_BYPASS_PERMISSIONS = "1"
+    try {
+      expect(after(argv({ bot: { id: "b", blockedTools: [send] } }), "--permission-mode")).toBe("default")
+    } finally {
+      delete process.env.GIZZI_BOT_BYPASS_PERMISSIONS
+    }
+  })
+
+  test("a normal session's pushed list goes to --disallowedTools", () => {
+    const args = argv({ blockedTools: [send] })
+    expect(after(args, "--permission-mode")).toBe("bypassPermissions")
+    expect(after(args, "--disallowedTools").split(",")).toEqual(["AskUserQuestion", send])
+  })
+
+  test("no blockedTools gives no change", () => {
+    const bot: BotTurn.BotTurnInfo = { id: "a", allowedTools: [send, "web_search"], askTools: ["web_search"] }
+    expect(BotTurn.claudePreapproved(bot, "allternit")).toEqual([send, "mcp__allternit"])
+    expect(BotTurn.claudeToolDecision(bot, send, "allternit")).toBe("allow")
+    expect(BotTurn.claudeToolDecision(bot, "WebSearch", "allternit")).toBe("ask")
+    expect(after(argv({ bot }), "--disallowedTools")).toBe("AskUserQuestion")
+    expect(after(argv({}), "--disallowedTools")).toBe("AskUserQuestion")
+  })
+})
+
 describe("MCP server instructions in the turn system", () => {
   test("a normal turn carries them after the workspace identity, before the scratchpad", async () => {
     const { header, loaded } = await turnPrompt({})

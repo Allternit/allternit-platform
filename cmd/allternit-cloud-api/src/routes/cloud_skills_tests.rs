@@ -173,3 +173,79 @@ async fn the_mcp_edge_lists_and_reads_a_stored_user_skill() {
     let text = skill_md["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(text.contains("name: pdf-notes") && text.contains("Read the file first."), "{text}");
 }
+
+// ------------------------------- available + read (for allternit-api) ----
+
+/// A GET signed the way allternit-api's account_sync.rs signs cloud calls
+/// (device token of `runtime`, path without the query).
+async fn signed_get(state: &Arc<ApiState>, path: &str, runtime: &str, token: &str) -> (StatusCode, Value) {
+    let key = crate::routes::runtime_pairing::sha256_hex(token.as_bytes());
+    let ts = chrono::Utc::now().timestamp();
+    let sig = crate::routes::runtime_relay::sign_runtime_request(&key, ts, "GET", path.split('?').next().unwrap(), b"");
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri(path)
+        .header("x-allternit-runtime-id", runtime)
+        .header("x-allternit-runtime-ts", ts.to_string())
+        .header("x-allternit-runtime-sig", sig)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let res = routes().with_state(state.clone()).oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn skills_available_and_read_are_scoped_to_the_caller() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let (status, _) = send(&state, "POST", "/api/v1/skills", &create_body(SKILL)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, list) = send(&state, "GET", "/api/v1/skills/available", "").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 1, "built-ins stay out: {list:?}");
+    assert_eq!(
+        list[0],
+        json!({ "source": "user", "uri": "skill://user/pdf-notes/SKILL.md", "name": "pdf-notes", "description": "Turn a PDF into notes", "from": "You", "defaultEnabled": true })
+    );
+    let (status, read) = send(&state, "GET", "/api/v1/skills/read?uri=skill://user/pdf-notes/SKILL.md", "").await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert!(read["text"].as_str().unwrap().contains("Read the file first."));
+    for missing in ["/api/v1/skills/read?uri=skill://user/nope/SKILL.md", "/api/v1/skills/read?uri=https://x", "/api/v1/skills/read"] {
+        let (status, body) = send(&state, "GET", missing, "").await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::NOT_FOUND, Some("skill_not_found")), "{missing}");
+    }
+
+    // Over 64 KB (allowed in the store, up to 256 KB) is refused on read.
+    sqlx::query("INSERT INTO cloud_skills (id, owner_user_id, name, description, skill_md) VALUES ('skl_big', $1, 'big', 'Big', $2)")
+        .bind(DEV_USER)
+        .bind(format!("{}{}", md("big"), "x".repeat(MAX_READ_BYTES)))
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let (status, body) = send(&state, "GET", "/api/v1/skills/read?uri=skill://user/big/SKILL.md", "").await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::PAYLOAD_TOO_LARGE, Some("skill_too_large")));
+
+    // allternit-api on user B's paired computer: path-signed, acts as B.
+    crate::routes::test_support::seed_runtime_device(&state.db, "rt_skills_b", "user-b").await;
+    sqlx::query("INSERT INTO cloud_skills (id, owner_user_id, name, description, skill_md) VALUES ('skl_b', 'user-b', 'b-notes', 'B notes', $1)")
+        .bind(md("b-notes"))
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let token = "token-of-rt_skills_b";
+    let (status, list) = signed_get(&state, "/api/v1/skills/available", "rt_skills_b", token).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let uris: Vec<&str> = list.as_array().unwrap().iter().map(|i| i["uri"].as_str().unwrap()).collect();
+    assert_eq!(uris, vec!["skill://user/b-notes/SKILL.md"], "B sees only B's skills");
+    let (status, body) = signed_get(&state, "/api/v1/skills/read?uri=skill://user/pdf-notes/SKILL.md", "rt_skills_b", token).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::NOT_FOUND, Some("skill_not_found")), "B cannot read A's skill");
+    let (status, body) = signed_get(&state, "/api/v1/skills/read?uri=skill://user/b-notes/SKILL.md", "rt_skills_b", token).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _) = signed_get(&state, "/api/v1/skills/available", "rt_skills_b", "wrong-token").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "a bad signature is refused");
+}

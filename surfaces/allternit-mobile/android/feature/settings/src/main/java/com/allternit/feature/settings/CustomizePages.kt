@@ -73,7 +73,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /*
- * Customize (iOS CustomizeScreen), Skills and Plugins (CapabilitiesSettingsView) and Connectors (ConnectorsListView).
+ * The Catalog (iOS twin), Skills and Plugins (CapabilitiesSettingsView) and Connectors (ConnectorsListView).
  * Skills and plugins are folders on the person's computer, read and written through the runtime's file routes the
  * way iOS does, so they need a computer. Connectors are an account list.
  */
@@ -84,7 +84,7 @@ private val PLUGIN_ROOTS = listOf("~/.allternit/plugins", "~/.agents/plugins", "
 /** One installed skill or plugin: a folder with a SKILL.md (skill) and an optional config.json holding `enabled`. */
 internal data class Cap(val name: String, val dir: String, val enabled: Boolean, val hasConfig: Boolean)
 
-private suspend fun runtimeLoad(host: SettingsHost, method: String, path: String, body: String? = null): Load<JsonElement> =
+internal suspend fun runtimeLoad(host: SettingsHost, method: String, path: String, body: String? = null): Load<JsonElement> =
     when (val r = host.backend.runtimeJson(method, path, body)) {
         is RuntimeCall.Ok -> Load.Ready(r.body)
         RuntimeCall.NoComputer -> Load.NoComputer
@@ -236,87 +236,46 @@ internal fun CapabilitiesPage(host: SettingsHost, plugins: Boolean, back: () -> 
     SPage(if (plugins) "Plugins" else "Skills", tag = if (plugins) "settingsPlugins" else "settingsSkills", onBack = back) {
         SNote(if (plugins) "Plugins add tools and commands to your bots. They live on your computer." else "Skills teach your bots how to do a job. They live on your computer.")
         SField("Search", query, "capabilities_search", { query = it })
+        if (!plugins) ServerSkillsSection(query)
         CapabilitiesBody(host, plugins, query, allowCreate = !plugins)
     }
 }
 
-private class CatalogSkill(val id: String, val name: String, val blurb: String, val category: String, val author: String)
-
-/** iOS SkillCatalog.entries: the skills directory that Add installs onto the computer (`POST skills/catalog/install`). */
-private val CATALOG = listOf(
-    CatalogSkill("claude-algorithmic-art", "Algorithmic Art", "Make generative art with p5.js.", "create", "Anthropic"),
-    CatalogSkill("claude-brand-guidelines", "Brand Guidelines", "Apply brand colors and type to your work.", "create", "Anthropic"),
-    CatalogSkill("claude-canvas-design", "Canvas Design", "Visual art as .png and .pdf documents.", "create", "Anthropic"),
-    CatalogSkill("claude-claude-api", "Claude API", "Build, debug and tune Claude API apps.", "build", "Anthropic"),
-    CatalogSkill("claude-doc-coauthoring", "Doc Co-Authoring", "A structured workflow for writing docs together.", "productivity", "Anthropic"),
-    CatalogSkill("claude-docx", "DOCX", "Create and edit Word documents.", "productivity", "Anthropic"),
-    CatalogSkill("claude-frontend-design", "Frontend Design", "Distinctive, production-grade frontend interfaces.", "create", "Anthropic"),
-    CatalogSkill("claude-internal-comms", "Internal Comms", "Write all kinds of internal communications.", "productivity", "Anthropic"),
-    CatalogSkill("claude-mcp-builder", "MCP Builder", "Build high-quality MCP servers.", "build", "Anthropic"),
-    CatalogSkill("claude-pdf", "PDF", "Read, make and edit PDF files.", "productivity", "Anthropic"),
-    CatalogSkill("claude-pptx", "PPTX", "Create and edit slide decks.", "productivity", "Anthropic"),
-    CatalogSkill("claude-skill-creator", "Skill Creator", "Create and improve skills.", "build", "Anthropic"),
-    CatalogSkill("claude-slack-gif-creator", "Slack GIF Creator", "Animated GIFs sized for Slack.", "create", "Anthropic"),
-    CatalogSkill("claude-theme-factory", "Theme Factory", "Style artifacts with a theme.", "create", "Anthropic"),
-    CatalogSkill("claude-web-artifacts-builder", "Web Artifacts Builder", "Build multi-component web artifacts.", "create", "Anthropic"),
-    CatalogSkill("claude-webapp-testing", "Web App Testing", "Test local web apps.", "build", "Anthropic"),
-    CatalogSkill("claude-xlsx", "XLSX", "Work with spreadsheets.", "productivity", "Anthropic"),
-    CatalogSkill("allternit-alabs-course-pipeline", "ALabs Course Pipeline", "End-to-end A://Labs course creation.", "productivity", "Allternit"),
-    CatalogSkill("allternit-allternit-codebase-to-course", "Allternit Codebase To Course", "Turn a codebase into an interactive course.", "productivity", "Allternit"),
-    CatalogSkill("codex-clone-website", "Clone Website", "Rebuild a public website as a pixel copy.", "build", "Codex"),
-    CatalogSkill("codex-mobile-app-design", "Mobile App Design", "Mobile app UI and UX design.", "create", "Codex"),
-)
-
+/** "From your servers": skills your MCP servers and installed apps offer, one switch each (`PUT /api/v1/mcp/skills/prefs`). Hidden with the flag off or when there are none. A failed save puts the switch back and says so. */
 @Composable
-private fun SkillDirectory(host: SettingsHost, query: String) {
+private fun ServerSkillsSection(query: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (!com.allternit.core.api.FeatureFlags.isOn(context, com.allternit.core.api.FeatureFlags.MCP_SKILLS)) return
     val scope = rememberCoroutineScope()
-    val (installed, reload) = rememberLoad("catalogInstalled") { runtimeLoad(host, "GET", "/api/v1/skills/catalog/installed") }
-    var busy by remember { mutableStateOf<String?>(null) }
+    var skills by remember { mutableStateOf<List<com.allternit.core.api.ServerSkill>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var category by remember { mutableStateOf<String?>(null) }
-    val cats = listOf("all", "create", "build", "productivity")
-    fun install(id: String) {
-        busy = id; error = null
-        scope.launch {
-            val r = runtimeLoad(host, "POST", "/api/v1/skills/catalog/install", buildJsonObject { put("id", id) }.toString())
-            if (r is Load.Ready) reload() else error = (r as? Load.Failed)?.message ?: "Connect a computer first."
-            busy = null
-        }
-    }
-    SLabel("Categories")
-    FilterPills(
-        options = cats.map { it.replaceFirstChar { ch -> ch.uppercase() } },
-        selectedIndex = cats.indexOf(category ?: "all").coerceAtLeast(0),
-        onSelect = { category = if (it == 0) null else cats[it] },
-        modifier = Modifier.padding(bottom = 8.dp),
-    )
-    LoadView(installed, reload, "load the skills directory") { body ->
-        val have = body.listUnder("skills").mapNotNull { it.str("id") }.toSet()
-        val rows = CATALOG
-            .filter { (category == null || it.category == category) && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.blurb.contains(query, ignoreCase = true)) }
-        if (rows.isEmpty()) StateBox("No skills match", "Try another word or category.", null, null, art = com.allternit.core.design.EmptyArtKind.Search) else {
-            CCard(Modifier.padding(top = 8.dp)) {
-                rows.forEachIndexed { i, s ->
-                    if (i > 0) SDivider()
-                    val added = s.id in have
-                    SRow(s.name, "directory_${s.id}", detail = "${s.blurb} · ${s.author}", chevron = false, enabled = !added && busy == null, onClick = { install(s.id) }, trailing = {
-                        GlassCircleButton(
-                            onClick = { if (!added && busy == null) install(s.id) },
-                            contentDescription = if (added) "${s.name} added" else "Add ${s.name}",
-                            size = 28.dp,
-                        ) {
-                            if (busy == s.id) androidx.compose.material3.Text("...", color = AllternitTheme.colors.textPrimary, fontSize = 11.sp)
-                            else Icon(painterResource(if (added) DesignR.drawable.ph_check_bold else DesignR.drawable.ph_plus_bold), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(13.dp))
+    LaunchedEffect(Unit) { skills = com.allternit.feature.chat.ServerSkillsRepository.list(force = true) }
+    val rows = skills.filter { query.isBlank() || it.name.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true) || it.description.contains(query, ignoreCase = true) }
+    if (rows.isEmpty()) return
+    SLabel("From your servers")
+    SCard(Modifier.padding(bottom = 12.dp)) {
+        rows.forEachIndexed { i, sk ->
+            if (i > 0) SDivider()
+            SToggleRow(
+                title = sk.name, tag = "serverSkill_${sk.id}", checked = sk.enabled,
+                detail = if (sk.source == "app") "From the ${sk.from} app" else "From ${sk.from}",
+                onChange = { on ->
+                    error = null
+                    skills = skills.map { if (it.id == sk.id) it.copy(enabled = on) else it }
+                    scope.launch {
+                        if (!com.allternit.feature.chat.ServerSkillsRepository.setEnabled(sk.id, on)) {
+                            skills = skills.map { if (it.id == sk.id) it.copy(enabled = !on) else it }
+                            error = "Couldn't save that change for ${sk.name}. Try again."
                         }
-                    })
-                }
-            }
+                    }
+                },
+            )
         }
     }
     SError(error)
 }
 
-/** The connector list. [onlyConnected] is the Customize "Yours" view. */
+/** The connector list. [onlyConnected] shows only what is connected. */
 @Composable
 internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
     val scope = rememberCoroutineScope()
@@ -405,7 +364,7 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
     }
 }
 
-/** iOS ConnectorsListView: the + sheet's Connectors row, Settings > Connectors and Customize's Connectors all land here. */
+/** iOS ConnectorsListView: the + sheet's Connectors row, Settings > Connectors and the Catalog's connector rows all land here. */
 @Composable
 fun ConnectorsRoot(onBack: () -> Unit) {
     var query by remember { mutableStateOf("") }
@@ -414,51 +373,79 @@ fun ConnectorsRoot(onBack: () -> Unit) {
         SNote("Connect apps like Gmail, Calendar or GitHub so your bots can use them. You choose what each one can do.")
         SField("Search connectors", query, "connectors_search", { query = it })
         ConnectorsBody(query, onlyConnected = false)
+        if (query.isBlank()) UseAllternitInOtherApps()
     }
 }
 
-private val CUSTOMIZE_TABS = listOf("Skills", "Connectors", "Plugins")
+private val CATALOG_TABS = listOf("All", "Connectors", "Skills")
 
 /**
- * iOS CustomizeScreen (section: customize): Skills, Connectors and Plugins, each with Yours and Discover, a search
- * field, and the More group (MCP servers, Webhooks, Sources, Publish). The drawer's Customize row and Settings > Customize open it.
- * Polished: the docking block title, search on the neutral fill, and tabs whose underline slides.
+ * The Catalog (iOS twin; settings section id stays `customize`): search, All / Connectors / Skills, an Interactive filter, and the sections
+ * Your connections, Most used, Trending, New and Categories. A row opens [CatalogDetail]. Skills and plugins already on the computer, and the
+ * More group (MCP servers, Webhooks, Sources, Publish), stay below the list. Polished: the docking block title, search on the neutral fill,
+ * and tabs whose underline slides.
  */
 @Composable
 fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
-    var discover by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var interactive by remember { mutableStateOf(false) }
+    var category by remember { mutableStateOf<String?>(null) }
+    var cats by remember { mutableStateOf<List<String>>(emptyList()) }
+    var open by remember { mutableStateOf<CatEntry?>(null) }
     val scroll = rememberScrollState()
     var more by remember { mutableStateOf<String?>(null) }
-    BackHandler { if (more != null) more = null else onBack() }
+    val (load, reload) = rememberLoad(Triple(query.trim(), category, interactive)) {
+        if (query.isNotBlank()) kotlinx.coroutines.delay(250) // a pause in typing, not a request per key
+        CatalogClient.list(query, category, interactive)
+    }
+    val (yours, _) = rememberLoad("catalogYours") { Net.get("connectors").toLoad("load connectors") }
+    LaunchedEffect(load) {
+        if (category == null && !interactive && query.isBlank()) (load as? Load.Ready)?.let { r -> cats = r.value.flatMap { it.categories }.distinct().sorted() }
+    }
+    BackHandler { if (open != null) open = null else if (more != null) more = null else onBack() }
+    open?.let { CatalogDetail(host, it) { open = null }; return }
     when (more) {
         "mcp" -> { McpPage(host) { more = null }; return }
         "webhooks" -> { WebhooksPage(host) { more = null }; return }
         "sources" -> { SourcesPage { more = null }; return }
-        "publish" -> { PublishPage({ more = null }, { more = null; tab = 2 }, host.onClose); return }
+        "skills" -> { CapabilitiesPage(host, plugins = false) { more = null }; return }
+        "plugins" -> { CapabilitiesPage(host, plugins = true) { more = null }; return }
+        "publish" -> { PublishPage({ more = null }, { more = "plugins" }, host.onClose); return }
     }
-        val c = AllternitTheme.colors
+    val c = AllternitTheme.colors
     val dockOffset = rememberDockOffset(scroll)
     Box(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("customizeScreen")) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
             Spacer(Modifier.height(52.dp))
             TabPage(
-                description = "Skills, connectors, and plugins that shape what the agent can do.",
+                description = "Connectors and skills that shape what the agent can do.",
                 modifier = Modifier.dockDescription(dockOffset),
-                title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Customize" }) },
+                title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Catalog" }) },
             ) {}
             Column(Modifier.padding(horizontal = 14.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (host.account == null) {
-                    StateBox("Sign in to customize", "Skills, connectors and plugins belong to your account.", "Sign in", host.onClose)
+                    StateBox("Sign in to browse the Catalog", "Connectors and skills belong to your account.", "Sign in", host.onClose)
                 } else {
-                    CustomizeSearch(query, "Search ${CUSTOMIZE_TABS[tab].lowercase()}", { query = it }, Modifier.fillMaxWidth())
-                    SlidingTabRow(CUSTOMIZE_TABS, tab, { tab = it; query = "" }, Modifier.padding(top = 4.dp))
-                    SlidingSegmented(listOf("Yours", "Discover"), if (discover) 1 else 0, { discover = it == 1 })
-                    when (tab) {
-                        0 -> if (discover) SkillDirectory(host, query) else CapabilitiesBody(host, plugins = false, query = query, allowCreate = true)
-                        1 -> ConnectorsBody(query, onlyConnected = !discover)
-                        else -> if (discover) StateBox("Plugin marketplaces", "Add a marketplace source and publish plugins from Allternit on the web or iPhone. Plugins you install show up under Yours.", null, null) else CapabilitiesBody(host, plugins = true, query = query, allowCreate = false)
+                    CustomizeSearch(query, "Search the Catalog", { query = it }, Modifier.fillMaxWidth())
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SlidingTabRow(CATALOG_TABS, tab, { tab = it }, Modifier.weight(1f))
+                        Box(
+                            Modifier.heightIn(min = 44.dp).clickable(role = Role.Switch) { interactive = !interactive }.testTag("catalogInteractive")
+                                .semantics { contentDescription = "Interactive only" },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(Modifier.clip(RoundedCornerShape(50)).background(if (interactive) c.textPrimary else c.fillNeutral).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                                androidx.compose.material3.Text("Interactive", color = if (interactive) c.bgPrimary else c.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                    CatalogBody(load, reload, tab, query, category, interactive, cats, yours, { category = it }) { open = it }
+                    SLabel("On your computer")
+                    CCard {
+                        SRow("Skills", "catalog_more_skills", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "skills" })
+                        SDivider()
+                        SRow("Plugins", "catalog_more_plugins", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "plugins" })
                     }
                     SLabel("More")
                     CCard {
@@ -473,12 +460,89 @@ fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
                 }
             }
         }
-        DockingBlockTitle("Customize", dockOffset, barCenter = 26.dp, modifier = Modifier.fillMaxSize(), top = 56.dp)
+        DockingBlockTitle("Catalog", dockOffset, barCenter = 26.dp, modifier = Modifier.fillMaxSize(), top = 56.dp)
         Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
             GlassCircleButton(onClick = onBack, contentDescription = "Back", modifier = Modifier.testTag("settingsBack")) {
                 Icon(painterResource(DesignR.drawable.ph_caret_left), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
             }
         }
         if (host.account != null) CustomizeIntroHost()
+    }
+}
+
+/** Sections when nothing is searched or filtered; one Results list when something is. */
+@Composable
+private fun CatalogBody(
+    load: Load<List<CatEntry>>, retry: () -> Unit, tab: Int, query: String, category: String?, interactive: Boolean,
+    cats: List<String>, yours: Load<JsonElement>, onCategory: (String?) -> Unit, onOpen: (CatEntry) -> Unit,
+) {
+    LoadView(load, retry, "load the Catalog") { all ->
+        val entries = all.filter { tab == 0 || (tab == 1 && !it.isSkill) || (tab == 2 && it.isSkill) }
+        val filtered = query.isNotBlank() || category != null || interactive
+        if (!filtered) {
+            val mine = (yours as? Load.Ready)?.value.listUnder("connectors", "items").filter { it["connection"].obj.str("status") == "connected" }
+            if (tab != 2 && mine.isNotEmpty()) {
+                SLabel("Your connections")
+                CCard {
+                    mine.forEachIndexed { i, m ->
+                        val id = m.str("id") ?: return@forEachIndexed
+                        if (i > 0) SDivider()
+                        val match = all.firstOrNull { it.connectorId == id }
+                        SRow(m.str("name") ?: id, "catalogYours_$id", detail = m["connection"].obj.str("account"), chevron = match != null, logoName = m.str("name") ?: id, logoId = m.str("logo") ?: id,
+                            onClick = match?.let { e -> { onOpen(e) } })
+                    }
+                }
+            }
+            CatalogSection("Most used", entries.sortedByDescending { it.popularity }.take(5), onOpen)
+            CatalogSection("Trending", entries.filter { it.trending }.take(5), onOpen)
+            CatalogSection("New", entries.filter { it.isNew }.take(5), onOpen)
+        }
+        SLabel("Categories")
+        if (cats.isNotEmpty()) FilterPills(
+            options = listOf("All") + cats.map { it.replaceFirstChar { ch -> ch.uppercase() } },
+            selectedIndex = if (category == null) 0 else cats.indexOf(category) + 1,
+            onSelect = { onCategory(if (it == 0) null else cats[it - 1]) },
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        if (filtered) {
+            if (entries.isEmpty()) StateBox("Nothing matches", "Try another word or turn a filter off.", null, null, art = com.allternit.core.design.EmptyArtKind.Search)
+            else CatalogSection(null, entries, onOpen)
+        }
+    }
+}
+
+@Composable
+private fun CatalogSection(title: String?, entries: List<CatEntry>, onOpen: (CatEntry) -> Unit) {
+    if (entries.isEmpty()) return
+    if (title != null) SLabel(title)
+    CCard {
+        entries.forEachIndexed { i, e ->
+            if (i > 0) SDivider()
+            CatalogRow(e) { onOpen(e) }
+        }
+    }
+}
+
+/** Logo tile 32 dp, name with verified, one-line blurb, "Connector · By author", and the Interactive chip. */
+@Composable
+private fun CatalogRow(e: CatEntry, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.Button, onClick = onClick).testTag("catalog_${e.id}").padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        CatalogIcon(e, size = 32.dp)
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                androidx.compose.material3.Text(e.name, color = c.textPrimary, fontSize = 16.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (e.verified) androidx.compose.material3.Text("Verified", color = c.textTertiary, fontSize = 11.sp)
+            }
+            e.blurb?.let { androidx.compose.material3.Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+            androidx.compose.material3.Text(e.kindLine, color = c.textTertiary, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        if (e.interactive) Box(Modifier.clip(RoundedCornerShape(50)).background(c.fillNeutral).padding(horizontal = 8.dp, vertical = 3.dp)) {
+            androidx.compose.material3.Text("Interactive", color = c.textSecondary, fontSize = 11.sp)
+        }
     }
 }

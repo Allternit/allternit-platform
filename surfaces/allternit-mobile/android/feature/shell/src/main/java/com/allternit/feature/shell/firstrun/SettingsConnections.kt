@@ -31,7 +31,7 @@ import com.allternit.feature.artifacts.FilterLabel
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibraryLayout
-import com.allternit.feature.artifacts.LibraryLayoutSwitch
+import com.allternit.feature.artifacts.LibraryLayoutButton
 import com.allternit.feature.artifacts.LibrarySearchField
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
@@ -50,7 +50,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.Role
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -109,6 +112,9 @@ internal fun ConnectionsSettingsScreen(
     val scope = rememberCoroutineScope()
     val relay = remember { RuntimeRelay(ShellApi.okHttp, ApiConfig(), context) }
     val store = remember { ConnectionsStore() }
+    val policyStore = remember { ToolPolicyStore() }
+    val signedIn = com.allternit.core.auth.AllternitAuth.state.collectAsState().value is com.allternit.core.auth.AuthState.SignedIn
+    var permissionsFor by remember { mutableStateOf<ConnEntry?>(null) }
     var sheet by remember { mutableStateOf<ConnSheet?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
@@ -124,6 +130,7 @@ internal fun ConnectionsSettingsScreen(
         launch { store.load(relay) }
         launch { store.loadCatalogCounts() }
         launch { store.loadPromotedApps() }
+        launch { policyStore.load() }
     }
 
     fun reload() { scope.launch { store.load(relay) } }
@@ -223,8 +230,19 @@ internal fun ConnectionsSettingsScreen(
                 entry = e,
                 store = store,
                 tag = null,
+                statusExtra = if (e.group == "apps" && signedIn && isOn(e)) policyStore.summary(e.id) else null,
                 trailing = when {
                     e.id == "claude-org" -> claudeOrgAction(store.row(e.id))
+                    e.group == "apps" && signedIn && isOn(e) -> ({
+                        Column(horizontalAlignment = Alignment.End) {
+                            Box(
+                                Modifier.heightIn(min = 48.dp).clickable(role = Role.Button) { permissionsFor = e }.padding(horizontal = 8.dp)
+                                    .testTag("toolPermissions-${e.id}").semantics { contentDescription = "Tool permissions for ${e.name}" },
+                                contentAlignment = Alignment.Center,
+                            ) { Text("Tool permissions", color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                            SetupQuietButton("Disconnect") { disconnect(e.id, e.name) }
+                        }
+                    })
                     isOn(e) -> ({ SetupQuietButton("Disconnect") { disconnect(e.id, e.name) } })
                     else -> null
                 },
@@ -236,7 +254,20 @@ internal fun ConnectionsSettingsScreen(
 
     @Composable
     fun CardFor(e: ConnEntry, modifier: Modifier) {
-        val t: (@Composable (Modifier) -> Unit)? = if (isOn(e)) { m -> SetupQuietButton("Disconnect", m) { disconnect(e.id, e.name) } } else null
+        val t: (@Composable (Modifier) -> Unit)? = when {
+            e.group == "apps" && signedIn && isOn(e) -> { m ->
+                Column(m, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { permissionsFor = e }
+                            .testTag("toolPermissions-${e.id}").semantics { contentDescription = "Tool permissions for ${e.name}" },
+                        contentAlignment = Alignment.Center,
+                    ) { Text(policyStore.summary(e.id)?.let { "Tool permissions · $it" } ?: "Tool permissions", color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                    SetupQuietButton("Disconnect", Modifier.fillMaxWidth()) { disconnect(e.id, e.name) }
+                }
+            }
+            isOn(e) -> { m -> SetupQuietButton("Disconnect", m) { disconnect(e.id, e.name) } }
+            else -> null
+        }
         ConnectionCard(e, store, t, onConnect = { connect(e.id) }, onFallback = ::fallback, modifier = modifier)
     }
 
@@ -375,7 +406,7 @@ internal fun ConnectionsSettingsScreen(
     if (menuOpen) {
         LibrarySheet("Connections", "connectionsMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {
             Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
-                Box(Modifier.padding(horizontal = 8.dp)) { LibraryLayoutSwitch(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) } }
+                Box(Modifier.padding(horizontal = 8.dp)) { LibraryLayoutButton(layout) { layout = it; LibraryLayout.save(context, LAYOUT_KEY, it) } }
                 FilterLabel("Show")
                 for (s in ConnStatus.entries) {
                     MenuRow(null, "${s.label} ${counts[s] ?: 0}", checked = status == s, testTag = "connectionsStatus${s.name}") { status = s; menuOpen = false }
@@ -385,6 +416,8 @@ internal fun ConnectionsSettingsScreen(
             }
         }
     }
+
+    permissionsFor?.let { e -> ToolPermissionsSheet(e.id, e.name, policyStore) { permissionsFor = null } }
 
     if (confirmUnlink) {
         AlertDialog(

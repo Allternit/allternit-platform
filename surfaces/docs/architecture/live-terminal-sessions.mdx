@@ -3,7 +3,7 @@ title: Live terminal sessions
 description: "The contract that makes every Gizzi TUI session an engine session: what the terminal pushes, what surfaces already receive, and how prompts, Stop and approvals reach the terminal."
 ---
 
-User guide: [Continue a terminal session anywhere](/cli/continue-anywhere).
+User guide: [Continue a terminal session anywhere](/cli/continue-anywhere). Starting a session from another device: [Session start](/architecture/session-start).
 
 ## Shape
 
@@ -34,6 +34,10 @@ The row is a normal `Session.Info` with:
 - `sourceRef.harness: "gizzi-tui"` and `sourceRef.sessionId` set to the TUI session id. **This is the Terminal badge signal**: allternit-api `transform_session` and the engine's `/api/v1/agent-sessions` facade both pass `metadata.sourceRef` through;
 - `directory` set to the terminal's folder, while the row lives in the engine's **default project**, where Desktop, the web app and the phone list and stream sessions. `/v1/session/<id>/…` requests for a terminal row stay in the default instance (`sessionDirectory` in `server.ts`);
 - `defaultModel` set to the terminal's model, used if the engine continues the session later.
+
+## Names
+
+A terminal row's title is the first real prompt. Until one exists the engine stores a default name, `New session - <ISO time>`. No surface shows it raw. The web app, phone and Desktop use `src/lib/sessions/session-display-title.ts` (first prompt, else "New session · Nov 17"); the Gizzi session list and picker (`cli/commands/session.ts`) and `getLogDisplayTitle` apply the same rule.
 
 ## Terminal → engine
 
@@ -66,6 +70,8 @@ Re-attach. When the inbox (re)connects, which includes the first connect and a r
 ## Engine → terminal: the inbox
 
 `GET /v1/terminal/sessions/:id/inbox?host=&pid=` is a server-sent event stream. While it is open the session is **live**: `TerminalLive.attached(id)` is true and `session.terminal` `{ sessionID, attached, host, cwd }` is published on attach and detach. `GET /v1/terminal/sessions` lists live terminals.
+
+**Remote Control state.** The engine keeps an `rc` value per session, `{ state, since }`, and publishes `session.rc` `{ sessionID, rc }` when it changes. `state` is `connected` while the inbox is open, `reconnecting` for 10 s after it drops (the terminal re-opens it after 2 s), `offline` for a terminal session with no terminal, and `off` for an ordinary engine session. `since` is when the state began (ms), or null when the engine never saw it change (after an engine restart, a terminal row reads `offline` since its last update). `GET /v1/remote-control/sessions` and `GET /v1/remote-control/sessions/:id` return it as `rc` beside `session` and `status`. The web maps `rc.state` to `metadata.rcState`.
 
 | Inbox event | Sent when | The terminal does |
 |---|---|---|

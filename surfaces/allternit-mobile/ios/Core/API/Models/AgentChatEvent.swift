@@ -114,6 +114,9 @@ enum AgentChatEvent: Decodable, Sendable {
         let messageId: String?
         let modelId: String?
         let runtimeModelId: String?
+        /// `true` on the first frame of a Settings style preview turn: the runtime
+        /// honoured `stylePreview` (nothing saved, no chat listed). Absent on a normal turn.
+        var stylePreview: Bool = false
     }
 
     struct TextDelta: Sendable {
@@ -262,7 +265,7 @@ enum AgentChatEvent: Decodable, Sendable {
         case chunk
         case sessionId = "session_id"
         // message_start / content_block_delta
-        case messageId, modelId, runtimeModelId, partId, delta
+        case messageId, modelId, runtimeModelId, partId, delta, stylePreview
         // content_block_start
         case contentBlock = "content_block"
         // tool_result / tool_error / error
@@ -342,7 +345,8 @@ enum AgentChatEvent: Decodable, Sendable {
             self = .messageStart(MessageStart(
                 messageId: try container.decodeIfPresent(String.self, forKey: .messageId),
                 modelId: try container.decodeIfPresent(String.self, forKey: .modelId),
-                runtimeModelId: try container.decodeIfPresent(String.self, forKey: .runtimeModelId)
+                runtimeModelId: try container.decodeIfPresent(String.self, forKey: .runtimeModelId),
+                stylePreview: (try? container.decodeIfPresent(Bool.self, forKey: .stylePreview)) ?? false
             ))
 
         case "content_block_delta":

@@ -874,8 +874,19 @@ pub(crate) async fn billed_completion(
             crate::routes::model_router::PLAN_PERSON_ONLY_MESSAGE
         ))));
     }
+    // Artifacts never run on open models (CONTRACT-open-tier D17): this path
+    // has no open-lane terms, entitlement or hard-line moderation gate, the
+    // same as Platform keys (items_bridge).
+    if state.model_router.is_open_lane_alias(&alias) {
+        return Err(ArtifactError::coded(
+            StatusCode::FORBIDDEN,
+            "model_not_available",
+            "Open-lane models aren't available to artifacts.",
+        ));
+    }
     let balance = inference_settlement::credit_balance_row(&state.db, &viewer).await?;
-    // Billed to the viewer: the same Cloud credits gate as chat (402).
+    // Billed to the viewer: the same usage windows (429) and Cloud credits gate (402) as chat.
+    crate::routes::me_usage::check_usage_windows(&state.db, &viewer, balance).await?;
     inference_settlement::check_inference_allowed(balance)?;
     let prompt_chars: usize = messages.iter().map(|(_, t)| t.chars().count()).sum();
     let prices = state.model_router.retail_prices(&alias).await.map_err(ApiError::from)?;

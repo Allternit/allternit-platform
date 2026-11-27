@@ -118,6 +118,14 @@ private struct IntroContinueStyle: ButtonStyle {
     }
 }
 
+/// True while a first-visit intro is presented below this view. A screen reads
+/// it (`.onPreferenceChange(IntroShowingKey.self)`) to hide its floating
+/// buttons and mute its header so nothing sits above the scrim.
+struct IntroShowingKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 private struct FirstVisitIntro<Hero: View>: ViewModifier {
     let key: IntroKey
     let hero: () -> Hero
@@ -129,6 +137,7 @@ private struct FirstVisitIntro<Hero: View>: ViewModifier {
         content
             .blur(radius: shown && !reduceMotion ? PolishTokens.introScrimBlur : 0)
             .accessibilityHidden(shown)
+            .preference(key: IntroShowingKey.self, value: shown)
             .overlay {
                 if shown {
                     IntroSheet(intro: key, onContinue: dismiss, hero: hero)

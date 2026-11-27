@@ -1072,9 +1072,9 @@ mod tests {
             drop(listener);
             port
         };
-        // SAFETY-equivalent concern: env mutation is process-global. This var
-        // is only read by `AppConfig::terminal_server_url`, and no other test
-        // depends on its value.
+        // Env mutation is process-global, and other tests point this var at
+        // their own fake gizzi: hold the shared lock while it is set.
+        let _env_lock = crate::test_helpers::terminal_url_env_lock();
         std::env::set_var("TERMINAL_SERVER_URL", format!("http://127.0.0.1:{port}"));
 
         // No gizzi runtime is running in tests: the process driver must report

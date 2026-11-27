@@ -53,9 +53,13 @@ pub struct ModelListResponse {
 /// `hidden: true` (pickers skip them; saved ids still route). Enriched with
 /// live upstream metadata when providers are healthy. A signed-in person whose
 /// Claude organization is linked also gets `linked/claude/<model>` rows
-/// (`billed_to: "claude_org"`, group `"Claude organization"`), last.
+/// (`billed_to: "claude_org"`, group `"Claude organization"`), last. Open
+/// Research (`research_only`) rows are listed only to a signed-in caller with
+/// the research flag (contract D11).
 pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Json<ModelListResponse>, ApiError> {
-    let mut models = state.model_router.list_models().await;
+    // Open Research rows only for a signed-in caller with the flag (D11).
+    let research = caller_has_open_research(&state, &headers).await;
+    let mut models = state.model_router.list_models_for(research).await;
     // A disabled shared pool is refused by chat_completions. Do not offer its
     // models in the apps' picker either. Unseeded providers keep the existing
     // catalog behavior; this only honors an explicit operator disable.
@@ -73,6 +77,23 @@ pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap)
         object: "list".to_string(),
         data: models,
     }))
+}
+
+/// Whether the caller of `GET /v1/models` has the Open Research flag. No
+/// token, a token that does not resolve, or a failed lookup all mean no.
+async fn caller_has_open_research(state: &ApiState, headers: &HeaderMap) -> bool {
+    if headers.get(axum::http::header::AUTHORIZATION).is_none() {
+        return false;
+    }
+    let Ok(user) = crate::auth::resolve::resolve_user(&state.db, headers).await else {
+        return false;
+    };
+    crate::routes::admin_open_lane::research_enabled(&state.db, &user.id)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::debug!(%error, "open research lookup for the model list failed; listing none");
+            false
+        })
 }
 
 /// Response header naming the request; the same id is on its `inference_usage` row.
@@ -128,6 +149,8 @@ pub(crate) async fn inference_attribution(
         billed_to: None,
         oauth_app_id: None,
         oauth_grant_id: None,
+        // Set once the alias is resolved (`with_lane` in the dispatch paths).
+        lane: None,
     }
 }
 
@@ -294,8 +317,13 @@ async fn chat_completions_attributed(
     // BYOK first: when the user has their own key for the alias's provider,
     // the call routes through it — their money, so the credits gate, pool
     // breaker, and pool policy do not apply. Early return keeps
-    // the shared path below readable.
-    if let Some(provider_id) = state.model_router.provider_for_alias(&alias) {
+    // the shared path below readable. Open-lane rows never take it: they
+    // always pass the open-lane gate below (terms, plan, funds, hard lines).
+    if let Some(provider_id) = state
+        .model_router
+        .provider_for_alias(&alias)
+        .filter(|_| !state.model_router.is_open_lane_alias(&alias))
+    {
         if inference_keys::should_route_byok(
             inference_keys::byok_enabled(),
             inference_keys::byok_base_url(provider_id).is_some(),
@@ -343,14 +371,18 @@ async fn chat_completions_attributed(
     // `credits_exhausted`. A platform runtime bills its project instead.
     let balance = inference_settlement::credit_balance_row(&state.db, &user_id).await?;
     if platform_runtime.is_none() {
+        // Enforced 5h / 7d windows on paid plans first (429 usage_window_exhausted), so
+        // an account over a window with an empty balance hears about the window.
+        crate::routes::me_usage::check_usage_windows(&state.db, &user_id, balance).await?;
         inference_settlement::check_inference_allowed(balance)?;
     }
 
-    // Open lane: an `-open` model needs the terms, credits and a clean
-    // hard-line check; any other model may be handed off if it refuses.
+    // Open lane: an `-open` model needs the terms, the Allternit Open
+    // entitlement (plan, allowance or bought credits) and a clean hard-line
+    // check; any other model may be handed off if it refuses.
     let has_credits = balance.is_some();
     if let Some(blocked) =
-        crate::routes::open_lane::guard_open_request(&state, &user_id, has_credits, &request).await?
+        crate::routes::open_lane::guard_open_request(&state, &user_id, &request).await?
     {
         return Ok(blocked);
     }
@@ -384,14 +416,27 @@ async fn chat_completions_attributed(
     )?;
     let pool_id = pool.map(|pool| pool.id);
 
+    // Open-lane rows settle as open spend (plan allowance, then bought; D5).
+    let attribution = attribution.with_lane(state.model_router.is_open_lane_alias(&alias));
+
     if let Some(plan) = handoff {
         return crate::routes::open_lane::chat_with_handoff(state, user_id, plan, request, pool_id, prices, attribution).await;
     }
 
-    let response = state.model_router.chat_completions(request).await?;
+    // An open row whose host fails before the first byte is retried once on
+    // its failover row; the row that served is the one billed (D9).
+    let served = state.model_router.chat_completions_with_failover(request).await?;
+    let response = served.response;
+    let (alias, prices) = if served.alias == alias {
+        (alias, prices)
+    } else {
+        let prices = state.model_router.retail_prices(&served.alias).await?;
+        (served.alias, prices)
+    };
 
     tracing::info!(
         user_id = %user_id,
+        model = %alias,
         token_id = %auth.user.token_id,
         request_id = attribution.request_id.as_deref().unwrap_or(""),
         status = %response.status(),
@@ -572,6 +617,8 @@ async fn byok_chat_completions(
         .expect("BYOK branch only runs for registered providers");
 
     let alias = request.model.clone();
+    // The row's lane only; a BYOK call is never charged (charge_user false).
+    let attribution = attribution.with_lane(state.model_router.is_open_lane_alias(&alias));
 
     let streaming = request.is_streaming();
     let prompt_chars: usize = request.messages.iter().map(|m| m.content_chars()).sum();

@@ -56,10 +56,281 @@ pub struct UsageResponse {
     pub credits: Option<f64>,
     pub month_to_date_usage_usd: f64,
     pub recent_transactions: Vec<UsageTransaction>,
+    /// Rolling 5-hour, rolling 7-day and current-month spend windows (snake_case keys inside).
+    pub windows: Vec<UsageWindow>,
+    pub pace: UsagePace,
+    /// Usage credits toggle (`user_credits.carry_past_windows`): credits carry the account past
+    /// an enforced 5h / 7d window while the balance is above 0.
+    pub carry_past_windows: bool,
     /// Same object as on `GET /api/v1/billing/credits` (contract D4); the
     /// key is snake_case on both endpoints.
     #[serde(rename = "cloud_models")]
     pub cloud_models: services::CloudModelsEntitlement,
+    /// Allternit Open entitlement, the same object as on
+    /// `GET /api/v1/billing/credits` (open-tier contract §3). Absent when it
+    /// could not be read: clients then treat open rows as today.
+    #[serde(rename = "open_models", skip_serializing_if = "Option::is_none")]
+    pub open_models: Option<services::open_entitlement::OpenModelsObject>,
+}
+
+/// One spend window. Paid Cloud plans have limits (decision E3, "B Roomy"); 5h and 7d are
+/// enforced at the Cloud admission gate ([`check_usage_windows`]), month is the grant.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct UsageWindow {
+    pub id: String,
+    pub label: String,
+    pub used_usd: f64,
+    pub limit_usd: Option<f64>,
+    pub used_ratio: Option<f64>,
+    pub resets_at: String,
+    pub enforced: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct UsagePace {
+    pub window_id: String,
+    pub burn_per_hour: f64,
+    pub runs_out_at: Option<String>,
+    /// "ok" | "warn" | "out"
+    pub status: String,
+}
+
+/// Per-window spend limits for one plan, in USD. `None` = no limit configured.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WindowLimits {
+    pub five_hour: Option<f64>,
+    pub seven_day: Option<f64>,
+    pub month: Option<f64>,
+}
+
+/// Per-plan window limits in USD of Cloud inference spend (`inference_usage.cost_usd`), keyed by
+/// plan id. Eoj approved "B Roomy" 2026-11-26 (DECISIONS E3): month = the monthly grant. Hosted
+/// computer time is not counted. Plans not listed (free, no plan) have no windows enforced.
+pub(crate) const PLAN_WINDOW_LIMITS: &[(&str, WindowLimits)] = &[
+    ("plus", WindowLimits { five_hour: Some(1.83), seven_day: Some(7.33), month: Some(22.0) }),
+    ("super", WindowLimits { five_hour: Some(9.17), seven_day: Some(36.67), month: Some(110.0) }),
+    ("ultra", WindowLimits { five_hour: Some(18.33), seven_day: Some(73.33), month: Some(220.0) }),
+];
+
+/// Windows refused at the admission gate (the month cap is the grant, held by the credits gate).
+pub(crate) fn is_enforced_window(id: &str, limit: Option<f64>) -> bool {
+    matches!(id, "5h" | "7d") && limit.map(|l| l > 0.0).unwrap_or(false)
+}
+
+/// The admission verdict for one request. Pure: spend, limits, the usage-credits toggle and the
+/// balance are inputs. `Some(window id)` = refuse with 429 for that window. Over an enforced window
+/// the request is allowed only when `carry_past_windows` is on AND the balance is above 0 (then it
+/// is billed from the balance as today). 5h is checked before 7d.
+pub(crate) fn refused_window(
+    spend: WindowSpend,
+    limits: WindowLimits,
+    carry_past_windows: bool,
+    balance: Option<f64>,
+) -> Option<&'static str> {
+    let over = [("5h", spend.five_hour, limits.five_hour), ("7d", spend.seven_day, limits.seven_day)]
+        .into_iter()
+        .find(|(id, used, limit)| is_enforced_window(id, *limit) && *used >= limit.unwrap_or(f64::MAX))
+        .map(|(id, _, _)| id)?;
+    let carried = carry_past_windows && balance.map(|b| b > 0.0).unwrap_or(false);
+    if carried { None } else { Some(over) }
+}
+
+/// The paid Cloud plan whose windows apply to `user_id` (`plus` | `super` | `ultra`), else None
+/// (free / no plan / not active). Admins are not limited.
+async fn enforced_plan(db: &sqlx::PgPool, user_id: &str) -> Option<String> {
+    if crate::auth::is_admin_user(user_id) {
+        return None;
+    }
+    let plan: Option<String> = sqlx::query_scalar(
+        "SELECT plan_id FROM billing_subscriptions \
+         WHERE user_id = $1 AND status IN ('active', 'trialing') \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    plan.filter(|p| matches!(p.as_str(), "plus" | "super" | "ultra"))
+}
+
+/// Cloud inference spend over each window (`inference_usage.cost_usd` only: hosted computer cost
+/// lives elsewhere and is not counted).
+pub(crate) async fn window_spend(db: &sqlx::PgPool, user_id: &str, now: DateTime<Utc>) -> WindowSpend {
+    let (five_hour, seven_day, month): (f64, f64, f64) = sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $2), 0)::float8,
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $3), 0)::float8,
+            COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= $4), 0)::float8
+        FROM inference_usage
+        WHERE user_id = $1 AND created_at >= LEAST($2, $3, $4)
+        "#,
+    )
+    .bind(user_id)
+    .bind(now - Duration::hours(5))
+    .bind(now - Duration::days(7))
+    .bind(month_start(now))
+    .fetch_one(db)
+    .await
+    .unwrap_or((0.0, 0.0, 0.0));
+    WindowSpend { five_hour, seven_day, month }
+}
+
+/// When a rolling window drops back under its limit: the first in-window row whose roll-off
+/// leaves spend below the limit, plus the window length. Falls back to now + window length.
+async fn window_resets_at(
+    db: &sqlx::PgPool,
+    user_id: &str,
+    window: &str,
+    used: f64,
+    limit: f64,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let length = if window == "5h" { Duration::hours(5) } else { Duration::days(7) };
+    let first: Option<DateTime<Utc>> = sqlx::query_scalar(
+        r#"
+        SELECT created_at FROM (
+            SELECT created_at, SUM(cost_usd) OVER (ORDER BY created_at, id) AS rolled
+            FROM inference_usage
+            WHERE user_id = $1 AND created_at >= $2
+        ) t
+        WHERE $3::float8 - rolled < $4::float8
+        ORDER BY created_at
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .bind(now - length)
+    .bind(used)
+    .bind(limit)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    first.map(|t| t + length).filter(|t| *t > now).unwrap_or(now + length)
+}
+
+/// The usage-credits toggle (`user_credits.carry_past_windows`, migration 168). False without a
+/// credits row.
+pub(crate) async fn carry_past_windows(db: &sqlx::PgPool, user_id: &str) -> bool {
+    sqlx::query_scalar("SELECT carry_past_windows FROM user_credits WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+}
+
+/// Enforced Cloud usage windows, checked at the Cloud admission gate right before
+/// `check_inference_allowed` (model router `/v1/chat/completions` and the artifact runtime's
+/// `billed_completion`). Free / no-plan accounts and admins are unchanged. `balance` is the
+/// caller's `credit_balance_row`.
+pub async fn check_usage_windows(db: &sqlx::PgPool, user_id: &str, balance: Option<f64>) -> Result<(), ApiError> {
+    let Some(plan) = enforced_plan(db, user_id).await else {
+        return Ok(());
+    };
+    let limits = window_limits_for(&plan);
+    let now = Utc::now();
+    let spend = window_spend(db, user_id, now).await;
+    // Toggle read only when a window is actually over (keeps the common path at two queries).
+    if refused_window(spend, limits, false, None).is_none() {
+        return Ok(());
+    }
+    let carry = carry_past_windows(db, user_id).await;
+    let Some(window) = refused_window(spend, limits, carry, balance) else {
+        return Ok(());
+    };
+    let (used, limit) = if window == "5h" {
+        (spend.five_hour, limits.five_hour.unwrap_or(0.0))
+    } else {
+        (spend.seven_day, limits.seven_day.unwrap_or(0.0))
+    };
+    let resets_at = window_resets_at(db, user_id, window, used, limit, now).await;
+    Err(ApiError::UsageWindowExhausted { window, resets_at: resets_at.to_rfc3339() })
+}
+
+pub(crate) fn window_limits_for(plan_id: &str) -> WindowLimits {
+    PLAN_WINDOW_LIMITS
+        .iter()
+        .find(|(id, _)| *id == plan_id)
+        .map(|(_, limits)| *limits)
+        .unwrap_or_default()
+}
+
+/// Spend (USD) from the inference ledger over each window.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WindowSpend {
+    pub five_hour: f64,
+    pub seven_day: f64,
+    pub month: f64,
+}
+
+pub(crate) fn month_start(now: DateTime<Utc>) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
+}
+
+/// Build `windows` and `pace` from ledger spend. Pure: `now` and `limits` are inputs.
+pub(crate) fn compose_windows(
+    spend: WindowSpend,
+    limits: WindowLimits,
+    now: DateTime<Utc>,
+) -> (Vec<UsageWindow>, UsagePace) {
+    let month_resets = next_month_start(now);
+    let month_hours = ((now - month_start(now)).num_seconds() as f64 / 3600.0).max(1.0);
+    // (id, label, used, limit, resets_at, hours elapsed in window)
+    let rows: [(&str, &str, f64, Option<f64>, DateTime<Utc>, f64); 3] = [
+        ("5h", "5-hour", spend.five_hour, limits.five_hour, now + Duration::hours(5), 5.0),
+        ("7d", "7-day", spend.seven_day, limits.seven_day, now + Duration::days(7), 168.0),
+        ("month", "This month", spend.month, limits.month, month_resets, month_hours),
+    ];
+    let windows: Vec<UsageWindow> = rows
+        .iter()
+        .map(|(id, label, used, limit, resets, _)| UsageWindow {
+            id: id.to_string(),
+            label: label.to_string(),
+            used_usd: *used,
+            limit_usd: *limit,
+            used_ratio: limit.filter(|l| *l > 0.0).map(|l| used / l),
+            resets_at: resets.to_rfc3339(),
+            enforced: is_enforced_window(id, *limit),
+        })
+        .collect();
+
+    // Pace follows the window closest to its limit; with no limits it reports month burn.
+    let pick = rows
+        .iter()
+        .filter(|r| r.3.map(|l| l > 0.0).unwrap_or(false))
+        .max_by(|a, b| {
+            let ra = a.2 / a.3.unwrap_or(1.0);
+            let rb = b.2 / b.3.unwrap_or(1.0);
+            ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(&rows[2]);
+    let (id, _, used, limit, resets, hours) = *pick;
+    let burn = if hours > 0.0 { used / hours } else { 0.0 };
+    let (runs_out_at, status) = match limit.filter(|l| *l > 0.0) {
+        None => (None, "ok"),
+        Some(l) if used >= l => (Some(now), "out"),
+        Some(l) if burn > 0.0 => {
+            let secs = ((l - used) / burn * 3600.0) as i64;
+            let at = now + Duration::seconds(secs);
+            (Some(at), if at < resets { "warn" } else { "ok" })
+        }
+        Some(_) => (None, "ok"),
+    };
+    let pace = UsagePace {
+        window_id: id.to_string(),
+        burn_per_hour: burn,
+        runs_out_at: runs_out_at.map(|t| t.to_rfc3339()),
+        status: status.to_string(),
+    };
+    (windows, pace)
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -80,6 +351,8 @@ struct CreditTxnRow {
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/me/usage", get(get_my_usage))
+        // Usage credits toggle (C1b): `{carry_past_windows}`.
+        .route("/api/v1/me/usage/settings", get(get_usage_settings).put(put_usage_settings))
         // Usage report + request logs (console Wave 3, lane L3B). Outside
         // console_gate on purpose: Gizzi and API tokens resolve here too.
         .route("/api/v1/me/usage/report", get(get_usage_report))
@@ -758,7 +1031,50 @@ pub(crate) fn compose_usage(
         month_to_date_usage_usd,
         recent_transactions,
         cloud_models,
+        windows: Vec::new(),
+        carry_past_windows: false,
+        pace: UsagePace {
+            window_id: "month".to_string(),
+            burn_per_hour: 0.0,
+            runs_out_at: None,
+            status: "ok".to_string(),
+        },
+        open_models: None,
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct UsageSettings {
+    pub carry_past_windows: bool,
+}
+
+async fn get_usage_settings(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<UsageSettings>, ApiError> {
+    let user_id = caller_user_id(&state, &headers).await?;
+    Ok(Json(UsageSettings { carry_past_windows: carry_past_windows(&state.db, &user_id).await }))
+}
+
+/// Sets the usage credits toggle. It lives on the credits row, so an account with no credits
+/// row (never bought credits, no plan grant) gets 409: there is nothing to carry it.
+async fn put_usage_settings(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<UsageSettings>,
+) -> Result<Json<UsageSettings>, ApiError> {
+    let user_id = caller_user_id(&state, &headers).await?;
+    let updated = sqlx::query("UPDATE user_credits SET carry_past_windows = $2 WHERE user_id = $1")
+        .bind(&user_id)
+        .bind(body.carry_past_windows)
+        .execute(&state.db)
+        .await
+        .map_err(ApiError::DatabaseError)?
+        .rows_affected();
+    if updated == 0 {
+        return Err(ApiError::Conflict("Add usage credits first.".to_string()));
+    }
+    Ok(Json(UsageSettings { carry_past_windows: body.carry_past_windows }))
 }
 
 async fn get_my_usage(
@@ -810,6 +1126,10 @@ async fn get_my_usage(
 
     let cloud_models = services::cloud_models_entitlement(&state.db, &user_id, credit_balance).await;
 
+    let now = Utc::now();
+    let spend = window_spend(&state.db, &user_id, now).await;
+    let carry = carry_past_windows(&state.db, &user_id).await;
+
     let recent = sqlx::query_as::<_, CreditTxnRow>(
         r#"
         SELECT amount_usd, source, created_at
@@ -824,7 +1144,20 @@ async fn get_my_usage(
     .await
     .unwrap_or_default();
 
-    Ok(Json(compose_usage(
+    let open_models = services::open_entitlement::load(&state.db, &user_id)
+        .await
+        .map_err(|error| tracing::warn!(%error, "open_models unreadable for /me/usage"))
+        .ok();
+
+    let paid_plan = if matches!(plan_id.as_str(), "plus" | "super" | "ultra")
+        && matches!(plan_status.as_str(), "active" | "trialing")
+    {
+        plan_id.as_str()
+    } else {
+        "free"
+    };
+    let limits = window_limits_for(paid_plan);
+    let mut usage = compose_usage(
         &plan_id,
         &plan_status,
         &plan_tier,
@@ -840,7 +1173,13 @@ async fn get_my_usage(
             })
             .collect(),
         cloud_models,
-    )))
+    );
+    let (windows, pace) = compose_windows(spend, limits, now);
+    usage.windows = windows;
+    usage.pace = pace;
+    usage.carry_past_windows = carry;
+    usage.open_models = open_models;
+    Ok(Json(usage))
 }
 
 #[cfg(test)]

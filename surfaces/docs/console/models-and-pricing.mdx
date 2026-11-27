@@ -16,10 +16,13 @@ description: 'Model catalog fields, per-token prices, tool prices, meter rates a
 | `pricing` | The same retail price per 1M tokens: `input_per_1m_usd` and `output_per_1m_usd` |
 | `context_length` | Context window in tokens |
 | `lane` | `standard` or `open` |
+| `open` | Open rows only: `{ "access": "plan" }`, or `"research"` for Open Research rows |
 | `default` | True for the recommended model |
 | `hidden` | True for unlisted aliases. They still route |
 
 The listed price is what a request is billed. The console Models page shows these values, with the default model first.
+
+Open rows (`lane: open`) are priced separately from the other rows. Accounts without Open Research do not see research rows in the list. Which accounts can run open models, and what pays for them, is in [Open models](/guides/open-models#who-can-use-them).
 
 ## Pricing route
 
@@ -50,7 +53,7 @@ New accounts start with the Auto model policy set to `balanced`. It picks the to
 
 The Dashboard and the rail show Cloud credits. Device credits appear only when a device is paired.
 
-Cloud credits have no free monthly allowance. A Cloud model call from an account with no credits answers `402 credits_required`, and one at or below $0 answers `402 credits_exhausted`. The `cloud_models` object on `GET /api/v1/billing/credits` says whether the account can run Cloud models now (see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models)).
+Cloud credits have no free monthly allowance. Credits you buy (packs, auto top-up, store packs) are kept apart from the credits a plan grants: a plan renewal never cuts bought credits. Open models on Max and Ultra draw from up to half of the plan grant first, then bought credits; Plus uses bought credits only. A Cloud model call from an account with no credits answers `402 credits_required`, and one at or below $0 answers `402 credits_exhausted`. The `cloud_models` object on `GET /api/v1/billing/credits` says whether the account can run Cloud models now (see [Cloud billing](/api/cloud-billing#credit-balance-and-cloud-models)). The same route carries the `open_models` object for open-model access (see [Open lane API](/api/open-lane#entitlement)).
 
 ## Related
 

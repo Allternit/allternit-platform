@@ -30,6 +30,12 @@ committed and synced at the end of the turn.
 Add `--drive <ref>` (for example `team:ws_42`) to work with a shared drive, and `--json`
 where you need machine-readable output.
 
+Gizzi adds a dated **From past chats** block to every turn, drawn from your stored turns, unless
+**Settings, Memory, Search and reference chats** or the `memory_search` setting is off. The
+`memory_recall` tool also searches past chats and takes `from`, `to`, `session`, `skip_sessions`
+and `neighbors_of`. See [Memory tools](/tools/memory#past-chats-in-recall). To review what agents
+want to learn, see [gizzi knowledge](/cli/knowledge).
+
 In the terminal UI: `/memory` (overview), `/memory view <path>`, `/memory log`, `/memory sync`,
 `/memory-search <words>`.
 
@@ -59,9 +65,11 @@ your computer.
 
 ## Sent to your Memory Drive
 
-When you're signed in, Gizzi also sends what you type in each turn to your Memory Drive's
-capture intake, so the nightly Dream can learn from your terminal sessions. Gizzi skips slash
-commands and tool output. Turn it off in Settings → Memory → **Where your memories come from** →
+When you're signed in, Gizzi also sends each turn to your Memory Drive's capture intake: what you
+type, the assistant's reply and the tool calls, so the nightly Dream can learn from your terminal
+sessions and Gizzi can search past chats. This happens with Sleep on or off. Gizzi skips slash
+commands, and credentials in tool input and output are replaced with `[redacted]` before storing.
+Incognito sessions send nothing. Turn it off in Settings → Memory → **Where your memories come from** →
 **Gizzi in the terminal**. Scripted `--bare` runs never send anything.
 
 ## Sleep and memory conflicts

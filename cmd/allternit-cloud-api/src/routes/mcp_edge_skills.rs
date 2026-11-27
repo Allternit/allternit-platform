@@ -12,6 +12,17 @@
 //!   user can never name, list or read another user's skill.
 //! - `skill://org/<org_id>/<name>/SKILL.md`: skills of an org the caller is a
 //!   member of. An org the caller is not in answers "not found".
+//! - `skill://app/<app_slug>/<name>/SKILL.md`: the skill an artifact app ships
+//!   (`artifacts.app_skill_ref`), for a caller with a live `app_installs` row
+//!   for that app. The text is the referenced skill, resolved as the app's
+//!   publisher when it is read, so an edit or a deletion shows at once, and an
+//!   uninstall removes it.
+//!
+//! An app's `skill_ref` (decision 7, 2026-11-26) is `skill://user/<name>`,
+//! `skill://org/<org_id>/<name>` or the short form `skill://<name>` (the
+//! publisher's own user skill); a trailing `/SKILL.md` is allowed. It must
+//! name a skill the publisher can read when the app is published
+//! ([`resolve_skill_ref`], 422 `skill_ref_not_found` in `artifacts_v2`).
 //!
 //! Supporting files are readable at `skill://<skill-path>/<file-path>`. Only
 //! `SKILL.md` goes into `resources/list`: gizzi (`runtime/skills/mcpSkills.ts`)
@@ -53,7 +64,19 @@ pub struct SkillFile {
     pub text: String,
 }
 
-/// Where user and org skills come from.
+/// A skill an app ships, for one of the caller's live installs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppSkill {
+    pub app_slug: String,
+    pub app_name: String,
+    /// Off for an app installed by share link, on for the caller's own and
+    /// their org's apps (Eoj 2026-11-26). allternit-api's per-skill switch overrides it.
+    pub default_enabled: bool,
+    /// The referenced skill, resolved as the publisher at read time.
+    pub skill: Skill,
+}
+
+/// Where user, org and app skills come from.
 #[async_trait::async_trait]
 pub trait SkillStore: Send + Sync {
     /// The skills `user_id` owns.
@@ -61,6 +84,45 @@ pub trait SkillStore: Send + Sync {
     /// The skills of every org `user_id` is a member of, keyed by org id.
     /// Must return only orgs the user belongs to: the edge trusts this list.
     async fn org_skills(&self, user_id: &str) -> Result<HashMap<String, Vec<Skill>>, String>;
+    /// The skills of the apps `user_id` has installed (a live `app_installs`
+    /// row) whose `app_skill_ref` resolves for the app's publisher.
+    async fn app_skills(&self, _user_id: &str) -> Result<Vec<AppSkill>, String> {
+        Ok(Vec::new())
+    }
+}
+
+/// What an app's `skill_ref` names.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SkillRef {
+    User(String),
+    Org { org: String, name: String },
+}
+
+/// Parse a `skill_ref`; `None` when it is not one of the accepted forms.
+pub fn parse_skill_ref(skill_ref: &str) -> Option<SkillRef> {
+    let rest = skill_ref.strip_prefix(SCHEME)?;
+    let rest = rest.strip_suffix("/SKILL.md").unwrap_or(rest);
+    if !valid_file_path(rest) {
+        return None;
+    }
+    match rest.split('/').collect::<Vec<_>>().as_slice() {
+        ["user", name] if valid_name(name) => Some(SkillRef::User((*name).into())),
+        ["org", org, name] if valid_name(name) => Some(SkillRef::Org { org: (*org).into(), name: (*name).into() }),
+        [name] if valid_name(name) => Some(SkillRef::User((*name).into())),
+        _ => None,
+    }
+}
+
+/// The skill `skill_ref` names, read as `publisher`: their own user skill, or
+/// a skill of an org they are a member of. `Ok(None)` = no such skill (or a
+/// malformed ref); `Err` = the store could not answer.
+pub async fn resolve_skill_ref(store: &dyn SkillStore, publisher: &str, skill_ref: &str) -> Result<Option<Skill>, String> {
+    Ok(match parse_skill_ref(skill_ref) {
+        None => None,
+        Some(SkillRef::User(name)) => store.user_skills(publisher).await?.into_iter().find(|s| s.name == name),
+        Some(SkillRef::Org { org, name }) => store.org_skills(publisher).await?.remove(&org).and_then(|v| v.into_iter().find(|s| s.name == name)),
+    }
+    .filter(|s| valid_name(&s.name)))
 }
 
 /// The store for backends with no database (the default `EdgeBackend::skills`).
@@ -137,18 +199,31 @@ pub(crate) fn valid_file_path(path: &str) -> bool {
 /// One skill the caller may see, with its URI root (`skill://user/notes`).
 struct Visible {
     root: String,
+    /// `allternit`, `user`, `org` or `app`.
+    source: &'static str,
+    /// Display name of where it comes from: "You", the org, the app.
+    from: String,
+    default_enabled: bool,
     skill: Skill,
 }
 
 /// Every skill the caller may see. Store errors drop that scope (logged), never
 /// the built-ins. Skills with names unsafe for a URI are skipped.
 async fn visible(store: &dyn SkillStore, caller: &SkillCaller<'_>) -> Vec<Visible> {
-    let mut out: Vec<Visible> = builtin().into_iter().map(|skill| Visible { root: format!("{SCHEME}allternit/{}", skill.name), skill }).collect();
+    let mut out: Vec<Visible> = builtin()
+        .into_iter()
+        .map(|skill| Visible { root: format!("{SCHEME}allternit/{}", skill.name), source: "allternit", from: "Allternit".into(), default_enabled: true, skill })
+        .collect();
     if !caller.personal {
         return out;
     }
     match store.user_skills(caller.user_id).await {
-        Ok(skills) => out.extend(skills.into_iter().filter(|s| valid_name(&s.name)).map(|skill| Visible { root: format!("{SCHEME}user/{}", skill.name), skill })),
+        Ok(skills) => out.extend(
+            skills
+                .into_iter()
+                .filter(|s| valid_name(&s.name))
+                .map(|skill| Visible { root: format!("{SCHEME}user/{}", skill.name), source: "user", from: "You".into(), default_enabled: true, skill }),
+        ),
         Err(e) => tracing::warn!(error = %e, "mcp edge: user skills unavailable"),
     }
     match store.org_skills(caller.user_id).await {
@@ -156,10 +231,27 @@ async fn visible(store: &dyn SkillStore, caller: &SkillCaller<'_>) -> Vec<Visibl
             let mut orgs: Vec<_> = orgs.into_iter().filter(|(org, _)| valid_file_path(org) && !org.contains('/')).collect();
             orgs.sort_by(|a, b| a.0.cmp(&b.0));
             for (org, skills) in orgs {
-                out.extend(skills.into_iter().filter(|s| valid_name(&s.name)).map(|skill| Visible { root: format!("{SCHEME}org/{org}/{}", skill.name), skill }));
+                // cloud-api has no org names (Clerk memberships carry id + role), so `from` is the id.
+                out.extend(skills.into_iter().filter(|s| valid_name(&s.name)).map(|skill| Visible {
+                    root: format!("{SCHEME}org/{org}/{}", skill.name),
+                    source: "org",
+                    from: org.clone(),
+                    default_enabled: true,
+                    skill,
+                }));
             }
         }
         Err(e) => tracing::warn!(error = %e, "mcp edge: org skills unavailable"),
+    }
+    match store.app_skills(caller.user_id).await {
+        Ok(apps) => out.extend(apps.into_iter().filter(|a| valid_name(&a.app_slug) && valid_name(&a.skill.name)).map(|a| Visible {
+            root: format!("{SCHEME}app/{}/{}", a.app_slug, a.skill.name),
+            source: "app",
+            from: a.app_name,
+            default_enabled: a.default_enabled,
+            skill: a.skill,
+        })),
+        Err(e) => tracing::warn!(error = %e, "mcp edge: app skills unavailable"),
     }
     out
 }
@@ -186,8 +278,28 @@ pub async fn resources(store: &dyn SkillStore, caller: &SkillCaller<'_>) -> Vec<
         .collect()
 }
 
+/// `GET /api/v1/skills/available` items: the caller's user, org and app
+/// skills (built-ins left out; allternit-api ships its own copy).
+pub async fn available(store: &dyn SkillStore, caller: &SkillCaller<'_>) -> Vec<Value> {
+    visible(store, caller)
+        .await
+        .into_iter()
+        .filter(|v| v.source != "allternit")
+        .map(|v| {
+            json!({
+                "source": v.source,
+                "uri": format!("{}/{SKILL_FILE}", v.root),
+                "name": v.skill.name,
+                "description": v.skill.description,
+                "from": v.from,
+                "defaultEnabled": v.default_enabled,
+            })
+        })
+        .collect()
+}
+
 /// The text of `uri` if the caller may read it: `(mimeType, text)`.
-async fn read(store: &dyn SkillStore, caller: &SkillCaller<'_>, uri: &str) -> Option<(String, String)> {
+pub async fn read(store: &dyn SkillStore, caller: &SkillCaller<'_>, uri: &str) -> Option<(String, String)> {
     let rest = uri.strip_prefix(SCHEME)?;
     if !valid_file_path(rest) {
         return None;
@@ -391,6 +503,56 @@ mod tests {
         assert_eq!(bare["result"]["capabilities"]["resources"], json!({}));
         let err = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"x"}}"#.to_vec();
         assert_eq!(advertise(err.clone()), err);
+    }
+
+    #[tokio::test]
+    async fn skill_ref_forms_resolve_only_for_the_publisher() {
+        assert_eq!(parse_skill_ref("skill://user/alpha"), Some(SkillRef::User("alpha".into())));
+        assert_eq!(parse_skill_ref("skill://alpha/SKILL.md"), Some(SkillRef::User("alpha".into())), "short form = the publisher's user skill");
+        assert_eq!(parse_skill_ref("skill://org/org-1/org-one/SKILL.md"), Some(SkillRef::Org { org: "org-1".into(), name: "org-one".into() }));
+        for bad in ["skill://", "skill://user/../alpha", "skill://user/Alpha", "skill://app/x/alpha", "skill://org/org-1", "https://alpha"] {
+            assert_eq!(parse_skill_ref(bad), None, "{bad}");
+        }
+        assert_eq!(resolve_skill_ref(&FakeStore, "user-a", "skill://alpha").await.unwrap().unwrap().body, "A's private body");
+        assert!(resolve_skill_ref(&FakeStore, "user-a", "skill://org/org-1/org-one").await.unwrap().is_some());
+        for (publisher, r) in [("user-b", "skill://user/alpha"), ("user-b", "skill://org/org-1/org-one"), ("user-a", "skill://user/nope")] {
+            assert!(resolve_skill_ref(&FakeStore, publisher, r).await.unwrap().is_none(), "{publisher} {r}");
+        }
+    }
+
+    /// FakeStore plus one app install: user-b installed user-a's "tips" app by link.
+    struct WithApp;
+
+    #[async_trait::async_trait]
+    impl SkillStore for WithApp {
+        async fn user_skills(&self, user_id: &str) -> Result<Vec<Skill>, String> {
+            FakeStore.user_skills(user_id).await
+        }
+        async fn org_skills(&self, user_id: &str) -> Result<HashMap<String, Vec<Skill>>, String> {
+            FakeStore.org_skills(user_id).await
+        }
+        async fn app_skills(&self, user_id: &str) -> Result<Vec<AppSkill>, String> {
+            Ok(match user_id {
+                "user-b" => vec![AppSkill { app_slug: "tipsapp000000001".into(), app_name: "Tips".into(), default_enabled: false, skill: skill("alpha", "A's private body") }],
+                _ => vec![],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn app_skills_are_listed_and_read_at_the_edge() {
+        let b = user("user-b");
+        let uri = "skill://app/tipsapp000000001/alpha/SKILL.md";
+        assert!(uris(&resources(&WithApp, &b).await).contains(&uri.to_string()));
+        let text = read(&WithApp, &b, uri).await.unwrap().1;
+        assert!(text.contains("A's private body"), "{text}");
+        assert!(read(&WithApp, &b, "skill://user/alpha/SKILL.md").await.is_none(), "the app grants the app copy only");
+        let list = available(&WithApp, &b).await;
+        let item = list.iter().find(|i| i["uri"] == uri).expect("app skill in available");
+        assert_eq!((item["source"].as_str(), item["from"].as_str(), item["defaultEnabled"].as_bool()), (Some("app"), Some("Tips"), Some(false)));
+        assert!(list.iter().all(|i| i["source"] != "allternit"), "built-ins stay out of available: {list:?}");
+        assert!(read(&WithApp, &user("user-a"), uri).await.is_none(), "no install, no app skill");
+        assert!(uris(&resources(&WithApp, &SkillCaller::of("user-b", "platform-key:k")).await).iter().all(|u| u.starts_with("skill://allternit/")));
     }
 
     #[test]

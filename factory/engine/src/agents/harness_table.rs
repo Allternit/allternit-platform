@@ -484,6 +484,17 @@ pub fn copy_argv(harness: &str, session_id: &str, carried: &[String]) -> Option<
     valid_id(session_id).then(|| expand(t, session_id, carried))
 }
 
+// ---------------------------------------------------------------- session start (Start anywhere)
+
+// The mode flags and start argv live in `allternit_terminal_service::harness_modes`, so
+// allternit-node (which links terminal-service, not the engine) reads the same table.
+pub use allternit_terminal_service::harness_modes::{mode_flags, prompt_args, start_argv, START_HARNESSES, START_MODES};
+
+/// The harness row for a runtime registry id (`claude`, `codex-cli`, `antigravity`, …).
+pub fn harness_for_runtime(runtime_id: &str) -> Option<&'static Harness> {
+    harness(&allternit_terminal_service::harness_modes::runtime_harness_id(runtime_id))
+}
+
 // ---------------------------------------------------------------- session ids from the stores
 
 /// A process's session id and when its store was last written (a recent write means it is mid-turn).
@@ -767,6 +778,21 @@ mod tests {
         assert_eq!(move_argv("claude", "a b", &[]), None);
         assert_eq!(move_argv("claude", "--help", &[]), None);
         assert_eq!(move_argv("claude", "x;rm", &[]), None);
+    }
+
+    #[test]
+    fn harness_table_mode_flags_and_start_argv() {
+        // The flag cases are tested in `allternit_terminal_service::harness_modes`; here: every
+        // harness row can start, and the re-exports agree with the row the runtime maps to.
+        for h in HARNESSES {
+            assert!(START_HARNESSES.contains(&h.id), "{} missing from harness_modes::START_HARNESSES", h.id);
+            assert_eq!(start_argv(h.id, None, None).map(|(argv, _)| argv), new_argv(h.id, &[]));
+        }
+        assert_eq!(harness_for_runtime("codex-cli").map(|h| h.id), Some("codex"));
+        assert_eq!(harness_for_runtime("antigravity").map(|h| h.id), Some("agy"));
+        assert!(harness_for_runtime("allternit").is_none());
+        assert_eq!(mode_flags("claude", "plan"), Some(v(&["--permission-mode", "plan"])));
+        assert_eq!(START_MODES.len(), 4);
     }
 
     #[test]

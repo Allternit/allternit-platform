@@ -1,0 +1,91 @@
+---
+title: "Open lane upstreams"
+description: "Internal runbook: how the open lane reaches its model hosts, how to add our own server, how failover works, and what to check before a new host goes live"
+---
+
+**Status: AVAILABLE (internal, operators only).** This page is for the people who run cloud-api (`api.allternit.com`). It covers the hosts behind the Allternit Open model rows. It names no third-party host on purpose. The env file on the cloud-api server is the only place that lists them.
+
+Code: `cmd/allternit-cloud-api/src/model_router/catalog.rs` (rows, primary host, failover alias), `src/model_router/` (dispatch and failover), `src/services/hard_line.rs` (hard-line filter).
+
+## What an open-lane upstream is
+
+An open row is a model alias in the cloud-api catalog that is served by a third-party host or by our own server. Each host is one provider. A provider exists when both its `BASE_URL` and `API_KEY` env vars are set. If either is missing, the provider is off and `GET /v1/models` does not list the rows that need it.
+
+| Env var | Meaning |
+|---|---|
+| One prefix per host (see the env file on the cloud-api server) | `<PREFIX>_BASE_URL` and `<PREFIX>_API_KEY` turn that host on |
+| `OPEN_SELF_BASE_URL`, `OPEN_SELF_API_KEY` | Our own OpenAI-compatible server. The key must be non-empty even if the server checks none |
+| `OPEN_LANE_BASE_URL`, `OPEN_LANE_API_KEY` | Legacy lane. It serves only the two original open aliases while their own host is unset |
+| `OPEN_LANE_MODEL_MAP` | Legacy lane only. Comma-separated `alias=upstream` pairs |
+| `OPEN_LANE_MARKUP` | Retail multiplier for open rows (see Markup) |
+| `OPEN_LANE_RPM`, `OPEN_LANE_RESEARCH_RPM` | Per-minute request limits for open rows and for research rows |
+| `OPEN_LANE_MODERATION_MODEL` | Model used by the hard-line filter, written as `provider:upstream-id` |
+
+Never write a key into a doc, a PR or a chat. Keys live only in the server env file.
+
+## Add our own server as OPEN_SELF
+
+Any server that speaks the OpenAI chat-completions API works. vLLM and SGLang are the two we run. The serve patterns below follow the recipes in `services/local-engine/src/runtime/manager.rs` (the `Vllm` and `Sglang` backends: model path, tensor parallel size, GPU memory fraction, dtype, quantization, context length).
+
+1. Start the server on the GPU machine. Set the served model name to the catalog alias, exactly. The router sends the alias as the model name, so a mismatch returns 404.
+
+```bash
+# vLLM
+vllm serve /models/example-weights \
+  --served-model-name ALIAS_FROM_CATALOG \
+  --tensor-parallel-size 4 \
+  --gpu-memory-utilization 0.90 \
+  --host 0.0.0.0 --port 8000
+
+# SGLang
+python -m sglang.launch_server \
+  --model-path /models/example-weights \
+  --served-model-name ALIAS_FROM_CATALOG \
+  --tp-size 4 \
+  --context-length 131072 \
+  --host 0.0.0.0 --port 8000
+```
+
+2. Put the server behind TLS or a private network. Do not expose it to the open internet without a key check.
+3. Set `OPEN_SELF_BASE_URL` to the server root and `OPEN_SELF_API_KEY` to the key the server expects (any non-empty value if it checks none). Restart cloud-api.
+4. Check health from the cloud-api machine:
+
+```bash
+curl -s -H "Authorization: Bearer $OPEN_SELF_API_KEY" "$OPEN_SELF_BASE_URL/v1/models"
+```
+
+The answer must list the alias. Then send one chat request to the alias through `api.allternit.com`.
+
+## How a row picks its host and its backup
+
+- Each open row in `catalog.rs` names one provider (its primary host) and the upstream model id on that host.
+- A row may name a `failover` alias. That alias is a hidden catalog row on a different provider. Hidden rows never show in `GET /v1/models`.
+- A request goes to the primary host. It retries once on the failover row only if the failure happens before the first byte: a connect error, an upstream 5xx, a 429, or a 402 (host out of credits, or a provider already marked out of credits).
+- A 4xx caused by the request itself is never retried. An error after the first byte is never retried. A row with no failover, or whose failover provider is not configured, returns the error.
+- The row that served is the row that is billed. After a failover the customer pays the failover row's price.
+- The two original open aliases keep running on the legacy `OPEN_LANE` host until their own host is set.
+- Research rows return 403 `open_research_required` to accounts without the research flag.
+
+### Switch a row's primary host
+
+This is a code change, not an env change. Edit the row in `catalog.rs`: set its provider to the new host and its upstream model id, set the prices, and check the row's `failover` alias points at a different host. Then ship it through the build train. Run the pre-launch check below first.
+
+To move a row to our own server, add a catalog row on `open_self` whose alias equals the served model name, and make it the primary.
+
+## Markup
+
+Retail price of an open row is the host price times `OPEN_LANE_MARKUP`. The default is 2. The value is clamped to 1 through 5. Other model rows use `INFERENCE_MARKUP`.
+
+## Hard-line filter
+
+The hard-line filter runs on every open request, whichever host serves it. It runs outside the model, so changing a host or a model never turns it off. `OPEN_LANE_MODERATION_MODEL` only chooses which model does the check.
+
+## Before turning on a new host
+
+Gate G10: one real request per model, then read the host's real charge and compare it with the price in the catalog. Do this before the host's env vars go on the production server.
+
+1. Send one chat request per model the host will serve.
+2. Read the charge in the host's own dashboard or response, not the price list.
+3. Compare it with the catalog price. If the real charge is higher, fix the catalog row before enabling.
+4. Confirm the failover alias for each row points at a different, working host.
+5. Get the owner's go-ahead before the env change.

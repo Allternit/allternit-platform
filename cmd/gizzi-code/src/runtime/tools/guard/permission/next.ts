@@ -127,7 +127,24 @@ export namespace PermissionNext {
    * Listed here, not added by the tool modules when they load, so the class
    * always asks whichever modules a process happens to import.
    */
-  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send", "folder_access", "computer.access"])
+  export const ALWAYS_ASK = new Set([
+    "subscription",
+    "mcp_app",
+    "project_send",
+    "folder_access",
+    "computer.access",
+    "computer.credential",
+    "computer.human",
+    "computer.block",
+  ])
+
+  /**
+   * Always-ask classes whose second button ("task" reply) is a different
+   * answer, not a remembered grant: it reaches the asking tool as
+   * `ReplyData.alt`. `computer.credential`: Allow for this run;
+   * `computer.block`: Re-run on my Mac. Nothing is remembered.
+   */
+  export const ALT_REPLY = new Set(["computer.credential", "computer.block"])
 
   /**
    * Classes a one-task grant ("Allow for this task") never covers: money,
@@ -152,6 +169,8 @@ export namespace PermissionNext {
   export interface ReplyData {
     humanAction?: string
     answer?: string
+    /** The second button of an ALT_REPLY class was pressed. */
+    alt?: boolean
   }
 
   export const Mode = z.enum(["default", "manual", "plan", "acceptEdits", "dontAsk", "auto", "yolo", "bypassPermissions"])
@@ -644,6 +663,7 @@ export namespace PermissionNext {
       delete s.pending[input.requestID]
       // The person's answer is the outcome label for this ask's shadow S1 GATE.
       PermissionS1.outcome(input.requestID, input.reply !== "reject")
+      const alt = input.reply === "task" && ALT_REPLY.has(existing.info.permission)
       // An always-ask class is never remembered: "always" counts as "once".
       if (input.reply === "always" && ALWAYS_ASK.has(existing.info.permission)) {
         input = { ...input, reply: "once" }
@@ -660,8 +680,9 @@ export namespace PermissionNext {
       // Only always-ask classes carry reply data (a human action, an answer)
       // back to the asking tool; an ordinary approval never mints one.
       const data: ReplyData | undefined =
-        ALWAYS_ASK.has(existing.info.permission) && (input.humanAction || input.answer !== undefined)
+        ALWAYS_ASK.has(existing.info.permission) && (input.humanAction || input.answer !== undefined || alt)
           ? {
+              ...(alt ? { alt: true } : {}),
               ...(input.humanAction ? { humanAction: input.humanAction } : {}),
               ...(input.answer !== undefined ? { answer: input.answer } : {}),
             }

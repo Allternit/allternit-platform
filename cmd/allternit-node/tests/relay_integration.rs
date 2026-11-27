@@ -39,6 +39,8 @@ async fn start_mock_relay(expected_runtime_id: &str) -> MockRelay {
                 let envelope: serde_json::Value =
                     serde_json::from_str(&authenticate_text).unwrap();
                 assert_eq!(envelope["type"], "authenticate");
+                // Start anywhere: cloud computers always take session starts.
+                assert_eq!(envelope["remote_start"], true);
                 assert_eq!(envelope["runtime_id"], expected);
                 assert_eq!(envelope["client"], "allternit-node");
                 let caps = envelope["capabilities"].as_array().unwrap();
@@ -219,6 +221,7 @@ async fn handlers_serve_terminal_contract_end_to_end() {
         body: serde_json::json!({ "shell": shell, "cols": 80, "rows": 24 })
             .to_string()
             .into_bytes(),
+        headers: Default::default(),
     };
     let response =
         allternit_node_daemon::handlers::handle(&state, &request).await;

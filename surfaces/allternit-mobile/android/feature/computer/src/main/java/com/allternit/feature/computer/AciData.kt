@@ -35,6 +35,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
@@ -66,6 +67,12 @@ object AciNav {
     fun openComputer(id: String) {
         openComputerId = id
         tab = AciTab.Computers
+    }
+    /** A computer, run pair from an `aci.attention` push (`/computers/<id>?run=<run_id>`): the Agent tab opens that run's screen. */
+    var pendingRun: Pair<String, String>? by mutableStateOf(null)
+    fun openRun(computerId: String, runId: String) {
+        pendingRun = computerId to runId
+        tab = AciTab.Agent
     }
 }
 
@@ -492,19 +499,23 @@ enum class AciRunStatus {
 class AciAgentClient(private val backend: ChatBackend) {
     data class Run(val sessionId: String, val adapterId: String?)
 
+    /** 404 `computer_unavailable` from the runs route: the target Mac is offline. */
+    class ComputerUnavailable : Exception("Your Mac isn't reachable")
+
     class NoComputer : Exception("No computer is connected. Pair one in Computers, or wake your cloud computer.")
 
     /** Defaults are the web store's: Sonnet 4.6, no allowlist, links stay in the agent viewport, auto-verify on. */
-    suspend fun startRun(goal: String): Run {
+    suspend fun startRun(goal: String, rerunOf: String? = null, targetRuntimeId: String? = null): Run {
         val body = buildJsonObject {
             put("goal", goal)
+            if (rerunOf != null) put("rerun_of", rerunOf)
             put("model", "anthropic/claude-sonnet-4.6")
             put("allowedSites", buildJsonArray { })
             put("openLinksInBrowser", false)
             put("autoVerify", true)
             put("sessionPersistence", "dont-keep")
         }.toString()
-        return when (val r = backend.runtimeJson("POST", "/api/aci/run", body)) {
+        return when (val r = backend.runtimeJson("POST", "/api/aci/run", body, targetRuntimeId)) {
             is RuntimeCall.Ok -> {
                 val o = r.body.obj
                 Run(o.str("sessionId") ?: throw IllegalStateException("This app needs an update to start a run."), o.str("adapterId"))
@@ -532,12 +543,194 @@ class AciAgentClient(private val backend: ChatBackend) {
 
     private class DoneSignal : Exception()
 
-    suspend fun stop(runId: String) {
-        backend.runtimeJson("POST", "/api/aci/stop/" + Uri.encode(runId), "{}")
+    suspend fun stop(runId: String, target: String? = null) {
+        backend.runtimeJson("POST", "/api/aci/stop/" + Uri.encode(runId), "{}", target)
+    }
+
+
+    /** The computer the relay talks to now: the picked one, else the active one (the run screen's picker). */
+    fun currentComputerId(): String? = backend.relay.selectedRuntimeId ?: backend.relay.activeRuntimeId
+
+    /**
+     * The computer's toolset events (`GET /api/v1/computers/:id/toolset/events`, same relay path as the `/api/aci/` calls).
+     * Every frame is named `computer.action`, so the kind comes from the JSON `type`. Undecodable frames are skipped.
+     */
+    fun toolsetEvents(computerId: String, target: String? = null): Flow<AciComputerEvent> = flow {
+        try {
+            backend.runtimeEvents("/api/v1/computers/" + Uri.encode(computerId) + "/toolset/events", target).collect { e ->
+                if (e.data.isEmpty()) return@collect
+                AciComputerEvent.parse(e.data)?.let { emit(it) }
+            }
+        } catch (_: NoComputerException) {
+            throw NoComputer()
+        }
+    }
+
+    /** `POST /api/aci/handoff/:approval_id/approve`; `scope = "run"` is "Allow for this run", null is once. */
+    suspend fun approveHandoff(approvalId: String, scope: String? = null, target: String? = null): Boolean {
+        val body = if (scope != null) buildJsonObject { put("scope", scope) }.toString() else null
+        return backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/approve", body, target) is RuntimeCall.Ok
+    }
+
+    suspend fun denyHandoff(approvalId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", "/api/aci/handoff/" + Uri.encode(approvalId) + "/deny", null, target) is RuntimeCall.Ok
+
+    /** `POST /api/v1/computers/:id/human-done`: the person did the step (Continue on "needs you"). */
+    suspend fun humanDone(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/human-done", "{}", target) is RuntimeCall.Ok
+
+    /** `POST /api/v1/computers/:id/block-resolve` with `continue`, `stop` or `rerun` (+ the target computer). */
+    suspend fun blockResolve(computerId: String, action: String, rerunTarget: String? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            put("action", action)
+            if (rerunTarget != null) put("rerun_target", rerunTarget)
+        }.toString()
+        return backend.runtimeJson("POST", "/api/v1/computers/" + Uri.encode(computerId) + "/block-resolve", body, target) is RuntimeCall.Ok
+    }
+
+    private fun computerPath(computerId: String, tail: String) = "/api/v1/computers/" + Uri.encode(computerId) + "/" + tail
+
+    /** Take over: `POST /api/v1/computers/:id/control/take`. While a person holds control, the bot's calls are refused. */
+    suspend fun takeControl(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "control/take"), "{}", target) is RuntimeCall.Ok
+
+    /** Hand back: `POST /api/v1/computers/:id/control/release`. */
+    suspend fun releaseControl(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "control/release"), "{}", target) is RuntimeCall.Ok
+
+    /** Mouse on a computer you hold control of, in screen pixels: `action` is click, scroll (with `button` up/down and `amount`) ... */
+    suspend fun mouse(computerId: String, action: String, x: Int, y: Int, button: String? = null, amount: Int? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            put("action", action)
+            put("x", x)
+            put("y", y)
+            if (button != null) put("button", button)
+            if (amount != null) put("amount", amount)
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "mouse"), body, target) is RuntimeCall.Ok
+    }
+
+    /** Keyboard on a computer you hold control of: type [text], or press [key]. */
+    suspend fun keyboard(computerId: String, text: String? = null, key: String? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            if (text != null) { put("action", "type"); put("text", text) } else { put("action", "key"); put("key", key ?: "Return") }
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "keyboard"), body, target) is RuntimeCall.Ok
+    }
+
+    /**
+     * The masked secret box: `POST /api/v1/computers/:id/secret`. The value goes in this one request body and
+     * nowhere else (never logged or stored). [saveAs] also saves it to the vault under that name. False on 409 (nothing pending).
+     */
+    suspend fun submitSecret(computerId: String, text: String, saveAs: String? = null, target: String? = null): Boolean {
+        val body = buildJsonObject {
+            put("text", text)
+            if (!saveAs.isNullOrBlank()) put("save_as", saveAs)
+        }.toString()
+        return backend.runtimeJson("POST", computerPath(computerId, "secret"), body, target) is RuntimeCall.Ok
+    }
+
+    suspend fun cancelSecret(computerId: String, target: String? = null): Boolean =
+        backend.runtimeJson("POST", computerPath(computerId, "secret"), buildJsonObject { put("cancel", true) }.toString(), target) is RuntimeCall.Ok
+
+    /** Starts a run on a computer: `POST /api/v1/computers/:id/runs {task, rerun_of}`. Returns the new run id. */
+    suspend fun startComputerRun(computerId: String, task: String, rerunOf: String? = null, runtimeId: String? = null): String? {
+        val body = buildJsonObject {
+            put("task", task)
+            if (rerunOf != null) put("rerun_of", rerunOf)
+        }.toString()
+        return when (val r = backend.runtimeJson("POST", computerPath(computerId, "runs"), body, runtimeId ?: computerId)) {
+            is RuntimeCall.Ok -> r.body.obj.let { it.str("run_id") ?: it.str("sessionId") }
+            is RuntimeCall.Http -> if (r.status == 404) throw ComputerUnavailable() else throw IllegalStateException(r.message?.takeIf { it.isNotBlank() } ?: "The computer couldn't start the run (HTTP ${r.status}).")
+            RuntimeCall.NoComputer -> throw NoComputer()
+            is RuntimeCall.Failed -> throw IllegalStateException(r.message)
+        }
+    }
+
+    /** One frame of the computer's screen, or of one run's own display on Linux (`?run_id=`). Raw image bytes, or JSON holding a base64 image. */
+    suspend fun screenshot(computerId: String, runId: String? = null, target: String? = null): ByteArray? {
+        val path = computerPath(computerId, "screenshot") + (runId?.let { "?run_id=" + Uri.encode(it) } ?: "")
+        val (status, bytes) = backend.runtimeBytes(path, "image/png, application/json", target) ?: return null
+        if (status !in 200..299 || bytes.isEmpty()) return null
+        if (bytes[0] == '{'.code.toByte()) {
+            val o = runCatching { ApiJson.default.parseToJsonElement(String(bytes)) }.getOrNull() as? JsonObject ?: return null
+            val b64 = o.str("image") ?: o.str("screenshot") ?: o.str("data") ?: return null
+            return runCatching { android.util.Base64.decode(b64.substringAfter(','), android.util.Base64.DEFAULT) }.getOrNull()
+        }
+        return bytes
     }
 
     suspend fun approve(runId: String, deny: Boolean) {
         backend.runtimeJson("POST", "/api/aci/approve/" + Uri.encode(runId) + if (deny) "?deny=true" else "", "{}")
+    }
+}
+
+/** Who is acting on a `computer.action` (the bot's name, avatar and colour). */
+data class AciActor(val agentId: String?, val name: String?, val avatarUrl: String?, val color: String?)
+
+/** A rerun target the computer offers when a site blocks the bot. */
+data class AciRerunTarget(val computerId: String, val name: String, val runtimeId: String? = null)
+
+/** The computer toolset events in CONTRACT.md (iOS ACIComputerEvent). Each frame's SSE name is `computer.action`; `type` is in the JSON. */
+sealed interface AciComputerEvent {
+    val runId: String?
+
+    data class Action(
+        override val runId: String?, val x: Double?, val y: Double?, val screenW: Double?, val screenH: Double?,
+        val step: Int?, val rerunOf: String?, val actor: AciActor?,
+    ) : AciComputerEvent
+
+    /** `kind` is "action" or "credential"; credential gates carry the name and domain, never a value. */
+    data class ConfirmationRequired(
+        override val runId: String?, val computerId: String?, val approvalId: String, val kind: String,
+        val credentialName: String?, val credentialDomain: String?, val message: String?,
+    ) : AciComputerEvent {
+        val isCredential: Boolean get() = kind == "credential" && credentialName != null
+    }
+
+    data class HumanRequested(override val runId: String?, val reason: String, val secret: Boolean, val kind: String? = null, val steps: List<String> = emptyList()) : AciComputerEvent
+    data class HumanResumed(override val runId: String?) : AciComputerEvent
+    data class BlockDetected(
+        override val runId: String?, val computerId: String?, val domain: String, val kind: String, val rerunTargets: List<AciRerunTarget>,
+    ) : AciComputerEvent
+    data class BlockResolved(override val runId: String?, val domain: String?, val action: String?) : AciComputerEvent
+    /** Linux: this run has its own display; follow `screenshot?run_id=`. */
+    data class AgentDisplay(override val runId: String?) : AciComputerEvent
+
+    companion object {
+        fun parse(raw: String): AciComputerEvent? {
+            val root = runCatching { ApiJson.default.parseToJsonElement(raw) }.getOrNull() as? JsonObject ?: return null
+            // Frames are flat or wrapped as {type, ts, data:{...}}.
+            val d = (root["data"] as? JsonObject) ?: root
+            fun num(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.doubleOrNull
+            val runId = d.str("run_id") ?: root.str("run_id")
+            return when (root.str("type")) {
+                "computer.action" -> {
+                    val a = d["actor"] as? JsonObject
+                    Action(runId, num(d, "x"), num(d, "y"), num(d, "screen_w"), num(d, "screen_h"),
+                        num(d, "step")?.toInt(), d.str("rerun_of"),
+                        a?.let { AciActor(it.str("agent_id"), it.str("name"), it.str("avatar_url"), it.str("color")) })
+                }
+                "computer.confirmation_required" -> {
+                    val cred = d["credential"] as? JsonObject
+                    ConfirmationRequired(runId, d.str("computer_id"), d.str("approval_id") ?: return null, d.str("kind") ?: "action",
+                        cred?.str("name"), cred?.str("domain"), d.str("message"))
+                }
+                "computer.human_requested" -> HumanRequested(runId, d.str("reason") ?: d.str("message") ?: "", d.str("secret").let { !it.isNullOrEmpty() && it != "false" },
+                    d.str("kind"), (d["steps"] as? JsonArray).orEmpty().mapNotNull { st ->
+                        (st as? JsonPrimitive)?.contentOrNull ?: (st as? JsonObject)?.let { it.str("text") ?: it.str("title") ?: it.str("label") }
+                    })
+                "computer.human_resumed" -> HumanResumed(runId)
+                "computer.block_detected" -> BlockDetected(runId, d.str("computer_id"), d.str("domain") ?: return null, d.str("kind") ?: "block_page",
+                    (d["rerun_targets"] as? JsonArray).orEmpty().mapNotNull { t ->
+                        val o = t as? JsonObject ?: return@mapNotNull null
+                        AciRerunTarget(o.str("computer_id") ?: return@mapNotNull null, o.str("name") ?: "another computer", o.str("runtime_id"))
+                    })
+                "computer.block_resolved" -> BlockResolved(runId, d.str("domain"), d.str("action"))
+                "computer.agent_display" -> AgentDisplay(runId)
+                else -> null
+            }
+        }
     }
 }
 

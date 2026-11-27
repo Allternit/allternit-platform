@@ -127,6 +127,7 @@ struct ConnectionRowView: View {
                         .foregroundColor(Color("TextSecondary"))
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if entry.group == .apps && row.state == .on { ToolPermissionsButton(entry: entry) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let customAction {

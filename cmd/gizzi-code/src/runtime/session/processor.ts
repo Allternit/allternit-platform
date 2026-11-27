@@ -25,6 +25,7 @@ import { Guardrails } from "./guardrails"
 import { generatedFileMeta, generatedFilePart, toolOutputFilePart, type GeneratedFileMeta } from "./generated-file"
 import { mergeSources, sourceFromStreamPart, todosFromNativePlan, type ResponseSource } from "./response-parts"
 import { Todo } from "./todo"
+import { PastChats } from "@/runtime/memory/past-chats"
 import { CliBridgeResults } from "@/runtime/integrations/cli-bridge/results"
 
 export namespace SessionProcessor {
@@ -505,7 +506,10 @@ export namespace SessionProcessor {
                     })
                   }
                   input.assistantMessage.finish = value.finishReason
-                  if (memoryRefs.length) input.assistantMessage.memory_refs = [...memoryRefs]
+                  // Past-chat refs from the turn's "From past chats" block lead (up to 4); the 10-item cap stays.
+                  const pastRefs = await PastChats.refsFor(input.assistantMessage.parentID)
+                  const allRefs = [...pastRefs, ...memoryRefs.filter((r) => !pastRefs.some((p) => p.id === r.id && p.action === r.action))].slice(0, 10)
+                  if (allRefs.length) input.assistantMessage.memory_refs = allRefs
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
                   // Native Anthropic requests use ephemeral markers without a TTL override

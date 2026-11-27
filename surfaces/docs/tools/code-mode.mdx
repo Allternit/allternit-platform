@@ -1,0 +1,44 @@
+---
+title: 'Code Mode'
+description: 'Let the agent run one short script that calls several MCP tools, instead of one call per turn'
+---
+
+## What it is
+
+Code Mode gives the agent one extra tool, `mcp_script`. Instead of calling MCP tools one at a time and reading each result in the chat, the agent writes a short TypeScript script that calls the tools it needs, combines the results, and returns one small answer. This keeps long chains of tool calls out of the conversation and saves tokens.
+
+The script runs in a sandbox with no files, network or environment of its own. The only things it can do are call your connected MCP tools and return a value.
+
+## When it is offered
+
+Code Mode is offered only when two or more MCP tools are connected. With one tool, a normal call is simpler, so the agent does not get `mcp_script`.
+
+It is on by default, in the app (Desktop, web, phone) and in the Gizzi terminal app, where it works with the MCP servers you added with `gizzi mcp add`.
+
+Turn it off: set `GIZZI_DISABLE_MCP_CODE_MODE=1` in the environment Gizzi runs in. The agent then gets no `mcp_script` tool and calls MCP tools one at a time.
+
+## Limits
+
+Each script run has these limits:
+
+| Limit | Value |
+| --- | --- |
+| Tool calls | 50 |
+| Run time | 60 seconds (time spent waiting for your approval does not count) |
+| Memory | 32 MB |
+| Result size | 8 KB |
+
+If a script hits a limit it stops, and the agent sees which limit it was.
+
+## Approvals still apply
+
+Every tool call inside a script goes through the same permission check as a call made directly. If a tool needs your approval, you are asked at that point and the script waits. Denying a call fails that call only; the script can handle the failure.
+
+## What you see
+
+The chat shows one collapsed row, for example "Ran a script, 2 servers, 5 calls, 0.8 s". Expand it to see the script, one line per call with a check or cross and its time, and the result. In the Gizzi terminal app the same row shows the script dimmed (up to 15 lines), then the calls, then the result.
+
+## Related pages
+
+- [MCP Servers](/tools/mcp)
+- [Connector tools](/tools/connectors)

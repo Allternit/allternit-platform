@@ -25,7 +25,7 @@ pub const HANDOFF_HEADER: &str = "x-allternit-handoff";
 
 /// Version of the acceptable use text the UI shows; stored acceptance is
 /// for this text.
-pub const AUP_VERSION: &str = "2026-10-28";
+pub const AUP_VERSION: &str = "2026-11-27";
 
 /// One user's open-lane settings. No row = nothing accepted, handoff off.
 #[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]
@@ -179,15 +179,25 @@ pub async fn load_settings(db: &PgPool, user_id: &str) -> Result<OpenLaneSetting
     Ok(row.unwrap_or_default())
 }
 
-/// Write a user's settings (upsert).
-pub async fn save_settings(db: &PgPool, user_id: &str, settings: &OpenLaneSettings) -> Result<(), ApiError> {
+/// Write a user's settings (upsert). The two timestamps are written only
+/// when the request named them (`write_aup` / `write_age`: an accept, or the
+/// person's own withdrawal). Any other save keeps the stored value, so an
+/// acceptance of an older AUP (read as none, D18) stays on record and a
+/// handoff toggle never NULLs it (contract D19).
+pub async fn save_settings(
+    db: &PgPool,
+    user_id: &str,
+    settings: &OpenLaneSettings,
+    write_aup: bool,
+    write_age: bool,
+) -> Result<(), ApiError> {
     sqlx::query(
         r#"
         INSERT INTO user_open_lane (user_id, aup_accepted_at, age_confirmed_at, handoff_enabled, updated_at)
         VALUES ($1, $2, $3, $4, now())
         ON CONFLICT (user_id) DO UPDATE SET
-            aup_accepted_at = EXCLUDED.aup_accepted_at,
-            age_confirmed_at = EXCLUDED.age_confirmed_at,
+            aup_accepted_at = CASE WHEN $5 THEN EXCLUDED.aup_accepted_at ELSE user_open_lane.aup_accepted_at END,
+            age_confirmed_at = CASE WHEN $6 THEN EXCLUDED.age_confirmed_at ELSE user_open_lane.age_confirmed_at END,
             handoff_enabled = EXCLUDED.handoff_enabled,
             updated_at = now()
         "#,
@@ -196,6 +206,8 @@ pub async fn save_settings(db: &PgPool, user_id: &str, settings: &OpenLaneSettin
     .bind(settings.aup_accepted_at)
     .bind(settings.age_confirmed_at)
     .bind(settings.handoff_enabled)
+    .bind(write_aup)
+    .bind(write_age)
     .execute(db)
     .await?;
     Ok(())

@@ -298,6 +298,8 @@ struct GroupChatView: View {
     @State private var speakingBotId: String? = nil
     @State private var isRunning = false
     @State private var runError: String? = nil
+    @State private var tail = TailFollow()
+    @ReducedMotion private var reducedMotion
     @State private var isAddingMembers = false
     /// The members have flown off the stage into the header pill.
     @State private var docked = false
@@ -437,15 +439,39 @@ struct GroupChatView: View {
                     if let runError {
                         Text(runError).font(.caption).foregroundColor(Theme.statusError)
                     }
+                    // The end of the log is in view: follow again.
+                    Color.clear.frame(height: 1)
+                        .onAppear { tail.reachedBottom() }
                 }
                 .padding(14)
             }
             .scrollDismissesKeyboard(.interactively)
+            .modifier(TailFollowTracker(tail: $tail))
             .onChange(of: group.log.count) { _, _ in
+                // Follow only while the reader is at the bottom.
+                guard tail.follows else { tail.grew(); return }
                 if let last = group.log.last?.id {
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
                 }
             }
+            .overlay(alignment: .bottom) {
+                if tail.hasNew {
+                    TailJumpButton(hasNew: true) {
+                        Haptics.light()
+                        if let last = group.log.last?.id {
+                            if reducedMotion {
+                                proxy.scrollTo(last, anchor: .bottom)
+                            } else {
+                                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
+                            }
+                        }
+                        tail.jumped()
+                    }
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: tail.hasNew)
         }
     }
 
@@ -477,6 +503,7 @@ struct GroupChatView: View {
         guard !text.isEmpty, !isRunning else { return }
         draft = ""
         runError = nil
+        tail.sent()
         isRunning = true
         // Sending flies the members up into the pill.
         dock()

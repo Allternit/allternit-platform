@@ -185,8 +185,14 @@ struct ComposerView: View {
         return list[placeholderIndex % list.count]
     }
 
+    @ObservedObject private var serverSkills = ServerSkillsStore.shared
+
     var body: some View {
         VStack(spacing: 0) {
+            // Typing `/` lists the enabled server skills; tap fills `/<id> `.
+            SkillSlashList(text: inputText, skills: serverSkills.skills) { skill in
+                inputText = "/\(skill.id) "
+            }
             limitStrip
 
             if let topDeck {
@@ -206,6 +212,9 @@ struct ComposerView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
             }
+
+            // Watching rows (live / webhook / poll) for this chat, when it has any.
+            McpWatchStrip(sessionId: sessionId)
 
             if let armedPhoneName {
                 HStack {
@@ -315,12 +324,19 @@ struct ComposerView: View {
         .sheet(isPresented: $isStoreSheetPresented) {
             StorePurchaseSheet(focus: .plan)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .composerOpenSkills)) { _ in
+            if inputText.isEmpty { inputText = "/" }
+        }
+        .onChange(of: inputText.hasPrefix("/")) { _, slash in
+            if slash { serverSkills.loadIfNeeded() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .composerFocusRequest)) { note in
             planNotePlaceholder = note.userInfo?["placeholder"] as? String
         }
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usageStore.fetchUsageIfNeeded()
+            serverSkills.loadIfNeeded()
             #if DEBUG
             // `-open-plus-sheet` / `-open-model-picker` (DEBUG only): jump
             // straight to a composer sheet for screenshots (simctl has no

@@ -54,7 +54,33 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     private enum class Result { Done, AlreadyHandled, Changed, Offline, SignedOut, Failed, Invalid }
 
+    /** Agent browser buttons (Deny, Continue, Stop) act on the run through the computer's ACI routes. */
+    private suspend fun resolveAci(context: Context, action: String, data: Map<String, String>): Result {
+        val approvalId = data["approval_id"].orEmpty()
+        val runId = data["run_id"].orEmpty()
+        val computerId = data["computer_id"] ?: data["computerId"]
+        val (path, body) = when (action) {
+            PushNotifications.ACTION_DENY -> if (approvalId.isEmpty()) return Result.Invalid else "/api/aci/handoff/${esc(approvalId)}/deny" to null
+            PushNotifications.ACTION_CONTINUE -> if (computerId.isNullOrEmpty()) return Result.Invalid else "/api/v1/computers/${esc(computerId)}/human-done" to "{}"
+            PushNotifications.ACTION_STOP -> if (runId.isEmpty()) return Result.Invalid else "/api/aci/stop/${esc(runId)}" to "{}"
+            else -> return Result.Invalid
+        }
+        return AciPushCalls.post(context, path, body, data["runtimeId"] ?: computerId).let {
+            when (it) {
+                is RuntimeCall.Ok -> Result.Done
+                is RuntimeCall.Http -> when (it.status) {
+                    404, 409 -> Result.AlreadyHandled
+                    401, 403 -> Result.SignedOut
+                    502, 503, 504 -> Result.Offline
+                    else -> Result.Failed
+                }
+                else -> Result.Offline
+            }
+        }
+    }
+
     private suspend fun resolve(context: Context, action: String, data: Map<String, String>, reply: String?): Result {
+        if (data["approval_id"] != null || data["run_id"] != null) return resolveAci(context, action, data)
         val inboxId = data["inboxId"].orEmpty()
         val sessionId = data["sessionId"] ?: data["threadSessionId"]
         val (path, body) = when (action) {

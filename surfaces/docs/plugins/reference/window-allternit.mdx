@@ -16,13 +16,14 @@ At `ui/initialize`, the host advertises the extension under the `x-allternit` ke
 ```json
 {
   "x-allternit": {
-    "version": 1,
+    "version": 3,
     "methods": [
       "x-allternit/saveArtifact",
       "x-allternit/openInAci",
       "x-allternit/dispatchAgent",
       "x-allternit/handoffToComputer",
-      "x-allternit/requestCheckout"
+      "x-allternit/requestCheckout",
+      "x-allternit/requestSignature"
     ]
   }
 }
@@ -58,6 +59,7 @@ if (window.allternit && (await window.allternit.detect())) {
 | `dispatchAgent(params)` | Calls `x-allternit/dispatchAgent`. |
 | `handoffToComputer(params)` | Calls `x-allternit/handoffToComputer`. |
 | `requestCheckout(params)` | Calls `x-allternit/requestCheckout`. See [Selling in your MCP App](/plugins/guides/selling). |
+| `requestSignature(params)` | Calls `x-allternit/requestSignature`. Needs extension version 3. |
 
 Every method returns a promise. On failure the promise rejects with an `Error` whose `code` is the JSON-RPC error code.
 
@@ -76,6 +78,7 @@ const result = await request("x-allternit/saveArtifact", { title, mimeType, cont
 | `x-allternit/dispatchAgent` | `{ agentId?, prompt }` | `{ taskId }` | Always |
 | `x-allternit/handoffToComputer` | `{ url?, instructions }` | `{ accepted: true }` | Yes |
 | `x-allternit/requestCheckout` | see [Selling](/plugins/guides/selling) | `{ status, order? }`, or `{ error: "unavailable" }` when commerce is off | The payment sheet is the consent |
+| `x-allternit/requestSignature` | see below | `{ status: "signed", ... }`, or `{ status: "declined" }` or `{ status: "cancelled" }` | The signing sheet is the consent |
 | `x-allternit/capabilities` | none | the advertisement above | No |
 
 ### `x-allternit/saveArtifact`
@@ -127,6 +130,40 @@ Returns `{ accepted: true }` after the user confirms. It opens Allternit's brows
 
 Reserved for [selling in your MCP App](/plugins/guides/selling), which is a preview. The host draws the payment sheet outside your View; your View never renders payment UI. When commerce is off the method returns `{ "error": "unavailable" }`. Treat that as "not supported here."
 
+### `x-allternit/requestSignature`
+
+Asks the user to review and sign a PDF. It needs extension version 3 (`x-allternit.version` of 3 or more); on an older host the method is not advertised, so check `supports("requestSignature")` first. The host draws the signing sheet over your View. Your View never sees signing UI.
+
+| Parameter | Type | Limit |
+|-----------|------|-------|
+| `title` | string, required | What the user is signing, in a few words. |
+| `summary` | string, optional | One or two sentences. |
+| `details` | array, optional | Up to 8 rows of `{ label, value }`, shown in the review. |
+| `slots` | array, optional | Signing areas: `{ id, label, page, x, y, w, h }` in PDF points, origin bottom-left, `page` 0-based. With no slot, the user taps where to sign. |
+| `send_to` | `{ name?, email }`, optional | Where a copy goes after signing. The user still has to switch on and confirm **Email a copy**. |
+| `document` | required | `{ name, mime_type: "application/pdf", data_base64 }` or `{ file_id }` for a file already in the user's cloud files. PDF only, up to 20 MB. |
+
+```js
+const r = await window.allternit.requestSignature({
+  title: "Service agreement",
+  details: [{ label: "Client", value: "Harbor Coffee Co." }],
+  document: { name: "agreement.pdf", mime_type: "application/pdf", data_base64: b64 },
+});
+if (r.status === "signed") console.log(r.signed_url, r.signer.name);
+```
+
+Three results:
+
+| Result | Fields |
+|--------|--------|
+| `{ status: "signed" }` | `request_id`, `signed_at`, `document_sha256`, `signed_sha256`, `signed_file_id`, `signed_url` (a 10-minute link), `signer: { name }` |
+| `{ status: "declined" }` | `request_id` |
+| `{ status: "cancelled" }` | `request_id`. The user closed the sheet. |
+
+The app gets nothing until the user taps **Sign & send**, and never gets strokes or the signature image. A request is recorded for the user as in [Review and sign](/guides/review-and-sign), with the app as the requester.
+
+Errors: `-32602` for invalid parameters (not a PDF, over 20 MB, more than 8 details, a bad slot), and `-32000` when the request is denied or the backing Allternit API call fails. Call it from a user action, not on load.
+
 ## Confirmation behavior
 
 - The prompt is rendered by the host, outside your View. It states which app is asking and what it will do.
@@ -141,7 +178,7 @@ Do not call a confirming method on load. Call it in response to a user action, a
 | Code | Meaning |
 |------|---------|
 | `-32601` | Unknown method. |
-| `-32602` | Invalid parameters: a missing or oversized field, a URL that is not `http(s)`, or a `resourceUri` that is not this View's own. |
+| `-32602` | Invalid parameters: a missing or oversized field, a document that is not a PDF, a URL that is not `http(s)`, or a `resourceUri` that is not this View's own. |
 | `-32000` | The user declined, or the backing API failed. |
 
 ## Degrading gracefully

@@ -23,6 +23,9 @@
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes. 409
 //!   `already_subscribed` (with `billing_provider`, `manage_url`) when any plan is open.
+//!   Optional body `"ui_mode": "embedded"` answers `{ client_secret, session_id }` for an
+//!   in-app Stripe.js form instead of the hosted `{ checkout_url }` (see
+//!   `routes::billing_checkout`); the Stripe customer is never taken from the body.
 //! - `POST /api/v1/billing/portal` (Clerk session or API token): billing-portal session for the user's Stripe
 //!   customer, resolved through `user_billing_accounts`. 409 `store_billed` when the
 //!   account's plan is billed by Apple or Google (`routes::billing_store`).
@@ -45,8 +48,9 @@ use std::sync::Arc;
 use crate::{
     error::ApiError,
     routes::billing_checkout::{
-        billing_not_configured_response, billing_upstream_error_response, ReqwestStripeCheckout,
-        StripeCheckout,
+        billing_not_configured_response, billing_upstream_error_response, checkout_session_response,
+        open_checkout_session, payment_method_fields, CheckoutReturn, CheckoutSession, ReqwestStripeCheckout,
+        StripeCheckout, UiMode,
     },
     ApiState,
 };
@@ -108,14 +112,15 @@ pub struct PlansResponse {
     freeweights: crate::routes::freeweights::PerkListing,
 }
 
+/// The body names only the plan and the ui mode (`hosted` default, or
+/// `embedded`; see `routes::billing_checkout`). There is no customer field:
+/// the Stripe customer comes from the signed-in account's
+/// `user_billing_accounts` row, and unknown fields are ignored.
 #[derive(Debug, Deserialize)]
 pub struct SubscribeRequest {
     plan_id: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SubscribeResponse {
-    checkout_url: String,
+    #[serde(default)]
+    ui_mode: Option<UiMode>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +155,79 @@ pub struct SubscriptionStatusResponse {
     /// Stripe plan and an App Store plan bought on the device). Clients show
     /// "You have two plans. Cancel one."
     conflict: bool,
+    /// Stripe plans: the plan ends at the period end (a pending cancel, so
+    /// the app shows "Resume plan"). False for store plans and free.
+    cancel_at_period_end: bool,
+    /// The same instant as `renews_at`, under the name the plan calls use.
+    current_period_end: Option<String>,
+    /// The plan a scheduled downgrade switches to at the period end; null
+    /// when none, and for store plans.
+    pending_plan_id: Option<String>,
+}
+
+/// What Stripe says about the caller's subscription right now.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct StripeLiveState {
+    pub cancel_at_period_end: bool,
+    pub pending_plan_id: Option<String>,
+}
+
+/// Read the pending cancel and the scheduled downgrade from the Stripe
+/// subscription (and its schedule). `None` when the subscription is not on
+/// `customer_id`. Errors are the caller's to swallow: this read is additive.
+pub(crate) async fn stripe_live_state(
+    stripe: &dyn StripeCheckout,
+    secret_key: &str,
+    subscription_id: &str,
+    customer_id: &str,
+    now: i64,
+) -> Result<Option<StripeLiveState>, ApiError> {
+    let subscription = stripe
+        .get_object(secret_key, &format!("/v1/subscriptions/{subscription_id}"), &[])
+        .await?;
+    let customer = subscription["customer"].as_str().or_else(|| subscription["customer"]["id"].as_str());
+    if customer != Some(customer_id) {
+        return Ok(None);
+    }
+    let schedule_id = subscription["schedule"].as_str().or_else(|| subscription["schedule"]["id"].as_str());
+    let mut pending_plan_id = None;
+    if let Some(schedule_id) = schedule_id.filter(|id| !id.is_empty()) {
+        let schedule = stripe
+            .get_object(secret_key, &format!("/v1/subscription_schedules/{schedule_id}"), &[])
+            .await?;
+        // The first phase that starts after now is the pending change.
+        pending_plan_id = schedule["phases"].as_array().into_iter().flatten().find_map(|phase| {
+            phase["start_date"].as_i64().filter(|start| *start > now)?;
+            let price = &phase["items"][0]["price"];
+            let price_id = price.as_str().or_else(|| price["id"].as_str())?;
+            SUBSCRIPTION_PLANS
+                .iter()
+                .find(|plan| plan_price_id(plan).as_deref() == Some(price_id))
+                .map(|plan| plan.id.to_string())
+        });
+    }
+    Ok(Some(StripeLiveState {
+        cancel_at_period_end: subscription["cancel_at_period_end"].as_bool().unwrap_or(false),
+        pending_plan_id,
+    }))
+}
+
+/// The caller's open Stripe row (subscription id, customer id), if any.
+async fn open_stripe_row(db: &PgPool, user_id: &str) -> Result<Option<(String, String)>, ApiError> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT stripe_subscription_id, stripe_customer_id
+        FROM billing_subscriptions
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+          AND COALESCE(provider, 'stripe') = 'stripe' AND COALESCE(stripe_subscription_id, '') <> ''
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.and_then(|(subscription_id, customer_id)| Some((subscription_id, customer_id.filter(|id| !id.is_empty())?))))
 }
 
 /// One open (`active`, `trialing`, `past_due`, `unpaid`) plan row with who
@@ -205,7 +283,24 @@ async fn get_current_subscription(
     } else {
         open_subscriptions(&state.db, &user_id).await?
     };
-    Ok(Json(subscription_status(plan, &open)))
+    let mut status = subscription_status(plan, &open);
+    if !admin && open.first().is_some_and(|sub| sub.provider == "stripe") {
+        // Additive: a Stripe outage or missing key leaves the defaults.
+        if let (Ok(secret_key), Ok(Some((subscription_id, customer_id)))) =
+            (std::env::var("STRIPE_SECRET_KEY"), open_stripe_row(&state.db, &user_id).await)
+        {
+            let stripe = ReqwestStripeCheckout::new();
+            match stripe_live_state(&stripe, &secret_key, &subscription_id, &customer_id, chrono::Utc::now().timestamp()).await {
+                Ok(Some(live)) => {
+                    status.cancel_at_period_end = live.cancel_at_period_end;
+                    status.pending_plan_id = live.pending_plan_id;
+                }
+                Ok(None) => {}
+                Err(error) => tracing::warn!("billing subscription: Stripe state unavailable: {error}"),
+            }
+        }
+    }
+    Ok(Json(status))
 }
 
 /// The subscription response from the plan and the open rows (newest-first,
@@ -216,6 +311,9 @@ fn subscription_status(plan: CurrentSubscriptionResponse, open: &[OpenSubscripti
         billing_provider: current.map(|sub| sub.provider.clone()),
         manage_url: current.and_then(|sub| crate::services::store_billing::manage_url(&sub.provider, &sub.plan_id)),
         conflict: open.len() > 1,
+        cancel_at_period_end: false,
+        current_period_end: plan.renews_at.clone(),
+        pending_plan_id: None,
         plan,
     }
 }
@@ -327,11 +425,10 @@ async fn create_subscription(
     let Some(price_id) = plan_price_id(plan) else {
         return billing_not_configured_response();
     };
-    let (success_url, cancel_url) =
-        match crate::routes::billing_checkout::checkout_return_urls(&return_to) {
-            Ok(urls) => urls,
-            Err(error) => return error.into_response(),
-        };
+    let checkout_return = match CheckoutReturn::for_mode(request.ui_mode.unwrap_or_default(), &return_to) {
+        Ok(checkout_return) => checkout_return,
+        Err(error) => return error.into_response(),
+    };
     // One subscription per account: a second checkout would bill twice and
     // create a second cloud computer. Plan changes go through the portal, or
     // through the store that bills a store plan.
@@ -355,19 +452,18 @@ async fn create_subscription(
     };
     let checkout = ReqwestStripeCheckout::new();
 
-    match create_subscription_checkout_url(
+    match create_subscription_checkout(
         &checkout,
         &secret_key,
         plan,
         &price_id,
         &user_id,
         customer_id.as_deref(),
-        &success_url,
-        &cancel_url,
+        &checkout_return,
     )
     .await
     {
-        Ok(url) => Json(SubscribeResponse { checkout_url: url }).into_response(),
+        Ok(session) => checkout_session_response(session),
         Err(error) => billing_upstream_error_response(&error),
     }
 }
@@ -460,25 +556,24 @@ fn plan_price_id(plan: &SubscriptionPlan) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Build the subscription-mode Checkout Session for a validated plan and return its hosted URL.
-#[allow(clippy::too_many_arguments)]
-async fn create_subscription_checkout_url(
+/// Build the subscription-mode Checkout Session for a validated plan: the
+/// hosted URL, or the embedded client secret and session id.
+async fn create_subscription_checkout(
     checkout: &dyn StripeCheckout,
     secret_key: &str,
     plan: &SubscriptionPlan,
     price_id: &str,
     clerk_user_id: &str,
     customer_id: Option<&str>,
-    success_url: &str,
-    cancel_url: &str,
-) -> Result<String, ApiError> {
-    let mut form = subscribe_form_params(plan, price_id, clerk_user_id, success_url, cancel_url);
+    checkout_return: &CheckoutReturn,
+) -> Result<CheckoutSession, ApiError> {
+    let mut form = subscribe_form_params(plan, price_id, clerk_user_id, checkout_return);
     // Reuse the account's Stripe customer (from an earlier plan or credit
     // pack), so one person stays one customer and the portal shows it all.
     if let Some(customer_id) = customer_id {
         form.push(("customer".to_string(), customer_id.to_string()));
     }
-    checkout.create_checkout_session(secret_key, &form).await
+    open_checkout_session(checkout, secret_key, &form, checkout_return.ui_mode()).await
 }
 
 /// The plan of the account's open subscription, if it has one. `past_due`
@@ -572,18 +667,15 @@ fn subscribe_form_params(
     plan: &SubscriptionPlan,
     price_id: &str,
     clerk_user_id: &str,
-    success_url: &str,
-    cancel_url: &str,
+    checkout_return: &CheckoutReturn,
 ) -> Vec<(String, String)> {
-    vec![
-        ("mode".to_string(), "subscription".to_string()),
-        // Pay-now methods only (cards, incl. Apple Pay / Google Pay, and
-        // Link): no buy-now-pay-later or delayed methods for Allternit Cloud.
-        // Services Payment Links keep the account's wider method list.
-        ("payment_method_types[0]".to_string(), "card".to_string()),
-        ("payment_method_types[1]".to_string(), "link".to_string()),
-        ("success_url".to_string(), success_url.to_string()),
-        ("cancel_url".to_string(), cancel_url.to_string()),
+    let mut form = vec![("mode".to_string(), "subscription".to_string())];
+    // Pay-now methods only (card and Link, decision E4): no buy-now-pay-later
+    // or delayed methods for Allternit Cloud. Services Payment Links keep the
+    // account's wider method list.
+    form.extend(payment_method_fields());
+    form.extend(checkout_return.form_fields());
+    form.extend([
         ("line_items[0][price]".to_string(), price_id.to_string()),
         ("line_items[0][quantity]".to_string(), "1".to_string()),
         (
@@ -598,7 +690,8 @@ fn subscribe_form_params(
             "subscription_data[metadata][allternit_plan_id]".to_string(),
             plan.id.to_string(),
         ),
-    ]
+    ]);
+    form
 }
 
 /// Why a portal session could not be created: the user has no Stripe customer link yet (404),
@@ -963,6 +1056,119 @@ mod tests {
             *self.portal_form.lock().unwrap() = Some(form.to_vec());
             Ok("https://billing.stripe.com/p/session/test_portal".to_string())
         }
+
+        /// Embedded sessions come back as the whole object, as Stripe returns
+        /// it for `ui_mode=embedded`: a client secret and no hosted URL.
+        async fn post_object(
+            &self,
+            _secret_key: &str,
+            path: &str,
+            _idempotency_key: Option<&str>,
+            form: &[(String, String)],
+        ) -> Result<serde_json::Value, ApiError> {
+            assert_eq!(path, "/v1/checkout/sessions");
+            *self.checkout_form.lock().unwrap() = Some(form.to_vec());
+            Ok(serde_json::json!({
+                "id": "cs_test_sub_1",
+                "object": "checkout.session",
+                "client_secret": "cs_test_sub_1_secret_xyz",
+                "url": null,
+            }))
+        }
+    }
+
+    fn hosted(success_url: &str, cancel_url: &str) -> CheckoutReturn {
+        CheckoutReturn::Hosted { success_url: success_url.to_string(), cancel_url: cancel_url.to_string() }
+    }
+
+    async fn response_json(response: Response) -> (StatusCode, serde_json::Value) {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn embedded_subscribe_returns_the_client_secret_for_every_plan() {
+        let checkout_return = CheckoutReturn::for_mode(
+            UiMode::Embedded,
+            &crate::routes::billing_checkout::ReturnTo {
+                return_url: Some("https://ai.allternit.com/settings/billing".to_string()),
+            },
+        )
+        .unwrap();
+        for plan in SUBSCRIPTION_PLANS {
+            let checkout = RecordingStripe::new();
+            let session = create_subscription_checkout(
+                &checkout, "sk_test", plan, "price_x", "user_1", Some("cus_own"), &checkout_return,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                session,
+                CheckoutSession::Embedded {
+                    client_secret: "cs_test_sub_1_secret_xyz".to_string(),
+                    session_id: "cs_test_sub_1".to_string(),
+                },
+                "{}",
+                plan.id
+            );
+            let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
+            let get = |key: &str| form.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+            assert_eq!(get("mode").as_deref(), Some("subscription"));
+            assert_eq!(get("ui_mode").as_deref(), Some("embedded"));
+            assert_eq!(
+                get("return_url").as_deref(),
+                Some("https://ai.allternit.com/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}")
+            );
+            assert_eq!(get("redirect_on_completion").as_deref(), Some("if_required"));
+            assert_eq!(get("success_url"), None);
+            assert_eq!(get("cancel_url"), None);
+            assert_eq!(get("payment_method_types[0]").as_deref(), Some("card"));
+            assert_eq!(get("payment_method_types[1]").as_deref(), Some("link"));
+            assert_eq!(get("payment_method_types[2]"), None, "no wallets or other methods");
+            assert_eq!(get("customer").as_deref(), Some("cus_own"));
+            assert_eq!(get("subscription_data[metadata][allternit_plan_id]").as_deref(), Some(plan.id));
+            assert_eq!(get("subscription_data[metadata][allternit_plan_tier]").as_deref(), Some(plan.plan_tier));
+            assert_eq!(get("subscription_data[metadata][clerk_user_id]").as_deref(), Some("user_1"));
+
+            let (status, body) = response_json(checkout_session_response(session)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body,
+                serde_json::json!({ "client_secret": "cs_test_sub_1_secret_xyz", "session_id": "cs_test_sub_1" })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hosted_subscribe_reply_is_unchanged() {
+        let plan = find_plan("plus").unwrap();
+        let checkout = RecordingStripe::new();
+        let session = create_subscription_checkout(
+            &checkout, "sk_test", plan, "price_x", "user_1", None, &hosted("https://s.example", "https://c.example"),
+        )
+        .await
+        .unwrap();
+        let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
+        assert!(form.iter().all(|(key, _)| key != "ui_mode" && key != "return_url" && key != "redirect_on_completion"));
+        let (status, body) = response_json(checkout_session_response(session)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({ "checkout_url": "https://checkout.stripe.com/c/pay/test_sub" }));
+    }
+
+    #[test]
+    fn subscribe_request_ignores_a_customer_and_defaults_to_hosted() {
+        let request: SubscribeRequest =
+            serde_json::from_str(r#"{"plan_id":"plus","customer":"cus_victim","customer_id":"cus_victim"}"#).unwrap();
+        assert_eq!(request.plan_id, "plus");
+        assert_eq!(request.ui_mode.unwrap_or_default(), UiMode::Hosted);
+        let embedded: SubscribeRequest = serde_json::from_str(r#"{"plan_id":"plus","ui_mode":"embedded"}"#).unwrap();
+        assert_eq!(embedded.ui_mode, Some(UiMode::Embedded));
+        assert!(serde_json::from_str::<SubscribeRequest>(r#"{"plan_id":"plus","ui_mode":"wallet"}"#).is_err());
+        // The form carries only the customer the server resolved.
+        let form = subscribe_form_params(find_plan("plus").unwrap(), "price_x", "user_1", &hosted("s", "c"));
+        assert!(form.iter().all(|(key, value)| key != "customer" && !value.contains("cus_victim")));
     }
 
     fn field(form: &[(String, String)], key: &str) -> String {
@@ -1081,6 +1287,8 @@ mod tests {
             "https://play.google.com/store/account/subscriptions?sku=plan_plus&package=com.allternit.app"
         );
         assert_eq!(value["conflict"], true);
+        assert_eq!(value["cancel_at_period_end"], false);
+        assert_eq!(value["pending_plan_id"], serde_json::Value::Null);
     }
 
     #[tokio::test]
@@ -1090,12 +1298,12 @@ mod tests {
         let plan = find_plan("plus").unwrap();
         let price_id = plan_price_id(plan).expect("env price id must resolve");
         let checkout = RecordingStripe::new();
-        let url = create_subscription_checkout_url(
-            &checkout, "sk_test", plan, &price_id, "user_1", None, "https://s.example", "https://c.example",
+        let session = create_subscription_checkout(
+            &checkout, "sk_test", plan, &price_id, "user_1", None, &hosted("https://s.example", "https://c.example"),
         )
         .await
         .unwrap();
-        assert_eq!(url, "https://checkout.stripe.com/c/pay/test_sub");
+        assert_eq!(session, CheckoutSession::Hosted { url: "https://checkout.stripe.com/c/pay/test_sub".to_string() });
         let form = checkout.checkout_form.lock().unwrap().clone().unwrap();
         assert!(form.iter().all(|(key, _)| key != "customer"));
         assert_eq!(field(&form, "mode"), "subscription");
@@ -1116,8 +1324,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let plan = find_plan("plus").unwrap();
         let checkout = RecordingStripe::new();
-        create_subscription_checkout_url(
-            &checkout, "sk_test", plan, "price_x", "user_1", Some("cus_123"), "https://s.example", "https://c.example",
+        create_subscription_checkout(
+            &checkout, "sk_test", plan, "price_x", "user_1", Some("cus_123"), &hosted("https://s.example", "https://c.example"),
         )
         .await
         .unwrap();
@@ -1144,6 +1352,51 @@ mod tests {
             "items": { "data": [ { "price": { "id": "price_other" } } ] },
         });
         assert_eq!(current_subscription_plan(&unknown).unwrap().id, "plus");
+        std::env::remove_var("STRIPE_PRICE_PLUS");
+        std::env::remove_var("STRIPE_PRICE_SUPER");
+    }
+
+    struct LiveStripe(std::collections::HashMap<String, serde_json::Value>);
+
+    #[async_trait::async_trait]
+    impl StripeCheckout for LiveStripe {
+        async fn create_checkout_session(&self, _: &str, _: &[(String, String)]) -> Result<String, ApiError> {
+            Err(ApiError::Internal("not used".into()))
+        }
+        async fn create_billing_portal_session(&self, _: &str, _: &[(String, String)]) -> Result<String, ApiError> {
+            Err(ApiError::Internal("not used".into()))
+        }
+        async fn get_object(&self, _: &str, path: &str, _: &[(String, String)]) -> Result<serde_json::Value, ApiError> {
+            self.0.get(path).cloned().ok_or_else(|| ApiError::Internal("no such object".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn stripe_state_shows_pending_cancel_and_scheduled_downgrade() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("STRIPE_PRICE_PLUS", "price_plus");
+        std::env::set_var("STRIPE_PRICE_SUPER", "price_super");
+        let now = 1_800_000_000;
+        let canceling = serde_json::json!({ "customer": "cus_a", "cancel_at_period_end": true, "schedule": null });
+        let downgrading = serde_json::json!({ "customer": "cus_a", "cancel_at_period_end": false, "schedule": "sub_sched_1" });
+        let schedule = serde_json::json!({ "phases": [
+            { "start_date": now - 100, "items": [{ "price": "price_super" }] },
+            { "start_date": now + 100, "items": [{ "price": { "id": "price_plus" } }] },
+        ] });
+        let stripe = LiveStripe(
+            [
+                ("/v1/subscriptions/sub_cancel".to_string(), canceling),
+                ("/v1/subscriptions/sub_down".to_string(), downgrading),
+                ("/v1/subscription_schedules/sub_sched_1".to_string(), schedule),
+            ]
+            .into(),
+        );
+        let cancel = stripe_live_state(&stripe, "sk_test_fake", "sub_cancel", "cus_a", now).await.unwrap().unwrap();
+        assert_eq!(cancel, StripeLiveState { cancel_at_period_end: true, pending_plan_id: None });
+        let down = stripe_live_state(&stripe, "sk_test_fake", "sub_down", "cus_a", now).await.unwrap().unwrap();
+        assert_eq!(down, StripeLiveState { cancel_at_period_end: false, pending_plan_id: Some("plus".to_string()) });
+        // Another account's subscription reads as nothing.
+        assert_eq!(stripe_live_state(&stripe, "sk_test_fake", "sub_down", "cus_b", now).await.unwrap(), None);
         std::env::remove_var("STRIPE_PRICE_PLUS");
         std::env::remove_var("STRIPE_PRICE_SUPER");
     }

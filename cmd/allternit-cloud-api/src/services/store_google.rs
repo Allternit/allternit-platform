@@ -1221,6 +1221,7 @@ impl<'a> GoogleSync<'a> {
                         -credits,
                         &format!("{key}-refund"),
                         REFUND_SOURCE,
+                        kind == "pack",
                     )
                     .await?;
                     tracing::warn!(user_id = %owner, %key, credits, "google voided purchase: credits taken back");

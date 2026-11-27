@@ -18,6 +18,7 @@ import { chooseAdapter, enabledMembers, enabledV2Members, toolDescription, toolD
 import { httpExecutor, type ExecutorClient } from "./executor-client"
 import { BROWSER_STATE_CLOSE, BROWSER_STATE_OPEN } from "./anthropic-native"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { credentialAsk, credentialOf, watchNeedsYou, type Listener } from "./needs-you"
 
 const log = Log.create({ service: "computer-toolset" })
 
@@ -137,17 +138,71 @@ export async function runToolsetCall(
   ctx: Pick<Tool.Context, "sessionID" | "messageID" | "abort" | "ask">,
   deps: RunDeps,
 ): Promise<ToolsetOutput> {
+  // A person can be needed while the call waits inside the executor (a human
+  // hand-off, a masked secret, a held block): watch this computer's events.
+  // "Stop" ends the waiting call; "Re-run on my Mac" reruns it there.
+  const rerouted = reroutes.get(ctx.sessionID)
+  const computerId = rerouted?.computerId ?? deps.computerId
+  let stop!: (err: Error) => void
+  const stopped = new Promise<never>((_, reject) => (stop = reject))
+  stopped.catch(() => {})
+  const listener: Listener = { ctx, executor: deps.executor, botName: runningAgent().agent_name ?? "Your bot", stop }
+  const release = watchNeedsYou(computerId, listener)
+  try {
+    let out: ToolsetOutput | undefined
+    let failure: unknown
+    try {
+      out = await Promise.race([runToolsetCallInner(toolset, args, ctx, { ...deps, computerId }, rerouted), stopped])
+    } catch (err) {
+      failure = err
+    }
+    if (listener.rerun) return await rerunOnTarget(toolset, args, ctx, deps, listener.rerun)
+    if (failure) throw failure
+    return out!
+  } finally {
+    release()
+  }
+}
+
+/** Sessions whose run the person moved to their Mac after a block: later calls follow it. */
+const reroutes = new Map<string, { computerId: string; runId: string; rerunOf: string }>()
+
+/** "Re-run on my Mac": a new run on the target with `rerun_of` set to the blocked run. Starts fresh, no logins carried. */
+async function rerunOnTarget(
+  toolset: ToolsetName,
+  args: Record<string, unknown>,
+  ctx: Pick<Tool.Context, "sessionID" | "messageID" | "abort" | "ask">,
+  deps: RunDeps,
+  rerun: { computerId: string; fromRunId: string },
+): Promise<ToolsetOutput> {
+  const route = { computerId: rerun.computerId, runId: `${ctx.sessionID}:rerun:${Date.now().toString(36)}`, rerunOf: rerun.fromRunId }
+  reroutes.set(ctx.sessionID, route)
+  const out = await runToolsetCallInner(toolset, args, ctx, { ...deps, computerId: route.computerId }, route)
+  return {
+    ...out,
+    output: `The blocked run was stopped and re-run on your Mac (${route.computerId}, run ${route.runId}); it starts fresh, with no logins carried over. Later steps go there too.\n${out.output}`,
+  }
+}
+
+async function runToolsetCallInner(
+  toolset: ToolsetName,
+  args: Record<string, unknown>,
+  ctx: Pick<Tool.Context, "sessionID" | "messageID" | "abort" | "ask">,
+  deps: RunDeps,
+  route?: { runId: string; rerunOf: string },
+): Promise<ToolsetOutput> {
   const { action, step, ...input } = args
   const member = String(action)
   for (const [k, v] of Object.entries(input)) if (v === undefined) delete input[k]
   const frameKey = `${ctx.sessionID}:${toolset}`
   const actor = runningAgent()
   const stepText = typeof step === "string" ? step.trim().slice(0, 120) : ""
-  const req: ToolsetRequest = {
+  const req: ToolsetRequest & { rerun_of?: string } = {
     toolset,
     member,
     input,
-    run_id: ctx.sessionID,
+    run_id: route?.runId ?? ctx.sessionID,
+    ...(route ? { rerun_of: route.rerunOf } : {}),
     turn_id: ctx.messageID,
     call_index: nextCallIndex(`${ctx.messageID}:${toolset}`),
     model_frame: frames.get(frameKey),
@@ -163,9 +218,18 @@ export async function runToolsetCall(
     await grantAccessFor(member, req.call_index, reply.body, stepText, ctx, deps)
     reply = await deps.executor.run(deps.computerId, req, ctx.abort)
   }
-  if (reply.status === 409 && reply.body.error === "approval_required" && reply.body.approval_id) {
+  const cred = (reply.status === 409 || reply.status === 403) && reply.body.approval_id ? credentialOf(reply.body) : undefined
+  let approveScope: "run" | undefined
+  if (cred && reply.body.approval_id) {
+    // A login fill: Approve / Allow for this run / Deny, then the call once more.
+    const decision = await credentialAsk(cred, reply.body.approval_id, { toolset, member, computer: deps.computerId }, ctx, deps.executor)
+    approveScope = decision.approved ? decision.scope : undefined
+  }
+  if ((reply.status === 409 || (cred && reply.status === 403)) && (reply.body.error === "approval_required" || cred) && reply.body.approval_id) {
     const access = member === "request_access" ? accessOf(reply.body) : undefined
-    if (access) {
+    if (cred) {
+      // Already asked above.
+    } else if (access) {
       // request_access: the card shows the apps, tiers and reason.
       const entries = accessEntries(access)
       await ctx.ask({
@@ -188,7 +252,7 @@ export async function runToolsetCall(
         metadata: { toolset, member, input, risk: reply.body.risk, computer: deps.computerId },
       })
     }
-    if (!(await deps.executor.approve(reply.body.approval_id, ctx.abort))) {
+    if (!(await deps.executor.approve(reply.body.approval_id, ctx.abort, approveScope))) {
       throw new Error(`${member} was approved here but the approval couldn't be recorded; it did not run.`)
     }
     reply = await deps.executor.run(deps.computerId, { ...req, approval_grant: reply.body.approval_id }, ctx.abort)

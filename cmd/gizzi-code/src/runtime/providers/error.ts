@@ -2,7 +2,7 @@ import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/shared/util/iife"
 import { Log } from "@/shared/util/log"
-import { cloudCreditsRefusal, describeProviderError, extractProviderErrorCode } from "@/shared/util/provider-error"
+import { cloudCreditsRefusal, cloudOpenRefusal, describeProviderError, extractProviderErrorCode } from "@/shared/util/provider-error"
 
 const log = Log.create({ service: "provider.error" })
 
@@ -203,9 +203,10 @@ export namespace ProviderError {
     // A Cloud credits refusal keeps its own code (credits_required /
     // credits_exhausted) so clients can open the credits disclosure.
     const credits = cloudCreditsRefusal(responseBody ?? source)
+    const open = cloudOpenRefusal(responseBody ?? source)
     const metadata: Record<string, string> = {
       providerID: input.providerID,
-      code: credits?.code ?? described.code,
+      code: open?.code ?? credits?.code ?? described.code,
     }
     if (originalName) metadata.originalName = originalName
     // A person-plan failure (PersonPlanError) keeps the provider's own code and
@@ -248,7 +249,10 @@ export namespace ProviderError {
     const metadata: Record<string, string> = {}
     if (input.error.url) metadata.url = input.error.url
     const credits = cloudCreditsRefusal(input.error.responseBody)
-    const code = credits?.code ?? extractProviderErrorCode(input.error.responseBody)
+    const code =
+      cloudOpenRefusal(input.error.responseBody, input.error.statusCode)?.code ??
+      credits?.code ??
+      extractProviderErrorCode(input.error.responseBody)
     if (code) metadata.code = code
     return {
       type: "api_error",

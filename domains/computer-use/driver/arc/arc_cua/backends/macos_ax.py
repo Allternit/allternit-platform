@@ -14,6 +14,7 @@ from ..errors import StaleDesktopState, TargetUnavailable, UnsupportedDesktopAct
 from ..keyboard import parse_hotkey
 from ..models import ActionKind, Bounds, DesktopElement, DesktopSnapshot, ExecutableAction
 from . import macos_background as background
+from . import macos_safari
 from .macos_app import MacOSApp, identify_ax_window, window_server_info
 from .macos_ax_cache import AXChangeFeed, AXNode, AXNodeCache
 from .macos_background import window_id as ax_window_id
@@ -705,6 +706,12 @@ class MacOSAXBackend:
         A document's text view likewise takes an AXValue write without recording an
         edit, so the document is not marked changed and Save does not save it."""
         self._ensure_input_window(window)
+        if window is not None and macos_safari.is_safari(self.app.pid):
+            # Focusing a field in a Safari window that is not key makes it key and takes
+            # the person's typing; the queue focuses and types only while that is safe.
+            macos_safari.type_text(self.app.pid, window, text, field=ref, replace=True,
+                                   check=self.app.check_running)
+            return
         AS.AXUIElementSetAttributeValue(ref, "AXFocused", True)
         had_text = bool(_attr(AS, ref, "AXValue"))
         if had_text and not background.select_all(ref):

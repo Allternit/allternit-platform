@@ -1,0 +1,36 @@
+---
+title: One view button
+description: Every page that changes how a list is shown uses one List, Grid or Deck button, and two guard scripts keep it that way.
+---
+
+Every overview that offers more than one way to look at a list has exactly one control for it: a single icon button. The icon is the view a tap gives you, and each tap goes to the next view in order: List, then Grid, then Deck, then back to List. A page with two views (Pad and List, or Grid and List) cycles between those two. There are no pills, segmented controls, "Layout" menu sections or second switches next to it.
+
+The choice is remembered per page. The same button is on the web app (Desktop, ai.allternit.com, the phone layout and the m.allternit.com app), iOS and Android.
+
+## Where it lives
+
+| Surface | The control |
+| --- | --- |
+| Web | `ViewSwitchButton` in `src/components/view-switch/ViewSwitchButton.tsx` in allternit-ai. Option lists: `VIEW_OPTIONS_LIST_GRID_DECK`, `VIEW_OPTIONS_PAD_LIST`, `VIEW_OPTIONS_GRID_LIST`. `OverviewLayoutSwitch` is an alias of it. |
+| iOS | `OverviewLayoutSwitch.swift` in `surfaces/allternit-mobile/ios/Features/Shell`. |
+| Android | `LayoutCycleButton`, with Phosphor icons and a haptic tap. |
+
+A new screen that lets people change its view imports the shared button. It does not draw its own.
+
+## The guard scripts
+
+Two scripts fail the build when a second control appears.
+
+**allternit-ai: `scripts/check-view-switch.mjs`.** It runs as part of `pnpm typecheck`, so a pull request with a second control does not pass. Rules:
+
+- A file that calls `useOverviewLayout(` must render `ViewSwitchButton` or `OverviewLayoutSwitch`, or have an allow entry naming the file that renders it.
+- Outside `src/components/view-switch/`, no code calls a layout setter with a literal view name, no menu has a section labelled "Layout", and no option list holds both grid and list.
+- At most one view button per file.
+
+**allternit-platform: `scripts/check-view-switch.sh`.** Run it with `bash scripts/check-view-switch.sh`. It exits 0 when there are no hits. On iOS it bans a `Picker` or segmented control over layout values and a `ForEach` over the layout cases. On Android it bans `LibraryLayoutSwitch`, a `PillRow` or loop over the layout entries, and a local `LayoutSwitch`.
+
+Both scripts have an allow table: a file, the rule it is excused from, and a reason. An entry must say why it is allowed. A permanent entry is a screen that is not a List, Grid or Deck view (for example the browser's split-pane layout). A temporary entry names the step that removes it. Add an entry only with a real reason, and delete it as soon as the screen moves to the shared button.
+
+## Verification
+
+Run the guard for the repo you changed, then open the screen and check that there is one view control and that a tap cycles the views in order. The Catalog, Artifacts, Code sessions and Projects pages are good ones to check. The shared button is described for people in the [Catalog guide](/guides/catalog).

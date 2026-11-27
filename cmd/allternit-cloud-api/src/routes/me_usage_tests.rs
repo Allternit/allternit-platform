@@ -479,3 +479,265 @@ async fn turning_log_bodies_off_deletes_that_projects_bodies() {
     let left: Vec<String> = sqlx::query_scalar("SELECT request_id FROM inference_request_bodies").fetch_all(&state.db).await.unwrap();
     assert_eq!(left, ["req_b"]);
 }
+
+fn hr(h: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 10, h, 0, 0).unwrap()
+}
+
+fn lim(five: f64) -> WindowLimits {
+    WindowLimits { five_hour: Some(five), seven_day: None, month: None }
+}
+
+#[test]
+fn paid_plan_has_roomy_limits_with_5h_and_7d_enforced() {
+    let spend = WindowSpend { five_hour: 0.5, seven_day: 3.0, month: 8.0 };
+    let (w, pace) = compose_windows(spend, window_limits_for("plus"), hr(12));
+    let ids: Vec<&str> = w.iter().map(|x| x.id.as_str()).collect();
+    assert_eq!(ids, vec!["5h", "7d", "month"]);
+    let limits: Vec<Option<f64>> = w.iter().map(|x| x.limit_usd).collect();
+    assert_eq!(limits, vec![Some(1.83), Some(7.33), Some(22.0)]);
+    let enforced: Vec<bool> = w.iter().map(|x| x.enforced).collect();
+    assert_eq!(enforced, vec![true, true, false]);
+    assert_eq!(w[2].used_usd, 8.0);
+    // 7d is closest to its limit (3 / 7.33) and lasts past its reset.
+    assert_eq!(pace.window_id, "7d");
+    assert_eq!(pace.status, "ok");
+    assert_eq!(window_limits_for("super"), WindowLimits { five_hour: Some(9.17), seven_day: Some(36.67), month: Some(110.0) });
+    assert_eq!(window_limits_for("ultra"), WindowLimits { five_hour: Some(18.33), seven_day: Some(73.33), month: Some(220.0) });
+    // Old fields still computed from the grant.
+    let ent = services::CloudModelsEntitlement {
+        allowed: true,
+        reason: None,
+        balance_usd: 10.5,
+        byok_providers: Vec::new(),
+    };
+    let usage = compose_usage("plus", "active", "pro", Some(10.5), 1.25, hr(0), vec![], ent);
+    assert_eq!(usage.weekly_limit, 22.0);
+}
+
+#[test]
+fn plan_without_grant_has_windows_and_no_limits() {
+    let (w, pace) = compose_windows(WindowSpend::default(), window_limits_for("free"), hr(12));
+    assert_eq!(w.len(), 3);
+    assert!(w.iter().all(|x| x.used_usd == 0.0 && x.limit_usd.is_none()));
+    assert_eq!(pace.status, "ok");
+    assert_eq!(pace.burn_per_hour, 0.0);
+}
+
+#[test]
+fn pace_ok_when_limit_outlasts_window() {
+    // 0.5 USD in 5h = 0.1/h; 10 USD limit -> 95h left, resets in 5h... runs out after reset: ok.
+    let spend = WindowSpend { five_hour: 0.5, ..Default::default() };
+    let (w, pace) = compose_windows(spend, lim(10.0), hr(12));
+    assert_eq!(w[0].limit_usd, Some(10.0));
+    assert_eq!(w[0].used_ratio, Some(0.05));
+    assert_eq!(pace.window_id, "5h");
+    assert_eq!(pace.status, "ok");
+}
+
+#[test]
+fn pace_warn_when_burn_exhausts_before_reset() {
+    // 4 USD in 5h = 0.8/h; 5 USD limit -> 1.25h left, before the 5h reset: warn.
+    let spend = WindowSpend { five_hour: 4.0, ..Default::default() };
+    let (_, pace) = compose_windows(spend, lim(5.0), hr(12));
+    assert_eq!(pace.status, "warn");
+    assert!(pace.runs_out_at.is_some());
+    assert!((pace.burn_per_hour - 0.8).abs() < 1e-9);
+}
+
+#[test]
+fn pace_out_when_limit_reached() {
+    let spend = WindowSpend { five_hour: 5.0, ..Default::default() };
+    let (w, pace) = compose_windows(spend, lim(5.0), hr(12));
+    assert_eq!(pace.status, "out");
+    assert_eq!(pace.runs_out_at, Some(hr(12).to_rfc3339()));
+    assert_eq!(w[0].used_ratio, Some(1.0));
+    assert!(w[0].enforced);
+}
+
+#[test]
+fn response_keys_stay_snake_case_inside_windows() {
+    let (w, pace) = compose_windows(WindowSpend::default(), WindowLimits::default(), hr(12));
+    let j = serde_json::to_value((&w, &pace)).unwrap();
+    assert!(j[0][0].get("used_usd").is_some());
+    assert!(j[1].get("burn_per_hour").is_some());
+}
+
+// ─── Enforced windows (C1b) ─────────────────────────────────────────────────
+
+fn plus() -> WindowLimits {
+    window_limits_for("plus")
+}
+
+#[test]
+fn under_every_window_is_allowed() {
+    let spend = WindowSpend { five_hour: 1.0, seven_day: 5.0, month: 10.0 };
+    assert_eq!(refused_window(spend, plus(), false, Some(5.0)), None);
+}
+
+#[test]
+fn over_5h_is_refused_without_credits_toggle() {
+    let spend = WindowSpend { five_hour: 1.83, seven_day: 2.0, month: 2.0 };
+    assert_eq!(refused_window(spend, plus(), false, Some(5.0)), Some("5h"));
+}
+
+#[test]
+fn over_7d_is_refused_when_5h_is_under() {
+    let spend = WindowSpend { five_hour: 0.2, seven_day: 7.5, month: 9.0 };
+    assert_eq!(refused_window(spend, plus(), false, Some(5.0)), Some("7d"));
+}
+
+#[test]
+fn credits_toggle_with_balance_carries_past_the_window() {
+    let spend = WindowSpend { five_hour: 3.0, seven_day: 9.0, month: 12.0 };
+    assert_eq!(refused_window(spend, plus(), true, Some(0.5)), None);
+}
+
+#[test]
+fn credits_toggle_with_zero_balance_is_still_refused() {
+    let spend = WindowSpend { five_hour: 3.0, seven_day: 3.0, month: 3.0 };
+    assert_eq!(refused_window(spend, plus(), true, Some(0.0)), Some("5h"));
+    assert_eq!(refused_window(spend, plus(), true, None), Some("5h"));
+}
+
+#[test]
+fn free_plan_has_no_enforced_window() {
+    let spend = WindowSpend { five_hour: 500.0, seven_day: 500.0, month: 500.0 };
+    assert_eq!(refused_window(spend, window_limits_for("free"), false, None), None);
+}
+
+#[tokio::test]
+async fn window_refusal_is_429_with_snake_case_body() {
+    let response = ApiError::UsageWindowExhausted {
+        window: "5h",
+        resets_at: "2026-11-26T20:00:00+00:00".to_string(),
+    }
+    .into_response();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        body,
+        json!({ "error": "usage_window_exhausted", "window": "5h", "resets_at": "2026-11-26T20:00:00+00:00" })
+    );
+}
+
+/// `setup()` plus the billing tables the gate reads, with migration 168 applied for real.
+async fn setup_billing() -> (Arc<ApiState>, Router) {
+    let (state, app) = setup().await;
+    sqlx::raw_sql(
+        "CREATE TABLE user_credits (user_id TEXT PRIMARY KEY, balance_usd DOUBLE PRECISION NOT NULL DEFAULT 0);
+         CREATE TABLE billing_subscriptions (user_id TEXT NOT NULL, plan_id TEXT NOT NULL,
+            plan_tier TEXT NOT NULL DEFAULT 'pro', status TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::raw_sql(&include_str!("../../migrations_pg/168_carry_past_windows.sql").replace("public.", ""))
+        .execute(&state.db)
+        .await
+        .expect("migration 168 applies");
+    (state, app)
+}
+
+async fn spend_row(state: &ApiState, user: &str, cost: f64, ago: Duration) {
+    sqlx::query(
+        "INSERT INTO inference_usage (id, user_id, model, prompt_tokens, completion_tokens, cost_usd, created_at) \
+         VALUES ($1, $2, 'm', 1, 1, $3, $4)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(user)
+    .bind(cost)
+    .bind(Utc::now() - ago)
+    .execute(&state.db)
+    .await
+    .unwrap();
+}
+
+async fn plan(state: &ApiState, user: &str, plan_id: &str, balance: f64) {
+    sqlx::query("INSERT INTO billing_subscriptions (user_id, plan_id, status) VALUES ($1, $2, 'active')")
+        .bind(user)
+        .bind(plan_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_credits (user_id, balance_usd) VALUES ($1, $2)")
+        .bind(user)
+        .bind(balance)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn gate_refuses_over_5h_then_allows_with_credits_toggle() {
+    let (state, _) = setup_billing().await;
+    plan(&state, "u_win", "plus", 5.0).await;
+    spend_row(&state, "u_win", 1.0, Duration::hours(4)).await;
+    spend_row(&state, "u_win", 1.0, Duration::hours(1)).await;
+    match check_usage_windows(&state.db, "u_win", Some(5.0)).await {
+        Err(ApiError::UsageWindowExhausted { window, resets_at }) => {
+            assert_eq!(window, "5h");
+            // Dropping the 4h-old row leaves 1.0 < 1.83: resets about 1 hour from now.
+            let at = DateTime::parse_from_rfc3339(&resets_at).unwrap().with_timezone(&Utc);
+            let mins = (at - Utc::now()).num_minutes();
+            assert!((55..=61).contains(&mins), "{mins}");
+        }
+        other => panic!("expected 429, got {other:?}"),
+    }
+    sqlx::query("UPDATE user_credits SET carry_past_windows = true WHERE user_id = 'u_win'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert!(check_usage_windows(&state.db, "u_win", Some(5.0)).await.is_ok());
+    // Toggle on, balance gone: still refused (window first, before the 402).
+    assert!(matches!(
+        check_usage_windows(&state.db, "u_win", Some(0.0)).await,
+        Err(ApiError::UsageWindowExhausted { window: "5h", .. })
+    ));
+}
+
+#[tokio::test]
+async fn gate_leaves_free_accounts_and_counts_only_inference_spend() {
+    let (state, _) = setup_billing().await;
+    // Free (no plan row): no window applies however much it spent.
+    spend_row(&state, "u_free", 50.0, Duration::hours(1)).await;
+    assert!(check_usage_windows(&state.db, "u_free", Some(60.0)).await.is_ok());
+    // Paid: spend is inference_usage.cost_usd only (hosted computer time is billed in
+    // another table and never enters these sums).
+    plan(&state, "u_paid", "plus", 5.0).await;
+    spend_row(&state, "u_paid", 1.0, Duration::hours(1)).await;
+    let spend = window_spend(&state.db, "u_paid", Utc::now()).await;
+    assert_eq!(spend, WindowSpend { five_hour: 1.0, seven_day: 1.0, month: spend.month });
+    assert!(check_usage_windows(&state.db, "u_paid", Some(5.0)).await.is_ok());
+}
+
+#[tokio::test]
+async fn usage_settings_route_reads_and_sets_the_toggle() {
+    let (state, app) = setup_billing().await;
+    let tok = token(&state, "u_set").await;
+    let put = |body: &'static str, tok: String| {
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/me/usage/settings")
+                    .header("authorization", format!("Bearer {tok}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+        }
+    };
+    // No credits row: nothing to carry the account, 409.
+    assert_eq!(put(r#"{"carry_past_windows":true}"#, tok.clone()).await, StatusCode::CONFLICT);
+    plan(&state, "u_set", "plus", 5.0).await;
+    assert_eq!(get(&app, "/api/v1/me/usage/settings", Some(&tok)).await.json(), json!({ "carry_past_windows": false }));
+    assert_eq!(put(r#"{"carry_past_windows":true}"#, tok.clone()).await, StatusCode::OK);
+    assert_eq!(get(&app, "/api/v1/me/usage/settings", Some(&tok)).await.json(), json!({ "carry_past_windows": true }));
+}

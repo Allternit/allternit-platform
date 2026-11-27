@@ -10,6 +10,7 @@ import {
   rejectQuestion,
   type Decision,
 } from '@/cli/work/api'
+import { isNeedsYouPermission, maskSecret, needsYouView, type NeedsYouReply } from '../../utils/needsYou'
 import { useLoaded, WorkPane } from './WorkPane'
 
 /**
@@ -29,6 +30,8 @@ export function DecisionsPane({ onDone }: { onDone: (msg?: string) => void }): R
   const [picks, setPicks] = useState<Record<string, string[][]>>({})
   const [notice, setNotice] = useState<string>()
   const [failure, setFailure] = useState<string>()
+  // Masked entry for a needs-you secret: which decision and reply it is for, and the typed value (bullets only on screen).
+  const [secret, setSecret] = useState<{ id: string; reply: NeedsYouReply; value: string }>()
 
   const done = (p: Promise<unknown>, what: string) =>
     p.then(
@@ -40,8 +43,30 @@ export function DecisionsPane({ onDone }: { onDone: (msg?: string) => void }): R
       e => setFailure(e instanceof Error ? e.message : String(e)),
     )
 
-  const onKey = (input: string, d: Decision | undefined) => {
+  const onKey = (input: string, d: Decision | undefined, _i?: number, key?: { escape: boolean; backspace: boolean; delete: boolean }) => {
+    if (secret) {
+      // Masked entry: never echoed, never logged; Enter sends it as the reply's answer, Esc cancels.
+      if (key?.escape) return setSecret(undefined)
+      if (key?.backspace || key?.delete) return setSecret(s => s && { ...s, value: s.value.slice(0, -1) })
+      if (input === '\r') {
+        const s = secret
+        if (!s.value) return
+        setSecret(undefined)
+        return void done(answerApproval(s.id, s.reply, s.value), `Answered · ${d ? source(d) : ''}`)
+      }
+      if (input.length > 0) setSecret(s => s && { ...s, value: s.value + input })
+      return
+    }
     if (!d) return
+    if (d.kind === 'approval' && isNeedsYouPermission(d.permission)) {
+      const view = needsYouView(d.permission, d.metadata, d.patterns)
+      const n = Number(input)
+      const option = Number.isInteger(n) && n >= 1 ? view.options[n - 1] : input === '\r' ? view.options[0] : undefined
+      if (!option) return
+      if (option.reply === 'reject') return void done(answerApproval(d.id, 'reject'), `${option.label} · ${source(d)}`)
+      if (view.secret) return setSecret({ id: d.id, reply: option.reply, value: '' })
+      return void done(answerApproval(d.id, option.reply), `${option.label} · ${source(d)}`)
+    }
     if (d.kind === 'approval') {
       if (input === 'y' || input === '\r') void done(answerApproval(d.id, 'once'), `Allowed once · ${source(d)}`)
       else if (input === 'a') void done(answerApproval(d.id, 'always'), `Always allowed · ${source(d)}`)
@@ -67,17 +92,40 @@ export function DecisionsPane({ onDone }: { onDone: (msg?: string) => void }): R
       error={failure ?? (error && `Couldn't reach the Allternit engine (${error}). Open Allternit Desktop or run \`gizzi serve\`.`)}
       empty="Nothing is waiting for you."
       notice={notice}
-      hint="↑/↓ choose · 1-9 answer · x dismiss · y allow · a always · n deny"
+      modal={!!secret}
+      hint={secret ? 'type the value (hidden) · enter send · esc cancel' : '↑/↓ choose · 1-9 answer · x dismiss · y allow · a always · n deny'}
       onClose={() => onDone()}
       onKey={onKey}
       renderRow={d => (
         <Text wrap="truncate-end">
           <Text color={d.kind === 'approval' ? 'warning' : 'suggestion'}>{d.kind === 'approval' ? 'approve' : 'question'}</Text>
           <Text dimColor> {source(d)} · </Text>
-          {d.kind === 'approval' ? `${d.permission}: ${approvalTarget(d)}` : (d.questions[0]?.header ?? d.questions[0]?.question)}
+          {d.kind === 'approval' && isNeedsYouPermission(d.permission) ? needsYouView(d.permission, d.metadata, d.patterns).summary : d.kind === 'approval' ? `${d.permission}: ${approvalTarget(d)}` : (d.questions[0]?.header ?? d.questions[0]?.question)}
         </Text>
       )}
       detail={d => {
+        if (d.kind === 'approval' && isNeedsYouPermission(d.permission)) {
+          const view = needsYouView(d.permission, d.metadata, d.patterns)
+          return (
+            <>
+              <Text bold>{view.summary}</Text>
+              {view.options.map((o, i) => (
+                <Box key={i}>
+                  <Text color="suggestion">{`  ${i + 1}. `}</Text>
+                  <Text>{o.label}</Text>
+                </Box>
+              ))}
+              {secret?.id === d.id ? (
+                <Text>
+                  {view.secretLabel}: {maskSecret(secret.value)}
+                  <Text dimColor>▏</Text>
+                </Text>
+              ) : view.secret ? (
+                <Text dimColor>A button other than the last asks for the value, hidden as you type.</Text>
+              ) : null}
+            </>
+          )
+        }
         if (d.kind === 'approval') {
           return (
             <>

@@ -1,6 +1,7 @@
 //! Memory disputes (D10, step 6.1): a contradiction is kept as a record with
 //! both sides instead of being silently fixed. Behind the `disputes` stage
-//! (master switch + `stage.disputes`); with it off nothing here writes.
+//! (master switch + `stage.disputes`); with it off nothing here writes. The
+//! flag defaults to on, and the Dream path and `open` need only the flag.
 //!
 //! **Contradiction or correction.** The extraction model only says `update`
 //! (this message changes that memory). [`classify_update`] splits it:
@@ -48,6 +49,18 @@ pub fn stage_cfg(conn: &Connection, user_id: &str) -> Option<Resolved> {
 
 pub fn stage_on(conn: &Connection, user_id: &str) -> bool {
     stage_cfg(conn, user_id).is_some()
+}
+
+/// The `disputes` flag alone (default on), without the Sleep master switch.
+/// The Dream and the dispute endpoints use it: a contradiction becomes a
+/// dispute that keeps both sides, and nothing is removed, for a user who never
+/// touched Sleep settings. The owner turns it off with `stage.disputes = false`.
+pub fn flag_cfg(conn: &Connection, user_id: &str) -> Option<Resolved> {
+    config::load(conn, user_id).ok().filter(|c| c.bool(&config::stage_key(Stage::Disputes)))
+}
+
+pub fn flag_on(conn: &Connection, user_id: &str) -> bool {
+    flag_cfg(conn, user_id).is_some()
 }
 
 // ── Contradiction or correction ─────────────────────────────────────────────
@@ -199,7 +212,7 @@ pub struct Opened {
 /// newer). Writes nothing and returns `None` when the stage is off or either
 /// fact is no longer current. Neither fact is changed.
 pub fn open(conn: &Connection, user_id: &str, a_id: &str, b_id: &str) -> rusqlite::Result<Option<Opened>> {
-    let Some(cfg) = stage_cfg(conn, user_id) else { return Ok(None) };
+    let Some(cfg) = flag_cfg(conn, user_id) else { return Ok(None) };
     if a_id == b_id {
         return Ok(None);
     }
@@ -536,8 +549,11 @@ mod tests {
     #[test]
     fn stage_off_an_update_supersedes_exactly_as_today_and_no_dispute_row_is_written() {
         let db = DbHandle::new_memory().unwrap();
-        // The master switch alone does not turn disputes on.
-        db.connect().unwrap().execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', 'enabled', 'true', 'owner')", []).unwrap();
+        // The master switch alone does not turn the update path's disputes on
+        // once the owner has switched the flag off.
+        for (k, v) in [("enabled", "true"), ("stage.disputes", "false")] {
+            db.connect().unwrap().execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', ?1, ?2, 'owner')", [k, v]).unwrap();
+        }
         let (old, new) = update(&db, "User lives in Austin.", "User lives in Denver.", "I live in Denver.");
         assert_eq!(current(&db), vec!["User lives in Denver.".to_string()]);
         assert_eq!(count(&db), 0);

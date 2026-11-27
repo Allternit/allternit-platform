@@ -26,7 +26,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { codexDeveloperInstructions, cliTurnMessage, channelSystemPrompt, systemLayerPath, toolCallsBrokered, codexApprovalParams, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, cliTurnMessage, channelSystemPrompt, systemLayerPath, toolCallsBrokered, codexApprovalParams, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeDisallowedTools, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -188,6 +188,7 @@ export class LocalCliDriver implements RuntimeDriver {
       mcp: task?.mcp,
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
+      blockedTools: task?.blockedTools,
       plan: task?.plan,
       toolsOff: task?.toolsOff,
       subagents: task?.subagents,
@@ -2051,6 +2052,8 @@ interface CliAdapter {
       mcp?: AgentTask["mcp"]
       vendorSessionId?: string
       bot?: AgentTask["bot"]
+      /** The account's blocked tools for a non-bot session (see AgentTask.blockedTools). */
+      blockedTools?: AgentTask["blockedTools"]
       plan?: AgentTask["plan"]
       /** No tools this turn (see AgentTask.toolsOff). */
       toolsOff?: boolean
@@ -2183,7 +2186,8 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         // Bots: settings isolation + their own tool allowlist / approval
         // gates instead of bypassPermissions (runtime/bots/bot-turn.ts).
         ...claudePermissionFlags(ctx),
-        "--disallowedTools", "AskUserQuestion",
+        // AskUserQuestion never reaches the user; the account's blocked tools never run.
+        "--disallowedTools", claudeDisallowedTools(ctx).join(","),
         // The picker's effort level (low, medium, high, xhigh, max).
         ...(ctx.effort ? ["--effort", ctx.effort] : []),
         // An internal completion: answer from the text alone, no tools at all.
@@ -2905,7 +2909,8 @@ function writeControlDeny(
 
 /**
  * A restricted bot's Claude CLI asked to use a tool it was not pre-approved
- * for. Allowlisted → allow; ask-each-time (or any tool on a bot with
+ * for. Blocked by the account → refuse ("Blocked in your tool permissions");
+ * allowlisted → allow; ask-each-time (or any tool on a bot with
  * approval gates) → the app's approval flow (PermissionNext.ask publishes
  * permission.asked; the turn waits for the person's reply in the app);
  * otherwise refuse with a reason the model relays to the user. Without a
@@ -2918,9 +2923,9 @@ async function botToolVerdict(
   sessionID: string | undefined,
   bridgeName: string | undefined,
 ): Promise<{ allow: true } | { allow: false; message: string }> {
-  const decision = claudeToolDecision(bot, toolName, bridgeName)
+  const decision = claudeToolDecision(bot, toolName, bridgeName, input)
   if (decision === "allow") return { allow: true }
-  if (decision === "deny") return { allow: false, message: deniedMessage(bot, toolName) }
+  if (decision === "deny") return { allow: false, message: deniedMessage(bot, toolName, input) }
   if (!sessionID) return { allow: false, message: `${toolName} needs the user's approval, and no one can approve it here.` }
   const pattern =
     typeof input?.command === "string"

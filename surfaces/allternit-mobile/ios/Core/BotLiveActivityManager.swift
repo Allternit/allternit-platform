@@ -340,6 +340,21 @@ final class BotLiveActivityManager {
     /// activity when a job enters `waiting_approval` or `working`, updates it
     /// on every later state, and ends it on completed / failed / cancelled.
     func syncBarJob(_ job: BarJobSnapshot) {
+        // The quiet banner above the composer follows the same job.
+        switch job.state {
+        case "working":
+            if JobBannerCenter.shared.current?.id == job.jobId {
+                JobBannerCenter.shared.update(id: job.jobId, title: job.title, done: false)
+            } else {
+                JobBannerCenter.shared.show(id: job.jobId, kind: "job", title: job.title)
+            }
+        case "completed":
+            JobBannerCenter.shared.update(id: job.jobId, title: job.title, done: true)
+        case "failed", "cancelled":
+            JobBannerCenter.shared.dismiss(id: job.jobId)
+        default:
+            break
+        }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let content = Self.taskContentState(for: job)
         if let existing = taskActivities[job.jobId] {

@@ -260,7 +260,7 @@ pub(crate) fn default_transport() -> Arc<dyn PushTransport> {
 
 #[derive(Debug, Clone)]
 pub struct PushMessage {
-    /// `call`, `missed_call`, `message`, `channel_message` or `event` (a backbone event from the sink).
+    /// `call`, `missed_call`, `message`, `channel_message`, `aci_approval`, `aci_human`, `aci_blocked` or `event` (a backbone event from the sink).
     pub kind: &'static str,
     pub title: String,
     pub body: String,

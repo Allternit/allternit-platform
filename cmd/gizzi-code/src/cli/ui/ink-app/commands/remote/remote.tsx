@@ -13,6 +13,48 @@ function useLive() {
   return live
 }
 
+type Reach = { reachable: boolean; via?: 'gizzi' | 'desktop' }
+
+/** Whether a phone or the web can reach this computer: the gizzi engine's cloud relay or Desktop holds it. */
+function useReachability(): Reach | null {
+  const [reach, setReach] = useState<Reach | null>(null)
+  useEffect(() => {
+    let alive = true
+    const check = () =>
+      void import('@/runtime/integrations/relay-connector')
+        .then(({ RelayConnector }) => RelayConnector.reachability())
+        .catch(() => ({ reachable: false }))
+        .then(next => {
+          if (alive) setReach(next)
+        })
+    check()
+    const timer = setInterval(check, 5_000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+  return reach
+}
+
+function ReachabilityLine(): React.ReactNode {
+  const reach = useReachability()
+  if (!reach) return <Text dimColor>Checking whether your devices can reach this computer…</Text>
+  if (reach.reachable) {
+    return (
+      <Text color="success">
+        Reachable from your devices
+        <Text dimColor>{reach.via === 'desktop' ? ' (through Allternit Desktop)' : ' (through gizzi serve)'}</Text>
+      </Text>
+    )
+  }
+  return (
+    <Text color="warning">
+      Not reachable from other devices: open Allternit Desktop, or run `gizzi pair` then `gizzi serve`
+    </Text>
+  )
+}
+
 export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode {
   const live = useLive()
   const [links, setLinks] = useState<LiveLinks | null>(null)
@@ -32,6 +74,7 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
       <Pane>
         <Text color="warning">This session is not live yet: the Allternit engine is not reachable at {live.engineURL}.</Text>
         <Text dimColor>Open Allternit Desktop (or run `gizzi serve`) and it connects within 15 seconds.</Text>
+        <ReachabilityLine />
         <Text dimColor>(press esc to close)</Text>
       </Pane>
     )
@@ -42,6 +85,9 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
       <Box marginBottom={1}>
         <Text bold>Continue this session anywhere</Text>
         <Text dimColor> · {live.connected ? 'live' : 'reconnecting…'} · {live.sessionID}</Text>
+      </Box>
+      <Box marginBottom={1}>
+        <ReachabilityLine />
       </Box>
       {links?.phone ? (
         <>

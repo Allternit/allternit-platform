@@ -318,12 +318,15 @@ impl ModelRouter {
         let default_alias = self.default_alias();
 
         for entry in self.alias_map.ordered_entries() {
-            // Open-lane models are listed only while their upstream is set.
-            if catalog::is_open_lane(entry) && !self.providers.contains_key(&entry.provider) {
+            // Open-lane models are listed only while a provider serves them
+            // (their own host, or legacy `OPEN_LANE` for the two old aliases).
+            let route = self.route(entry);
+            if catalog::is_open_lane(entry) && route.is_none() {
                 continue;
             }
+            let serving = route.as_ref().map_or(entry.provider.as_str(), |(provider_id, _)| *provider_id);
             // A model whose provider is out of credits would only fail.
-            if crate::services::upstream_funding::provider_out_of_credits(&entry.provider) {
+            if crate::services::upstream_funding::provider_out_of_credits(serving) {
                 continue;
             }
             let mut info = ModelInfo {
@@ -417,6 +420,14 @@ impl ModelRouter {
                     "output_per_1m_usd": retail.completion_per_1m,
                 }),
             );
+            if catalog::is_open_lane(entry) {
+                info.extra.insert(
+                    "open".to_string(),
+                    serde_json::json!({
+                        "access": if entry.research_only { "research" } else { "plan" },
+                    }),
+                );
+            }
             // Set last so upstream extras can never override these flags.
             info.extra.insert(
                 "default".to_string(),
@@ -431,6 +442,17 @@ impl ModelRouter {
             models.push(info);
         }
 
+        models
+    }
+
+    /// [`Self::list_models`] for one caller (contract D11): Open Research
+    /// (`research_only`) rows, listed or hidden backups, are left out unless
+    /// the caller has the research flag. Public callers pass `false`.
+    pub async fn list_models_for(&self, research: bool) -> Vec<ModelInfo> {
+        let mut models = self.list_models().await;
+        if !research {
+            models.retain(|model| !self.alias_map.resolve(&model.id).is_some_and(|entry| entry.research_only));
+        }
         models
     }
 
@@ -475,6 +497,37 @@ impl ModelRouter {
     /// Whether an upstream provider id is configured.
     pub fn has_provider(&self, provider_id: &str) -> bool {
         self.providers.contains_key(provider_id)
+    }
+
+    /// Whether any open-lane provider is configured: a host
+    /// (`OPEN_VENICE`, `OPEN_ABLIT`, `OPEN_FEATHERLESS`, `OPEN_SELF`) or the
+    /// legacy `OPEN_LANE`.
+    pub fn any_open_provider(&self) -> bool {
+        catalog::OPEN_PROVIDERS.iter().any(|id| self.providers.contains_key(*id))
+    }
+
+    /// Whether a configured provider can serve this alias right now (its own
+    /// provider, or the legacy fallback for the two old open aliases).
+    pub fn is_routable(&self, alias: &str) -> bool {
+        self.alias_map.resolve(alias).is_some_and(|entry| self.route(entry).is_some())
+    }
+
+    /// Where a catalog entry is served: `(provider id, upstream model id)`.
+    /// Its own provider when configured. Otherwise, for the legacy open
+    /// aliases only (D12), the `OPEN_LANE` provider under the upstream id the
+    /// legacy lane used, so a deploy before the host keys are set keeps them
+    /// up. The row's own price still bills.
+    fn route<'a>(&'a self, entry: &'a catalog::ModelAliasEntry) -> Option<(&'a str, String)> {
+        if self.providers.contains_key(&entry.provider) {
+            return Some((entry.provider.as_str(), entry.upstream_id.clone()));
+        }
+        if catalog::is_open_lane(entry)
+            && catalog::LEGACY_OPEN_ALIASES.contains(&entry.alias.as_str())
+            && self.providers.contains_key(catalog::OPEN_LANE_PROVIDER)
+        {
+            return Some((catalog::OPEN_LANE_PROVIDER, catalog::legacy_open_upstream(&entry.alias)));
+        }
+        None
     }
 
     /// Dispatch a request to a named provider with `request.model` already
@@ -526,23 +579,75 @@ impl ModelRouter {
     }
 
     /// Dispatch a chat completion request to the provider responsible for the
-    /// requested model alias.
+    /// requested model alias. No failover: callers that bill by the requested
+    /// alias use this; the chat route uses [`Self::chat_completions_with_failover`].
     pub async fn chat_completions(
         &self,
-        mut request: ChatCompletionRequest,
+        request: ChatCompletionRequest,
     ) -> Result<Response<Body>, ModelRouterError> {
-        let alias = &request.model;
         let entry = self
             .alias_map
-            .resolve(alias)
-            .ok_or_else(|| ModelRouterError::UnknownModel(alias.clone()))?;
+            .resolve(&request.model)
+            .ok_or_else(|| ModelRouterError::UnknownModel(request.model.clone()))?;
+        self.dispatch(entry, request).await
+    }
 
-        let provider = self
-            .providers
-            .get(&entry.provider)
-            .ok_or_else(|| ModelRouterError::ProviderNotConfigured {
+    /// Like [`Self::chat_completions`], but when the row's upstream fails
+    /// before the first byte (connect error, 5xx, 429, or the host out of
+    /// credits) and the row names a `failover` alias whose provider is
+    /// configured, retry once there (contract D9). An error inside a stream
+    /// that already started is never retried: the response has been handed
+    /// back by then. Returns the alias that served, which is the row to bill.
+    pub async fn chat_completions_with_failover(
+        &self,
+        request: ChatCompletionRequest,
+    ) -> Result<Served, ModelRouterError> {
+        let entry = self
+            .alias_map
+            .resolve(&request.model)
+            .ok_or_else(|| ModelRouterError::UnknownModel(request.model.clone()))?;
+        let backup = entry
+            .failover
+            .and_then(|alias| self.alias_map.resolve(alias))
+            .filter(|backup| self.route(backup).is_some());
+        let retry = backup.map(|_| request.clone());
+
+        let error = match self.dispatch(entry, request).await {
+            Ok(response) => return Ok(Served { response, alias: entry.alias.clone() }),
+            Err(error) => error,
+        };
+        let (Some(backup), Some(mut retry)) = (backup, retry) else {
+            return Err(error);
+        };
+        if !fails_over(&error) {
+            return Err(error);
+        }
+        tracing::warn!(
+            primary = %entry.alias,
+            failover = %backup.alias,
+            %error,
+            "open lane primary failed before the first byte; trying its failover"
+        );
+        retry.model = backup.alias.clone();
+        let response = self.dispatch(backup, retry).await?;
+        tracing::info!(primary = %entry.alias, served = %backup.alias, "open lane request served by failover");
+        Ok(Served { response, alias: backup.alias.clone() })
+    }
+
+    /// Send one request to the provider that serves `entry` ([`Self::route`]).
+    async fn dispatch(
+        &self,
+        entry: &catalog::ModelAliasEntry,
+        mut request: ChatCompletionRequest,
+    ) -> Result<Response<Body>, ModelRouterError> {
+        let (provider_id, upstream_id) =
+            self.route(entry).ok_or_else(|| ModelRouterError::ProviderNotConfigured {
                 provider: entry.provider.clone(),
             })?;
+        let provider = self
+            .providers
+            .get(provider_id)
+            .ok_or_else(|| ModelRouterError::ProviderNotConfigured { provider: provider_id.to_string() })?;
 
         // Streaming responses only carry token usage when asked: inject
         // stream_options so the usage-settlement body scanner sees a final
@@ -556,16 +661,16 @@ impl ModelRouter {
         }
 
         use crate::services::upstream_funding::{mark_out_of_credits, provider_out_of_credits};
-        if provider_out_of_credits(&entry.provider) {
+        if provider_out_of_credits(provider_id) {
             return Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() });
         }
 
         // Rewrite the model field to the upstream id before dispatching.
-        request.model = entry.upstream_id.clone();
+        request.model = upstream_id;
 
         match provider.chat_completions(request).await {
             Err(ModelRouterError::UpstreamError { status: 402, .. }) => {
-                mark_out_of_credits(&entry.provider);
+                mark_out_of_credits(provider_id);
                 Err(ModelRouterError::ModelUnavailable { model: entry.name.clone() })
             }
             other => other,
@@ -621,7 +726,7 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
     if let (Some(wholesale_prompt), Some(wholesale_completion)) =
         (per_1m("prompt_price"), per_1m("completion_price"))
     {
-        let markup = inference_markup();
+        let markup = entry_markup(entry);
         return RetailPrices {
             prompt_per_1m: wholesale_prompt * markup,
             completion_per_1m: wholesale_completion * markup,
@@ -631,7 +736,7 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
     }
 
     if entry.static_price_is_wholesale {
-        let markup = inference_markup();
+        let markup = entry_markup(entry);
         return RetailPrices {
             prompt_per_1m: entry.prompt_price * markup,
             completion_per_1m: entry.completion_price * markup,
@@ -648,6 +753,24 @@ fn retail_from(entry: &catalog::ModelAliasEntry, upstream: Option<&ModelInfo>) -
     }
 }
 
+/// A dispatched response and the catalog alias that served it (the row
+/// usage bills at; differs from the requested alias after a failover).
+pub struct Served {
+    pub response: Response<Body>,
+    pub alias: String,
+}
+
+/// Errors that happen before the first byte and warrant the row's failover:
+/// a connect/transport error, an upstream 5xx or 429, or the host out of
+/// credits. A 4xx is the request's own fault and is never retried.
+fn fails_over(error: &ModelRouterError) -> bool {
+    match error {
+        ModelRouterError::UpstreamRequestFailed(_) | ModelRouterError::ModelUnavailable { .. } => true,
+        ModelRouterError::UpstreamError { status, .. } => *status == 429 || (500..=599).contains(status),
+        _ => false,
+    }
+}
+
 /// Retail prices for one model, per 1M tokens USD. The wholesale fields are
 /// our upstream cost: live pricing when available, else the static catalog
 /// price of an entry flagged `static_price_is_wholesale`; None otherwise.
@@ -657,6 +780,28 @@ pub struct RetailPrices {
     pub completion_per_1m: f64,
     pub wholesale_prompt_per_1m: Option<f64>,
     pub wholesale_completion_per_1m: Option<f64>,
+}
+
+/// Markup for one row: its own `markup` (clamped 1.0..=5.0), else
+/// `OPEN_LANE_MARKUP` for open rows, else `INFERENCE_MARKUP`.
+fn entry_markup(entry: &catalog::ModelAliasEntry) -> f64 {
+    if let Some(markup) = entry.markup {
+        return markup.clamp(1.0, 5.0);
+    }
+    if catalog::is_open_lane(entry) {
+        return open_lane_markup();
+    }
+    inference_markup()
+}
+
+/// `OPEN_LANE_MARKUP` (default 2.0, clamped 1.0..=5.0): retail over host price
+/// for open rows (contract D8).
+fn open_lane_markup() -> f64 {
+    std::env::var("OPEN_LANE_MARKUP")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .map(|value| value.clamp(1.0, 5.0))
+        .unwrap_or(2.0)
 }
 
 /// The retail markup over wholesale pricing: `INFERENCE_MARKUP`, default

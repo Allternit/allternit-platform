@@ -456,6 +456,8 @@ internal fun ConnectionRow(
     trailing: (@Composable () -> Unit)?,
     onConnect: () -> Unit,
     onFallback: (String) -> Unit,
+    /** Appended to the status line, e.g. "2 allowed, 1 blocked" (tool permissions). */
+    statusExtra: String? = null,
 ) {
     val c = setupColors
     Row(
@@ -464,7 +466,7 @@ internal fun ConnectionRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         ConnLogo(entry)
-        Column(Modifier.weight(1f)) { ConnStatusLines(entry, store, tag) }
+        Column(Modifier.weight(1f)) { ConnStatusLines(entry, store, tag, extra = statusExtra) }
         val wrapped: (@Composable (Modifier) -> Unit)? = if (trailing != null) { _ -> trailing() } else null
         ConnRowTrailing(entry, store, wrapped, onConnect, onFallback)
     }
@@ -485,11 +487,12 @@ internal fun ConnLogo(entry: ConnEntry) {
 
 /** Name (with "New" or a tag) and the status line, shared by [ConnectionRow] and the Grid/Deck card (iOS ConnStatusLines). */
 @Composable
-internal fun ConnStatusLines(entry: ConnEntry, store: ConnectionsStore, tag: String?, maxLines: Int = Int.MAX_VALUE) {
+internal fun ConnStatusLines(entry: ConnEntry, store: ConnectionsStore, tag: String?, maxLines: Int = Int.MAX_VALUE, extra: String? = null) {
     val c = setupColors
     val r = store.row(entry.id)
     val available = store.isAvailable(entry.id)
-    val status = if (!available) store.unavailableReason(entry.id) else store.statusLine(entry)
+    val base = if (!available) store.unavailableReason(entry.id) else store.statusLine(entry)
+    val status = if (extra != null) "$base · $extra" else base
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         if (tag != null) Text(tag, fontSize = 11.sp, color = c.okFg, modifier = Modifier.background(c.okBg, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))

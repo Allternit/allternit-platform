@@ -169,6 +169,8 @@ private fun author(cm: ArtifactComment, a: ArtifactV2): String = when {
 
 internal enum class PdfTemplate(val raw: String, val label: String, val variants: List<String>) {
     Invoice("invoice", "Invoice", listOf("classic", "minimal", "modern")),
+    Quote("quote", "Quote", listOf("classic", "minimal", "modern")),
+    Contract("contract", "Contract", listOf("classic", "minimal")),
     Report("report", "Report", listOf("classic", "minimal", "modern")),
     Ticket("ticket", "Event ticket", listOf("classic", "minimal", "modern")),
     Minutes("minutes", "Meeting minutes", listOf("classic", "minimal")),
@@ -183,6 +185,32 @@ internal enum class PdfTemplate(val raw: String, val label: String, val variants
             putJsonArray("items") {
                 add(buildJsonObject { put("description", "Brand audit"); put("qty", 1); put("unitPrice", 1800) })
                 add(buildJsonObject { put("description", "Menu design"); put("qty", 3); put("unitPrice", 240) })
+            }
+        }
+        Quote -> buildJsonObject {
+            put("number", "Q-2051"); put("issued", "Nov 26, 2026"); put("validUntil", "Dec 26, 2026"); put("currency", "USD"); put("taxRate", 8.25)
+            putJsonObject("from") { put("name", "Northwind Studio"); putJsonArray("lines") { add(JsonPrimitive("410 Market Street")); add(JsonPrimitive("Austin, TX 78701")) } }
+            putJsonObject("to") { put("name", "Harbor Coffee Co."); putJsonArray("lines") { add(JsonPrimitive("22 Pier Road")); add(JsonPrimitive("Galveston, TX 77550")) } }
+            putJsonArray("items") {
+                add(buildJsonObject { put("description", "Website design"); put("detail", "Five pages, two rounds of changes"); put("qty", 15); put("unitPrice", 100) })
+                add(buildJsonObject { put("description", "Website development"); put("qty", 10); put("unitPrice", 100) })
+                add(buildJsonObject { put("description", "Copywriting"); put("qty", 5); put("unitPrice", 50) })
+            }
+            put("scope", "Design and build of the new Harbor Coffee website, from wireframes to launch.")
+            put("terms", "50% due on acceptance, 50% on launch. Work starts within five business days of acceptance.")
+        }
+        Contract -> buildJsonObject {
+            put("title", "Services agreement"); put("number", "SA-118"); put("effective", "Dec 1, 2026"); put("term", "6 months")
+            putJsonArray("parties") {
+                add(buildJsonObject { put("id", "provider"); put("role", "Service provider"); put("name", "Northwind Studio"); putJsonArray("lines") { add(JsonPrimitive("410 Market Street")); add(JsonPrimitive("Austin, TX 78701")) } })
+                add(buildJsonObject { put("id", "client"); put("role", "Client"); put("name", "Harbor Coffee Co."); putJsonArray("lines") { add(JsonPrimitive("22 Pier Road")); add(JsonPrimitive("Galveston, TX 77550")) } })
+            }
+            put("intro", "This agreement sets out how Northwind Studio will provide design services to Harbor Coffee Co.")
+            putJsonArray("clauses") {
+                add(buildJsonObject { put("heading", "Services"); put("body", "Northwind Studio will design and build the website described in quote Q-2051.") })
+                add(buildJsonObject { put("heading", "Fees and payment"); put("body", "The client pays the fees in quote Q-2051. Invoices are due within 30 days.") })
+                add(buildJsonObject { put("heading", "Ownership"); put("body", "The client owns the finished work once it is paid for in full.") })
+                add(buildJsonObject { put("heading", "Ending the agreement"); put("body", "Either party may end this agreement with 14 days written notice. Work done until then is paid for.") })
             }
         }
         Report -> buildJsonObject {

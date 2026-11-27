@@ -372,6 +372,25 @@ async fn eval_harness_runs_on_the_tiny_fixture() {
     assert_eq!(r.questions, 6);
 }
 
+/// The raw-windows arm (turn windows, sidecar down so fused order) finds at
+/// least as many turn evidences in its top 8 as the incumbent recall does.
+#[tokio::test]
+async fn raw_windows_arm_recall_at_8_is_at_least_the_incumbents() {
+    let fixture: Fixture = serde_json::from_str(include_str!("fixtures/tiny_locomo.json")).unwrap();
+    let (url, _rx) = mock_s1(keyword_brain()).await;
+    let report = run_eval(&db(), &fixture, &S1Client::new(&url), &EmbedClient::new(None, "hash"), 8).await.unwrap();
+    assert_eq!(report.k, 8);
+    // Five of the six questions have a turn in their gold evidence.
+    assert!(report.per_question.iter().all(|q| !q.raw_windows.is_empty()), "{:?}", report.per_question);
+    assert!(report.raw_windows.recall_at_k > 0.0);
+    assert!(
+        report.raw_windows.recall_at_k >= report.incumbent_on_turns.recall_at_k,
+        "raw {} < incumbent {}",
+        report.raw_windows.recall_at_k,
+        report.incumbent_on_turns.recall_at_k
+    );
+}
+
 /// Real run: `ALLTERNIT_MEMORY_EVAL_FIXTURE=<fixture.json>` (and optionally
 /// `ALLTERNIT_S1_URL`, `ALLTERNIT_EMBED_URL`, `ALLTERNIT_MEMORY_EVAL_K`);
 /// writes the report to `ALLTERNIT_MEMORY_EVAL_OUT` (default stdout).

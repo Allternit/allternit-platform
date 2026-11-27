@@ -21,6 +21,7 @@ import { LookupTool } from "@/runtime/tools/builtins/lookup"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
+import { RequestSignatureTool } from "@/runtime/tools/builtins/request-signature"
 import { WaitAgentsTool } from "@/runtime/tools/builtins/wait-agents"
 import { AgentControlTool } from "@/runtime/tools/builtins/agent-control"
 import { ToolSearchTool } from "@/runtime/tools/builtins/tool-search"
@@ -33,6 +34,7 @@ import { SkillTool } from "@/runtime/tools/builtins/skill"
 import { AgentCommunicateTool } from "@/runtime/tools/builtins/agent-communicate"
 import { ListTool } from "@/runtime/tools/builtins/ls"
 import { MultiEditTool } from "@/runtime/tools/builtins/multiedit"
+import { McpScriptTool } from "@/runtime/tools/builtins/mcp-script"
 import { RunCodeTool } from "@/runtime/tools/builtins/run_code"
 import type { Agent } from "@/runtime/loop/agent"
 import { Tool } from "@/runtime/tools/builtins/tool"
@@ -56,6 +58,7 @@ import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
 import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
+import { KnowledgeFlagTool } from "@/runtime/tools/builtins/knowledge-flag"
 import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
 import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
@@ -256,6 +259,9 @@ export namespace ToolRegistry {
       EditTool,
       MultiEditTool,
       SymbolEditTool,
+      // Code Mode: one sandboxed script calls several MCP tools. Offered only with
+      // 2+ MCP tools connected (McpScript.attach in session/prompt.ts).
+      McpScriptTool,
       WriteTool,
       TaskTool,
       AgentSwarmTool,
@@ -293,6 +299,8 @@ export namespace ToolRegistry {
       // A question that doesn't stop the turn; the answer starts a new one.
       // Every client, not bot-gated (routines, workers and subagents ask too).
       AskUserLaterTool,
+      // Asks the user to sign a PDF (non-blocking; the agent can never sign): every client.
+      RequestSignatureTool,
       // A short in-turn wait that wakes on the user's next message: every client, not bot-gated.
       SleepTool,
       // Folders outside the project for this session: every client, not
@@ -316,6 +324,7 @@ export namespace ToolRegistry {
       NotebookEditTool,
       MdxGraphTool,
       MemoryWriteTool,
+      KnowledgeFlagTool,
       ProjectStatusTool,
       MemoryRecallTool,
       // Wave D recall: memory topics/entries with versions, windowed reads of

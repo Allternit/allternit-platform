@@ -1370,6 +1370,19 @@ struct McpToolCall<'a> {
     output: Option<&'a Value>,
 }
 
+/// An app candidate keeps the raw tool `result` (what the app is handed) or
+/// names a `ui://` resource in its metadata.
+fn has_ui_marker(meta: &Value) -> bool {
+    meta.get("result").is_some_and(|r| r.is_object()) || ui_resource_uri(meta).is_some_and(|u| u.starts_with("ui://"))
+}
+
+/// A typed result: `structuredContent` with no raw `result` and no `ui://`
+/// resource. It carries no app. A part with neither (only the model-visible
+/// output) is still a candidate: the server's tool list decides.
+fn is_typed_result_only(meta: &Value) -> bool {
+    meta.get("structuredContent").is_some() && !has_ui_marker(meta)
+}
+
 fn mcp_tool_call(part: &Value) -> Option<McpToolCall<'_>> {
     let meta = part.pointer("/state/metadata/mcp")?;
     Some(McpToolCall {
@@ -1405,6 +1418,10 @@ pub(crate) async fn app_frame_for_tool_part_with(
     allow_private: bool,
 ) -> Option<Value> {
     let call = mcp_tool_call(part)?;
+    // Typed results (`structuredContent` only) carry no app: do not open a session for them.
+    if is_typed_result_only(call.meta) {
+        return None;
+    }
     let call_id = part.get("callID").and_then(|c| c.as_str())?;
     let server = normalize_name(call.server);
 
@@ -2269,6 +2286,17 @@ pub(crate) mod tests {
         assert_eq!(server.count(), before);
         // a disabled connector
         assert!(emit("user-1", tool_part("off-server", "show_dashboard", true)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn typed_result_without_a_ui_resource_opens_no_session() {
+        let (state, server, _) = fixture().await;
+        let mut part = tool_part("dash-server", "show_dashboard", true);
+        let mcp = part["state"]["metadata"]["mcp"].as_object_mut().unwrap();
+        mcp.remove("result");
+        mcp.insert("structuredContent".into(), json!({ "rows": [1] }));
+        assert!(app_frame_for_tool_part_with(&state, "user-1", "m", &part, true).await.is_none());
+        assert!(server.log.lock().unwrap().is_empty(), "no MCP request for a typed result");
     }
 
     #[tokio::test]

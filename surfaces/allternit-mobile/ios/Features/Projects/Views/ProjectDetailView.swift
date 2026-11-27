@@ -400,7 +400,7 @@ struct ProjectDetailView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Customize")
+            .accessibilityLabel("Catalog")
         }
     }
 
@@ -842,7 +842,7 @@ struct ProjectDetailView: View {
                                 Image(systemName: "bubble.left")
                                     .font(.subheadline)
                                     .foregroundColor(Color("TextSecondary"))
-                                Text(session.name ?? "Untitled")
+                                Text(session.displayTitle)
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(Color("TextPrimary"))
                                     .lineLimit(1)

@@ -15,6 +15,7 @@ struct AutomationTasksPhoneView: View {
 
     @StateObject private var store = AutomationStore()
     @State private var barHidden = false
+    @State private var introShowing = false
     @ObservedObject private var cron = CronJobStore.shared
     @ObservedObject private var bots = BotModeStore.shared
     @ObservedObject private var agentHub = AgentHubStore.shared
@@ -216,10 +217,14 @@ struct AutomationTasksPhoneView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     PhoneMenuButton(round: true, onOpen: { openLibraryDrawer($isSidebarOpen) })
+                        .opacity(introShowing ? 0 : 1)
+                        .allowsHitTesting(!introShowing)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     GlassCircleButton(systemImage: filtersOn ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease",
                                       label: "Filter and sort", size: 36) { isFilterPresented = true }
+                        .opacity(introShowing ? 0 : 1)
+                        .allowsHitTesting(!introShowing)
                 }
             }
         }
@@ -236,7 +241,10 @@ struct AutomationTasksPhoneView: View {
                 }
             )
             .hidesOnScroll(barHidden)
+            .opacity(introShowing ? 0 : 1)
+            .allowsHitTesting(!introShowing)
         }
+        .onPreferenceChange(IntroShowingKey.self) { introShowing = $0 }
         .tracksScrollForHide($barHidden)
         .sheet(isPresented: $isFilterPresented) {
             AutomationFilterSheet(activeTab: $activeTab, sortBy: $sortBy, routinesViewRaw: $routinesViewRaw)
@@ -535,7 +543,7 @@ struct AutomationTasksPhoneView: View {
     }
 
     private func emptyState(title: String, message: String) -> some View {
-        EmptyBox(title: title, line: message, art: .bell)
+        EmptyBox(title: title, line: message, art: .calendar)
     }
 
     // MARK: - Actions

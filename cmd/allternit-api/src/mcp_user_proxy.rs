@@ -481,7 +481,25 @@ pub(crate) async fn dispatch_rpc_with(
                 RpcCaller::Turn { .. } => PER_CONNECTOR_TIMEOUT,
                 RpcCaller::Edge => EDGE_PER_CONNECTOR_TIMEOUT,
             };
-            (rpc_result(&id, list_tools(state, user_id, &connectors, &modes, budget, allow_private).await), None, "ok")
+            let mut listed = list_tools(state, user_id, &connectors, &modes, budget, allow_private).await;
+            // Skills from the user's servers and apps (mcp_skills): chat turns only, from memory.
+            if let RpcCaller::Turn { .. } = caller {
+                if let (Some(tool), Some(tools)) = (crate::mcp_skills::turn_tool(state, user_id, allow_private), listed["tools"].as_array_mut()) {
+                    tools.push(tool);
+                }
+            }
+            (rpc_result(&id, listed), None, "ok")
+        }
+        // `load_skill` (mcp_skills): a read of the caller's own catalog, so no approval
+        // prompt and no team gate (no connector tool runs). An edge caller falls through
+        // to the namespaced lookup below, which has no such tool.
+        "tools/call"
+            if matches!(caller, RpcCaller::Turn { .. })
+                && params.get("name").and_then(|n| n.as_str()) == Some(crate::mcp_skills::LOAD_SKILL_TOOL) =>
+        {
+            let result = crate::mcp_skills::load_skill_call(state, user_id, &params["arguments"], allow_private).await;
+            let outcome = if result["isError"] == json!(true) { "error" } else { "ok" };
+            (rpc_result(&id, result), Some(crate::mcp_skills::LOAD_SKILL_TOOL.to_string()), outcome)
         }
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -918,7 +936,7 @@ async fn acting_bot(state: &Arc<AppState>, actor: &TokenActor, session_id: &str)
 /// The bot a chat turn's session belongs to (the app's `isBot` session tag, the
 /// same lookup the agent-chat bridge uses for the bot marker). `None` = the
 /// person acting as themself. Only for tokens without the actor claims.
-async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
+pub(crate) async fn session_bot(state: &Arc<AppState>, session_id: &str) -> Option<String> {
     let db = state.db.clone();
     let sid = session_id.to_string();
     tokio::task::spawn_blocking(move || {
@@ -2395,6 +2413,73 @@ mod e2e {
         state.db.set_session_metadata("ses_1", &json!({})).unwrap();
         assert!(call_as(&state, &old, read).await.get("result").is_some());
         assert_eq!(server.called_tools(), ["model_only"]);
+    }
+
+    // ------------------------------------------------ load_skill (mcp-skills-app run B)
+
+    fn seed_skills(state: &Arc<AppState>, user: &str, prefs: &[(&str, bool)]) {
+        use crate::mcp_skills::{seed_for_test, ConnMeta};
+        let conns = vec![ConnMeta { id: "conn-1".into(), name: "Nimbrook".into(), prefix: "dash-server".into() }];
+        let info = |uri: &str, name: &str| mcp_client::SkillInfo { uri: uri.into(), name: name.into(), description: format!("{name} steps") };
+        let skills = vec![("conn-1", vec![info("skill://review/SKILL.md", "review"), info("skill://ship/SKILL.md", "ship")])];
+        seed_for_test(state, user, conns, skills, prefs.iter().map(|(k, v)| (k.to_string(), *v)).collect());
+    }
+
+    fn skill_tool(list: &Value) -> Option<Value> {
+        list["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == crate::mcp_skills::LOAD_SKILL_TOOL).cloned()
+    }
+
+    fn call_text(v: &Value) -> String {
+        v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    }
+
+    #[tokio::test]
+    async fn load_skill_is_listed_for_turns_with_an_enabled_skill_and_never_for_the_edge() {
+        let (state, _server, _) = fixture().await;
+        seed_skills(&state, "user-1", &[("dash-server:ship", false)]);
+        let turn = rpc(&state, "user-1", "tools/list", json!({})).await;
+        let tool = skill_tool(&turn).expect("turn gets load_skill");
+        let d = tool["description"].as_str().unwrap();
+        assert!(d.contains("\ndash-server:review — review steps"));
+        assert!(!d.contains("dash-server:ship"), "disabled skills are not listed");
+        assert_eq!(tool["_meta"][crate::mcp_skills::SKILLS_META_KEY][0]["from"], "Nimbrook");
+        assert_eq!(tool["_meta"][REQUIRES_CONFIRMATION_META_KEY], false);
+        // Connector tools are still there and still namespaced.
+        assert!(tool_names(&turn).iter().any(|n| n == "dash-server__plain"));
+
+        let edge = edge_rpc(&state, "user-1", "tools/list", json!({})).await;
+        assert!(skill_tool(&edge).is_none(), "edge callers never get load_skill");
+        let edge_call = edge_rpc(&state, "user-1", "tools/call", json!({ "name": "load_skill", "arguments": { "id": "dash-server:review" } })).await;
+        assert!(edge_call.get("error").is_some() || edge_call["result"]["isError"] == true, "{edge_call}");
+        assert!(!call_text(&edge_call).starts_with("Skill "));
+    }
+
+    #[tokio::test]
+    async fn no_load_skill_when_every_skill_is_off() {
+        let (state, _server, _) = fixture().await;
+        seed_skills(&state, "user-1", &[("dash-server:review", false), ("dash-server:ship", false)]);
+        let turn = rpc(&state, "user-1", "tools/list", json!({})).await;
+        assert!(skill_tool(&turn).is_none());
+    }
+
+    #[tokio::test]
+    async fn load_skill_refuses_disabled_unknown_uri_and_other_users_ids() {
+        let (state, _server, _) = fixture().await;
+        seed_skills(&state, "user-1", &[("dash-server:ship", false)]);
+        let call = |user: &'static str, id: &'static str| {
+            let state = state.clone();
+            async move { rpc(&state, user, "tools/call", json!({ "name": "load_skill", "arguments": { "id": id } })).await }
+        };
+        for (user, id, code) in [
+            ("user-1", "dash-server:ship", "skill_disabled"),
+            ("user-1", "dash-server:nope", "skill_not_found"),
+            ("user-1", "skill://review/SKILL.md", "skill_not_found"),
+            ("user-2", "dash-server:review", "skill_not_found"),
+        ] {
+            let v = call(user, id).await;
+            assert_eq!(v["result"]["isError"], true, "{id}: {v}");
+            assert!(call_text(&v).starts_with(&format!("{code}: ")), "{id}: {v}");
+        }
     }
 }
 

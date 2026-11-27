@@ -7,3 +7,5 @@ Each hit is one memory line with its drive, topic file, id, version, source and 
 Write queries that stand alone. Use the user's exact names, terms and time window, and the topic's own nouns, not meta-words like "discussed" or "talked about". If the request has no content words ("what did I tell you?"), ask which thing instead of searching. Search for what was asked; do not widen to related preferences.
 
 A hit may carry a "Memory conflict" note: two memories disagree. It shows both sides and the one Sleep picked; mention the conflict only if it matters. When it says to ask the user, recall has already asked them; use their answer, and do not ask again.
+
+Past chats: the result also lists matching turns from the user's earlier conversations (date, speaker, observation id, session id), after the memory hits. Narrow them with from and to (ISO dates), session (one session id), or skip_sessions (session ids you already read). To read around a hit, call again with neighbors_of set to its observation id; you get the turns before and after it, in order.

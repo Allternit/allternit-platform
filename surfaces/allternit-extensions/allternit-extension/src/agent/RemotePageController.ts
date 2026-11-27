@@ -1,5 +1,6 @@
 import type { BrowserState } from '@page-agent/page-controller'
 
+import { handlePageControlMessage } from './RemotePageController.background'
 import type { TabsController } from './TabsController'
 
 const PREFIX = '[RemotePageController]'
@@ -14,6 +15,13 @@ function sendMessage(message: {
 	targetTabId: number
 	payload?: any
 }): Promise<any> {
+	// A service worker does not receive its own runtime messages, so call the
+	// background handler directly when the agent runs there (remote tasks).
+	if (typeof window === 'undefined') {
+		return new Promise((resolve) => {
+			handlePageControlMessage(message, {} as chrome.runtime.MessageSender, resolve)
+		})
+	}
 	return chrome.runtime.sendMessage(message).catch((error) => {
 		console.error(PREFIX, message.action, error)
 		return null
@@ -149,10 +157,48 @@ export class RemotePageController {
 		return this.remoteCallDomAction('execute_javascript', args)
 	}
 
-	/** @note Managed by content script via storage polling. */
-	async showMask(): Promise<void> {}
-	/** @note Managed by content script via storage polling. */
-	async hideMask(): Promise<void> {}
+	/** Tell the current tab's content script to show the mask and cursor. */
+	async showMask(): Promise<void> {
+		if (!this.currentTabId || !isContentScriptAllowed(await this.getCurrentUrl())) return
+		await sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'show_mask',
+			targetTabId: this.currentTabId,
+			payload: [this.maskLabel],
+		})
+	}
+
+	async hideMask(): Promise<void> {
+		if (!this.currentTabId || !isContentScriptAllowed(await this.getCurrentUrl())) return
+		await sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'hide_mask',
+			targetTabId: this.currentTabId,
+		})
+	}
+
+	/** Text next to the cursor, for example "Allternit · Opening the page". */
+	private maskLabel = ''
+
+	async setMaskLabel(label: string): Promise<void> {
+		this.maskLabel = label
+		await chrome.storage.local.set({ agentMaskLabel: label })
+	}
+
+	/** Ask the current page whether it needs the person (login, 2FA, captcha, block). */
+	async detectBlocker(): Promise<{
+		blocker: { kind: string; reason: string } | null
+		url: string
+		domain: string
+	} | null> {
+		if (!this.currentTabId || !isContentScriptAllowed(await this.getCurrentUrl())) return null
+		return sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'detect_blocker',
+			targetTabId: this.currentTabId,
+		})
+	}
+
 	/** @note Managed by content script via storage polling. */
 	dispose(): void {}
 

@@ -425,6 +425,10 @@ export namespace MessageV2 {
           id: z.string(),
           title: z.string().optional(),
           action: z.enum(["recalled", "saved", "updated", "deleted"]),
+          /** Absent for saved memories; "past_chat" for turns from earlier chats. */
+          source: z.literal("past_chat").optional(),
+          date: z.string().optional(),
+          session_id: z.string().optional(),
         }),
       )
       .max(10)

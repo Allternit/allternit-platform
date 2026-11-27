@@ -613,6 +613,39 @@ pub fn enforce_confirmation_with_mode(
     descriptor: &serde_json::Value,
     approval_id: Option<&str>,
 ) -> Result<(), ConfirmationDenial> {
+    enforce_confirmation_with_mode_details(mode, approval_store, user_id, route, class, descriptor, approval_id, &serde_json::json!({}))
+}
+
+/// [`enforce_confirmation`] with what the person is asked to approve.
+/// `details` may carry `kind` (`"action"`, the default, or `"credential"`),
+/// `credential: {name, domain}` (never the value), `run_id` and
+/// `computer_id`. `kind` and `credential` go on the `confirmation_required`
+/// body; all of them go on the stored approval, so `/api/aci/handoff/:id`
+/// can show them and an "Allow for this run" approve can find the run.
+pub fn enforce_confirmation_with_details(
+    approval_store: &crate::permission_policy::ApprovalStore,
+    user_id: &str,
+    route: &str,
+    class: ConfirmationClass,
+    descriptor: &serde_json::Value,
+    approval_id: Option<&str>,
+    details: &serde_json::Value,
+) -> Result<(), ConfirmationDenial> {
+    enforce_confirmation_with_mode_details(HOST_POLICY.mode, approval_store, user_id, route, class, descriptor, approval_id, details)
+}
+
+/// Mode-injectable core of [`enforce_confirmation_with_details`].
+#[allow(clippy::too_many_arguments)]
+pub fn enforce_confirmation_with_mode_details(
+    mode: SafetyMode,
+    approval_store: &crate::permission_policy::ApprovalStore,
+    user_id: &str,
+    route: &str,
+    class: ConfirmationClass,
+    descriptor: &serde_json::Value,
+    approval_id: Option<&str>,
+    details: &serde_json::Value,
+) -> Result<(), ConfirmationDenial> {
     use serde_json::json;
 
     if !class.requires_confirmation() || mode == SafetyMode::Off {
@@ -647,31 +680,38 @@ pub fn enforce_confirmation_with_mode(
 
     // No grant presented: create the handoff record and the hash-bound grant
     // under one shared id so `/api/aci/handoff/:id/*` drives both.
-    let approval_id = approval_store.create(
-        user_id,
-        "computer.confirmation_required",
-        &json!({
-            "route": route,
-            "confirmation_class": class.label(),
-            "action_hash": action_hash,
-        }),
-    );
+    let kind = details.get("kind").and_then(serde_json::Value::as_str).unwrap_or("action");
+    let credential = details.get("credential").filter(|c| c.is_object()).cloned();
+    let mut data = json!({
+        "route": route,
+        "confirmation_class": class.label(),
+        "action_hash": action_hash,
+        "kind": kind,
+    });
+    for key in ["credential", "run_id", "computer_id"] {
+        if let Some(v) = details.get(key).filter(|v| !v.is_null()) {
+            data[key] = v.clone();
+        }
+    }
+    let approval_id = approval_store.create(user_id, "computer.confirmation_required", &data);
     crate::aci_approvals::GRANTS.issue_with_id(
         &approval_id,
         user_id,
         &action_hash,
         crate::aci_approvals::grant_ttl_secs(),
     );
-    Err(ConfirmationDenial {
-        status: axum::http::StatusCode::FORBIDDEN,
-        body: json!({
-            "error": "confirmation_required",
-            "approval_id": approval_id,
-            "action_hash": action_hash,
-            "confirmation_class": class.label(),
-            "message": format!("{} action requires human approval before execution", class.label()),
-        }),
-    })
+    let mut body = json!({
+        "error": "confirmation_required",
+        "approval_id": approval_id,
+        "action_hash": action_hash,
+        "confirmation_class": class.label(),
+        "kind": kind,
+        "message": format!("{} action requires human approval before execution", class.label()),
+    });
+    if let Some(credential) = credential {
+        body["credential"] = credential;
+    }
+    Err(ConfirmationDenial { status: axum::http::StatusCode::FORBIDDEN, body })
 }
 
 #[cfg(test)]

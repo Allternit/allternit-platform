@@ -21,7 +21,10 @@ implements the published format and includes none of its code). The kernel's
 | `ledger_edit.rs` | Applies an edited ledger file to the real bot, routine, workflow, workspace file or skill. |
 | `ledger_restore.rs` | Restores a ledger into an account: preview, paused schedules, credentials never written back. |
 | `ledger.rs`, `ledger_repo.rs` | The ledger: collects everything the person built into files and commits hourly snapshots to `ledger.git`. |
-| `memory_capture.rs` | Capture switches, owner-only channel capture, Gizzi turns, the periodic agent-folder import, counts and forget-by-source. |
+| `memory_capture.rs` | Capture switches, owner-only channel capture, raw storage of every turn (user, assistant, tool; secrets redacted on tool text), the periodic agent-folder import, counts and forget-by-source (which also deletes raw turns, their windows and vectors). |
+| `memory_index.rs` | Search index. Raw turns (`turn_*` observations) are cut into overlapping dated windows, `memory_index_chunks` rows with `source_type = 'observation'`. |
+| `memory_retrieve/raw_windows.rs` | Raw search: hybrid window search, optional rerank, whole turns back. |
+| `knowledge_store.rs`, `knowledge_routes.rs`, `knowledge_curator.rs` | The [knowledge factory](/guides/knowledge-factory): flags, proposals, approve-writes-the-drive, and the curator that runs after the Dream. |
 | `memory_drive_chat_import.rs` | Finds memories in exported chats with the memory model, and imports the facts the person keeps. |
 | `memory_drive_agent_import.rs` | Imports from Claude Code, Codex, Hermes and OpenClaw memory files on the computer. |
 | `memory_drive_writer.rs` | The one writer for personal memory. Every kernel write path calls `commit_facts`. |
@@ -130,18 +133,25 @@ or a failed run (up to 3 attempts) is retried.
 2. Ask the model (through `gizzi_completion`, the same route as memory extraction,
    with a JSON schema) for merges, contradictions, lessons, prunes and twin proposals.
 3. Check every suggestion in code (`memory_dream::check`): contradiction fixes, lessons
-   and twin proposals must cite turn ids that were actually shown; prunes only remove
-   entries never used and at least 30 days old; each entry is touched once; text must
-   pass the entry format and secret checks.
+   and twin proposals must cite turn ids that were actually shown; prunes only mark
+   entries out of date when they were never used and are at least 30 days old; each
+   entry is touched once; text must pass the entry format and secret checks. The Dream
+   never deletes a line: a prune, merge or contradiction fix adds `superseded: <date>` and
+   `superseded-by: <entry id or dream-prune>` to the entry's metadata. The line stays in
+   its topic file and in git history, but it leaves the index and recall (`active()` in
+   `memory_drive_service`). With the `disputes` flag on (the default), a contradiction
+   opens a dispute instead and nothing is marked.
 4. Apply as one `Dream YYYY-MM-DD` commit by `Dream via Allternit`, and store a report
    built from what was applied. Twin facts go to `twin_persona::propose` and wait for
    the owner.
 5. No answer or an unusable answer marks the run `failed` and changes nothing.
 
 **Undo** compares the Dream's parent, the Dream commit and the current head entry by
-entry. It restores lines the Dream removed or rewrote and removes lines it added, as a
+entry. It restores lines the Dream rewrote (including the out-of-date mark) or removed, and removes lines it added, as a
 new `Undo Dream YYYY-MM-DD` commit. If a line the Dream touched was edited later, undo
 refuses and lists the files instead of guessing.
+
+After a Dream that applied or made no changes, and only when Dreaming is on for the drive, `knowledge_curator::after_dream` runs the curator, which turns open flags and the day's turns into knowledge proposals. It never approves anything. See [Knowledge factory](/guides/knowledge-factory).
 
 The lexical `memory_consolidation` merge skips drive-backed facts. Gizzi's local
 `autoDream` stays off while the server Dream is on, and also while
@@ -200,12 +210,21 @@ Gizzi and other agents mount them next to the personal drive (`GET /memory/drive
 
 The Memory Drive appears as a protected root in the [Files drive](/guides/files-drive), next to Inbox, Code and Models. Writes from the Files drive go through the Memory Drive write path, so the git history stays. The root needs a fresh device unlock (Face ID or a fingerprint) before it opens, and its file names are left out of the asleep snapshot. See the [Files drive API](/api/files-drive).
 
+## Raw retrieval
+
+Every turn is stored as a `memory_observations` row with its role as the kind, in full up to 64,000 characters. Tool rows hold the tool name, the input (4,000 characters) and the output (16,000 characters), with credentials replaced by `[redacted]` first. Incognito sessions are never stored.
+
+`memory_index::chunk_text_with` cuts each turn into windows of 1,000 characters with 125 of overlap. Each window starts with a header line, `[2026-11-27 14:05 UTC · user · session <id> · <source>]`, so the date and speaker are searchable. Windows are embedded as `chunk` targets.
+
+`memory_retrieve::raw_windows::search` runs full-text and vector search (reciprocal rank fusion), takes 128 candidates, reranks them with the embed sidecar's `POST /v1/rerank` (`BAAI/bge-reranker-v2-m3`, off under 8 GB of RAM, tuned by `RERANK_MODEL` and `RERANK_DISABLE`), and falls back to the fused order if the rerank is slow or unavailable. It then expands the top windows to whole turns inside a token budget. Windows are inner-joined to their observation, so a forgotten turn never comes back. See the [raw search routes](/api/memory#raw-search). Gizzi uses it on every chat turn; agency context and `thread_search` use it too.
+
 ## Other memory stores
 
 | Store | Role now |
 | --- | --- |
 | `memory_facts`, `memory_adapter_links` | Index of the personal drive. |
-| `memory_observations` | Evidence log the Dream and source links cite. Never copied into a drive. |
+| `memory_observations` | Raw log of every turn (`turn_user`, `turn_assistant`, `turn_tool`) for everyone, plus explicit memories. The Dream and source links cite it, and raw search reads it. Never copied into a drive. |
+| `knowledge_flags`, `knowledge_proposals` | Knowledge factory queue (migration V298). Approved domain and data-access proposals are written into the drive under `knowledge/`. |
 | `twin_memory` | Decides what's active (owner approval); mirrored to `twin/`. |
 | `cowork_memory_entries` | Index of bot and project drives (grants kept); unscoped entries and turn summaries stay rows. |
 | `memory_notes` | Multi-line titled notes; a document store, not one-line memories. |
@@ -215,7 +234,7 @@ The Memory Drive appears as a protected root in the [Files drive](/guides/files-
 
 ## Used memory under replies
 
-A reply that ran memory tools records them as `memory_refs`. ai and iOS show a "Used memory (n)" chip; the TUI shows a dim "used memory (n)" line. The count is taken from the tools the turn ran, never from what the model says. See [Memory tools](/tools/memory#used-memory-chip).
+A reply that ran memory tools records them as `memory_refs`. Past-chat items carry `source: "past_chat"`, a `date` and a `session_id`, and the chip groups them under "From past chats" (up to 4 of the 10). ai, iOS and Android show the chip; the TUI shows a dim "used memory (n)" line. The count is taken from the tools the turn ran, never from what the model says. See [Memory tools](/tools/memory#used-memory-chip).
 
 ## gizzi-code
 

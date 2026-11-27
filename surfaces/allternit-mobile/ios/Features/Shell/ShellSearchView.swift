@@ -40,14 +40,49 @@ struct ShellSearchView: View {
         return agentModeStore.agents.filter { $0.name.lowercased().contains(needle) }
     }
 
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(Color("TextSecondary"))
+            TextField("Search chats and projects", text: $query)
+                .focused($focused)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("shellSearchField")
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextSecondary"))
+                }
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(Capsule().fill(Color("BgPanel")))
+        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color("BgPrimary"))
+    }
+
     var body: some View {
         NavigationStack {
-            List {
+            // Dot title that docks into the bar on scroll (UI feedback I11).
+            DockingTitleList(title: "Search") {
+                searchField
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 if needle.isEmpty {
-                    Text("Search chats and projects.")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                        .listRowBackground(Color.clear)
+                    FriendlyStateView(
+                        style: .empty,
+                        icon: "magnifyingglass",
+                        title: "Search chats and projects",
+                        message: "Find a chat, a file or a project by what was said.",
+                        art: .search
+                    )
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 } else if matchedSessions.isEmpty && matchedProjects.isEmpty && matchedBots.isEmpty {
                     FriendlyInlineStateView(
                         style: .empty,
@@ -62,7 +97,7 @@ struct ShellSearchView: View {
                     if !matchedSessions.isEmpty {
                         Section("Chats & threads") {
                             ForEach(matchedSessions) { session in
-                                row(icon: Self.icon(for: session), title: session.name ?? "Untitled", subtitle: Self.surfaceLabel(for: session)) {
+                                row(icon: Self.icon(for: session), title: session.displayTitle, subtitle: Self.surfaceLabel(for: session)) {
                                     dismiss()
                                     onOpenSession(session)
                                 }
@@ -91,34 +126,7 @@ struct ShellSearchView: View {
                     }
                 }
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Color("BgPrimary").ignoresSafeArea())
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .top) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(Color("TextSecondary"))
-                    TextField("Search chats and projects", text: $query)
-                        .focused($focused)
-                        .submitLabel(.search)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("shellSearchField")
-                    if !query.isEmpty {
-                        Button { query = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundColor(Color("TextSecondary"))
-                        }
-                        .accessibilityLabel("Clear search")
-                    }
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 40)
-                .background(Capsule().fill(Color("BgPanel")))
-                .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color("BgPrimary"))
-            }
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -35,7 +35,7 @@ final class RailTabsStore: ObservableObject {
                 Tab(id: "projects", label: "Projects", icon: "folder"),
                 Tab(id: "artifacts-library", label: "Artifacts", icon: "doc.text"),
                 Tab(id: "automation-tasks", label: "Automation Tasks", icon: "clock"),
-                Tab(id: "customize", label: "Customize", icon: "slider.horizontal.3"),
+                Tab(id: "customize", label: "Catalog", icon: "slider.horizontal.3"),
             ]
         case .code:
             return [
@@ -84,19 +84,52 @@ final class RailTabsStore: ObservableObject {
     }
 }
 
-/// Customize (allternit-ai src/views/customize/CustomizeView.tsx): what the
-/// assistant can use. Skills, Plugins (CapabilitiesSettingsView), Connectors
-/// Webhooks and MCP servers are native screens.
+/// Catalog (allternit-ai src/views/catalog): everything the assistant can
+/// use. Search, All / Connectors / Skills, an Interactive filter, then Your
+/// connections, Most used, Trending, New and Categories. Rows open
+/// `CatalogDetailView`. Plugins, MCP servers and webhooks stay under Manage.
+/// (The type keeps its old name: Settings presents it.)
 struct CustomizeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthManager.shared
-    @State private var isConnectorsPresented = false
+
+    private enum Kind: String, CaseIterable { case all = "All", connectors = "Connectors", skills = "Skills" }
+
+    @State private var kind: Kind = .all
+    @State private var interactiveOnly = false
+    @State private var search = ""
+    @State private var category: String?
+    @State private var mostUsed: [CatalogEntry] = []
+    @State private var trending: [CatalogEntry] = []
+    @State private var fresh: [CatalogEntry] = []
+    @State private var results: [CatalogEntry] = []
+    @State private var yours: [Connector] = []
+    @State private var isLoading = false
+    @State private var loadError: String?
+    private let connectorsClient = ConnectorsClient()
+
+    private var groups: [String] {
+        switch kind {
+        case .all: return ["apps", "skills"]
+        case .connectors: return ["apps"]
+        case .skills: return ["skills"]
+        }
+    }
+    private var isBrowsing: Bool {
+        search.trimmingCharacters(in: .whitespaces).isEmpty && category == nil
+    }
+    private var connectedIds: Set<String> { Set(yours.filter(\.isConnected).map(\.id)) }
+    private var categories: [String] {
+        var seen = Set<String>(), out: [String] = []
+        for e in mostUsed + trending + fresh { for c in e.categories where seen.insert(c).inserted { out.append(c) } }
+        return out.sorted()
+    }
 
     var body: some View {
         NavigationStack {
-            List {
+            DockingTitleList(title: "Catalog") {
                 if !auth.isSignedIn && !auth.isSkippingAuth {
-                    FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to customize",
+                    FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to browse the Catalog",
                                       message: "Skills, connectors and plugins belong to your account.",
                                       actionTitle: "Sign in", action: {
                                           dismiss()
@@ -104,48 +137,171 @@ struct CustomizeSheet: View {
                                       })
                         .listRowBackground(Color.clear)
                 } else {
-                    Section {
-                        NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: {
-                            Label("Skills", image: "ph-book-open")
-                        }
-                        Button { isConnectorsPresented = true } label: {
-                            row("Connectors", icon: "plugs-connected", trailing: "chevron.right")
-                        }
-                        .buttonStyle(.plain)
-                        NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: {
-                            Label("Plugins", image: "ph-puzzle-piece")
-                        }
-                    }
-                    Section("More") {
-                        NavigationLink { McpServersSettingsView() } label: {
-                            Label("MCP servers", image: "ph-cpu")
-                        }
-                        NavigationLink { WebhooksSettingsView() } label: {
-                            Label("Webhooks", image: "ph-webhooks-logo")
-                        }
+                    controls
+                    if isBrowsing { sections } else { resultsSection }
+                    Section("Manage") {
+                        NavigationLink { CapabilitiesSettingsView(kind: .skill) } label: { Label("Skills", image: "ph-book-open") }
+                        NavigationLink { CapabilitiesSettingsView(kind: .plugin) } label: { Label("Plugins", image: "ph-puzzle-piece") }
+                        NavigationLink { McpServersSettingsView() } label: { Label("MCP servers", image: "ph-cpu") }
+                        NavigationLink { WebhooksSettingsView() } label: { Label("Webhooks", image: "ph-webhooks-logo") }
                     }
                 }
             }
-            .navigationTitle("Customize")
+            .navigationTitle("Catalog")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-            .sheet(isPresented: $isConnectorsPresented) { ConnectorsListView() }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task(id: "\(kind.rawValue)|\(interactiveOnly)") { await loadSections() }
+            .task(id: "\(kind.rawValue)|\(interactiveOnly)|\(search)|\(category ?? "")") { await loadResults() }
         }
     }
 
-    private func row(_ title: String, icon: String, trailing: String) -> some View {
-        HStack(spacing: 12) {
-            PhIcon(icon, size: 20)
-                .frame(width: 22)
-                .foregroundColor(Color("TextSecondary"))
-            Text(title).foregroundColor(Color("TextPrimary"))
-            Spacer()
-            Image(systemName: trailing)
-                .font(.caption)
-                .foregroundColor(Color("TextSecondary"))
+    // MARK: Controls
+
+    private var controls: some View {
+        Section {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundColor(Color("TextSecondary"))
+                TextField("Search", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled()
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundColor(Color("TextSecondary")).accessibilityLabel("Clear search")
+                }
+            }
+            Picker("Show", selection: $kind) {
+                ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Toggle("Interactive", isOn: $interactiveOnly)
+            if let category {
+                Button { self.category = nil } label: {
+                    Label("\(category)  \u{2715}", systemImage: "line.3.horizontal.decrease")
+                }
+            }
         }
-        .contentShape(Rectangle())
+    }
+
+    // MARK: Sections
+
+    @ViewBuilder private var sections: some View {
+        let mine = yours.filter(\.isConnected)
+        if !mine.isEmpty {
+            Section("Your connections") {
+                ForEach(mine.prefix(5)) { c in
+                    entryLink(CatalogEntry.stub(c), connected: true, subtitle: c.connection.account.map { "Connected \u{00B7} \($0)" } ?? "Connected")
+                }
+            }
+        }
+        listSection("Most used", mostUsed)
+        listSection("Trending", trending)
+        listSection("New", fresh)
+        if !categories.isEmpty {
+            Section("Categories") {
+                ForEach(categories, id: \.self) { c in
+                    Button { category = c } label: {
+                        HStack { Text(c).foregroundColor(Color("TextPrimary")); Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundColor(Color("TextSecondary")) }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        if isLoading && mostUsed.isEmpty {
+            HStack { Spacer(); ProgressView(); Spacer() }.listRowBackground(Color.clear)
+        } else if let loadError, mostUsed.isEmpty {
+            FriendlyStateView(style: .error, icon: "wifi.exclamationmark", title: "Couldn't load the Catalog",
+                              message: loadError, actionTitle: "Try again", action: { Task { await loadSections() } })
+                .listRowBackground(Color.clear)
+        }
+    }
+
+    @ViewBuilder private func listSection(_ title: String, _ entries: [CatalogEntry]) -> some View {
+        if !entries.isEmpty {
+            Section(title) { ForEach(entries) { entryLink($0, connected: connectedIds.contains($0.connectId)) } }
+        }
+    }
+
+    @ViewBuilder private var resultsSection: some View {
+        Section(category ?? "Results") {
+            if results.isEmpty {
+                Text(isLoading ? "Searching\u{2026}" : "Nothing matches.").foregroundColor(Color("TextSecondary"))
+            } else {
+                ForEach(results) { entryLink($0, connected: connectedIds.contains($0.connectId)) }
+            }
+        }
+    }
+
+    private func entryLink(_ e: CatalogEntry, connected: Bool, subtitle: String? = nil) -> some View {
+        NavigationLink {
+            CatalogDetailView(entry: e, isConnected: connected, onChanged: { Task { await loadYours() } })
+        } label: {
+            HStack(spacing: 12) {
+                CatalogLogo(name: e.name, url: e.iconURL, size: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(e.name).font(.subheadline.weight(.semibold)).foregroundColor(Color("TextPrimary")).lineLimit(1)
+                        if e.isVerified { Image(systemName: "checkmark.seal").font(.caption).foregroundColor(Color("TextSecondary")).accessibilityLabel("Verified") }
+                        if e.interactive {
+                            Text("Interactive").font(.caption2.weight(.medium)).foregroundColor(Color("TextSecondary"))
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                        }
+                    }
+                    if !e.blurb.isEmpty {
+                        Text(e.blurb).font(.caption).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                    }
+                    Text(subtitle ?? e.byline).font(.caption2).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    // MARK: Loading
+
+    @MainActor private func loadYours() async {
+        if let all = try? await connectorsClient.listConnectors() { yours = all }
+    }
+
+    @MainActor private func loadSections() async {
+        guard auth.isSignedIn || auth.isSkippingAuth else { return }
+        isLoading = true
+        loadError = nil
+        await loadYours()
+        func top(_ sort: CatalogSort) async throws -> [CatalogEntry] {
+            var out: [CatalogEntry] = []
+            for g in groups { out += try await CatalogClient.page(group: g, interactive: interactiveOnly, sort: sort, limit: 8).entries }
+            return Array(out.prefix(8))
+        }
+        do {
+            async let a = top(.popular), b = top(.trending), c = top(.new)
+            (mostUsed, trending, fresh) = try await (a, b, c)
+        } catch is CancellationError {
+        } catch {
+            loadError = ConnectionsClient.describe(error)
+        }
+        isLoading = false
+    }
+
+    @MainActor private func loadResults() async {
+        guard !isBrowsing, auth.isSignedIn || auth.isSkippingAuth else { results = []; return }
+        isLoading = true
+        // Debounce typing: the task is cancelled when the text changes.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard !Task.isCancelled else { return }
+        var out: [CatalogEntry] = []
+        for g in groups {
+            if let page = try? await CatalogClient.page(group: g, q: search, category: category, interactive: interactiveOnly, limit: 40) {
+                out += page.entries
+            }
+        }
+        guard !Task.isCancelled else { return }
+        results = out
+        isLoading = false
+    }
+}
+
+private extension CatalogEntry {
+    /// A connected connector the Catalog has not loaded yet: enough to show a row and open its page.
+    static func stub(_ c: Connector) -> CatalogEntry {
+        CatalogEntry(id: c.id, name: c.name, blurb: c.description ?? "")
     }
 }

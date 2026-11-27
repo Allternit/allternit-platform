@@ -36,15 +36,26 @@ fn catalog_entries_are_primary_aliases_only() {
     let catalog = starter_catalog();
     // Primary models only (one per model, not per alias):
     // 9 OpenRouter + 3 Together AI + 4 Fireworks + 3 DeepInfra + 3 Groq
-    // + 2 open lane = 24.
-    assert_eq!(catalog.entries().len(), 24);
+    // + 7 open lane (4 offered, 3 hidden failover) = 29.
+    assert_eq!(catalog.entries().len(), 29);
     let open: Vec<_> = catalog
         .entries()
         .iter()
         .filter(|e| super::catalog::is_open_lane(e))
         .map(|e| e.alias.as_str())
         .collect();
-    assert_eq!(open, vec!["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]);
+    assert_eq!(
+        open,
+        vec![
+            "glm-4.7-flash-open",
+            "deepseek-v4.1-flash-open",
+            "glm-5.3-flash-open",
+            "open-large-research",
+            "open-failover-glm-4.7-flash",
+            "open-failover-deepseek-v4.1-flash",
+            "open-failover-large-research",
+        ]
+    );
 }
 
 #[test]
@@ -82,8 +93,8 @@ fn disabled_router_reports_not_enabled() {
 async fn disabled_router_list_models_returns_static_catalog() {
     let router = ModelRouter::disabled(starter_catalog());
     let models = router.list_models().await;
-    // 24 catalog entries minus the 2 open-lane models, hidden while the
-    // open-lane provider is unset. Unlisted aliases are still returned.
+    // 24 non-open entries (open-lane models are hidden while the
+    // provider is unset). Unlisted aliases are still returned.
     assert_eq!(models.len(), 22);
     assert!(models.iter().any(|m| m.id == "llama-3.1-8b"));
     assert!(!models.iter().any(|m| m.id.ends_with("-open")));
@@ -190,20 +201,44 @@ async fn new_rows_route_and_are_listed_and_sonnet_4_6_is_hidden() {
     assert_eq!(models[0].id, "kimi-k3");
 }
 
-/// Only Fireworks rows (whose model list has no pricing) treat the static
-/// catalog price as wholesale; every other row bills its static price.
+/// Only Fireworks rows (whose model list has no pricing) and open-lane rows
+/// (static price = host price, contract D8) treat the static catalog price as
+/// wholesale; every other row bills its static price. Open rows bill exactly
+/// 2x the host price by default (`OPEN_LANE_MARKUP`, no per-row override).
 #[test]
 fn only_fireworks_rows_mark_up_their_static_price() {
+    let _guard = pricing::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("OPEN_LANE_MARKUP");
     let catalog = starter_catalog();
+    let mut open_rows = 0;
     for entry in catalog.entries() {
+        let open = super::catalog::is_open_lane(entry);
         assert_eq!(
             entry.static_price_is_wholesale,
-            entry.provider == "fireworks",
+            entry.provider == "fireworks" || open,
             "{} ({})",
             entry.alias,
             entry.provider
         );
+        if open {
+            open_rows += 1;
+            assert_eq!(entry.markup, None, "{}: open rows use the lane markup", entry.alias);
+            let prices = super::retail_from(entry, None);
+            assert_eq!(
+                (prices.prompt_per_1m, prices.completion_per_1m),
+                (entry.prompt_price * 2.0, entry.completion_price * 2.0),
+                "{}: open rows bill exactly 2x the host price",
+                entry.alias
+            );
+            assert_eq!(
+                (prices.wholesale_prompt_per_1m, prices.wholesale_completion_per_1m),
+                (Some(entry.prompt_price), Some(entry.completion_price)),
+                "{}",
+                entry.alias
+            );
+        }
     }
+    assert!(open_rows > 0, "the catalog has open-lane rows");
 }
 
 #[tokio::test]
@@ -234,8 +269,8 @@ mod pricing {
     use axum::{body::Body, http::Response};
     use std::sync::{Arc, Mutex};
 
-    /// Guards `INFERENCE_MARKUP` mutation across these tests.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Guards `INFERENCE_MARKUP` / `OPEN_LANE_*` env mutation across these tests.
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Provider stub serving a fixed model list (and recording dispatched
     /// requests for the stream_options test).
@@ -471,24 +506,62 @@ mod pricing {
     }
 
     #[tokio::test]
-    async fn open_lane_prices_are_retail_and_not_marked_up() {
+    async fn open_rows_retail_is_exactly_twice_host_price_and_standard_rows_keep_inference_markup() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("INFERENCE_MARKUP");
-        let open_lane = StubProvider::serving(
-            super::super::catalog::OPEN_LANE_PROVIDER,
-            &["deepseek-v4.1-flash-open", "glm-5.3-flash-open"],
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        let venice = StubProvider::serving(super::super::catalog::OPEN_VENICE_PROVIDER, &["olafangensan-glm-4.7-flash-heretic"], None);
+        let router = ModelRouter::new(vec![venice], starter_catalog());
+        let prices = router.retail_prices("glm-4.7-flash-open").await.unwrap();
+        assert_eq!((prices.prompt_per_1m, prices.completion_per_1m), (0.14, 0.80));
+        assert_eq!(prices.wholesale_prompt_per_1m, Some(0.07));
+        assert_eq!(prices.wholesale_completion_per_1m, Some(0.40));
+        let models = router.list_models().await;
+        assert!((listed_price(&models, "glm-4.7-flash-open", "prompt_price") - 0.00000014).abs() < 1e-15);
+        let row = models.iter().find(|m| m.id == "glm-4.7-flash-open").unwrap();
+        assert_eq!(row.extra["open"]["access"], "plan");
+
+        // A standard row with a wholesale static price still uses INFERENCE_MARKUP (1.5).
+        let standard = ModelRouter::disabled(starter_catalog()).retail_prices("kimi-k3").await.unwrap();
+        assert!((standard.prompt_per_1m - 4.50).abs() < 1e-9);
+        std::env::set_var("INFERENCE_MARKUP", "3.0");
+        let standard = ModelRouter::disabled(starter_catalog()).retail_prices("kimi-k3").await.unwrap();
+        assert!((standard.prompt_per_1m - 9.00).abs() < 1e-9);
+        std::env::remove_var("INFERENCE_MARKUP");
+    }
+
+    /// D11: Open Research rows (listed and their hidden backup) are left out
+    /// of the model list for an account without the flag, and listed for one
+    /// with it.
+    #[tokio::test]
+    async fn research_rows_are_listed_only_for_research_accounts() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let ablit = StubProvider::serving(super::super::catalog::OPEN_ABLIT_PROVIDER, &["abliterated-model-large-v2"], None);
+        let venice = StubProvider::serving(
+            super::super::catalog::OPEN_VENICE_PROVIDER,
+            &["olafangensan-glm-4.7-flash-heretic", "abliteration-abliterated-model-large-v2"],
             None,
         );
-        let router = ModelRouter::new(vec![open_lane], starter_catalog());
-        for (alias, prompt, completion) in
-            [("deepseek-v4.1-flash-open", 0.10, 2.00), ("glm-5.3-flash-open", 0.40, 1.20)]
-        {
-            let prices = router.retail_prices(alias).await.unwrap();
-            assert_eq!((prices.prompt_per_1m, prices.completion_per_1m), (prompt, completion), "{alias}");
-            assert_eq!(prices.wholesale_prompt_per_1m, None, "{alias}");
-        }
-        let models = router.list_models().await;
-        assert!((listed_price(&models, "deepseek-v4.1-flash-open", "prompt_price") - 0.0000001).abs() < 1e-15);
+        let router = ModelRouter::new(vec![ablit, venice], starter_catalog());
+        let ids = |models: Vec<ModelInfo>| models.into_iter().map(|m| m.id).collect::<Vec<_>>();
+
+        let public = ids(router.list_models_for(false).await);
+        assert!(public.contains(&"glm-4.7-flash-open".to_string()), "plan open rows stay: {public:?}");
+        assert!(!public.iter().any(|id| id == "open-large-research" || id == "open-failover-large-research"), "{public:?}");
+
+        let research = router.list_models_for(true).await;
+        let row = research.iter().find(|m| m.id == "open-large-research").expect("research row listed");
+        assert_eq!(row.extra["open"]["access"], "research");
+    }
+
+    #[tokio::test]
+    async fn open_lane_markup_env_is_clamped_to_five() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPEN_LANE_MARKUP", "9");
+        let prices = ModelRouter::disabled(starter_catalog()).retail_prices("open-large-research").await.unwrap();
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        assert!((prices.prompt_per_1m - 15.0).abs() < 1e-9);
+        assert!((prices.completion_per_1m - 25.0).abs() < 1e-9);
     }
 
     fn listed_price(models: &[ModelInfo], alias: &str, key: &str) -> f64 {
@@ -684,6 +757,7 @@ fn default_alias_is_the_flagged_listed_model() {
         upstream_id: format!("up/{alias}"),
         listed,
         default,
+        lane: if provider == super::catalog::OPEN_LANE_PROVIDER { "open" } else { "standard" },
         ..Default::default()
     };
     let open = super::catalog::OPEN_LANE_PROVIDER;
@@ -848,10 +922,10 @@ mod plan_turns {
             top_p: None,
             extra: serde_json::Map::new(),
         };
-        let refused = crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().expect("refused");
+        let refused = crate::routes::open_lane::guard_open_request(&state, USER, &open).await.unwrap().expect("refused");
         assert_eq!(refused.status(), StatusCode::FORBIDDEN);
         open.model = "copilot/gpt-5".into();
-        assert!(crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().is_some());
+        assert!(crate::routes::open_lane::guard_open_request(&state, USER, &open).await.unwrap().is_some());
         let platform = crate::routes::platform_v1::responses::refuse_person_only_model(Some("plan/grok/grok-4.6")).unwrap_err();
         assert_eq!(platform.status, StatusCode::FORBIDDEN);
         assert!(crate::routes::platform_v1::responses::refuse_person_only_model(Some("kimi-k3")).is_ok());
@@ -920,5 +994,227 @@ mod plan_turns {
                 assert_eq!(reply["usage"]["completion_tokens"], 2);
             })
             .await;
+    }
+}
+
+/// Open-lane hosts (contract D9/D12): failover before the first byte, the
+/// serving row bills, `OPEN_SELF` serves its rows, legacy `OPEN_LANE`
+/// fallback for the two original aliases. Upstreams are the only fakes.
+mod open_hosts {
+    use super::super::catalog::{
+        starter_catalog, ModelAliasEntry, ModelAliasMap, OPEN_ABLIT_PROVIDER, OPEN_LANE_PROVIDER,
+        OPEN_SELF_PROVIDER, OPEN_VENICE_PROVIDER,
+    };
+    use super::super::generic_openai::{GenericOpenAiConfig, GenericOpenAiProvider};
+    use super::super::{ChatCompletionRequest, Message, ModelInfo, ModelRouter, ModelRouterError, UpstreamProvider};
+    use super::pricing::ENV_LOCK;
+    use axum::{body::Body, http::Response};
+    use std::sync::{Arc, Mutex};
+
+    /// What a fake upstream does with every request.
+    #[derive(Clone, Copy)]
+    enum Behaviour {
+        Ok,
+        Status(u16),
+        ConnectError,
+        /// 200, one SSE chunk, then the stream breaks.
+        StreamThenBreak,
+    }
+
+    struct Upstream {
+        id: &'static str,
+        behaviour: Behaviour,
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl Upstream {
+        fn new(id: &'static str, behaviour: Behaviour) -> Arc<Self> {
+            Arc::new(Self { id, behaviour, seen: Mutex::new(Vec::new()) })
+        }
+        fn seen(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UpstreamProvider for Upstream {
+        fn provider_id(&self) -> &str {
+            self.id
+        }
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, ModelRouterError> {
+            Ok(Vec::new()) // no live pricing: rows bill host static × OPEN_LANE_MARKUP
+        }
+        async fn chat_completions(&self, request: ChatCompletionRequest) -> Result<Response<Body>, ModelRouterError> {
+            self.seen.lock().unwrap().push(request.model.clone());
+            match self.behaviour {
+                Behaviour::Ok => Ok(Response::new(Body::from("{}"))),
+                Behaviour::Status(status) => Err(ModelRouterError::UpstreamError { status, message: "upstream".into() }),
+                Behaviour::ConnectError => Err(ModelRouterError::UpstreamRequestFailed("connection refused".into())),
+                Behaviour::StreamThenBreak => {
+                    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+                        Ok(bytes::Bytes::from_static(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n")),
+                        Err(std::io::Error::other("upstream reset")),
+                    ];
+                    Ok(Response::new(Body::from_stream(futures::stream::iter(chunks))))
+                }
+            }
+        }
+    }
+
+    fn request(model: &str, stream: bool) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: model.to_string(),
+            messages: vec![Message::text("user", "hello")],
+            temperature: None,
+            max_tokens: None,
+            stream: stream.then_some(true),
+            top_p: None,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    fn clear_open_env() {
+        std::env::remove_var("OPEN_LANE_MARKUP");
+        std::env::remove_var("OPEN_LANE_MODEL_MAP");
+    }
+
+    #[tokio::test]
+    async fn primary_failure_before_first_byte_is_served_and_billed_by_the_failover_row() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_open_env();
+        for failure in [Behaviour::Status(503), Behaviour::Status(500), Behaviour::Status(429), Behaviour::ConnectError] {
+            let venice = Upstream::new(OPEN_VENICE_PROVIDER, failure);
+            let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+            let router = ModelRouter::new(vec![venice.clone(), ablit.clone()], starter_catalog());
+
+            let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", true)).await.unwrap();
+            assert_eq!(served.response.status(), 200);
+            assert_eq!(served.alias, "open-failover-deepseek-v4.1-flash", "the backup row served");
+            assert_eq!(venice.seen(), vec!["e2ee-deepseek-v4-1-flash-1017-abliterated"]);
+            assert_eq!(ablit.seen(), vec!["abliterated-model-large-flash"], "retried exactly once on the backup");
+
+            // Billed at the serving row's own price (host 1.00/2.00 × 2), not
+            // the primary's (0.375/1.50 × 2).
+            let billed = router.retail_prices(&served.alias).await.unwrap();
+            assert_eq!((billed.prompt_per_1m, billed.completion_per_1m), (2.00, 4.00));
+            let primary = router.retail_prices("deepseek-v4.1-flash-open").await.unwrap();
+            assert_eq!((primary.prompt_per_1m, primary.completion_per_1m), (0.75, 3.00));
+        }
+    }
+
+    #[tokio::test]
+    async fn client_errors_and_unset_backups_are_not_retried() {
+        // A 400 is the request's own fault.
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::Status(400));
+        let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![venice, ablit.clone()], starter_catalog());
+        let error = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.err().unwrap();
+        assert!(matches!(error, ModelRouterError::UpstreamError { status: 400, .. }));
+        assert!(ablit.seen().is_empty());
+
+        // The backup's host is unset: the primary's own error comes back.
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::Status(503));
+        let router = ModelRouter::new(vec![venice], starter_catalog());
+        let error = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.err().unwrap();
+        assert!(matches!(error, ModelRouterError::UpstreamError { status: 503, .. }));
+    }
+
+    #[tokio::test]
+    async fn an_error_after_the_first_byte_is_never_retried() {
+        let venice = Upstream::new(OPEN_VENICE_PROVIDER, Behaviour::StreamThenBreak);
+        let ablit = Upstream::new(OPEN_ABLIT_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![venice, ablit.clone()], starter_catalog());
+
+        let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", true)).await.unwrap();
+        assert_eq!(served.alias, "deepseek-v4.1-flash-open", "the primary row served and bills");
+        // The stream breaks for the client; nothing is replayed elsewhere.
+        assert!(axum::body::to_bytes(served.response.into_body(), 1 << 20).await.is_err());
+        assert!(ablit.seen().is_empty(), "no retry once streaming started");
+    }
+
+    #[tokio::test]
+    async fn open_self_env_registers_a_server_that_serves_its_rows() {
+        use axum::{routing::post, Json, Router};
+        async fn own_server(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "id": "own", "object": "chat.completion", "created": 0, "model": body["model"],
+                "choices": [{ "index": 0, "message": { "role": "assistant", "content": "OK" }, "finish_reason": "stop" }]
+            }))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/chat/completions", post(own_server))).await.unwrap();
+        });
+
+        // The provider main.rs builds from the OPEN_SELF prefix.
+        let config = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            std::env::set_var("OPEN_SELF_BASE_URL", format!("http://{addr}"));
+            std::env::set_var("OPEN_SELF_API_KEY", "own-key");
+            let config = GenericOpenAiConfig::from_env("OPEN_SELF");
+            std::env::remove_var("OPEN_SELF_BASE_URL");
+            std::env::remove_var("OPEN_SELF_API_KEY");
+            config.expect("OPEN_SELF_BASE_URL + OPEN_SELF_API_KEY enable the provider")
+        };
+        assert_eq!(config.provider_id, OPEN_SELF_PROVIDER, "prefix maps to the catalog's provider id");
+
+        let catalog = ModelAliasMap::new(vec![ModelAliasEntry {
+            alias: "own-open".to_string(),
+            provider: OPEN_SELF_PROVIDER.to_string(),
+            upstream_id: "own-open".to_string(),
+            name: "Own Open".to_string(),
+            prompt_price: 0.10,
+            completion_price: 0.20,
+            static_price_is_wholesale: true,
+            lane: "open",
+            ..Default::default()
+        }]);
+        let router = ModelRouter::new(vec![GenericOpenAiProvider::new(config)], catalog);
+        assert!(router.any_open_provider());
+        assert!(router.list_models().await.iter().any(|m| m.id == "own-open"));
+
+        let served = router.chat_completions_with_failover(request("own-open", false)).await.unwrap();
+        assert_eq!(served.alias, "own-open");
+        let body = axum::body::to_bytes(served.response.into_body(), 1 << 20).await.unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(reply["model"], "own-open");
+        assert_eq!(reply["choices"][0]["message"]["content"], "OK");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_open_lane_serves_the_two_old_aliases_when_their_host_is_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_open_env();
+        let legacy = Upstream::new(OPEN_LANE_PROVIDER, Behaviour::Ok);
+        let router = ModelRouter::new(vec![legacy.clone()], starter_catalog());
+        assert!(router.any_open_provider());
+
+        let served = router.chat_completions_with_failover(request("deepseek-v4.1-flash-open", false)).await.unwrap();
+        assert_eq!(served.alias, "deepseek-v4.1-flash-open");
+        router.chat_completions(request("glm-5.3-flash-open", false)).await.unwrap();
+        // Served under the alias itself, as the legacy lane did before the host rows.
+        assert_eq!(legacy.seen(), vec!["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]);
+        // Billed at the row's own price (host 0.375/1.50 × 2).
+        let billed = router.retail_prices(&served.alias).await.unwrap();
+        assert_eq!((billed.prompt_per_1m, billed.completion_per_1m), (0.75, 3.00));
+
+        // OPEN_LANE_MODEL_MAP still renames them for a third-party server.
+        std::env::set_var("OPEN_LANE_MODEL_MAP", "glm-5.3-flash-open=zai/glm-5.3-flash");
+        router.chat_completions(request("glm-5.3-flash-open", false)).await.unwrap();
+        std::env::remove_var("OPEN_LANE_MODEL_MAP");
+        assert_eq!(legacy.seen().last().map(String::as_str), Some("zai/glm-5.3-flash"));
+
+        // New rows have no legacy route: unlisted and not served.
+        let listed: Vec<String> = router.list_models().await.into_iter().map(|m| m.id).collect();
+        assert!(listed.contains(&"deepseek-v4.1-flash-open".to_string()));
+        assert!(listed.contains(&"glm-5.3-flash-open".to_string()));
+        assert!(!listed.contains(&"glm-4.7-flash-open".to_string()));
+        assert!(!listed.contains(&"open-large-research".to_string()));
+        assert!(matches!(
+            router.chat_completions(request("glm-4.7-flash-open", false)).await,
+            Err(ModelRouterError::ProviderNotConfigured { .. })
+        ));
     }
 }

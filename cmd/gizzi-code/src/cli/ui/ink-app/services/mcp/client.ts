@@ -1796,7 +1796,13 @@ export const fetchToolsForClient = memoizeWithLRU(
             // In skip-prefix mode, use the original name for model invocation so MCP tools
             // can override builtins by name. mcpInfo is used for permission checking.
             name: skipPrefix ? tool.name : fullyQualifiedName,
-            mcpInfo: { serverName: client.name, toolName: tool.name },
+            mcpInfo: {
+              serverName: client.name,
+              toolName: tool.name,
+              ...(connectorOf(tool._meta) && {
+                connector: connectorOf(tool._meta),
+              }),
+            },
             isMcp: true,
             // Collapse whitespace: _meta is open to external MCP servers, and
             // a newline here would inject orphan lines into the deferred-tool
@@ -3308,6 +3314,19 @@ async function callMCPTool({
       clearInterval(progressInterval)
     }
   }
+}
+
+/** `_meta["allternit/connector"]` on a tool listed by the Allternit user proxy. */
+function connectorOf(
+  meta: Record<string, unknown> | undefined,
+): { id?: string; name?: string } | undefined {
+  const c = meta?.['allternit/connector'] as
+    | { id?: unknown; name?: unknown }
+    | undefined
+  if (!c || typeof c !== 'object') return undefined
+  const id = typeof c.id === 'string' ? c.id : undefined
+  const name = typeof c.name === 'string' ? c.name : undefined
+  return id || name ? { id, name } : undefined
 }
 
 function extractToolUseId(message: AssistantMessage): string | undefined {

@@ -50,8 +50,11 @@ struct CoworkSession: Decodable, Sendable, Identifiable, Hashable {
 
     /// Display title fallback: stored title, then a short timestamp.
     var displayTitle: String {
-        if let title, !title.isEmpty { return title }
-        return "Session \(createdAt.prefix(10))"
+        if !AgentSession.isRawDefaultName(title) { return (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let date = (try? Date(createdAt, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            ?? (try? Date(createdAt, strategy: Date.ISO8601FormatStyle()))
+        guard let date else { return "New session" }
+        return "New session · " + date.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 

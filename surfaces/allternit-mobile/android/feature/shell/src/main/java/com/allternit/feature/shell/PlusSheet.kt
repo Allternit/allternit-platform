@@ -68,12 +68,16 @@ import com.allternit.core.design.R as DesignR
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PlusSheet(
+    showWatch: Boolean = false,
+    onWatchEvent: () -> Unit = {},
     noComputer: Boolean,
     webSearch: Boolean,
     research: Boolean,
     onWebSearch: (Boolean) -> Unit,
     onResearch: (Boolean) -> Unit,
     onAttach: (ComposerAttachment) -> Unit,
+    /** Types `/` in the composer to open the server skills list; null hides the row (no skills, flag off). */
+    onServerSkills: (() -> Unit)? = null,
     onOpenSection: (RailRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -84,6 +88,11 @@ internal fun PlusSheet(
     var githubOpen by remember { mutableStateOf(false) }
     var githubUrl by remember { mutableStateOf("") }
     var sketchOpen by remember { mutableStateOf(false) }
+    // Start anywhere: the Permission, Computer and Folder pages open inside this sheet (mockup E).
+    var page by remember { mutableStateOf("menu") }
+    val startBackend = com.allternit.feature.chat.PendingStart.backend
+    val runtime = com.allternit.feature.bots.runtimes.ChatRuntime.runtimeId
+    if (startBackend != null) com.allternit.feature.chat.LoadPendingOptions(startBackend, runtime)
 
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
         uris.forEach { onAttach(ComposerAttachment(displayName(context, it), it.toString(), "photo")) }
@@ -164,6 +173,9 @@ internal fun PlusSheet(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (page != "menu" && startBackend != null) {
+                    StartSubPage(page, startBackend, runtime, onBack = { page = "menu" }, onOpenSection = onOpenSection)
+                } else {
                 PlusGroup {
                     PlusRow(com.allternit.core.design.R.drawable.ph_camera, "Camera", testTag = "plusSheetCamera") { camera.launch(null) }
                     PlusDivider()
@@ -191,12 +203,31 @@ internal fun PlusSheet(
                     }
                 }
                 PlusGroup {
-                    PlusRow(com.allternit.core.design.R.drawable.ph_shield_check, "Permission settings", chevron = true) {
-                        onOpenSection(RailRow("permission-settings", "Permission settings", com.allternit.core.design.R.drawable.ph_shield_check))
-                    }
-                    PlusDivider()
-                    PlusRow(com.allternit.core.design.R.drawable.ph_desktop, "Computer", value = if (noComputer) "No computer" else "Connected", chevron = true) {
-                        onOpenSection(RailRow("computers", "Computer", com.allternit.core.design.R.drawable.ph_desktop))
+                    if (startBackend != null) {
+                        val pending = com.allternit.feature.chat.PendingStart
+                        PlusRow(com.allternit.core.design.R.drawable.ph_shield_check, "Permission", value = com.allternit.feature.chat.permissionValue(), chevron = true, testTag = "plusSheetPermission") { page = "perm" }
+                        PlusDivider()
+                        PlusRow(
+                            com.allternit.core.design.R.drawable.ph_desktop, "Computer",
+                            value = pending.shownDeviceName ?: if (noComputer) "No computer" else "Automatic",
+                            chevron = true, testTag = "plusSheetComputer",
+                        ) { page = "computer" }
+                        if (pending.shownDeviceName != null) {
+                            PlusDivider()
+                            PlusRow(
+                                com.allternit.core.design.R.drawable.ph_folder, "Folder",
+                                value = pending.folder?.label ?: pending.options?.folders?.firstOrNull()?.name ?: "Pick a folder",
+                                chevron = true, testTag = "plusSheetFolder",
+                            ) { page = "folder" }
+                        }
+                    } else {
+                        PlusRow(com.allternit.core.design.R.drawable.ph_shield_check, "Permission settings", chevron = true) {
+                            onOpenSection(RailRow("permission-settings", "Permission settings", com.allternit.core.design.R.drawable.ph_shield_check))
+                        }
+                        PlusDivider()
+                        PlusRow(com.allternit.core.design.R.drawable.ph_desktop, "Computer", value = if (noComputer) "No computer" else "Connected", chevron = true) {
+                            onOpenSection(RailRow("computers", "Computer", com.allternit.core.design.R.drawable.ph_desktop))
+                        }
                     }
                     PlusDivider()
                     PlusRow(com.allternit.core.design.R.drawable.ph_folder, "Project", value = "None", chevron = true) {
@@ -211,11 +242,19 @@ internal fun PlusSheet(
                     PlusRow(com.allternit.core.design.R.drawable.ph_lightning, "Connectors", chevron = true, testTag = "plusSheetConnectors") {
                         onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning))
                     }
+                    if (showWatch) {
+                        PlusDivider()
+                        PlusRow(DesignR.drawable.ph_broadcast, "Watch an app event", chevron = true, testTag = "plusSheetWatch") { onWatchEvent() }
+                    }
                     PlusDivider()
                     PlusRow(com.allternit.core.design.R.drawable.ph_graduation_cap, "Skills", chevron = true) {
                         onOpenSection(RailRow("skills", "Skills", com.allternit.core.design.R.drawable.ph_graduation_cap))
                     }
                     PlusDivider()
+                    if (onServerSkills != null) {
+                        PlusRow(DesignR.drawable.ph_sparkle, "Server skills", chevron = true, testTag = "plusSheetServerSkills") { onServerSkills() }
+                        PlusDivider()
+                    }
                     PlusRow(DesignR.drawable.ph_puzzle_piece, "Plugins", chevron = true) {
                         onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece))
                     }
@@ -223,6 +262,7 @@ internal fun PlusSheet(
                     PlusRow(DesignR.drawable.ph_check_circle_fill, "Cowork tasks", chevron = true, testTag = "plusSheetCoworkTasks") {
                         onOpenSection(RailRow("cowork-tasks", "Cowork tasks", DesignR.drawable.ph_check_circle_fill))
                     }
+                }
                 }
             }
         }
@@ -235,6 +275,40 @@ internal fun PlusSheet(
             },
             onDismiss = { sketchOpen = false },
         )
+    }
+}
+
+/** A Start anywhere page inside the + sheet: a back row with the page title, then the shared page body. */
+@Composable
+private fun StartSubPage(page: String, backend: com.allternit.feature.chat.ChatBackend, runtime: String, onBack: () -> Unit, onOpenSection: (RailRow) -> Unit) {
+    val c = AllternitTheme.colors
+    val title = when (page) { "perm" -> "Permission"; "folder" -> "Folder"; else -> "Computer" }
+    Box(Modifier.fillMaxWidth().heightIn(min = 44.dp), contentAlignment = Alignment.Center) {
+        Text(title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+        Row(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier.size(44.dp).testTag("plusSheetBack").clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack).semantics { contentDescription = "Back" },
+                contentAlignment = Alignment.Center,
+            ) { Icon(painterResource(DesignR.drawable.ph_caret_left), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp)) }
+        }
+    }
+    val pending = com.allternit.feature.chat.PendingStart
+    when (page) {
+        "perm" -> {
+            com.allternit.feature.chat.PermissionPage(supported = pending.options?.modes?.get(com.allternit.feature.chat.contractRuntime(runtime))?.supported?.takeIf { it.isNotEmpty() }, onDone = onBack)
+            com.allternit.feature.chat.PickGroup {
+                com.allternit.feature.chat.PickRow("Permission settings", chevron = true) {
+                    onOpenSection(RailRow("permission-settings", "Permission settings", DesignR.drawable.ph_shield_check))
+                }
+            }
+        }
+        "folder" -> com.allternit.feature.chat.FolderPage(backend, runtime, onDone = onBack)
+        else -> com.allternit.feature.chat.DeviceList(backend, selectedId = pending.runtimeId, folder = pending.folder) { device, asleep, folder ->
+            pending.pick(device, asleep)
+            if (folder != null && device != null) pending.folder = folder
+            // An asleep pick stays on the page: its plain line and the cloud offer show on send.
+            if (!asleep) onBack()
+        }
     }
 }
 

@@ -230,6 +230,14 @@ class MainActivity : ComponentActivity() {
         intent.data = null
     }
 
+    /** Android 8-9 screen-lock confirmation for agent approvals (DeviceAuth). Newer versions use BiometricPrompt. */
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (com.allternit.core.auth.DeviceAuth.onActivityResult(requestCode, resultCode)) return
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     /**
      * A tapped notification (or its Open / Review button) opens what it points at (iOS
      * PushNotificationManager.handleTap → DeepLinkRouter): the inbox item, Decisions for an approval, Settings, or
@@ -241,6 +249,8 @@ class MainActivity : ComponentActivity() {
         val url = tap.url.orEmpty()
         shellLaunch = when {
             // A computer_alert push (or a /computers/<id> url): that computer's console detail.
+            // An aci.attention push (`/computers/<id>?run=<run_id>`): that run's screen, not the console.
+            tap.computer != null && tap.run != null -> ShellLaunch(mode = ShellMode.Aci, computerId = tap.computer, runId = tap.run, nonce = nonce)
             tap.computer != null -> ShellLaunch(mode = ShellMode.Aci, tab = "computers", computerId = tap.computer, nonce = nonce)
             tap.inboxItem != null -> ShellLaunch(sheet = "inbox", inboxItem = tap.inboxItem, nonce = nonce)
             tap.event == "approval.requested" -> ShellLaunch(sheet = "inbox", nonce = nonce)

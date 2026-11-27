@@ -219,8 +219,11 @@ pub mod computer_parallel;
 pub mod computer_subtask;
 pub mod computer_safety;
 pub mod computer_access;
+pub mod computer_agent_display;
 pub mod computer_ocr;
 pub mod computer_v2;
+pub mod computer_block;
+pub mod computer_safari_window;
 pub mod guest_driver;
 pub mod vnc_auth;
 pub mod vnc_readonly;
@@ -330,6 +333,7 @@ pub mod mcp_directory_held;
 pub mod mcp_directory_routes;
 pub mod studio_apps_routes;
 pub mod mcp_routes;
+pub mod mcp_skills;
 pub mod oauth_result_page;
 pub mod oauth_return;
 pub mod official_mcp;
@@ -377,6 +381,10 @@ pub mod memory_drive_text_import;
 pub mod memory_drive_agent_import;
 pub mod memory_drive_chat_import;
 pub mod memory_capture;
+/// Knowledge factory: flags and proposals (`/api/v1/knowledge`, V298).
+pub mod knowledge_store;
+pub mod knowledge_routes;
+pub mod knowledge_curator;
 pub mod memory_activity;
 pub mod vendor_memory;
 pub mod ledger;
@@ -452,7 +460,10 @@ pub mod team_skill_routes;
 // Code Mode terminals on the Factory pane engine (Unix socket, or a named
 // pipe on Windows).
 pub mod terminal_routes;
+// Start anywhere: GET/POST /api/v1/session-start (mounted with netops presence).
+pub mod session_start_routes;
 pub mod token_crypto;
+pub mod tool_policy_routes;
 pub mod tool_routes;
 pub mod udemy_routes;
 pub mod upload_routes;
@@ -470,6 +481,7 @@ pub mod subscription_sync;
 pub mod webhook_subscription_routes;
 pub mod webhook_trigger_routes;
 pub mod mcp_events_client;
+pub mod mcp_feedback;
 pub mod mcp_event_automations;
 pub mod workflow_routes;
 pub mod workspace_routes;
@@ -570,6 +582,20 @@ pub mod test_helpers {
     }
 
     static CLOUD_URL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    static TERMINAL_URL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize tests that point the process-wide `TERMINAL_SERVER_URL` at
+    /// their own fake gizzi. `agent_session_routes::gizzi_base` reads it at
+    /// call time, so a concurrent `set_var` from another test sends one test's
+    /// session calls to another test's server (the
+    /// `a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes`
+    /// failure: its wake asked a fake gizzi with no session route, saw the chat
+    /// as closed and sent no turn). Every test that sets the var takes this
+    /// guard before setting it. Not reentrant: take it once per test.
+    pub fn terminal_url_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        TERMINAL_URL_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     /// Holds `ALLTERNIT_CLOUD_API_URL` at a known value for one test, then
     /// restores whatever was there before. `AppConfig::cloud_api_url()` and the

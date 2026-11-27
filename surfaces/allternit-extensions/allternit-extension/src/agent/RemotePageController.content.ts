@@ -3,6 +3,8 @@
  */
 import { PageController } from '@page-agent/page-controller'
 
+import { detectPageBlocker } from '@/browser-agent/safety/pageDetector'
+
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
@@ -19,7 +21,7 @@ export function initPageController() {
 
 	function getPC(): PageController {
 		if (!pageController) {
-			pageController = new PageController({ enableMask: false, viewportExpansion: 400 })
+			pageController = new PageController({ enableMask: true, viewportExpansion: 400 })
 		}
 		return pageController
 	}
@@ -32,11 +34,20 @@ export function initPageController() {
 		const isAgentRunning = (await chrome.storage.local.get('isAgentRunning')).isAgentRunning
 		const currentTabId = (await chrome.storage.local.get('currentTabId')).currentTabId
 
-		const shouldShowMask = isAgentRunning && agentInTouch && currentTabId === (await myTabIdPromise)
+		// While the agent waits for the person (needs_you), the mask must not
+		// block the page: they have to sign in, solve the captcha, etc.
+		const { agentPaused, agentMaskLabel } = await chrome.storage.local.get([
+			'agentPaused',
+			'agentMaskLabel',
+		])
+
+		const shouldShowMask =
+			isAgentRunning && agentInTouch && !agentPaused && currentTabId === (await myTabIdPromise)
 
 		if (shouldShowMask) {
 			const pc = getPC()
 			pc.initMask()
+			await pc.setMaskLabel(typeof agentMaskLabel === 'string' ? agentMaskLabel : '')
 			await pc.showMask()
 		} else {
 			// await getPC().hideMask()
@@ -66,9 +77,27 @@ export function initPageController() {
 		const { action, payload } = message
 		const methodName = getMethodName(action)
 
+		// Page detector for the needs_you pause: read-only, never returns field values.
+		if (action === 'detect_blocker') {
+			const blocker = detectPageBlocker(document)
+			sendResponse({ blocker, url: location.href, domain: location.hostname })
+			return true
+		}
+
 		const pc = getPC() as any
 
 		switch (action) {
+			case 'show_mask':
+				pc.initMask()
+				pc.setMaskLabel(payload?.[0] ?? '')
+					.then(() => pc.showMask())
+					.then(() => sendResponse({ success: true }))
+				break
+
+			case 'hide_mask':
+				pc.hideMask().then(() => sendResponse({ success: true }))
+				break
+
 			case 'get_last_update_time':
 			case 'get_browser_state':
 			case 'update_tree':

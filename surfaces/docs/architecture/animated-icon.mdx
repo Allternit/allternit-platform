@@ -53,6 +53,10 @@ Each icon has one named motion. A motion plays once, in under a second. The web 
 
 iOS 18 effects (`rotate`, `wiggle`, `breathe`) fall back to `bounce` on iOS 17, which is the lowest iOS version the app supports. Which SF Symbol effects need iOS 18 has not been checked against Apple's documentation, so the code guards each with an availability check.
 
+## Tool-row icons
+
+In Gizzi Code, the loader in a tool row shows a glyph for the kind of tool while the call runs: image, read, search, write, code, or a plain dot for anything else. When the call ends without an error it shows a check mark in the success colour, and on error the red dot. The glyph map lives in `figures.ts` beside the toast glyphs, one block glyph per toast kind.
+
 ## Reduced motion
 
 - When the system or app setting is on, nothing plays. One-shot icons show their end state at once, loops do not start, and `onSettled` is still called.

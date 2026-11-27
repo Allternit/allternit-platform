@@ -43,6 +43,13 @@ export interface ToolUseContext {
 export interface ToolPermissionContext {
   mode: string
   allowedTools?: string[]
+  /**
+   * Tools the account blocks (Settings > Connections > Tool permissions), in
+   * the runtime's name forms. The runtime keeps the live list per session in
+   * BlockedTools (guard/blocked-tools.ts, pushed with the permission mode
+   * and read from the bot marker); every native call passes
+   * ToolDispatcher.assertNotBlocked.
+   */
   blockedTools?: string[]
   isAutoModeAvailable?: boolean
   [key: string]: any

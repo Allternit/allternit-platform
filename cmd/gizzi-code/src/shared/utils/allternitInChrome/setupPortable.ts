@@ -6,15 +6,16 @@ import { isFsInaccessible } from '../errors.js'
 export const CHROME_EXTENSION_URL = 'https://docs.gizziio.com'
 
 // Production extension ID
-const PROD_EXTENSION_ID = 'chheieepkpbhkiimdmbdjmnhcooclpok'
+const PROD_EXTENSION_ID = 'hkillgnnhkokmjcjjpolpnecmdnilhod'
+const OLD_PROD_EXTENSION_ID = 'chheieepkpbhkiimdmbdjmnhcooclpok' // previous signing key, still accepted
 // Dev extension IDs (for internal use)
 const DEV_EXTENSION_ID = 'dihbgbndebgnbjfmelmegjepbnkhlgni'
 const ANT_EXTENSION_ID = 'dngcpimnedloihjnnfngkgjoidhnaolf'
 
 function getExtensionIds(): string[] {
   return process.env.USER_TYPE === 'ant'
-    ? [PROD_EXTENSION_ID, DEV_EXTENSION_ID, ANT_EXTENSION_ID]
-    : [PROD_EXTENSION_ID]
+    ? [PROD_EXTENSION_ID, OLD_PROD_EXTENSION_ID, DEV_EXTENSION_ID, ANT_EXTENSION_ID]
+    : [PROD_EXTENSION_ID, OLD_PROD_EXTENSION_ID]
 }
 
 // Must match ChromiumBrowser from common.ts
