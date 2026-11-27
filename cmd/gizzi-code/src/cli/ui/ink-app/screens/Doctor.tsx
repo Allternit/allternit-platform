@@ -19,7 +19,8 @@ import { Box, Text } from '../ink';
 import { useKeybindings } from '../keybindings/useKeybinding';
 import { useAppState } from '../state/AppState';
 import { getPluginErrorMessage } from '../types/plugin';
-import { getGcsDistTags, getNpmDistTags, type NpmDistTags } from '../utils/autoUpdater';
+import type { NpmDistTags } from '../utils/autoUpdater';
+import { Updater } from '@/shared/installation/updater';
 import { type ContextWarnings, checkContextWarnings } from '../utils/doctorContextWarnings';
 import { type DiagnosticInfo, getDoctorDiagnostic } from '../utils/doctorDiagnostic';
 import { validateBoundedIntEnvVar } from '../utils/envValidation';
@@ -62,7 +63,7 @@ function DistTagsDisplay(t0: {
   } = t0;
   const distTags = use(promise);
   if (!distTags.latest) {
-    const t1 = <Text dimColor={true}>└ Failed to fetch versions</Text>;
+    const t1 = <Text dimColor={true}>└ Latest version: not checked yet</Text>;
 
     return t1;
   }
@@ -293,13 +294,12 @@ function _temp8(v) {
 function _temp7(error) {
   return error.mcpErrorMetadata === undefined;
 }
-function _temp6(diag) {
-  const fetchDistTags = diag.installationType === "native" ? getGcsDistTags : getNpmDistTags;
-  return fetchDistTags().catch(_temp5);
-}
-function _temp5() {
+function _temp6() {
+  // The signed release feed is the only version source (PLAN.md D2); the
+  // background updater has already read it, so doctor never fetches here.
+  const status = Updater.getStatus();
   return {
-    latest: null,
+    latest: status.latest ?? null,
     stable: null
   };
 }

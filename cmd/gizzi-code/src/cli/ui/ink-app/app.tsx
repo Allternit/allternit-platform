@@ -36,8 +36,19 @@ import { routeInternalFetch } from './utils/routeInternalFetch'
 import { initializeLspServerManager, shutdownLspServerManager } from './services/lsp/manager'
 import { lspDiagnosticsEnabled } from './services/lsp/builtinServers'
 import { registerCleanup } from './utils/cleanupRegistry'
+import { Updater } from '@/shared/installation/updater'
 
 export async function tui(options?: any): Promise<void> {
+  // The signed updater (PLAN.md D2): applies an update staged by an earlier
+  // run, checks 2 s after launch and every 6 h on unref'd timers, and swaps /
+  // runs npm on exit. Idempotent; never blocks the prompt. The footer notice
+  // (components/AutoUpdaterWrapper.tsx) reads its status.
+  try {
+    Updater.start()
+  } catch (err: any) {
+    Log.Default.warn('tui: updater failed to start', { error: err?.message || String(err) })
+  }
+
   const currentCwd = process.cwd()
   setOriginalCwd(currentCwd)
   setCwdState(currentCwd)

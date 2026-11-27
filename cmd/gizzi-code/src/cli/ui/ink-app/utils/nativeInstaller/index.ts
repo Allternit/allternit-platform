@@ -12,7 +12,6 @@ export {
   cleanupNpmInstallations,
   cleanupOldVersions,
   cleanupShellAliases,
-  installLatest,
   lockCurrentVersion,
   removeInstalledSymlink,
   type SetupMessage,
