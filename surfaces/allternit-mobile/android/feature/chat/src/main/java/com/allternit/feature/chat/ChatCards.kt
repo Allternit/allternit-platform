@@ -334,6 +334,7 @@ internal object ToolDescriber {
         fun v(now: String, past: String) = if (running) now else past
         val n = normalize(call.toolName)
         return when {
+            SkillCalls.isLoadSkill(call.toolName) -> SkillCalls.verb(call)
             n.contains("websearch") || n == "search" || n == "bravesearch" -> v("Searching the web", "Searched the web")
             n.contains("fetch") || n.contains("url") -> v("Reading", "Read")
             n == "bash" || n == "shell" || n.contains("exec") || n == "runcode" -> call.input?.str("description") ?: v("Running", "Ran")
@@ -356,6 +357,7 @@ internal object ToolDescriber {
     }
 
     fun detail(call: ToolCallRecord): String? {
+        if (SkillCalls.isLoadSkill(call.toolName)) return null
         val i = call.input ?: return call.title
         return call.title ?: i.str("query") ?: i.str("url") ?: i.str("command") ?: i.str("filePath") ?: i.str("path") ?: i.str("pattern")
     }
@@ -422,7 +424,7 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
                     Text(verb, color = c.textPrimary, fontSize = 13.sp)
                     if (!detail.isNullOrBlank()) Text(detail, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                call.error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 12.sp, modifier = Modifier.padding(start = 24.dp), maxLines = 3) }
+                (SkillCalls.reason(call) ?: call.error)?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 12.sp, modifier = Modifier.padding(start = 24.dp), maxLines = 3) }
             }
         }
     }
@@ -955,6 +957,84 @@ fun NotificationsCard() {
                 modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { ask() }.padding(vertical = 12.dp).testTag("chatNotificationsTurnOn"))
             Text("Not now", color = c.textSecondary, fontSize = 14.sp,
                 modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { dismissed = true; prefs.edit().putBoolean("notificationsCardDismissed", true).apply() }.padding(vertical = 12.dp).testTag("chatNotificationsNotNow"))
+        }
+    }
+}
+
+
+/** Server skills: the `load_skill` step row wording and the checklist card (iOS and web say the same words). */
+internal object SkillCalls {
+    private val NAME = Regex("(^|_)load_skill$")
+    fun isLoadSkill(toolName: String) = NAME.containsMatchIn(toolName.lowercase())
+
+    private fun inputId(call: ToolCallRecord): String? = call.input?.str("id")
+    fun parsed(call: ToolCallRecord) = call.output?.let { com.allternit.core.api.SkillResult.parse(it) }
+    private fun nameOf(id: String) = id.substringAfter(':')
+
+    fun verb(call: ToolCallRecord): String = when (call.state) {
+        ToolState.Running -> "Loading skill \u00b7 ${inputId(call).orEmpty()}".trimEnd(' ', '\u00b7')
+        ToolState.Failed -> "Couldn't load skill"
+        ToolState.Done -> parsed(call)?.let { "Loaded skill \u00b7 ${nameOf(it.id)} \u00b7 from ${it.from}" } ?: "Loaded skill \u00b7 ${nameOf(inputId(call).orEmpty())}".trimEnd(' ', '\u00b7')
+    }
+
+    /** The reason under a failed row, by the server's error code (found in the error or output text). */
+    fun reason(call: ToolCallRecord): String? {
+        if (!isLoadSkill(call.toolName) || call.state != ToolState.Failed) return null
+        val text = "${call.error.orEmpty()} ${call.output.orEmpty()}"
+        val from = call.metadata?.str("from") ?: "that server"
+        return when {
+            "skill_not_found" in text -> "This skill is no longer on the server."
+            "skill_disabled" in text -> "This skill is turned off in Settings."
+            "connector_unavailable" in text -> "The server didn't answer."
+            "connector_sign_in_required" in text -> "Sign in to $from again in Connections."
+            "skill_too_large" in text -> "This skill is too large to load."
+            "skill_read_timeout" in text -> "The server took too long to send this skill."
+            else -> null
+        }
+    }
+
+    /** Todo items from the newest todo tool call after [call] in the same turn: (content, completed). Null when there is none. */
+    fun todoAfter(call: ToolCallRecord, all: List<ToolCallRecord>): List<Pair<String, Boolean>>? {
+        val later = all.drop(all.indexOf(call) + 1).lastOrNull { ToolDescriber.normalized(it.toolName).let { n -> n == "todowrite" || n == "todoread" || n == "todo" } }
+            ?: return null
+        val arr = later.input?.get("todos") as? kotlinx.serialization.json.JsonArray ?: return null
+        return arr.mapNotNull { e ->
+            val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val content = o.str("content") ?: o.str("text") ?: return@mapNotNull null
+            content to (o.str("status") == "completed")
+        }
+    }
+
+    fun ticked(step: String, todos: List<Pair<String, Boolean>>): Boolean {
+        val s = com.allternit.core.api.SkillResult.plainStep(step).lowercase()
+        return todos.any { (t, done) ->
+            val x = com.allternit.core.api.SkillResult.plainStep(t).lowercase()
+            done && (x == s || x.contains(s) || s.contains(x))
+        }
+    }
+}
+
+/** The steps of a loaded skill under the turn: "Skill \u00b7 name \u00b7 from X". Ticks come only from a later todo tool call in the same turn; with none it is a plain numbered list. */
+@Composable
+internal fun SkillChecklistCard(call: ToolCallRecord, all: List<ToolCallRecord>) {
+    val skill = SkillCalls.parsed(call) ?: return
+    if (skill.steps.isEmpty()) return
+    val c = AllternitTheme.colors
+    val todos = SkillCalls.todoAfter(call, all)
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(c.bgPanel).border(androidx.compose.foundation.BorderStroke(1.dp, c.borderSubtle), shape)
+            .padding(horizontal = 14.dp, vertical = 12.dp).testTag("skillChecklistCard"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Skill \u00b7 ${skill.id.substringAfter(':')} \u00b7 ${skill.from}", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        skill.steps.forEachIndexed { i, step ->
+            val done = todos != null && SkillCalls.ticked(step, todos)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                if (todos == null) Text("${i + 1}.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.width(20.dp))
+                else Icon(painterResource(if (done) DesignR.drawable.ph_check_circle_fill else DesignR.drawable.ph_circle), contentDescription = if (done) "Done" else "Not done", tint = if (done) c.accentPrimary else c.textTertiary, modifier = Modifier.size(16.dp))
+                Text(step, color = if (done) c.textSecondary else c.textPrimary, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f))
+            }
         }
     }
 }

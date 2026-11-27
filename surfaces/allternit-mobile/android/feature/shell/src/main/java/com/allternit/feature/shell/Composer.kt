@@ -131,6 +131,9 @@ internal data class ComposerDraft(
     val onPhone: Boolean = false,
     val webSearch: Boolean = false,
     val research: Boolean = false,
+    /** An enabled server skill the text starts with (`/<id>`); the text stays as typed. */
+    val skillId: String? = null,
+    val skillArguments: String? = null,
 )
 
 /** Launch-state placeholders (iOS ComposerPlaceholders, web useRotatingPlaceholder.ts). */
@@ -277,6 +280,12 @@ internal fun Composer(
     // The picked kind's "It can" choices (registry defaults); a new pick resets them.
     var itCan by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var plusOpen by remember { mutableStateOf(false) }
+    // Server skills (flag mcp.skills, on by default): the `/` list and the + sheet row.
+    val skillsOn = remember { com.allternit.core.api.FeatureFlags.isOn(context, com.allternit.core.api.FeatureFlags.MCP_SKILLS) }
+    var skills by remember { mutableStateOf<List<com.allternit.core.api.ServerSkill>>(emptyList()) }
+    LaunchedEffect(skillsOn, plusOpen, text.startsWith("/")) {
+        if (skillsOn && (plusOpen || text.startsWith("/"))) skills = com.allternit.feature.chat.ServerSkillsRepository.enabled()
+    }
     var pickerOpen by remember { mutableStateOf(false) }
     var placeholderIndex by remember { mutableIntStateOf(0) }
     var webSearch by remember { mutableStateOf(prefs.getBoolean("composer-web-search", false)) }
@@ -393,8 +402,11 @@ internal fun Composer(
         // Attached artifacts ride as one text line each (web); every other attachment still uploads.
         val artifactLines = attachments.filter { it.kind == "artifact" && it.artifactId != null }
             .joinToString("\n") { attachedArtifactLine(it.artifactId.orEmpty(), it.name, it.artifactKind) }
+        val skillHit = if (skillsOn) com.allternit.feature.chat.ServerSkillsRepository.match(skills, text.trim()) else null
         val draft = ComposerDraft(
             text = if (artifactLines.isEmpty()) text.trim() else text.trim() + "\n\n" + artifactLines,
+            skillId = skillHit?.first?.id,
+            skillArguments = skillHit?.second,
             attachments = attachments.filter { it.kind != "artifact" },
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
@@ -444,6 +456,8 @@ internal fun Composer(
             )
         }
         LocalComposerOrbs.current(deckOpen, sessionOpen, onNewItem)
+
+        if (skillsOn) SkillSlashList(skills, text) { s -> text = "/${s.id} " }
 
         // Rest is one line. Focus or a draft opens the field without a pointer-focus ring.
         val cardShape = RoundedCornerShape(if (rest) 28.dp else 18.dp)
@@ -631,6 +645,11 @@ internal fun Composer(
                 prefs.edit().putBoolean("composer-research", it).apply()
             },
             onAttach = { attachments += it },
+            onServerSkills = if (skillsOn && skills.isNotEmpty()) ({
+                plusOpen = false
+                text = "/"
+                runCatching { inputFocus.requestFocus() }
+            }) else null,
             onOpenSection = { row ->
                 plusOpen = false
                 onOpenSection(row)

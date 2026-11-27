@@ -398,7 +398,7 @@ class ChatBackend(
      * [ChatStreamEvent.Failed]: 503 `runtime_warming` (the caller waits and retries),
      * `runtime_offline`, 409 `no_brain`, 428 / `compute_required` (no computer).
      */
-    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false, imagePrompt: String? = null): Flow<ChatStreamEvent> {
+    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false, imagePrompt: String? = null, skill: JsonObject? = null): Flow<ChatStreamEvent> {
         val envelope = buildJsonObject {
             put("method", "POST")
             put("path", "/api/agent-chat")
@@ -413,7 +413,9 @@ class ChatBackend(
                 imagePrompt?.takeIf { it.isNotBlank() && it.length <= 16000 }?.let { put("image_prompt", it) }
             }
             val marked = if (personTurn) JsonObject(encoded + ("metadata" to JsonObject((encoded["metadata"] as? JsonObject).orEmpty() + person))) else encoded
-            put("body", marked.toString())
+            // A picked server skill rides top-level (`skill: {id, arguments?}`); the server adds the one-turn directive.
+            val withSkill = if (skill != null) JsonObject(marked + ("skill" to skill)) else marked
+            put("body", withSkill.toString())
             put("bodyEncoding", "utf8")
         }.toString()
         val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = "text/event-stream")

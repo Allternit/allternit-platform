@@ -74,6 +74,8 @@ internal fun PlusSheet(
     onWebSearch: (Boolean) -> Unit,
     onResearch: (Boolean) -> Unit,
     onAttach: (ComposerAttachment) -> Unit,
+    /** Types `/` in the composer to open the server skills list; null hides the row (no skills, flag off). */
+    onServerSkills: (() -> Unit)? = null,
     onOpenSection: (RailRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -216,6 +218,10 @@ internal fun PlusSheet(
                         onOpenSection(RailRow("skills", "Skills", com.allternit.core.design.R.drawable.ph_graduation_cap))
                     }
                     PlusDivider()
+                    if (onServerSkills != null) {
+                        PlusRow(DesignR.drawable.ph_sparkle, "Server skills", chevron = true, testTag = "plusSheetServerSkills") { onServerSkills() }
+                        PlusDivider()
+                    }
                     PlusRow(DesignR.drawable.ph_puzzle_piece, "Plugins", chevron = true) {
                         onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece))
                     }

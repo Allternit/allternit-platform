@@ -47,6 +47,9 @@ data class ChatSendRequest(
     val personTurn: Boolean = false,
     /** Raw composer text of an Image or Artifact mode send (`metadata.image_prompt`); person sends only. */
     val imagePrompt: String? = null,
+    /** A server skill the message starts with (`/<id>`): sent as top-level `skill: {id, arguments?}`; the text stays as typed. */
+    val skillId: String? = null,
+    val skillArguments: String? = null,
 )
 
 /** iOS ToolCallRecord.State / MessageRecord.ToolStatus.State. */

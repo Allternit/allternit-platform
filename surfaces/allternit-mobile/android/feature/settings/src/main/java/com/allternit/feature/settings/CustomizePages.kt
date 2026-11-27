@@ -236,8 +236,43 @@ internal fun CapabilitiesPage(host: SettingsHost, plugins: Boolean, back: () -> 
     SPage(if (plugins) "Plugins" else "Skills", tag = if (plugins) "settingsPlugins" else "settingsSkills", onBack = back) {
         SNote(if (plugins) "Plugins add tools and commands to your bots. They live on your computer." else "Skills teach your bots how to do a job. They live on your computer.")
         SField("Search", query, "capabilities_search", { query = it })
+        if (!plugins) ServerSkillsSection(query)
         CapabilitiesBody(host, plugins, query, allowCreate = !plugins)
     }
+}
+
+/** "From your servers": skills your MCP servers and installed apps offer, one switch each (`PUT /api/v1/mcp/skills/prefs`). Hidden with the flag off or when there are none. A failed save puts the switch back and says so. */
+@Composable
+private fun ServerSkillsSection(query: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (!com.allternit.core.api.FeatureFlags.isOn(context, com.allternit.core.api.FeatureFlags.MCP_SKILLS)) return
+    val scope = rememberCoroutineScope()
+    var skills by remember { mutableStateOf<List<com.allternit.core.api.ServerSkill>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { skills = com.allternit.feature.chat.ServerSkillsRepository.list(force = true) }
+    val rows = skills.filter { query.isBlank() || it.name.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true) || it.description.contains(query, ignoreCase = true) }
+    if (rows.isEmpty()) return
+    SLabel("From your servers")
+    SCard(Modifier.padding(bottom = 12.dp)) {
+        rows.forEachIndexed { i, sk ->
+            if (i > 0) SDivider()
+            SToggleRow(
+                title = sk.name, tag = "serverSkill_${sk.id}", checked = sk.enabled,
+                detail = if (sk.source == "app") "From the ${sk.from} app" else "From ${sk.from}",
+                onChange = { on ->
+                    error = null
+                    skills = skills.map { if (it.id == sk.id) it.copy(enabled = on) else it }
+                    scope.launch {
+                        if (!com.allternit.feature.chat.ServerSkillsRepository.setEnabled(sk.id, on)) {
+                            skills = skills.map { if (it.id == sk.id) it.copy(enabled = !on) else it }
+                            error = "Couldn't save that change for ${sk.name}. Try again."
+                        }
+                    }
+                },
+            )
+        }
+    }
+    SError(error)
 }
 
 private class CatalogSkill(val id: String, val name: String, val blurb: String, val category: String, val author: String)

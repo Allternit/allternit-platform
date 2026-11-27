@@ -123,6 +123,7 @@ internal fun MessageRow(
                                 onRetry = { actions.onRetry(message.id) },
                             )
                         }
+                        if (SkillCalls.isLoadSkill(call.toolName) && call.state == ToolState.Done) SkillChecklistCard(call, message.toolCalls)
                         if (n == "lookup") call.metadata?.obj("card")?.let { AnswerCard(it, call.output, backend) }
                         val suggestion = ConnectorSuggestions.parse(call)
                         if (suggestion != null) {

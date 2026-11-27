@@ -393,6 +393,7 @@ class ChatViewModel(
             systemPrompt = request.systemPrompt,
             personTurn = request.personTurn,
             imagePrompt = request.imagePrompt,
+            skill = request.skillId?.let { id -> buildJsonObject { put("id", id); request.skillArguments?.let { put("arguments", it) } } },
         )
     }
 
@@ -507,6 +508,7 @@ class ChatViewModel(
         systemPrompt: String? = null,
         personTurn: Boolean = false,
         imagePrompt: String? = null,
+        skill: JsonObject? = null,
     ) {
         transientError = null
         draftToRestore = null
@@ -579,7 +581,7 @@ class ChatViewModel(
                         answerCards = "widgets",
                     ),
                 )
-                failed = runStream(runtimeId, body, assistantId, personTurn, imagePrompt)
+                failed = runStream(runtimeId, body, assistantId, personTurn, imagePrompt, skill)
                 finishStreaming(assistantId)
             } catch (e: CancellationException) {
                 isCreatingSession = false
@@ -620,12 +622,12 @@ class ChatViewModel(
      * up to 120 s, iOS RuntimeRelayClient.wakeTimeout) as long as nothing has arrived yet.
      * Returns true when the reply failed (error frame / finish "error").
      */
-    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String, personTurn: Boolean, imagePrompt: String? = null): Boolean {
+    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String, personTurn: Boolean, imagePrompt: String? = null, skill: JsonObject? = null): Boolean {
         val deadline = System.currentTimeMillis() + 120_000
         while (true) {
             var failedFrame = false
             var transport: ChatStreamEvent.Failed? = null
-            backend.streamTurn(runtimeId, body, personTurn && browserImages?.foreground == true, imagePrompt?.takeIf { personTurn && browserImages?.foreground == true }).collect { event ->
+            backend.streamTurn(runtimeId, body, personTurn && browserImages?.foreground == true, imagePrompt?.takeIf { personTurn && browserImages?.foreground == true }, skill).collect { event ->
                 if (event is ChatStreamEvent.Failed) transport = event else if (apply(event, assistantId)) failedFrame = true
             }
             val t = transport ?: run {
