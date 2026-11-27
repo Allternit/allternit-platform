@@ -269,3 +269,17 @@ object AnswerRoom {
     /** An anchored turn that is still running must not drag the view to the bottom. */
     fun followsBottom(anchored: Boolean, streaming: Boolean) = !(anchored && streaming)
 }
+
+/**
+ * Whether a chat follows its streaming reply. Rule: only the reader's own drag releases it; text growing,
+ * layout changes and our own pinning never do. It re-follows when the reader reaches the bottom, taps the
+ * "New text" pill ([jumped]) or sends ([sent]). [hasNew] is true while text arrived below a released reader.
+ * Immutable: hold it in Compose state and replace it with the returned value.
+ */
+data class TailFollow(val follows: Boolean = true, val hasNew: Boolean = false) {
+    fun userScrolledUp() = copy(follows = false)
+    fun reachedBottom() = TailFollow(follows = true, hasNew = false)
+    fun grew() = if (follows) this else copy(hasNew = true)
+    fun jumped() = TailFollow()
+    fun sent() = TailFollow()
+}
