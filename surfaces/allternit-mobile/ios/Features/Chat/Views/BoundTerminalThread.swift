@@ -94,7 +94,9 @@ struct BoundTerminalThread: View {
 /// Code's approval banner and review sheet, and answered with
 /// `POST /v1/permission/:id/reply` on that computer. Read when the thread
 /// opens and again on each permission event from its event stream.
-/// Decisions keeps serving every other chat.
+/// Questions from the same stream go to `AgentAskStore`, which reads and
+/// answers them on the bound computer and shows them as the thread's usual
+/// question cards. Decisions keeps serving every other chat and skips these.
 struct BoundEngineApprovals: View {
     let binding: StartBinding
 
@@ -153,6 +155,7 @@ struct BoundEngineApprovals: View {
             if let all = try? await client.listPending() {
                 pending = all.filter { $0.sessionID == sessionId }.sorted { $0.id < $1.id }
             }
+            await AgentAskStore.shared.refresh(sessionId: sessionId)
             do {
                 for try await event in client.subscribeToEvents() {
                     try Task.checkCancellation()
@@ -166,6 +169,10 @@ struct BoundEngineApprovals: View {
                         if info.sessionID == sessionId {
                             pending.removeAll { $0.id == info.requestID }
                         }
+                    case .questionAsked(let request):
+                        if request.sessionID == sessionId { AgentAskStore.shared.questionAsked(request) }
+                    case .questionClosed(let closedSession, let requestID):
+                        if closedSession == sessionId { AgentAskStore.shared.questionClosed(id: requestID) }
                     case .ignored:
                         break
                     }

@@ -35,7 +35,8 @@ final class DecisionsStore: ObservableObject {
     var waitingCount: Int { visibleQuestions.count + approvals.count }
 
     var visibleQuestions: [AgentQuestionRequest] {
-        questions.filter { !AgentAskStore.shared.isResolved($0.id) }
+        // A bound Start-anywhere thread shows its own questions; never twice.
+        questions.filter { !AgentAskStore.shared.isResolved($0.id) && !AgentAskStore.shared.isBound($0.sessionID) }
     }
 
     /// Done / Later on a Factory approval: the same inbox calls the web Inbox uses

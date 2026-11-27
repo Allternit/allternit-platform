@@ -427,7 +427,8 @@ struct MessageRow: View {
                 list.append(pending)
             }
         }
-        return list.filter { !asks.isResolved($0.id) }
+        // A bound thread's approvals show once, in BoundEngineApprovals.
+        return list.filter { !asks.isResolved($0.id) && !asks.isBound(sessionId) }
     }
 
     /// Permissions whose tool call isn't on this reply's rail get a card.
