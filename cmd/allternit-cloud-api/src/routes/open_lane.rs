@@ -35,7 +35,7 @@ use std::time::Duration;
 use crate::{
     auth,
     error::ApiError,
-    model_router::{catalog::OPEN_LANE_PROVIDER, ChatCompletionRequest, ModelRouterError, RetailPrices},
+    model_router::{ChatCompletionRequest, ModelRouter, ModelRouterError, RetailPrices},
     services::{
         hard_line, inference_settlement, open_entitlement,
         open_lane::{self, OpenLaneSettings, RequestOptions},
@@ -53,14 +53,24 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route("/api/v1/open-lane", get(get_settings).put(put_settings))
 }
 
+/// The open models this server can serve right now: listed open rows (not
+/// Open Research ones) whose host, or the legacy lane, is configured.
 fn open_models(state: &ApiState) -> Vec<String> {
-    if !state.model_router.has_provider(OPEN_LANE_PROVIDER) {
+    let router = &state.model_router;
+    if !router.any_open_provider() {
         return Vec::new();
     }
-    ["deepseek-v4.1-flash-open", "glm-5.3-flash-open"]
-        .iter()
-        .filter(|alias| state.model_router.is_open_lane_alias(alias))
-        .map(|alias| alias.to_string())
+    router
+        .catalog()
+        .ordered_entries()
+        .into_iter()
+        .filter(|entry| {
+            crate::model_router::catalog::is_open_lane(entry)
+                && entry.listed
+                && !entry.research_only
+                && router.is_routable(&entry.alias)
+        })
+        .map(|entry| entry.alias.clone())
         .collect()
 }
 
@@ -111,7 +121,16 @@ async fn put_settings(
         chrono::Utc::now(),
     )
     .map_err(ApiError::BadRequest)?;
-    open_lane::save_settings(&state.db, &user.id, &next).await?;
+    // Timestamps are written only when this request accepts or withdraws
+    // them; a handoff-only save never NULLs a stored acceptance (D19).
+    open_lane::save_settings(
+        &state.db,
+        &user.id,
+        &next,
+        update.accept_aup.is_some(),
+        update.confirm_age.is_some(),
+    )
+    .await?;
     Ok(Json(settings_body(&state, &next)))
 }
 
@@ -152,7 +171,7 @@ pub async fn guard_open_request(
     if !open_models.entitlement.terms_accepted {
         return Ok(Some(open_lane::terms_required_response()));
     }
-    if is_research_row(state, &request.model) && !open_models.entitlement.research {
+    if research_blocked(&state.model_router, &request.model, open_models.entitlement.research) {
         return Ok(Some(open_entitlement::research_required_response()));
     }
     if let Some(refused) = open_entitlement::refusal(&open_models) {
@@ -161,11 +180,10 @@ pub async fn guard_open_request(
     Ok(hard_line_gate(state, user_id, request).await.err())
 }
 
-/// Whether an open alias is an Open Research (`research_only`) row. The
-/// starter catalog has none until the research rows land (#3150, B5); B6
-/// wires this to the row's `research_only` flag.
-fn is_research_row(_state: &ApiState, _alias: &str) -> bool {
-    false
+/// An Open Research (`research_only`) row asked for by an account without the
+/// research flag: answered 403 `open_research_required` (contract D10).
+pub fn research_blocked(router: &ModelRouter, alias: &str, research: bool) -> bool {
+    !research && router.catalog().resolve(alias).is_some_and(|entry| entry.research_only)
 }
 
 /// A planned handoff: the model the caller asked for and the open model a
@@ -193,7 +211,7 @@ pub async fn plan_handoff(
     if requested_is_open
         || options.handoff_disabled
         || !has_credits
-        || !state.model_router.has_provider(OPEN_LANE_PROVIDER)
+        || !state.model_router.any_open_provider()
     {
         return Ok(None);
     }
@@ -202,7 +220,7 @@ pub async fn plan_handoff(
         .clone()
         .filter(|m| state.model_router.is_open_lane_alias(m))
         .unwrap_or_else(|| open_lane::DEFAULT_HANDOFF_MODEL.to_string());
-    let target_available = state.model_router.is_open_lane_alias(&to);
+    let target_available = state.model_router.is_open_lane_alias(&to) && state.model_router.is_routable(&to);
     let settings = open_entitlement::load_terms(&state.db, user_id).await?;
     if !open_lane::should_hand_off(&settings, options, requested_is_open, has_credits, target_available) {
         return Ok(None);
@@ -211,7 +229,7 @@ pub async fn plan_handoff(
     // as asking the open model directly (contract §2). A blocked account is
     // simply not handed off; the frontier answer stands.
     let entitlement = open_entitlement::load(&state.db, user_id).await?.entitlement;
-    if !entitlement.allowed || (is_research_row(state, &to) && !entitlement.research) {
+    if !entitlement.allowed || research_blocked(&state.model_router, &to, entitlement.research) {
         return Ok(None);
     }
     Ok(Some(HandoffPlan { from: alias.to_string(), to }))
@@ -363,11 +381,12 @@ async fn hand_off(
     let mut request = original;
     request.model = plan.to.clone();
     let chars = prompt_chars(&request);
-    let prices = state.model_router.retail_prices(&plan.to).await.ok()?;
-    let response = match state.model_router.chat_completions(request).await {
-        Ok(response) if response.status().is_success() => response,
-        Ok(response) => {
-            tracing::warn!(status = %response.status(), to = %plan.to, "open lane handoff upstream error");
+    // The open row may fail over to its backup before the first byte; the
+    // row that served is the one billed (D9).
+    let (response, served) = match state.model_router.chat_completions_with_failover(request).await {
+        Ok(served) if served.response.status().is_success() => (served.response, served.alias),
+        Ok(served) => {
+            tracing::warn!(status = %served.response.status(), to = %plan.to, "open lane handoff upstream error");
             return None;
         }
         Err(error) => {
@@ -375,6 +394,7 @@ async fn hand_off(
             return None;
         }
     };
+    let prices = state.model_router.retail_prices(&served).await.ok()?;
     let header_value = open_lane::handoff_header_value(&plan.from, &plan.to);
     // The handed-off answer runs on the open model: it settles as open spend (D5).
     let attribution = &attribution.clone().with_lane(state.model_router.is_open_lane_alias(&plan.to));
@@ -385,7 +405,7 @@ async fn hand_off(
             inference_settlement::StreamSettlement {
                 db: Arc::new(state.db.clone()),
                 user_id: user_id.to_string(),
-                model: plan.to.clone(),
+                model: served.clone(),
                 pool_id: None,
                 charge_user: true,
                 prices,
@@ -403,7 +423,7 @@ async fn hand_off(
     }
 
     let metered = inference_settlement::meter_json_response(
-        &state.db, user_id, &plan.to, None, true, &prices, chars, response, attribution,
+        &state.db, user_id, &served, None, true, &prices, chars, response, attribution,
     )
     .await
     .ok()?;
@@ -538,6 +558,23 @@ mod tests {
         hold.push(format!("data: {event}\n\n").as_bytes());
         assert!(hold.decided());
         assert!(!hold.is_refusal(false));
+    }
+
+    /// A research row without the account's research flag is refused 403
+    /// `open_research_required`; with the flag, or on a plan row, it passes.
+    #[tokio::test]
+    async fn research_row_without_the_flag_is_403_open_research_required() {
+        let router = ModelRouter::disabled(crate::model_router::catalog::starter_catalog());
+        assert!(research_blocked(&router, "open-large-research", false));
+        assert!(research_blocked(&router, "open-failover-large-research", false), "its backup row too");
+        assert!(!research_blocked(&router, "open-large-research", true));
+        assert!(!research_blocked(&router, "deepseek-v4.1-flash-open", false));
+
+        let response = open_entitlement::research_required_response();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "open_research_required", "{body}");
     }
 
     #[test]
