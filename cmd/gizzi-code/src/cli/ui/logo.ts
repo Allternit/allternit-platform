@@ -31,8 +31,12 @@ export function ansiArtRow(row: ArtRow): string {
 
 /** The `--help` banner: the approved mascot (18 x 8 cells) and the one-row GIZZI CODE wordmark. */
 export function helpBannerLines(): string[] {
+  // Same layout as the startup header: the wordmark sits beside the mascot, on its middle row.
   const lines = mascotRows("mid").map(ansiArtRow)
-  lines.push("")
-  lines.push(...wordmarkRows().map(ansiArtRow))
+  const word = wordmarkRows().map(ansiArtRow)
+  const at = Math.floor((lines.length - word.length) / 2)
+  word.forEach((w, i) => {
+    lines[at + i] = `${lines[at + i]}   ${w}`
+  })
   return lines
 }
