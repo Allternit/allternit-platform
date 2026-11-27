@@ -18,6 +18,37 @@ Sections appear in this order:
 
 OpenRouter is never its own section. Allternit Cloud uses it to route, so it is not offered on its own. A model ref that names it still runs when you ask for it by name (`gizzi --model openrouter/…`).
 
+## Live catalog
+
+The Allternit Cloud list comes from the server. Gizzi reads it when you sign in and caches it on disk for 6 hours. If the server cannot be reached, Gizzi uses the cache, then a built-in list. `gizzi models --refresh` skips the cache.
+
+## Layers and access
+
+The picker shows three layers above the list:
+
+| Layer | What it is |
+|---|---|
+| Runtime | The runtime of the focused brain. Change it with `/runtime`. |
+| Brain | The model rows. Each row has an access badge. |
+| Bot | The active bot. It is read-only here. |
+
+Access badges:
+
+| Badge | Meaning |
+|---|---|
+| `plan` | Covered by a plan you connected |
+| `key` | Uses an API key on file |
+| `local` | Runs on this computer |
+| `credits` | Uses Allternit credits |
+
+A locked row is grey and shows the reason on the right. Press Enter on it to see the unlock action. It does not select the model. The action is one of: sign in, add credits, accept terms, upgrade, or retry. Hidden models are not listed. A saved choice of a hidden model still works.
+
+Press F2 to move through your 5 most recent models.
+
+## Local servers and offline rows
+
+A local server shows only the models it lists. Gizzi adds no placeholder models. If a server is in your config and does not answer in 1 second, the picker shows one grey row: the server name, then "offline". It also shows the fix. You cannot select that row. See [Configuration](/cli/configuration#local-providers).
+
 ## List the models
 
 `gizzi models` prints the models the picker offers, in the picker's order: Allternit Cloud, Your subscriptions, API keys, Local. Under Your subscriptions the CLIs come in a fixed order. Inside a provider, models are in the vendor's order, newest and strongest first. They are not sorted alphabetically.
@@ -34,7 +65,8 @@ Each row is `provider/model`. Tags after a row:
 The last line shows the current default and why: `default: provider/model (reason)`.
 
 - For CLIs that can list their own models, Gizzi asks the CLI and caches the list for 6 hours. `gizzi models --refresh` reads it again. Models a CLI marks as hidden are not shown. If the CLI cannot be asked, Gizzi shows its built-in list.
-- `gizzi models --json` prints the same data as JSON.
+- Each row shows its access badge. A locked row shows the reason. An offline server is one dim line: the name, "offline", and the fix.
+- `gizzi models --json` prints an object with two keys. `sections` has the same data as before. `rows` has one entry per row: `id`, `section`, `access`, `locked`, and `offline`.
 - `gizzi models --all` also shows providers the picker does not offer: aggregators such as OpenRouter, and API providers with no key.
 - `gizzi models <provider>` shows one provider. Use `gizzi models claude-cli` for example.
 - Retired Allternit Cloud aliases are not listed, but a saved choice of one keeps working. A retired CLI model id in your config is mapped to its replacement.

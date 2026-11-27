@@ -491,6 +491,7 @@
             "pages": [
               "cli/overview",
               "cli/installation",
+              "cli/update",
               "cli/configuration",
               "cli/models",
               "cli/studio",
