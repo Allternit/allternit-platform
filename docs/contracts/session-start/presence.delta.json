@@ -1,0 +1,49 @@
+{
+  "presence": {
+    "route": "GET /api/v1/runtime-presence",
+    "added": {
+      "remoteStart": { "type": "boolean", "description": "False when the safety switch is off on that computer." },
+      "kind": { "type": "string", "enum": ["desktop", "cloud", "server"] }
+    },
+    "example": { "runtimeId": "rt_8f3a21c9", "name": "Studio Mac", "remoteStart": true, "kind": "desktop" }
+  },
+  "putStartOptions": {
+    "route": "PUT /api/v1/runtime-devices/:id/start-options",
+    "auth": "device credential",
+    "body": {
+      "updatedAt": "2026-11-27T15:45:00Z",
+      "folders": [
+        {
+          "path": "/Users/dev/code/allternit",
+          "name": "allternit",
+          "lastUsedAt": "2026-11-27T15:42:10Z",
+          "git": { "remote": "https://github.com/example-org/allternit.git", "branch": "main", "head": "5ba6155c7e0d4c1f9a2b3d4e5f60718293a4b5c6", "dirty": false, "ahead": 0 }
+        },
+        { "path": "/Users/dev/Documents/taxes-2026", "name": "taxes-2026", "lastUsedAt": "2026-11-20T09:12:01Z" }
+      ],
+      "modes": { "gizzi": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] } },
+      "defaultRuntime": "gizzi"
+    },
+    "response": { "status": 204 }
+  },
+  "getStartOptions": {
+    "route": "GET /api/v1/start-options",
+    "auth": "signed-in user",
+    "response": {
+      "devices": [
+        {
+          "runtimeId": "rt_8f3a21c9",
+          "name": "Studio Mac",
+          "kind": "desktop",
+          "remoteStart": true,
+          "updatedAt": "2026-11-27T15:45:00Z",
+          "folders": [
+            { "path": "/Users/dev/code/allternit", "name": "allternit", "lastUsedAt": "2026-11-27T15:42:10Z", "git": { "remote": "https://github.com/example-org/allternit.git", "branch": "main", "head": "5ba6155c7e0d4c1f9a2b3d4e5f60718293a4b5c6", "dirty": false, "ahead": 0 } }
+          ],
+          "modes": { "gizzi": { "default": "default", "supported": ["auto", "default", "plan", "bypass"] } },
+          "defaultRuntime": "gizzi"
+        }
+      ]
+    }
+  }
+}
