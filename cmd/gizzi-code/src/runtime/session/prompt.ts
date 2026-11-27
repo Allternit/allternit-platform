@@ -39,7 +39,7 @@ import WRAP_UP from "@/runtime/session/prompt/wrap-up.txt"
 import { defer } from "@/shared/util/defer"
 import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
-import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
+import { mcpToolMetadata } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
@@ -1996,7 +1996,7 @@ const message = await createUserMessage(input)
           ...(result.metadata ?? {}),
           // MCP Apps: the host needs the untouched result (structuredContent, _meta) and the
           // originating server/tool to render a ui:// resource; the model never sees this.
-          ...mcpAppMetadata(mcpCatalog.descriptors[key], result),
+          ...mcpToolMetadata(mcpCatalog.descriptors[key], result),
           truncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
         }

@@ -74,6 +74,41 @@ export function mcpAppMetadata(
   }
 }
 
+/**
+ * Typed display data for the host (display only; never added to the text the model reads).
+ * Rides tool-part metadata as `metadata.mcp`, which the app reads through `readMcpMeta(part)`.
+ * Emitted only when the result carries `structuredContent`.
+ */
+export function mcpTypedMetadata(
+  descriptor: { serverName: string; originalName: string; outputSchema?: unknown; canReport?: boolean; connectorId?: string; appName?: string } | undefined,
+  result: { structuredContent?: unknown },
+): { mcp?: Record<string, unknown> } {
+  if (!descriptor || result.structuredContent === undefined || result.structuredContent === null) return {}
+  const withinLimit = JSON.stringify(result.structuredContent).length <= MAX_APP_RESULT_BYTES
+  return {
+    mcp: {
+      server: descriptor.serverName,
+      tool: descriptor.originalName,
+      connectorId: descriptor.connectorId ?? descriptor.serverName,
+      ...(descriptor.appName && { connectorName: descriptor.appName }),
+      ...(withinLimit ? { structuredContent: result.structuredContent } : { structuredOmitted: "too_large" }),
+      ...(descriptor.outputSchema !== undefined && { outputSchema: descriptor.outputSchema }),
+      canReport: descriptor.canReport === true,
+    },
+  }
+}
+
+/** Both `metadata.mcp` producers merged: typed fields plus the MCP Apps `result` for ui:// tools. */
+export function mcpToolMetadata(
+  descriptor: Parameters<typeof mcpAppMetadata>[0] & Parameters<typeof mcpTypedMetadata>[0],
+  result: Parameters<typeof mcpAppMetadata>[1],
+): { mcp?: Record<string, unknown> } {
+  const app = mcpAppMetadata(descriptor, result).mcp
+  const typed = mcpTypedMetadata(descriptor, result).mcp
+  if (!app && !typed) return {}
+  return { mcp: { ...typed, ...app } }
+}
+
 // ── `mcp_app` stream frame (gizzi's own agent-chat route) ────────────────────
 // Mirrors allternit-api's `mcp_apps.rs::build_app_frame`; the field names are what the web client's
 // `buildMcpAppPart` requires.
