@@ -124,6 +124,8 @@ internal fun MessageRow(
                             )
                         }
                         if (SkillCalls.isLoadSkill(call.toolName) && call.state == ToolState.Done) SkillChecklistCard(call, message.toolCalls)
+                        call.mcpScriptMeta()?.let { McpScriptRow(it) }
+                        call.mcpMeta()?.takeIf { it.structured != null }?.let { McpTypedResultRow(call, it, backend) }
                         if (n == "lookup") call.metadata?.obj("card")?.let { AnswerCard(it, call.output, backend) }
                         val suggestion = ConnectorSuggestions.parse(call)
                         if (suggestion != null) {

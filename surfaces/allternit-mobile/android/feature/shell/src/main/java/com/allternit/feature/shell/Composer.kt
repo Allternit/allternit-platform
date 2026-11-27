@@ -255,6 +255,8 @@ internal fun Composer(
     onPickPdf: (() -> Unit)? = null,
     /** The deck Artifacts menu's Open: that artifact opens in the library (null falls back to the library list). */
     onOpenArtifactId: ((String) -> Unit)? = null,
+    /** The open chat's session id: shows its MCP watch rows above the composer and the "Watch an app event" entry. */
+    watchSessionId: String? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -262,6 +264,7 @@ internal fun Composer(
     val prefs = remember { context.getSharedPreferences("allternit_shell", Context.MODE_PRIVATE) }
 
     var text by rememberSaveable { mutableStateOf("") }
+    var watchSheet by remember { mutableStateOf(false) }
     val attachments = remember { mutableStateListOf<ComposerAttachment>() }
     var focused by remember { mutableStateOf(false) }
     // Plan Revise / Ask a question (feature/chat ComposerFocusRequests): focus the field and show the
@@ -455,6 +458,7 @@ internal fun Composer(
                 onDismiss = { chipDismissed = true },
             )
         }
+        WatchingRows(watchSessionId)
         LocalComposerOrbs.current(deckOpen, sessionOpen, onNewItem)
 
         if (skillsOn) SkillSlashList(skills, text) { s -> text = "/${s.id} " }
@@ -631,8 +635,11 @@ internal fun Composer(
         }
     }
 
+    if (watchSheet) WatchEventSheet(watchSessionId, onDismiss = { watchSheet = false })
     if (plusOpen) {
         PlusSheet(
+            showWatch = true,
+            onWatchEvent = { plusOpen = false; watchSheet = true },
             noComputer = noComputer,
             webSearch = webSearch,
             research = research,

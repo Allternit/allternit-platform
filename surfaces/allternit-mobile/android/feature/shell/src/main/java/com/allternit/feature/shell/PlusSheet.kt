@@ -68,6 +68,8 @@ import com.allternit.core.design.R as DesignR
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PlusSheet(
+    showWatch: Boolean = false,
+    onWatchEvent: () -> Unit = {},
     noComputer: Boolean,
     webSearch: Boolean,
     research: Boolean,
@@ -212,6 +214,10 @@ internal fun PlusSheet(
                     PlusDivider()
                     PlusRow(com.allternit.core.design.R.drawable.ph_lightning, "Connectors", chevron = true, testTag = "plusSheetConnectors") {
                         onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning))
+                    }
+                    if (showWatch) {
+                        PlusDivider()
+                        PlusRow(DesignR.drawable.ph_broadcast, "Watch an app event", chevron = true, testTag = "plusSheetWatch") { onWatchEvent() }
                     }
                     PlusDivider()
                     PlusRow(com.allternit.core.design.R.drawable.ph_graduation_cap, "Skills", chevron = true) {
