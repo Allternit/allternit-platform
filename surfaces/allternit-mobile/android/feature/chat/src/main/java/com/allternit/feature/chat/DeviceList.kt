@@ -187,32 +187,15 @@ fun DeviceList(
         }
         val asleep = list?.firstOrNull { it.id == asleepId }
         if (asleep != null) {
-            val name = asleep.name.ifEmpty { "Computer" }
-            val snap = snapshots.firstOrNull { it.runtimeId == asleep.id }
-            val path = (folder as? StartFolderRef.Path)?.path
-            val snapFolder = snap?.folders?.let { fs -> fs.firstOrNull { it.path == path } ?: fs.firstOrNull() }
-            val folderName = snapFolder?.name ?: folder?.label ?: "this folder"
-            val git = snapFolder?.git
-            val cloud = list.orEmpty().firstOrNull { it.isCloud }
-            PickGroup {
-                val line = when {
-                    snap == null -> "$name is asleep. $name has not shared its folders, so a cloud computer cannot open $folderName."
-                    git == null -> "$name is asleep. $folderName has no git remote, so a cloud computer cannot open it."
-                    else -> "$name is asleep. Run in $folderName on a cloud computer instead?"
-                }
-                Text(line, color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp).testTag("deviceAsleepOffer"))
-                if (git != null) {
-                    PickDivider()
-                    PickRow("Use a cloud computer", chevron = true, testTag = "deviceUseCloud") {
-                        if (cloud == null) gate = true
-                        else { asleepId = null; onPick(cloud, false, StartFolderRef.Git(git.remote, git.branch, git.head)) }
-                    }
-                }
-                PickDivider()
-                PickRow("Pick $name anyway", sub = "Runs when it wakes", testTag = "devicePickAnyway") {
-                    asleepId = null; onPick(asleep, true, folder)
-                }
-            }
+            AsleepOffer(
+                name = asleep.name.ifEmpty { "Computer" },
+                snapshot = snapshots.firstOrNull { it.runtimeId == asleep.id },
+                folder = folder,
+                hasCloud = list.orEmpty().any { it.isCloud },
+                onUseCloud = { git -> asleepId = null; list.orEmpty().firstOrNull { it.isCloud }?.let { onPick(it, false, git) } },
+                onNoCloud = { gate = true },
+                onPickAnyway = { asleepId = null; onPick(asleep, true, folder) },
+            )
         } else {
             PickFoot("Your next message runs on the computer you pick: a real session with your files and tools.")
         }
@@ -312,5 +295,82 @@ fun PermissionPage(supported: List<StartMode>? = null, onDone: () -> Unit) {
             }
         }
         PickFoot("A change here is for this chat only.")
+    }
+}
+
+/**
+ * The asleep offer (web DeviceList asleep offer): the same git folder on a cloud computer, or a plain reason
+ * when it can't move; then "Pick <name> anyway". Shared by the Computer page and the chat feed (a send to an
+ * asleep pick fails and shows this again).
+ */
+@Composable
+fun AsleepOffer(
+    name: String,
+    snapshot: StartSnapshot?,
+    folder: StartFolderRef?,
+    hasCloud: Boolean,
+    onUseCloud: (StartFolderRef.Git) -> Unit,
+    onNoCloud: () -> Unit,
+    onPickAnyway: () -> Unit,
+    lead: String = "$name is asleep.",
+) {
+    val c = AllternitTheme.colors
+    val path = (folder as? StartFolderRef.Path)?.path
+    val snapFolder = snapshot?.folders?.let { fs -> fs.firstOrNull { it.path == path } ?: fs.firstOrNull() }
+    val folderName = snapFolder?.name ?: folder?.label ?: "this folder"
+    val git = snapFolder?.git ?: (folder as? StartFolderRef.Git)?.let { StartGit(it.remote, it.branch, it.head) }
+    PickGroup {
+        val line = when {
+            git == null && snapshot == null -> "$lead $name has not shared its folders, so a cloud computer cannot open $folderName."
+            git == null -> "$lead $folderName has no git remote, so a cloud computer cannot open it."
+            else -> "$lead Run in $folderName on a cloud computer instead?"
+        }
+        Text(line, color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp).testTag("deviceAsleepOffer"))
+        if (git != null) {
+            PickDivider()
+            PickRow("Use a cloud computer", chevron = true, testTag = "deviceUseCloud") {
+                if (hasCloud) onUseCloud(StartFolderRef.Git(git.remote, git.branch, git.head)) else onNoCloud()
+            }
+        }
+        PickDivider()
+        PickRow("Pick $name anyway", sub = "Runs when it wakes", testTag = "devicePickAnyway", onClick = onPickAnyway)
+    }
+}
+
+/** A send to the picked computer found it asleep or offline: the offer, shown in the chat feed. */
+data class AsleepSend(val runtimeId: String, val deviceName: String, val folder: StartFolderRef?)
+
+/**
+ * The feed card for [AsleepSend]: "Use a cloud computer" re-picks the account's cloud computer with the same
+ * git folder (the draft is back in the composer: send again), or opens the compute gate when there is none;
+ * "Pick <name> anyway" keeps the pick and closes the card.
+ */
+@Composable
+internal fun AsleepSendCard(backend: ChatBackend, offer: AsleepSend, onDone: () -> Unit) {
+    var devices by remember { mutableStateOf<List<RelayDevice>>(emptyList()) }
+    var snapshots by remember { mutableStateOf<List<StartSnapshot>>(emptyList()) }
+    var gate by remember { mutableStateOf(false) }
+    LaunchedEffect(offer) {
+        devices = backend.relay.listDevices().orEmpty()
+        snapshots = SessionStartClient.snapshots(backend)
+    }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("asleepSendCard"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AsleepOffer(
+            name = offer.deviceName,
+            snapshot = snapshots.firstOrNull { it.runtimeId == offer.runtimeId },
+            folder = offer.folder,
+            hasCloud = devices.any { it.isCloud },
+            onUseCloud = { git ->
+                devices.firstOrNull { it.isCloud }?.let { cloud ->
+                    PendingStart.pick(cloud)
+                    PendingStart.folder = git
+                }
+                onDone()
+            },
+            onNoCloud = { gate = true },
+            onPickAnyway = onDone,
+            lead = "${offer.deviceName} is asleep, so the session didn't start.",
+        )
+        if (gate) ComputeGateCard(ComputeGateReason.NoComputer, backend, onConnected = { gate = false }, onDismiss = { gate = false })
     }
 }

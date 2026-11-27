@@ -105,6 +105,8 @@ class ChatViewModel(
      */
     var binding by mutableStateOf<StartBinding?>(null)
         private set
+    /** A send to the picked computer found it asleep/offline: the feed shows the cloud offer again. */
+    var asleepSend by mutableStateOf<AsleepSend?>(null)
     /** One key per first send, so a retried start never starts twice (Idempotency-Key). */
     private var startKey: String? = null
 
@@ -308,6 +310,7 @@ class ChatViewModel(
         currentSessionId = null
         binding = null
         startKey = null
+        asleepSend = null
     }
 
     /** Opens a history chat: `GET agent-sessions/:id/messages`, then its branches. */
@@ -573,12 +576,14 @@ class ChatViewModel(
                 }
                 // Start anywhere: the first message with a picked computer starts a session there and
                 // binds this thread to it; a bound thread keeps going to the same computer.
-                val bound = binding ?: if (currentSessionId == null && PendingStart.appliesTo(null, messages.count { it.role == "user" } > 1)) startOnPicked(text) else null
+                val bound = binding ?: if (currentSessionId == null && PendingStart.appliesTo(null, messages.count { it.role == "user" } > 1)) startOnPicked(text, hasFiles = staged.isNotEmpty()) else null
                 if (bound?.isTerminal == true) {
                     // The CLI got the message as its prompt; the thread now shows its terminal (ChatPage).
                     ensureSessionId(agentModeId, bound)
                     isCreatingSession = false
                     binding = bound
+                    // A CLI in a terminal takes text only: say so rather than drop the files silently.
+                    if (staged.isNotEmpty()) transientError = "${bound.runtime} in a terminal takes text only, so your files weren't sent."
                     update(assistantId) { it.copy(content = "Started ${bound.runtime} in ${bound.folder.trimEnd('/').substringAfterLast('/')} on ${bound.deviceName}.") }
                     finishStreaming(assistantId)
                     return@launch
@@ -594,8 +599,17 @@ class ChatViewModel(
                     requestStartedAt = System.currentTimeMillis()
                     firstDeltaAt = null
                     startPermissionPolling(currentSessionId ?: "")
+                    // The start carried the first message as its prompt, unless it had files.
+                    val viaMessages = !first || staged.isNotEmpty()
                     val since = if (first) 0 else BoundEngine.messages(backend, bound)?.size ?: 0
-                    if (!first) BoundEngine.send(backend, bound, strippedText(text))?.let { throw SendException(it) }
+                    if (viaMessages) {
+                        val files = staged.map { a ->
+                            val (bytes, mediaType) = withContext(Dispatchers.IO) { readAttachment(a) } ?: throw SendException(uploadFailed(a.name))
+                            if (bytes.size > BoundEngine.MAX_FILE_BYTES) throw SendException("${a.name} is too big to send to ${bound.deviceName} (10 MB at most).")
+                            BoundEngine.FilePart(mediaType, "data:$mediaType;base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP), a.name)
+                        }
+                        BoundEngine.send(backend, bound, strippedText(text), files)?.let { throw SendException(it) }
+                    }
                     BoundEngine.follow(backend, bound, since, onText = { t -> update(assistantId) { it.copy(content = t) } }, onAsk = { refreshPermissions() })
                     refreshPermissions()
                     finishStreaming(assistantId)
@@ -835,10 +849,11 @@ class ChatViewModel(
      * relay to THAT computer). Gizzi (`allternit`) is an engine session the chat drives; any other CLI is a
      * pane terminal that gets [text] as its prompt. Null when no computer is picked (today's path).
      */
-    private suspend fun startOnPicked(text: String): StartBinding? {
+    private suspend fun startOnPicked(text: String, hasFiles: Boolean = false): StartBinding? {
         val runtimeId = PendingStart.runtimeId ?: return null
         val deviceName = PendingStart.deviceName ?: "your computer"
         val runtime = contractRuntime((sessionContext.botBrain?.get("runtime") as? JsonPrimitive)?.content ?: "allternit")
+        asleepSend = null
         val folder = PendingStart.folder ?: run {
             val opts = PendingStart.options ?: (SessionStartClient.options(backend, runtimeId) as? StartResult.Ok)?.value
             opts?.folders?.firstOrNull()?.let { StartFolderRef.Path(it.path) }
@@ -848,7 +863,8 @@ class ChatViewModel(
         val picked = PendingStart.mode
         val origin = StartOrigin(surface = "android", deviceName = android.os.Build.MODEL ?: "Android phone", depth = 0)
         val key = startKey ?: UUID.randomUUID().toString().also { startKey = it }
-        val request = StartRequest(folder = folder, runtime = runtime, mode = picked, prompt = strippedText(text), origin = origin)
+        val request = StartRequest(folder = folder, runtime = runtime, mode = picked, // Gizzi with files: start with no prompt, then the first message (text + files) goes to remote-control.
+            prompt = if (runtime == "allternit" && hasFiles) null else strippedText(text), origin = origin)
         val binding = when (val r = SessionStartClient.start(backend, runtimeId, request, key)) {
             is StartResult.Ok -> when (val v = r.value) {
                 is StartResponse.Engine -> StartBinding(runtimeId, deviceName, v.directory.ifEmpty { (folder as? StartFolderRef.Path)?.path.orEmpty() }, runtime,
@@ -857,7 +873,11 @@ class ChatViewModel(
                     picked ?: PendingStart.defaultMode ?: StartMode.Default, "terminal", terminalId = v.terminalId, origin = origin)
             }
             is StartResult.Refused -> throw SendException(r.error.sentence)
-            is StartResult.Unreachable -> throw SendException(if (PendingStart.asleep) asleepLine(deviceName) else r.message)
+            is StartResult.Unreachable -> {
+                // Asleep or offline: the plain line, and the cloud offer again in the feed.
+                asleepSend = AsleepSend(runtimeId, deviceName, folder)
+                throw SendException(asleepLine(deviceName))
+            }
         }
         startKey = null
         PendingStart.clear()

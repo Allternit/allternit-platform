@@ -362,10 +362,24 @@ object BoundEngine {
         }
     }
 
-    /** `POST …/messages {text}`; null on success, else the sentence to show. */
-    suspend fun send(backend: ChatBackend, b: StartBinding, text: String): String? {
+    /** One file for gizzi's message `attachments` ({mime, url, filename}); [url] is a data: URL. */
+    data class FilePart(val mime: String, val url: String, val filename: String?)
+
+    /** Data URLs ride the relay body, so each file stays small. */
+    const val MAX_FILE_BYTES = 10 * 1024 * 1024
+
+    /**
+     * `POST …/messages {text, attachments}`; null on success, else the sentence to show. Files go as gizzi file
+     * parts with data: URLs: the computer can't fetch the chat's cloud upload URLs (they need the bearer).
+     */
+    suspend fun send(backend: ChatBackend, b: StartBinding, text: String, files: List<FilePart> = emptyList()): String? {
         val id = b.sessionId ?: return "This chat lost its computer session. Start a new chat."
-        val body = buildJsonObject { put("text", text) }.toString()
+        val body = buildJsonObject {
+            put("text", text)
+            if (files.isNotEmpty()) put("attachments", kotlinx.serialization.json.buildJsonArray {
+                files.forEach { f -> add(buildJsonObject { put("mime", f.mime); put("url", f.url); f.filename?.let { put("filename", it) } }) }
+            })
+        }.toString()
         return when (backend.runtimeJson("POST", rc(id, "/messages"), body, b.runtimeId)) {
             is RuntimeCall.Ok -> null
             else -> "${b.deviceName} did not take that message. Check that it is online, then try again."

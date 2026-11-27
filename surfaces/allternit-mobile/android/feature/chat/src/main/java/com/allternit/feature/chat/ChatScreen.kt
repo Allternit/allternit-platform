@@ -267,6 +267,9 @@ fun ChatScreen(
                     if (anchorIndex >= 0) {
                         item(key = ANSWER_ROOM_KEY) { Spacer(Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { roomPx.toDp() })) }
                     }
+                    viewModel.asleepSend?.let { offer ->
+                        item(key = "asleepSend") { AsleepSendCard(backend, offer, onDone = { viewModel.asleepSend = null }) }
+                    }
                     if (gate != null) {
                         item(key = "computeGate") {
                             ComputeGateCard(
