@@ -15,6 +15,14 @@
 //! `q` ranks: name starts with it, then name contains it, then category or
 //! blurb contains it; ties by name. `counts` follow `q` but not `group`.
 //! The cursor is the offset as a decimal string.
+//!
+//! Version 2 filters: `category` (an entry's category or one of its pack
+//! categories), `interactive=true` (the in-chat UI flag) and
+//! `sort=popular|new|trending` (within a group, after `q` rank). Filters
+//! narrow `counts` like `q` does. `skills` lists plugin-marketplace skills
+//! that carry the id of the app whose logo they show; the committed snapshot
+//! has no `skills` array (the cloud has no marketplace install path yet), so
+//! the group is empty in production.
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
@@ -26,10 +34,13 @@ use sqlx::PgPool;
 use crate::error::ApiError;
 use crate::services::connections::{key_page, KEY_ROWS};
 
-pub const VERSION: u32 = 1;
+/// 2 adds optional entry fields, the `skills` group, the `category`,
+/// `interactive` and `sort` filters and the detail route. Additive only: a
+/// client that ignores the new fields still parses a version 2 page.
+pub const VERSION: u32 = 2;
 
-/// The seven groups, in the order an unfiltered page lists them.
-pub const GROUPS: [&str; 7] = ["brains", "computers", "phones", "tools", "voice", "apps", "channels"];
+/// The eight groups, in the order an unfiltered page lists them.
+pub const GROUPS: [&str; 8] = ["brains", "computers", "phones", "tools", "voice", "apps", "skills", "channels"];
 
 pub const DEFAULT_LIMIT: usize = 24;
 pub const MAX_LIMIT: usize = 60;
@@ -81,7 +92,7 @@ fn key_row_name(id: &str) -> &'static str {
 }
 
 /// One catalog entry, exactly as the contract's JSON.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct Entry {
     pub id: String,
     pub group: &'static str,
@@ -96,6 +107,36 @@ pub struct Entry {
     pub available: bool,
     pub unavailable_reason: Option<&'static str>,
     pub fallbacks: Vec<&'static str>,
+    // Version 2: all optional; a client that ignores them still parses.
+    /// `partner`, `verified`, ... as the pack says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    /// When the entry was listed (RFC 3339 date), if the snapshot has it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_url: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+    /// The connector draws a UI in the chat.
+    pub interactive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screen_pack: Option<String>,
+    pub is_new: bool,
+    pub trending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub popularity: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_source: Option<String>,
+    /// Skills: the id of the app whose logo the skill shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
 }
 
 /// Per-group totals after `q`.
@@ -107,6 +148,7 @@ pub struct Counts {
     pub tools: usize,
     pub voice: usize,
     pub apps: usize,
+    pub skills: usize,
     pub channels: usize,
 }
 
@@ -119,6 +161,7 @@ impl Counts {
             "tools" => self.tools += 1,
             "voice" => self.voice += 1,
             "apps" => self.apps += 1,
+            "skills" => self.skills += 1,
             "channels" => self.channels += 1,
             _ => {}
         }
@@ -145,6 +188,19 @@ pub struct Query {
     pub q: Option<String>,
     pub limit: usize,
     pub offset: usize,
+    /// Keep entries in this category (case-insensitive).
+    pub category: Option<String>,
+    /// Keep only entries with the in-chat UI flag.
+    pub interactive: bool,
+    pub sort: Option<Sort>,
+}
+
+/// `sort=` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sort {
+    Popular,
+    New,
+    Trending,
 }
 
 /// A 400 the route answers as `{"error": code}`.
@@ -152,6 +208,7 @@ pub struct Query {
 pub enum QueryError {
     UnknownGroup,
     BadCursor,
+    BadSort,
 }
 
 impl QueryError {
@@ -159,6 +216,7 @@ impl QueryError {
         match self {
             QueryError::UnknownGroup => "unknown_group",
             QueryError::BadCursor => "bad_cursor",
+            QueryError::BadSort => "bad_sort",
         }
     }
 }
@@ -188,7 +246,29 @@ pub fn parse_query(
         Some(c) if c.bytes().all(|b| b.is_ascii_digit()) => c.parse::<usize>().map_err(|_| QueryError::BadCursor)?,
         Some(_) => return Err(QueryError::BadCursor),
     };
-    Ok(Query { group, q, limit, offset })
+    Ok(Query { group, q, limit, offset, category: None, interactive: false, sort: None })
+}
+
+/// Version 2 filters on a parsed query. An empty value counts as absent;
+/// `interactive` is on for `true` or `1`.
+pub fn with_filters(
+    mut query: Query,
+    category: Option<&str>,
+    interactive: Option<&str>,
+    sort: Option<&str>,
+) -> Result<Query, QueryError> {
+    query.category = category
+        .map(|c| c.trim().to_lowercase().chars().take(MAX_QUERY_CHARS).collect::<String>())
+        .filter(|c| !c.is_empty());
+    query.interactive = matches!(interactive.map(|v| v.trim().to_lowercase()).as_deref(), Some("true" | "1"));
+    query.sort = match sort.map(str::trim).filter(|s| !s.is_empty()) {
+        None => None,
+        Some("popular") => Some(Sort::Popular),
+        Some("new") => Some(Sort::New),
+        Some("trending") => Some(Sort::Trending),
+        Some(_) => return Err(QueryError::BadSort),
+    };
+    Ok(query)
 }
 
 /// Whether the page will hold app entries, i.e. whether the route needs the
@@ -209,6 +289,22 @@ struct Item {
 #[derive(Deserialize)]
 struct Snapshot {
     apps: Vec<SnapshotApp>,
+    /// Plugin-marketplace skills; absent until the cloud can install them.
+    #[serde(default)]
+    skills: Vec<SnapshotSkill>,
+}
+
+#[derive(Deserialize)]
+struct SnapshotSkill {
+    id: String,
+    name: String,
+    #[serde(default)]
+    blurb: String,
+    /// The app whose logo the skill shows; a skill without a known app is dropped.
+    #[serde(default)]
+    app_id: String,
+    #[serde(default)]
+    popularity: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -221,6 +317,38 @@ struct SnapshotApp {
     blurb: String,
     #[serde(default)]
     auth: String,
+    #[serde(default)]
+    one_liner: String,
+    #[serde(default)]
+    tier: Option<String>,
+    #[serde(default)]
+    listed_at: Option<String>,
+    #[serde(default)]
+    server_url: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    author_url: Option<String>,
+    #[serde(default)]
+    categories: Vec<String>,
+    #[serde(default)]
+    interactive: bool,
+    #[serde(default)]
+    screen_pack: Option<String>,
+    #[serde(default)]
+    is_new: bool,
+    #[serde(default)]
+    trending: bool,
+    #[serde(default)]
+    popularity: Option<u64>,
+    #[serde(default)]
+    icon_url: Option<String>,
+    #[serde(default)]
+    icon_source: Option<String>,
+}
+
+fn non_empty(v: Option<String>) -> Option<String> {
+    v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 /// How an app connects, from its snapshot auth type. The contract has no
@@ -268,15 +396,16 @@ fn build_items(snapshot: &str) -> Vec<Item> {
                 available: true,
                 unavailable_reason: None,
                 fallbacks: Vec::new(),
+                ..Default::default()
             })
         })
         .collect();
 
-    let apps = match serde_json::from_str::<Snapshot>(snapshot) {
-        Ok(snapshot) => snapshot.apps,
+    let (apps, skills) = match serde_json::from_str::<Snapshot>(snapshot) {
+        Ok(snapshot) => (snapshot.apps, snapshot.skills),
         Err(error) => {
             tracing::error!(%error, "connections catalog snapshot unreadable; listing no apps");
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     };
     let mut seen: HashSet<String> = items.iter().map(|i| i.entry.id.clone()).collect();
@@ -286,9 +415,10 @@ fn build_items(snapshot: &str) -> Vec<Item> {
             continue;
         }
         let category = app.category.trim().to_string();
-        let blurb = match app.blurb.trim() {
-            "" => category.clone(),
-            blurb => blurb.to_string(),
+        let blurb = match (app.blurb.trim(), app.one_liner.trim()) {
+            ("", "") => category.clone(),
+            ("", one_liner) => one_liner.to_string(),
+            (blurb, _) => blurb.to_string(),
         };
         items.push(item(Entry {
             connector_id: Some(id.clone()),
@@ -305,8 +435,51 @@ fn build_items(snapshot: &str) -> Vec<Item> {
             available: false,
             unavailable_reason: Some(NEEDS_COMPUTER),
             fallbacks: vec!["this-mac"],
+            tier: non_empty(app.tier),
+            listed_at: non_empty(app.listed_at),
+            server_url: non_empty(app.server_url),
+            author: non_empty(app.author),
+            author_url: non_empty(app.author_url),
+            categories: app.categories,
+            interactive: app.interactive,
+            screen_pack: non_empty(app.screen_pack),
+            is_new: app.is_new,
+            trending: app.trending,
+            popularity: app.popularity,
+            icon_url: non_empty(app.icon_url),
+            icon_source: non_empty(app.icon_source),
+            app_id: None,
         }));
     }
+    // Skills show the logo of their app; one whose app is not in the catalog
+    // (or is a base row) is left out rather than drawn without a logo.
+    let skills: Vec<Entry> = skills
+        .into_iter()
+        .filter_map(|skill| {
+            let id = skill.id.trim().to_string();
+            let app_id = skill.app_id.trim().to_string();
+            let app = items.iter().find(|i| i.entry.group == "apps" && i.entry.id == app_id)?;
+            if id.is_empty() || BASE_IDS.contains(&id.as_str()) || !seen.insert(id.clone()) {
+                return None;
+            }
+            Some(Entry {
+                id,
+                group: "skills",
+                name: skill.name.trim().to_string(),
+                blurb: skill.blurb.trim().to_string(),
+                category: app.entry.category.clone(),
+                ways: vec!["install"],
+                runs_on: "computer",
+                available: true,
+                popularity: skill.popularity,
+                icon_url: app.entry.icon_url.clone(),
+                icon_source: app.entry.icon_source.clone(),
+                app_id: Some(app_id),
+                ..Default::default()
+            })
+        })
+        .collect();
+    items.extend(skills.into_iter().map(item));
     // Group order, then name: the order of a page with no `q`.
     items.sort_by(|a, b| (a.group_rank, &a.name_lc, &a.entry.id).cmp(&(b.group_rank, &b.name_lc, &b.entry.id)));
     items
@@ -332,6 +505,40 @@ fn rank(item: &Item, q: Option<&str>) -> Option<u8> {
     }
 }
 
+fn apply_online(entry: &mut Entry, computer_online: bool) {
+    if entry.group == "apps" && computer_online {
+        entry.available = true;
+        entry.unavailable_reason = None;
+        entry.fallbacks = Vec::new();
+    }
+}
+
+fn passes_filters(entry: &Entry, query: &Query) -> bool {
+    if query.interactive && !entry.interactive {
+        return false;
+    }
+    match &query.category {
+        None => true,
+        Some(c) => {
+            entry.category.to_lowercase() == *c || entry.categories.iter().any(|x| x.to_lowercase() == *c)
+        }
+    }
+}
+
+/// The entry with this id, or `None`. `computer_online` decides `available`
+/// for an app, like [`page`].
+pub fn detail(id: &str, computer_online: bool) -> Option<Entry> {
+    let item = items().iter().find(|i| i.entry.id == id)?;
+    let mut entry = item.entry.clone();
+    apply_online(&mut entry, computer_online);
+    Some(entry)
+}
+
+/// Whether [`detail`] for this id needs the "computer online" fact.
+pub fn detail_needs_computer_fact(id: &str) -> bool {
+    items().iter().any(|i| i.entry.id == id && i.entry.group == "apps")
+}
+
 /// One page of the catalog. `computer_online` decides `available` for apps.
 pub fn page(query: &Query, computer_online: bool) -> Page {
     page_of(items(), query, computer_online)
@@ -345,12 +552,27 @@ fn page_of(items: &[Item], query: &Query, computer_online: bool) -> Page {
     let mut matched: Vec<(usize, u8, &Item)> = Vec::new();
     for item in items {
         let Some(rank) = rank(item, q) else { continue };
+        if !passes_filters(&item.entry, query) {
+            continue;
+        }
         counts.bump(item.entry.group);
         if query.group.is_none_or(|group| group == item.entry.group) {
             matched.push((item.group_rank, rank, item));
         }
     }
-    matched.sort_by_key(|(group_rank, rank, _)| (*group_rank, *rank));
+    match query.sort {
+        None => matched.sort_by_key(|(group_rank, rank, _)| (*group_rank, *rank)),
+        Some(sort) => matched.sort_by_key(|(group_rank, rank, item)| {
+            let e = &item.entry;
+            let flag = match sort {
+                Sort::Popular => false,
+                Sort::New => e.is_new,
+                Sort::Trending => e.trending,
+            };
+            // Flagged first, then most popular; ties keep name order (stable).
+            (*group_rank, *rank, !flag, std::cmp::Reverse(e.popularity.unwrap_or(0)))
+        }),
+    }
 
     let total = matched.len();
     let start = query.offset.min(total);
@@ -359,11 +581,7 @@ fn page_of(items: &[Item], query: &Query, computer_online: bool) -> Page {
         .iter()
         .map(|(_, _, item)| {
             let mut entry = item.entry.clone();
-            if entry.group == "apps" && computer_online {
-                entry.available = true;
-                entry.unavailable_reason = None;
-                entry.fallbacks = Vec::new();
-            }
+            apply_online(&mut entry, computer_online);
             entry
         })
         .collect();
@@ -571,6 +789,97 @@ mod tests {
         assert_eq!((past.entries.len(), past.next_cursor.clone()), (0, None));
     }
 
+    /// Version 2 sample: pack fields, flags, popularity and one skill.
+    fn sample_v2() -> Vec<Item> {
+        build_items(
+            r#"{"version":1,"generated_from":"test","apps":[
+                {"id":"alpha","name":"Alpha","category":"Productivity","blurb":"","one_liner":"Does alpha","auth":"oauth2",
+                 "tier":"partner","server_url":"https://mcp.alpha.test/mcp","author":"Alpha Inc.","author_url":"https://alpha.test/",
+                 "categories":["productivity","design"],"interactive":true,"screen_pack":"alpha","is_new":false,"trending":true,
+                 "popularity":10,"icon_source":"favicon","icon_url":"https://icons.test/alpha.svg","listed_at":"2026-11-01"},
+                {"id":"beta","name":"Beta","category":"Design","blurb":"","auth":"oauth2",
+                 "categories":["design"],"interactive":false,"is_new":true,"trending":false,"popularity":99},
+                {"id":"gamma","name":"Gamma","category":"Data","blurb":"","auth":"oauth2",
+                 "interactive":true,"is_new":true,"trending":true,"popularity":50},
+                {"id":"plain","name":"Plain","category":"Other","blurb":"","auth":"oauth2"}
+            ],"skills":[
+                {"id":"alpha-skill","name":"Alpha helper","blurb":"Skill for Alpha","app_id":"alpha","popularity":7},
+                {"id":"orphan-skill","name":"Orphan","blurb":"No such app","app_id":"missing"}
+            ]}"#,
+        )
+    }
+
+    fn v2(group: Option<&str>, category: Option<&str>, interactive: Option<&str>, sort: Option<&str>) -> Query {
+        with_filters(query(group, None, Some("60"), None), category, interactive, sort).expect("valid query")
+    }
+
+    #[test]
+    fn catalog_v2_fields_and_old_fields_survive() {
+        let items = sample_v2();
+        let page = page_of(&items, &query(Some("apps"), Some("alpha"), None, None), false);
+        let e = &page.entries[0];
+        assert_eq!(page.version, 2);
+        assert_eq!(e.blurb, "Does alpha", "one_liner is the blurb when there is none");
+        assert_eq!((e.tier.as_deref(), e.author.as_deref(), e.screen_pack.as_deref()), (Some("partner"), Some("Alpha Inc."), Some("alpha")));
+        assert_eq!((e.server_url.as_deref(), e.listed_at.as_deref()), (Some("https://mcp.alpha.test/mcp"), Some("2026-11-01")));
+        assert_eq!((e.icon_url.as_deref(), e.icon_source.as_deref()), (Some("https://icons.test/alpha.svg"), Some("favicon")));
+        assert!(e.interactive && e.trending && !e.is_new);
+        assert_eq!((e.popularity, e.categories.clone()), (Some(10), vec!["productivity".to_string(), "design".to_string()]));
+        // An entry with none of the new fields still carries every v1 key.
+        let json = serde_json::to_value(&page_of(&items, &query(Some("apps"), Some("plain"), None, None), false)).unwrap();
+        for key in ["id", "group", "name", "blurb", "category", "ways", "runs_on", "connector_id", "key_page", "logo", "available", "unavailable_reason", "fallbacks"] {
+            assert!(json["entries"][0].get(key).is_some(), "entry.{key}");
+        }
+        assert!(json["entries"][0].get("tier").is_none());
+    }
+
+    #[test]
+    fn catalog_v2_interactive_and_category_filters() {
+        let items = sample_v2();
+        let page = page_of(&items, &v2(Some("apps"), None, Some("true"), None), false);
+        assert_eq!(ids(&page), vec!["alpha", "gamma"]);
+        assert_eq!(page.counts.apps, 2, "counts follow the filters");
+        let page = page_of(&items, &v2(Some("apps"), Some("Design"), None, None), false);
+        assert_eq!(ids(&page), vec!["alpha", "beta"], "pack categories and the category both match");
+        let page = page_of(&items, &v2(Some("apps"), Some("design"), Some("1"), None), false);
+        assert_eq!(ids(&page), vec!["alpha"]);
+        assert_eq!(with_filters(query(None, None, None, None), None, None, Some("hot")), Err(QueryError::BadSort));
+    }
+
+    #[test]
+    fn catalog_v2_sort_new_trending_popular() {
+        let items = sample_v2();
+        let new = page_of(&items, &v2(Some("apps"), None, None, Some("new")), false);
+        assert_eq!(ids(&new), vec!["beta", "gamma", "alpha", "plain"], "new first, then most popular");
+        let trending = page_of(&items, &v2(Some("apps"), None, None, Some("trending")), false);
+        assert_eq!(ids(&trending), vec!["gamma", "alpha", "beta", "plain"]);
+        let popular = page_of(&items, &v2(Some("apps"), None, None, Some("popular")), false);
+        assert_eq!(ids(&popular), vec!["beta", "gamma", "alpha", "plain"]);
+    }
+
+    #[test]
+    fn catalog_v2_skill_carries_its_app_id() {
+        let items = sample_v2();
+        let page = page_of(&items, &query(Some("skills"), None, Some("60"), None), false);
+        assert_eq!(ids(&page), vec!["alpha-skill"], "a skill whose app is missing is dropped");
+        let skill = &page.entries[0];
+        assert_eq!((skill.group, skill.app_id.as_deref()), ("skills", Some("alpha")));
+        assert_eq!(skill.icon_url.as_deref(), Some("https://icons.test/alpha.svg"), "the skill shows its app's logo");
+        assert_eq!((page.counts.skills, page.counts.apps), (1, 4));
+        assert!(skill.available);
+    }
+
+    #[test]
+    fn catalog_detail_finds_entries() {
+        assert_eq!(detail("anthropic-key", false).map(|e| e.group), Some("brains"));
+        assert!(detail("no-such-entry", true).is_none());
+        assert!(!detail_needs_computer_fact("anthropic-key"));
+        let app = items().iter().find(|i| i.entry.group == "apps").unwrap().entry.id.clone();
+        assert!(detail_needs_computer_fact(&app));
+        assert_eq!(detail(&app, false).map(|e| e.available), Some(false));
+        assert_eq!(detail(&app, true).map(|e| e.available), Some(true));
+    }
+
     #[test]
     fn catalog_bad_group_and_cursor() {
         assert_eq!(parse_query(Some("gadgets"), None, None, None), Err(QueryError::UnknownGroup));
@@ -579,6 +888,6 @@ mod tests {
         assert_eq!(parse_query(None, None, None, Some("99999999999999999999999")), Err(QueryError::BadCursor));
         assert_eq!(QueryError::UnknownGroup.code(), "unknown_group");
         assert_eq!(QueryError::BadCursor.code(), "bad_cursor");
-        assert_eq!(query(Some(""), None, None, Some("")), Query { group: None, q: None, limit: DEFAULT_LIMIT, offset: 0 });
+        assert_eq!(query(Some(""), None, None, Some("")), Query { group: None, q: None, limit: DEFAULT_LIMIT, offset: 0, category: None, interactive: false, sort: None });
     }
 }
