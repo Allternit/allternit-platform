@@ -875,6 +875,8 @@ interface StoreSchema {
   coworkDeviceId?: string;
   /** Settings → Cowork "Open links in the built-in browser", mirrored from the API prefs. */
   openLinksInApp?: boolean;
+  /** Settings "Allow new sessions from my other devices" (Start anywhere D6). Unset = on. */
+  remoteStartEnabled?: boolean;
   /** Whether the startup onboarding wizard (welcome → sign-in) has been completed or skipped */
   startupWizardCompleted: boolean;
   permissions: {
@@ -3447,6 +3449,36 @@ authManager.setRelayHostHandler((method, path, body) => {
   if (path === '/host/shares/start') return shareManager.handleHostStart(body);
   const command = /^\/host\/shares\/([A-Za-z0-9_-]{1,64})\/(resume|pause|stop)$/.exec(path);
   return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
+});
+
+// Start anywhere (D6): the switch is read before authManager.initialize()
+// opens the relay, so the first authenticate already carries it.
+authManager.setRemoteStartEnabled(store.get('remoteStartEnabled') ?? true);
+// Held until clicked or closed so the click handler is not garbage collected.
+const remoteStartNotices = new Set<Notification>();
+authManager.setRemoteStartListener(({ title, body }) => {
+  if (!Notification.isSupported()) {
+    log.info(`[RemoteStart] ${title}: ${body}`);
+    return;
+  }
+  const notice = new Notification({ title, body });
+  remoteStartNotices.add(notice);
+  notice.on('click', () => {
+    remoteStartNotices.delete(notice);
+    showOrReopenMainWindow();
+  });
+  notice.on('close', () => remoteStartNotices.delete(notice));
+  notice.show();
+});
+
+ipcMain.handle('remote-start:get', () => store.get('remoteStartEnabled') ?? true);
+
+handleGuarded('remote-start:set', (_event, enabled: unknown) => {
+  const value = enabled === true;
+  store.set('remoteStartEnabled', value);
+  authManager.setRemoteStartEnabled(value);
+  broadcastToMainWindows('remote-start:changed', value);
+  return value;
 });
 featureFlagManager.onChange((key, value) => {
   if (key === 'share.live' && value !== true) void shareManager.disable();
