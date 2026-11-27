@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { WelcomeBox, headerArtMode, headerCanAnimate, headerMascotSize, idleFrame, welcomeRows } from "../../src/cli/ui/ink-app/components/WelcomeBox"
-import { CORAL, EYE, FONT35, FONT45, brailleRows, mascotRows, wordmarkRows } from "../../src/cli/ui/ink-app/components/welcomeArt"
+import { CORAL, EYE, FONT35, FONT45, MASCOT_MID, brailleRows, mascotRows, pixelCell, wordmarkRows } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
@@ -95,10 +95,29 @@ describe("half-block mascot", () => {
     expect(rows).toHaveLength(8)
     for (const line of text(rows)) {
       expect(line).toHaveLength(18)
-      expect(line).toMatch(/^[ ▀▄█]+$/)
+      expect(line).toMatch(/^[ ▀▄]+$/)
     }
     const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
     expect([...colors].sort()).toEqual([CORAL, EYE, "gizziSand", "gizziVisor"].sort())
+  })
+
+  test("mid: the approved 18 x 16 drawing", () => {
+    expect(MASCOT_MID).toEqual([
+      "........BB........", "..................", "...TTTTE..ETTTT...", "..................",
+      "...TTTTTTTTTTTT...", "..TTVVVVVVVVVVTT..", "..TVVEEVVVVEEVVT..", ".TTVVEEVVVVEEVVTT.",
+      ".TTVVVVVBBVVVVVTT.", "..TVVVVBBBBVVVVT..", "..TTVVVVVVVVVVTT..", "...TTTTTTTTTTTT...",
+      "...TTTTTTTTTTTT...", "....TTTTTTTTTT....", "...TT.TT..TT.TT...", "...TT.TT..TT.TT...",
+    ])
+  })
+
+  test("gap-free cell rule", () => {
+    expect(pixelCell(undefined, undefined)).toEqual([" ", ""])
+    expect(pixelCell("a", "a")).toEqual([" ", "", "a"]) // same color: space with bg
+    expect(pixelCell("a", "b")).toEqual(["▄", "b", "a"]) // split: fg = bottom, bg = top
+    expect(pixelCell(undefined, "b")).toEqual(["▄", "b"]) // empty top: no bg
+    expect(pixelCell("a", undefined)).toEqual(["▀", "a"]) // empty bottom: no terminal bg known
+    const all = mascotRows("mid").flat().map(([t]) => t).join("")
+    expect(all).not.toContain("█")
   })
 
   test("tiny: 10 x 3", () => {

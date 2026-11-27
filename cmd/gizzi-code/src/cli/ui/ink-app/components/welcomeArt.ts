@@ -22,14 +22,14 @@ export type ArtRow = ArtSegment[]
 export const MASCOT_MID = [
   '........BB........',
   '..................',
-  '...TTTTT..TTTTT...',
+  '...TTTTE..ETTTT...',
   '..................',
   '...TTTTTTTTTTTT...',
   '..TTVVVVVVVVVVTT..',
   '..TVVEEVVVVEEVVT..',
-  'TTTVVEEVVVVEEVVTTT',
+  '.TTVVEEVVVVEEVVTT.',
   '.TTVVVVVBBVVVVVTT.',
-  '..TVVVVBVVBVVVVT..',
+  '..TVVVVBBBBVVVVT..',
   '..TTVVVVVVVVVVTT..',
   '...TTTTTTTTTTTT...',
   '...TTTTTTTTTTTT...',
@@ -76,6 +76,20 @@ function mergeRuns(cells: ArtSegment[]): ArtRow {
 }
 
 /**
+ * One cell from its top and bottom pixel colors, gap-free: ▀ starts below the
+ * cell top in some fonts (SF Mono), so a split cell is drawn with ▄ (reaches
+ * the cell bottom) and the top color as the cell background; a solid cell is a
+ * space on a background. No terminal background color is known (only
+ * dark/light), so an empty bottom half falls back to ▀ with a small top gap.
+ */
+export function pixelCell(t: string | undefined, b: string | undefined): ArtSegment {
+  if (!t && !b) return [' ', '']
+  if (t && b) return t === b ? [' ', '', t] : ['▄', b, t]
+  if (b) return ['▄', b]
+  return ['▀', t!]
+}
+
+/**
  * Two pixel rows per terminal cell with half blocks. `colorOf` maps a pixel
  * char to a theme color (undefined = empty). An optional text `mark` is
  * drawn bold coral on the face panel at a cell row/column.
@@ -98,10 +112,7 @@ export function renderPixelArt(
       }
       const t = colorOf(top[c]!)
       const b = colorOf(bottom[c]!)
-      if (!t && !b) cells.push([' ', ''])
-      else if (t && b) cells.push(t === b ? ['█', t] : ['▀', t, b])
-      else if (t) cells.push(['▀', t!])
-      else cells.push(['▄', b!])
+      cells.push(pixelCell(t, b))
     }
     rows.push(mergeRuns(cells))
   }
