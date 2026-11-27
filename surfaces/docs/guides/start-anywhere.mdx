@@ -69,11 +69,12 @@ If Desktop is running on the same computer, it holds the connection and the engi
 `gizzi start` starts a session on any of your computers, from the terminal:
 
 ```bash
-gizzi start --list                        # computers, folders and runtimes
-gizzi start --device laptop --folder ~/app "fix the failing test"
+gizzi start --list                        # your computers: online, asleep, last seen
+gizzi start --device laptop --folder ~/app --prompt "fix the failing test"
+gizzi start --device laptop --folder ~/app --runtime codex --mode default
 ```
 
-The Gizzi agent can do the same with its **StartSession** tool. The tool asks you first. It never starts a session with more permission than the one that called it. A session started by a session can go three levels deep at most, and there is a limit of six starts a minute per computer. Other coding CLIs can call `gizzi start`.
+The Gizzi agent can do the same with its **StartSession** tool. The tool asks you first. It never starts a session with more permission than the one that called it. A session started by a session can go three levels deep at most, and there is a limit of six starts a minute per computer. Other coding CLIs can call `gizzi start`. Starting on another computer from the terminal needs an Allternit API key in `ALLTERNIT_API_TOKEN`.
 
 ## If a start fails
 
