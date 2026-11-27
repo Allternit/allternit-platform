@@ -299,6 +299,10 @@ struct SendMessageBody {
     /// Standing instructions for this turn ("+…" appends to gizzi's own).
     #[serde(default)]
     system: Option<String>,
+    /// The caller's "search past chats" switch. Passed to gizzi unchanged,
+    /// which owns the per-turn past-chats block; absent means gizzi's default (on).
+    #[serde(default)]
+    memory_search: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1720,6 +1724,10 @@ async fn send_message(
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // An incognito chat never searches past chats.
+    if state.db.is_session_ephemeral(&session_id).unwrap_or(false) {
+        payload["memory_search"] = json!(false);
+    }
     // A plain chat created on a runtime (Claude Code, Codex, …) runs every
     // turn on that runtime's CLI, whatever model the client sends.
     let asked = payload.get("model").and_then(|m| {
@@ -2325,6 +2333,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     }
     if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
         payload["system"] = json!(system);
+    }
+    if let Some(flag) = body.memory_search {
+        payload["memory_search"] = json!(flag);
     }
     // Prompt hints the runtime reads (small-screen, spoken-reply and
     // `answer_cards: "widgets"` writing-card blocks, and whether this client

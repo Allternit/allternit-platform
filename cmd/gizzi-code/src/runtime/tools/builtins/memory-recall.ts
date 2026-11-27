@@ -1,7 +1,7 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
-import { MemoryKernelAdapter } from "@/runtime/memory/kernel-adapter"
+import { MemoryKernelAdapter, type PastTurn } from "@/runtime/memory/kernel-adapter"
 import { Question } from "@/runtime/integrations/question"
 import { askDisputes, needsUser, relatedLines, resolveDispute, type DisputeNote } from "@/runtime/memory/sleep/dispute-note"
 import { Flag } from "@/runtime/context/flag/flag"
@@ -9,19 +9,48 @@ import { Session } from "@/runtime/session"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import DESCRIPTION from "@/runtime/tools/builtins/memory-recall.txt"
 
+function pastLine(t: PastTurn): string {
+  const text = t.text.replace(/\s+/g, " ").trim()
+  return `- [${t.timestamp.slice(0, 10)} · ${t.speaker}; id: ${t.observation_id}; session: ${t.session_id}] ${text}`
+}
+
 export const MemoryRecallTool = Tool.define("memory_recall", {
   description: DESCRIPTION,
   parameters: z.object({
     query: z.string().describe("Words to look for. Leave empty to list everything (bounded)."),
+    from: z.string().optional().describe("Only past chats on or after this date (ISO, e.g. 2026-11-01)."),
+    to: z.string().optional().describe("Only past chats on or before this date (ISO)."),
+    session: z.string().optional().describe("Only past chats from this session id."),
+    skip_sessions: z.array(z.string()).optional().describe("Session ids to leave out (ones you already read)."),
+    neighbors_of: z
+      .string()
+      .optional()
+      .describe("A past-chat observation id (obs_…): return the turns around it instead of searching."),
   }),
   async execute(params, ctx) {
     const query = params.query.trim()
+    if (params.neighbors_of?.trim()) {
+      const turns = await MemoryKernelAdapter.neighbors(params.neighbors_of.trim())
+      return {
+        title: turns.length ? `${turns.length} turns around ${params.neighbors_of}` : "No neighbouring turns",
+        output: turns.length ? turns.map(pastLine).join("\n") : `No turns found around ${params.neighbors_of}.`,
+        metadata: { count: turns.length, ids: turns.map((t) => t.observation_id), versions: {} as Record<string, string> },
+      }
+    }
     // Drive hits carry the entry version (needed for memory_write if_version).
     const hits = await MemoryDrive.search(query, 60)
     // Server recall over the indexed drive adds paraphrase matches.
     const seen = new Set(hits.map((h) => h.entry?.id).filter(Boolean))
     const extra = query ? (await MemoryKernelAdapter.search(query)).filter((k) => !seen.has(k.external_id ?? "")) : []
-    const count = hits.length + extra.length
+    const past = query
+      ? await MemoryKernelAdapter.searchPastChats(query, {
+          from: params.from,
+          to: params.to,
+          session: params.session,
+          skip_sessions: params.skip_sessions,
+        })
+      : []
+    const count = hits.length + extra.length + past.length
     if (count === 0) {
       return {
         title: "No memories found",
@@ -64,10 +93,13 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
         }
       }
     }
+    if (past.length > 0) {
+      lines.push("", "Past chats (use neighbors_of with an id to read around a hit):", ...past.map(pastLine))
+    }
     return {
       title: `Recalled ${count} memor${count === 1 ? "y" : "ies"}`,
       output: lines.join("\n"),
-      metadata: { count, ids: hits.map((h) => h.entry?.id).filter((x): x is string => !!x), versions },
+      metadata: { count, ids: [...hits.map((h) => h.entry?.id).filter((x): x is string => !!x), ...past.map((t) => t.observation_id)], versions },
     }
   },
 })
