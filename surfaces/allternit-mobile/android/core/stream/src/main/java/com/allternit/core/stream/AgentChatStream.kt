@@ -62,6 +62,8 @@ sealed interface ChatStreamEvent {
         val errorName: String?,
         val errorMessage: String?,
         val usage: JsonElement?,
+        /** `metadata.memoryRefs` (or `memory_refs`): the memories this reply used; the chat decodes them. */
+        val memoryRefs: JsonElement? = null,
     ) : ChatStreamEvent
 
     /** `{"type":"error","error"}` or a `chunk_type:"error"` chunk. */
@@ -154,6 +156,7 @@ object AgentChatFrames {
                     errorName = details?.str("name"),
                     errorMessage = details?.str("message"),
                     usage = frame["usage"]?.takeUnless { it is JsonNull },
+                    memoryRefs = (metadata?.get("memoryRefs") ?: metadata?.get("memory_refs"))?.takeUnless { it is JsonNull },
                 )
             }
             "message_stop" -> ChatStreamEvent.Done

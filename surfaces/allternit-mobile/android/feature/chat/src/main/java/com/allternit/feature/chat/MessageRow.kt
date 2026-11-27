@@ -75,6 +75,8 @@ internal class RowActions(
     val onOpenArtifact: ((ArtifactRecord) -> Unit)? = null,
     /** Settings > Connections (the typed error card's "Open Connections"). */
     val onOpenConnections: () -> Unit = {},
+    /** Opens a past chat from a memory chip row (`ChatViewModel.loadSession`). */
+    val onOpenSession: (String) -> Unit = {},
 )
 
 /**
@@ -205,6 +207,9 @@ internal fun MessageRow(
                 }
 
                 if (isUser && editedVersions.isNotEmpty()) EditedChip(editedVersions)
+
+                // Memories the reply used or changed (`metadata.memoryRefs`).
+                if (!isUser && message.memoryRefs.isNotEmpty()) MemoryRefsChip(message.memoryRefs, actions.onOpenSession, actions.onOpenSettings)
 
                 if (!isUser) {
                     message.questions.forEach { q ->

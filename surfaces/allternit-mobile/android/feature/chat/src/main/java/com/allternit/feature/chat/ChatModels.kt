@@ -194,6 +194,31 @@ enum class ChatErrorAction(val title: String, val tag: String) {
     ManageClaudeOrg("Manage Claude organization", "error-manage-claude-org"),
 }
 
+/**
+ * One memory a reply used or changed (iOS MemoryRef): `metadata.memoryRefs[]` on a stored message,
+ * or the same on the stream's `finish` frame. [source] is `past_chat` for a past conversation and
+ * absent for a saved memory.
+ */
+data class MemoryRef(
+    val id: String,
+    val title: String?,
+    val action: String,
+    val source: String? = null,
+    val date: String? = null,
+    val sessionId: String? = null,
+) {
+    val isPastChat: Boolean get() = source == "past_chat"
+
+    companion object {
+        /** A bad entry is dropped, never the whole list; at most 10 (the Gizzi cap). */
+        fun parseAll(element: JsonElement?): List<MemoryRef> =
+            ((element as? JsonArray).orEmpty()).mapNotNull { it as? JsonObject }.mapNotNull { o ->
+                val id = o.str("id") ?: return@mapNotNull null
+                MemoryRef(id, o.str("title"), o.str("action") ?: "recalled", o.str("source"), o.str("date"), o.str("session_id") ?: o.str("sessionId"))
+            }.take(10)
+    }
+}
+
 /** One feed row (iOS MessageRecord). */
 data class MessageRecord(
     val id: String,
@@ -216,6 +241,8 @@ data class MessageRecord(
     val createdAt: Long = System.currentTimeMillis(),
     /** Wave H2: the feed's "Voice chat ended" card (iOS MessageRecord.voiceSummary); a local system row. */
     val voiceSummary: com.allternit.feature.chat.voice.VoiceSummary? = null,
+    /** Memories the reply used or changed (`metadata.memoryRefs`), for the "Used memory (n)" chip. Empty for user rows. */
+    val memoryRefs: List<MemoryRef> = emptyList(),
 ) {
     /** Folds an engine picture (`tool-call://<id>` file part) onto its call; false when no such call is here yet. */
     fun attachToolImage(sourceUri: String?, url: String?, mime: String?): MessageRecord? {
@@ -305,6 +332,7 @@ data class MessageRecord(
                 artifacts = if (record.role == "user") emptyList() else artifacts,
                 attachmentNames = if (record.role == "user") artifacts.map { it.title } else emptyList(),
                 createdAt = parseMillis(record.timestamp) ?: System.currentTimeMillis(),
+                memoryRefs = if (record.role == "user") emptyList() else (record.metadata as? JsonObject)?.let { MemoryRef.parseAll(it["memoryRefs"] ?: it["memory_refs"]) }.orEmpty(),
             )
         }
 

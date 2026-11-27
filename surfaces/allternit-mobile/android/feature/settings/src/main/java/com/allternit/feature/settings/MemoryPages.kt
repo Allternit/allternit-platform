@@ -105,6 +105,9 @@ internal fun MemoryPage(host: SettingsHost, back: () -> Unit, push: (String) -> 
             }
             if (open > 0) SNote("$open ${if (open == 1L) "conflict" else "conflicts"} waiting for you.")
         }
+        // Knowledge review (KnowledgePages.kt): flags and proposals, with a count badge.
+        SLabel("Knowledge")
+        MemoryKnowledgeRow(push)
         SLabel("Memory drive")
         SCard {
             SRow("Memory drive", "memory_drive_row", detail = "The files your bots keep, with every change saved.", onClick = { push("memory-drive") })
