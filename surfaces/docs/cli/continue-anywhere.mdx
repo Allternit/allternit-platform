@@ -33,6 +33,21 @@ The links go through this computer's paired runtime, so they work when your phon
 
 `/remote-control`, `/continue-on` and `/phone` do the same thing.
 
+## Panes of other CLIs
+
+`/remote` also lists the other coding CLIs running in Factory panes on this computer. Each row shows the session's name, its status (working, blocked or idle) and its reach:
+
+- **Steer** (phone, web and Desktop): you can type a reply into the session from those surfaces.
+- **View only**: you can see the session but not type into it.
+
+On your phone, in the web app and in Desktop, the session rows show the same status. A blocked session shows **Needs you** and how long it has been blocked. **Open** shows its terminal, and **Steer** sends a line of text plus Enter to it. Steer is hidden for sessions you can only view.
+
+## When a session is blocked
+
+When a session turns blocked, Allternit sends one push: `<name> needs you`. Tapping it opens the session's terminal, or the session's row if it has no terminal. You get one push per time a session becomes blocked, none while it stays blocked, and none for sessions that were already blocked when the engine started.
+
+Set `ALLTERNIT_BLOCKED_PUSH=off` on the engine's computer to turn these pushes off. In the terminal, `/sessions` shows a bell and a footer badge for blocked sessions; turn that off with the `sessionsBlockedNotice` setting. See [Live sessions](/guides/live-sessions) for the fields behind this.
+
 ## Open it in Desktop
 
 Type `/desktop` (or `/app`). Allternit Desktop comes to the front with this session open. Keep typing in either place: both stay in sync.

@@ -5,6 +5,17 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## Next, Gizzi overhaul: updates, models, sessions and remote
+
+These ship with the next Gizzi release. The full list is in the Gizzi Code changelog.
+
+- **One updater:** Gizzi reads a signed release feed. `gizzi update` updates by your install method, and `gizzi doctor` shows the method, channel and any other `gizzi` on your PATH.
+- **Model picker:** Runtime, Brain and Bot layers, an access badge on each row, locked and offline rows with the fix, and F2 for recent models. iOS and Android read the same lock state from the server. See [Models](/cli/models).
+- **Live sessions:** `/sessions` lists every live session, including other CLIs' panes, with attach, steer and a "needs you" bell. See [Live sessions](/guides/live-sessions).
+- **Spawn and message:** `gizzi spawn <cli> "<prompt>"` starts a session; `message_agent` works in normal sessions and asks on the first send to each target. See [Spawn, message and list sessions](/factory/agents).
+- **Remote:** `/remote` lists other CLIs' panes. A blocked session sends one "needs you" push. Phone, web and Desktop can steer it. `ALLTERNIT_BLOCKED_PUSH=off` turns the push off. See [Continue a session anywhere](/cli/continue-anywhere).
+- **Slash commands:** 47 unused commands are gone, and `/status` has four tabs.
+
 ## Next — Desktop sign-in and Connect screen fixes
 
 The server fix goes live with the next cloud-api deploy; the Desktop fixes arrive with the next Desktop build.

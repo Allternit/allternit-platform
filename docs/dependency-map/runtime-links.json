@@ -2133,6 +2133,47 @@
         "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
         "allternit/surfaces/docs/architecture/session-start.mdx"
       ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit-ai/src/components/ai-elements",
+      "kind": "GET /api/v1/picker-catalog returns runtimes and cloud models with server-side access (ok, locked, hidden)",
+      "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "kind": "Gizzi reads GET /api/v1/picker-catalog with ETag and a six-hour cache, then falls back to the build-time snapshot",
+      "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/shared/installation",
+      "target": "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+      "kind": "updater reads the Ed25519-signed feed runtime.allternit.com/gizzi/<channel>/latest.json (built and uploaded by the release workflow) and the footer shows one update notice",
+      "evidence": [
+        "allternit/cmd/gizzi-code/CHANGELOG.md"
+      ]
+    },
+    {
+      "source": "allternit/factory/engine",
+      "target": "allternit/cmd/gizzi-code/src/cli/work",
+      "kind": "GET /api/factory/sessions returns status (blocked kept), blockedSince, terminalId and steer for /sessions and /remote",
+      "evidence": [
+        "allternit/surfaces/docs/guides/live-sessions.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/netops",
+      "target": "allternit/surfaces/allternit-mobile/ios",
+      "kind": "one push per blocked transition, openUrl /terminal/<terminalId> or /factory/sessions/<address>; opt-out ALLTERNIT_BLOCKED_PUSH=off",
+      "evidence": [
+        "allternit/surfaces/docs/guides/live-sessions.mdx",
+        "allternit/surfaces/docs/cli/continue-anywhere.mdx"
+      ]
     }
   ]
 }

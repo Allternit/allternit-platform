@@ -5840,8 +5840,12 @@
       "description": "Replay of bot-to-bot messages reads from and preview on each delivery; Gizzi prints them as from to to with the preview.",
       "touches": [
         "allternit/cmd/gizzi-code/src/cli/factory/render.ts",
-        "allternit/factory/engine/src/orchestration/send.rs"
-      , "allternit-ai/src/components/factory/views/TeamGraph.tsx", "allternit-ai/src/lib/factory", "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift", "allternit/surfaces/allternit-mobile/android/feature/bots"],
+        "allternit/factory/engine/src/orchestration/send.rs",
+        "allternit-ai/src/components/factory/views/TeamGraph.tsx",
+        "allternit-ai/src/lib/factory",
+        "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/bots"
+      ],
       "decisions": [
         {
           "on": "2026-11-26",
@@ -5969,6 +5973,107 @@
       "evidence": [
         "allternit/surfaces/docs/architecture/session-start.mdx",
         "allternit/cmd/agent-daemon/src/index.ts"
+      ]
+    },
+    {
+      "id": "feature:gizzi-picker-catalog",
+      "label": "Picker catalog",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "One server route, GET /api/v1/picker-catalog (cloud-api and allternit-api), lists runtimes and Cloud models with the lock state worked out on the server. Gizzi (TUI picker and `gizzi models`), the web and Desktop picker, iOS and Android read it. Gizzi falls back to a cached copy, then to a snapshot built at build time. Locked rows show the reason and the action; hidden models are not listed.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes",
+        "allternit/cmd/allternit-api/src",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/surfaces/docs/cli/models.mdx",
+        "allternit-ai/src/lib/cloud-credits-gate.ts",
+        "allternit-ai/src/components/ai-elements"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Locks are decided on the server so every picker agrees; clients show the reason and action and never decide access themselves."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/models.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-release-feed",
+      "label": "Gizzi release feed",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Gizzi updates from one Ed25519-signed feed at runtime.allternit.com/gizzi/<channel>/latest.json (channels stable and latest). The release workflow builds, signs and uploads it and pushes the Homebrew and Scoop manifests. The updater, `gizzi update`, `gizzi doctor` and the install scripts read it and fail closed on a bad signature or hash. Desktop's copy is managed by Desktop.",
+      "touches": [
+        "allternit/.github/workflows/publish-gizzi-code-npm.yml",
+        "allternit/cmd/gizzi-code/script",
+        "allternit/cmd/gizzi-code/install",
+        "allternit/cmd/gizzi-code/src/shared/installation",
+        "allternit/cmd/gizzi-code/CHANGELOG.md",
+        "allternit/surfaces/docs/release-notes.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "One signed feed replaces the old storage-bucket updater and version kill switch; there is no unsigned path."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/CHANGELOG.md"
+      ]
+    },
+    {
+      "id": "feature:live-session-blocked-steer",
+      "label": "Live sessions: blocked, steer and push",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Live sessions keep a blocked status with blockedSince, carry terminalId and a steer route (terminal, delivery or none). A blocked session sends one 'needs you' push per transition (opt-out ALLTERNIT_BLOCKED_PUSH=off). Gizzi /sessions and /remote, the web app, Desktop, iOS and Android show the rows and can steer them.",
+      "touches": [
+        "allternit/factory/engine/src/agents",
+        "allternit/factory/pane/src",
+        "allternit/cmd/allternit-api/src/netops",
+        "allternit/cmd/gizzi-code/src/cli/work",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/surfaces/docs/guides/live-sessions.mdx",
+        "allternit/surfaces/docs/cli/continue-anywhere.mdx",
+        "allternit-ai/src/views/code"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "No new steer route: terminal panes use the terminal input route, other sessions use Factory delivery; a pane with neither is view only."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/live-sessions.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-sessions-view",
+      "label": "Gizzi /sessions view",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "/sessions in the Gizzi terminal lists every live session (Gizzi and other CLIs' panes) from the engine, with status, the doing line and recent output. Enter attaches, s steers, n starts one with `gizzi spawn`, x stops after typing the exact name. A bell and footer badge mark blocked sessions.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/cli/work",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/factory/engine/src/agents",
+        "allternit/surfaces/docs/factory/agents.mdx",
+        "allternit/surfaces/docs/cli/work.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "/sessions replaces the separate dash, board, live and factory commands as the one place to see sessions."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/cli/work.mdx"
       ]
     }
   ],
