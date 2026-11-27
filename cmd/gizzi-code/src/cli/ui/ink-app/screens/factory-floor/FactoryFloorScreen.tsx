@@ -32,7 +32,7 @@ import { NOT_BUILT_MARK, buildAgentRow, nodeRowText, truncate } from './rows'
 type Focus = 'bots' | 'needs'
 
 /** Release Ink's screen, hand the terminal to the engine, take it back. */
-function handOff(args: string[]): { exitCode: number } {
+export function handOff(args: string[]): { exitCode: number } {
   const ink = instances.get(process.stdout)
   ink?.enterAlternateScreen()
   try {

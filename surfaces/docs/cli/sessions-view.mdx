@@ -1,0 +1,87 @@
+---
+title: Sessions view
+description: "Every live agent session on this computer in one terminal view: what each one is doing, which ones need you, and keys to attach, steer, start and stop them."
+---
+
+`/sessions` opens a full-screen view of every live agent session on this computer. It shows Gizzi sessions and the Factory panes that run other coding tools, all in one list. You can see which sessions are working, which are blocked on you and which are idle, and you can act on one without leaving Gizzi.
+
+`/dash`, `/dashboard`, `/board`, `/live` and `/factory` open the same view. They are hidden from the slash menu.
+
+## What each session shows
+
+| Column | What it means |
+|---|---|
+| Name | The session's name (its address is `person/name`) |
+| Runtime | The coding tool it runs, such as `gizzi` |
+| Folder | The repository or folder it works in |
+| Status | `working`, `blocked` (waiting on you), `idle` or `done` |
+| Doing | What it is doing now, as the session reports it |
+| Age | How long it has been in its current status |
+
+The selected session also shows its last three output lines, read from its pane.
+
+Press `g` to switch between the list and a grid of tiles. Each tile shows the same fields and the last three output lines.
+
+The view reads `GET /api/factory/sessions` from the Factory engine every 2 seconds. If the engine stops answering, the last list stays on screen with the error above it.
+
+## Keys
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` (`k` `j`) | Move. In the grid, `←` `→` and `h` also move. |
+| `g` | List or grid |
+| `Enter` | Attach to the session's pane. Detach to come back to the view. |
+| `s` | Steer: type a line and press `Enter` to send it once |
+| `n` | New session: type `<cli> <task>`, for example `gizzi fix the failing tests` |
+| `x` | Stop the session. You must type its name to confirm. |
+| `l` | Land a finished swarm worker (merge its branch). Shown only on swarm workers. |
+| `b` | The swarm board |
+| `f` | The factory floor |
+| `r` | Read the list now |
+| `q` / `Esc` | Back to the prompt |
+
+### Attach
+
+`Enter` hands the terminal to the pane engine, which shows the session's real screen. When you detach, Gizzi takes the terminal back and the view returns. A session that runs in another terminal app (not in an Allternit pane) has no pane to attach to. The view tells you which app it runs in.
+
+### Steer
+
+How a message reaches the session depends on what the engine reports for it:
+
+- **Terminal**: Gizzi types the line into the session's terminal and presses `Enter`.
+- **Delivery**: Gizzi sends it with `POST /api/factory/send`, and the engine picks the delivery tier (push into the running turn, the next turn, or the session's inbox).
+- **None**: the session can't take messages from here, and `s` is hidden on it.
+
+Each `Enter` sends the message once.
+
+### New session
+
+`n` runs `gizzi spawn <cli> <task> --window`. The new session opens in its own terminal window and shows up in the view once it is running. If this Gizzi doesn't have `gizzi spawn` yet, the view shows the command to run instead.
+
+### Stop
+
+Gizzi never stops a session without a typed confirm. `x` asks you to type the session's exact name. Anything else cancels. A swarm worker's worktree is kept when you stop it. Land it from the view with `l`, or with `gizzi swarm land`.
+
+## Blocked notices
+
+When a session becomes blocked (it is waiting for an answer or an approval), Gizzi:
+
+1. rings the terminal bell,
+2. sends a desktop notice, "`<name>` needs you" (OSC 9, which most modern terminals show), and
+3. shows a yellow `● 1 blocked · /sessions` badge in the prompt footer while any session stays blocked.
+
+You get one notice each time a session becomes blocked. A session that stays blocked does not ring again. A session that was already blocked when Gizzi started does not ring, but it does count in the badge.
+
+To turn the bell and desktop notice off, open `/config` and switch off **Notify when a live session is blocked** (the `sessionsBlockedNotice` setting).
+
+The footer badge stays on.
+
+## Older engines
+
+An engine from before blocked status reports blocked sessions as `idle`, and it sends no steer route. With that engine, every session uses the delivery route, and no blocked notices appear until the engine is updated.
+
+## Related
+
+- [Agent swarms](/factory/swarms): the board, landing workers and `gizzi swarm`
+- [Native sessions](/cli/native-sessions)
+- [Continue anywhere](/cli/continue-anywhere)

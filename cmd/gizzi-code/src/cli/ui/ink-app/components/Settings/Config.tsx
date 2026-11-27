@@ -481,6 +481,21 @@ export function Config({
         enabled: terminalProgressBarEnabled
       });
     }
+  }, {
+    id: 'sessionsBlockedNotice',
+    label: 'Notify when a live session is blocked',
+    value: globalConfig.sessionsBlockedNotice !== false,
+    type: 'boolean' as const,
+    onChange(sessionsBlockedNotice: boolean) {
+      saveGlobalConfig(current_sb => ({
+        ...current_sb,
+        sessionsBlockedNotice
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        sessionsBlockedNotice
+      });
+    }
   }, ...(getFeatureValue_CACHED_MAY_BE_STALE('tengu_terminal_sidebar', false) ? [{
     id: 'showStatusInTerminalTab',
     label: 'Show status in terminal tab',
