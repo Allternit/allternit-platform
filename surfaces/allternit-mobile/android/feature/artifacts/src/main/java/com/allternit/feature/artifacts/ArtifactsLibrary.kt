@@ -138,7 +138,7 @@ fun <T> LayoutCycleButton(options: List<T>, selected: T, label: (T) -> String, o
 
 /** The shared overview layout button for the three LibraryLayout views. */
 @Composable
-fun LibraryLayoutButton(selected: LibraryLayout, onPick: (LibraryLayout) -> Unit, modifier: Modifier = Modifier) {
+fun LibraryLayoutButton(selected: LibraryLayout, modifier: Modifier = Modifier, onPick: (LibraryLayout) -> Unit) {
     LayoutCycleButton(LibraryLayout.entries, selected, { it.label }, onPick, modifier)
 }
 

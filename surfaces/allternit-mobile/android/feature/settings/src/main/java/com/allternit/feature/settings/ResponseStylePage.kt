@@ -58,6 +58,7 @@ import com.allternit.core.stream.AgentChatFrames
 import com.allternit.core.stream.ChatStreamEvent
 import com.allternit.core.stream.SseParser
 import com.allternit.feature.artifacts.LibraryNet
+import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.chat.MarkdownText
 import java.io.IOException
 import java.util.UUID

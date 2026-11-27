@@ -30,6 +30,7 @@ import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.artifacts.LibraryNet
+import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.chat.mcpPop
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray

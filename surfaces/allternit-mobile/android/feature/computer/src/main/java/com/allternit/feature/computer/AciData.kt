@@ -552,7 +552,7 @@ class AciAgentClient(private val backend: ChatBackend) {
     fun currentComputerId(): String? = backend.relay.selectedRuntimeId ?: backend.relay.activeRuntimeId
 
     /**
-     * The computer's toolset events (`GET /api/v1/computers/:id/toolset/events`, same relay path as `/api/aci/*`).
+     * The computer's toolset events (`GET /api/v1/computers/:id/toolset/events`, same relay path as the `/api/aci/` calls).
      * Every frame is named `computer.action`, so the kind comes from the JSON `type`. Undecodable frames are skipped.
      */
     fun toolsetEvents(computerId: String, target: String? = null): Flow<AciComputerEvent> = flow {

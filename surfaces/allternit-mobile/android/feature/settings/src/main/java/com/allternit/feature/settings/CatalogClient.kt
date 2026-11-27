@@ -110,8 +110,8 @@ internal object CatalogClient {
     }
 
     private fun ApiResult<JsonElement>.toLoadOf(doing: String): Load<Nothing> = when (val l = toLoad(doing)) {
-        is Load.Failed -> l
-        Load.NoComputer -> l
+        is Load.Failed -> Load.Failed(l.message)
+        Load.NoComputer -> Load.NoComputer
         else -> Load.Failed("Couldn't $doing.")
     }
 
