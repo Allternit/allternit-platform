@@ -247,6 +247,28 @@ export namespace Snapshot {
     return result
   }
 
+  export async function archive(
+    hash: string,
+    dest: string,
+  ): Promise<{ bytes: number } | { error: "pruned" | "snapshot_off" | "not_git" }> {
+    if (Instance.project.vcs !== "git") return { error: "not_git" }
+    const cfg = await Config.get()
+    if (cfg.snapshot === false) return { error: "snapshot_off" }
+    const git = gitdir()
+    const exists = await fs
+      .stat(git)
+      .then(() => true)
+      .catch(() => false)
+    if (!exists) return { error: "pruned" }
+    const result = await $`git --git-dir ${git} archive --format=tar.gz -o ${dest} ${hash}`.quiet().nothrow()
+    if (result.exitCode !== 0) {
+      await fs.unlink(dest).catch(() => {})
+      return { error: "pruned" }
+    }
+    const stat = await fs.stat(dest)
+    return { bytes: stat.size }
+  }
+
   function gitdir() {
     const project = Instance.project
     return path.join(Global.Path.data, "snapshot", project.id)
