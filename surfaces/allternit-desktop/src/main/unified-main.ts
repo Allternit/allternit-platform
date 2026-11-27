@@ -3689,6 +3689,17 @@ handleGuarded('remote-start:set', (_event, enabled: unknown) => {
   broadcastToMainWindows('remote-start:changed', value);
   return value;
 });
+
+// Settings "Stay reachable after you quit". Unset (never asked) reads as on, like quitToBackground().
+ipcMain.handle('background-on-quit:get', () => store.get('backgroundOnQuit') !== false);
+
+handleGuarded('background-on-quit:set', (_event, enabled: unknown) => {
+  const value = enabled === true;
+  store.set('backgroundOnQuit', value);
+  if (process.platform === 'linux' && persistedState.get('prefs').startupOnLogin) refreshLinuxAutostart(true);
+  broadcastToMainWindows('background-on-quit:changed', value);
+  return value;
+});
 featureFlagManager.onChange((key, value) => {
   if (key === 'share.live' && value !== true) void shareManager.disable();
 });
