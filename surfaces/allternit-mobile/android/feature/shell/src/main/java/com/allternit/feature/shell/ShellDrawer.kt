@@ -460,7 +460,7 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Icon(
-            painter = painterResource(com.allternit.core.design.R.drawable.ph_chat_circle),
+            painter = painterResource(if (session.isTerminal || session.originSurface == "code") sessionIcon(session) else com.allternit.core.design.R.drawable.ph_chat_circle),
             contentDescription = null,
             tint = c.textSecondary,
             modifier = Modifier.size(18.dp),
