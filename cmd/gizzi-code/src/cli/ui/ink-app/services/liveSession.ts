@@ -5,7 +5,7 @@
  * (Desktop's, or `gizzi serve`; GIZZI_ENGINE_URL overrides 127.0.0.1:4096),
  * pushes its transcript, busy/idle and permission asks, and listens on the
  * inbox for prompts, stops and permission answers sent from Desktop, the web
- * app, the PWA or the phone apps. Contract: surfaces/docs/dev/live-terminal-sessions.mdx.
+ * app, the PWA or the phone apps. Contract: surfaces/docs/architecture/live-terminal-sessions.mdx.
  */
 import type { Message } from '../types/message'
 
