@@ -327,3 +327,67 @@ export function visibleWindow<T>(rows: T[], focusIndex: number, count: number): 
   )
   return rows.slice(start, start + count)
 }
+
+// ── Layers, access badges, locked rows, recent models (TUI /model) ──────────
+
+/** How a Brain is paid for, shown as a badge on its rows (same words as Desktop). */
+export type BrainAccess = 'plan' | 'key' | 'local' | 'credits'
+
+/** Section kind (runtime/providers/offer.ts) to the access badge. Cloud rows are Allternit credits. */
+export function brainAccessFor(kind: string | undefined): BrainAccess | undefined {
+  switch (kind) {
+    case 'cloud':
+      return 'credits'
+    case 'subscription':
+      return 'plan'
+    case 'api':
+      return 'key'
+    case 'local':
+      return 'local'
+    default:
+      return undefined
+  }
+}
+
+export interface LockedInfo {
+  reason: string
+  action?: string
+}
+
+/**
+ * What Enter on a locked row shows instead of selecting it: the reason, then
+ * the way out. sign_in points at `gizzi login`; add_credits at the billing URL.
+ */
+export function lockedNotice(locked: LockedInfo, billingUrl: string): string {
+  if (locked.action === 'sign_in') return `${locked.reason} Run: gizzi login`
+  if (locked.action === 'add_credits') return `${locked.reason} Add credits: ${billingUrl}`
+  return locked.reason
+}
+
+/** One-line text for an offline provider row: the name, then the fix. */
+export function offlineNotice(row: { reason: string; fix: string }): string {
+  return `${row.reason}. ${row.fix}`
+}
+
+export const RECENT_MODELS_MAX = 5
+
+/** Put `value` first in the recent list, de-duplicated, capped at 5. */
+export function pushRecentModel(recent: string[], value: string): string[] {
+  return [value, ...recent.filter(v => v !== value)].slice(0, RECENT_MODELS_MAX)
+}
+
+/**
+ * F2: the next model in the recent list after `current`, wrapping around.
+ * With `current` not in the list, the most recent one. Skips values that are
+ * not selectable (locked or no longer listed) via `isUsable`.
+ */
+export function nextRecentModel(
+  recent: string[],
+  current: string | undefined,
+  isUsable: (value: string) => boolean = () => true,
+): string | undefined {
+  const usable = recent.filter(isUsable)
+  if (usable.length === 0) return undefined
+  const at = current === undefined ? -1 : usable.indexOf(current)
+  return usable[(at + 1) % usable.length]
+}

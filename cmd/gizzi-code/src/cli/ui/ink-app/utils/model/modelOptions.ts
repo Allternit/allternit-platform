@@ -35,7 +35,7 @@ import { has1mContext } from '../context.js'
 import { getGlobalConfig } from '../config.js'
 import { ProviderOffer } from '@/runtime/providers/offer'
 import type { ModelList } from '@/runtime/providers/model-list'
-import { inferVendor, vendorDisplayName } from './modelPickerModel.js'
+import { brainAccessFor, inferVendor, vendorDisplayName, type BrainAccess } from './modelPickerModel.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
@@ -116,6 +116,8 @@ function getModelListOptions(): ModelOption[] {
 export type ModelPickerRow =
   | { kind: 'section'; key: string; title: string }
   | { kind: 'provider'; key: string; title: string; providerId?: string; notSignedIn: boolean }
+  /** A configured local provider that did not answer: one grey row, never selectable. */
+  | { kind: 'offline'; key: string; title: string; providerId: string; reason: string; fix: string }
   | {
       kind: 'option'
       key: string
@@ -132,6 +134,10 @@ export type ModelPickerRow =
       /** False for a CLI known to be signed out (row stays selectable). */
       signedIn?: boolean
       favorite: boolean
+      /** How the Brain is paid for: plan, key, local or credits. */
+      access?: BrainAccess
+      /** Locked Cloud model: greyed, Enter shows `locked.action` instead of selecting. */
+      locked?: { reason: string; action?: string }
     }
 
 type PickerOptionRow = Extract<ModelPickerRow, { kind: 'option' }>
@@ -167,7 +173,22 @@ export function buildModelPickerRows(
 
   for (const section of sections) {
     const groups: Group[] = []
+    const offlineRows: Extract<ModelPickerRow, { kind: 'offline' }>[] = []
     for (const provider of section.providers) {
+      if (provider.offline) {
+        const hay = [provider.name, provider.id, section.title]
+        if (matches(hay)) {
+          offlineRows.push({
+            kind: 'offline',
+            key: `offline:${provider.id}`,
+            title: `${provider.name.replace(/\s+\u2014 offline$/, '')} \u2014 offline`,
+            providerId: provider.id,
+            reason: provider.offline.reason,
+            fix: provider.offline.fix,
+          })
+        }
+        continue
+      }
       const byKey = new Map<string, Group>()
       const notSignedIn = provider.signedIn === false
       const cloudVendors =
@@ -176,6 +197,8 @@ export function buildModelPickerRows(
           : []
       const splitByVendor = cloudVendors.some(v => v !== 'other')
       provider.models.forEach((row, i) => {
+        // A hidden (retired) alias is not offered; a saved choice still runs, and the list keeps it only when current.
+        if (row.hidden && row.ref !== current && !row.current) return
         total++
         seen.add(row.ref)
         const vendor = splitByVendor ? cloudVendors[i]! : undefined
@@ -210,11 +233,14 @@ export function buildModelPickerRows(
           context: row.context,
           signedIn: provider.signedIn,
           favorite: favorites.includes(row.ref),
+          access: brainAccessFor(section.kind),
+          ...(row.locked ? { locked: row.locked } : {}),
         })
       })
     }
-    if (groups.length === 0) continue
+    if (groups.length === 0 && offlineRows.length === 0) continue
     rows.push({ kind: 'section', key: `sec:${section.kind}`, title: section.title })
+    rows.push(...offlineRows.splice(0))
     for (const group of groups) {
       rows.push({
         kind: 'provider',

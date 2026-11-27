@@ -65,6 +65,8 @@ export namespace ModelList {
     output?: number
     /** A retired alias shown only because it is running (or with `all`). */
     hidden?: boolean
+    /** Allternit Cloud: the live catalog says the account cannot run this model now. Shown greyed with the reason. */
+    locked?: { reason: string; action?: string }
   }
 
   export type ProviderRows = {
@@ -206,6 +208,8 @@ export namespace ModelList {
       if (draft.context !== undefined) row.context = draft.context
       if (draft.output !== undefined) row.output = draft.output
       if (flags.hidden) row.hidden = true
+      const lockedBy = dp?.models.find((m) => m.id === draft.id)?.locked
+      if (lockedBy) row.locked = lockedBy
       rows.push({ row, sortIndex: draft.sortIndex })
     }
     // Vendor order (`rank`) first; models without one keep Provider.sort order after them.
