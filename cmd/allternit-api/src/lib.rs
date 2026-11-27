@@ -221,6 +221,7 @@ pub mod computer_safety;
 pub mod computer_access;
 pub mod computer_ocr;
 pub mod computer_v2;
+pub mod computer_block;
 pub mod guest_driver;
 pub mod vnc_auth;
 pub mod vnc_readonly;

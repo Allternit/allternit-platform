@@ -10,9 +10,12 @@
 //! The 17 pixel members stay in `computer_toolset::dispatch`; this module is
 //! the v2 path out of `execute`. Approvals and the audit row for these
 //! members are the existing lease → policy → approval → audit pipeline in
-//! `computer_toolset::execute` (act's text-entering ops and use_credential
-//! upgrade to a human approval on non-sandbox targets, the same rule as
-//! `type`/`key`). The two access members (`resolve_access`,
+//! `computer_toolset::execute` (act's text-entering ops upgrade to a human
+//! approval on non-sandbox targets, the same rule as `type`/`key`;
+//! use_credential asks the person on every target, cloud guests included,
+//! unless they chose "Allow for this run" for the same credential + domain).
+//! A `read_ui` that lands on a login, 2FA, captcha, bot-block or rate-limit
+//! page holds the run for the person (`computer_block`). The two access members (`resolve_access`,
 //! `request_access`) also run through here, into `computer_access`.
 
 use std::collections::HashMap;
@@ -142,6 +145,18 @@ pub(crate) async fn driver_op(member: &str, params: &Value) -> Result<Value, Fai
         .map_err(|e| Fail::from(String::from(e)))
 }
 
+/// One driver call for read_ui / act / run_batch / verify: the local sidecar
+/// on this device, the in-guest driver on a guest.
+async fn structured_call(target: &Target, member: &str, input: &Value) -> Result<(Value, ScreenInfo), Fail> {
+    match target {
+        Target::Guest { .. } => {
+            let reply = crate::guest_driver::guest_driver_op(target, member, input, driver_timeout(member, input)).await?;
+            Ok((reply, guest_screen_block(target).await))
+        }
+        _ => Ok((driver_op(member, input).await?, screen_block().await)),
+    }
+}
+
 /// Run one v2 member. Called from `computer_toolset::execute` after the
 /// lease, policy, approval and audit steps, so every member keeps the same
 /// gate. Returns the toolset result (text content; no screenshots).
@@ -160,25 +175,26 @@ pub async fn execute_v2(
             // driver inside the guest image through the guest exec channel
             // (guest_driver). Same lease/policy/safety/audit gate either way —
             // `execute` ran it before dispatching here.
-            let (reply, screen) = match target {
-                Target::Guest { .. } => {
-                    let reply = crate::guest_driver::guest_driver_op(target, member, input, driver_timeout(member, input)).await?;
-                    let screen = guest_screen_block(target).await;
-                    (reply, screen)
+            let (mut reply, mut screen) = structured_call(target, member, input).await?;
+            // A wall the agent can't pass (login, 2FA, captcha, bot block,
+            // rate limit) holds the run until the person answers
+            // (computer_block). "continue" re-reads the page they fixed.
+            let mut note = None;
+            if member == "read_ui" {
+                if let Some(det) = crate::computer_block::detect(&reply).filter(|d| crate::computer_block::should_hold(run_id, d)) {
+                    let outcome = crate::computer_block::hold(state, user, computer, target, run_id, &det).await?;
+                    if let Some(ended) = crate::computer_block::ended_result(&outcome, &det) {
+                        return Ok(ended);
+                    }
+                    if outcome == crate::computer_block::HoldOutcome::Continue {
+                        (reply, screen) = structured_call(target, member, input).await?;
+                    }
+                    note = crate::computer_block::continue_note(&outcome, &det);
                 }
-                _ => {
-                    let reply = driver_op(member, input).await?;
-                    let screen = screen_block().await;
-                    (reply, screen)
-                }
-            };
-            Ok(ToolsetResult {
-                is_error: false,
-                content: vec![text(serde_json::to_string(&reply).unwrap_or_else(|_| "{}".into()))],
-                browser_state: None,
-                screen,
-                error: None,
-            })
+            }
+            let mut content = vec![text(serde_json::to_string(&reply).unwrap_or_else(|_| "{}".into()))];
+            content.extend(note);
+            Ok(ToolsetResult { is_error: false, content, browser_state: None, screen, error: None })
         }
         "request_human" if input.get("secret").is_some_and(Value::is_object) => {
             request_secret(user, computer, target, input, run_id).await
@@ -260,6 +276,48 @@ fn emit_human_event(computer_id: &str, kind: &str, reason: &str, run_id: &str, e
     let _ = crate::computer_toolset::ACTION_EVENTS.send((computer_id.to_string(), event));
 }
 
+/// Guests: release the agent's lease so the person can drive during a
+/// window (request_human, a block-page hold).
+pub(crate) async fn release_for_person(state: &Arc<AppState>, computer_id: &str, caller: &lease::Holder) -> Result<(), Fail> {
+    let (db, cid, caller) = (state.db.clone(), computer_id.to_string(), caller.clone());
+    let released = tokio::task::spawn_blocking(move || {
+        let conn = db.connect()?;
+        lease::release(&conn, &cid, &caller, chrono::Utc::now().timestamp())
+    })
+    .await;
+    match released {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(Fail::from(format!("couldn't release control for the human window: {e}"))),
+        Err(_) => Err(Fail::from("internal error releasing control")),
+    }
+}
+
+/// Guests: take the lease back after a person's window. A person who is
+/// still driving keeps control (agents never preempt a person): after 15 s
+/// this answers `Ok(Some(holder label))` and the agent stays off the input.
+pub(crate) async fn take_back_after_person(state: &Arc<AppState>, computer_id: &str, caller: &lease::Holder) -> Result<Option<Option<String>>, Fail> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let (db, cid, caller) = (state.db.clone(), computer_id.to_string(), caller.clone());
+        let took = tokio::task::spawn_blocking(move || {
+            let conn = db.connect().map_err(|e| lease::TakeError::Db(e.to_string()))?;
+            lease::take(&conn, &cid, &caller, chrono::Utc::now().timestamp())
+        })
+        .await;
+        match took {
+            Ok(Ok(_)) => return Ok(None),
+            Ok(Err(lease::TakeError::Held(held))) => {
+                if std::time::Instant::now() >= deadline {
+                    return Ok(Some(held.holder.label));
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok(Err(lease::TakeError::Db(e))) => return Err(Fail::from(format!("couldn't take control back after the human window: {e}"))),
+            Err(_) => return Err(Fail::from("internal error taking control back")),
+        }
+    }
+}
+
 /// request_human: hand control to the person, wait for their done signal
 /// (or the timeout), then take the lease back. On this-device the person
 /// already is the controller, so the wait is purely the latch; on guests the
@@ -291,17 +349,7 @@ async fn request_human(
 
     // Guests: release the agent's lease for the human window.
     if !is_this_device {
-        let (db, cid, caller) = (state.db.clone(), computer.id.clone(), caller.clone());
-        let released = tokio::task::spawn_blocking(move || {
-            let conn = db.connect()?;
-            lease::release(&conn, &cid, &caller, chrono::Utc::now().timestamp())
-        })
-        .await;
-        match released {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => return Err(Fail::from(format!("couldn't release control for the human window: {e}"))),
-            Err(_) => return Err(Fail::from("internal error releasing control")),
-        }
+        release_for_person(state, &computer.id, &caller).await?;
     }
 
     let done = human_gate_open(&computer.id, &reason);
@@ -310,6 +358,10 @@ async fn request_human(
         m.insert("timeout_ms".into(), json!(timeout_ms));
         m
     });
+    crate::computer_block::push_to_owner(
+        &user.user_id,
+        json!({ "kind": "aci_human", "run_id": run_id, "computer_id": computer.id, "reason": reason, "secret": false }),
+    );
 
     let timed_out = tokio::time::timeout(Duration::from_millis(timeout_ms), done.notified()).await.is_err();
     HUMAN_GATES.lock().unwrap_or_else(|p| p.into_inner()).remove(&computer.id);
@@ -318,33 +370,14 @@ async fn request_human(
     // control (agents never preempt a person); the next action then answers
     // 423 and the model can request_human again.
     if !is_this_device {
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        loop {
-            let (db, cid, caller) = (state.db.clone(), computer.id.clone(), caller.clone());
-            let took = tokio::task::spawn_blocking(move || {
-                let conn = db.connect().map_err(|e| lease::TakeError::Db(e.to_string()))?;
-                lease::take(&conn, &cid, &caller, chrono::Utc::now().timestamp())
-            })
-            .await;
-            match took {
-                Ok(Ok(_)) => break,
-                Ok(Err(lease::TakeError::Held(held))) => {
-                    if std::time::Instant::now() >= deadline {
-                        emit_human_event(&computer.id, "human_resumed", &reason, run_id, {
-                            let mut m = Map::new();
-                            m.insert("resumed".into(), json!(false));
-                            m.insert("held_by".into(), json!(held.holder.label));
-                            m
-                        });
-                        return Ok(human_result(&reason, timed_out, false));
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-                Ok(Err(lease::TakeError::Db(e))) => {
-                    return Err(Fail::from(format!("couldn't take control back after the human window: {e}")))
-                }
-                Err(_) => return Err(Fail::from("internal error taking control back")),
-            }
+        if let Some(held_by) = take_back_after_person(state, &computer.id, &caller).await? {
+            emit_human_event(&computer.id, "human_resumed", &reason, run_id, {
+                let mut m = Map::new();
+                m.insert("resumed".into(), json!(false));
+                m.insert("held_by".into(), json!(held_by));
+                m
+            });
+            return Ok(human_result(&reason, timed_out, false));
         }
     }
 
@@ -475,6 +508,10 @@ async fn request_secret(
         m.insert("input_enabled".into(), json!(false));
         m
     });
+    crate::computer_block::push_to_owner(
+        &user.user_id,
+        json!({ "kind": "aci_human", "run_id": run_id, "computer_id": computer.id, "reason": label, "secret": true }),
+    );
 
     let waited = tokio::time::timeout(SECRET_TTL, rx).await;
     SECRET_GATES.lock().unwrap_or_else(|p| p.into_inner()).remove(&computer.id);

@@ -367,6 +367,95 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SleepSettings" }
         default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/toolset/events:
+    get:
+      operationId: streamComputerToolsetEvents
+      summary: Live run events for one computer (SSE), the stream every surface reads for cursors, approvals, human windows and blocked pages
+      description: |
+        Server-sent events, one JSON object per `data:` line, shaped
+        `{ "type": "<event type>", "ts": "<RFC 3339>", "data": { ... } }`.
+        Types and their `data` schemas:
+        - `computer.action`: `ComputerActionEventData`
+        - `computer.confirmation_required`: `ComputerConfirmationRequiredEventData`
+        - `computer.human_requested` / `computer.human_resumed`: `ComputerHumanEventData`
+        - `computer.block_detected`: `ComputerBlockDetectedEventData`
+        - `computer.block_resolved`: `ComputerBlockResolvedEventData`
+        The SSE `event:` name is `computer.action` on every frame (kept for
+        older listeners), so read `type` from the JSON. Clients ignore types
+        they don't know. The same frames go out on the computer's events
+        websocket. The approval, human and block events also have a push
+        kind (see `AciPushNotify`).
+      x-base: api
+      x-stream: sse
+      x-handler: cmd/allternit-api/src/computer_toolset.rs get_toolset_events
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/ComputerRunEvent" }
+        default: { $ref: "#/components/responses/Error" }
+  /computers/{id}/block-resolve:
+    post:
+      operationId: resolveComputerBlock
+      summary: Answer a `computer.block_detected` hold (continue, stop, or re-run on the person's Mac)
+      description: |
+        `continue`: the person signed in or solved the page; the run goes on and
+        the same domain + kind won't hold this run again. `stop`: the run ends.
+        `rerun`: the run ends here and the CLIENT starts a new run on
+        `rerun_target` (one of the event's `rerun_targets`) with
+        `rerun_of` set to the returned `run_id` on its toolset calls. The server
+        never moves a run between computers. 409 `no_block_pending` when no hold
+        is waiting; 400 `invalid_rerun_target` for a computer not listed.
+      x-base: api
+      x-handler: cmd/allternit-api/src/computer_toolset.rs post_block_resolve
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlockResolveRequest" }
+      responses:
+        "200":
+          description: The hold was answered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockResolveResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/aci/handoff/{id}/approve:
+    post:
+      operationId: approveAciHandoff
+      summary: Approve a pending approval (`approval_id` from `computer.confirmation_required` or the 409 body)
+      description: |
+        Mounted at `/api/aci/...` on the same host, not under `/api/v1`, so
+        the path is absolute. The body is optional. `{ "scope": "run" }` on a
+        credential approval (`kind: "credential"`) is "Allow for this run":
+        later fills of the same credential name into the same domain in the
+        same run skip the prompt. It lives in memory only and ends with the
+        run; nothing is remembered per site. Any other approval is single-use
+        and answers `scope: "once"`. Deny is `POST /api/aci/handoff/{id}/deny`.
+      x-base: instance
+      x-handler: cmd/allternit-api/src/aci_routes.rs aci_handoff_approve
+      tags: [Computers]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HandoffApproveRequest" }
+      responses:
+        "200":
+          description: Approved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandoffApproveResponse" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -657,3 +746,165 @@ components:
         reason: { type: string, enum: [sleep_disabled, stage_not_built] }
         stage: { type: string }
         error: { type: string }
+    ComputerRunEvent:
+      type: object
+      description: One toolset-events SSE frame. `data` is one of the `Computer*EventData` schemas, picked by `type`.
+      required: [type, ts, data]
+      properties:
+        type:
+          type: string
+          enum: [computer.action, computer.confirmation_required, computer.human_requested, computer.human_resumed, computer.block_detected, computer.block_resolved]
+        ts: { type: string }
+        data:
+          type: object
+          x-kotlin-raw: true
+          description: The event's data; its shape depends on `type`.
+    ComputerActionEventData:
+      type: object
+      description: computer_toolset.rs `emit_action`.
+      required: [toolset, member, ok]
+      properties:
+        toolset: { type: string, enum: [computer, browser] }
+        member: { type: string }
+        x: { type: [integer, "null"] }
+        y: { type: [integer, "null"] }
+        screen_w: { type: [integer, "null"] }
+        screen_h: { type: [integer, "null"] }
+        run_id: { type: [string, "null"] }
+        ok: { type: boolean }
+        actor: { type: [object, "null"], x-kotlin-raw: true, description: "`{agent_id, name}` for the cursor badge." }
+        step: { type: [string, "null"] }
+        rerun_of: { type: [string, "null"], description: "The run this run re-runs, when the client started it with `rerun_of`." }
+    CredentialRef:
+      type: object
+      description: A vault credential named for an approval. Never carries the value.
+      required: [name, domain]
+      properties:
+        name: { type: string }
+        domain: { type: [string, "null"], description: "Where it types (declared `domain`, else the vault binding): lower case, no scheme or `www.`." }
+    ComputerConfirmationRequiredEventData:
+      type: object
+      description: computer_toolset.rs `emit_confirmation_required`. Also pushed as `aci_approval`. Approve with `POST /api/aci/handoff/{approval_id}/approve`, then the agent retries with the grant.
+      required: [computer_id, approval_id, kind, member, message]
+      properties:
+        run_id: { type: [string, "null"] }
+        computer_id: { type: string }
+        approval_id: { type: string }
+        kind: { type: string, enum: [action, credential] }
+        credential: { oneOf: [{ $ref: "#/components/schemas/CredentialRef" }, { type: "null" }], description: "Set when `kind` is `credential`." }
+        confirmation_class: { type: [string, "null"], description: "`risky` or `irreversible`." }
+        member: { type: string }
+        message: { type: string }
+    ConfirmationRequiredBody:
+      type: object
+      description: aci_safety.rs `enforce_confirmation_with_details`. The refusal body the toolset route answers 409 `approval_required` (other ACI routes 403 `confirmation_required`) with, among the toolset result fields.
+      required: [error, approval_id, action_hash, confirmation_class, kind, message]
+      properties:
+        error: { type: string }
+        approval_id: { type: string }
+        action_hash: { type: string }
+        confirmation_class: { type: string }
+        kind: { type: string, enum: [action, credential] }
+        credential: { $ref: "#/components/schemas/CredentialRef" }
+        message: { type: string }
+    ComputerHumanEventData:
+      type: object
+      description: computer_v2.rs `emit_human_event` (`human_requested` / `human_resumed`). `human_requested` is also pushed as `aci_human`. Done is `POST /computers/{id}/human-done`.
+      required: [computer_id, reason, run_id, live_view, input_enabled]
+      properties:
+        computer_id: { type: string }
+        reason: { type: string }
+        run_id: { type: string }
+        live_view: { type: boolean }
+        input_enabled: { type: boolean }
+        timeout_ms: { type: integer }
+        resumed: { type: boolean }
+        timed_out: { type: boolean }
+        held_by: { type: [string, "null"] }
+    RerunTarget:
+      type: object
+      description: One of the person's online Macs (this-device computers) a blocked run can be re-run on.
+      required: [computer_id, name]
+      properties:
+        computer_id: { type: string }
+        name: { type: string }
+    ComputerBlockDetectedEventData:
+      type: object
+      description: computer_block.rs `hold`. The run waits until `POST /computers/{computer_id}/block-resolve` (or `timeout_ms`, after which it goes on with a note). Also pushed as `aci_blocked`.
+      required: [run_id, computer_id, domain, kind, rerun_targets, timeout_ms]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        rerun_targets: { type: array, items: { $ref: "#/components/schemas/RerunTarget" }, description: "Empty when no Mac is online." }
+        timeout_ms: { type: integer }
+    ComputerBlockResolvedEventData:
+      type: object
+      description: computer_block.rs `hold`, when the hold ends.
+      required: [run_id, computer_id, domain, kind, action, rerun_target]
+      properties:
+        run_id: { type: string }
+        computer_id: { type: string }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        action: { type: string, enum: [continue, stop, rerun, timed_out] }
+        rerun_target: { type: [string, "null"] }
+    BlockResolveRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [continue, stop, rerun] }
+        rerun_target: { type: string, description: "With `rerun`: a `computer_id` from the event's `rerun_targets`." }
+    BlockResolveResponse:
+      type: object
+      required: [ok, action, run_id, domain, kind, rerun_target]
+      properties:
+        ok: { type: boolean }
+        action: { type: string, enum: [continue, stop, rerun] }
+        run_id: { type: string, description: "The held run; send it as `rerun_of` on the new run." }
+        domain: { type: [string, "null"] }
+        kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited] }
+        rerun_target: { type: [string, "null"] }
+    HandoffApproveRequest:
+      type: object
+      properties:
+        scope: { type: string, enum: [once, run], description: "`run` = Allow for this run (credential approvals only)." }
+    HandoffApproveResponse:
+      type: object
+      required: [approval_id, status, scope]
+      properties:
+        approval_id: { type: string }
+        status: { type: string, const: approved }
+        scope: { type: string, enum: [once, run] }
+    AciPushNotify:
+      type: object
+      description: |
+        computer_block.rs `push_to_owner`: what allternit-api POSTs to cloud-api
+        `POST /push/notify/{runtime_id}` (host root, `routes/aci_push.rs`) for a
+        run event. Relay-signed exactly like `/api/v1/runtime/events` (signed
+        path `/push/notify/{runtime_id}`, `x-allternit-runtime-id` header) and
+        sent only when the runtime is paired to the run's owner. cloud-api
+        rebuilds `data` from an allowlist and fans it out to web push, APNs and
+        FCM (categories ACI_APPROVAL, ACI_HUMAN, ACI_BLOCKED).
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/AciPushData" }
+        bot_name: { type: string, description: "The driving agent's name, when the run named one." }
+    AciPushData:
+      type: object
+      description: "One of three kinds. A credential goes by name + domain only, never its value."
+      required: [kind, run_id, computer_id]
+      properties:
+        kind: { type: string, enum: [aci_approval, aci_human, aci_blocked] }
+        run_id: { type: string }
+        computer_id: { type: string }
+        approval_id: { type: string, description: "aci_approval only." }
+        approval_kind: { type: string, enum: [action, credential], description: "aci_approval only." }
+        credential: { $ref: "#/components/schemas/CredentialRef" }
+        message: { type: string, description: "aci_approval only." }
+        reason: { type: string, description: "aci_human only: what the agent asked for." }
+        secret: { type: boolean, description: "aci_human only: true for a masked-box secret request." }
+        domain: { type: [string, "null"], description: "aci_blocked only." }
+        block_kind: { type: string, enum: [login, two_factor, captcha, block_page, rate_limited], description: "aci_blocked only." }
+        rerun_targets: { type: array, items: { type: string }, description: "aci_blocked only: computer ids of the person's online Macs." }

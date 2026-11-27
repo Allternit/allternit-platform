@@ -625,6 +625,72 @@ pub fn record_run_binding(run_id: &str, user_id: &str, resolved: &[ResolvedCrede
     });
 }
 
+// ─── "Allow for this run" (use_credential approvals) ─────────────────────────
+
+/// How long a run-scoped credential approval lives at most. Runs end long
+/// before this; the cap only stops a run that never reports its end from
+/// keeping the allowance for the process lifetime.
+const RUN_ALLOW_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// Run-scoped credential approvals: the person approved one `use_credential`
+/// fill with `scope: "run"`, so later fills of the SAME credential name into
+/// the SAME domain in the same run skip the prompt. Memory only: nothing is
+/// written to disk, and nothing carries over to another run or a restart.
+/// Holds names and domains, never a value.
+#[derive(Debug, Default)]
+pub struct RunCredentialAllows {
+    /// (user_id, run_id, credential name, normalized domain) → when allowed.
+    allows: Mutex<HashMap<(String, String, String, String), std::time::Instant>>,
+}
+
+/// The domain a credential fill is bound to, in the form approvals compare:
+/// lower case, no scheme, path, port, trailing dot or leading `www.`. Blank
+/// is the empty string (an unbound fill with no declared domain).
+pub fn normalize_credential_domain(domain: Option<&str>) -> String {
+    let d = domain.unwrap_or("").trim().to_ascii_lowercase();
+    let d = d.split_once("://").map(|(_, rest)| rest.to_string()).unwrap_or(d);
+    let d = d.split(['/', '?', '#']).next().unwrap_or("");
+    let d = d.rsplit_once('@').map(|(_, host)| host).unwrap_or(d);
+    let d = match d.rsplit_once(':') {
+        Some((host, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => host,
+        _ => d,
+    };
+    let d = d.trim_end_matches('.');
+    d.strip_prefix("www.").unwrap_or(d).to_string()
+}
+
+impl RunCredentialAllows {
+    fn key(user_id: &str, run_id: &str, name: &str, domain: Option<&str>) -> (String, String, String, String) {
+        (user_id.to_string(), run_id.to_string(), name.trim().to_string(), normalize_credential_domain(domain))
+    }
+
+    /// Record the person's "Allow for this run" for one credential + domain.
+    pub fn allow(&self, user_id: &str, run_id: &str, name: &str, domain: Option<&str>) {
+        if run_id.trim().is_empty() || name.trim().is_empty() {
+            return;
+        }
+        let mut allows = self.allows.lock().expect("run allow lock");
+        allows.retain(|_, at| at.elapsed() < RUN_ALLOW_TTL);
+        allows.insert(Self::key(user_id, run_id, name, domain), std::time::Instant::now());
+    }
+
+    /// Did the person allow this credential into this domain for this run?
+    pub fn allowed(&self, user_id: &str, run_id: &str, name: &str, domain: Option<&str>) -> bool {
+        self.allows
+            .lock()
+            .expect("run allow lock")
+            .get(&Self::key(user_id, run_id, name, domain))
+            .is_some_and(|at| at.elapsed() < RUN_ALLOW_TTL)
+    }
+
+    /// The run ended (stopped, re-run elsewhere): drop its allowances.
+    pub fn forget_run(&self, run_id: &str) {
+        self.allows.lock().expect("run allow lock").retain(|(_, r, _, _), _| r != run_id);
+    }
+}
+
+pub static RUN_CREDENTIAL_ALLOWS: Lazy<RunCredentialAllows> = Lazy::new(RunCredentialAllows::default);
+
 /// Recursively replace every occurrence of any bound secret in a run-event
 /// frame with `***`. Applied to frames before they enter the run buffer so a
 /// sandbox that echoes its own environment cannot leak values into streamed,
@@ -1269,5 +1335,27 @@ mod tests {
         let binding = RUN_BINDINGS.get("run-1").unwrap();
         assert_eq!(binding.secrets(), &["very-secret-token".to_string()]);
         assert!(binding.env_keys.contains(&"ACI_CRED_VAULT".to_string()));
+    }
+
+    #[test]
+    fn allow_for_this_run_covers_the_same_credential_and_domain_only() {
+        let allows = RunCredentialAllows::default();
+        allows.allow("user-a", "run-1", "github", Some("https://www.GitHub.com/login"));
+        assert!(allows.allowed("user-a", "run-1", "github", Some("github.com")), "same name + domain in the same run passes");
+        assert!(!allows.allowed("user-a", "run-1", "github", Some("evil.example.com")), "another domain still prompts");
+        assert!(!allows.allowed("user-a", "run-1", "github", None), "no domain still prompts");
+        assert!(!allows.allowed("user-a", "run-1", "gitlab", Some("github.com")), "another credential still prompts");
+        assert!(!allows.allowed("user-a", "run-2", "github", Some("github.com")), "another run still prompts");
+        assert!(!allows.allowed("user-b", "run-1", "github", Some("github.com")), "another person still prompts");
+        allows.forget_run("run-1");
+        assert!(!allows.allowed("user-a", "run-1", "github", Some("github.com")), "gone when the run ends");
+    }
+
+    #[test]
+    fn credential_domains_normalize_for_comparison() {
+        assert_eq!(normalize_credential_domain(Some("https://www.Example.com:443/a?b")), "example.com");
+        assert_eq!(normalize_credential_domain(Some("login.example.com.")), "login.example.com");
+        assert_eq!(normalize_credential_domain(Some("  ")), "");
+        assert_eq!(normalize_credential_domain(None), "");
     }
 }
