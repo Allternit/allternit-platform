@@ -120,7 +120,18 @@ internal object ModeHubSpec {
 
     // Timings (CONTRACT.md "Timings and motion").
     const val HOLD_MILLIS = 450L
-    const val PRESS_SCALE = 0.94f
+    /** Orb press swell. Liquid lens 2026-11-26 (Eoj OK): 0.94 -> 1.1; the orb now swells instead of shrinking. */
+    const val PRESS_SCALE = 1.1f
+    /** Liquid lens (Option B, 2026-11-26): slide starts the drag past this travel. */
+    const val SLIDE_START_DP = 6f
+    const val LENS_PRESS_SCALE = 1.22f
+    const val LENS_MAGNIFY_SCALE = 1.16f
+    const val LENS_OVERSHOOT_DP = 8f
+    const val LENS_STRETCH_VELOCITY = 2400f // dp per second per full stretch step
+    const val LENS_STRETCH_MAX = 0.3f
+    const val LENS_STRETCH_SQUASH = 0.5f
+    /** Fold the pill this long after a pick so the snap and jelly are seen (0 in reduced motion). */
+    const val PICK_SETTLE_MILLIS = 260L
     const val OPEN_ITEMS = 4 // Frozen contract: up to four rows, then More.
     const val ROW_HEIGHT_DP = 42
     const val CARD_WIDTH_DP = 128
@@ -129,6 +140,11 @@ internal object ModeHubSpec {
     // Spring (stiffness, damping) -> Compose (stiffness / mass, ratio = damping / (2 sqrt(stiffness * mass))).
     const val ORB_STIFFNESS = 380f; const val ORB_DAMPING_RATIO = 0.77f
     const val LENS_STIFFNESS = 743f; const val LENS_DAMPING_RATIO = 0.68f
+    // Lens springs (web 1400/70, 620/24, 430/13 mass 0.8, 700/32; Kotlin = k/m, d / 2 sqrt(k m)).
+    const val FOLLOW_STIFFNESS = 1400f; const val FOLLOW_DAMPING_RATIO = 0.94f
+    const val SWELL_STIFFNESS = 620f; const val SWELL_DAMPING_RATIO = 0.48f
+    const val JELLY_STIFFNESS = 538f; const val JELLY_DAMPING_RATIO = 0.35f
+    const val STRETCH_STIFFNESS = 700f; const val STRETCH_DAMPING_RATIO = 0.60f
     const val SHEET_STIFFNESS = 467f; const val SHEET_DAMPING_RATIO = 0.98f
 
     // Events (web names; Android hosts call these through the shell, not a broadcast).
