@@ -6,6 +6,7 @@
   "machineName": "Dev MacBook",
   "sessionId": "ao-pane-w3:p1",
   "paneId": "w3:p1",
+  "botId": "local:lead-bonsai-lead",
   "cwd": "allternit",
   "repo": "Allternit/allternit-platform",
   "branch": "main",
