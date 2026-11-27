@@ -13,7 +13,12 @@
  */
 
 import { handlePageControlMessage } from '@/agent/RemotePageController.background'
-import { handleTabControlMessage, setupTabChangeEvents } from '@/agent/TabsController.background'
+import {
+  handleTabControlMessage,
+  isAgentAutofillApproved,
+  isAgentWindowTab,
+  setupTabChangeEvents,
+} from '@/agent/TabsController.background'
 import { remoteTaskHandler } from '@/agent/remote-task-handler'
 import { browserAgentConnection } from '@/browser-agent/connection'
 import { 
@@ -189,6 +194,14 @@ export default defineBackground(() => {
       sendResponse({ ok: true })
       return undefined
     }
+    // Side panel "Gizzi needs you · Continue · Stop" bar
+    if (message.type === 'AGENT_HANDOFF_RESOLVE') {
+      remoteTaskHandler
+        .resumeTask(String(message.handoffId ?? ''), message.approved === true)
+        .then((ok) => sendResponse({ ok }))
+        .catch(() => sendResponse({ ok: false }))
+      return true
+    }
     if (message.type === 'PLATFORM_TASK_SUBSCRIBE') {
       sendResponse({ ok: true })
       return undefined
@@ -223,6 +236,12 @@ export default defineBackground(() => {
       }
       if (typeof tabId !== 'number') {
         sendResponse({ ok: false, error: 'tabId is required' })
+        return undefined
+      }
+      // The agent never fills a password on its own: in its window, autofill
+      // waits until the person approved the pause (resume_task).
+      if (isAgentWindowTab(sender.tab?.windowId) && !isAgentAutofillApproved(tabId)) {
+        sendResponse({ ok: false, error: 'Waiting for you to approve before filling.' })
         return undefined
       }
       fillCredential(credentialId, origin)
