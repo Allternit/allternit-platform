@@ -270,13 +270,24 @@ export function displayMediaHandler(deps: {
   };
 }
 
+// Stripe.js + Checkout + Link, exactly as Stripe's CSP guide lists them
+// (docs.stripe.com/security/guide#content-security-policy, 2026-11-26).
+// No wallet hosts. connect-src, frame-src and img-src already allow https:,
+// so the explicit entries there only keep payments working if that narrows.
+const STRIPE_SCRIPT_SRC = ['https://js.stripe.com', 'https://*.js.stripe.com', 'https://checkout.stripe.com'];
+const STRIPE_CONNECT_SRC = ['https://api.stripe.com', 'https://checkout.stripe.com', 'https://link.com', 'https://*.link.com'];
+const STRIPE_FRAME_SRC = [
+  'https://js.stripe.com', 'https://*.js.stripe.com', 'https://hooks.stripe.com',
+  'https://checkout.stripe.com', 'https://link.com', 'https://*.link.com',
+];
+
 function buildContentSecurityPolicy(): string {
   const dev = config?.isDev ?? false;
   const directives: Record<string, string[]> = {
     'default-src': ["'self'"],
     // wasm-unsafe-eval: compiling WebAssembly (the PDF editor's PDFium engine
     // runs in a worker). It allows WASM compilation only, not JS eval.
-    'script-src': ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", ...(dev ? ["'unsafe-eval'"] : [])],
+    'script-src': ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", ...(dev ? ["'unsafe-eval'"] : []), ...STRIPE_SCRIPT_SRC],
     'style-src': ["'self'", "'unsafe-inline'"],
     'img-src': ["'self'", 'data:', 'blob:', 'https:'],
     'font-src': ["'self'", 'data:'],
@@ -286,12 +297,13 @@ function buildContentSecurityPolicy(): string {
       'http://127.0.0.1:*', 'http://localhost:*',
       'ws://127.0.0.1:*', 'ws://localhost:*',
       'allternit-api:', 'allternit-gizzi:',
+      ...STRIPE_CONNECT_SRC,
     ],
     // ElevenLabs voice previews (Settings > Voice picker) play straight from
     // the vendor: storage.googleapis.com and api.us.elevenlabs.io (2026-11-13).
     'media-src': ["'self'", 'blob:', 'data:', 'https://storage.googleapis.com', 'https://*.elevenlabs.io'],
     'worker-src': ["'self'", 'blob:'],
-    'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:'],
+    'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:', ...STRIPE_FRAME_SRC],
     'object-src': ["'none'"],
     'base-uri': ["'self'"],
   };
