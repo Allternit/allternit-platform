@@ -1,0 +1,111 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_summarize_handoff",
+  "suite": "shared.v1",
+  "title": "Write a handoff in HANDOFF.md from transcript.md: decisions, every open item wit",
+  "label": "good",
+  "note": "Ported from the subagent task 'summarize-handoff' (skill: summarizing).",
+  "split": "dev",
+  "origin": {
+    "session_id": "summarize-handoff",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Write a handoff in HANDOFF.md from transcript.md: decisions, every open item with its owner (or 'no owner'), and the files involved."
+    }
+  ],
+  "workspace": {
+    "kind": "archive",
+    "path": "workspace.tar.gz",
+    "bytes": 1666,
+    "snapshot": "ad0b2e63adb9e70080bc9a450e2a4d4949b658d7"
+  },
+  "checks": [
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "sqlite",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "items.json",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "--csv",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "rounding",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "theo",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "mara",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "inventory/store.py",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "inventory/shipping.py",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "HANDOFF.md",
+      "text": "2026-10-24",
+      "ignore_case": true
+    },
+    {
+      "type": "absent",
+      "path": "HANDOFF.md",
+      "text": "lunch",
+      "ignore_case": true
+    }
+  ],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "verifier_pass"
+    }
+  ],
+  "k": 3,
+  "pass_rule": {
+    "n_of_k": 2
+  },
+  "recorded": null,
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}
