@@ -6,8 +6,9 @@
 //! or `owner` (the user, through `PUT /memory/sleep/settings` or `/config`).
 //! Writers of `fitted` rows must not replace an `owner` row.
 //!
-//! Every stage flag is off by default and the daily spend cap is 0, so nothing
-//! runs and nothing is spent until a stage is built and switched on.
+//! Every stage flag is off by default, except `disputes` (it only records and
+//! keeps both sides), and the daily spend cap is 0, so nothing else runs and
+//! nothing is spent until a stage is built and switched on.
 
 use std::collections::BTreeMap;
 
@@ -84,7 +85,9 @@ pub const DEFS: &[Def] = &[
     flag("stage.pages", "Topic pages, Track 2 (4.1-4.3)."),
     flag("stage.router", "Router out of shadow, context and load_page (4.4)."),
     flag("stage.orchestrator", "Sleep cycles from the unit queue (5.1)."),
-    flag("stage.disputes", "Dispute records and the arbiter (6.1)."),
+    // On by default (RAW-RAG step 9): a Dream contradiction opens a dispute
+    // and keeps both sides, instead of changing memory. The owner can turn it off.
+    Def { key: "stage.disputes", default: DefaultValue::Bool(true), min: 0.0, max: 1.0, group: Group::Setting, about: "Dispute records and the arbiter (6.1). On by default for the Dream; the other paths still need the master switch." },
     flag("stage.checks", "Spaced checks on old memories (6.3)."),
     flag("stage.intentions", "Prospective memory (6.4)."),
     flag("stage.rem", "REM and the hypothesis queue (5.4)."),

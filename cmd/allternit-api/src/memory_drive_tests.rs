@@ -358,6 +358,92 @@ async fn dream_applies_one_commit_and_undo_preserves_later_writes() {
     assert!(matches!(crate::memory_dream::undo(&f.db, "u1", &row.id), Err(crate::memory_dream::UndoError::NotUndoable(_))));
 }
 
+async fn dream_run(f: &Fixture, plan: serde_json::Value, day: chrono::NaiveDate) -> crate::memory_dream::DreamRow {
+    let plan = plan.to_string();
+    let complete: crate::memory_dream::Complete = std::sync::Arc::new(move |_p| {
+        let plan = plan.clone();
+        Box::pin(async move { Some(plan) })
+    });
+    crate::memory_dream::run(f.db.clone(), "u1".into(), day, complete).await.unwrap().unwrap()
+}
+
+/// The drive line holding `text`, across every file.
+fn line_with(db: &DbHandle, text: &str) -> Option<String> {
+    drive_files(db, "u1").values().flat_map(|c| c.lines().map(str::to_string).collect::<Vec<_>>()).find(|l| l.starts_with("- ") && l.contains(text))
+}
+
+fn disputes_count(db: &DbHandle) -> i64 {
+    db.connect().unwrap().query_row("SELECT COUNT(*) FROM memory_disputes WHERE user_id='u1'", [], |r| r.get(0)).unwrap()
+}
+
+#[tokio::test]
+async fn dream_prune_marks_the_line_out_of_date_and_undo_removes_the_mark() {
+    let (f, ids) = dream_fixture();
+    let stale = entry_id(&f.db, &ids[1]);
+    let day = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+    let row = dream_run(&f, serde_json::json!({
+        "merges": [], "contradictions": [], "lessons": [], "twin_proposals": [],
+        "prune": [{"id": stale, "reason": "never used"}]
+    }), day).await;
+    assert_eq!((row.status.as_str(), row.summary.pruned), ("applied", 1));
+    // The entry is still in its topic file, with the mark, and in git history.
+    let line = line_with(&f.db, "User enjoys tea.").expect("pruned entry stays in its file");
+    assert!(line.contains("superseded: 2099-01-01") && line.contains("superseded-by: dream-prune"), "{line}");
+    assert!(line_with(&f.db, "User likes tea.").map(|l| !l.contains("superseded")).unwrap());
+    // Left out of the MEMORY.md index and out of recall.
+    assert!(!drive_files(&f.db, "u1")["MEMORY.md"].contains("enjoys tea"));
+    assert_eq!(active_facts(&f.db, "u1"), vec!["User likes tea."]);
+    assert!(row.report.as_deref().unwrap().contains("Marked out of date"));
+    assert!(!row.report.as_deref().unwrap().contains("Pruned"));
+    // Undo reverses the Dream's own mark.
+    let undone = crate::memory_dream::undo(&f.db, "u1", &row.id).unwrap();
+    assert_eq!(undone.status, "undone");
+    let line = line_with(&f.db, "User enjoys tea.").unwrap();
+    assert!(!line.contains("superseded"), "{line}");
+    assert_eq!(active_facts(&f.db, "u1"), vec!["User enjoys tea.", "User likes tea."]);
+}
+
+#[tokio::test]
+async fn dream_contradiction_with_default_settings_opens_a_dispute_and_removes_nothing() {
+    let (f, ids) = dream_fixture();
+    let (keep, drop) = (entry_id(&f.db, &ids[0]), entry_id(&f.db, &ids[1]));
+    let turn = obs(&f.db, "u1", None);
+    // No sleep_config rows at all: a user who never touched Sleep settings.
+    let n: i64 = f.db.connect().unwrap().query_row("SELECT COUNT(*) FROM sleep_config", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    let row = dream_run(&f, serde_json::json!({
+        "merges": [], "lessons": [], "prune": [], "twin_proposals": [],
+        "contradictions": [{"keep": keep, "drop": [drop], "evidence": [turn]}]
+    }), day).await;
+    assert_eq!(row.status, "no_changes");
+    assert_eq!(disputes_count(&f.db), 1);
+    for t in ["User likes tea.", "User enjoys tea."] {
+        let line = line_with(&f.db, t).unwrap_or_else(|| panic!("{t} removed"));
+        assert!(!line.contains("superseded"), "{line}");
+    }
+    assert_eq!(active_facts(&f.db, "u1"), vec!["User enjoys tea.", "User likes tea."]);
+    assert!(row.report.as_deref().unwrap().contains("Dispute"));
+}
+
+#[tokio::test]
+async fn dream_contradiction_with_disputes_switched_off_marks_the_loser_out_of_date() {
+    let (f, ids) = dream_fixture();
+    let (keep, drop) = (entry_id(&f.db, &ids[0]), entry_id(&f.db, &ids[1]));
+    let turn = obs(&f.db, "u1", None);
+    f.db.connect().unwrap().execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', 'stage.disputes', 'false', 'owner')", []).unwrap();
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    let row = dream_run(&f, serde_json::json!({
+        "merges": [], "lessons": [], "prune": [], "twin_proposals": [],
+        "contradictions": [{"keep": keep, "drop": [drop], "evidence": [turn]}]
+    }), day).await;
+    assert_eq!(row.status, "applied");
+    assert_eq!(disputes_count(&f.db), 0);
+    let line = line_with(&f.db, "User enjoys tea.").expect("still in its file");
+    assert!(line.contains("superseded: 2026-10-06") && line.contains(&format!("superseded-by: {keep}")), "{line}");
+    assert_eq!(active_facts(&f.db, "u1"), vec!["User likes tea."]);
+}
+
 #[tokio::test]
 async fn dream_without_a_model_answer_changes_nothing() {
     let (f, _) = dream_fixture();

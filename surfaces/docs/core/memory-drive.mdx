@@ -130,16 +130,21 @@ or a failed run (up to 3 attempts) is retried.
 2. Ask the model (through `gizzi_completion`, the same route as memory extraction,
    with a JSON schema) for merges, contradictions, lessons, prunes and twin proposals.
 3. Check every suggestion in code (`memory_dream::check`): contradiction fixes, lessons
-   and twin proposals must cite turn ids that were actually shown; prunes only remove
-   entries never used and at least 30 days old; each entry is touched once; text must
-   pass the entry format and secret checks.
+   and twin proposals must cite turn ids that were actually shown; prunes only mark
+   entries out of date when they were never used and are at least 30 days old; each
+   entry is touched once; text must pass the entry format and secret checks. The Dream
+   never deletes a line: a prune or contradiction fix adds `superseded: <date>` and
+   `superseded-by: <entry id or dream-prune>` to the entry's metadata. The line stays in
+   its topic file and in git history, but it leaves the index and recall (`active()` in
+   `memory_drive_service`). With the `disputes` flag on (the default), a contradiction
+   opens a dispute instead and nothing is marked.
 4. Apply as one `Dream YYYY-MM-DD` commit by `Dream via Allternit`, and store a report
    built from what was applied. Twin facts go to `twin_persona::propose` and wait for
    the owner.
 5. No answer or an unusable answer marks the run `failed` and changes nothing.
 
 **Undo** compares the Dream's parent, the Dream commit and the current head entry by
-entry. It restores lines the Dream removed or rewrote and removes lines it added, as a
+entry. It restores lines the Dream rewrote (including the out-of-date mark) or removed, and removes lines it added, as a
 new `Undo Dream YYYY-MM-DD` commit. If a line the Dream touched was edited later, undo
 refuses and lists the files instead of guessing.
 
