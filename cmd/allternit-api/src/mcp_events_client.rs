@@ -1584,7 +1584,7 @@ fn set_wake_result(watch_id: &str, error: Option<String>, woke: bool) {
     }
     if let Ok(mut l) = t.last_wake_error.lock() {
         *l = error;
-    }
+    };
 }
 
 /// A refused or failed woken turn, in plain words for the watch row.
