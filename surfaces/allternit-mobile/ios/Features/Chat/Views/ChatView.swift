@@ -22,6 +22,7 @@ struct ChatView: View {
     /// A ⋯ row that opens a sheet waits for the menu to close first.
     @State private var pendingMenuItem: ChatMenuItem?
     @State private var isBrainCapturePresented = false
+    @State private var isSaveTestCasePresented = false
     @State private var menuError: String?
 
     private var menuItems: [ChatMenuItem] {
@@ -77,6 +78,11 @@ struct ChatView: View {
         .sheet(isPresented: $isShareLinkPresented) {
             ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title.isEmpty ? "Allternit" : title, messages: viewModel.messages)
         }
+        .sheet(isPresented: $isSaveTestCasePresented) {
+            if let id = viewModel.currentSessionId {
+                SaveTestCaseSheet(sessionId: id)
+            }
+        }
         .sheet(isPresented: $isBrainCapturePresented) {
             BrainCaptureSheet()
         }
@@ -89,6 +95,7 @@ struct ChatView: View {
                 switch item {
                 case .shareLink: isShareLinkPresented = true
                 case .captureToBrain: isBrainCapturePresented = true
+                case .saveTestCase: isSaveTestCasePresented = true
                 default: break
                 }
             }
@@ -145,7 +152,7 @@ struct ChatView: View {
         case .runOnPhone:
             // RunOnPhoneRow draws and runs itself inside the menu.
             break
-        case .captureToBrain, .shareLink:
+        case .captureToBrain, .shareLink, .saveTestCase:
             pendingMenuItem = item
             isChatMenuOpen = false
         case .pin, .unpin:
@@ -215,6 +222,7 @@ private struct ChatMenuPopover: View {
         case .shareLink: return "Share link"
         case .pin: return "Pin"
         case .unpin: return "Unpin"
+        case .saveTestCase: return "Save as test case"
         case .archive: return "Archive"
         }
     }
@@ -226,6 +234,7 @@ private struct ChatMenuPopover: View {
         case .shareLink: return "link"
         case .pin: return "pin"
         case .unpin: return "pin.slash"
+        case .saveTestCase: return "flask"
         case .archive: return "archivebox"
         }
     }

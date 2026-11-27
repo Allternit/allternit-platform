@@ -15,6 +15,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
     case security, agents, webhooks, about
     case deviceAccess = "device-access"
     case selfHosted = "self-hosted"
+    case testCases = "test-cases"
 
     var id: String { rawValue }
 
@@ -64,6 +65,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .about: return "About"
         case .deviceAccess: return "Device Access"
         case .selfHosted: return "Self-hosted server"
+        case .testCases: return "Test cases"
         }
     }
 
@@ -111,6 +113,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .about: return "info.circle"
         case .deviceAccess: return "hand.raised"
         case .selfHosted: return "server.rack"
+        case .testCases: return "flask"
         }
     }
 
@@ -131,6 +134,7 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .voice: return (.assistant, 2)
         case .appearance: return (.assistant, 3)
         case .responseStyle: return (.assistant, 4)
+        case .testCases: return (.assistant, 6)
         case .openModels: return (.assistant, 5)
         case .subscriptions: return (.bots, 1)
         case .agentRules: return (.bots, 2)
