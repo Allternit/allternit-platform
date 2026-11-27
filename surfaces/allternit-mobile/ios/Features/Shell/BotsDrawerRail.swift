@@ -546,20 +546,11 @@ struct BotsDrawerRail: View {
                     VStack(spacing: 0) {
                         ForEach(groups) { group in
                             Button { onOpen(.group(group.id)) } label: {
-                                HStack(spacing: 10) {
-                                    GroupAvatarStack(members: group.members, size: 34)
-                                    Text(group.name)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(Color("TextPrimary"))
-                                        .lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    Text(BotTime.short(group.updatedAt))
-                                        .font(.system(size: 11))
-                                        .foregroundColor(Color("TextTertiary"))
-                                }
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 44)
-                                .contentShape(Rectangle())
+                                QuietSessionRow(
+                                    title: group.name,
+                                    time: BotTime.short(group.updatedAt),
+                                    leading: { GroupAvatarStack(members: group.members, size: 34) }
+                                ) { EmptyView() }
                             }
                             .buttonStyle(.plain)
                         }

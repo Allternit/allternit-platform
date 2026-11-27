@@ -400,16 +400,12 @@ struct HistorySidebarView: View {
     /// `phone-nav-row` in the drawer: 46pt, 22pt glyph, 17pt label, 12pt
     /// rounded fill when it's the open section.
     private func navRowLabel(_ row: RailRow, trailingDot: Bool = false) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: row.isActive ? (row.activeIcon ?? row.icon) : row.icon)
-                .font(.system(size: 19, weight: .regular))
-                .frame(width: 24)
-                .overlay(alignment: .topTrailing) {
-                    if trailingDot { PhoneRoundDot().offset(x: 3, y: -1) }
-                }
-            Text(row.label)
-                .font(.system(size: 17))
-            Spacer(minLength: 0)
+        QuietSessionRow(
+            title: row.label,
+            glyph: row.isActive ? (row.activeIcon ?? row.icon) : row.icon,
+            isSelected: row.isActive,
+            metrics: .nav
+        ) {
             if row.badge > 0 {
                 Text(row.badge > 99 ? "99+" : "\(row.badge)")
                     .font(.system(size: 11, weight: .bold))
@@ -419,14 +415,9 @@ struct HistorySidebarView: View {
                     .background(Capsule().fill(Theme.statusError))
             }
         }
-        .foregroundColor(Color("TextPrimary"))
-        .padding(.horizontal, 12)
-        .frame(height: 50)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(row.isActive ? Color("BorderStrong").opacity(0.65) : Color.clear)
-        )
-        .contentShape(Rectangle())
+        .overlay(alignment: .topLeading) {
+            if trailingDot { PhoneRoundDot().offset(x: 32, y: 14) }
+        }
     }
 
     private func railRowView(_ row: RailRow) -> some View {
@@ -680,85 +671,37 @@ struct HistorySidebarView: View {
     /// Claude-iOS row body: icon, title, preview line, and time / Working /
     /// unread dot (PhoneDrawer RecentRowBody).
     private func recentRowBody(_ session: AgentSession) -> some View {
-        let isSelected = selectedSessionId == session.id
         let working = store.isStreaming(session.id)
         let unread = store.isUnread(session)
         let time = ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session))
         // C6 (9a server flags): Needs input / Ready for review ride on the row.
         let codeStatus = codeSessionFilterStatus(session, streaming: working)
         let asks = codeStatus.asksForUser
-        return HStack(spacing: 14) {
-            Image(systemName: ShellSearchView.icon(for: session))
-                .font(.system(size: 16))
-                .foregroundColor(Color("TextSecondary"))
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.displayTitle)
-                        .font(.system(size: 16.5, weight: unread ? .semibold : .regular))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if session.isTerminal {
-                        // .phone-rail-terminal: a live Gizzi terminal session.
-                        Text("TERMINAL")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Color("TextSecondary"))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color("BorderStrong").opacity(0.5)))
-                            .accessibilityLabel("Terminal session")
-                    }
-                    if working {
-                        // .phone-rail-spinner: a small coral spinner while a reply runs.
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(Self.workingCoral)
-                            .accessibilityLabel("Working")
-                    } else if asks {
-                        CodeSessionStatusIcon(status: codeStatus)
-                            .imageScale(.small)
-                            .accessibilityLabel(codeStatus.label)
-                    } else if !time.isEmpty {
-                        Text(time)
-                            .font(.system(size: 12))
-                            .monospacedDigit()
-                            .foregroundColor(Color("TextSecondary"))
-                    }
-                }
-                if asks {
-                    Text(codeStatus.label)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(1)
-                } else if let mission = session.missionLabel {
-                    Text(mission)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color("AccentPrimary"))
-                        .lineLimit(1)
-                } else if let preview = session.description?.trimmingCharacters(in: .whitespacesAndNewlines), !preview.isEmpty {
-                    Text(preview)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(1)
-                }
-            }
-            if !working && unread {
-                // .phone-rail-dot-new: 8px, blue (new reply).
+        return QuietSessionRow(
+            title: session.displayTitle,
+            glyph: ShellSearchView.icon(for: session),
+            time: time,
+            isSelected: selectedSessionId == session.id,
+            emphasized: unread
+        ) {
+            // Only what the data says: running, asking, or unread.
+            if working {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(Self.workingCoral)
+                    .accessibilityLabel("Working")
+            } else if asks {
+                CodeSessionStatusIcon(status: codeStatus)
+                    .imageScale(.small)
+                    .accessibilityLabel(codeStatus.label)
+            } else if unread {
                 Circle()
                     .fill(Color.blue)
                     .frame(width: 8, height: 8)
                     .accessibilityLabel("Unread")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .frame(minHeight: 48)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isSelected ? Color("BorderStrong").opacity(0.65) : Color.clear)
-        )
-        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 
     /// The web's working accent (#D97757, `.phone-rail-working`).
