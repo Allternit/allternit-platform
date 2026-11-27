@@ -453,16 +453,27 @@ pub fn hybrid_search(
 /// Split text into overlapping chunks of about [`CHUNK_CHARS`] characters,
 /// preferring paragraph / sentence / word boundaries.
 pub fn chunk_text(text: &str) -> Vec<String> {
+    chunk_text_with(text, CHUNK_CHARS, CHUNK_OVERLAP)
+}
+
+/// Window size / overlap for raw conversation turns (`turn_*` observations).
+const TURN_WINDOW_CHARS: usize = 1000;
+const TURN_WINDOW_OVERLAP: usize = 125;
+
+/// [`chunk_text`] with an explicit window `size` and `overlap` (in chars).
+pub fn chunk_text_with(text: &str, size: usize, overlap: usize) -> Vec<String> {
+    let size = size.max(1);
+    let overlap = overlap.min(size / 2);
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut start = 0;
     while start < chars.len() {
-        let mut end = (start + CHUNK_CHARS).min(chars.len());
+        let mut end = (start + size).min(chars.len());
         if end < chars.len() {
             let window: String = chars[start..end].iter().collect();
             let cut = ["\n\n", ". ", "\n", " "]
                 .iter()
-                .find_map(|sep| window.rfind(sep).filter(|&p| p > CHUNK_CHARS / 2).map(|p| p + sep.len()));
+                .find_map(|sep| window.rfind(sep).filter(|&p| p > size / 2).map(|p| p + sep.len()));
             if let Some(byte_cut) = cut {
                 end = start + window[..byte_cut].chars().count();
             }
@@ -474,7 +485,7 @@ pub fn chunk_text(text: &str) -> Vec<String> {
         if end >= chars.len() {
             break;
         }
-        start = end.saturating_sub(CHUNK_OVERLAP).max(start + 1);
+        start = end.saturating_sub(overlap).max(start + 1);
     }
     out
 }
@@ -529,6 +540,64 @@ pub fn chunk_pending_documents(conn: &Connection, batch: usize) -> rusqlite::Res
             params![id, n as i64],
         )?;
         written += n;
+    }
+    Ok(written)
+}
+
+/// Header line that starts every raw-turn window (CONTRACT.md "Window format").
+fn turn_header(kind: &str, content: &str, timestamp: Option<&str>, session: Option<&str>, source: Option<&str>) -> String {
+    let speaker = match kind {
+        "turn_user" => "user".to_string(),
+        "turn_assistant" => "assistant".to_string(),
+        "turn_tool" => {
+            let name = content.lines().next().map(str::trim).filter(|l| {
+                !l.is_empty() && l.chars().count() <= 64 && l.chars().all(|c| c.is_alphanumeric() || "_-.:/".contains(c))
+            });
+            format!("tool:{}", name.unwrap_or("tool"))
+        }
+        other => other.trim_start_matches("turn_").to_string(),
+    };
+    let ts: String = timestamp.unwrap_or("").chars().take(16).map(|c| if c == 'T' { ' ' } else { c }).collect();
+    let ts = if ts.is_empty() { "-".to_string() } else { format!("{ts} UTC") };
+    let clean = |v: Option<&str>| v.map(str::trim).filter(|v| !v.is_empty()).unwrap_or("-").replace('\n', " ");
+    format!("[{ts} · {speaker} · session {} · {}]", clean(session), clean(source))
+}
+
+/// Chunk `turn_*` observations that have no windows yet into headed
+/// windows (1,000 chars / 125 overlap, scope = user, source_type =
+/// 'observation'). Stateless and resumable: old turns backfill lazily, a
+/// batch at a time. Returns windows written.
+pub fn chunk_pending_observations(conn: &Connection, batch: usize) -> rusqlite::Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT o.id, o.user_id, o.kind, o.content, o.timestamp, o.session_id, o.source FROM memory_observations o
+         WHERE o.kind LIKE 'turn\\_%' ESCAPE '\\'
+           AND NOT EXISTS (SELECT 1 FROM memory_index_sources s WHERE s.source_type = 'observation' AND s.source_id = o.id)
+           AND NOT EXISTS (SELECT 1 FROM memory_index_chunks c WHERE c.source_type = 'observation' AND c.source_id = o.id)
+         ORDER BY o.timestamp, o.id LIMIT ?1",
+    )?;
+    type Row = (String, String, String, String, Option<String>, Option<String>, Option<String>);
+    let rows: Vec<Row> = stmt
+        .query_map(params![batch as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, Option<String>>(3)?.unwrap_or_default(), r.get(4)?, r.get(5)?, r.get(6)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut written = 0;
+    for (id, user, kind, content, ts, session, source) in rows {
+        let header = turn_header(&kind, &content, ts.as_deref(), session.as_deref(), source.as_deref());
+        let windows = chunk_text_with(&content, TURN_WINDOW_CHARS, TURN_WINDOW_OVERLAP);
+        for (i, w) in windows.iter().enumerate() {
+            let cid = format!("chk_{}", uuid::Uuid::new_v4().simple());
+            conn.execute(
+                "INSERT INTO memory_index_chunks (id, scope, source_type, source_id, chunk_index, text)
+                 VALUES (?1, ?2, 'observation', ?3, ?4, ?5)",
+                params![cid, user, id, i as i64, format!("{header}\n{w}")],
+            )?;
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_index_sources (source_type, source_id, chunk_count) VALUES ('observation', ?1, ?2)",
+            params![id, windows.len() as i64],
+        )?;
+        written += windows.len();
     }
     Ok(written)
 }
@@ -591,7 +660,8 @@ pub fn pending_targets(conn: &Connection, model: Option<&str>, batch: usize) -> 
         ("fact", "SELECT f.user_id, f.id, f.fact FROM memory_facts f", "f.user_id", "f.id", "f.valid_until IS NULL"),
         ("entity", "SELECT n.user_id, n.id, n.name || ' ' || n.type || ' ' || COALESCE(n.summary, '') FROM memory_entities n", "n.user_id", "n.id", "1"),
         ("chunk", "SELECT c.scope, c.id, c.text FROM memory_index_chunks c", "c.scope", "c.id", "1"),
-        ("observation", "SELECT o.user_id, o.id, o.content FROM memory_observations o", "o.user_id", "o.id", "1"),
+        // Raw turns (`turn_*`) are embedded as `chunk` windows instead.
+        ("observation", "SELECT o.user_id, o.id, o.content FROM memory_observations o", "o.user_id", "o.id", "o.kind NOT LIKE 'turn\\_%' ESCAPE '\\'"),
         // V209: notes and procedures share the index (WP-M1d).
         ("note", "SELECT t.user_id, t.id, t.title || ': ' || t.content FROM memory_notes t", "t.user_id", "t.id", "1"),
         (
@@ -651,7 +721,7 @@ pub async fn index_pending(db: &DbHandle, client: &EmbedClient, batch: usize) ->
     let db2 = db.clone();
     let chunked = tokio::task::spawn_blocking(move || -> rusqlite::Result<usize> {
         let conn = db2.connect()?;
-        Ok(chunk_pending_documents(&conn, 16)? + chunk_pending_files(&conn, None, 16)?)
+        Ok(chunk_pending_documents(&conn, 16)? + chunk_pending_files(&conn, None, 16)? + chunk_pending_observations(&conn, 64)?)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1089,6 +1159,60 @@ mod tests {
         let hits = kernel::recall_hybrid(&db, &client, "u1", None, None, "which vehicle is mine", 3).await.unwrap();
         assert_eq!(hits[0].id, ids[0], "{hits:?}");
         assert_eq!(hits[0].metadata["embedding_model"], DEFAULT_EMBED_MODEL);
+    }
+
+    fn put_obs(conn: &Connection, id: &str, kind: &str, content: &str) {
+        conn.execute(
+            "INSERT INTO memory_observations (id, user_id, session_id, kind, content, timestamp, source)
+             VALUES (?1, 'u1', 'ses_1', ?2, ?3, '2026-11-20 14:05:33', 'gizzi:session/ses_1')",
+            params![id, kind, content],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn turn_window_chunking_is_headed_overlapping_and_bounded() {
+        let db = m1d_db();
+        let conn = db.connect().unwrap();
+        let text = "alpha bravo charlie delta. ".repeat(186); // ~5,000 chars
+        put_obs(&conn, "obs_t1", "turn_user", &text);
+        let n = chunk_pending_observations(&conn, 10).unwrap();
+        assert!(n >= 5, "got {n}");
+        assert_eq!(chunk_pending_observations(&conn, 10).unwrap(), 0, "resumable: no rework");
+        let mut stmt = conn
+            .prepare("SELECT text FROM memory_index_chunks WHERE source_type='observation' AND source_id='obs_t1' ORDER BY chunk_index")
+            .unwrap();
+        let wins: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        let header = "[2026-11-20 14:05 UTC · user · session ses_1 · gizzi:session/ses_1]";
+        for w in &wins {
+            assert!(w.starts_with(header), "{w}");
+            assert!(w.chars().count() <= 1000 + header.chars().count() + 1);
+        }
+        let tail: String = wins[0].chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+        assert!(wins[1].contains(tail.trim()), "overlap present");
+        // Windows are keyword searchable.
+        let scope = Scope { scope: "u1", target_types: &["chunk"], only_ids: None };
+        assert!(!keyword_search(&conn, &scope, "charlie", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn turn_observations_embed_as_chunks_other_kinds_stay_observations() {
+        let db = m1d_db();
+        let conn = db.connect().unwrap();
+        put_obs(&conn, "obs_turn", "turn_user", "what is the plan for the memory index?");
+        put_obs(&conn, "obs_file", "file", "edited memory_index.rs");
+        chunk_pending_observations(&conn, 10).unwrap();
+        let pending = pending_targets(&conn, None, 100).unwrap();
+        assert!(!pending.iter().any(|p| p.target_type == "observation" && p.target_id == "obs_turn"));
+        assert!(pending.iter().any(|p| p.target_type == "observation" && p.target_id == "obs_file"));
+        assert!(pending.iter().any(|p| p.target_type == "chunk" && p.text.contains("plan for the memory index")));
+    }
+
+    #[test]
+    fn tool_turn_header_names_the_tool() {
+        let h = turn_header("turn_tool", "bash\nls -la", Some("2026-11-20T14:05:33Z"), None, None);
+        assert_eq!(h, "[2026-11-20 14:05 UTC · tool:bash · session - · -]");
+        assert!(turn_header("turn_tool", "some long free text line with spaces", None, None, None).contains("tool:tool"));
     }
 
     #[test]
