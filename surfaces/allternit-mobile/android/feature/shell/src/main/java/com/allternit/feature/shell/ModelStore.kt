@@ -36,6 +36,8 @@ internal data class PickerModel(
     val cloudProvider: String? = null,
     val inputPer1mUsd: Double? = null,
     val outputPer1mUsd: Double? = null,
+    /** Allternit Open rows only: `open.access`, `plan` or `research` (CONTRACT-open-tier §5). */
+    val openAccess: String? = null,
 )
 
 private fun RuntimeModel.toPicker() = PickerModel(
@@ -56,6 +58,9 @@ internal class ModelStore(context: Context) {
         private set
     var cloudModels by mutableStateOf<List<PickerModel>>(emptyList())
         private set
+    /** Allternit Open rows of the Cloud catalog; shown only by [chatModels] once terms are accepted. */
+    var openCloudModels by mutableStateOf<List<PickerModel>>(emptyList())
+        private set
     var isLoading by mutableStateOf(false)
         private set
     var loadError by mutableStateOf<String?>(null)
@@ -68,7 +73,15 @@ internal class ModelStore(context: Context) {
         private set
 
     /** The computer's catalog, or with no computer the Allternit Cloud catalog (iOS chatModels). */
-    val chatModels: List<PickerModel> get() = models.ifEmpty { cloudModels } + phoneModels
+    val chatModels: List<PickerModel> get() = models.ifEmpty { cloudModels + visibleOpenModels } + phoneModels
+
+    /** Open rows the account may see: after web terms only, research rows only with the flag. No `open_models` field = none (today). */
+    val visibleOpenModels: List<PickerModel>
+        get() = openCloudModels.filter { com.allternit.feature.billing.OpenModelsGate.showsRow(it.openAccess) }
+
+    /** True when the list should offer "Accept terms on the web" in place of open rows. */
+    val showsOpenTermsRow: Boolean
+        get() = models.isEmpty() && openCloudModels.isNotEmpty() && com.allternit.feature.billing.OpenModelsGate.needsTerms()
 
     /** Gap run GS-D: the models downloaded to this phone (iOS "On this iPhone" group), `ondevice/<id>#<quant>`. */
     var phoneModels by mutableStateOf<List<PickerModel>>(emptyList())
@@ -155,17 +168,31 @@ internal class ModelStore(context: Context) {
         }
     }
 
-    /** `{cloud}/v1/models` (iOS SetupAPI.cloudModelCatalog): listed, standard-lane rows only. */
+    /** `{cloud}/v1/models` (iOS SetupAPI.cloudModelCatalog): standard rows, and open-lane rows kept apart in [openCloudModels]. */
     private suspend fun loadCloud() {
         val url = ApiConfig().cloudBaseUrl.newBuilder().addPathSegments("v1/models").build()
         val r = ApiCall.execute(ShellApi.okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonObject.serializer())
         if (r !is ApiResult.Ok) return
+        val openRows = mutableListOf<PickerModel>()
         val rows = (r.value["data"] as? JsonArray).orEmpty().mapNotNull { item ->
             val o = item as? JsonObject ?: return@mapNotNull null
             fun str(key: String) = (o[key] as? JsonPrimitive)?.contentOrNull
             fun bool(key: String) = (o[key] as? JsonPrimitive)?.booleanOrNull == true
             val alias = str("id")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            if (bool("hidden") || str("lane") == "open") return@mapNotNull null
+            if (bool("hidden")) return@mapNotNull null
+            if (str("lane") == "open") {
+                val pricing = o["pricing"] as? JsonObject
+                openRows += PickerModel(
+                    id = CLOUD_PREFIX + alias, name = (str("name") ?: alias).ifEmpty { alias }, provider = "allternit",
+                    description = com.allternit.feature.billing.OpenModelsCopy.SUBTITLE, isDefault = false,
+                    hidden = false, rank = null, thinking = null,
+                    cloudProvider = str("provider"),
+                    inputPer1mUsd = (pricing?.get("input_per_1m_usd") as? JsonPrimitive)?.doubleOrNull,
+                    outputPer1mUsd = (pricing?.get("output_per_1m_usd") as? JsonPrimitive)?.doubleOrNull,
+                    openAccess = (((o["open"] as? JsonObject)?.get("access")) as? JsonPrimitive)?.contentOrNull ?: "plan",
+                )
+                return@mapNotNull null
+            }
             val extraName = ((o["extra"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull
             val name = (str("name") ?: extraName ?: alias).ifEmpty { alias }
             PickerModel(
@@ -178,6 +205,7 @@ internal class ModelStore(context: Context) {
             )
         }
         if (rows.isNotEmpty()) cloudModels = rows
+        openCloudModels = openRows
     }
 
     companion object {

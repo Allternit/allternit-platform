@@ -217,6 +217,7 @@ fun StorePlanTicket(item: StoreCatalogItem) {
             }
             Text(String.format(java.util.Locale.US, "$%.0f in Allternit Cloud credits each month", item.creditsUsd), color = c.textSecondary, fontSize = 13.sp)
             item.rolloverCapUsd?.let { Text(String.format(java.util.Locale.US, "Unused credits roll over, up to $%.0f", it), color = c.textSecondary, fontSize = 13.sp) }
+            OpenModelsCopy.planLine(item.id)?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("storePlanOpen_${item.id}")) }
             if (current) {
                 Text("Current plan", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             } else {

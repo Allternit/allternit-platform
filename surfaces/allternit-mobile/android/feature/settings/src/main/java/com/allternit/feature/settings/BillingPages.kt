@@ -36,6 +36,8 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.artifacts.listUnder
 import com.allternit.feature.artifacts.str
 import com.allternit.feature.billing.AccountPlan
+import com.allternit.feature.billing.OpenModelsStatusRow
+import com.allternit.feature.billing.OpenResearchCard
 import com.allternit.feature.billing.PlayPurchases
 import com.allternit.feature.billing.StoreKind
 import com.allternit.feature.billing.StorePackGrid
@@ -126,12 +128,17 @@ internal fun BillingPage(host: SettingsHost, back: () -> Unit) {
         }
         SDivider()
         CreditsRow()
+        // Allternit Open status meter (absent until open_models terms are accepted).
+        OpenModelsStatusRow(Modifier.padding(start = 6.dp, end = 6.dp, bottom = 14.dp))
         SDivider()
 
         // Google Play Billing: plan tickets priced by Play, while no plan is billed on the web or by Apple (D5).
         if (PlayPurchases.showsStoreButtons(StoreKind.Plan) && PlayPurchases.planPurchaseAllowed(sub)) {
             SLabel(if (sub?.isPaid == true) "Change plan" else "Choose a plan")
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { for (item in PlayPurchases.plans) StorePlanTicket(item) }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (item in PlayPurchases.plans) StorePlanTicket(item)
+                OpenResearchCard()
+            }
         }
         if (PlayPurchases.showsStoreButtons(StoreKind.Pack)) {
             SLabel("Buy credits")
