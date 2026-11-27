@@ -36,6 +36,7 @@ pub mod agent_routes;
 pub mod bot_brain;
 pub mod agent_runtime_routes;
 pub mod agent_session_routes;
+pub mod agent_eval_routes;
 pub mod code_session_status;
 pub mod agent_workspace_paths;
 pub mod agent_workspace_routes;
