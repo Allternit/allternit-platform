@@ -367,6 +367,198 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SleepSettings" }
         default: { $ref: "#/components/responses/Error" }
+  /knowledge/flags:
+    get:
+      operationId: listKnowledgeFlags
+      summary: The signed-in user's knowledge flags, newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs list_flags
+      tags: [Knowledge]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, proposed, resolved, dismissed] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: Flags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [flags]
+                properties:
+                  flags: { type: array, items: { $ref: "#/components/schemas/KnowledgeFlag" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createKnowledgeFlag
+      summary: File a flag (knowledge was missing, wrong or stale). Never include secrets
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs create_flag
+      tags: [Knowledge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, target_kind, evidence]
+              properties:
+                kind: { type: string, enum: [missing, wrong, stale] }
+                target_kind: { type: string, enum: [skill, domain, data_access] }
+                target_ref: { type: string }
+                evidence: { type: string, maxLength: 8000 }
+                suggested_fix: { type: string, maxLength: 8000 }
+                session_id: { type: string }
+                turn_id: { type: string }
+                agent_id: { type: string }
+      responses:
+        "200":
+          description: The new flag (status `open`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeFlagResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/flags/{id}/dismiss:
+    post:
+      operationId: dismissKnowledgeFlag
+      summary: Dismiss a flag. A linked proposal is left alone; a resolved flag is 409
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs dismiss_flag
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The flag after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeFlagResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals:
+    get:
+      operationId: listKnowledgeProposals
+      summary: The signed-in user's knowledge proposals, newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs list_proposals
+      tags: [Knowledge]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [proposed, approved, rejected, active, rolled_back] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: Proposals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposals]
+                properties:
+                  proposals: { type: array, items: { $ref: "#/components/schemas/KnowledgeProposal" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createKnowledgeProposal
+      summary: Propose a change (status `proposed`). Cited open flags become `proposed` and link to it; every cited id must be the user's own
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs create_proposal
+      tags: [Knowledge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_kind, target_ref, title, body, origin]
+              properties:
+                target_kind: { type: string, enum: [skill, domain, data_access] }
+                target_ref: { type: string, description: "Slug of letters, digits, '-', '_', '.'; skills may also use ':' and '/'." }
+                title: { type: string, maxLength: 200 }
+                body: { type: string }
+                base: { type: string }
+                evidence: { type: array, items: { $ref: "#/components/schemas/KnowledgeEvidence" } }
+                origin: { type: string, enum: [curator, agent, skill_growth] }
+                eval: { type: object }
+      responses:
+        "200":
+          description: The new proposal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/approve:
+    post:
+      operationId: approveKnowledgeProposal
+      summary: Approve (proposed → approved). domain/data_access write the knowledge file in the personal Memory Drive (step 16); skill is activated by the client. Linked flags become resolved
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs approve
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/reject:
+    post:
+      operationId: rejectKnowledgeProposal
+      summary: Reject (proposed → rejected). Linked flags become resolved
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs reject
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/activated:
+    post:
+      operationId: markKnowledgeProposalActivated
+      summary: The client turned an approved proposal on (approved → active)
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs activated
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /knowledge/proposals/{id}/rollback:
+    post:
+      operationId: rollbackKnowledgeProposal
+      summary: Roll back (approved or active → rolled_back)
+      x-base: api
+      x-handler: cmd/allternit-api/src/knowledge_routes.rs rollback
+      tags: [Knowledge]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The proposal after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeProposalResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -657,3 +849,57 @@ components:
         reason: { type: string, enum: [sleep_disabled, stage_not_built] }
         stage: { type: string }
         error: { type: string }
+    KnowledgeFlag:
+      type: object
+      description: knowledge_store.rs `Flag` (the `knowledge_flags` row).
+      required: [id, user_id, kind, target_kind, evidence, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        agent_id: { type: [string, "null"] }
+        session_id: { type: [string, "null"] }
+        turn_id: { type: [string, "null"] }
+        kind: { type: string, enum: [missing, wrong, stale] }
+        target_kind: { type: string, enum: [skill, domain, data_access] }
+        target_ref: { type: [string, "null"] }
+        evidence: { type: string }
+        suggested_fix: { type: [string, "null"] }
+        status: { type: string, enum: [open, proposed, resolved, dismissed] }
+        proposal_id: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+    KnowledgeFlagResponse:
+      type: object
+      required: [flag]
+      properties:
+        flag: { $ref: "#/components/schemas/KnowledgeFlag" }
+    KnowledgeEvidence:
+      type: object
+      description: Exactly one of the two ids.
+      properties:
+        flag_id: { type: string }
+        observation_id: { type: string }
+    KnowledgeProposal:
+      type: object
+      description: knowledge_store.rs `Proposal` (the `knowledge_proposals` row; `evidence_json` and `eval_json` are returned parsed as `evidence` and `eval`).
+      required: [id, user_id, target_kind, target_ref, title, body, evidence, origin, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        target_kind: { type: string, enum: [skill, domain, data_access] }
+        target_ref: { type: string }
+        title: { type: string }
+        body: { type: string }
+        base: { type: [string, "null"] }
+        evidence: { type: array, items: { $ref: "#/components/schemas/KnowledgeEvidence" } }
+        origin: { type: string, enum: [curator, agent, skill_growth] }
+        eval: { type: [object, "null"] }
+        status: { type: string, enum: [proposed, approved, rejected, active, rolled_back] }
+        decided_at: { type: [string, "null"] }
+        created_at: { type: string }
+        updated_at: { type: string }
+    KnowledgeProposalResponse:
+      type: object
+      required: [proposal]
+      properties:
+        proposal: { $ref: "#/components/schemas/KnowledgeProposal" }

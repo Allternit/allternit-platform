@@ -1062,6 +1062,8 @@ async fn main() {
         .merge(memory_router())
         // Allternit Sleep (`/memory/sleep/*`, `/memory/disputes*`); every stage off by default.
         .merge(allternit_api::sleep::routes::sleep_router())
+        // Knowledge factory (`/knowledge/flags`, `/knowledge/proposals`); proposals wait for the person's approve.
+        .merge(allternit_api::knowledge_routes::knowledge_router())
         .merge(me_router())
         .merge(setup_router())
         .merge(local_brain_router())
