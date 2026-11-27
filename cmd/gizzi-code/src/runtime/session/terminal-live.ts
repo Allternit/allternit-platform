@@ -89,6 +89,57 @@ export namespace TerminalLive {
         cwd: z.string().optional(),
       }),
     ),
+    /** The session's Remote Control state changed (see `rc`). */
+    Rc: BusEvent.define(
+      "session.rc",
+      z.object({
+        sessionID: z.string(),
+        rc: z.lazy(() => Rc),
+      }),
+    ),
+  }
+
+  /**
+   * Remote Control state of a session, as the engine sees the terminal's inbox:
+   * - connected: a terminal holds the inbox open;
+   * - reconnecting: the inbox dropped and the terminal has not re-opened it yet
+   *   (the TUI retries after 2 s, useLiveSession RECONNECT_MS);
+   * - offline: a terminal session whose terminal is gone;
+   * - off: never a terminal session (an ordinary engine session).
+   * `since` is when the state began (ms); null when the engine never saw it change.
+   */
+  export const RcState = z.enum(["connected", "reconnecting", "offline", "off"])
+  export const Rc = z.object({ state: RcState, since: z.number().nullable() })
+  export type Rc = z.infer<typeof Rc>
+
+  /** How long a dropped inbox reads as reconnecting before it reads as offline. */
+  const RECONNECT_GRACE_MS = 10_000
+  const rcState = new Map<string, Rc>()
+  const offlineTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  function setRc(sessionID: string, state: Rc["state"]) {
+    const timer = offlineTimers.get(sessionID)
+    if (timer) {
+      clearTimeout(timer)
+      offlineTimers.delete(sessionID)
+    }
+    if (rcState.get(sessionID)?.state === state) return
+    const rc: Rc = { state, since: Date.now() }
+    rcState.set(sessionID, rc)
+    try {
+      Bus.publish(Event.Rc, { sessionID, rc })
+    } catch (error) {
+      log.warn("rc publish failed", { sessionID, error: String(error) })
+    }
+  }
+
+  /** A session's Remote Control state for session lists. */
+  export function rc(session: Pick<Session.Info, "id" | "sourceRef" | "time">): Rc {
+    const known = rcState.get(session.id)
+    if (known) return known
+    // Not seen since the engine started: a terminal row has no terminal yet.
+    if (session.sourceRef?.harness === HARNESS) return { state: "offline", since: session.time.updated }
+    return { state: "off", since: null }
   }
 
   type Live = {
@@ -171,12 +222,22 @@ export namespace TerminalLive {
         host: input.host,
         cwd: input.directory,
       })
+    setRc(input.sessionID, "connected")
     log.info("attached", { sessionID: input.sessionID, host: input.host, pid: input.pid })
     return () => {
       if (live.get(input.sessionID) !== entry) return
       live.delete(input.sessionID)
       streamed.delete(input.sessionID)
       SessionStatus.set(input.sessionID, { type: "idle" })
+      setRc(input.sessionID, "reconnecting")
+      // The timer runs in this request's async context, so Bus/Instance state resolve.
+      offlineTimers.set(
+        input.sessionID,
+        setTimeout(() => {
+          offlineTimers.delete(input.sessionID)
+          if (!live.has(input.sessionID)) setRc(input.sessionID, "offline")
+        }, RECONNECT_GRACE_MS),
+      )
       Bus.publish(Event.Attached, {
         sessionID: input.sessionID,
         attached: false,

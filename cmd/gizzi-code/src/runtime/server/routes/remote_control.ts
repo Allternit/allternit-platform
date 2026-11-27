@@ -12,6 +12,7 @@ import { Log } from "@/shared/util/log"
 import { lazy } from "@/shared/util/lazy"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Question } from "@/runtime/integrations/question"
+import { TerminalLive } from "@/runtime/session/terminal-live"
 
 const log = Log.create({ service: "remote-control" })
 
@@ -23,6 +24,8 @@ export const RemoteControlRoutes = lazy(() => {
   const RemoteSessionStatus = z.object({
     session: Session.Info,
     status: SessionStatus.Info,
+    /** Remote Control: connected | reconnecting | offline | off, and since when (ms, or null). */
+    rc: TerminalLive.Rc,
   })
 
   return (
@@ -31,7 +34,7 @@ export const RemoteControlRoutes = lazy(() => {
       "/sessions",
       describeRoute({
         summary: "List remote-controllable sessions",
-        description: "List non-archived sessions with their current busy/idle status.",
+        description: "List non-archived sessions with their current busy/idle status and Remote Control state.",
         operationId: "remoteControl.sessions.list",
         responses: {
           200: {
@@ -45,6 +48,7 @@ export const RemoteControlRoutes = lazy(() => {
         const result = sessions.map((session) => ({
           session,
           status: SessionStatus.get(session.id),
+          rc: TerminalLive.rc(session),
         }))
         return c.json(result)
       },
@@ -71,6 +75,7 @@ export const RemoteControlRoutes = lazy(() => {
         return c.json({
           session,
           status: SessionStatus.get(sessionID),
+          rc: TerminalLive.rc(session),
           messages,
         })
       },
