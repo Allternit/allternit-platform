@@ -113,6 +113,13 @@ enum RuntimeMessage {
         /// connection grants the full pairing capability set (legacy).
         #[serde(default)]
         capabilities: Option<Vec<String>>,
+        /// Start anywhere (D6): true while the computer's Remote start
+        /// switch is on. Absent = off, so builds that never serve
+        /// `/api/v1/session-start` refuse with `remote_start_off`. A scoped
+        /// connection may instead list `runtime:remote_start` in
+        /// `capabilities`.
+        #[serde(default)]
+        remote_start: bool,
     },
     Response {
         request_id: String,
@@ -274,7 +281,18 @@ pub(crate) struct RelayConnectionEntry {
     pub(crate) connection: Arc<RuntimeConnection>,
     pub(crate) client: String,
     pub(crate) capabilities: Option<Vec<String>>,
+    /// This connection advertised `runtime:remote_start` (the computer's
+    /// Remote start switch is on). See [`REMOTE_START_CAPABILITY`].
+    pub(crate) remote_start: bool,
 }
+
+/// Start anywhere: starting a session from another device. Never stored in
+/// the pairing — the connected computer advertises it live while its safety
+/// switch is on (relay `authenticate`), and the pairing only has to allow
+/// running work (`runtime:execute`).
+pub(crate) const REMOTE_START_CAPABILITY: &str = "runtime:remote_start";
+/// Contract `errors.json`: the computer is connected but Remote start is off.
+pub(crate) const REMOTE_START_OFF: &str = "remote_start_off";
 
 /// Per-runtime relay connections, most recently attached last. With the
 /// multi-connection flag off each runtime holds at most one entry and the
@@ -300,6 +318,26 @@ fn multi_connection_enabled() -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
+}
+
+/// Normalize what a connection advertised at `authenticate`: remote start
+/// is on when the flag is set or a scoped connection lists
+/// `runtime:remote_start`; with the flag set a scoped list gains the
+/// capability so [`select_connection`] can route session starts to it.
+fn advertised_remote_start(
+    capabilities: Option<Vec<String>>,
+    flag: bool,
+) -> (Option<Vec<String>>, bool) {
+    match capabilities {
+        Some(mut caps) => {
+            let listed = caps.iter().any(|cap| cap == REMOTE_START_CAPABILITY);
+            if flag && !listed {
+                caps.push(REMOTE_START_CAPABILITY.to_string());
+            }
+            (Some(caps), flag || listed)
+        }
+        None => (None, flag),
+    }
 }
 
 /// Attach a freshly authenticated connection to the hub. `multi` mirrors
@@ -363,8 +401,9 @@ fn select_connection(
                 caps.iter().any(|cap| cap == required)
                     && (node_path || !caps.iter().any(|cap| cap == "node.core"))
             }
-            // Legacy clients grant the full pairing surface.
-            None => true,
+            // Legacy clients grant the full pairing surface, except remote
+            // start, which they must advertise.
+            None => required != REMOTE_START_CAPABILITY || entry.remote_start,
         })
         .max_by_key(|(index, entry)| {
             (
@@ -413,6 +452,7 @@ pub(crate) async fn relay_connection_presence(runtime_id: &str) -> Vec<serde_jso
                     serde_json::json!({
                         "client": entry.client,
                         "capabilities": entry.capabilities,
+                        "remoteStart": entry.remote_start,
                     })
                 })
                 .collect()
@@ -643,6 +683,53 @@ pub(crate) async fn runtime_is_connected(runtime_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True while at least one live relay connection for the runtime advertises
+/// `runtime:remote_start` (presence `remoteStart`).
+pub(crate) async fn runtime_remote_start(runtime_id: &str) -> bool {
+    relay_hub()
+        .read()
+        .await
+        .get(runtime_id)
+        .is_some_and(|entries| entries.iter().any(|entry| entry.remote_start))
+}
+
+/// Whether the stored pairing allows `required`. `runtime:remote_start` is
+/// advertised live, not paired, so the pairing only needs `runtime:execute`.
+fn pairing_grants(capabilities: &[String], required: &str) -> bool {
+    let needed = if required == REMOTE_START_CAPABILITY {
+        "runtime:execute"
+    } else {
+        required
+    };
+    capabilities.iter().any(|capability| capability == needed)
+}
+
+/// `Some(403 remote_start_off)` when a remote-start request reaches a
+/// computer that is connected but does not advertise Remote start. An
+/// offline computer falls through to the usual wake / `runtime_offline`.
+async fn refuse_remote_start_off(runtime_id: &str, required: &str) -> Option<Response> {
+    if required != REMOTE_START_CAPABILITY
+        || !runtime_is_connected(runtime_id).await
+        || runtime_remote_start(runtime_id).await
+    {
+        return None;
+    }
+    tracing::info!(runtime_id, "relay: session start refused (remote start off)");
+    Some(remote_start_off_response())
+}
+
+fn remote_start_off_response() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": REMOTE_START_OFF,
+            "message": "Remote start is turned off on this computer.",
+            "action": "Turn on Remote start in Settings on that computer, or start the session there.",
+        })),
+    )
+        .into_response()
+}
+
 /// Start a wake without waiting for it (Files wake consent). `Some(true)` =
 /// already awake, `Some(false)` = waking, `None` = cannot be woken.
 pub(crate) async fn start_wake(state: &ApiState, runtime_id: &str) -> Result<Option<bool>, ApiError> {
@@ -720,7 +807,7 @@ pub(crate) async fn issue_socket_ticket(
     };
     validate_proxy_request(&validation)?;
     let required = required_capability(&validation.path, "GET").to_string();
-    if !capabilities.iter().any(|capability| capability == &required) {
+    if !pairing_grants(&capabilities, &required) {
         return Err(ApiError::Forbidden(format!(
             "Runtime pairing does not grant {required}"
         )));
@@ -825,7 +912,7 @@ pub(crate) async fn issue_stream_ticket(
     };
     validate_proxy_request(&validation)?;
     let required = required_capability(&validation.path, "GET").to_string();
-    if !capabilities.iter().any(|capability| capability == &required) {
+    if !pairing_grants(&capabilities, &required) {
         return Err(ApiError::Forbidden(format!(
             "Runtime pairing does not grant {required}"
         )));
@@ -961,12 +1048,14 @@ pub(crate) async fn register_test_connection_with(
         pending: Mutex::new(HashMap::new()),
         sockets: Mutex::new(HashMap::new()),
     });
+    let (capabilities, remote_start) = advertised_remote_start(capabilities, false);
     attach_connection(
         runtime_id,
         RelayConnectionEntry {
             connection: connection.clone(),
             client: client.to_string(),
             capabilities,
+            remote_start,
         },
         multi,
     )
@@ -1217,18 +1306,23 @@ async fn runtime_socket(socket: WebSocket, state: Arc<ApiState>, expected_id: St
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<RuntimeMessage>(&text).ok(),
         _ => None,
     };
-    let (runtime_id, device_token, client, capabilities) = match auth_message {
+    let (runtime_id, device_token, client, capabilities, remote_start) = match auth_message {
         Some(RuntimeMessage::Authenticate {
             runtime_id,
             device_token,
             client,
             capabilities,
-        }) if runtime_id == expected_id => (
-            runtime_id,
-            device_token,
-            client.unwrap_or_else(|| "desktop".to_string()),
-            capabilities,
-        ),
+            remote_start,
+        }) if runtime_id == expected_id => {
+            let (capabilities, remote_start) = advertised_remote_start(capabilities, remote_start);
+            (
+                runtime_id,
+                device_token,
+                client.unwrap_or_else(|| "desktop".to_string()),
+                capabilities,
+                remote_start,
+            )
+        }
         _ => {
             let _ = sink.send(Message::Close(None)).await;
             return;
@@ -1278,6 +1372,7 @@ async fn runtime_socket(socket: WebSocket, state: Arc<ApiState>, expected_id: St
             connection: connection.clone(),
             client,
             capabilities,
+            remote_start,
         },
         multi,
     )
@@ -1542,13 +1637,13 @@ pub(crate) async fn relay_request_to_runtime_with(
     }
     validate_proxy_request(&request)?;
     let required_capability = required_capability(&request.path, &request.method);
-    if !capabilities
-        .iter()
-        .any(|capability| capability == required_capability)
-    {
+    if !pairing_grants(&capabilities, required_capability) {
         return Err(ApiError::Forbidden(format!(
             "Runtime pairing does not grant {required_capability}"
         )));
+    }
+    if let Some(refused) = refuse_remote_start_off(runtime_id, required_capability).await {
+        return Ok(refused);
     }
     // Whole-disk file roots (step 2.11): a file route naming a path outside
     // the Files drive needs the owner's per-computer setting, for every
@@ -1666,10 +1761,13 @@ pub(crate) async fn relay_request_no_wake(
     }
     validate_proxy_request(&request)?;
     let required = required_capability(&request.path, &request.method);
-    if !capabilities.iter().any(|capability| capability == required) {
+    if !pairing_grants(&capabilities, required) {
         return Err(ApiError::Forbidden(format!(
             "Runtime pairing does not grant {required}"
         )));
+    }
+    if let Some(refused) = refuse_remote_start_off(runtime_id, required).await {
+        return Ok(NoWakeRelay::Response(refused));
     }
     let Some(connection) = connect_without_wake(runtime_id, required, &request.path, Duration::ZERO).await else {
         return Ok(NoWakeRelay::Offline);
@@ -2006,6 +2104,14 @@ fn is_host_share_command(path: &str) -> bool {
 
 fn required_capability(path: &str, method: &str) -> &'static str {
     let normalized = path.to_ascii_lowercase();
+    // Start anywhere: session start (POST) and its options (GET, which
+    // lists folder names) come FIRST, before the substring checks below
+    // ("workspace", "terminal", "provider", …), and cover every subpath and
+    // trailing slash. Folder paths travel in the body only.
+    let route = normalized.split('?').next().unwrap_or(normalized.as_str());
+    if route == "/api/v1/session-start" || route.starts_with("/api/v1/session-start/") {
+        return REMOTE_START_CAPABILITY;
+    }
     if normalized == "/health"
         || normalized.starts_with("/health?")
         || normalized == "/status"
@@ -2126,6 +2232,65 @@ mod tests {
         assert!(super::is_allowed_runtime_path("/api/v1/mcp/elicitation/t1%3Ak/reply"));
         assert!(super::is_allowed_runtime_path("/api/v1/mcp/task/c%3Aup1/cancel"));
         assert_eq!(super::required_capability("/api/v1/mcp/task/c%3Aup1/cancel", "POST"), "runtime:execute");
+    }
+
+    #[test]
+    fn session_start_maps_to_remote_start_before_substring_rules() {
+        use super::required_capability as cap;
+        assert!(super::is_allowed_runtime_path("/api/v1/session-start"));
+        assert!(super::is_allowed_runtime_path("/api/v1/session-start/options"));
+        assert_eq!(cap("/api/v1/session-start", "POST"), "runtime:remote_start");
+        assert_eq!(cap("/api/v1/session-start/options", "GET"), "runtime:remote_start");
+        assert_eq!(cap("/api/v1/session-start/options?runtime=claude", "GET"), "runtime:remote_start");
+        assert_eq!(cap("/api/v1/session-start/", "POST"), "runtime:remote_start");
+        // Words the later rules match never win over session start.
+        assert_eq!(cap("/api/v1/session-start?folder=workspace-terminal-provider", "POST"), "runtime:remote_start");
+        assert_eq!(cap("/api/v1/session-start/terminal", "POST"), "runtime:remote_start");
+        // Neighbours keep their old capability.
+        assert_eq!(cap("/terminal/sessions", "POST"), "runtime:terminal");
+        assert_eq!(cap("/api/v1/terminal/create", "POST"), "runtime:terminal");
+        assert_eq!(cap("/api/v1/session-starter", "POST"), "runtime:execute");
+        assert_eq!(cap("/api/v1/sessions", "POST"), "runtime:execute");
+    }
+
+    #[test]
+    fn remote_start_is_live_advertised_not_paired() {
+        let paired: Vec<String> = ["runtime:connect", "runtime:execute"].iter().map(|s| s.to_string()).collect();
+        assert!(super::pairing_grants(&paired, "runtime:remote_start"));
+        assert!(!super::pairing_grants(&paired, "runtime:terminal"));
+        assert!(!super::pairing_grants(&["runtime:connect".to_string()], "runtime:remote_start"));
+
+        let (caps, on) = super::advertised_remote_start(None, true);
+        assert!(caps.is_none() && on);
+        let (_, on) = super::advertised_remote_start(None, false);
+        assert!(!on);
+        let (caps, on) = super::advertised_remote_start(Some(vec!["runtime:execute".into()]), true);
+        assert!(on);
+        assert!(caps.unwrap().iter().any(|c| c == "runtime:remote_start"));
+        let (_, on) = super::advertised_remote_start(Some(vec!["runtime:remote_start".into()]), false);
+        assert!(on);
+    }
+
+    #[test]
+    fn session_start_skips_legacy_connections_without_remote_start() {
+        fn legacy(remote_start: bool) -> super::RelayConnectionEntry {
+            let (sender, _outgoing) = tokio::sync::mpsc::unbounded_channel();
+            super::RelayConnectionEntry {
+                connection: std::sync::Arc::new(super::RuntimeConnection {
+                    sender,
+                    pending: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    sockets: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                }),
+                client: "desktop".to_string(),
+                capabilities: None,
+                remote_start,
+            }
+        }
+        let off = legacy(false);
+        let on = legacy(true);
+        assert!(super::select_connection(std::slice::from_ref(&off), "runtime:remote_start", "/api/v1/session-start").is_none());
+        assert!(super::select_connection(std::slice::from_ref(&off), "runtime:execute", "/api/v1/sessions").is_some());
+        assert!(super::select_connection(std::slice::from_ref(&on), "runtime:remote_start", "/api/v1/session-start").is_some());
     }
 
     #[test]
@@ -2491,6 +2656,9 @@ mod tests {
                 sockets: Mutex::new(HashMap::new()),
             }),
             client: client.to_string(),
+            remote_start: capabilities
+                .as_ref()
+                .is_some_and(|caps| caps.iter().any(|cap| cap == REMOTE_START_CAPABILITY)),
             capabilities,
         }
     }

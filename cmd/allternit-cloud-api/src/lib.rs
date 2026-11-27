@@ -454,6 +454,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::thread_shares::routes())
         // Runtime heartbeats (relay-signed) and the owner's presence list (agent network WP4).
         .merge(routes::runtime_presence::routes())
+        // Start anywhere folder snapshot: the computer PUTs its own (device credential,
+        // scoped to :id); GET /api/v1/start-options returns the owner's (Clerk session).
+        .merge(routes::start_options::routes())
         // Team roster + send (agent network phase 2, WP13).
         .merge(routes::team::routes())
         // MCP Events client (P6): public Standard Webhooks receiver for events from a user's

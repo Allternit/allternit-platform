@@ -48,6 +48,7 @@ pub mod hosted_entitlements;
 pub mod hosted_runtimes;
 pub mod instances;
 pub mod inference_keys;
+pub mod start_options;
 pub mod voice_keys;
 pub mod brain_runners;
 pub mod connections;

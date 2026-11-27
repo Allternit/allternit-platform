@@ -7,7 +7,10 @@
 //!   plus an optional `hostSample` (computers console D4, see
 //!   [`super::computer_metrics`]).
 //! * `GET /api/v1/runtime-presence`: signed-in owner →
-//!   `[{runtimeId, name, online, lastSeen, wakeable, nextDue}]`.
+//!   `[{runtimeId, name, online, lastSeen, wakeable, nextDue, remoteStart, kind}]`.
+//!   `remoteStart` (Start anywhere D6) is true while a live relay connection
+//!   advertises `runtime:remote_start`; `kind` is [`presence_kind`] of the
+//!   paired `runtime_type`.
 //! * The sweeper ([`sweep`], once a minute) raises `attention.opened` through
 //!   [`super::allternit_events::emit_user_event`] and resolves it
 //!   (`attention.resolved`) when the runtime is back:
@@ -282,9 +285,21 @@ pub async fn is_wakeable(db: &PgPool, user_id: &str, runtime_id: &str) -> Result
 struct Row {
     id: String,
     name: Option<String>,
+    runtime_type: Option<String>,
     last_heartbeat_at: Option<DateTime<Utc>>,
     last_seen_at: Option<DateTime<Utc>>,
     next_due: Value,
+}
+
+/// Start anywhere `kind` from the paired `runtime_type` (pairing accepts
+/// desktop | vps | hosted | provisioned | ios | ao): our cloud computers are
+/// `cloud`, the Desktop app is `desktop`, every other paired box is `server`.
+pub(crate) fn presence_kind(runtime_type: &str) -> &'static str {
+    match runtime_type {
+        "desktop" => "desktop",
+        "hosted" | "provisioned" => "cloud",
+        _ => "server",
+    }
 }
 
 fn is_online(connected: bool, beat: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
@@ -294,7 +309,7 @@ fn is_online(connected: bool, beat: Option<DateTime<Utc>>, now: DateTime<Utc>) -
 async fn list(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, name, last_heartbeat_at, last_seen_at, next_due FROM runtime_devices \
+        "SELECT id, name, runtime_type, last_heartbeat_at, last_seen_at, next_due FROM runtime_devices \
          WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at",
     )
     .bind(&user.id)
@@ -303,15 +318,20 @@ async fn list(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<
     let connected = super::runtime_relay::connected_runtime_ids().await;
     let now = Utc::now();
     let mut wakeable = HashSet::new();
+    let mut remote_start = HashSet::new();
     for r in &rows {
         if is_wakeable(&state.db, &user.id, &r.id).await.unwrap_or(false) {
             wakeable.insert(r.id.clone());
+        }
+        if super::runtime_relay::runtime_remote_start(&r.id).await {
+            remote_start.insert(r.id.clone());
         }
     }
     let out: Vec<Value> = rows
         .into_iter()
         .map(|r| {
             let can_wake = wakeable.contains(&r.id);
+            let can_start = remote_start.contains(&r.id);
             json!({
                 "runtimeId": r.id,
                 "name": r.name.unwrap_or_else(|| "Computer".into()),
@@ -319,6 +339,8 @@ async fn list(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<
                 "lastSeen": r.last_heartbeat_at.max(r.last_seen_at),
                 "wakeable": can_wake,
                 "nextDue": r.next_due,
+                "remoteStart": can_start,
+                "kind": presence_kind(r.runtime_type.as_deref().unwrap_or_default()),
             })
         })
         .collect();
@@ -487,6 +509,15 @@ mod tests {
         assert_eq!(v.as_array().unwrap().len(), 1);
         assert_eq!(v[0]["title"], "Briefing");
         assert_eq!(clean_due(&json!({})), json!([]));
+    }
+
+    #[test]
+    fn presence_kind_from_runtime_type() {
+        assert_eq!(presence_kind("desktop"), "desktop");
+        assert_eq!(presence_kind("hosted"), "cloud");
+        assert_eq!(presence_kind("provisioned"), "cloud");
+        assert_eq!(presence_kind("vps"), "server");
+        assert_eq!(presence_kind("ao"), "server");
     }
 
     #[test]
