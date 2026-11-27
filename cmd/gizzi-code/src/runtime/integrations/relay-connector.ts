@@ -238,6 +238,11 @@ export namespace RelayConnector {
     return /^\/v1\/(pty|file|cron|automations|mcp|vcs|path)(\/|\?|$)/.test(requestPath) || /^\/v1\/event(\?|$)/.test(requestPath)
   }
 
+  /** Paths the engine answers itself when the local gateway (Desktop) is down. */
+  export function engineServesWithoutGateway(requestPath: string): boolean {
+    return requestPath.startsWith("/v1/") || /^\/api\/v1\/session-start(\/|\?|$)/.test(requestPath)
+  }
+
   /** Where a relayed request goes: this engine or the local gateway. */
   export function localTarget(requestPath: string, engine: string, gateway: string): { url: string; gizzi: boolean } {
     if (requestPath.startsWith("/api/v1/remote-control/")) {
@@ -557,8 +562,9 @@ export namespace RelayConnector {
       try {
         response = await fetch(target.url, { method, headers: relayedHeaders(message.headers || {}, target.gizzi), body })
       } catch (err) {
-        // No Desktop means no gateway; gizzi serves its whole surface under /v1/.
-        if (target.gizzi || !requestPath.startsWith("/v1/")) throw err
+        // No Desktop means no gateway; gizzi serves its whole surface under /v1/,
+        // plus /api/v1/session-start (Start anywhere: a phone start with Desktop quit).
+        if (target.gizzi || !engineServesWithoutGateway(requestPath)) throw err
         response = await fetch(`${engineUrl}${requestPath}`, { method, headers: relayedHeaders(message.headers || {}, true), body })
       }
       const responseHeaders: Record<string, string> = {}

@@ -69,3 +69,15 @@ describe("RelayConnector relay.lock", () => {
     expect(RelayConnector.readLock(file)?.pid).toBe(process.ppid)
   })
 })
+
+// Start anywhere: with Desktop quit there is no gateway, so a relayed phone
+// start must still reach gizzi's own /api/v1/session-start.
+describe("RelayConnector gateway fallback", () => {
+  test("engine answers /v1 and session-start when the gateway is down", () => {
+    expect(RelayConnector.engineServesWithoutGateway("/v1/session")).toBe(true)
+    expect(RelayConnector.engineServesWithoutGateway("/api/v1/session-start")).toBe(true)
+    expect(RelayConnector.engineServesWithoutGateway("/api/v1/session-start/options")).toBe(true)
+    expect(RelayConnector.engineServesWithoutGateway("/api/v1/session-starter")).toBe(false)
+    expect(RelayConnector.engineServesWithoutGateway("/api/v1/files/list")).toBe(false)
+  })
+})
