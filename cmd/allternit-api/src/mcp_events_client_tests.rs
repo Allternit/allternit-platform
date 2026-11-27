@@ -651,6 +651,7 @@ async fn event_runs_through_real_bot_session_and_permission_requests(){
         .route("/v1/session/:id",axum::routing::patch(move |Json(body):Json<Value>|{let p=permissions.clone();async move{p.lock().unwrap().push(json!({"permission":body}));Json(json!({}))}}))
         .route("/v1/session/:id/message",post(move |Json(body):Json<Value>|{let m=messages.clone();async move{m.lock().unwrap().push(json!({"turn":body}));Json(json!({"info":{"id":"reply-1","sessionID":"mcp-native-session","role":"assistant"},"parts":[{"type":"text","text":"Draft fix and tests ready"}]}))}}));
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let _env_lock=crate::test_helpers::terminal_url_env_lock();
     struct EnvRestore(Option<String>);impl Drop for EnvRestore{fn drop(&mut self){match &self.0{Some(v)=>std::env::set_var("TERMINAL_SERVER_URL",v),None=>std::env::remove_var("TERMINAL_SERVER_URL")}}}
     let _restore=EnvRestore(std::env::var("TERMINAL_SERVER_URL").ok());std::env::set_var("TERMINAL_SERVER_URL",format!("http://{addr}"));
     let mut request=req("email.received","bot-a");let mut rule=automation_rule("bot-a");rule.execution_mode="ACCEPT_EDITS".into();request.automation=Some(rule);
@@ -691,6 +692,7 @@ async fn a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let gizzi = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let _env_lock = crate::test_helpers::terminal_url_env_lock();
     struct EnvRestore(Option<String>);
     impl Drop for EnvRestore {
         fn drop(&mut self) {

@@ -4642,8 +4642,6 @@ mod tests {
     use tokio::task::JoinHandle;
     use tower::ServiceExt;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn part(part_type: &str, text: &str) -> GizziMessagePart {
         GizziMessagePart {
             id: None,
@@ -5376,7 +5374,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_forwards_selected_model_to_gizzi() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         let (addr, handle, captured) = mock_gizzi_server().await;
         std::env::set_var("TERMINAL_SERVER_URL", format!("http://{}", addr));
 
@@ -5438,7 +5436,7 @@ mod tests {
     /// each removed message the `/messages` shape, ids unchanged.
     #[tokio::test]
     async fn branches_proxy_returns_old_reply_in_messages_shape() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         let seen = Arc::new(Mutex::new(None::<String>));
         let seen_clone = seen.clone();
         let gizzi = Router::new().route(
@@ -5497,7 +5495,7 @@ mod tests {
     async fn owner_chat_turn_counts_for_the_owner_only_phone_rule() {
         use crate::netops::provenance::{label, Trust};
         use crate::phone_guard::TaskCtx;
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_helpers::terminal_url_env_lock();
         // Nothing may reach a real gizzi from this test.
         std::env::set_var("TERMINAL_SERVER_URL", "http://127.0.0.1:9");
         let temp = tempfile::tempdir().unwrap().keep();

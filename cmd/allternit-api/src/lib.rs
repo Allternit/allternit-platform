@@ -577,6 +577,20 @@ pub mod test_helpers {
 
     static CLOUD_URL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    static TERMINAL_URL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize tests that point the process-wide `TERMINAL_SERVER_URL` at
+    /// their own fake gizzi. `agent_session_routes::gizzi_base` reads it at
+    /// call time, so a concurrent `set_var` from another test sends one test's
+    /// session calls to another test's server (the
+    /// `a_webhook_watch_wakes_its_chat_once_a_minute_and_stop_unsubscribes`
+    /// failure: its wake asked a fake gizzi with no session route, saw the chat
+    /// as closed and sent no turn). Every test that sets the var takes this
+    /// guard before setting it. Not reentrant: take it once per test.
+    pub fn terminal_url_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        TERMINAL_URL_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Holds `ALLTERNIT_CLOUD_API_URL` at a known value for one test, then
     /// restores whatever was there before. `AppConfig::cloud_api_url()` and the
     /// channel transports read that var at call time, so a test that sets it
