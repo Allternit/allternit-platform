@@ -77,6 +77,32 @@ class SessionStartTest {
     }
 
     @Test
+    fun chipRuntimeIdsMapToContractIds() {
+        // Same table as iOS SessionStartClient.contractRuntime: a chip id sent as-is would be runtime_missing.
+        assertEquals("allternit", contractRuntime("gizzi"))
+        assertEquals("allternit", contractRuntime("allternit"))
+        assertEquals("claude", contractRuntime("claude-code"))
+        assertEquals("codex", contractRuntime("codex-cli"))
+        assertEquals("kimi", contractRuntime("kimi-cli"))
+        assertEquals("opencode", contractRuntime("opencode"))
+    }
+
+    @Test
+    fun pickAppliesOnlyToItsOwnChat() {
+        PendingStart.clear()
+        PendingStart.openChatId = null
+        PendingStart.runtimeId = "rt_1"
+        PendingStart.chatId = null
+        assertTrue(PendingStart.appliesTo(null, hasMessages = false))
+        assertEquals(false, PendingStart.appliesTo(null, hasMessages = true))
+        PendingStart.chatId = "chat_a"
+        assertEquals(false, PendingStart.appliesTo("chat_b", hasMessages = false))
+        assertTrue(PendingStart.appliesTo("chat_a", hasMessages = true))
+        PendingStart.clear()
+        assertEquals(false, PendingStart.appliesTo(null, hasMessages = false))
+    }
+
+    @Test
     fun bindingRoundTripsThroughMetadata() {
         val b = StartBinding("rt_1", "MacBook Pro", "/Users/dev/code/allternit", "allternit", StartMode.Plan, "engine", sessionId = "ses_1", origin = StartOrigin("android", "Pixel 9"))
         val meta = JsonObject(mapOf(StartBinding.KEY to b.toJson()))

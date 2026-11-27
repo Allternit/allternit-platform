@@ -293,8 +293,15 @@ object PendingStart {
     /** True when the picked computer was asleep at pick time ("Pick <name> anyway"). */
     var asleep by mutableStateOf(false)
     var folder by mutableStateOf<StartFolderRef?>(null)
-    /** Null = the computer's default for the runtime. Applies to this chat only. */
+    /**
+     * Only an explicit pick (null = the computer's default applies; the start omits `mode`). Applies to this
+     * chat only.
+     */
     var mode by mutableStateOf<StartMode?>(null)
+    /** The chat the computer pick was made in (null = the new-chat screen). */
+    var chatId by mutableStateOf<String?>(null)
+    /** The chat open right now (set by the chat page; null on the new-chat screen). */
+    var openChatId by mutableStateOf<String?>(null)
     /** The picked computer's default mode for the current runtime (from its options), for "<mode> · default". */
     var defaultMode by mutableStateOf<StartMode?>(null)
     var options by mutableStateOf<StartOptions?>(null)
@@ -304,12 +311,121 @@ object PendingStart {
     fun pick(device: RelayDevice?, asleep: Boolean = false) {
         if (device?.id != runtimeId) { folder = null; options = null; defaultMode = null }
         runtimeId = device?.id
+        chatId = openChatId
         deviceName = device?.name?.ifEmpty { "Computer" }
         this.asleep = asleep
     }
 
+    /**
+     * The pick applies only to the chat it was made in, or, made on the new-chat screen, only to a chat with
+     * no messages yet (web pendingAppliesTo).
+     */
+    fun appliesTo(sessionId: String?, hasMessages: Boolean): Boolean =
+        runtimeId != null && if (chatId != null) chatId == sessionId else !hasMessages
+
+    /** The device name to show for the open chat (the chip segment), when the pick applies there. */
+    val shownDeviceName: String? get() = deviceName?.takeIf { chatId == openChatId }
+
     /** After the first send started a session: the thread is bound, the next new chat starts clean. */
     fun clear() {
-        runtimeId = null; deviceName = null; asleep = false; folder = null; mode = null; defaultMode = null; options = null
+        runtimeId = null; deviceName = null; asleep = false; folder = null; mode = null; defaultMode = null; options = null; chatId = null
+    }
+}
+
+/** Chip runtime ids → contract runtime ids (iOS SessionStartClient.contractRuntime, #3191). */
+fun contractRuntime(chipRuntimeId: String): String = when (chipRuntimeId) {
+    "allternit", "gizzi" -> "allternit"
+    "claude-code", "claude-cli" -> "claude"
+    "codex-cli" -> "codex"
+    else -> listOf("-cli", "-code").firstOrNull { chipRuntimeId.endsWith(it) }?.let { chipRuntimeId.removeSuffix(it) } ?: chipRuntimeId
+}
+
+/**
+ * A thread bound to an engine session drives THAT session on ITS computer (web session-start/send.ts):
+ * messages, Stop and the event stream go through gizzi's remote-control routes over the relay
+ * (`/api/v1/remote-control/…` → `/v1/remote-control/…` on the computer), approvals through gizzi's
+ * `/v1/permission` routes. Never the chat's own agent-session.
+ */
+object BoundEngine {
+    private fun rc(sessionId: String, tail: String = "") =
+        "/api/v1/remote-control/sessions/${java.net.URLEncoder.encode(sessionId, "UTF-8").replace("+", "%20")}$tail"
+
+    /** The session's messages as (role, text) — assistant text parts only, like web assistantTextAfter. */
+    suspend fun messages(backend: ChatBackend, b: StartBinding): List<Pair<String, String>>? {
+        val id = b.sessionId ?: return null
+        val body = (backend.runtimeJson("GET", rc(id), null, b.runtimeId) as? RuntimeCall.Ok)?.body as? JsonObject ?: return null
+        return body.arr("messages").mapNotNull { el ->
+            val m = el as? JsonObject ?: return@mapNotNull null
+            val role = (m["info"] as? JsonObject)?.str("role") ?: return@mapNotNull null
+            val text = m.arr("parts").mapNotNull { p -> (p as? JsonObject)?.takeIf { it.str("type") == "text" }?.str("text") }.joinToString("\n").trim()
+            role to text
+        }
+    }
+
+    /** `POST …/messages {text}`; null on success, else the sentence to show. */
+    suspend fun send(backend: ChatBackend, b: StartBinding, text: String): String? {
+        val id = b.sessionId ?: return "This chat lost its computer session. Start a new chat."
+        val body = buildJsonObject { put("text", text) }.toString()
+        return when (backend.runtimeJson("POST", rc(id, "/messages"), body, b.runtimeId)) {
+            is RuntimeCall.Ok -> null
+            else -> "${b.deviceName} did not take that message. Check that it is online, then try again."
+        }
+    }
+
+    suspend fun abort(backend: ChatBackend, b: StartBinding) {
+        val id = b.sessionId ?: return
+        backend.runtimeJson("POST", rc(id, "/abort"), "{}", b.runtimeId)
+    }
+
+    /**
+     * Follows the reply: re-reads the session on its events (at most every ~400 ms) and hands back the
+     * assistant text after [since]. Ends at idle, when the stream closes, or when the caller is cancelled.
+     * [onAsk] runs on a permission or question event so the cards show at once.
+     */
+    suspend fun follow(backend: ChatBackend, b: StartBinding, since: Int, onText: (String) -> Unit, onAsk: suspend () -> Unit) {
+        val id = b.sessionId ?: return
+        var last = ""
+        var readAt = 0L
+        suspend fun refresh() {
+            readAt = System.currentTimeMillis()
+            val text = messages(backend, b)?.drop(since)?.filter { it.first == "assistant" }?.joinToString("\n") { it.second }?.trim().orEmpty()
+            if (text.isNotEmpty() && text != last) { last = text; onText(text) }
+        }
+        try {
+            backend.runtimeEvents(rc(id, "/events"), b.runtimeId).collect { e ->
+                val o = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(e.data) as? JsonObject }.getOrNull() ?: return@collect
+                val type = o.str("type").orEmpty()
+                val status = ((o["properties"] as? JsonObject)?.get("status") as? JsonObject)?.str("type")
+                if (type == "session.idle" || type == "session.error" || (type == "session.status" && status == "idle")) throw FollowDone()
+                if (type.startsWith("permission.") || type.startsWith("question.")) onAsk()
+                if ((type.startsWith("message.") || type.startsWith("session.")) && System.currentTimeMillis() - readAt > 400) refresh()
+            }
+        } catch (_: FollowDone) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The stream dropped: the final read below still shows what the computer has.
+        }
+        refresh()
+    }
+
+    private class FollowDone : Exception()
+
+    /** Open asks for this session from gizzi's `GET /v1/permission`. */
+    suspend fun permissions(backend: ChatBackend, b: StartBinding): List<PermissionAsk> {
+        val id = b.sessionId ?: return emptyList()
+        val body = (backend.runtimeJson("GET", "/v1/permission", null, b.runtimeId) as? RuntimeCall.Ok)?.body
+        val rows = (body as? kotlinx.serialization.json.JsonArray) ?: (body as? JsonObject)?.arr("permissions")?.let { kotlinx.serialization.json.JsonArray(it) } ?: return emptyList()
+        return rows.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val sid = o.str("sessionID") ?: o.str("sessionId")
+            if (sid != null && sid != id) null else PermissionAsks.from(o, id)
+        }
+    }
+
+    /** `POST /v1/permission/:id/reply {reply}`: "once", "always" or "reject". */
+    suspend fun reply(backend: ChatBackend, b: StartBinding, requestId: String, reply: String): Boolean {
+        val path = "/v1/permission/${java.net.URLEncoder.encode(requestId, "UTF-8").replace("+", "%20")}/reply"
+        return backend.runtimeJson("POST", path, buildJsonObject { put("reply", reply) }.toString(), b.runtimeId) is RuntimeCall.Ok
     }
 }

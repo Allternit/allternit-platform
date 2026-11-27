@@ -205,10 +205,10 @@ internal fun PlusSheet(
                         PlusDivider()
                         PlusRow(
                             com.allternit.core.design.R.drawable.ph_desktop, "Computer",
-                            value = pending.deviceName ?: if (noComputer) "No computer" else "Automatic",
+                            value = pending.shownDeviceName ?: if (noComputer) "No computer" else "Automatic",
                             chevron = true, testTag = "plusSheetComputer",
                         ) { page = "computer" }
-                        if (pending.runtimeId != null) {
+                        if (pending.shownDeviceName != null) {
                             PlusDivider()
                             PlusRow(
                                 com.allternit.core.design.R.drawable.ph_folder, "Folder",
@@ -283,7 +283,7 @@ private fun StartSubPage(page: String, backend: com.allternit.feature.chat.ChatB
     val pending = com.allternit.feature.chat.PendingStart
     when (page) {
         "perm" -> {
-            com.allternit.feature.chat.PermissionPage(supported = pending.options?.modes?.get(runtime)?.supported?.takeIf { it.isNotEmpty() }, onDone = onBack)
+            com.allternit.feature.chat.PermissionPage(supported = pending.options?.modes?.get(com.allternit.feature.chat.contractRuntime(runtime))?.supported?.takeIf { it.isNotEmpty() }, onDone = onBack)
             com.allternit.feature.chat.PickGroup {
                 com.allternit.feature.chat.PickRow("Permission settings", chevron = true) {
                     onOpenSection(RailRow("permission-settings", "Permission settings", DesignR.drawable.ph_shield_check))

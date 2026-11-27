@@ -143,7 +143,7 @@ fun ChatRuntimeChip(
         runtimeKey = current.tool ?: current.id, runtimeName = current.name, brainName = model.brainName,
         background = if (chipBackground == Color.Unspecified) c.bgPrimary else chipBackground, modifier = modifier.testTag("composerRuntimeChip"),
         dot = if (com.allternit.feature.chat.PendingStart.asleep) RuntimeDot.NeedsStep else dot, warning = model.misfit, iconOnly = iconOnly,
-        computerName = com.allternit.feature.chat.PendingStart.deviceName ?: com.allternit.feature.chat.PendingStart.bound?.deviceName,
+        computerName = com.allternit.feature.chat.PendingStart.shownDeviceName ?: com.allternit.feature.chat.PendingStart.bound?.deviceName,
         computerCloud = computerCloud,
     ) { blocked = null; computerPage = false; open = true }
 
@@ -186,7 +186,7 @@ fun ChatRuntimeChip(
                 com.allternit.feature.chat.PickGroup {
                     com.allternit.feature.chat.PickRow(
                         "Computer", icon = if (computerCloud) DesignR.drawable.ph_cloud else DesignR.drawable.ph_desktop,
-                        value = com.allternit.feature.chat.PendingStart.deviceName ?: "No computer", chevron = true, testTag = "runtimeBrainComputer",
+                        value = com.allternit.feature.chat.PendingStart.shownDeviceName ?: "Automatic", chevron = true, testTag = "runtimeBrainComputer",
                     ) { computerPage = true }
                 }
             }),

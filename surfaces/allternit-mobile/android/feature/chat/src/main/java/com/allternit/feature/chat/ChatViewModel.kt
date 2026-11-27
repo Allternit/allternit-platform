@@ -339,6 +339,14 @@ class ChatViewModel(
                     (backend.api.getAgentSession(sessionId) as? ApiResult.Ok)?.value?.let { s ->
                         if (currentSessionId == sessionId) binding = StartBinding.read(s.metadata)
                     }
+                    // The conversation lives in the engine session on that computer, not in the agent-session.
+                    binding?.takeIf { !it.isTerminal }?.let { b ->
+                        BoundEngine.messages(backend, b)?.let { rows ->
+                            if (currentSessionId == sessionId) messages = rows.filter { it.second.isNotBlank() && (it.first == "user" || it.first == "assistant") }
+                                .mapIndexed { i, (role, text) -> MessageRecord(id = "${b.sessionId}-$i", role = role, content = text) }
+                        }
+                        refreshPermissions()
+                    }
                 }
                 else -> if (r is ApiResult.HttpError && ChatErrors.isComputeGate(r.status, r.code, r.message)) {
                     computeGate = ComputeGateReason.NoComputer
@@ -565,7 +573,7 @@ class ChatViewModel(
                 }
                 // Start anywhere: the first message with a picked computer starts a session there and
                 // binds this thread to it; a bound thread keeps going to the same computer.
-                val bound = binding ?: if (currentSessionId == null) startOnPicked(text) else null
+                val bound = binding ?: if (currentSessionId == null && PendingStart.appliesTo(null, messages.count { it.role == "user" } > 1)) startOnPicked(text) else null
                 if (bound?.isTerminal == true) {
                     // The CLI got the message as its prompt; the thread now shows its terminal (ChatPage).
                     ensureSessionId(agentModeId, bound)
@@ -575,16 +583,33 @@ class ChatViewModel(
                     finishStreaming(assistantId)
                     return@launch
                 }
+                if (bound != null) {
+                    // An engine-bound thread drives the session the start opened, on its computer (web
+                    // send.ts): the first message went in as the start's prompt; later ones go to
+                    // remote-control `…/messages`. The reply follows that session's events.
+                    val first = binding == null
+                    ensureSessionId(agentModeId, bound)
+                    binding = bound
+                    isCreatingSession = false
+                    requestStartedAt = System.currentTimeMillis()
+                    firstDeltaAt = null
+                    startPermissionPolling(currentSessionId ?: "")
+                    val since = if (first) 0 else BoundEngine.messages(backend, bound)?.size ?: 0
+                    if (!first) BoundEngine.send(backend, bound, strippedText(text))?.let { throw SendException(it) }
+                    BoundEngine.follow(backend, bound, since, onText = { t -> update(assistantId) { it.copy(content = t) } }, onAsk = { refreshPermissions() })
+                    refreshPermissions()
+                    finishStreaming(assistantId)
+                    return@launch
+                }
                 // Find the computer before creating the session, so a no-computer send leaves
                 // no empty chat behind.
-                val runtimeId = bound?.runtimeId ?: when (val pick = backend.relay.resolve()) {
+                val runtimeId = when (val pick = backend.relay.resolve()) {
                     is RelayPick.Computer -> pick.runtimeId
                     RelayPick.NoComputer -> throw GateException(ComputeGateReason.NoComputer)
                     RelayPick.Unreachable -> throw GateException(ComputeGateReason.Unreachable)
                     is RelayPick.Failed -> if (pick.gate) throw GateException(ComputeGateReason.NoComputer) else throw SendException(pick.message)
                 }
-                val sessionId = ensureSessionId(agentModeId, bound)
-                binding = bound
+                val sessionId = ensureSessionId(agentModeId)
                 isCreatingSession = false
                 requestStartedAt = System.currentTimeMillis()
                 firstDeltaAt = null
@@ -600,8 +625,6 @@ class ChatViewModel(
                     runtimeModelId = runtimeModelId,
                     effort = effort,
                     attachments = refs.ifEmpty { null },
-                    // A bound engine thread works in the folder it was started in.
-                    workdir = bound?.folder?.takeIf { it.isNotBlank() },
                     metadata = AgentChatMetadata(
                         tools = tools,
                         formFactor = "phone",
@@ -790,7 +813,15 @@ class ChatViewModel(
         isStreaming = false
         isCreatingSession = false
         streamingMessageId = null
-        if (wasStreaming && sessionId != null) {
+        val bound = binding?.takeIf { !it.isTerminal }
+        if (wasStreaming && bound != null) {
+            // Stop on a bound engine thread aborts the session on its own computer.
+            scope.launch { BoundEngine.abort(backend, bound) }
+            scope.launch {
+                delay(1_500)
+                if (currentSessionId == sessionId) refreshPermissions()
+            }
+        } else if (wasStreaming && sessionId != null) {
             scope.launch { backend.abort(sessionId) }
             scope.launch {
                 delay(1_500)
@@ -807,8 +838,7 @@ class ChatViewModel(
     private suspend fun startOnPicked(text: String): StartBinding? {
         val runtimeId = PendingStart.runtimeId ?: return null
         val deviceName = PendingStart.deviceName ?: "your computer"
-        val runtime = (sessionContext.botBrain?.get("runtime") as? JsonPrimitive)?.content ?: "allternit"
-        val engine = runtime == "allternit"
+        val runtime = contractRuntime((sessionContext.botBrain?.get("runtime") as? JsonPrimitive)?.content ?: "allternit")
         val folder = PendingStart.folder ?: run {
             val opts = PendingStart.options ?: (SessionStartClient.options(backend, runtimeId) as? StartResult.Ok)?.value
             opts?.folders?.firstOrNull()?.let { StartFolderRef.Path(it.path) }
@@ -818,7 +848,7 @@ class ChatViewModel(
         val picked = PendingStart.mode
         val origin = StartOrigin(surface = "android", deviceName = android.os.Build.MODEL ?: "Android phone", depth = 0)
         val key = startKey ?: UUID.randomUUID().toString().also { startKey = it }
-        val request = StartRequest(folder = folder, runtime = runtime, mode = picked, prompt = if (engine) null else strippedText(text), origin = origin)
+        val request = StartRequest(folder = folder, runtime = runtime, mode = picked, prompt = strippedText(text), origin = origin)
         val binding = when (val r = SessionStartClient.start(backend, runtimeId, request, key)) {
             is StartResult.Ok -> when (val v = r.value) {
                 is StartResponse.Engine -> StartBinding(runtimeId, deviceName, v.directory.ifEmpty { (folder as? StartFolderRef.Path)?.path.orEmpty() }, runtime,
@@ -931,7 +961,8 @@ class ChatViewModel(
 
     suspend fun refreshPermissions() {
         val sessionId = currentSessionId ?: return
-        val asks = backend.listPermissions(sessionId)
+        val bound = binding?.takeIf { !it.isTerminal }
+        val asks = if (bound != null) BoundEngine.permissions(backend, bound) else backend.listPermissions(sessionId)
         if (currentSessionId != sessionId) return
         val target = lastAssistantMessageId ?: return
         val open = asks.associateBy { it.id }
@@ -945,7 +976,11 @@ class ChatViewModel(
     /** Allow ("once"), Always ("always") or Deny ("reject"). Errors come back to the card. */
     fun replyPermission(ask: PermissionAsk, reply: String, onError: (String) -> Unit) {
         scope.launch {
-            when (val r = backend.replyPermission(ask.id, reply)) {
+            val bound = binding?.takeIf { !it.isTerminal }
+            val r: ApiResult<Unit> = if (bound != null) {
+                if (BoundEngine.reply(backend, bound, ask.id, reply)) ApiResult.Ok(Unit) else ApiResult.Network(java.io.IOException("${bound.deviceName} did not take the answer."))
+            } else backend.replyPermission(ask.id, reply)
+            when (r) {
                 is ApiResult.Ok -> messages = messages.map { m ->
                     m.copy(permissions = m.permissions.map { if (it.id == ask.id) it.copy(answered = reply) else it })
                 }

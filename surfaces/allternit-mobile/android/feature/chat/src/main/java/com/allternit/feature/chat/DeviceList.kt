@@ -233,15 +233,15 @@ fun LoadPendingOptions(backend: ChatBackend, runtime: String) {
         val opts = PendingStart.options ?: (SessionStartClient.options(backend, id) as? StartResult.Ok)?.value
         if (PendingStart.runtimeId != id) return@LaunchedEffect
         PendingStart.options = opts
-        PendingStart.defaultMode = opts?.modes?.get(runtime)?.default
+        PendingStart.defaultMode = opts?.modes?.get(contractRuntime(runtime))?.default
     }
 }
 
-/** "<mode> · default" when no pick (or the pick is the default), else the picked mode's label. */
+/** "<default label> · default" with no explicit pick, else the picked mode's label (web ComposerPlusSheet). */
 fun permissionValue(): String {
     val def = PendingStart.defaultMode
     val shown = PendingStart.mode ?: def ?: StartMode.Default
-    return if (PendingStart.mode == null || PendingStart.mode == def) "${shown.label} · default" else shown.label
+    return if (shown == def || (PendingStart.mode == null && def == null)) "${shown.label} · default" else shown.label
 }
 
 /** The Folder page: the picked computer's recent folders, then "Other folder…" (a typed path). */
@@ -306,7 +306,8 @@ fun PermissionPage(supported: List<StartMode>? = null, onDone: () -> Unit) {
                 if (i > 0) PickDivider()
                 val shown = PendingStart.mode ?: def ?: StartMode.Default
                 PickRow(m.label + if (m == (def ?: StartMode.Default)) " · default" else "", checked = shown == m, testTag = "permission-${m.id}") {
-                    PendingStart.mode = if (m == def) null else m; onDone()
+                    // Any tap is an explicit pick for this chat: the start then sends `mode`.
+                    PendingStart.mode = m; onDone()
                 }
             }
         }
