@@ -201,20 +201,44 @@ async fn new_rows_route_and_are_listed_and_sonnet_4_6_is_hidden() {
     assert_eq!(models[0].id, "kimi-k3");
 }
 
-/// Only Fireworks rows (whose model list has no pricing) treat the static
-/// catalog price as wholesale; every other row bills its static price.
+/// Only Fireworks rows (whose model list has no pricing) and open-lane rows
+/// (static price = host price, contract D8) treat the static catalog price as
+/// wholesale; every other row bills its static price. Open rows bill exactly
+/// 2x the host price by default (`OPEN_LANE_MARKUP`, no per-row override).
 #[test]
 fn only_fireworks_rows_mark_up_their_static_price() {
+    let _guard = pricing::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("OPEN_LANE_MARKUP");
     let catalog = starter_catalog();
+    let mut open_rows = 0;
     for entry in catalog.entries() {
+        let open = super::catalog::is_open_lane(entry);
         assert_eq!(
             entry.static_price_is_wholesale,
-            entry.provider == "fireworks",
+            entry.provider == "fireworks" || open,
             "{} ({})",
             entry.alias,
             entry.provider
         );
+        if open {
+            open_rows += 1;
+            assert_eq!(entry.markup, None, "{}: open rows use the lane markup", entry.alias);
+            let prices = super::retail_from(entry, None);
+            assert_eq!(
+                (prices.prompt_per_1m, prices.completion_per_1m),
+                (entry.prompt_price * 2.0, entry.completion_price * 2.0),
+                "{}: open rows bill exactly 2x the host price",
+                entry.alias
+            );
+            assert_eq!(
+                (prices.wholesale_prompt_per_1m, prices.wholesale_completion_per_1m),
+                (Some(entry.prompt_price), Some(entry.completion_price)),
+                "{}",
+                entry.alias
+            );
+        }
     }
+    assert!(open_rows > 0, "the catalog has open-lane rows");
 }
 
 #[tokio::test]
