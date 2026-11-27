@@ -44,9 +44,12 @@ object OpenModelsCopy {
     const val GROUP = "Open models · via Allternit Cloud"
     const val SUBTITLE = "Far fewer refusals"
     const val STATUS_TITLE = "Open models"
-    const val RESEARCH_TITLE = "Open Research"
+    const val RESEARCH_URL = "https://services.allternit.com"
+    const val RESEARCH_TITLE = "OPEN RESEARCH"
     const val RESEARCH_PRICE = "By agreement"
-    const val RESEARCH_BODY = "Research models for organizations, under a written agreement."
+    const val RESEARCH_LINE_1 = "Larger models, higher rate limits"
+    const val RESEARCH_LINE_2 = "For verified security and red teams"
+    const val RESEARCH_OPEN_LINE = "Open models: all, on agreed credits"
     const val RESEARCH_ACTION = "Ask us"
     const val RESEARCH_ACTIVE = "Active on your account"
 
@@ -68,7 +71,7 @@ object OpenModelsCopy {
     fun title(reason: String?): String? = when (reason) {
         "plan_required", "open_plan_required" -> "Open models need a paid plan"
         "allowance_used", "bought_credits_required" -> "Add credits for open models"
-        "open_research_required" -> RESEARCH_TITLE
+        "open_research_required" -> "Open Research"
         else -> null
     }
 
@@ -115,8 +118,10 @@ object OpenModelsGate {
 }
 
 /** Opens the web terms page in the browser (an Intent, so the app's chosen browser handles it). */
-fun openOpenModelsTerms(context: Context) {
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(OpenModelsCopy.TERMS_URL)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+fun openOpenModelsTerms(context: Context) = openUrl(context, OpenModelsCopy.TERMS_URL)
+
+private fun openUrl(context: Context, url: String) {
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 private fun shortDate(raw: String): String? = runCatching {
@@ -182,13 +187,15 @@ fun OpenResearchCard() {
             Text(OpenModelsCopy.RESEARCH_TITLE, color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             Text(OpenModelsCopy.RESEARCH_PRICE, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
-        Text(OpenModelsCopy.RESEARCH_BODY, color = c.textSecondary, fontSize = 13.sp)
+        Text(OpenModelsCopy.RESEARCH_LINE_1, color = c.textSecondary, fontSize = 13.sp)
+        Text(OpenModelsCopy.RESEARCH_LINE_2, color = c.textSecondary, fontSize = 13.sp)
+        Text(OpenModelsCopy.RESEARCH_OPEN_LINE, color = c.textSecondary, fontSize = 13.sp)
         if (active) {
             Text(OpenModelsCopy.RESEARCH_ACTIVE, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         } else {
             Box(
                 Modifier.fillMaxWidth().heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp)).background(c.textPrimary)
-                    .testTag("openResearchAsk").clickable { openOpenModelsTerms(context) },
+                    .testTag("openResearchAsk").clickable { openUrl(context, OpenModelsCopy.RESEARCH_URL) },
                 contentAlignment = Alignment.Center,
             ) { Text(OpenModelsCopy.RESEARCH_ACTION, color = c.bgPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
         }
