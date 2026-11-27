@@ -875,7 +875,8 @@ pub(crate) async fn billed_completion(
         ))));
     }
     let balance = inference_settlement::credit_balance_row(&state.db, &viewer).await?;
-    // Billed to the viewer: the same Cloud credits gate as chat (402).
+    // Billed to the viewer: the same usage windows (429) and Cloud credits gate (402) as chat.
+    crate::routes::me_usage::check_usage_windows(&state.db, &viewer, balance).await?;
     inference_settlement::check_inference_allowed(balance)?;
     let prompt_chars: usize = messages.iter().map(|(_, t)| t.chars().count()).sum();
     let prices = state.model_router.retail_prices(&alias).await.map_err(ApiError::from)?;

@@ -115,6 +115,14 @@ pub enum ApiError {
     /// or below 0).
     #[error("Credits required: {code}")]
     CreditsRequired { code: &'static str, balance_usd: f64 },
+
+    /// Enforced Cloud usage window (Claude polish CONTRACT "Enforced
+    /// windows", step C1b): a paid plan over its 5h or 7d window without
+    /// usage credits carrying it. 429 with
+    /// `{"error":"usage_window_exhausted","window":"5h"|"7d","resets_at":...}`
+    /// (snake_case like every billing/usage reply).
+    #[error("Usage window exhausted: {window}")]
+    UsageWindowExhausted { window: &'static str, resets_at: String },
 }
 
 impl From<sqlx::migrate::MigrateError> for ApiError {
@@ -143,6 +151,15 @@ impl IntoResponse for ApiError {
         if let ApiError::CreditsRequired { code, balance_usd } = &self {
             let body = crate::services::inference_settlement::credits_required_body(code, *balance_usd);
             return (StatusCode::PAYMENT_REQUIRED, Json(body)).into_response();
+        }
+        // And the enforced usage window's.
+        if let ApiError::UsageWindowExhausted { window, resets_at } = &self {
+            let body = serde_json::json!({
+                "error": "usage_window_exhausted",
+                "window": window,
+                "resets_at": resets_at,
+            });
+            return (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
         }
 
         let (status, error_code, message) = match &self {
@@ -244,6 +261,12 @@ impl IntoResponse for ApiError {
                 StatusCode::PAYMENT_REQUIRED,
                 *code,
                 crate::services::inference_settlement::credits_message(code).to_string(),
+            ),
+            // Answered above with its contract body; kept for exhaustiveness.
+            ApiError::UsageWindowExhausted { .. } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "usage_window_exhausted",
+                "You've reached your usage limit.".to_string(),
             ),
             ApiError::PreconditionRequired(msg) => (
                 StatusCode::PRECONDITION_REQUIRED,
