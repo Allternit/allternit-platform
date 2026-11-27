@@ -5,7 +5,7 @@ import { ModelsDev } from "@/runtime/providers/adapters/models"
 import { ModelList } from "@/runtime/providers/model-list"
 import { currentDefaultBrain } from "@/runtime/providers/default-brain"
 import { CloudContinue } from "@/runtime/session/cloud-continue"
-import { cloudEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
+import { cloudEntitlement, openEntitlement } from "@/cli/ui/ink-app/services/allternitAccount"
 import { cloudCreditsDisclosure } from "@/shared/util/provider-error"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
@@ -335,6 +335,19 @@ export const ModelsCommand = cmd({
         )
         const entitlement = listsCloud ? await cloudEntitlement() : undefined
         const locked = await CloudContinue.lockCheck(entitlement).catch(() => () => false)
+        // Open rows: lane, price per 1M in/out, and the lock reason from `open_models`.
+        const openRows = new Map<string, CloudContinue.CatalogModel>()
+        let openLock: string | undefined
+        let openResearch = false
+        if (listsCloud) {
+          const rows = (await CloudContinue.catalogRows().catch(() => undefined)) ?? []
+          for (const m of rows) if (m.id && m.lane === "open") openRows.set(m.id, m)
+          if (openRows.size > 0) {
+            const openEnt = await openEntitlement().catch(() => undefined)
+            openLock = CloudContinue.openLockTag(openEnt)
+            openResearch = openEnt?.research === true
+          }
+        }
         let anyLocked = false
         for (const section of sections) {
           const providers = section.providers.filter((p) => !args.provider || p.id === args.provider)
@@ -342,11 +355,21 @@ export const ModelsCommand = cmd({
           if (!args.provider) UI.println(dim(`# ${section.title}`))
           for (const provider of providers) {
             for (const row of provider.models) {
+              // Research rows only with the Open Research flag.
+              if (provider.id === CloudContinue.PROVIDER_ID && openRows.get(row.modelID)?.open?.access === "research" && !openResearch) continue
               const tags: string[] = []
               if (row.default) tags.push("default")
               if (row.current) tags.push("current")
               if (provider.signedIn === false) tags.push("not signed in")
-              if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
+              const open = provider.id === CloudContinue.PROVIDER_ID ? openRows.get(row.modelID) : undefined
+              if (open) {
+                tags.push("open")
+                const p = open.pricing
+                if (typeof p?.input_per_1m_usd === "number" && typeof p?.output_per_1m_usd === "number")
+                  tags.push(`$${p.input_per_1m_usd}/$${p.output_per_1m_usd} per 1M in/out`)
+                if (open.open?.access === "research") tags.push("research")
+                if (openLock) tags.push(`locked: ${openLock}`)
+              } else if (provider.id === CloudContinue.PROVIDER_ID && locked(row.modelID)) {
                 tags.push("needs credits")
                 anyLocked = true
               }

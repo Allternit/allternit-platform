@@ -380,3 +380,61 @@ export function cloudCreditsDisclosure(
   const packs = (opts.packs?.length ? opts.packs : CLOUD_PACK_LABELS).join(", ")
   return `${lead} Packs: ${packs}. Buy: ${opts.billingUrl ?? CLOUD_BILLING_URL} · or choose a plan.`
 }
+
+/**
+ * Allternit Open refusals (contract CONTRACT-open-tier-2026-11-26 §4):
+ * 402 `open_plan_required`, 402 `open_lane_requires_credits` (reason
+ * `allowance_used` or `bought_credits_required`), 403 `open_research_required`.
+ * The relayed path can lose `error.code`, so a bare body is also matched by
+ * status plus the body's own wording or `reason`.
+ */
+export type CloudOpenCode = "open_plan_required" | "open_lane_requires_credits" | "open_research_required"
+export type CloudOpenReason = "allowance_used" | "bought_credits_required"
+
+export type CloudOpenRefusal = { code: CloudOpenCode; reason?: CloudOpenReason; billingUrl?: string }
+
+const OPEN_CODES: CloudOpenCode[] = ["open_plan_required", "open_lane_requires_credits", "open_research_required"]
+
+export function cloudOpenRefusal(raw: unknown, status?: number): CloudOpenRefusal | undefined {
+  const source = normalizeRaw(raw)
+  if (!source) return undefined
+  const parsed = parseJsonObject(source) ?? parseEmbeddedJsonObject(source)
+  const body = (parsed?.error && typeof parsed.error === "object" ? parsed.error : parsed) as Record<string, unknown> | undefined
+  let code = OPEN_CODES.find((c) => c === body?.code) ?? OPEN_CODES.find((c) => source.includes(`"${c}"`))
+  const message = typeof body?.message === "string" ? body.message : source
+  if (!code) {
+    // Code lost on the relay: status + body wording.
+    if (status === 403 && /open research/i.test(message)) code = "open_research_required"
+    else if (status === 402 && /open models?.{0,40}(need|require).{0,20}paid plan|on free, run open models/i.test(message)) code = "open_plan_required"
+    else if (status === 402 && /open-model allowance|open models run on credits you buy|open_lane/i.test(message)) code = "open_lane_requires_credits"
+  }
+  if (!code) return undefined
+  let reason: CloudOpenReason | undefined
+  if (code === "open_lane_requires_credits") {
+    const r = body?.reason
+    reason =
+      r === "allowance_used" || r === "bought_credits_required"
+        ? r
+        : /bought_credits_required|credits you buy/i.test(source)
+          ? "bought_credits_required"
+          : "allowance_used"
+  }
+  const url = body?.billing_url ?? body?.plans_url
+  const billingUrl = typeof url === "string" && /^https:\/\//.test(url) ? url : undefined
+  return { code, reason, billingUrl }
+}
+
+/** One line per refusal: contract §4 copy plus the billing URL. */
+export function cloudOpenDisclosure(refusal: CloudOpenRefusal): string {
+  const url = refusal.billingUrl ?? CLOUD_BILLING_URL
+  switch (refusal.code) {
+    case "open_plan_required":
+      return `Open models on Allternit Cloud need a paid plan. On Free, run open models on your own device with Freeweights. Plans: ${url}`
+    case "open_research_required":
+      return "This model is part of Open Research, available by agreement."
+    default:
+      return refusal.reason === "bought_credits_required"
+        ? `On Plus, open models run on credits you buy. Add credits to use them: ${url}`
+        : `This month's open-model allowance is used. Add credits to keep going: ${url}`
+  }
+}
