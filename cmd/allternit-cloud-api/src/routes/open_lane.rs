@@ -4,8 +4,11 @@
 //!   Settings > Open models state (acceptable use, 18+ confirmation, handoff
 //!   opt-in). Clerk session or an `account` API token.
 //! - [`guard_open_request`]: requests that name an open-lane model need the
-//!   terms (403 `open_lane_terms_required`), credits (402
-//!   `open_lane_requires_credits`) and a clean hard-line check (400
+//!   terms for the current AUP version (403 `open_lane_terms_required`), the
+//!   Allternit Open entitlement (`services::open_entitlement`: 402
+//!   `open_plan_required` on Free, 402 `open_lane_requires_credits` when the
+//!   allowance or bought credits ran out, 403 `open_research_required`) and
+//!   a clean hard-line check (400
 //!   `content_policy_hard_line`, or 503 `open_lane_moderation_unavailable`
 //!   when moderation cannot run: fail closed).
 //! - [`plan_handoff`] + [`chat_with_handoff`]: with handoff on, a frontier
@@ -34,7 +37,7 @@ use crate::{
     error::ApiError,
     model_router::{catalog::OPEN_LANE_PROVIDER, ChatCompletionRequest, ModelRouterError, RetailPrices},
     services::{
-        hard_line, inference_settlement,
+        hard_line, inference_settlement, open_entitlement,
         open_lane::{self, OpenLaneSettings, RequestOptions},
         refusal,
     },
@@ -80,7 +83,7 @@ async fn get_settings(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let settings = open_lane::load_settings(&state.db, &user.id).await?;
+    let settings = open_entitlement::load_terms(&state.db, &user.id).await?;
     Ok(Json(settings_body(&state, &settings)))
 }
 
@@ -97,7 +100,9 @@ async fn put_settings(
     Json(update): Json<SettingsUpdate>,
 ) -> Result<Json<Value>, ApiError> {
     let user = auth::resolve_user_scoped(&state.db, &headers, "account").await?;
-    let current = open_lane::load_settings(&state.db, &user.id).await?;
+    // An acceptance of an older AUP text reads as none, so accepting now
+    // stamps the current version (D18).
+    let current = open_entitlement::load_terms(&state.db, &user.id).await?;
     let next = open_lane::apply_update(
         current,
         update.accept_aup,
@@ -127,11 +132,13 @@ async fn hard_line_gate(state: &ApiState, user_id: &str, request: &ChatCompletio
 }
 
 /// Gate a request that names an open-lane model. `Some(response)` = stop
-/// and answer with it.
+/// and answer with it. Runs after the base Cloud credits gate
+/// (`credits_required` / `credits_exhausted`). Order: terms (current AUP
+/// version), research row without the flag, plan and funds
+/// (`open_entitlement`), then the hard-line check.
 pub async fn guard_open_request(
     state: &ApiState,
     user_id: &str,
-    has_credits: bool,
     request: &ChatCompletionRequest,
 ) -> Result<Option<Response>, ApiError> {
     // Plan and Copilot models never run on the open lane (contract 9.3).
@@ -141,14 +148,24 @@ pub async fn guard_open_request(
     if !state.model_router.is_open_lane_alias(&request.model) {
         return Ok(None);
     }
-    let settings = open_lane::load_settings(&state.db, user_id).await?;
-    if !settings.terms_ok() {
+    let open_models = open_entitlement::load(&state.db, user_id).await?;
+    if !open_models.entitlement.terms_accepted {
         return Ok(Some(open_lane::terms_required_response()));
     }
-    if !has_credits {
-        return Ok(Some(open_lane::credits_required_response()));
+    if is_research_row(state, &request.model) && !open_models.entitlement.research {
+        return Ok(Some(open_entitlement::research_required_response()));
+    }
+    if let Some(refused) = open_entitlement::refusal(&open_models) {
+        return Ok(Some(refused));
     }
     Ok(hard_line_gate(state, user_id, request).await.err())
+}
+
+/// Whether an open alias is an Open Research (`research_only`) row. The
+/// starter catalog has none until the research rows land (#3150, B5); B6
+/// wires this to the row's `research_only` flag.
+fn is_research_row(_state: &ApiState, _alias: &str) -> bool {
+    false
 }
 
 /// A planned handoff: the model the caller asked for and the open model a
@@ -186,9 +203,18 @@ pub async fn plan_handoff(
         .filter(|m| state.model_router.is_open_lane_alias(m))
         .unwrap_or_else(|| open_lane::DEFAULT_HANDOFF_MODEL.to_string());
     let target_available = state.model_router.is_open_lane_alias(&to);
-    let settings = open_lane::load_settings(&state.db, user_id).await?;
-    Ok(open_lane::should_hand_off(&settings, options, requested_is_open, has_credits, target_available)
-        .then(|| HandoffPlan { from: alias.to_string(), to }))
+    let settings = open_entitlement::load_terms(&state.db, user_id).await?;
+    if !open_lane::should_hand_off(&settings, options, requested_is_open, has_credits, target_available) {
+        return Ok(None);
+    }
+    // The handed-off answer is open spend: it needs the same plan and funds
+    // as asking the open model directly (contract §2). A blocked account is
+    // simply not handed off; the frontier answer stands.
+    let entitlement = open_entitlement::load(&state.db, user_id).await?.entitlement;
+    if !entitlement.allowed || (is_research_row(state, &to) && !entitlement.research) {
+        return Ok(None);
+    }
+    Ok(Some(HandoffPlan { from: alias.to_string(), to }))
 }
 
 fn prompt_chars(request: &ChatCompletionRequest) -> usize {

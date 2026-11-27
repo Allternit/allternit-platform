@@ -60,6 +60,11 @@ pub struct UsageResponse {
     /// key is snake_case on both endpoints.
     #[serde(rename = "cloud_models")]
     pub cloud_models: services::CloudModelsEntitlement,
+    /// Allternit Open entitlement, the same object as on
+    /// `GET /api/v1/billing/credits` (open-tier contract §3). Absent when it
+    /// could not be read: clients then treat open rows as today.
+    #[serde(rename = "open_models", skip_serializing_if = "Option::is_none")]
+    pub open_models: Option<services::open_entitlement::OpenModelsObject>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -758,6 +763,7 @@ pub(crate) fn compose_usage(
         month_to_date_usage_usd,
         recent_transactions,
         cloud_models,
+        open_models: None,
     }
 }
 
@@ -824,7 +830,12 @@ async fn get_my_usage(
     .await
     .unwrap_or_default();
 
-    Ok(Json(compose_usage(
+    let open_models = services::open_entitlement::load(&state.db, &user_id)
+        .await
+        .map_err(|error| tracing::warn!(%error, "open_models unreadable for /me/usage"))
+        .ok();
+
+    let mut usage = compose_usage(
         &plan_id,
         &plan_status,
         &plan_tier,
@@ -840,7 +851,9 @@ async fn get_my_usage(
             })
             .collect(),
         cloud_models,
-    )))
+    );
+    usage.open_models = open_models;
+    Ok(Json(usage))
 }
 
 #[cfg(test)]

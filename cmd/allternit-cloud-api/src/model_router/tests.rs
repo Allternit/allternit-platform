@@ -848,10 +848,10 @@ mod plan_turns {
             top_p: None,
             extra: serde_json::Map::new(),
         };
-        let refused = crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().expect("refused");
+        let refused = crate::routes::open_lane::guard_open_request(&state, USER, &open).await.unwrap().expect("refused");
         assert_eq!(refused.status(), StatusCode::FORBIDDEN);
         open.model = "copilot/gpt-5".into();
-        assert!(crate::routes::open_lane::guard_open_request(&state, USER, true, &open).await.unwrap().is_some());
+        assert!(crate::routes::open_lane::guard_open_request(&state, USER, &open).await.unwrap().is_some());
         let platform = crate::routes::platform_v1::responses::refuse_person_only_model(Some("plan/grok/grok-4.6")).unwrap_err();
         assert_eq!(platform.status, StatusCode::FORBIDDEN);
         assert!(crate::routes::platform_v1::responses::refuse_person_only_model(Some("kimi-k3")).is_ok());

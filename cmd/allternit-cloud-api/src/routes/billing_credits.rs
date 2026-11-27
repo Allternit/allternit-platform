@@ -5,7 +5,9 @@
 //! recent credit ledger entries (grants and usage debits), plus
 //! `cloud_models`: whether Allternit Cloud models may run for this account
 //! (`inference_settlement::cloud_models_entitlement`, the same rule as the
-//! chat gate; CONTRACT-cloud-credits-2026-11-15). The
+//! chat gate; CONTRACT-cloud-credits-2026-11-15), and `open_models`: the
+//! Allternit Open entitlement (`services::open_entitlement::load`, the same
+//! object as `GET /api/v1/me/usage`; CONTRACT-open-tier-2026-11-26 §3). The
 //! caller is verified per request — Clerk session or `allternit_*` API token
 //! (`auth::resolve_user_id`).
 
@@ -25,6 +27,10 @@ pub struct CreditBalanceResponse {
     recent_transactions: Vec<CreditTransactionResponse>,
     /// Allternit Cloud models entitlement (contract D4).
     cloud_models: services::CloudModelsEntitlement,
+    /// Allternit Open entitlement (open-tier contract §3). Absent when it
+    /// could not be read: clients then treat open rows as today.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_models: Option<services::open_entitlement::OpenModelsObject>,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -61,6 +67,10 @@ async fn get_credit_balance(
             .await?;
     let balance_usd = balance_row.unwrap_or(0.0);
     let cloud_models = services::cloud_models_entitlement(&state.db, &user_id, balance_row).await;
+    let open_models = services::open_entitlement::load(&state.db, &user_id)
+        .await
+        .map_err(|error| tracing::warn!(%error, "open_models unreadable for /billing/credits"))
+        .ok();
     let usage = services::hosted_usage_summary(&state.db, &user_id).await?;
     let recent = sqlx::query_as::<_, CreditTransactionRow>(
         r#"
@@ -87,5 +97,6 @@ async fn get_credit_balance(
             })
             .collect(),
         cloud_models,
+        open_models,
     }))
 }
