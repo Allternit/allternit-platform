@@ -2210,6 +2210,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "allternit-self-improve-gizzi"
+version = "0.1.0"
+dependencies = [
+ "allternit-self-improve",
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "allternit-session-manager"
 version = "0.1.0"
 dependencies = [
