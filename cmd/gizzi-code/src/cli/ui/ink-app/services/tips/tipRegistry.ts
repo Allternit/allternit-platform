@@ -331,12 +331,6 @@ const externalTips: Tip[] = [
     isRelevant: async () => !getGlobalConfig().githubActionSetupCount,
   },
   {
-    id: 'install-slack-app',
-    content: async () => 'Run /install-slack-app to use Gizzi in Slack',
-    cooldownSessions: 10,
-    isRelevant: async () => !getGlobalConfig().slackAppInstallCount,
-  },
-  {
     id: 'permissions',
     content: async () =>
       'Use /permissions to pre-approve and pre-deny bash, edit, and MCP tools',
