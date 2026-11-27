@@ -145,6 +145,7 @@ test/components/RunTelemetry.test.ts
 test/components/ToolUseCard.test.ts
 test/runtime/bots/platform-api.test.ts
 test/runtime/pairing-approval-url.test.ts
+test/runtime/relay-connector-lock.test.ts
 test/components/routeInternalFetch.test.ts
 test/services/localModel-reasoning.test.ts
 test/components/side-query-provider.test.ts
