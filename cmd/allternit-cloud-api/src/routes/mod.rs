@@ -161,6 +161,7 @@ pub mod test_support;
 pub mod files;
 pub mod files_gateway;
 pub mod files_keys;
+pub mod sign_requests;
 pub mod voice_consent;
 pub mod voice_recordings;
 pub mod voice_tickets;
