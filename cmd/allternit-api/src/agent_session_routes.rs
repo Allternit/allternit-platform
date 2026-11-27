@@ -299,6 +299,10 @@ struct SendMessageBody {
     /// Standing instructions for this turn ("+…" appends to gizzi's own).
     #[serde(default)]
     system: Option<String>,
+    /// The caller's "search past chats" switch. Passed to gizzi unchanged,
+    /// which owns the per-turn past-chats block; absent means gizzi's default (on).
+    #[serde(default)]
+    memory_search: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -2317,6 +2321,9 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     }
     if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
         payload["system"] = json!(system);
+    }
+    if let Some(flag) = body.memory_search {
+        payload["memory_search"] = json!(flag);
     }
     // Prompt hints the runtime reads (small-screen, spoken-reply and
     // `answer_cards: "widgets"` writing-card blocks, and whether this client

@@ -27,7 +27,70 @@ export interface KernelHit {
   dispute?: unknown
 }
 
+export interface PastTurn {
+  observation_id: string
+  session_id: string
+  speaker: string
+  timestamp: string
+  text: string
+  score?: number
+}
+
+export interface PastChatFilters {
+  from?: string
+  to?: string
+  session?: string
+  skip_sessions?: string[]
+}
+
+let request: typeof platformRequest = platformRequest
+
 export namespace MemoryKernelAdapter {
+  /** Tests swap the network edge; pass nothing to restore. */
+  export function setRequestForTests(fn?: typeof platformRequest) {
+    request = fn ?? platformRequest
+  }
+
+  /** Raw-log search over earlier chats (mode "search": the wide budget). Empty on failure. */
+  export async function searchPastChats(query: string, filters: PastChatFilters = {}, limit = 12): Promise<PastTurn[]> {
+    if (!enabled() || !query.trim()) return []
+    try {
+      const r = await request<{ turns?: PastTurn[] }>(
+        "POST",
+        "/api/v1/memory/v2/raw-search",
+        {
+          query,
+          mode: "search",
+          limit,
+          ...(filters.from ? { from: filters.from } : {}),
+          ...(filters.to ? { to: filters.to } : {}),
+          ...(filters.session ? { session_id: filters.session } : {}),
+          ...(filters.skip_sessions?.length ? { exclude_sessions: filters.skip_sessions } : {}),
+        },
+        { timeoutMs: TIMEOUT_MS },
+      )
+      return r.turns ?? []
+    } catch {
+      return []
+    }
+  }
+
+  /** Turns around one observation, same session, in time order. Empty on failure. */
+  export async function neighbors(observationId: string, before = 2, after = 2): Promise<PastTurn[]> {
+    if (!enabled() || !observationId.trim()) return []
+    try {
+      const r = await request<{ turns?: PastTurn[] }>(
+        "GET",
+        `/api/v1/memory/v2/turns/${encodeURIComponent(observationId)}/neighbors?before=${before}&after=${after}`,
+        undefined,
+        { timeoutMs: TIMEOUT_MS },
+      )
+      return r.turns ?? []
+    } catch {
+      return []
+    }
+  }
+
   export function enabled(): boolean {
     return process.env.GIZZI_MEMORY_KERNEL !== "0"
   }
@@ -62,7 +125,7 @@ export namespace MemoryKernelAdapter {
   export async function search(query: string, limit = 10): Promise<KernelHit[]> {
     if (!enabled() || !query.trim()) return []
     try {
-      const r = await platformRequest<{ items: KernelHit[] }>(
+      const r = await request<{ items: KernelHit[] }>(
         "POST",
         "/api/v1/memory/adapters/search",
         { query, limit },

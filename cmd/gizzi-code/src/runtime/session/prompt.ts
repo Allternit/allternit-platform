@@ -57,6 +57,7 @@ import { ConfigMarkdown } from "@/runtime/context/config/markdown"
 import { SessionSummary } from "@/runtime/session/summary"
 import { NamedError } from "@allternit/gizzi-util/error.js"
 import { fn } from "@/shared/util/fn"
+import { PastChats } from "@/runtime/memory/past-chats"
 import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
@@ -196,6 +197,12 @@ export namespace SessionPrompt {
       .optional()
       .describe(
         "The caller's per-user MCP proxy for this turn ({ server, url, sessionId, token }), sent by allternit-api. Held in memory for the turn only: deliberately not part of `metadata` (which is stored on the user message) because the token must never be written to disk.",
+      ),
+    memory_search: z
+      .boolean()
+      .optional()
+      .describe(
+        "The caller's \"search past chats\" switch. Defaults to true. When false, this turn gets no <past-chats> block.",
       ),
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
@@ -434,12 +441,18 @@ const message = await createUserMessage(input)
     // the `turnLocation` field; the `turnSystem` text only when an older API sent no field.
     const location = resolveTurnLocation(input.turnLocation, turnLayer)
     if (location) TurnLocations.set(input.sessionID, location)
+    const eph = input.metadata?.["ephemeral"]
+    const releasePastChats = PastChats.setTurn(input.sessionID, {
+      memorySearch: input.memory_search,
+      incognito: eph === true || eph === "true",
+    })
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
       if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
       return result
     } finally {
       releaseMcpProxy()
+      releasePastChats()
       if (turnLayer && turnSystemLayers.get(input.sessionID) === turnLayer) turnSystemLayers.delete(input.sessionID)
       if (location) TurnLocations.release(input.sessionID, location)
     }
@@ -1199,6 +1212,8 @@ const message = await createUserMessage(input)
         agent,
         session,
       })
+
+      await insertPastChats(msgs, sessionID)
 
       const processor = SessionProcessor.create({
         assistantMessage: (await Session.updateMessage({
@@ -2811,6 +2826,32 @@ const message = await createUserMessage(input)
       info,
       parts,
     }
+  }
+
+  /** Adds the turn's "From past chats" block to the last user message, as a synthetic part (not the system prompt: that would void the prompt cache). */
+  async function insertPastChats(messages: MessageV2.WithParts[], sessionID: string) {
+    const user = messages.findLast((m) => m.info.role === "user")
+    if (!user) return
+    const text = user.parts
+      .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
+      .map((p) => p.text)
+      .join("\n")
+    const flags = PastChats.flagsFor(sessionID)
+    const built = await PastChats.forUserMessage(user.info.id, {
+      sessionID,
+      text,
+      memorySearch: flags.memorySearch,
+      incognito: flags.incognito,
+    })
+    if (!built) return
+    user.parts.push({
+      id: Identifier.ascending("part"),
+      messageID: user.info.id,
+      sessionID: user.info.sessionID,
+      type: "text",
+      text: built.block,
+      synthetic: true,
+    })
   }
 
   async function insertReminders(input: { messages: MessageV2.WithParts[]; agent: Agent.Info; session: Session.Info }) {
