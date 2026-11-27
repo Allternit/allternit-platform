@@ -323,8 +323,8 @@ function logExposureForFeature(feature: string): void {
  *
  * Without this running on refresh, remoteEvalFeatureValues freezes at its
  * init-time snapshot and getDynamicConfig_BLOCKS_ON_INIT returns stale values
- * for the entire process lifetime — which broke the tengu_max_version_config
- * kill switch for long-running sessions.
+ * for the entire process lifetime — which broke long-lived dynamic configs
+ * in long-running sessions.
  */
 async function processRemoteEvalPayload(
   gbClient: GrowthBook,
@@ -1054,8 +1054,8 @@ export async function refreshGrowthBookFeatures(): Promise<void> {
     }
 
     // Rebuild remoteEvalFeatureValues from the refreshed payload so that
-    // _BLOCKS_ON_INIT callers (e.g. getMaxVersion for the auto-update kill
-    // switch) see fresh values, not the stale init-time snapshot.
+    // _BLOCKS_ON_INIT callers see fresh values, not the stale init-time
+    // snapshot.
     const hadFeatures = await processRemoteEvalPayload(growthBookClient)
     // Same re-check as init path: covers the setPayload yield inside
     // processRemoteEvalPayload (the guard above only covers refreshFeatures).
