@@ -3624,9 +3624,44 @@ authManager.setRelayHostHandler((method, path, body) => {
   return command ? shareManager.handleHostCommand(command[2], command[1]) : Promise.resolve(null);
 });
 
+/**
+ * allternit-api's own copy of the switch (platform #3188): it refuses relayed
+ * starts while `remote_start_off_file()` exists. That is Rust
+ * `dirs::data_dir()/allternit/remote-start-off`, the OS data dir, not the
+ * ALLTERNIT_DATA_DIR Desktop passes (macOS ~/Library/Application Support,
+ * Linux $XDG_DATA_HOME or ~/.local/share, Windows %APPDATA%).
+ */
+function apiRemoteStartOffMarker(): string {
+  const home = os.homedir();
+  let base: string;
+  if (process.platform === 'darwin') base = join(home, 'Library', 'Application Support');
+  else if (process.platform === 'win32') base = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+  else {
+    const xdg = process.env.XDG_DATA_HOME;
+    base = xdg && xdg.startsWith('/') ? xdg : join(home, '.local', 'share');
+  }
+  return join(base, 'allternit', 'remote-start-off');
+}
+
+/** Keep allternit-api's marker in step with the pref: present when off, absent when on. */
+function syncApiRemoteStartMarker(enabled: boolean): void {
+  const marker = apiRemoteStartOffMarker();
+  try {
+    if (enabled) {
+      fs.rmSync(marker, { force: true });
+    } else {
+      fs.mkdirSync(dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, 'Remote start is off in Allternit Desktop Settings.\n');
+    }
+  } catch (error) {
+    log.warn('[RemoteStart] Could not update allternit-api marker', marker, error);
+  }
+}
+
 // Start anywhere (D6): the switch is read before authManager.initialize()
 // opens the relay, so the first authenticate already carries it.
 authManager.setRemoteStartEnabled(store.get('remoteStartEnabled') ?? true);
+syncApiRemoteStartMarker(store.get('remoteStartEnabled') ?? true);
 // Held until clicked or closed so the click handler is not garbage collected.
 const remoteStartNotices = new Set<Notification>();
 authManager.setRemoteStartListener(({ title, body }) => {
@@ -3650,6 +3685,7 @@ handleGuarded('remote-start:set', (_event, enabled: unknown) => {
   const value = enabled === true;
   store.set('remoteStartEnabled', value);
   authManager.setRemoteStartEnabled(value);
+  syncApiRemoteStartMarker(value);
   broadcastToMainWindows('remote-start:changed', value);
   return value;
 });
