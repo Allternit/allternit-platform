@@ -110,6 +110,59 @@ An attempt row is claimed first in `billing_auto_topup_attempts` (a partial uniq
 
 A decline, `authentication_required` or `requires_action` in the API answer marks the attempt `failed`, turns auto top-up off, stores the reason, and notifies the person (web push plus the `auto_topup_failed` customer email). A `requires_action` intent is canceled.
 
+## Paying inside the app
+
+Web, Desktop and the phone web app can take payment without leaving Allternit. iPhone and Android buy through the stores instead (see [Store purchases](#store-purchases-apple-and-google)). Billing and usage replies in this section use snake_case keys.
+
+### Billing config
+
+`GET /api/v1/billing/config` tells a client how to load Stripe.
+
+```json
+{ "publishable_key": "pk_test_abc", "mode": "test", "payment_method_types": ["card", "link"] }
+```
+
+`mode` is `test` or `live`, read from the key. The route answers the same `billing_not_configured` error as the other billing routes when `STRIPE_PUBLISHABLE_KEY` is missing, malformed, or in a different mode from `STRIPE_SECRET_KEY`. Set both keys in the same mode. Only `card` and `link` are offered.
+
+### Embedded checkout
+
+`POST /api/v1/billing/checkout` (credit packs) and `POST /api/v1/billing/subscribe` (plans) take an optional `ui_mode`:
+
+| `ui_mode` | Reply |
+| --- | --- |
+| absent, `null` or `hosted` | `{ "checkout_url": "https://checkout.stripe.com/..." }`, as before. |
+| `embedded` | `{ "client_secret": "cs_..._secret_...", "session_id": "cs_..." }`. Mount Stripe's embedded checkout with the secret and the publishable key from `/billing/config`. |
+
+Any other `ui_mode` value is rejected (`422` from request parsing). An embedded session has a `return_url` and `redirect_on_completion` of `if_required`, and no success or cancel URL. The customer is always the signed-in account's own Stripe customer; a `customer` field in the body is ignored.
+
+### Payment methods
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/v1/billing/payment-methods` | `{ "payment_methods": [...], "default_id": "pm_..." or null }`. Each method has `id`, `kind` (`card` or `link`), `brand`, `last4`, `exp_month`, `exp_year`, `email` (Link) and `is_default`. |
+| POST | `/api/v1/billing/payment-methods/setup-intent` | `{ "client_secret", "setup_intent_id" }` to add a card with Stripe's element. |
+| POST | `/api/v1/billing/payment-methods/:id/default` | Make this the default (used for the plan and packs). |
+| DELETE | `/api/v1/billing/payment-methods/:id` | Remove a saved method. |
+
+Errors: `404 payment_method_not_found` for a method that is not on the account. `409 default_payment_method_in_use` when removing the card an active plan is billed to; make another card the default first. A backup card is never charged on its own.
+
+### Invoices
+
+`GET /api/v1/billing/invoices?limit=&cursor=` lists the account's Stripe invoices.
+
+```json
+{
+  "invoices": [{ "id": "in_1", "created_at": "2026-11-01T00:00:00Z", "total_usd": 20.0, "currency": "usd", "status": "paid", "pdf_url": "https://pay.stripe.com/invoice/in_1/pdf" }],
+  "cursor": "in_1"
+}
+```
+
+`cursor` is `null` on the last page; pass it back as `cursor` for the next. `pdf_url` is `null` when Stripe has no PDF.
+
+### Embedded auto top-up card
+
+`POST /api/v1/billing/auto-topup/setup?ui_mode=embedded` returns `{ "client_secret", "setup_intent_id" }` instead of a checkout URL. After Stripe confirms the card in the page, the client calls `POST /api/v1/billing/auto-topup/setup/confirm` with the setup intent id. Errors: `setup_intent_not_found` (not this account's), `setup_not_finished` (the card was not confirmed) and `auto_topup_card_unsupported` (auto top-up needs a card or Link). Any `ui_mode` other than `embedded` or `hosted` is `400`.
+
 ## Webhook events
 
 Stripe posts to `POST /api/v1/webhooks/stripe` (signed with `STRIPE_WEBHOOK_SECRET`). Auto top-up adds these events to the ones plans and packs already use:
