@@ -440,55 +440,28 @@ private fun EmptyStateDrawer(title: String, message: String, newLabel: String, o
 @Composable
 internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    val view = LocalView.current
-    val time = relativeTime(session.timestampMillis)
-    val source = remember { MutableInteractionSource() }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(AllternitRadii.MD))
-            .testTag("recentRow${session.id}")
-            .rowPress(source)
-            .clickable(interactionSource = source, indication = null, role = Role.Button) {
-                Haptics.perform(view, Haptics.Kind.Tap)
-                onClick()
+    com.allternit.core.design.QuietSessionRow(
+        title = session.title,
+        time = relativeTime(session.timestampMillis),
+        testTag = "recentRow${session.id}",
+        onClick = onClick,
+        leading = { com.allternit.core.design.QuietSessionGlyph(if (session.isTerminal || session.originSurface == "code") sessionIcon(session) else com.allternit.core.design.R.drawable.ph_chat_circle) },
+        status = {
+            if (session.isTerminal) {
+                Text(
+                    text = "TERMINAL",
+                    color = c.textSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(c.borderStrong.copy(alpha = c.borderStrong.alpha * 0.5f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
             }
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            painter = painterResource(if (session.isTerminal || session.originSurface == "code") sessionIcon(session) else com.allternit.core.design.R.drawable.ph_chat_circle),
-            contentDescription = null,
-            tint = c.textSecondary,
-            modifier = Modifier.size(18.dp),
-        )
-        Text(
-            text = session.title,
-            color = c.textPrimary,
-            fontSize = 16.5.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (session.isTerminal) {
-            Text(
-                text = "TERMINAL",
-                color = c.textSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(c.borderStrong.copy(alpha = c.borderStrong.alpha * 0.5f))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
-            )
-        }
-        if (time.isNotEmpty()) Text(time, color = c.textTertiary, fontSize = 13.sp)
-    }
+        },
+    )
 }
-
 
 /**
  * `phone-rail-foot` (iOS footer): the account avatar in its ring (Settings), the Phones button

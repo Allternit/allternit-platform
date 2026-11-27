@@ -16,9 +16,7 @@ ALLOW='
 android/feature/artifacts/src/main/java/com/allternit/feature/artifacts/ArtifactsLibrary.kt|defines LibraryLayoutSwitch; replaced in a1
 android/feature/bots/src/main/java/com/allternit/feature/bots/runtimes/AgentLayersUi.kt|uses LibraryLayoutSwitch; replaced in a1
 android/feature/bots/src/main/java/com/allternit/feature/bots/BotsRoot.kt|layout PillRow; replaced in a1
-android/feature/bots/src/main/java/com/allternit/feature/bots/BotThreads.kt|layout PillRow; replaced in a1/a5
 android/feature/projects/src/main/java/com/allternit/feature/projects/ProjectsList.kt|uses LibraryLayoutSwitch; replaced in a5
-android/feature/shell/src/main/java/com/allternit/feature/shell/SessionOverview.kt|bespoke LayoutSwitch; replaced in a5
 android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/SettingsConnections.kt|uses LibraryLayoutSwitch; replaced in a5
 '
 allowed() { # $1 = path relative to $M
