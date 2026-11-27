@@ -28,8 +28,8 @@ use crate::memory_drive_service::{Result, ServiceError};
 const KEY: &str = "memory_capture";
 /// Longest captured message; longer ones are clipped.
 const MAX_TURN_CHARS: usize = 4000;
-/// Longest raw user turn kept for a person who turned Allternit Sleep on
-/// (Sleep's source of truth; extraction input stays at `MAX_TURN_CHARS`).
+/// Longest raw turn kept for everyone (the raw store is the source of truth
+/// for recall and Sleep; extraction input stays at `MAX_TURN_CHARS`).
 pub const MAX_RAW_TURN_CHARS: usize = 64_000;
 /// Tool rows: input and output are clipped separately, with a marker.
 const MAX_TOOL_INPUT_CHARS: usize = 4_000;
@@ -146,7 +146,7 @@ impl Role {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Capture {
     Recorded(String),
-    /// Nothing stored, and why (`source_off`, `sleep_off`, `incognito`,
+    /// Nothing stored, and why (`source_off`, `incognito`,
     /// `empty`, `repeat`, `no_owner`).
     Skipped(&'static str),
 }
@@ -165,6 +165,21 @@ fn tool_content(name: &str, input: &str, output: &str) -> String {
     format!("{}\n{}\n---\n{}", name.trim(), clip_marked(input.trim(), MAX_TOOL_INPUT_CHARS), clip_marked(output.trim(), MAX_TOOL_OUTPUT_CHARS))
 }
 
+/// `s` with credentials replaced by `[redacted]`: token shapes (API keys,
+/// JWTs, cloud keys), private key blocks, and `key: value` / `key=value`
+/// pairs for password, secret, token and api key names. Tool input and output
+/// go through this before they are stored raw.
+pub fn redact_secrets(s: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)|\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9_]{8,}|github_pat_[a-z0-9_]+|glpat-[a-z0-9_-]+|xox[baprs]-[a-z0-9-]+|AKIA[A-Z0-9]{16}|ASIA[A-Z0-9]{16}|allternit_git_[a-z0-9]+|eyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+)|(?:token|secret|passw(?:or)?d|api[_-]?key|authorization)["']?\s*[:=]\s*["']?[^\s"',;}]+"#,
+        )
+        .expect("constant secret regex")
+    });
+    re.replace_all(s, "[redacted]").into_owned()
+}
+
 /// The session a `gizzi:session/<id>` label names.
 fn gizzi_session(label: &str) -> Option<&str> {
     label.strip_prefix("gizzi:session/").filter(|s| !s.is_empty())
@@ -177,11 +192,11 @@ pub fn record_turn(db: &DbHandle, owner: &str, source: Source, label: &str, text
     record_row(db, owner, source, label, Role::User, text, None, "", "").map(Capture::id)
 }
 
-/// Record one row of a turn. User rows are as before, except that with Sleep
-/// on the full text (up to `MAX_RAW_TURN_CHARS`) is kept. Assistant and tool
-/// rows are recorded only with Sleep on. Nothing is recorded for an
-/// incognito Gizzi session. Every role respects the per-source switches.
-/// For tool rows `text` is unused: `tool_name`, `tool_input`, `tool_output`
+/// Record one row of a turn, raw, for everyone (Sleep on or off). User and
+/// assistant rows keep up to `MAX_RAW_TURN_CHARS`. Tool input and output are
+/// passed through [`redact_secrets`] before they are stored. Nothing is
+/// recorded for an incognito Gizzi session, and every role respects the
+/// per-source switches. For tool rows `text` is unused: `tool_name`, `tool_input`, `tool_output`
 /// make the content.
 #[allow(clippy::too_many_arguments)]
 pub fn record_row(
@@ -210,19 +225,15 @@ pub fn record_row(
             }
         }
     }
-    let sleep_on = crate::sleep::config::load(&conn, owner).map(|r| r.enabled()).unwrap_or(false);
-    if role != Role::User && !sleep_on {
-        return Ok(Capture::Skipped("sleep_off"));
-    }
     let content = match role {
-        Role::User => clean_turn_cap(text, if sleep_on { MAX_RAW_TURN_CHARS } else { MAX_TURN_CHARS }),
+        Role::User => clean_turn_cap(text, MAX_RAW_TURN_CHARS),
         Role::Assistant => {
             let t = text.trim();
             (!t.is_empty()).then(|| clip_marked(t, MAX_RAW_TURN_CHARS))
         }
         Role::Tool => {
             let name = tool_name.map(str::trim).unwrap_or("");
-            (!name.is_empty()).then(|| tool_content(name, tool_input, tool_output))
+            (!name.is_empty()).then(|| tool_content(name, &redact_secrets(tool_input), &redact_secrets(tool_output)))
         }
     };
     let Some(content) = content else { return Ok(Capture::Skipped("empty")) };
@@ -289,13 +300,33 @@ pub fn counts(conn: &Connection, owner: &str) -> Result<Vec<SourceCount>> {
 /// Most memories one forget removes; run again for the rest.
 pub const MAX_FORGET: usize = 2000;
 
+/// Delete the raw turns recorded from `<scheme>:` sources for `owner`, with
+/// their index windows and vectors, in one transaction. The FTS rows go with
+/// the base rows through the V206 delete triggers.
+fn forget_raw_turns(db: &DbHandle, owner: &str, scheme: &str) -> Result<usize> {
+    let mut conn = db.connect()?;
+    let tx = conn.transaction()?;
+    let like = "substr(source, 1, length(?2) + 1) = ?2 || ':'";
+    let ids = format!("SELECT id FROM memory_observations WHERE user_id = ?1 AND {like}");
+    // Chunks first: their delete trigger removes the chunk's FTS row and vectors.
+    tx.execute(&format!("DELETE FROM memory_index_chunks WHERE source_type = 'observation' AND source_id IN ({ids})"), params![owner, scheme])?;
+    tx.execute(&format!("DELETE FROM memory_index_sources WHERE source_type = 'observation' AND source_id IN ({ids})"), params![owner, scheme])?;
+    tx.execute(&format!("DELETE FROM memory_embeddings WHERE target_type = 'observation' AND target_id IN ({ids})"), params![owner, scheme])?;
+    let n = tx.execute(&format!("DELETE FROM memory_observations WHERE user_id = ?1 AND {like}"), params![owner, scheme])?;
+    tx.commit()?;
+    Ok(n)
+}
+
 /// Remove every memory whose source starts with `<scheme>:` from the personal
 /// drive, as one commit. Like any delete, the lines stay in the drive's
-/// history. Returns (revision, removed).
+/// history. The raw turns recorded from that source (observations, their
+/// index windows and vectors) are deleted too. Returns (revision, removed
+/// drive facts).
 pub fn forget_source(db: &DbHandle, owner: &str, scheme: &str) -> Result<(Option<String>, usize)> {
     if scheme.is_empty() || scheme.len() > 32 || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)) || scheme == "allternit" {
         return Err(ServiceError::Provenance("Choose a source to forget.".into()));
     }
+    forget_raw_turns(db, owner, scheme)?;
     let facts: Vec<String> = {
         let conn = db.connect()?;
         let mut stmt = conn.prepare(
@@ -435,16 +466,20 @@ mod tests {
     const LABEL: &str = "gizzi:session/s1";
 
     #[test]
-    fn sleep_off_keeps_todays_capture() {
+    fn sleep_off_still_stores_assistant_and_tool_rows_redacted() {
         let db = DbHandle::new_memory().unwrap();
         let big = "a".repeat(10_000);
-        let r = record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "hello", None, "", "").unwrap();
-        assert_eq!(r, Capture::Skipped("sleep_off"));
-        let r = record_row(&db, "u1", Source::Gizzi, LABEL, Role::Tool, "", Some("bash"), "{}", "out").unwrap();
-        assert_eq!(r, Capture::Skipped("sleep_off"));
+        assert!(matches!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "hello", None, "", "").unwrap(), Capture::Recorded(_)));
+        let out = "HTTP 200\nAPI_KEY=abcd1234efgh5678 and sk-live1234567890abcdef\npassword: hunter2";
+        assert!(matches!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Tool, "", Some("bash"), "curl -H 'token: abc123xyz'", out).unwrap(), Capture::Recorded(_)));
         assert!(record_turn(&db, "u1", Source::Gizzi, LABEL, &big).unwrap().is_some());
-        assert!(rows(&db, "u1", "turn_assistant").is_empty() && rows(&db, "u1", "turn_tool").is_empty());
-        assert_eq!(rows(&db, "u1", "turn_user")[0].len(), MAX_TURN_CHARS);
+        assert_eq!(rows(&db, "u1", "turn_assistant"), vec!["hello".to_string()]);
+        let t = &rows(&db, "u1", "turn_tool")[0];
+        assert!(t.contains("HTTP 200") && t.contains("[redacted]"), "{t}");
+        for leak in ["abcd1234efgh5678", "sk-live1234567890abcdef", "hunter2", "abc123xyz"] {
+            assert!(!t.contains(leak), "{leak} leaked: {t}");
+        }
+        assert_eq!(rows(&db, "u1", "turn_user")[0].len(), 10_000);
     }
 
     #[test]
@@ -463,19 +498,23 @@ mod tests {
         assert!(t.ends_with("[truncated 24000 chars]"), "{}", &t[t.len() - 40..]);
         // A resend of the same row inside ten minutes is dropped.
         assert_eq!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "Sure, done.", None, "", "").unwrap(), Capture::Skipped("repeat"));
-        // Another person with Sleep off gets nothing.
-        assert_eq!(record_row(&db, "u2", Source::Gizzi, LABEL, Role::Assistant, "hi", None, "", "").unwrap(), Capture::Skipped("sleep_off"));
+        // Another person with Sleep off is recorded the same way.
+        assert!(matches!(record_row(&db, "u2", Source::Gizzi, LABEL, Role::Assistant, "hi", None, "", "").unwrap(), Capture::Recorded(_)));
     }
 
     #[test]
     fn incognito_sessions_and_switched_off_sources_record_nothing() {
         let db = DbHandle::new_memory().unwrap();
-        sleep_on(&db, "u1");
         db.connect().unwrap().execute("INSERT INTO ephemeral_sessions (session_id) VALUES ('s-inc')", []).unwrap();
         for role in [Role::User, Role::Assistant] {
             let r = record_row(&db, "u1", Source::Gizzi, "gizzi:session/s-inc", role, "secret", None, "", "").unwrap();
             assert_eq!(r, Capture::Skipped("incognito"));
         }
+        let r = record_row(&db, "u1", Source::Gizzi, "gizzi:session/s-inc", Role::Tool, "", Some("bash"), "ls", "out").unwrap();
+        assert_eq!(r, Capture::Skipped("incognito"));
+        let conn = db.connect().unwrap();
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM memory_observations WHERE user_id = 'u1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
         save(&db.connect().unwrap(), "u1", &Settings { gizzi: false, ..Settings::default() }).unwrap();
         assert_eq!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "x", None, "", "").unwrap(), Capture::Skipped("source_off"));
     }
@@ -493,6 +532,41 @@ mod tests {
         for bad in ["", "allternit", "a b", "x:y", &"a".repeat(40)] {
             assert!(forget_source(&db, "u1", bad).is_err(), "{bad}");
         }
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn forget_source_removes_raw_turns_windows_and_vectors_only_for_that_source() {
+        let db = DbHandle::new_memory().unwrap();
+        let (a, b) = ("telegram:chat/1", "slack:chat/2");
+        let ta = crate::memory_kernel_service::record_observation(&db, "u1", None, None, "turn_user", "hello from telegram", Some(a)).unwrap();
+        let tb = crate::memory_kernel_service::record_observation(&db, "u1", None, None, "turn_user", "hello from slack", Some(b)).unwrap();
+        let conn = db.connect().unwrap();
+        for (obs, chunk) in [(&ta, "ch_a"), (&tb, "ch_b")] {
+            conn.execute("INSERT INTO memory_index_chunks (id, scope, source_type, source_id, chunk_index, text) VALUES (?1, 'u1', 'observation', ?2, 0, 'window text')", params![chunk, obs]).unwrap();
+            conn.execute("INSERT INTO memory_index_sources (source_type, source_id, chunk_count) VALUES ('observation', ?1, 1)", params![obs]).unwrap();
+            for (tt, tid) in [("observation", obs.as_str()), ("chunk", chunk)] {
+                conn.execute(
+                    "INSERT INTO memory_embeddings (id, user_id, target_type, target_id, embedding, model, dim) VALUES (?1, 'u1', ?2, ?3, x'00000000', 'm', 1)",
+                    params![format!("e_{tt}_{tid}"), tt, tid],
+                )
+                .unwrap();
+            }
+        }
+        forget_source(&db, "u1", "telegram").unwrap();
+        let conn = db.connect().unwrap();
+        assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM memory_observations WHERE id = '{ta}'")), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM memory_index_chunks WHERE id = 'ch_a'"), 0);
+        assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM memory_embeddings WHERE target_id IN ('{ta}', 'ch_a')")), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM memory_index_fts WHERE target_id IN ('ch_a') OR text = 'hello from telegram'"), 0);
+        // The other source is untouched.
+        assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM memory_observations WHERE id = '{tb}'")), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM memory_index_chunks WHERE id = 'ch_b'"), 1);
+        assert_eq!(count(&conn, &format!("SELECT COUNT(*) FROM memory_embeddings WHERE target_id IN ('{tb}', 'ch_b')")), 2);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM memory_index_fts WHERE target_id = 'ch_b'"), 1);
     }
 
     #[test]
