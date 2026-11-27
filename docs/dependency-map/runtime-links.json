@@ -2074,6 +2074,33 @@
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"
       ]
+    },
+    {
+      "source": "allternit-ai/src/components/agent-card",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "authenticated HTTP through the relay proxy: GET /api/v1/session-start/options and POST /api/v1/session-start (Idempotency-Key); the route needs runtime:remote_start, advertised live by the computer",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit-ai/src/components/agent-card",
+      "kind": "GET /api/v1/runtime-presence adds remoteStart and kind (desktop, cloud, server); GET /api/v1/start-options returns each computer's folder and mode snapshot so an asleep computer still lists folders",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_presence.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "kind": "relayed session-start routes reach the computer's engine server; refused with remote_start_off when the safety switch is off",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/surfaces/docs/architecture/session-start.mdx"
+      ]
     }
   ]
 }

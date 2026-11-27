@@ -5706,6 +5706,47 @@
         "allternit/cmd/allternit-cloud-api/openapi/sign-requests.yaml",
         "allternit/sdk/apps-bridge/src/allternit.ts"
       ]
+    },
+    {
+      "id": "feature:start-anywhere",
+      "label": "Start anywhere",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "From the chat composer on every surface a person picks a computer and a folder, the chip picks the runtime (Gizzi by default, or a coding CLI installed on that computer), and the next message starts a real session there. Approvals and Stop work from the chat. An asleep Mac offers the same git folder on a cloud computer. The Desktop switch 'Allow new sessions from my other devices' (default on) gates it; Desktop stays reachable after quit; without Desktop, gizzi serve keeps the relay. The StartSession tool and `gizzi start` do the same from a terminal (asks first, depth 3 at most).",
+      "touches": [
+        "allternit/docs/contracts/session-start",
+        "allternit/cmd/allternit-cloud-api/src/routes",
+        "allternit/cmd/allternit-cloud-api/migrations_pg",
+        "allternit/factory/terminal-service/src",
+        "allternit/factory/engine/src/agents",
+        "allternit/cmd/allternit-api/src",
+        "allternit/cmd/allternit-node",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/surfaces/allternit-desktop/src/main",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/surfaces/docs/architecture/session-start.mdx",
+        "allternit/surfaces/docs/guides/start-anywhere.mdx",
+        "allternit-ai/src/components/agent-card",
+        "allternit-ai/src/views/chat/components",
+        "allternit-ai/src/views/code",
+        "allternit/cmd/agent-daemon/src/index.ts",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Eoj approved: shared device list in the + sheet and a computer segment on the chip; Gizzi is the default runtime; permission starts at the computer's default and can change per chat; an asleep Mac offers the same folder on a cloud computer (git folders only); safety switch default on; Desktop keeps the relay after quit; phone push for approvals on by default. Code mode keeps its own computer control."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/session-start.mdx",
+        "allternit/cmd/agent-daemon/src/index.ts"
+      ]
     }
   ],
   "journeys": [
@@ -6441,6 +6482,33 @@
       "evidence": [
         "allternit/surfaces/docs/guides/island-bar.mdx",
         "allternit/surfaces/docs/guides/team-map.mdx"
+      ]
+    },
+    {
+      "id": "journey:start-session-from-phone",
+      "label": "Start a session on a computer from the phone",
+      "description": "From the chat composer on a phone to a running session on a paired computer, with approvals and Stop from the same chat.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/views/chat/components",
+          "says": "The person opens the + sheet, picks a computer, a folder and (on the chip) a runtime. Permission starts at that computer's default."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+          "says": "The first message posts session-start through the relay proxy. The route needs the runtime:remote_start capability, which the computer advertises only while its switch is on."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/server/routes",
+          "says": "The computer starts the session (a Gizzi engine session, or a terminal for another CLI) and answers 201 with the id."
+        },
+        {
+          "at": "allternit-ai/src/views/chat/components",
+          "says": "The chat becomes the session's thread. Approvals are cards; Stop ends the turn. An asleep Mac offers the same git folder on a cloud computer."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/session-start.mdx",
+        "allternit/surfaces/docs/guides/start-anywhere.mdx"
       ]
     }
   ]

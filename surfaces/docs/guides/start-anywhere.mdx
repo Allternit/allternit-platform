@@ -1,0 +1,92 @@
+---
+title: Start a session from your phone
+description: "Pick a computer and a folder in the chat, send a message, and a real session starts there. Approve and stop it from your phone, even after you quit Desktop."
+---
+
+## What you get
+
+From the chat composer on your phone, on ai.allternit.com, on the m.allternit.com app or on Desktop, you can start a real session on one of your computers. The computer does the work in the folder you pick. You watch it, approve its actions and stop it from the same chat.
+
+Nothing new to install. The computer only needs to be paired with your Allternit account and online.
+
+## Start a session
+
+1. Open a chat and tap **+**. The **Computer** page lists your computers: **Online now**, **Asleep** with the time it was last seen, your **Cloud computer** (it wakes when you send), and **No computer** (plan chats work without one). The composer chip has the same list in its **Computer** row.
+2. Pick a computer. The chip now begins with its name.
+3. Pick a **Folder**. Recent folders show first. **Other folder…** browses that computer.
+4. Pick the runtime on the chip. **Gizzi** is the default. The list also shows each coding CLI installed on that computer.
+5. Send your message. The session starts in that folder and the chat becomes its thread.
+
+Code mode keeps its own computer control in the Code bar. It uses the same computer list.
+
+## Permission
+
+A new session starts with that computer's default permission for the runtime you picked. The **Permission** row in the sheet shows it as "mode · default". Change it and the change applies to this chat only.
+
+Starting in **bypass** from another device needs the computer's default to already be bypass, or an extra confirmation.
+
+## Approve and stop
+
+- A Gizzi session shows each action that needs approval as a card in the chat. Tap **Allow** or **Deny**.
+- A session with a coding CLI shows that CLI's own prompt in the chat. Answer it there.
+- **Stop** ends the current turn, like Esc in a terminal.
+
+Your phone gets a push when a session waits for approval. Push for approvals is on by default. Turn it off in the phone's notification settings.
+
+## When the Mac is asleep
+
+An asleep Mac cannot start anything. Pick it anyway and the chat offers **Use a cloud computer**: the same folder, started on your cloud computer. This works for folders that are in a git repository. The cloud computer clones the folder's remote at its branch, so work that is not pushed does not come along. A folder that is not in git cannot move, and the row says so.
+
+## Let other devices start sessions
+
+On Desktop, **Settings → Devices** has a switch: **Allow new sessions from my other devices**. It is on by default.
+
+When it is off, this computer refuses:
+
+- new sessions started from your phone, the web app or another computer;
+- terminals created from another device;
+- **New** and **Open a copy** of a terminal session from another device.
+
+Sessions that are already running keep running. Desktop shows a notification each time another device starts a session on this computer.
+
+## Desktop after you quit
+
+Quit closes Desktop's windows but keeps this computer reachable, so your phone can still start and drive sessions. The first time you quit, Desktop asks once. To go fully offline, use **Quit and go offline** from the menu bar icon.
+
+## Without Desktop
+
+On a computer with no Desktop, the Gizzi engine keeps the connection:
+
+```bash
+gizzi pair     # once: pairs this computer with your Allternit account
+gizzi serve    # keeps it reachable
+```
+
+If Desktop is running on the same computer, it holds the connection and the engine waits. `/remote` in the terminal shows whether this computer is **Reachable**. For servers that run only the relay, see [Agent Daemon](/cli/agent-daemon).
+
+## Start a session from a terminal
+
+`gizzi start` starts a session on any of your computers, from the terminal:
+
+```bash
+gizzi start --list                        # computers, folders and runtimes
+gizzi start --device laptop --folder ~/app "fix the failing test"
+```
+
+The Gizzi agent can do the same with its **StartSession** tool. The tool asks you first. It never starts a session with more permission than the one that called it. A session started by a session can go three levels deep at most, and there is a limit of six starts a minute per computer. Other coding CLIs can call `gizzi start`.
+
+## If a start fails
+
+| Message | What to do |
+|---|---|
+| Remote start is off | Turn on **Allow new sessions from my other devices** on that computer. |
+| Folder is missing | Pick another folder. It may have been moved or deleted. |
+| Runtime is missing | Install that CLI on the computer, or pick Gizzi. |
+| Signed out | Sign in to that CLI on the computer. |
+| Too many starts | Wait a minute. |
+
+## For developers
+
+The routes, fixtures and error codes are in [Session start](/architecture/session-start). The terminal side is in [Live terminal sessions](/architecture/live-terminal-sessions).
+
+Related: [Continue a terminal session anywhere](/cli/continue-anywhere), [Link your computer](/guides/link-your-computer).

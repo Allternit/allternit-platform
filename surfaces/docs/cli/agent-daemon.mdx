@@ -9,6 +9,10 @@ The Allternit Agent Daemon (`@allternit/agent-daemon`) is a TypeScript/Node daem
 
 The daemon is bundled into the Allternit Hosted Runtime container and can also be installed directly on a VPS, desktop, or CI worker.
 
+<Note>
+Allternit Desktop and `gizzi serve` now keep the relay connection themselves, so a laptop or desktop does not need the daemon. The daemon is for servers and hosted runtimes. See [Start a session from your phone](/guides/start-anywhere).
+</Note>
+
 ## What the daemon does
 
 1. Loads an existing runtime identity from `~/.config/allternit/runtime-identity.json`.
