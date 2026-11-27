@@ -57,6 +57,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/billing/auto-topup/setup/confirm", post(confirm_setup_intent))
         .merge(super::billing_payment_methods::routes())
         .merge(super::billing_invoices::routes())
+        .merge(super::billing_plan_change::routes())
 }
 
 /// `?ui_mode=embedded` on card setup: a SetupIntent secret for Stripe
