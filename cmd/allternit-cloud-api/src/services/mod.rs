@@ -48,6 +48,7 @@ pub mod store_billing;
 pub mod store_google;
 pub mod task_service;
 pub mod hard_line;
+pub mod open_entitlement;
 pub mod open_lane;
 pub mod refusal;
 pub mod upstream_funding;

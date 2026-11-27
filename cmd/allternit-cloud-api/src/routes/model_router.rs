@@ -296,8 +296,13 @@ async fn chat_completions_attributed(
     // BYOK first: when the user has their own key for the alias's provider,
     // the call routes through it — their money, so the credits gate, pool
     // breaker, and pool policy do not apply. Early return keeps
-    // the shared path below readable.
-    if let Some(provider_id) = state.model_router.provider_for_alias(&alias) {
+    // the shared path below readable. Open-lane rows never take it: they
+    // always pass the open-lane gate below (terms, plan, funds, hard lines).
+    if let Some(provider_id) = state
+        .model_router
+        .provider_for_alias(&alias)
+        .filter(|_| !state.model_router.is_open_lane_alias(&alias))
+    {
         if inference_keys::should_route_byok(
             inference_keys::byok_enabled(),
             inference_keys::byok_base_url(provider_id).is_some(),
@@ -351,11 +356,12 @@ async fn chat_completions_attributed(
         inference_settlement::check_inference_allowed(balance)?;
     }
 
-    // Open lane: an `-open` model needs the terms, credits and a clean
-    // hard-line check; any other model may be handed off if it refuses.
+    // Open lane: an `-open` model needs the terms, the Allternit Open
+    // entitlement (plan, allowance or bought credits) and a clean hard-line
+    // check; any other model may be handed off if it refuses.
     let has_credits = balance.is_some();
     if let Some(blocked) =
-        crate::routes::open_lane::guard_open_request(&state, &user_id, has_credits, &request).await?
+        crate::routes::open_lane::guard_open_request(&state, &user_id, &request).await?
     {
         return Ok(blocked);
     }

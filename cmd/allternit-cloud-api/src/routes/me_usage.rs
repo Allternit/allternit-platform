@@ -66,6 +66,11 @@ pub struct UsageResponse {
     /// key is snake_case on both endpoints.
     #[serde(rename = "cloud_models")]
     pub cloud_models: services::CloudModelsEntitlement,
+    /// Allternit Open entitlement, the same object as on
+    /// `GET /api/v1/billing/credits` (open-tier contract §3). Absent when it
+    /// could not be read: clients then treat open rows as today.
+    #[serde(rename = "open_models", skip_serializing_if = "Option::is_none")]
+    pub open_models: Option<services::open_entitlement::OpenModelsObject>,
 }
 
 /// One spend window. Paid Cloud plans have limits (decision E3, "B Roomy"); 5h and 7d are
@@ -1034,6 +1039,7 @@ pub(crate) fn compose_usage(
             runs_out_at: None,
             status: "ok".to_string(),
         },
+        open_models: None,
     }
 }
 
@@ -1138,6 +1144,11 @@ async fn get_my_usage(
     .await
     .unwrap_or_default();
 
+    let open_models = services::open_entitlement::load(&state.db, &user_id)
+        .await
+        .map_err(|error| tracing::warn!(%error, "open_models unreadable for /me/usage"))
+        .ok();
+
     let paid_plan = if matches!(plan_id.as_str(), "plus" | "super" | "ultra")
         && matches!(plan_status.as_str(), "active" | "trialing")
     {
@@ -1167,6 +1178,7 @@ async fn get_my_usage(
     usage.windows = windows;
     usage.pace = pace;
     usage.carry_past_windows = carry;
+    usage.open_models = open_models;
     Ok(Json(usage))
 }
 
