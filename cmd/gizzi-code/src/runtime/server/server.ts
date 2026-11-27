@@ -95,6 +95,7 @@ import { RuntimeHeartbeat } from "@/runtime/runtime-heartbeat"
 import { RuntimeRoutes } from "@/runtime/server/routes/runtime"
 import { RemoteControlRoutes } from "@/runtime/server/routes/remote_control"
 import { TerminalRoutes } from "@/runtime/server/routes/terminal"
+import { SessionStartRoutes } from "@/runtime/server/routes/session-start"
 import { AgentCompatRoutes } from "@/runtime/server/routes/agent-compat"
 import { createHash, randomUUID } from "node:crypto"
 
@@ -501,6 +502,8 @@ export namespace Server {
         // agent brain without allternit-api in the middle.
         .route("/api", AgentCompatRoutes())
         .route("/v1beta/remote-control", RemoteControlRoutes())
+        // Start anywhere: the cloud relay forwards /api/*, so the phone reaches this as /api/v1/session-start.
+        .route("/api/v1/session-start", SessionStartRoutes())
         // /v1/ — versioned API surface (same handlers, new path prefix)
         .route(
           "/v1",
@@ -558,6 +561,7 @@ export namespace Server {
             .route("/runtime", RuntimeRoutes())
             .route("/remote-control", RemoteControlRoutes())
             .route("/terminal", TerminalRoutes())
+            .route("/session-start", SessionStartRoutes())
             .route("/workspace", WorkspaceRoutes()) as unknown as Hono,
         )
         .all("/*", async (c) => {

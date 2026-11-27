@@ -7,7 +7,7 @@ import { Session } from "@/runtime/session"
 import { Question } from "@/runtime/integrations/question"
 
 /**
- * Live terminal sessions (contract: surfaces/docs/dev/live-terminal-sessions.mdx).
+ * Live terminal sessions (contract: surfaces/docs/architecture/live-terminal-sessions.mdx).
  * Called by the Gizzi TUI on this machine; surfaces never call these — they
  * keep using the session, message, permission and event routes they already use.
  */
