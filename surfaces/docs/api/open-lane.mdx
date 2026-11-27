@@ -11,27 +11,59 @@ User guide: [Open models](/guides/open-models).
 
 ## Models
 
-Open-lane models carry `"lane": "open"` in `GET /v1/models` (every other model has `"lane": "standard"`):
+Open-lane models carry `"lane": "open"` in `GET /v1/models` (every other model has `"lane": "standard"`) and `"open": { "access": "plan" | "research" }`:
 
-| Model id | Served by |
-|----------|-----------|
-| `deepseek-v4.1-flash-open` | the `open_lane` provider |
-| `glm-5.3-flash-open` | the `open_lane` provider |
+| Model id | Notes |
+|----------|-------|
+| `deepseek-v4.1-flash-open` | Alias stays valid |
+| `glm-5.3-flash-open` | Alias stays valid |
 
-They are listed only while the `open_lane` provider is configured (see [Environment](#environment)).
+Each row has an upstream with a provider prefix, and a row can fail over to another upstream before the first byte is sent. The row that served the request is the one billed. Rows marked `research` are listed only for accounts with Open Research. They are listed only while an open-lane upstream is configured (see [Environment](#environment)).
+
+## Entitlement
+
+`GET /api/v1/billing/credits` and `GET /api/v1/me/usage` return an `open_models` object:
+
+```json
+"open_models": {
+  "allowed": false,
+  "reason": "bought_credits_required",
+  "terms_accepted": true,
+  "plan": "plus",
+  "plan_allowance_usd": 0,
+  "used_usd": 0,
+  "plan_remaining_usd": 0,
+  "bought_balance_usd": 0,
+  "period_end": "2026-12-26T00:00:00Z",
+  "research": false
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `allowed` | Whether an open-model request can run now. |
+| `reason` | The first that applies: `terms_required`, `plan_required`, `allowance_used` (Max or Ultra, allowance used, no bought credits), `bought_credits_required` (Plus, no bought credits), else `null`. |
+| `plan_allowance_usd`, `used_usd`, `plan_remaining_usd` | This period's open-model allowance: 50% of the plan grant on Max and Ultra, 0 on Plus. |
+| `bought_balance_usd` | Credits the account bought. A plan renewal never cuts them. |
+| `period_end` | End of the plan period, or `null` without a plan. |
+| `research` | True when Open Research is on for the account. |
+
+Open spend draws the plan allowance first, then bought credits. A request that runs past the allowance finishes; the next one is blocked. Free and unknown plans get no Cloud open models, even with bought credits. If the field is missing, clients treat open models as unlocked.
 
 ## Gate
 
-A chat completion whose `model` is an open-lane model is checked in this order:
+A chat completion whose `model` is an open-lane model is checked in this order. The base credits gate (`credits_required`, `credits_exhausted`) runs first.
 
 | Check | Failure |
 |-------|---------|
 | Acceptable use accepted and age (18+) confirmed | 403 `open_lane_terms_required` |
-| Caller has a credits row (paid use) | 402 `open_lane_requires_credits` |
+| Paid plan | 402 `open_plan_required` |
+| Plan allowance or bought credits available | 402 `open_lane_requires_credits` |
+| Open Research row and the account has the flag | 403 `open_research_required` |
 | Hard-line filter allows the request | 400 `content_policy_hard_line` with `error.category` |
 | The moderation model answered | 503 `open_lane_moderation_unavailable` (fail closed) |
 
-Errors use the standard Chat Completions error shape:
+Errors are JSON, sent before any stream starts, in the standard Chat Completions error shape:
 
 ```json
 {
@@ -43,6 +75,14 @@ Errors use the standard Chat Completions error shape:
   }
 }
 ```
+
+| HTTP | `code` | Message | Body adds |
+|------|--------|---------|-----------|
+| 402 | `open_plan_required` | Open models on Allternit Cloud need a paid plan. On Free, run open models on your own device with Freeweights. | `open_models`, `plans_url` |
+| 402 | `open_lane_requires_credits` | `allowance_used`: This month's open-model allowance is used. Add credits to keep going. `bought_credits_required`: On Plus, open models run on credits you buy. Add credits to use them. | `reason`, `open_models`, `packs` (same list as `GET /api/v1/billing/packs`), `billing_url` |
+| 403 | `open_research_required` | This model is part of Open Research, available by agreement. | none |
+
+Platform API-key projects, the OAuth app path and artifacts never run open models; those requests are refused as before.
 
 ### Hard-line filter
 
@@ -84,7 +124,7 @@ Response (both routes):
 
 ## Handoff
 
-Handoff runs when all of these hold: the user turned it on (with both gates passed), the user has credits, the requested model is not an open-lane model, and the open-lane provider is configured.
+Handoff runs when all of these hold: the user turned it on (with both gates passed), the account is entitled to open models (see [Entitlement](#entitlement)), the requested model is not an open-lane model, and an open-lane upstream is configured.
 
 A completion counts as refused when the provider signals it (`finish_reason` `content_filter`, a non-empty `refusal` field, or a content-policy error instead of a completion) or when a refusal phrase opens a short answer (`services/refusal.rs`). Answers that call tools are never refused. The refused request then passes the hard-line filter and is sent unchanged to the open model. If the filter blocks it, the moderation model is down, or the open model fails, the original refusal is returned.
 
@@ -123,20 +163,35 @@ The chat app reaches models through gizzi (`cmd/gizzi-code`), and gizzi reaches 
 - **Other brains** (CLI subscriptions, your own API keys). When a finished step has no tool calls and reads as a refusal, gizzi re-runs the turn once on `allternit/<default_handoff_model>`. It uses the same rules as `services/refusal.rs`, and it checks `GET /api/v1/open-lane` first: `available`, `terms_accepted` and `handoff_enabled` must all be true. The refused message is left out of the open model's context. The new assistant message carries `handoff`. Sub-agent sessions are skipped. `GIZZI_DISABLE_OPEN_LANE_HANDOFF=1` turns this off on a runtime.
 - **The bridge** (allternit-api `v1_routes.rs`) sends `{ "type": "handoff", "messageId", "handoff": { from, to } }` once per handed-off message. History responses carry the same object as `metadata.telemetry.handoff`, so the note is still there after a reload.
 
+## Admin: Open Research
+
+Admin only. Not part of the public API; it needs an admin session.
+
+`PUT /api/v1/admin/open-lane/:user_id/research` with body:
+
+```json
+{ "enabled": true, "contract_ref": "OR-2026-001", "note": "Verified red team" }
+```
+
+Returns 200 with the stored row. The admin customers row shows `open_research: { enabled, contract_ref, set_at }`. Open Research is by agreement only; there is no self-serve path.
+
 ## Tables
 
 Migration `105_open_lane.sql`:
 
-- `user_open_lane`: `user_id` (key), `aup_accepted_at`, `age_confirmed_at`, `handoff_enabled` (default false), `updated_at`.
+- `user_open_lane`: `user_id` (key), `aup_accepted_at`, `age_confirmed_at`, `handoff_enabled` (default false), `updated_at`, plus the Open Research columns `research_enabled_at`, `research_set_by`, `research_ref`.
+- `user_open_allowance`: per user, the period allowance and what is used. Reset when a plan grant lands.
+- `user_credits.bought_usd`: the part of the balance that was bought. Plan grants never clip it.
 - `open_lane_blocks`: `id`, `user_id`, `category`, `created_at`.
 
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
-| `OPEN_LANE_BASE_URL` | Chat Completions-compatible base URL serving the open-lane models (for example a vLLM server). Required with the key; unset hides the models. |
-| `OPEN_LANE_API_KEY` | Bearer key for that server. |
-| `OPEN_LANE_MODEL_MAP` | Optional `alias=upstream-id` pairs, comma separated, when the server names the models differently. Default: the alias itself. |
+| `OPEN_LANE_BASE_URL`, `OPEN_LANE_API_KEY` | Legacy single upstream: a Chat Completions-compatible base URL and its bearer key. Unset hides the models. |
+| `OPEN_LANE_MARKUP` | Retail multiplier on the upstream price for open rows. Default 2.0, clamped 1.0 to 5.0. |
+
+Each upstream is a provider prefix with its own variables, named `OPEN_` plus the provider. Setup is in the operations runbook.
 | `OPEN_LANE_MODERATION_MODEL` | `provider:upstream-id` of the moderation model, through a configured provider. Default: the gpt-oss-safeguard 20B model through OpenRouter (`DEFAULT_MODERATION_MODEL` in `services/hard_line.rs`). Llama Guard style answers are understood too. |
 
 ## Related pages

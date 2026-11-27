@@ -16,7 +16,27 @@ Open models are listed in the model picker with an **Open** badge. Today there a
 
 The stock versions, `deepseek-v4.1-flash` and `glm-5.3-flash`, are in the normal model list too and behave like any other model.
 
-Open models are a paid feature: they use your credits or plan, at the price shown in the model list. They appear only while Allternit has an open-model server running; when it is down they are hidden from the picker.
+Open models on Allternit Cloud are a paid feature. They appear only while Allternit has an open-model server running; when it is down they are hidden from the picker.
+
+## Who can use them
+
+| Plan | Open models on Allternit Cloud | What pays for them |
+|------|-------------------------------|--------------------|
+| Free | Not on Cloud. Run open models on your own device with Freeweights. | Nothing to pay |
+| Plus | Yes, after you accept the terms | Credits you buy |
+| Max and Ultra | Yes, after you accept the terms | Up to 50% of each month's plan credits, then credits you buy |
+| Open Research | Larger models and higher rate limits, for verified security and red teams | Agreed credits. Available by agreement: ask at [services.allternit.com](https://services.allternit.com) |
+
+**Bought credits** are credits you add yourself: credit packs, auto top-up, store packs on your phone, and credits moved to you from another account. Plan credits are the ones your plan grants each month.
+
+- On Plus, open models use bought credits only. With none, a request answers that open models run on credits you buy.
+- On Max and Ultra, open models draw from the open-model allowance first. The allowance is half of the credits your plan grants for the month, and it resets when the plan renews. When it is used up, open models use bought credits.
+- A renewal no longer cuts credits you bought. It only resets the plan part of your balance, so a top-up stays until you spend it.
+- If a request runs past the allowance, it finishes, and the next one waits for bought credits. Settings shows the allowance, what is left, and when it resets.
+
+## Prices
+
+Each open model shows its price per 1M input and output tokens in the model picker. That listed price is what a request is billed.
 
 <Note>
 Far fewer refusals is not the same as no limits. The open lane still refuses the hard lines below, and the models themselves can still decline a request.
@@ -47,6 +67,15 @@ Until both boxes are ticked, open models answer with `open_lane_terms_required`.
 
 The same section is in Settings on Allternit Desktop, on ai.allternit.com (computer and phone layouts) and in the m.allternit.com app. Your choice follows your account.
 
+### Phones
+
+Accept the terms and confirm your age on the web first. The phone apps have no terms screen.
+
+- **iPhone and iPad:** open models show only after you accept the terms on the web, and only with a US App Store account. Until then the list has one row, **Accept terms on the web**, that opens ai.allternit.com/settings/open-models.
+- **Android:** open models show after you accept the terms on the web. Until then the same single row shows.
+
+Plan allowance and bought credits work the same on every surface.
+
 ## Handoff
 
 With handoff on, when the model you picked refuses, Allternit sends the same request to an open model (DeepSeek V4.1 Flash Open by default) and shows its answer instead. It does not reword your request or try to trick the first model; it simply asks a different model.
@@ -70,6 +99,7 @@ This is separate from a usage limit. When your own subscription reaches its limi
 
 ## Related
 
-- [Open lane API](/api/open-lane): settings routes, handoff fields and error codes.
+- [Open lane API](/api/open-lane): settings routes, the entitlement object, handoff fields and error codes.
+- [Credits and auto top-up](/guides/credits-and-auto-top-up)
 - [Chat Completions](/api/chat-completions)
 - [Models](/api/models)
