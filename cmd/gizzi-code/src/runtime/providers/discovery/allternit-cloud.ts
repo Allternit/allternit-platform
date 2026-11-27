@@ -8,6 +8,7 @@
 
 import { CLOUD_URLS } from "@/shared/constants/cloudUrls"
 import { isSelfHosted } from "@/shared/selfhost/offline"
+import { cloudModelsFromCatalog, pickerCatalog } from "./picker-catalog"
 import type { DiscoveredModel, DiscoveredProvider } from "./index"
 
 export type AllternitPlan = {
@@ -195,6 +196,25 @@ export async function discoverAllternitCloud(): Promise<DiscoveredProvider[]> {
   if (isSelfHosted()) return []
   const planTask = refreshAllternitPlan()
   try {
+    // The live picker catalog (access computed on the server) wins; a 404
+    // (older server) or any failure falls through to /v1/models.
+    const picked = await pickerCatalog()
+    if (picked.status === "ok") {
+      const models = cloudModelsFromCatalog(picked.catalog)
+      if (models.length > 0) {
+        await planTask
+        return [
+          {
+            id: "allternit",
+            name: "Allternit Cloud",
+            auth_type: "api_key",
+            base_url: `${cloudOrigin()}/v1`,
+            source: "platform",
+            models,
+          },
+        ]
+      }
+    }
     const res = await fetch(`${cloudOrigin()}/v1/models`, {
       headers: authHeaders(),
       signal: AbortSignal.timeout(8000),

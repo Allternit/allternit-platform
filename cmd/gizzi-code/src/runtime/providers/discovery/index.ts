@@ -25,6 +25,7 @@ import { discoverSubscriptionFabric } from "../fabric/discovery"
 import { discoverPersonPlans } from "../person-plan/discovery"
 
 export { getCachedAllternitPlan, refreshAllternitPlan } from "./allternit-cloud"
+export { livePickerSnapshot, pickerCatalog, resetPickerCatalog, cloudBrainAccess } from "./picker-catalog"
 export { ALLTERNIT_DEVICES_PROVIDER_ID, scanAllternitDevices } from "./allternit-devices"
 
 export interface DiscoveredProvider {
@@ -60,6 +61,8 @@ export interface DiscoveredModel {
   rank?: number
   /** A retired alias: still resolves for saved choices, never offered in a picker. */
   hidden?: boolean
+  /** Allternit Cloud only: the live picker catalog says this model is not usable now; the picker greys it with `reason` and offers `action` (sign_in, add_credits). */
+  locked?: { reason: string; action?: string }
 }
 
 /** Extension hook type — any module can register a discovery hook */
