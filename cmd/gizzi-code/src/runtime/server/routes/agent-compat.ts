@@ -67,6 +67,7 @@ import { Provider } from "@/runtime/providers/provider"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { startupCheck } from "@/runtime/skills/growth-person"
 import { Question } from "@/runtime/integrations/question"
 import { fileAsk, parameters as askUserLaterParameters } from "@/runtime/tools/builtins/ask-user-later"
 import z from "zod/v4"
@@ -644,7 +645,12 @@ export const AgentCompatRoutes = () =>
       // Cowork project stamp (`metadata.projectId`, snake_case accepted too).
       const projectID = body?.metadata?.projectId ?? body?.metadata?.project_id
       if (typeof projectID === "string" && projectID !== "") projectStamps.set(session.id, projectID)
-      if (ephemeralFrom(body)) ephemeralSessions.add(session.id)
+      const incognito = ephemeralFrom(body)
+      if (incognito) ephemeralSessions.add(session.id)
+      // Session start: pull skill approvals made in a review screen and send
+      // pending skill-growth changes, in the background (never blocks, never
+      // activates; skill_activate still asks). Incognito sessions skip it.
+      void startupCheck({ incognito }).catch(() => {})
       // NOTE: the Rust handler also resolves the platform agent's harness
       // config and surface allow-list from its registry DB, and pins a default
       // model on the session. Neither registry nor per-session model pinning

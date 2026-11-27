@@ -374,6 +374,7 @@ import { AwsAuthStatusBox } from '../components/AwsAuthStatusBox';
 import { useRateLimitWarningNotification } from './../hooks/notifs/useRateLimitWarningNotification.tsx';
 import { useDeprecationWarningNotification } from './../hooks/notifs/useDeprecationWarningNotification.tsx';
 import { useNpmDeprecationNotification } from './../hooks/notifs/useNpmDeprecationNotification.tsx';
+import { useSkillGrowthNotification } from '../hooks/notifs/useSkillGrowthNotification.js';
 import { useIDEStatusIndicator } from './../hooks/notifs/useIDEStatusIndicator.tsx';
 import { useModelMigrationNotifications } from './../hooks/notifs/useModelMigrationNotifications.tsx';
 import { useCanSwitchToExistingSubscription } from './../hooks/notifs/useCanSwitchToExistingSubscription.tsx';
@@ -906,6 +907,7 @@ export function REPL({
   useFastModeNotification();
   useDeprecationWarningNotification(mainLoopModel);
   useNpmDeprecationNotification();
+  useSkillGrowthNotification();
   useAntOrgWarningNotification();
   useInstallMessages();
   useChromeExtensionNotification();

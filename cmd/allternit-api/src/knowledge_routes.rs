@@ -12,6 +12,7 @@
 //! - `POST /knowledge/flags/{id}/dismiss` → `{flag}`
 //! - `GET  /knowledge/proposals?status=` → `{proposals}`
 //! - `POST /knowledge/proposals` → `{proposal}`
+//! - `POST /knowledge/proposals/{id}/eval` `{eval}` → `{proposal}` (only while `proposed`)
 //! - `POST /knowledge/proposals/{id}/approve|reject|activated|rollback` → `{proposal}`
 
 use std::path::Path;
@@ -39,10 +40,17 @@ pub fn knowledge_router() -> Router<Arc<AppState>> {
         .route("/knowledge/flags", get(list_flags).post(create_flag))
         .route("/knowledge/flags/:id/dismiss", post(dismiss_flag))
         .route("/knowledge/proposals", get(list_proposals).post(create_proposal))
+        .route("/knowledge/proposals/:id/eval", post(set_eval))
         .route("/knowledge/proposals/:id/approve", post(approve))
         .route("/knowledge/proposals/:id/reject", post(reject))
         .route("/knowledge/proposals/:id/activated", post(activated))
         .route("/knowledge/proposals/:id/rollback", post(rollback))
+}
+
+/// Body of `POST /knowledge/proposals/{id}/eval`.
+#[derive(Debug, Deserialize)]
+pub struct EvalBody {
+    pub eval: Value,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -361,6 +369,20 @@ async fn create_proposal(State(state): State<Arc<AppState>>, headers: HeaderMap,
     }
 }
 
+async fn set_eval(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    UrlPath(id): UrlPath<String>,
+    Json(req): Json<EvalBody>,
+) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let db = state.db.clone();
+    match blocking(move || store::set_proposal_eval(&db, &user, &id, &req.eval)).await {
+        Ok(p) => (StatusCode::OK, Json(json!({ "proposal": p }))),
+        Err(e) => e,
+    }
+}
+
 async fn approve(State(state): State<Arc<AppState>>, headers: HeaderMap, UrlPath(id): UrlPath<String>) -> Reply {
     let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
     let db = state.db.clone();
@@ -462,6 +484,12 @@ mod tests {
         let pid = v["proposal"]["id"].as_str().unwrap().to_string();
         assert_eq!(v["proposal"]["evidence"], json!([{ "flag_id": flag_id }]));
         assert_eq!(v["proposal"]["status"], json!("proposed"));
+
+        // Skill growth attaches its evaluation after proposing.
+        let eval_uri = format!("/api/v1/knowledge/proposals/{pid}/eval");
+        let (s, v) = call(&app, "POST", &eval_uri, Some("user-a"), Some(json!({ "eval": { "score": 0.9, "report": "ok" } }))).await;
+        assert_eq!((s, v["proposal"]["eval"]["score"].clone()), (StatusCode::OK, json!(0.9)), "{v}");
+        assert_eq!(call(&app, "POST", &eval_uri, Some("user-b"), Some(json!({ "eval": {} }))).await.0, StatusCode::NOT_FOUND);
 
         // User B can neither see nor approve it.
         let (_, v) = call(&app, "GET", "/api/v1/knowledge/proposals", Some("user-b"), None).await;

@@ -467,6 +467,36 @@ pub fn get_proposal(db: &DbHandle, user_id: &str, id: &str) -> Result<Option<Pro
     proposal_on(&db.connect()?, user_id, id)
 }
 
+/// Attach or replace the evaluation of a `proposed` proposal (skill growth
+/// evaluates after it proposes). `eval` must be a JSON object; once the
+/// proposal is decided the evaluation is fixed (409).
+pub fn set_proposal_eval(db: &DbHandle, user_id: &str, id: &str, eval: &Value) -> Result<Proposal> {
+    user_required(user_id)?;
+    if !eval.is_object() {
+        return Err(StoreError::Invalid("eval must be an object".into()));
+    }
+    let eval_json = eval.to_string();
+    if eval_json.chars().count() > MAX_BODY_CHARS {
+        return Err(StoreError::Invalid(format!("eval is longer than {MAX_BODY_CHARS} characters")));
+    }
+    let mut conn = db.connect()?;
+    let tx = conn.transaction()?;
+    let n = tx.execute(
+        "UPDATE knowledge_proposals SET eval_json = ?3, updated_at = datetime('now')
+         WHERE user_id = ?1 AND id = ?2 AND status = 'proposed'",
+        params![user_id, id, eval_json],
+    )?;
+    if n == 0 {
+        return match proposal_on(&tx, user_id, id)? {
+            None => Err(StoreError::NotFound),
+            Some(p) => Err(StoreError::Conflict(format!("proposal is {}", p.status))),
+        };
+    }
+    let out = proposal_on(&tx, user_id, id)?.ok_or(StoreError::NotFound)?;
+    tx.commit()?;
+    Ok(out)
+}
+
 /// Move a proposal to its next status. The `UPDATE` only matches from the
 /// allowed states, so two racing approvals give one 200 and one 409.
 /// Approve and reject also resolve the linked flags (same transaction).
@@ -667,5 +697,20 @@ mod tests {
         assert_eq!(create_proposal(&db, "u1", &np).unwrap().target_ref, "plugin:release-notes");
         let n: i64 = db.connect().unwrap().query_row("SELECT COUNT(*) FROM knowledge_proposals", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1, "refused proposals write nothing");
+    }
+
+    #[test]
+    fn knowledge_eval_is_set_only_while_proposed() {
+        let db = DbHandle::new_memory().unwrap();
+        let mut np = proposal(vec![]);
+        np.eval = None;
+        let p = create_proposal(&db, "u1", &np).unwrap();
+        assert_eq!(p.eval, None);
+        let eval = serde_json::json!({ "score": 0.9, "report": "passes 9 of 10" });
+        assert_eq!(set_proposal_eval(&db, "u1", &p.id, &eval).unwrap().eval, Some(eval.clone()));
+        assert!(matches!(set_proposal_eval(&db, "u1", &p.id, &serde_json::json!(0.9)), Err(StoreError::Invalid(_))));
+        assert!(matches!(set_proposal_eval(&db, "u2", &p.id, &eval), Err(StoreError::NotFound)));
+        update_proposal_status(&db, "u1", &p.id, Decision::Approve).unwrap();
+        assert!(matches!(set_proposal_eval(&db, "u1", &p.id, &eval), Err(StoreError::Conflict(_))));
     }
 }

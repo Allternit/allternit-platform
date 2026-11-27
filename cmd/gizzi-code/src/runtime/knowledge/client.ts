@@ -5,6 +5,9 @@
  */
 import { createTwoFilesPatch } from "diff"
 import { PlatformApiError, PlatformSignedOutError, platformRequest } from "@/runtime/bots/platform-api"
+import { Instance } from "@/runtime/context/project/instance"
+import { SkillGrowth } from "@/runtime/skills/growth"
+import { activateSkillProposal, personAsk, SkillActivationRefused } from "@/runtime/skills/growth-person"
 
 export interface KnowledgeFlag {
   id: string
@@ -52,9 +55,16 @@ const clip = (s: string, n: number) => {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one
 }
 
-export function formatList(flags: KnowledgeFlag[], proposals: KnowledgeProposal[]): string {
-  if (!flags.length && !proposals.length) return "Nothing waiting. No open flags and no proposals to review."
+export function formatList(flags: KnowledgeFlag[], proposals: KnowledgeProposal[], waiting: SkillGrowth.Record[] = []): string {
+  if (!flags.length && !proposals.length && !waiting.length) return "Nothing waiting. No open flags and no proposals to review."
   const out: string[] = []
+  if (waiting.length) {
+    out.push(`Approved skills waiting to be turned on (${waiting.length})`)
+    for (const w of waiting) {
+      out.push(`  ${w.server_id ?? w.id}  skill/${w.name} v${w.version}  ${clip(w.description, 60)}  [${w.origin === "curator" ? "curator" : "skill_growth"}]`)
+    }
+    if (proposals.length || flags.length) out.push("")
+  }
   if (proposals.length) {
     out.push(`Proposals to review (${proposals.length})`)
     for (const p of proposals) {
@@ -68,7 +78,7 @@ export function formatList(flags: KnowledgeFlag[], proposals: KnowledgeProposal[
       out.push(`  ${f.id}  ${f.kind} ${f.target_kind}${f.target_ref ? `/${f.target_ref}` : ""}  ${clip(f.evidence, 80)}`)
     }
   }
-  out.push("", "/knowledge show <id> · approve <id> · reject <id> · dismiss <id>")
+  out.push("", "/knowledge show <id> · approve <id> · reject <id> · dismiss <id> · activate <id>")
   return out.join("\n")
 }
 
@@ -91,11 +101,64 @@ export function describeError(error: unknown): string {
     : text
 }
 
+export interface KnowledgeOptions {
+  /**
+   * The skill_manage ask for turning on an approved skill (a dialog in the TUI,
+   * a prompt in a terminal). Without it, approving a skill only says how to
+   * turn it on, and `activate` refuses unless the permission rule is "allow".
+   */
+  confirm?: (question: string) => Promise<boolean>
+  /** Project folder for project-scope skills (default: the current folder). */
+  directory?: string
+}
+
+/** Approved skills on this device that wait for activation (after a quiet sync with the server). */
+async function waitingSkills(): Promise<SkillGrowth.Record[]> {
+  await SkillGrowth.sync().catch(() => {})
+  return SkillGrowth.awaitingActivation().catch(() => [])
+}
+
+/**
+ * Turn on an approved skill proposal (local id or `kprop_…`): pull approvals,
+ * ask for skill_manage, then write SKILL.md and tell the server. The only
+ * activation path besides the skill_activate tool, and it asks the same way.
+ */
+export async function activateSkill(id: string, options: KnowledgeOptions = {}): Promise<string> {
+  return Instance.provide({
+    directory: options.directory ?? process.cwd(),
+    fn: async () => {
+      await SkillGrowth.sync()
+      const record = await SkillGrowth.find(id)
+      if (!record || record.status !== "approved") {
+        const waiting = await SkillGrowth.awaitingActivation()
+        const state = record ? `${id} is ${record.status}, not approved.` : `No approved skill proposal ${id} on this device.`
+        return waiting.length
+          ? `${state} Waiting to be turned on: ${waiting.map((w) => `${w.server_id ?? w.id} (${w.name})`).join(", ")}.`
+          : state
+      }
+      const where = record.scope === "project" ? "this project" : "your skills"
+      const who = record.origin === "curator" ? "curator edit" : "skill growth"
+      const question = `Turn on skill "${record.name}" v${record.version} (${who}) in ${where}?`
+      try {
+        const done = await activateSkillProposal(id, personAsk(options.confirm, question))
+        return `Turned on ${done.name} v${done.version}: ${done.target}`
+      } catch (error) {
+        if (error instanceof SkillActivationRefused) return `${error.message} Turn it on later with /knowledge activate ${id}.`
+        throw error
+      }
+    },
+  })
+}
+
 /** Run one subcommand and return the text to show. Shared by /knowledge and `gizzi knowledge`. */
-export async function runKnowledge(args: string[]): Promise<string> {
+export async function runKnowledge(args: string[], options: KnowledgeOptions = {}): Promise<string> {
   const [sub = "list", id] = args
   try {
-    if (sub === "list") return formatList(await KnowledgeApi.flags(), await KnowledgeApi.proposals())
+    if (sub === "list") return formatList(await KnowledgeApi.flags(), await KnowledgeApi.proposals(), await waitingSkills())
+    if (sub === "activate") {
+      if (!id) return "Pass a proposal id: /knowledge activate <id>"
+      return await activateSkill(id, options)
+    }
     if (sub === "show") {
       if (!id) return "Pass a proposal id: /knowledge show <id>"
       const p = (await KnowledgeApi.proposals()).find((x) => x.id === id)
@@ -105,11 +168,12 @@ export async function runKnowledge(args: string[]): Promise<string> {
       if (!id) return `Pass an id: /knowledge ${sub} <id>`
       const r = await KnowledgeApi.act(sub, id)
       if (sub === "approve" && "target_kind" in r && (r as KnowledgeProposal).target_kind === "skill") {
-        return `${id} approved: activation runs in step 13`
+        if (!options.confirm) return `${id} approved. Turn it on with /knowledge activate ${id} (it asks first).`
+        return `${id} approved. ${await activateSkill(id, options)}`
       }
       return `${id} ${sub === "approve" ? "approved" : sub === "reject" ? "rejected" : "dismissed"}.`
     }
-    return "Usage: /knowledge [list] | show <id> | approve <id> | reject <id> | dismiss <id>"
+    return "Usage: /knowledge [list] | show <id> | approve <id> | reject <id> | dismiss <id> | activate <id>"
   } catch (error) {
     return describeError(error)
   }
