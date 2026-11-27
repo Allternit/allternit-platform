@@ -234,6 +234,12 @@ internal object CodeApi {
     // sessions on the computer, and Move / Open a copy / New session here. The error code is kept, since every
     // adopt refusal has its own sentence (OnYourComputer.moveErrorText).
 
+    /** `POST /api/factory/send {to, text}`: a Factory delivery to the pane's address (steer = "delivery"). */
+    suspend fun sendDelivery(b: ChatBackend, to: String, text: String): CodeResult<Unit> {
+        val body = buildJsonObject { put("to", to); put("text", text) }.toString()
+        return b.codeCall("POST", "/api/factory/send", body, "send the message").map { }
+    }
+
     /** `GET /api/v1/live-sessions`. */
     suspend fun liveSessions(b: ChatBackend): LiveCall<List<LiveSession>> =
         liveCall(b, "GET", "/api/v1/live-sessions") { LiveWire.sessions(it) }
@@ -442,7 +448,7 @@ data class LiveSession(
     val machineName: String = "",
     val pid: Int? = null,
     val cwd: String = "",
-    /** busy | idle | offline */
+    /** busy | idle | offline | blocked (a Factory pane waiting on a person) */
     val status: String = "idle",
     val holders: List<LiveSessionHolder> = emptyList(),
     val carriedFlags: List<String> = emptyList(),
@@ -456,6 +462,14 @@ data class LiveSession(
     val copyCommand: List<String>? = null,
     val newCommand: List<String>? = null,
     val move: AdoptJob? = null,
+    /** The Factory pane the row runs in; null for a session outside the Factory and on an older runtime. */
+    val paneId: String? = null,
+    /** ISO time the pane went blocked. */
+    val blockedSince: String? = null,
+    /** The Allternit terminal of a Factory pane, opened with the terminal thread view. */
+    val terminalId: String? = null,
+    /** terminal | delivery | none; null on an older runtime (no steer). */
+    val steer: String? = null,
 )
 
 /** A terminal-list or live-sessions call's answer. */
@@ -517,6 +531,8 @@ internal object LiveWire {
             carriedFlags = strings(o["carriedFlags"]).orEmpty(), canCopy = o.bool("canCopy") == true, external = o.bool("external") == true,
             movable = o.str("movable"), moveCommand = strings(o["moveCommand"]), copyCommand = strings(o["copyCommand"]),
             newCommand = strings(o["newCommand"]), move = job(o.child("move")),
+            paneId = o.str("paneId")?.takeIf { it.isNotEmpty() }, blockedSince = o.str("blockedSince"),
+            terminalId = o.str("terminalId")?.takeIf { it.isNotEmpty() }, steer = o.str("steer"),
         )
     }
 

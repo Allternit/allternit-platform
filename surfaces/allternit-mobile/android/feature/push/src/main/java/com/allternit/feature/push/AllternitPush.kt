@@ -154,7 +154,8 @@ object AllternitPush {
     fun tapIntent(context: Context, data: Map<String, String>): Intent? =
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            data["url"]?.let { putExtra(EXTRA_URL, it) }
+            // A blocked Factory pane's push carries `openUrl` (/terminal/<id> or /factory/sessions/<address>).
+            (data["url"] ?: data["openUrl"])?.let { putExtra(EXTRA_URL, it) }
             data["event"]?.let { putExtra(EXTRA_EVENT, it) }
             data["inboxId"]?.let { putExtra(EXTRA_INBOX_ID, it) }
             (data["sessionId"] ?: data["threadSessionId"])?.let { putExtra(EXTRA_SESSION_ID, it) }

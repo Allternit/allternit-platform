@@ -22,6 +22,12 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -126,6 +132,7 @@ internal fun OnYourComputerRow(session: LiveSession, store: TerminalSessionsStor
     val c = AllternitTheme.colors
     val view = LocalView.current
     var confirming by remember { mutableStateOf(false) }
+    var steering by remember { mutableStateOf(false) }
     val name = OnYourComputer.displayName(session)
     val harness = OnYourComputer.harnessName(session.harness)
     val set = OnYourComputer.rowActions(session.movable, session.canCopy)
@@ -154,11 +161,20 @@ internal fun OnYourComputerRow(session: LiveSession, store: TerminalSessionsStor
                 Text(detail, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             val dot = when (session.status) {
+                "blocked" -> AllternitStatic.StatusWarning
                 "busy" -> c.accentCode
                 "idle" -> AllternitStatic.StatusSuccess
                 else -> c.textTertiary
             }
             Box(Modifier.padding(top = 6.dp).size(8.dp).clip(CircleShape).background(dot))
+        }
+        if (OnYourComputer.isBlocked(session)) {
+            val badge = "Needs you · ${OnYourComputer.blockedLabel(session.blockedSince)}"
+            Text(
+                badge, color = AllternitStatic.StatusWarning, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(AllternitStatic.StatusWarning.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp).testTag("codeLiveBlocked-${session.sessionId}"),
+            )
         }
         if (flags.isNotEmpty()) FlagChips(flags)
         if (set.openElsewhere) {
@@ -193,7 +209,32 @@ internal fun OnYourComputerRow(session: LiveSession, store: TerminalSessionsStor
                 }
             }
         }
+        if (OnYourComputer.hasTerminal(session) || OnYourComputer.canSteer(session)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                session.terminalId?.takeIf { it.isNotEmpty() }?.let { id ->
+                    ActionPill("Open", "Open: $name", primary = true, busy = false, enabled = true, testTag = "codeLiveOpen-${session.sessionId}") {
+                        Haptics.perform(view, Haptics.Kind.Tap)
+                        onOpenTerminal(id, name)
+                    }
+                }
+                if (OnYourComputer.canSteer(session)) {
+                    ActionPill("Steer", "Steer: $name", primary = false, busy = false, enabled = true, testTag = "codeLiveSteer-${session.sessionId}") { steering = true }
+                }
+            }
+        }
     }
+
+    // A blocked push for this row opens its terminal (or the steer sheet when it has none).
+    val target = store.pushTarget
+    LaunchedEffect(target, session.sessionId, session.terminalId) {
+        val t = target ?: return@LaunchedEffect
+        if (store.session(t)?.sessionId != session.sessionId) return@LaunchedEffect
+        store.pushTarget = null
+        val id = session.terminalId
+        if (!id.isNullOrEmpty()) onOpenTerminal(id, name) else if (OnYourComputer.canSteer(session)) steering = true
+    }
+
+    if (steering) SteerSheet(session, name, store, onDone = { steering = false })
 
     if (confirming) {
         MoveConfirmSheet(
@@ -205,6 +246,43 @@ internal fun OnYourComputerRow(session: LiveSession, store: TerminalSessionsStor
                 store.start(session, if (session.movable == "busy") OnYourComputer.RowAction.MoveWhenIdle else OnYourComputer.RowAction.Move, onOpenTerminal)
             },
         )
+    }
+}
+
+/** A short message to a pane's CLI: typed into its terminal, or delivered through the Factory inbox, by the row's `steer` route. */
+@Composable
+private fun SteerSheet(session: LiveSession, name: String, store: TerminalSessionsStore, onDone: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LibrarySheet(title = "Steer", testTag = "codeSteerSheet", onDismiss = onDone, leading = LibrarySheetAction("Cancel", onClick = onDone)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Steer $name", color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+            Text(if (session.steer == "terminal") "Sent to its terminal as typed text." else "Delivered to its inbox.", color = c.textSecondary, fontSize = 13.sp)
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.bgTertiary).padding(10.dp)) {
+                if (text.isEmpty()) Text("Say what it should do next", color = c.textTertiary, fontSize = 15.sp)
+                BasicTextField(
+                    text, { text = it }, maxLines = 5, textStyle = TextStyle(color = c.textPrimary, fontSize = 15.sp), cursorBrush = SolidColor(c.textPrimary),
+                    modifier = Modifier.fillMaxWidth().testTag("codeSteerField").semantics { contentDescription = "Steer message" },
+                )
+            }
+            error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.testTag("codeSteerError")) }
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SheetButton("Cancel", "Cancel", primary = false, testTag = "codeSteerCancel", modifier = Modifier.weight(1f), onClick = onDone)
+                SheetButton(if (sending) "Sending…" else "Send", "Send to $name", primary = true, testTag = "codeSteerSend", modifier = Modifier.weight(1f)) {
+                    if (sending || text.isBlank()) return@SheetButton
+                    sending = true; error = null
+                    scope.launch {
+                        val failure = store.steer(session, text)
+                        sending = false
+                        if (failure != null) error = failure else { Haptics.perform(view, Haptics.Kind.Success); onDone() }
+                    }
+                }
+            }
+        }
     }
 }
 
