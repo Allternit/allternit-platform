@@ -21,6 +21,9 @@ struct FriendlyStateView: View {
     /// Art size: full 96 pt, or `.panel` (64 pt) inside a card or list section.
     var size: EmptyArtSize = .full
     var paper: Color = Color("BgPrimary")
+    /// Connect scene in place of the art / icon tile (no-computer states).
+    /// A compute-gate refusal gets the asleep scene on its own.
+    var scene: ConnectSceneState? = nil
 
     /// What actually shows: error text made calm, and a compute-gate refusal
     /// turned into the no-computer empty state (contract C5).
@@ -43,7 +46,11 @@ struct FriendlyStateView: View {
     var body: some View {
         let shown = self.shown
         VStack(spacing: 16) {
-            if let art, effectiveStyle == .empty {
+            if let scene {
+                ConnectScene(state: scene)
+            } else if shown.isNoComputer {
+                ConnectScene(state: .asleep)
+            } else if let art, effectiveStyle == .empty {
                 EmptyArt(kind: art, size: size, paper: paper)
             } else {
                 Image(systemName: shown.icon)

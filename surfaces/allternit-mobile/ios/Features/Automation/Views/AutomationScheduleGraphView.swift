@@ -13,38 +13,11 @@ struct AutomationGraphEmptyState: View {
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
+    /// One block for List, Graph and Calendar: EmptyBox with the 96 pt
+    /// calendar art, so the three can never differ.
     var body: some View {
-        VStack(spacing: 10) {
-            if let art {
-                EmptyArt(kind: art, size: .panel)
-            } else {
-                Image(systemName: "calendar")
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundColor(Color("TextTertiary"))
-            }
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(Color("TextPrimary"))
-            Text(message)
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            if let actionTitle, let action {
-                Button(action: action) {
-                    Label(actionTitle, systemImage: "plus")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color("BgPrimary"))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 40)
+        EmptyBox(title: title, line: message, art: art ?? .calendar,
+                 actionTitle: actionTitle, action: action)
     }
 }
 
@@ -114,8 +87,8 @@ struct AutomationTasksGraph: View {
         if tasks.isEmpty {
             if isLoaded {
                 AutomationGraphEmptyState(
-                    title: "No \(noun) yet",
-                    message: "Tap New task to add one. It shows here with its schedule, the bot that runs it and the goal it serves."
+                    title: kind == nil ? "No automation tasks yet" : "No \(noun) yet",
+                    message: "Tap New task to set up your first Goal, Routine or Loop."
                 )
             } else {
                 Text("Loading \(kind == nil ? "tasks" : noun)…")
@@ -405,10 +378,7 @@ struct AutomationRoutinesGraph: View {
             if isLoaded {
                 AutomationGraphEmptyState(
                     title: "No routines yet",
-                    message: "A bot's routines run on their own and post in its main thread.",
-                    art: .bell,
-                    actionTitle: "New routine",
-                    action: onNew
+                    message: "Tap 'New task' to add a routine."
                 )
             } else {
                 Text("Loading routines…")

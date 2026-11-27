@@ -75,12 +75,11 @@ struct InboxSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// A phone hold open in its Review pane (Review only, never approved from the row).
     @State private var reviewing: InboxItem?
+    @State private var isConnectOpen = false
 
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("Needs you")
-                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") { dismiss() }
@@ -96,6 +95,7 @@ struct InboxSheet: View {
             }
         }
         .sheet(item: $reviewing) { PhoneHoldReviewSheet(item: $0) }
+        .sheet(isPresented: $isConnectOpen) { ConnectComputerSheet() }
         .onDisappear { store.focusedId = nil }
     }
 
@@ -107,17 +107,30 @@ struct InboxSheet: View {
 
     @ViewBuilder
     private var content: some View {
+        if store.hasLoaded, store.isAvailable, !(store.error != nil && store.items.isEmpty), !store.items.isEmpty {
+            list
+        } else {
+            DockingTitleScrollView(title: "Needs you", chrome: .navigationBar) { state }
+        }
+    }
+
+    /// Loading, no computer, error and all-caught-up under the docking title.
+    @ViewBuilder
+    private var state: some View {
         if !store.hasLoaded {
             ProgressView("Checking what needs you…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 360)
         } else if !store.isAvailable {
             FriendlyStateView(
                 style: .offline,
                 icon: "laptopcomputer",
                 title: "No inbox on this computer yet",
-                message: "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you."
+                message: "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you.",
+                actionTitle: "Connect",
+                action: { isConnectOpen = true },
+                scene: .asleep
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 360)
         } else if let error = store.error, store.items.isEmpty {
             FriendlyStateView(
                 style: .error,
@@ -127,7 +140,7 @@ struct InboxSheet: View {
                 actionTitle: "Retry",
                 action: { Task { await store.refresh() } }
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 360)
         } else if store.items.isEmpty {
             FriendlyStateView(
                 style: .empty,
@@ -136,10 +149,14 @@ struct InboxSheet: View {
                 message: "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
                 art: .bell
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
+            .frame(maxWidth: .infinity, minHeight: 360)
+        }
+    }
+
+    private var list: some View {
+        Group {
             ScrollViewReader { proxy in
-            List {
+            DockingTitleList(title: "Needs you") {
                 if focusedIsGone { alreadyHandledNote }
                 ForEach(store.items) { item in
                     InboxRow(item: item, onOpen: { open(item) }, onReview: { reviewing = item })
@@ -160,8 +177,6 @@ struct InboxSheet: View {
                         }
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
             .refreshable { await store.refresh() }
             .onAppear {
                 if let id = store.focusedId, store.items.contains(where: { $0.id == id }) {

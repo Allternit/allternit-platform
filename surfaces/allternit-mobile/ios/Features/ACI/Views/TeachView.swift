@@ -179,13 +179,13 @@ struct TeachView: View {
 
     private var backButton: some View {
         Button { dismiss() } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "chevron.left").font(.system(size: 15, weight: .bold))
-                Text("ACI").font(.system(size: 15))
-            }
-            .foregroundColor(Color("TextPrimary"))
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            Image(systemName: "chevron.left").font(.system(size: 15, weight: .bold))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Color.white))
+                .overlay(Circle().strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Back to ACI")
@@ -361,10 +361,7 @@ struct TeachView: View {
     /// phone can't list them or analyze a recording without one.
     private var computerOffline: some View {
         VStack(spacing: 0) {
-            PhIcon("desktop", size: 28)
-                .foregroundColor(Color("TextPrimary"))
-                .frame(width: 72, height: 72)
-                .background(Circle().fill(Color("FillNeutral")))
+            ConnectScene(state: .asleep)
             Text(relay.devices.isEmpty ? "Connect a computer to see your skills" : "Can’t reach your computer")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
