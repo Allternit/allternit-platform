@@ -1,0 +1,17 @@
+appId: com.allternit.mobile
+---
+# Verifies the composer agent/bot selection sheet opens.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -enable-agent-mode: true
+      -open-agent-sheet: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "CHOOSE AGENT | BOT"
+- takeScreenshot: chat_agent_selection
+- tapOn: "Done"
+- stopApp

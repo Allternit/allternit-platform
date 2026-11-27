@@ -366,7 +366,7 @@ struct HistorySidebarView: View {
                 projects, artifacts,
                 RailRow(id: "automation-tasks", label: "Automation Tasks", icon: "clock", activeIcon: "clock.fill",
                         isActive: tab == .automation) { go(.automation) },
-                RailRow(id: "customize", label: "Customize", icon: "slider.horizontal.3",
+                RailRow(id: "customize", label: "Catalog", icon: "slider.horizontal.3",
                         isActive: tab == .customize) { go(.customize) },
             ]
         case .code:

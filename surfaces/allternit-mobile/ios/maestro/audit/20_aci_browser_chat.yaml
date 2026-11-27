@@ -1,0 +1,14 @@
+appId: com.allternit.mobile
+---
+# Verifies the ACI browser chat sheet opens.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-browser-chat: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- takeScreenshot: aci_browser_chat
+- stopApp

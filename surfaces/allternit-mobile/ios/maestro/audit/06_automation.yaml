@@ -1,0 +1,15 @@
+appId: com.allternit.mobile
+---
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn: "Automation Tasks"
+- takeScreenshot: automation_cron
+- tapOn: "Routines"
+- takeScreenshot: automation_routines
+- tapOn: "Loops"
+- takeScreenshot: automation_loops
+- stopApp

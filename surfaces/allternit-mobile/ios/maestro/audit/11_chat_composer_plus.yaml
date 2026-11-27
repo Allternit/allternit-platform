@@ -1,0 +1,20 @@
+appId: com.allternit.mobile
+---
+# Verifies the composer "+" attachment/options sheet renders all sections.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-plus-sheet: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Camera"
+- assertVisible: "Photos"
+- assertVisible: "Files"
+- assertVisible: "GitHub"
+- assertVisible: "Connectors"
+- takeScreenshot: composer_plus_sheet
+- tapOn: "Close"
+- stopApp

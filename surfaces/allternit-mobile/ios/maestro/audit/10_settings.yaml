@@ -1,0 +1,16 @@
+appId: com.allternit.mobile
+---
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- tapOn:
+    id: "drawerSettings"
+- assertVisible: "Settings"
+- takeScreenshot: settings_root
+- stopApp

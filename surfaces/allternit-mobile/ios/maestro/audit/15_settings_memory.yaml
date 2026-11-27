@@ -1,0 +1,16 @@
+appId: com.allternit.mobile
+---
+# Verifies Memory settings opens and surfaces its friendly error state offline.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-settings-memory: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Memory"
+- assertVisible: "Couldn't load memory"
+- takeScreenshot: settings_memory
+- stopApp

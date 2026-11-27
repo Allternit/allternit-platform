@@ -121,7 +121,7 @@ struct CustomizeSourcesView: View {
             .padding(.bottom, 48)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
-        .navigationTitle("Customize")
+        .navigationTitle("Catalog")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isAdding, onDismiss: { sources = PersonalSources.load() }) {
             AddSourceSheet()
@@ -194,7 +194,7 @@ struct CustomizePublishView: View {
             .padding(.bottom, 48)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
-        .navigationTitle("Customize")
+        .navigationTitle("Catalog")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

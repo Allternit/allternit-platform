@@ -1,0 +1,19 @@
+appId: com.allternit.mobile
+---
+# Verifies the New Project sheet renders its form.
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-projects: true
+      -open-new-project: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "New project"
+- assertVisible: "Name"
+- assertVisible: "Create project"
+- takeScreenshot: project_new_sheet
+- tapOn: "Close"
+- stopApp

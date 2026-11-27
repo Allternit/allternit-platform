@@ -1,0 +1,17 @@
+appId: com.allternit.mobile
+---
+- launchApp:
+    appId: com.allternit.mobile
+    clearState: true
+    arguments:
+      skip-auth: true
+- tapOn:
+    text: "Dismiss notifications prompt"
+    optional: true
+- assertVisible: "Message Allternit..."
+- takeScreenshot: home_chat
+- tapOn: "Open sidebar"
+- takeScreenshot: sidebar_open
+- tapOn: "New chat"
+- takeScreenshot: home_chat_new
+- stopApp
