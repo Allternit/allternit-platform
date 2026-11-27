@@ -399,6 +399,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::runtime_relay::routes())
         // Runtime registry (static, public; same JSON allternit-api embeds).
         .merge(routes::runtimes::routes())
+        // Picker catalog (public; locks from the caller's credits when signed in).
+        .merge(routes::picker_catalog::routes())
         // Files drive: wake consent, wake settings, endpoints, token keys
         // (each handler resolves the user itself).
         .merge(routes::computer_files::routes())

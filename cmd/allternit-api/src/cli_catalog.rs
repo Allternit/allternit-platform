@@ -62,6 +62,12 @@ pub(crate) struct CatalogModel {
     /// The tool's default model (at most one per tool; catalog v2).
     #[serde(default)]
     pub default: bool,
+    /// Context window in tokens (picker catalog).
+    #[serde(default)]
+    pub context: Option<u64>,
+    /// Max output tokens (picker catalog).
+    #[serde(default)]
+    pub output: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -408,27 +414,45 @@ pub(crate) async fn caller_is_owner(state: &AppState, headers: &HeaderMap) -> bo
 pub(crate) fn installed_map(status: &std::collections::HashMap<String, (bool, bool)>) -> Value {
     let mut out = Map::new();
     for runtime in &runtime_registry().runtimes {
-        let (installed, signed_in) = match runtime.tool.as_deref() {
-            // The native runtime ships with Allternit; the caller is signed in.
-            None => (true, true),
-            Some(tool) => status.get(tool).copied().unwrap_or((false, false)),
-        };
+        let (installed, signed_in) = runtime_install_state(runtime, status);
         out.insert(
             runtime.id.clone(),
-            json!({ "installed": installed, "signedIn": installed && signed_in, "version": Value::Null }),
+            json!({ "installed": installed, "signedIn": signed_in, "version": Value::Null }),
         );
     }
     Value::Object(out)
+}
+
+/// `(installed, signedIn)` for one runtime from [`owner_cli_status`]. The
+/// native runtime ships with Allternit and its caller is signed in; a CLI
+/// counts as signed in only when it is installed.
+pub(crate) fn runtime_install_state(
+    runtime: &RuntimeEntry,
+    status: &std::collections::HashMap<String, (bool, bool)>,
+) -> (bool, bool) {
+    match runtime.tool.as_deref() {
+        None => (true, true),
+        Some(tool) => {
+            let (installed, signed_in) = status.get(tool).copied().unwrap_or((false, false));
+            (installed, installed && signed_in)
+        }
+    }
+}
+
+/// This computer's CLI detection by tool id: `(installed, signed in)`, the
+/// same rows `/cli-tools/catalog` and the provider list use.
+pub(crate) async fn owner_cli_status() -> std::collections::HashMap<String, (bool, bool)> {
+    let connected = crate::gizzi_provider_auth::connected_provider_ids().await;
+    tokio::task::spawn_blocking(move || crate::provider_routes::cli_status_by_id(&connected))
+        .await
+        .unwrap_or_default()
 }
 
 async fn get_runtimes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let vary = (header::VARY, "Authorization, x-allternit-desktop-access-token");
     if caller_is_owner(&state, &headers).await {
         // Per-machine and per-owner: never a shared cache, never a 304.
-        let connected = crate::gizzi_provider_auth::connected_provider_ids().await;
-        let status = tokio::task::spawn_blocking(move || crate::provider_routes::cli_status_by_id(&connected))
-            .await
-            .unwrap_or_default();
+        let status = owner_cli_status().await;
         let mut body = RUNTIMES_BODY.clone();
         body["installed"] = installed_map(&status);
         return (
