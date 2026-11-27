@@ -618,6 +618,10 @@ pub async fn grant_store_transaction(
                     tx.provider.plan_grant_source(),
                     plan.monthly_credits_usd,
                     plan.rollover_cap_usd,
+                    crate::services::cost_service::open_allowance_for(
+                        plan.id,
+                        plan.monthly_credits_usd,
+                    ),
                 )
                 .await?;
             ("cloud_wallet".to_string(), Some(balance))
