@@ -1,0 +1,10 @@
+[
+  { "status": 403, "error": "remote_start_off", "message": "Remote start is turned off on this computer.", "action": "Turn on Remote start in Settings on that computer, or start the session there." },
+  { "status": 403, "error": "mode_not_allowed", "message": "This permission mode is higher than the one you are allowed to grant.", "action": "Pick a mode at or below your own, or confirm bypass on the computer." },
+  { "status": 403, "error": "depth_exceeded", "message": "Sessions started from sessions can only go three levels deep.", "action": "Start the work from a top-level session instead." },
+  { "status": 404, "error": "folder_missing", "message": "That folder no longer exists on this computer.", "action": "Pick another folder from the list." },
+  { "status": 404, "error": "runtime_missing", "message": "That coding tool is not installed on this computer.", "action": "Pick another tool or install it on that computer." },
+  { "status": 409, "error": "runtime_signed_out", "message": "That coding tool is signed out on this computer.", "action": "Sign in to the tool on that computer, then try again." },
+  { "status": 429, "error": "rate_limited", "message": "This computer has started too many sessions in the last minute.", "action": "Wait a minute, then try again." },
+  { "status": 502, "error": "clone_failed", "message": "The cloud computer could not copy the repository.", "action": "Check that the repository is reachable, then try again." }
+]

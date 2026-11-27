@@ -265,6 +265,7 @@
               "architecture/meet-your-bots",
               "architecture/two-machines",
               "architecture/live-terminal-sessions",
+              "architecture/session-start",
               "architecture/contracts-not-models",
               "architecture/agent-loop",
               "architecture/agents",
