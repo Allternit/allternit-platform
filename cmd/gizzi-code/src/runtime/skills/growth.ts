@@ -186,6 +186,11 @@ export namespace SkillGrowth {
     return (await list()).filter((item) => item.status === "approved")
   }
 
+  /** A proposal by its local id or its server id (`kprop_…`). */
+  export async function find(id: string): Promise<Record | undefined> {
+    return (await get(id)) ?? (await list()).find((item) => item.server_id === id)
+  }
+
   export async function get(id: string): Promise<Record | undefined> {
     return read(path.join(recordsDir(), `${id}.json`))
   }
@@ -316,7 +321,7 @@ export namespace SkillGrowth {
   // ── Local helpers ─────────────────────────────────────────────────────────
 
   async function requireRecord(id: string) {
-    const record = (await get(id)) ?? (await list()).find((item) => item.server_id === id)
+    const record = await find(id)
     if (!record) {
       const waiting = (await list()).filter((item) => item.status === "approved")
       const hint = waiting.length

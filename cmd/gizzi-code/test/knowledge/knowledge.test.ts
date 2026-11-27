@@ -80,9 +80,9 @@ describe("/knowledge formatting", () => {
     expect(text).toContain("+owner_login is the column")
     expect(text).toContain("flag kflag_1")
   })
-  test("approving a skill proposal says activation is a later step", async () => {
+  test("approving a skill proposal with nobody to ask says how to turn it on", async () => {
     fakeEdge(() => new Response(JSON.stringify({ proposal: { ...proposal, target_kind: "skill", status: "approved" } }), { status: 200 }))
     const out = await runKnowledge(["approve", "kprop_1"])
-    expect(out).toBe("kprop_1 approved: activation runs in step 13")
+    expect(out).toBe("kprop_1 approved. Turn it on with /knowledge activate kprop_1 (it asks first).")
   })
 })

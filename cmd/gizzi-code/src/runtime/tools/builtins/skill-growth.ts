@@ -1,6 +1,7 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { SkillGrowth } from "@/runtime/skills/growth"
+import { activateSkillProposal } from "@/runtime/skills/growth-person"
 
 /**
  * The record, plus the proposals approved (here or in a review screen) that
@@ -75,8 +76,7 @@ export const SkillActivateTool = Tool.define("skill_activate", {
     "Activate an approved skill version, preserving the previous target for rollback. Also activates proposals the person approved in a review screen, including curator edits; proposal_id may be the local id or the server id (kprop_…).",
   parameters: z.object({ proposal_id: z.string() }),
   async execute(params, ctx) {
-    await ctx.ask({ permission: "skill_manage", patterns: [`activate:${params.proposal_id}`], always: [], metadata: {} })
-    const record = await SkillGrowth.activate(params.proposal_id)
+    const record = await activateSkillProposal(params.proposal_id, (request) => ctx.ask(request))
     return {
       title: `Activated ${record.name}`,
       metadata: { id: record.id, status: record.status, target: record.target, sync: record.sync },

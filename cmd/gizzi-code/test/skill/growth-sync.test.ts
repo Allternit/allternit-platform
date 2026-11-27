@@ -8,6 +8,8 @@ import { Global } from "../../src/runtime/context/global"
 import { Instance } from "../../src/project/instance"
 import { SkillGrowth } from "../../src/runtime/skills/growth"
 import { SkillActivateTool, SkillEvaluateTool, SkillProposeTool } from "../../src/runtime/tools/builtins/skill-growth"
+import { startupCheck } from "../../src/runtime/skills/growth-person"
+import { runKnowledge } from "../../src/runtime/knowledge/client"
 import { tmpdir } from "../fixture/fixture"
 
 const realFetch = globalThis.fetch
@@ -85,6 +87,20 @@ async function inProject<T>(fn: (dir: string) => Promise<T>) {
 
 async function stored(id: string) {
   return JSON.parse(await fs.readFile(path.join(Global.Path.data, "skill-growth", "proposals", `${id}.json`), "utf8"))
+}
+
+const exists = (file: string) => fs.stat(file).then(() => true, () => false)
+
+const curatorRow = {
+  id: "kprop_9",
+  target_kind: "skill",
+  target_ref: "release-notes",
+  title: "Release notes: list breaking changes first",
+  body: '---\nname: release-notes\ndescription: "Write release notes"\n---\n\nList breaking changes first.\n',
+  base: null,
+  origin: "curator",
+  eval: null,
+  status: "approved",
 }
 
 const skill = { name: "pr-review", description: "Review a PR", content: "Read the diff first.", scope: "project" }
@@ -190,6 +206,48 @@ describe("skill growth server sync", () => {
       expect(server.rows.get("kprop_9").status).toBe("active")
       const local = await stored(result.metadata.id)
       expect([local.origin, local.server_id, local.status]).toEqual(["curator", "kprop_9", "active"])
+    })
+  })
+  test("session start with a server-approved proposal shows the notice and writes no SKILL.md", async () => {
+    await inProject(async (dir) => {
+      const proposed = await run(SkillProposeTool, skill)
+      await run(SkillEvaluateTool, { proposal_id: proposed.metadata.id, score: 0.9, report: "ok" })
+      server.rows.get("kprop_1").status = "approved"
+      const target = path.join(dir, ".gizzi", "skills", "pr-review", "SKILL.md")
+
+      // Incognito sessions skip the check entirely.
+      expect(await startupCheck({ incognito: true })).toBeUndefined()
+      expect((await stored(proposed.metadata.id)).status).toBe("evaluated")
+
+      expect(await startupCheck()).toBe("1 approved skill is waiting to be turned on: run /knowledge")
+      expect((await stored(proposed.metadata.id)).status).toBe("approved")
+      expect(await exists(target)).toBe(false)
+      expect(server.rows.get("kprop_1").status).toBe("approved")
+    })
+  })
+
+  test("/knowledge activate asks first: no means no file, yes writes SKILL.md", async () => {
+    await inProject(async (dir) => {
+      server.rows.set("kprop_9", { ...curatorRow })
+      const target = path.join(Global.Path.config, "skills", "release-notes", "SKILL.md")
+      const questions: string[] = []
+
+      const refused = await runKnowledge(["activate", "kprop_9"], {
+        directory: dir,
+        confirm: async (q) => {
+          questions.push(q)
+          return false
+        },
+      })
+      expect(refused).toBe("Not turned on. Turn it on later with /knowledge activate kprop_9.")
+      expect(questions).toEqual(['Turn on skill "release-notes" v1 (curator edit) in your skills?'])
+      expect(await exists(target)).toBe(false)
+      expect(server.rows.get("kprop_9").status).toBe("approved")
+
+      const done = await runKnowledge(["activate", "kprop_9"], { directory: dir, confirm: async () => true })
+      expect(done).toBe(`Turned on release-notes v1: ${target}`)
+      expect(await fs.readFile(target, "utf8")).toContain("List breaking changes first.")
+      expect(server.rows.get("kprop_9").status).toBe("active")
     })
   })
 })
