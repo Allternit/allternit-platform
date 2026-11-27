@@ -62,7 +62,7 @@ class ChatBackend(
     internal fun mcpUrl(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().addPathSegment("mcp").apply { segments.forEachIndexed { i, s -> if (i == 1) addEncodedPathSegment(escapeMcpId(s)) else addPathSegment(s) } }.build()
 
-    private fun v1(vararg segments: String): HttpUrl =
+    internal fun v1(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().apply { segments.forEach { addPathSegment(it) } }.build()
 
     /** Authenticated sync only; image execution stays in this phone's WebView. */
@@ -71,6 +71,14 @@ class ChatBackend(
         if (id != null) parts += id
         if (action != null) parts += action
         return ApiCall.execute(okHttp, json, ApiCall.request(method, v1(*parts.toTypedArray()), body), kotlinx.serialization.json.JsonElement.serializer())
+    }
+
+    /** Gizzi test cases: `/api/v1/agent-evals/...` through the account token (the proxy picks the computer). */
+    val eval: EvalBackend by lazy {
+        EvalBackend { method, segments, query, body ->
+            val url = v1("agent-evals", *segments.toTypedArray()).newBuilder().apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+            ApiCall.execute(okHttp, json, ApiCall.request(method, url, body ?: if (method == "GET") null else "{}"), kotlinx.serialization.json.JsonElement.serializer())
+        }
     }
 
     // MARK: Sessions

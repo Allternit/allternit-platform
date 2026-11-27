@@ -143,6 +143,7 @@ internal val ALL_PAGES: List<SPageInfo> = listOf(
     SPageInfo("meetings", "Meetings", DesignR.drawable.ph_play_fill, "assistant", 6),
     SPageInfo("platform", "Platform", DesignR.drawable.ph_sliders_horizontal, "developer", 4),
     SPageInfo("brain", "Brain", DesignR.drawable.ph_books, "developer", 5),
+    SPageInfo("test-cases", "Test cases", DesignR.drawable.ph_flask, "assistant", 7),
 )
 
 private fun page(id: String): SPageInfo = ALL_PAGES.first { it.id == id }
@@ -160,7 +161,7 @@ private sealed interface RootRow {
 
 private val ROOT_GROUPS: List<Pair<String, List<RootRow>>> = listOf(
     "Account" to listOf(RootRow.Page("profile"), RootRow.Page("billing"), RootRow.Page("usage"), RootRow.Page("notifications"), RootRow.Page("privacy"), RootRow.Feedback, RootRow.Changelog),
-    "Assistant" to listOf(RootRow.Customize, RootRow.Page("memory"), RootRow.Page("voice", "Voice and dictation")),
+    "Assistant" to listOf(RootRow.Customize, RootRow.Page("memory"), RootRow.Page("voice", "Voice and dictation"), RootRow.Page("test-cases")),
     "Bots and computers" to listOf(RootRow.Page("subscriptions"), RootRow.Page("computers", "Computers and devices"), RootRow.Page("agent-rules")),
     "App" to listOf(RootRow.OpenLinks, RootRow.Haptics, RootRow.ReduceMotion),
 )
@@ -260,6 +261,7 @@ fun SettingsRoot(host: SettingsHost) {
             "files" -> FilesPage(back, push)
             "files-keys" -> FilesKeysPage(back)
             "voice" -> VoicePage(back)
+            "test-cases" -> TestCasesPage(host, back)
             "self-hosted" -> SelfHostedPage(back, push)
             "self-hosted-session" -> SelfHostedSessionPage(back)
             "brain" -> BrainPage(back, push)
