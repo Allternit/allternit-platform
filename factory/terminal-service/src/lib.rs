@@ -26,6 +26,7 @@
 //! a [`Reply`] (HTTP status + JSON body) or, for the stream, the SSE bytes;
 //! the caller's HTTP layer (axum in allternit-api) sends them as they are.
 
+pub mod harness_modes;
 mod list;
 pub mod start;
 
