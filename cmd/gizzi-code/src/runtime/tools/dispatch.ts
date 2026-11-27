@@ -5,6 +5,8 @@ import { Instance } from "@/runtime/context/project/instance";
 import { Log } from "@/shared/util/log";
 import { checkToolHardBan, formatHardBanDenial } from "@/shared/utils/agentHardBans";
 import { RemoteToolHost } from "./remote-host";
+import { BlockedTools } from "./guard/blocked-tools";
+import * as BotTurn from "@/runtime/bots/bot-turn";
 
 export namespace ToolDispatcher {
   const log = Log.create({ service: "tool.dispatcher" });
@@ -28,6 +30,27 @@ export namespace ToolDispatcher {
     return executeInitialized(tool.id, args, ctx, initialized.execute)
   }
 
+  /**
+   * The account's tool permissions (BlockedTools): throws "Blocked in your
+   * tool permissions" when the session (or its parent, or its bot) blocks
+   * this call. Deny first: runs before hooks, prompts and the tool itself.
+   * Callers that ask the person before dispatching (the MCP path in
+   * prompt.ts) call it first so a blocked tool never prompts.
+   */
+  export async function assertNotBlocked(toolID: string, args: unknown, sessionID: string | undefined): Promise<void> {
+    const blocked = await BlockedTools.resolve(sessionID, BotTurn.get(sessionID)?.blockedTools);
+    const matched = BlockedTools.match(blocked, toolID, args);
+    if (!matched) return;
+    log.warn("Tool call blocked by the account's tool permissions", { toolId: toolID, matched, sessionId: sessionID });
+    await HookDispatcher.emit({
+      name: "PostToolUseFailure",
+      timestamp: Date.now(),
+      sessionId: sessionID ?? "",
+      payload: { tool: toolID, args, reason: BlockedTools.REASON, blocked: true },
+    });
+    throw new Error(BlockedTools.message(toolID));
+  }
+
   export async function executeInitialized<T>(
     toolID: string,
     args: any,
@@ -35,6 +58,10 @@ export namespace ToolDispatcher {
     execute: (args: any, ctx: Tool.Context) => Promise<T>,
   ): Promise<T> {
     const sessionId = ctx.sessionID;
+
+    // -1. The account's tool permissions: Block wins over everything below
+    // (hooks, the bot's allowlist, the session mode, Autopilot).
+    await assertNotBlocked(toolID, args, sessionId);
 
     // 0. Dispatch-time hard-ban guard: the active agent's character-card hard
     // bans (ALLTERNIT_AGENT_HARD_BANS) block banned tool calls (e.g.

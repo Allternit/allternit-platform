@@ -1906,6 +1906,10 @@ const message = await createUserMessage(input)
           )
         }
 
+        // The account's tool permissions: a blocked tool is refused before
+        // anyone is asked (the dispatcher checks again before it runs).
+        await ToolDispatcher.assertNotBlocked(key, args, ctx.sessionID)
+
         // A tool its server marks destructive still asks in an app session's
         // auto mode (PermissionNext.evaluatePolicy).
         const descriptor = mcpCatalog.descriptors[key]
