@@ -359,6 +359,7 @@ impl DriverEndpoint {
 }
 
 /// One JSON-RPC call to the Allternit Driver (one JSON object per line).
+/// Answers the whole reply envelope (`result` or `error`).
 #[cfg(unix)]
 async fn driver_rpc_unix(socket: &str, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -373,13 +374,7 @@ async fn driver_rpc_unix(socket: &str, method: &str, params: Value, timeout: Dur
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
         let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
-        match reply.get("error") {
-            Some(err) => Err(DriverFailure::Refused(format!(
-                "the driver refused {method}: {}",
-                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
-            ))),
-            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
-        }
+        Ok(reply)
     };
     tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
 }
@@ -402,24 +397,54 @@ async fn driver_rpc_tcp(addr: &str, token: Option<&str>, method: &str, params: V
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
         let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
-        match reply.get("error") {
-            Some(err) => Err(DriverFailure::Refused(format!(
-                "the driver refused {method}: {}",
-                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
-            ))),
-            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
-        }
+        Ok(reply)
     };
     tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
 }
 
 /// One sidecar JSON-RPC call on whichever transport this platform uses.
 pub async fn driver_rpc(endpoint: &DriverEndpoint, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
-    match endpoint {
-        #[cfg(unix)]
-        DriverEndpoint::Unix(socket) => driver_rpc_unix(socket, method, params, timeout).await,
-        DriverEndpoint::Tcp(addr, token) => driver_rpc_tcp(addr, token.as_deref(), method, params, timeout).await,
+    match driver_rpc_reply(endpoint, method, params, timeout).await? {
+        DriverReply::Ok(result) => Ok(result),
+        DriverReply::Refused { message, .. } => Err(DriverFailure::Refused(format!("the driver refused {method}: {message}"))),
     }
+}
+
+/// A driver answer that keeps the refusal's stable code and data (the
+/// driver sends `error.data.code`, e.g. `profile_missing` with the setup
+/// `steps`), for callers that act on the code.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DriverReply {
+    Ok(Value),
+    Refused { code: Option<String>, message: String, data: Value },
+}
+
+impl DriverReply {
+    /// Read one JSON-RPC reply envelope.
+    pub fn from_envelope(reply: &Value) -> DriverReply {
+        match reply.get("error") {
+            Some(err) => {
+                let data = err.get("data").cloned().unwrap_or(Value::Null);
+                DriverReply::Refused {
+                    code: data.get("code").and_then(Value::as_str).map(str::to_string),
+                    message: err.get("message").and_then(Value::as_str).unwrap_or("unknown error").to_string(),
+                    data,
+                }
+            }
+            None => DriverReply::Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+        }
+    }
+}
+
+/// [`driver_rpc`] with the refusal's code and data kept. Transport
+/// failures (no sidecar, timeout, broken connection) stay `Err`.
+pub async fn driver_rpc_reply(endpoint: &DriverEndpoint, method: &str, params: Value, timeout: Duration) -> Result<DriverReply, DriverFailure> {
+    let envelope = match endpoint {
+        #[cfg(unix)]
+        DriverEndpoint::Unix(socket) => driver_rpc_unix(socket, method, params, timeout).await?,
+        DriverEndpoint::Tcp(addr, token) => driver_rpc_tcp(addr, token.as_deref(), method, params, timeout).await?,
+    };
+    Ok(DriverReply::from_envelope(&envelope))
 }
 
 /// One driver call for the toolset executor and the input routes: a Cua

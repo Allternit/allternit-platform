@@ -2021,6 +2021,14 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
                     return respond(StatusCode::CONFLICT, error_result("display_limit", refused.message(), None));
                 }
             }
+            // 2c. A browser run on this device (macOS) gets its own Safari
+            // window in the "Allternit Agent" profile on its first call
+            // (computer_safari_window). A missing profile holds the run for
+            // the person's setup, like request_human.
+            if let Err(f) = crate::computer_safari_window::ensure(state, user, &computer, &target, run).await {
+                settle(false);
+                return respond(StatusCode::OK, error_result(f.code.unwrap_or("safari_profile_missing"), f.message, None));
+            }
         }
     }
 
@@ -2540,6 +2548,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
         .route("/computers/:id/block-resolve", post(post_block_resolve))
+        // Start an agent run on this computer (re-run on my Mac): aci_routes.
+        .route("/computers/:id/runs", post(crate::aci_routes::start_computer_run))
         .route("/computers/:id/secret", post(post_secret).get(get_secret))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
         .route("/computers/:id/access", get(crate::computer_access::get_access).delete(crate::computer_access::delete_access))

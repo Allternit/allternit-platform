@@ -268,11 +268,17 @@ pub enum HoldOutcome {
 pub struct RerunTarget {
     pub computer_id: String,
     pub name: String,
+    /// The runtime (`runtime_devices.id`) that Mac's allternit-api is paired
+    /// as, when known: relay clients address that runtime to start the
+    /// re-run there (`POST /api/v1/computers/:id/runs`, which also takes
+    /// its own runtime id as `:id`). `None` for a row of this API's own
+    /// database on an unpaired runtime.
+    pub runtime_id: Option<String>,
 }
 
 impl RerunTarget {
     fn to_json(&self) -> Value {
-        json!({ "computer_id": self.computer_id, "name": self.name })
+        json!({ "computer_id": self.computer_id, "name": self.name, "runtime_id": self.runtime_id })
     }
 }
 
@@ -358,23 +364,145 @@ pub fn forget_run(run_id: &str) {
 /// How recently a Mac must have been seen to be offered as a re-run target.
 pub const RERUN_SEEN_WITHIN_SECS: i64 = 120;
 
-/// The person's Macs registered as this-device computers and seen in the last
-/// [`RERUN_SEEN_WITHIN_SECS`], other than the one the run is on. "Seen" is
-/// the row's `last_activity_at`: set when Desktop registers the Mac and
-/// bumped every 60 s by that Mac's own API while it runs
-/// ([`mark_this_device_seen`], from the runtime-presence loop), so a Mac that
-/// is asleep, shut down or quit drops out after two minutes even though its
-/// row still says `running`. Empty when none is fresh.
+/// The person's online Macs, other than the computer the run is on, from two
+/// places:
+///
+/// - **Local:** this-device computers in this API's own database seen in the
+///   last [`RERUN_SEEN_WITHIN_SECS`]. "Seen" is the row's `last_activity_at`:
+///   set when Desktop registers the Mac and bumped every 60 s by that Mac's
+///   own API while it runs ([`mark_this_device_seen`], from the
+///   runtime-presence loop), so a Mac that is asleep, shut down or quit drops
+///   out after two minutes even though its row still says `running`.
+/// - **Cloud:** the owner's Allternit Desktop runtimes on macOS whose
+///   runtime-presence heartbeat is under two minutes old, from cloud-api
+///   `GET /api/v1/runtime-presence/computers?kind=this_device&online=true`
+///   ([`cloud_macs`], relay-signed like `runtime_events`). This is how a run
+///   on a cloud computer (whose allternit-api has no Mac rows) finds the
+///   person's Macs. Asked only when this runtime is paired to `user_id`.
+///
+/// Merged by [`merge_rerun_targets`]. Empty when no Mac is fresh.
 pub async fn rerun_targets(state: &Arc<AppState>, user_id: &str, exclude_computer: &str) -> Vec<RerunTarget> {
     let (db, owner, exclude) = (state.db.clone(), user_id.to_string(), exclude_computer.to_string());
-    tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<RerunTarget>> {
+    let local = tokio::task::spawn_blocking(move || -> rusqlite::Result<Vec<RerunTarget>> {
         let conn = db.connect()?;
         fresh_rerun_targets(&conn, &owner, &exclude)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or_default()
+    });
+    let (local, cloud) = tokio::join!(local, cloud_macs(user_id));
+    let local = local.ok().and_then(Result::ok).unwrap_or_default();
+    let own_runtime = crate::relay_auth::RelaySecret::runtime_id(crate::relay_auth::process_secret().as_ref());
+    merge_rerun_targets(local, cloud, exclude_computer, own_runtime.as_deref(), chrono::Utc::now())
+}
+
+/// One Mac as cloud-api lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudMac {
+    pub runtime_id: String,
+    pub name: String,
+    pub last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// The cloud route [`cloud_macs`] calls (cloud-api `routes/runtime_presence.rs`).
+pub const CLOUD_MACS_PATH: &str = "/api/v1/runtime-presence/computers";
+const CLOUD_MACS_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Read cloud-api's answer: `{"computers": [{computer_id, runtime_id, name, last_seen}]}`.
+pub fn read_cloud_macs(body: &Value) -> Vec<CloudMac> {
+    body.get("computers")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let runtime_id = r.get("runtime_id").or_else(|| r.get("computer_id")).and_then(Value::as_str)?.trim();
+                    let ok = !runtime_id.is_empty() && runtime_id.len() <= 128;
+                    ok.then(|| CloudMac {
+                        runtime_id: runtime_id.to_string(),
+                        name: r.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).unwrap_or("Mac").chars().take(120).collect(),
+                        last_seen: r
+                            .get("last_seen")
+                            .and_then(Value::as_str)
+                            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                            .map(|t| t.with_timezone(&chrono::Utc)),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The owner's online Macs from cloud-api. Empty when this runtime isn't
+/// paired to `owner`, or cloud-api doesn't answer in time: the local list
+/// still stands.
+pub async fn cloud_macs(owner: &str) -> Vec<CloudMac> {
+    let secret = crate::relay_auth::process_secret();
+    let token = crate::relay_auth::RelaySecret::device_token(secret.as_ref());
+    let paired = crate::relay_auth::RelaySecret::paired_owner(secret.as_ref());
+    let runtime_id = crate::relay_auth::RelaySecret::runtime_id(secret.as_ref());
+    let (Some(token), Some(paired), Some(runtime_id)) = (token, paired, runtime_id) else { return Vec::new() };
+    if paired != owner {
+        return Vec::new();
+    }
+    let mut req = crate::net_client::client()
+        .get(format!("{}{CLOUD_MACS_PATH}?kind=this_device&online=true", crate::phone_sync::cloud_base()))
+        .timeout(CLOUD_MACS_TIMEOUT);
+    // Signed over the path without the query, empty body.
+    for (k, v) in crate::relay_auth::signed_headers(&token, &paired, "GET", CLOUD_MACS_PATH, b"") {
+        req = req.header(k, v);
+    }
+    req = req.header(crate::relay_auth::RUNTIME_ID_HEADER, runtime_id);
+    match req.send().await {
+        Ok(r) if r.status().is_success() => r.json::<Value>().await.map(|b| read_cloud_macs(&b)).unwrap_or_default(),
+        Ok(r) => {
+            tracing::debug!(status = %r.status(), "cloud re-run Macs refused");
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "cloud re-run Macs unavailable");
+            Vec::new()
+        }
+    }
+}
+
+/// One list of re-run Macs: the local rows first (this API's own database
+/// is the freshest word on this machine), then cloud-api's. A local row is
+/// this machine, so it carries this runtime's id, and a cloud entry for the
+/// same runtime is the same Mac. Dropped: the run's own computer (by
+/// computer id or runtime id), cloud entries not seen in the last
+/// [`RERUN_SEEN_WITHIN_SECS`] (or with no time), and repeats.
+pub fn merge_rerun_targets(
+    local: Vec<RerunTarget>,
+    cloud: Vec<CloudMac>,
+    exclude_computer: &str,
+    own_runtime: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<RerunTarget> {
+    let mut out: Vec<RerunTarget> = Vec::new();
+    let mut seen_runtimes: Vec<String> = Vec::new();
+    for mut t in local {
+        if t.computer_id == exclude_computer || out.iter().any(|o| o.computer_id == t.computer_id) {
+            continue;
+        }
+        if t.runtime_id.is_none() {
+            t.runtime_id = own_runtime.map(str::to_string);
+        }
+        if let Some(r) = &t.runtime_id {
+            seen_runtimes.push(r.clone());
+        }
+        out.push(t);
+    }
+    // The machine running this API is listed (or excluded) by its local row.
+    if let Some(own) = own_runtime {
+        seen_runtimes.push(own.to_string());
+    }
+    let window = chrono::Duration::seconds(RERUN_SEEN_WITHIN_SECS);
+    for m in cloud {
+        let fresh = m.last_seen.is_some_and(|t| now - t <= window && t <= now + chrono::Duration::seconds(60));
+        if !fresh || m.runtime_id == exclude_computer || seen_runtimes.contains(&m.runtime_id) || out.iter().any(|o| o.computer_id == m.runtime_id) {
+            continue;
+        }
+        seen_runtimes.push(m.runtime_id.clone());
+        out.push(RerunTarget { computer_id: m.runtime_id.clone(), name: m.name, runtime_id: Some(m.runtime_id) });
+    }
+    out
 }
 
 /// The query under [`rerun_targets`].
@@ -387,7 +515,7 @@ pub fn fresh_rerun_targets(conn: &rusqlite::Connection, owner: &str, exclude: &s
     )?;
     let window = format!("-{RERUN_SEEN_WITHIN_SECS} seconds");
     let rows = q.query_map(rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER, owner, exclude, window], |r| {
-        Ok(RerunTarget { computer_id: r.get(0)?, name: r.get(1)? })
+        Ok(RerunTarget { computer_id: r.get(0)?, name: r.get(1)?, runtime_id: None })
     })?;
     let out: rusqlite::Result<Vec<RerunTarget>> = rows.collect();
     out
@@ -741,6 +869,42 @@ mod tests {
         assert!(should_hold(&run, &det));
     }
 
+    /// A run blocked on a cloud computer lists the person's Macs from
+    /// cloud-api next to this API's own rows: one entry per Mac, the
+    /// machine running this API by its local row, stale Macs and the run's
+    /// own computer left out.
+    #[test]
+    fn rerun_targets_merge_local_and_cloud_macs() {
+        let now = chrono::Utc::now();
+        let ago = |s: i64| Some(now - chrono::Duration::seconds(s));
+        let local = vec![
+            RerunTarget { computer_id: "cmp_local_mac".into(), name: "Studio".into(), runtime_id: None },
+            RerunTarget { computer_id: "cmp_local_mac".into(), name: "Studio".into(), runtime_id: None },
+        ];
+        let cloud = read_cloud_macs(&json!({ "computers": [
+            { "computer_id": "rt_this", "runtime_id": "rt_this", "name": "Studio", "last_seen": (now - chrono::Duration::seconds(10)).to_rfc3339() },
+            { "computer_id": "rt_air", "runtime_id": "rt_air", "name": "MacBook Air", "last_seen": (now - chrono::Duration::seconds(30)).to_rfc3339() },
+            { "computer_id": "rt_air", "runtime_id": "rt_air", "name": "MacBook Air", "last_seen": (now - chrono::Duration::seconds(5)).to_rfc3339() },
+            { "computer_id": "rt_asleep", "runtime_id": "rt_asleep", "name": "Old Mac", "last_seen": (now - chrono::Duration::seconds(600)).to_rfc3339() },
+            { "computer_id": "rt_notime", "runtime_id": "rt_notime", "name": "Mystery" },
+            { "computer_id": "rt_run", "runtime_id": "rt_run", "name": "The run's own", "last_seen": (now - chrono::Duration::seconds(1)).to_rfc3339() }
+        ] }));
+        assert_eq!(cloud.len(), 6);
+        assert!(cloud[4].last_seen.is_none() && cloud[3].last_seen < ago(120), "a Mac with no time, and one asleep");
+
+        let merged = merge_rerun_targets(local.clone(), cloud.clone(), "rt_run", Some("rt_this"), now);
+        let ids: Vec<(&str, Option<&str>)> = merged.iter().map(|t| (t.computer_id.as_str(), t.runtime_id.as_deref())).collect();
+        assert_eq!(ids, [("cmp_local_mac", Some("rt_this")), ("rt_air", Some("rt_air"))]);
+
+        // On a cloud computer: no local Macs, the run's computer excluded by id.
+        let merged = merge_rerun_targets(Vec::new(), cloud.clone(), "rt_air", Some("rt_cloud_guest"), now);
+        let ids: Vec<&str> = merged.iter().map(|t| t.computer_id.as_str()).collect();
+        assert_eq!(ids, ["rt_this", "rt_run"]);
+
+        // Cloud unreachable: the local list stands.
+        assert_eq!(merge_rerun_targets(local, Vec::new(), "x", None, now).len(), 1);
+    }
+
     #[test]
     fn resolve_needs_a_pending_hold_and_a_listed_target() {
         let cid = format!("cmp-{}", uuid::Uuid::new_v4().simple());
@@ -748,7 +912,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         BLOCK_GATES.lock().unwrap().insert(
             cid.clone(),
-            BlockGate { tx, run_id: "r1".into(), domain: Some("example.com".into()), kind: BlockKind::BlockPage, rerun_targets: vec![RerunTarget { computer_id: "mac-1".into(), name: "Mac".into() }], since: Instant::now() },
+            BlockGate { tx, run_id: "r1".into(), domain: Some("example.com".into()), kind: BlockKind::BlockPage, rerun_targets: vec![RerunTarget { computer_id: "mac-1".into(), name: "Mac".into(), runtime_id: None }], since: Instant::now() },
         );
         assert_eq!(resolve(&cid, BlockAction::Rerun { target: Some("mac-9".into()) }), Err(ResolveError::UnknownTarget));
         let ok = resolve(&cid, BlockAction::Rerun { target: Some("mac-1".into()) }).unwrap();

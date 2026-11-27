@@ -175,6 +175,13 @@ pub async fn execute_v2(
             // driver inside the guest image through the guest exec channel
             // (guest_driver). Same lease/policy/safety/audit gate either way —
             // `execute` ran it before dispatching here.
+            // A browser run on this device reads its own Safari window when
+            // read_ui names none (computer_safari_window).
+            let scoped = match target {
+                Target::ThisDevice => crate::computer_safari_window::scope_read_ui(member, input, crate::computer_safari_window::window_of(run_id).as_ref()),
+                _ => None,
+            };
+            let input = scoped.as_ref().unwrap_or(input);
             let (mut reply, mut screen) = structured_call(target, member, input).await?;
             // A wall the agent can't pass (login, 2FA, captcha, bot block,
             // rate limit) holds the run until the person answers
@@ -345,7 +352,27 @@ async fn request_human(
         .and_then(Value::as_f64)
         .unwrap_or(300_000.0)
         .clamp(1_000.0, 1_800_000.0) as u64;
+    hold_for_person(state, user, computer, target, run_id, &reason, Map::new(), timeout_ms).await
+}
 
+/// The request_human window itself: `computer.human_requested` (with
+/// `extra` merged into its data, e.g. a setup card's `steps`), the
+/// `aci_human` push, the wait for `POST /computers/:id/human-done` or the
+/// timeout, then `computer.human_resumed`. Guests give the lease to the
+/// person for the window. Also used by the Safari agent-window setup hold
+/// (computer_safari_window).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn hold_for_person(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    computer: &ComputerResponse,
+    target: &Target,
+    run_id: &str,
+    reason: &str,
+    extra: Map<String, Value>,
+    timeout_ms: u64,
+) -> Result<ToolsetResult, Fail> {
+    let reason = reason.to_string();
     let is_this_device = matches!(target, Target::ThisDevice);
     let caller = agent_holder(user, Some(run_id));
 
@@ -356,7 +383,7 @@ async fn request_human(
 
     let done = human_gate_open(&computer.id, &reason);
     emit_human_event(&computer.id, "human_requested", &reason, run_id, {
-        let mut m = Map::new();
+        let mut m = extra;
         m.insert("timeout_ms".into(), json!(timeout_ms));
         m
     });

@@ -504,6 +504,17 @@ struct AciRunBody {
     /// Allternit iOS app's in-app browser (`phone_app`); absent = this
     /// runtime's browser.
     target_device: Option<String>,
+    /// The run this run re-runs (a blocked cloud run started again on the
+    /// person's Mac). Recorded on the new run (`computer_block::
+    /// remember_rerun_of`): its audit rows and `computer.action` events
+    /// carry it. Accepted as `rerunOf` or `rerun_of`. Not part of the
+    /// approval hash: a re-run is the same task.
+    #[serde(alias = "rerun_of")]
+    rerun_of: Option<String>,
+    /// The computer the run drives (set by `POST /computers/:id/runs`, never
+    /// read from the wire). Absent = this device.
+    #[serde(skip)]
+    computer_id: Option<String>,
 }
 
 /// Canonical action descriptor for the ACU loop route. Ephemeral ids
@@ -570,8 +581,71 @@ fn first_policy_host(allowed_sites: &Option<serde_json::Value>) -> Option<String
 async fn aci_run(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
-    Json(mut body): Json<AciRunBody>,
-) -> impl IntoResponse {
+    Json(body): Json<AciRunBody>,
+) -> Response {
+    start_run(state, user, body).await
+}
+
+// ─── POST /api/v1/computers/:id/runs ──────────────────────────────────────────
+
+/// Body of `POST /api/v1/computers/:id/runs`.
+#[derive(Deserialize)]
+pub(crate) struct ComputerRunBody {
+    task: String,
+    #[serde(default, alias = "rerunOf")]
+    rerun_of: Option<String>,
+    #[serde(default, alias = "botId")]
+    bot_id: Option<String>,
+}
+
+/// Start an agent run on one computer, the same way `POST /api/aci/run`
+/// does (safety gate, handoff, ACU planning loop, run buffer, run cards),
+/// with the engine's toolset calls aimed at that computer and `rerun_of`
+/// recorded on the new run. The "Re-run on my Mac" button of a
+/// `computer.block_detected` card calls this on a `rerun_targets` entry.
+/// `:id` is a computer id, `this-device`, or this runtime's own runtime id
+/// (a re-run target listed from cloud-api). Answers what `/api/aci/run`
+/// answers (`{sessionId, adapterId, run_id, computer_id, rerun_of}`, or 202
+/// `handoff_required`); 404 for a computer the caller can't use.
+pub(crate) async fn start_computer_run(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<ComputerRunBody>,
+) -> Response {
+    let own_runtime = crate::relay_auth::RelaySecret::runtime_id(crate::relay_auth::process_secret().as_ref());
+    let id = if own_runtime.as_deref() == Some(id.as_str()) { crate::computer_toolset::THIS_DEVICE_ID.to_string() } else { id };
+    let computer = match crate::computer_toolset::resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    let rerun_of = match req.rerun_of.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        None => None,
+        Some(raw) => match crate::computer_block::clean_run_id(Some(raw)) {
+            Some(r) => Some(r),
+            None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_rerun_of", "message": "rerun_of must be a run id." }))).into_response(),
+        },
+    };
+    let body = AciRunBody {
+        goal: req.task,
+        model: None,
+        bot_id: req.bot_id,
+        thread_id: None,
+        allowed_sites: None,
+        open_links_in_browser: None,
+        auto_verify: None,
+        session_persistence: None,
+        approval_id: None,
+        credential_names: None,
+        target_device: None,
+        rerun_of,
+        computer_id: Some(computer.id),
+    };
+    start_run(state, user, body).await
+}
+
+async fn start_run(state: Arc<AppState>, user: AuthUser, mut body: AciRunBody) -> Response {
     // Settings → Cowork → Allowed sites: when the client sends none, the run
     // uses the saved list. Filled before the action descriptor is hashed, so
     // a retried run (same body, same settings) hashes identically.
@@ -624,6 +698,12 @@ async fn aci_run(
     };
 
     let run_id = uuid::Uuid::new_v4().to_string();
+    // A re-run of a blocked run: the link rides on the new run's audit rows
+    // and computer.action events (the engine's toolset calls use this id).
+    let rerun_of = crate::computer_block::clean_run_id(body.rerun_of.as_deref());
+    if let Some(prior) = rerun_of.as_deref() {
+        crate::computer_block::remember_rerun_of(&run_id, prior);
+    }
 
     // Declarative policy gate (env-configured; entirely absent when
     // ALLTERNIT_ACI_POLICY_FILE is unset). Policy verdict first, existing
@@ -848,7 +928,7 @@ async fn aci_run(
             buffer_push(&id, json!({ "type": "done", "data": report }), true);
             PHONE_WEB_RUNS.lock().map(|mut m| m.remove(&id)).ok();
         });
-        return (StatusCode::OK, Json(json!({ "sessionId": run_id, "adapterId": "phone-browser" }))).into_response();
+        return (StatusCode::OK, Json(json!({ "sessionId": run_id, "run_id": run_id, "adapterId": "phone-browser", "computer_id": null, "rerun_of": rerun_of }))).into_response();
     }
 
     // Start the run in ACU's streaming mode: the planning loop launches in
@@ -881,6 +961,10 @@ async fn aci_run(
             // The bot it runs for, so the engine's toolset calls (and its
             // cursor.moved events) name who is driving the agent cursor.
             "botId": body.bot_id,
+            // The computer the engine's toolset calls go to
+            // (`/computers/:id/toolset`); absent = this device.
+            "computerId": body.computer_id,
+            "rerunOf": rerun_of,
         },
     });
 
@@ -904,13 +988,19 @@ async fn aci_run(
     crate::aci_safety::record_aci_success(&actor_key);
     buffer_create(&run_id);
     register_run_cards(&state.db, &run_id, &user.user_id, body.bot_id.as_deref(), body.thread_id.as_deref(), &decision.sanitized_goal);
+    // A browser run's first toolset call on this device (macOS) opens its
+    // own Safari window (computer_safari_window).
+    crate::computer_safari_window::mark_browser_run(&run_id);
     tokio::spawn(drain_acu_events(run_id.clone(), resp));
 
     (
         StatusCode::OK,
         Json(json!({
             "sessionId": run_id,
+            "run_id": run_id,
             "adapterId": "browser",
+            "computer_id": body.computer_id,
+            "rerun_of": rerun_of,
         })),
     )
         .into_response()
@@ -1726,6 +1816,8 @@ mod tests {
             approval_id: Some("grant-from-a-prior-attempt".to_string()),
             credential_names: None,
             target_device: None,
+            rerun_of: None,
+            computer_id: None,
         };
         let h1 = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&body, &body.goal));
 
@@ -1743,6 +1835,8 @@ mod tests {
             approval_id: None,
             credential_names: None,
             target_device: None,
+            rerun_of: None,
+            computer_id: None,
         };
         let h2 = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&retry, &retry.goal));
         assert_eq!(h1, h2);
@@ -1772,6 +1866,8 @@ mod tests {
             approval_id: None,
             credential_names: None,
             target_device: None,
+            rerun_of: None,
+            computer_id: None,
         };
         let action_hash = crate::aci_approvals::hash_action_payload(&aci_action_descriptor(&body, &body.goal));
         let approval_id = store.create("user-1", "aci.sensitive_action", &json!({}));
