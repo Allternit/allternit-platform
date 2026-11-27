@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import android.util.Log
 import com.allternit.core.api.ApiResult
 import com.allternit.core.api.gen.SignRequest
 import com.allternit.core.api.gen.SignSlot
@@ -93,6 +94,11 @@ import com.allternit.feature.office.sign.SignRepository
 import com.allternit.feature.office.sign.SignSheet
 import com.allternit.feature.office.sign.rememberSignSheetState
 import com.allternit.feature.office.sign.fitRect
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
+import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -216,10 +222,60 @@ private fun defaultSlot(page: PageInfo, index: Int) = SignSlot(
 )
 
 /**
- * Composes the signed copy (iOS compose): every page flattened, [ink] drawn into [slot] keeping its aspect, and a 7 pt
+ * Composes the signed copy (iOS compose). Real PDF: the original is loaded with PdfBox and only the slot's page gets the
+ * [ink] drawn into [slot] (keeping its aspect) and a 7 pt footer line; every other page, and the text, stay as they were.
+ * Falls back to [composeFlattened] if PdfBox cannot handle the file. Slot units are PDF points, origin bottom-left.
+ */
+private fun composeSigned(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray? =
+    try {
+        composeVector(context, source, ink, slot, footer)
+    } catch (e: Throwable) {
+        Log.w("PdfSign", "Vector signing failed, flattening the pages instead: ${e.message}", e)
+        composeFlattened(context, source, ink, slot, footer)
+    }
+
+/** Helvetica (a standard 14 font) cannot encode every character: swap those for "?". */
+private fun encodable(font: PDType1Font, text: String): String = buildString {
+    text.forEach { ch ->
+        val ok = ch.code >= 0x20 && runCatching { font.encode(ch.toString()) }.isSuccess
+        append(if (ok) ch else '?')
+    }
+}
+
+private fun composeVector(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray {
+    PDFBoxResourceLoader.init(context.applicationContext)
+    PDDocument.load(source).use { doc ->
+        val pageIndex = slot.page.toInt()
+        if (pageIndex !in 0 until doc.numberOfPages) throw IllegalStateException("slot page $pageIndex out of range")
+        val page = doc.getPage(pageIndex)
+        // Rotated pages need the renderer's rotated frame; leave those to the flatten fallback.
+        if (page.rotation % 360 != 0) throw IllegalStateException("rotated page")
+        val box = page.mediaBox
+        val w = box.width; val h = box.height
+        // Same maths as the flatten path, in top-left coordinates, then flipped into PDF space.
+        val slotRect = Rect(slot.x.toFloat(), (h - slot.y - slot.h).toFloat(), (slot.x + slot.w).toFloat(), (h - slot.y).toFloat())
+        val fit = fitRect(ink.width.toFloat(), ink.height.toFloat(), slotRect)
+        val lineY = if (slotRect.bottom + 2f + 9f <= h) slotRect.bottom + 2f else maxOf(slotRect.top - 10f, 0f)
+        val image = LosslessFactory.createFromImage(doc, ink)
+        val font = PDType1Font.HELVETICA
+        PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
+            cs.drawImage(image, box.lowerLeftX + fit.left, box.lowerLeftY + h - fit.bottom, fit.right - fit.left, fit.bottom - fit.top)
+            cs.beginText()
+            cs.setFont(font, 7f)
+            cs.setNonStrokingColor(64, 64, 64)
+            cs.newLineAtOffset(box.lowerLeftX + slotRect.left, box.lowerLeftY + h - (lineY + 7f))
+            cs.showText(encodable(font, footer))
+            cs.endText()
+        }
+        return java.io.ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+    }
+}
+
+/**
+ * Fallback: the signed copy with every page flattened to an image, [ink] drawn into [slot] keeping its aspect, and a 7 pt
  * footer line under the slot (above it when there is no room). Slot units are PDF points, origin bottom-left.
  */
-private fun composeSigned(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray? {
+private fun composeFlattened(context: Context, source: ByteArray, ink: Bitmap, slot: SignSlot, footer: String): ByteArray? {
     val pages = renderPages(context, source) ?: return null
     val doc = PdfDocument()
     val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
