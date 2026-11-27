@@ -165,6 +165,15 @@ object ArtifactsV2Client {
             ArtifactListPage(o.list("items").mapNotNull(::summary), o.str("next_cursor"), o.bool("archive_supported") ?: false)
         }
 
+    /** `GET api/v1/artifacts/counts?scope=` (null when the route is absent: show no numbers). */
+    suspend fun counts(scope: String): ArtifactCounts? {
+        val r = call("GET", "../v1/artifacts/counts", query = mapOf("scope" to scope)) as? ApiResult.Ok ?: return null
+        val o = r.value.obj ?: return null
+        val total = o.num("total")?.toInt() ?: return null
+        val by = o.child("byKind")?.mapNotNull { (k, v) -> (v as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()?.let { k to it } }?.toMap().orEmpty()
+        return ArtifactCounts(total, by)
+    }
+
     /** `POST api/v2/artifacts` (iOS ArtifactV2CreateInput: kind, title, body, body_format, meta, origin, capabilities). */
     suspend fun create(input: JsonObject): ApiResult<ArtifactV2?> = call("POST", "artifacts", input).map(::full)
 
@@ -290,3 +299,6 @@ object ArtifactWeb {
         url.scheme == "https" && url.host == "ai.allternit.com" &&
             listOf("/a/", "/editor/", "/embed/editor/").any { (url.path ?: "").startsWith(it) }
 }
+
+/** Counts for the Artifacts title menu: the total and one number per kind. */
+data class ArtifactCounts(val total: Int, val byKind: Map<String, Int>)

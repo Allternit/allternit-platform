@@ -46,6 +46,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -425,8 +427,18 @@ internal fun copyText(context: Context, label: String, text: String) {
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(ClipData.newPlainText(label, text))
 }
 
+/** Blur-up: the preview sharpens 12dp to 0dp in 220 ms on API 31+, a crossfade below. */
 @Composable
 private fun ArtifactBody(a: ArtifactV2, dark: Boolean) {
+    val blurApi = android.os.Build.VERSION.SDK_INT >= 31
+    val settle = remember(a.id) { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(a.id) { settle.animateTo(1f, androidx.compose.animation.core.tween(220)) }
+    val look = if (blurApi) Modifier.blur((12f * (1f - settle.value)).dp) else Modifier.graphicsLayer { alpha = settle.value }
+    Box(Modifier.fillMaxSize().then(look)) { ArtifactBodyContent(a, dark) }
+}
+
+@Composable
+private fun ArtifactBodyContent(a: ArtifactV2, dark: Boolean) {
     val c = AllternitTheme.colors
     // Downloads, option B: a stored picture loads with its poster sharpening by the real bytes in, then shows.
     if (a.kind == "image" && a.body.trim().startsWith("https://")) { ByteLoadedImage(a); return }
