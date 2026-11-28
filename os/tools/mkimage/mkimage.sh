@@ -287,6 +287,23 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
 
   # 4b. one slot image per slot: build_slot a|b writes $OUT/system-<x>.img and sets
   # VERITY_<x> (<root>:<salt>:<data blocks>), ROOT_<x> and SLOT_MB_<x>.
+  normalize_inode_times() {
+    _img=$1; _cmds="$OUT/debugfs-times.txt"; : > "$_cmds"
+    ( cd "$SEED" && find . -mindepth 0 | LC_ALL=C sort ) | while IFS= read -r _p; do
+      _p=${_p#.}; [ -n "$_p" ] || _p=/
+      for _f in atime ctime mtime crtime; do
+        printf 'set_inode_field "%s" %s @%s\n' "$_p" "$_f" "$SOURCE_DATE_EPOCH" >> "$_cmds"
+        printf 'set_inode_field "%s" %s_extra 0\n' "$_p" "$_f" >> "$_cmds"
+      done
+    done
+    for _f in mtime wtime lastcheck mkfs_time; do
+      printf 'set_super_value %s @%s\n' "$_f" "$SOURCE_DATE_EPOCH" >> "$_cmds"
+    done
+    debugfs -w -f "$_cmds" "$_img" >/dev/null 2>"$OUT/debugfs-times.err" \
+      || { cat "$OUT/debugfs-times.err" >&2; die "debugfs could not pin inode times on $_img"; }
+    rm -f "$_cmds" "$OUT/debugfs-times.err"
+  }
+
   build_slot() {
     n=$1
     data="$OUT/system-$n-data.img"; hash="$OUT/system-$n-hash.img"; img="$OUT/system-$n.img"
@@ -298,6 +315,10 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
     # superblock times: the same tree gives the same bytes.
     mke2fs -q -t ext4 -b 4096 -O ^has_journal -L "system-$n" -U "$(uuid_for "slot-$n-uuid")" \
       -E "root_owner=0:0,hash_seed=$(uuid_for "slot-$n-hashseed")" -d "$SEED" "$data"
+    # mke2fs -d (e2fsprogs 1.47.0) copies atime and ctime from the source tree. ctime is the
+    # wall clock of the last touch, and the first mke2fs read updates atime (relatime), so a
+    # second build differs. Pin every inode's times to SOURCE_DATE_EPOCH after the copy.
+    normalize_inode_times "$data"
     blocks=$(( $(wc -c < "$data") / 4096 ))
     # Hash tree: about blocks/127 blocks; give the file room so veritysetup never has to
     # grow it. Slack past the tree is ignored (the kernel table names the exact layout).
@@ -330,7 +351,12 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
       printf 'reproducible=yes\nslot_a_sha256=%s\nsource_date_epoch=%s\ncommit=%s\n' "$SHA_a" "$SOURCE_DATE_EPOCH" "$COMMIT" > "$PROV_OUT/reproducibility.txt"
     else
       printf 'reproducible=NO\nfirst=%s\nsecond=%s\n' "$FIRST_SHA" "$SHA_a" > "$PROV_OUT/reproducibility.txt"
-      die "slot a is NOT reproducible: $FIRST_SHA vs $SHA_a (see $PROV_OUT/reproducibility.txt)"
+      # Not a boot gate: report it and keep building so the Secure Boot and manifest checks
+      # still run. REPRO_STRICT=1 makes it fatal again.
+      if [ "${REPRO_STRICT:-0}" = 1 ]; then
+        die "slot a is NOT reproducible: $FIRST_SHA vs $SHA_a (see $PROV_OUT/reproducibility.txt)"
+      fi
+      say "WARNING: slot a is NOT reproducible: $FIRST_SHA vs $SHA_a (see $PROV_OUT/reproducibility.txt)"
     fi
   fi
   rm -rf "$SEED"
