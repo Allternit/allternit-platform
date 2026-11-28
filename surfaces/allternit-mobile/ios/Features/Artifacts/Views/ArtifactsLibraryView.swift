@@ -54,28 +54,30 @@ struct ArtifactsLibraryView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                LibrarySectionHeader(title: nil, onMenu: { openLibraryDrawer($isSidebarOpen) }) {
-                    ProjectsPill(searching: $searching, filtersActive: filtersOn, searchLabel: "Search artifacts") { filterPopover }
-                }
-                .blur(radius: introShowing ? PolishTokens.introScrimBlur : 0)
-                .allowsHitTesting(!introShowing)
-                if searching || !searchDraft.isEmpty {
-                    ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
-                }
-                if searching, searchDraft.isEmpty, !recentSearches.isEmpty { recentSearchesList }
-                // No nav bar here: the title docks into LibrarySectionHeader's
-                // centre, measured from this page's top (the search field can
-                // sit between them).
-                ACIDockReader { dock in
-                    PolishedTabPage(title: "Artifacts", chrome: .overlay(barCenter: dock.barCenter),
-                                    introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
-                        kindTitleMenu
-                        if let notice { noticeBar(notice) }
-                        yourArtifacts
+            NavigationStack {
+                PolishedTabPage(title: "Artifacts", introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
+                    if searching || !searchDraft.isEmpty {
+                        ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .refreshable { await store.reload() }
+                    if searching, searchDraft.isEmpty, !recentSearches.isEmpty { recentSearchesList }
+                    kindTitleMenu
+                    if let notice { noticeBar(notice) }
+                    yourArtifacts
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .refreshable { await store.reload() }
+                .background(Color("BgPrimary").ignoresSafeArea())
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        PhoneMenuButton(round: true, onOpen: { openLibraryDrawer($isSidebarOpen) })
+                            .blur(radius: introShowing ? PolishTokens.introScrimBlur : 0)
+                            .allowsHitTesting(!introShowing)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ProjectsPill(searching: $searching, filtersActive: filtersOn, searchLabel: "Search artifacts") { filterPopover }
+                            .blur(radius: introShowing ? PolishTokens.introScrimBlur : 0)
+                            .allowsHitTesting(!introShowing)
+                    }
                 }
             }
             // Floating "New artifact": keeps every item the old bar's menu had.

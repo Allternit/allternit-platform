@@ -8,6 +8,8 @@ import SwiftUI
 /// browserExtensions.store: the four Allternit extensions plus whatever was
 /// installed from the marketplace or uploaded.
 struct ACIExtensionsView: View {
+    /// Opens the drawer from the ☰ in the nav bar.
+    var onMenu: () -> Void = {}
     @StateObject private var store = ACIExtensionsStore.shared
     @Environment(\.openURL) private var openURL
     @State private var query = ""
@@ -26,13 +28,11 @@ struct ACIExtensionsView: View {
     }
 
     var body: some View {
-        ACIDockReader { dock in
-            ACIDockingScroll(title: "ACI Extensions", dock: dock) {
+        NavigationStack {
+            DockingTitleScrollView(title: "ACI Extensions") {
                 // The scroll view starts under the ACI header, so the pinned bar
                 // pins at its top edge: below the docked title, never under it.
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ACIViewHeader(title: "ACI Extensions", bottom: 16, dock: dock)
-                        .padding(.horizontal, 2)
                     Section {
                         content
                             .padding(.horizontal, 2)
@@ -46,6 +46,11 @@ struct ACIExtensionsView: View {
                         .padding(.horizontal, -14)
                         .background(Color("BgPrimary"))
                     }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(round: true, onOpen: onMenu)
                 }
             }
         }

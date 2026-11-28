@@ -362,9 +362,7 @@ struct ProjectsListView: View {
                 if searchText.isEmpty {
                     EmptyBox(title: "No projects yet",
                              line: "Tap New project to start one. Its chats, tasks and files stay together.",
-                             art: .sheets,
-                             actionTitle: "New project",
-                             action: { newProjectTapped() })
+                             art: .sheets)
                 } else {
                     Text("No projects match your search.")
                         .font(.system(size: 13))
