@@ -259,6 +259,7 @@ enum FitTone {
         switch k {
         case .ok: return Theme.statusSuccess
         case .slow: return Theme.statusWarning
+        case .stream: return Theme.statusInfo
         case .no: return Theme.statusError
         case .na, .unknown: return Color("TextTertiary")
         }
@@ -284,6 +285,7 @@ struct FitLabel: View {
     }
 
     private var text: String {
+        if fit.k == .stream, let s = fit.stream { return "\(fit.label) · \(FwText.deviceSize(s.size)) on disk" }
         if showSize, let q = fit.quant, fit.k != .na, fit.k != .unknown { return "\(fit.label) · \(FwText.deviceSize(q.size))" }
         return fit.label
     }

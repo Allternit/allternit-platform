@@ -653,6 +653,7 @@ struct FreeweightsDetailSheet: View {
                     if isCommunity { communitySection }
                     OnDeviceRunPanel(modelId: summary.id, quants: quants, onRun: onRun.map { run in { id in dismiss(); run(id) } })
                         .id("run")
+                    streamsFromDiskNote
                     if fit.k != .ok && fit.k != .slow { computerSection }
                     Button { openURL(FreeweightsClient.pageURL(for: summary.id)) } label: {
                         Label(isLinkOnly ? "Open on Freeweights" : "View on Freeweights", systemImage: "safari")
@@ -882,6 +883,28 @@ struct FreeweightsDetailSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    // MARK: Streams from disk (other devices only)
+
+    /// The phone never streams (it has no disk_free_bytes); this tells the
+    /// owner that a Mac or PC (My other devices, Remote) can run the model.
+    @ViewBuilder
+    private var streamsFromDiskNote: some View {
+        if fit.k != .ok, fit.k != .slow, let s = Fit.preferredStream(device?.streamQuants ?? []) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Circle().fill(FitTone.color(.stream)).frame(width: 7, height: 7)
+                    Text("Streams from disk").font(.system(size: 12, weight: .medium)).foregroundColor(Color("TextSecondary"))
+                }
+                Text("On your Mac or PC: \(FwText.deviceSize(s.size)) on disk. " + (s.bestFor ?? "Not on this iPhone."))
+                    .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .accessibilityElement(children: .combine)
+        }
     }
 
     // MARK: Builds that need a computer

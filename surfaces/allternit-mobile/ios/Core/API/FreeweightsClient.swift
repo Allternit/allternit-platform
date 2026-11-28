@@ -211,14 +211,30 @@ struct FreeweightsDeviceData: Codable, Sendable, Equatable {
     }
     let id: String
     let quants: [Quant]
+    /// colibri packs that stream from disk (`stream_quants`). Shown only as a
+    /// verdict for another device; the phone never installs or runs one.
+    let streamQuants: [StreamQuant]
     let deviceFormats: [String]?
     let manifest: Manifest?
     let generatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, quants, manifest
+        case streamQuants = "stream_quants"
         case deviceFormats = "device_formats"
         case generatedAt = "generated_at"
+    }
+
+    /// Lossy lists: an entry with an engine this build does not know is
+    /// dropped and the rest are kept, so a new engine never breaks old builds.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        quants = c.decodeLossyArray(Quant.self, forKey: .quants) ?? []
+        streamQuants = c.decodeLossyArray(StreamQuant.self, forKey: .streamQuants) ?? []
+        deviceFormats = try c.decodeIfPresent([String].self, forKey: .deviceFormats)
+        manifest = try c.decodeIfPresent(Manifest.self, forKey: .manifest)
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
     }
 }
 
