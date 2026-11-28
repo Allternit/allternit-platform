@@ -54,6 +54,7 @@ import { openAppWindow, closeAppWindow } from './app-window.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
+import { checkUserPresence, kernelApproveRequestId, PRESENCE_PROOF_HEADER, presenceRefusal } from './presence.js';
 import { officeEngineManager } from './office-engine-manager.js';
 import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
@@ -3359,6 +3360,25 @@ app.whenReady().then(async () => {
       const requestBody = request.method === 'GET' || request.method === 'HEAD'
         ? undefined
         : await request.arrayBuffer();
+
+      // CONTRACT.md 12.3: approving an AllternitOS kernel request from this
+      // window needs an OS user-presence check (Touch ID / Windows Hello) on
+      // top of the window proof. Only main can mint the presence proof.
+      headers.delete(PRESENCE_PROOF_HEADER);
+      const desktopProof = isCloud ? null : backendManager.getHumanProof();
+      const approveId = desktopProof && headers.get(HUMAN_PROOF_HEADER) === desktopProof
+        ? kernelApproveRequestId(request.method, url.pathname, requestBody)
+        : null;
+      if (approveId) {
+        const presence = await checkUserPresence('approve an action an Allternit agent asked to take');
+        if (!presence.ok) {
+          log.info(`[Protocol] Kernel approve refused: presence ${presence.reason}`);
+          return presenceRefusal(presence);
+        }
+        const proof = backendManager.getPresenceProof(approveId);
+        if (proof) headers.set(PRESENCE_PROOF_HEADER, proof);
+      }
+
       const response = await fetch(targetUrl, {
         method: request.method,
         headers,

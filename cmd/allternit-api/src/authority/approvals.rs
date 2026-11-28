@@ -274,6 +274,29 @@ impl SqlAuthority {
         Ok(body)
     }
 
+    /// Refuse an approve that came through the Desktop window without a user-presence proof
+    /// (CONTRACT.md 12.3; see [`super::presence`]). Writes the refusal receipt on the request's
+    /// chain, like every other resolve refusal, and changes nothing else.
+    pub fn refuse_without_presence(&self, caller: &Caller, body: &ResolveBody) -> AuthorityError {
+        let chain = self
+            .connect()
+            .and_then(|conn| self.load(&conn, &body.request_id))
+            .ok()
+            .flatten()
+            .filter(|s| s.owner_user_id == caller.principal)
+            .map_or_else(|| format!("kernel:{}", caller.principal), |s| s.request.run_id);
+        let ctx = json!({
+            "op": "resolve", "request_id": body.request_id, "decision": enum_str(body.decision),
+            "caller_kind": enum_str(caller.kind), "caller": caller.principal,
+        });
+        self.deny(
+            &chain,
+            ErrorCode::ForbiddenCaller,
+            "approving on Allternit Desktop needs a user-presence check (Touch ID or Windows Hello); approve from the Allternit web or phone app if this computer has neither",
+            ctx,
+        )
+    }
+
     /// `approval.resolve`: HUMAN ONLY (CONTRACT.md 4.3). Any other caller kind is refused with
     /// `forbidden_caller` and a receipt, before the request is even looked at for state.
     pub fn resolve(&self, caller: &Caller, body: ResolveBody) -> Result<Resolution, AuthorityError> {
@@ -571,6 +594,20 @@ mod tests {
 
     fn count(k: &SqlAuthority, sql: &str) -> i64 {
         k.db.connect().unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn approve_without_presence_is_refused_with_a_receipt_and_the_request_stays_open() {
+        let k = kernel();
+        let req = k.request(&run(), body(None)).expect("request");
+        let id = req.request_id.clone().unwrap();
+        let resolve = ResolveBody { request_id: id.clone(), decision: Decision::Approve, note: None };
+        let err = k.refuse_without_presence(&human(), &resolve);
+        assert_eq!(err.code, ErrorCode::ForbiddenCaller);
+        assert!(err.receipt_id.is_some(), "the refusal writes a receipt");
+        assert_eq!(count(&k, "SELECT COUNT(*) FROM approval_requests WHERE status = 'open'"), 1);
+        // The person can still approve once presence passes.
+        assert!(matches!(k.resolve(&human(), resolve).unwrap(), Resolution::Approved(_)));
     }
 
     #[test]
