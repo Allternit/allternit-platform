@@ -7,7 +7,7 @@ description: 'The built-in tool an agent uses to open and arrange views, start a
 
 `shell` lets an agent drive the screen you see. It sends one command to your app, the app runs it, and the agent gets the result. The agent never edits the page itself.
 
-Not built, not live: this ships with AllternitOS Stage 1. The app side that runs the commands is a later step, so until then the tool answers `no_app`.
+Not built, not live: this ships with AllternitOS Stage 1. If no app showing the session answers within 30 seconds, the tool returns `no_app`.
 
 ## Actions
 
@@ -25,3 +25,11 @@ Not built, not live: this ships with AllternitOS Stage 1. The app side that runs
 - Install or copy an app without your answer. Every `install_app` and `fork_app` asks, at every autonomy level.
 
 Pass `expected_state_version` from `get_state` so a command built on an out-of-date screen is refused with `conflict`.
+
+## How a command reaches your app
+
+1. The tool publishes `shell.command.requested` on the runtime bus.
+2. The agent-sessions sync stream delivers it to the app as `shell_command_requested`, with `request_id`, `session_id`, `kind` (`command` or `get_state`), `command` and `time`.
+3. The app runs it and answers `POST /api/v1/shell/:requestID/reply` with the result. allternit-api passes the reply to the runtime's `/v1/shell/:requestID/reply`; on Allternit Cloud, cloud-api relays it to your computer first.
+
+When you approve an `install_app` or `fork_app`, the command carries `check_id`, the id of the approval you gave. The app refuses either action with `approval_required` when `check_id` is missing.

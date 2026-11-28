@@ -411,6 +411,17 @@ export const AgentCompatRoutes = () =>
               args: props.args ?? null,
               time: props.time ?? null,
             }
+          case "shell.command.requested":
+            // The `shell` tool (ShellBridge): the app's shell executor runs the
+            // ShellCommandV1 (or reads its state) and answers POST /shell/:id/reply.
+            return {
+              type: "shell_command_requested",
+              request_id: props.id ?? null,
+              session_id: props.sessionID ?? null,
+              kind: props.kind ?? null,
+              command: props.command ?? null,
+              time: props.time ?? null,
+            }
           case "pane_render.requested":
             return {
               type: "pane_render_requested",
