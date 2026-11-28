@@ -25,6 +25,7 @@ members = [
     "services/session-manager",
     "services/vm-executor",
     "services/self-improve",
+    "services/self-improve-gizzi",
     "services/etrid",
     "mcp/core",
     "mcp/mcp-client",
