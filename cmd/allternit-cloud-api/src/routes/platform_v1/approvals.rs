@@ -34,7 +34,7 @@
 //!
 //! * **Kernel rows** (`source = 'kernel'`, migration 171): cloud-api's authority kernel files
 //!   its approval requests for chats with no computer in this table
-//!   ([`crate::kernel_approvals`]). They are never listed or shown here (no scope maps to
+//!   ([`crate::kernel_approvals`]). They are listed read-only only by `GET /v1/approvals?source=kernel` (with a `kernel` object; never fetched, never decided; no scope maps to
 //!   them), the sweep expires them without a webhook, and `POST /v1/approvals/{id}` refuses
 //!   them with a `resolve_refused` receipt: an API key never approves a kernel request. The
 //!   owner approves from their phone (`/api/v1/kernel/relay/approvals/cloud/{id}/resolve`,
@@ -118,6 +118,9 @@ pub struct Approval {
     pub created_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
     pub resolved_by: Option<String>,
+    /// Unified kernel fields; present only on `source = "kernel"` rows (listed read-only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<Value>,
 }
 
 impl ApprovalRow {
@@ -137,6 +140,7 @@ impl ApprovalRow {
             created_at: self.created_at,
             resolved_at: self.resolved_at,
             resolved_by: self.resolved_by.clone(),
+            kernel: None,
         }
     }
 }
@@ -550,6 +554,10 @@ async fn list(
     ApiQuery(q): ApiQuery<ListQuery>,
 ) -> Result<Json<Page<Approval>>, PlatformError> {
     let mut sources = allowed_sources(&caller)?;
+    // Kernel rows are listed only when asked for by name, read-only (decide refuses them).
+    if q.source.as_deref() == Some(crate::kernel_approvals::SOURCE) {
+        return list_kernel(&state, &caller, &q).await;
+    }
     if let Some(s) = q.source.as_deref().filter(|s| !s.is_empty()) {
         if !SOURCES.contains(&s) {
             return Err(PlatformError::invalid_request("invalid_source", "source is twin or computer.").with_param("source"));
@@ -592,6 +600,101 @@ async fn list(
     .await?;
     let now = Utc::now();
     let objects: Vec<Approval> = rows.iter().map(|r| r.object(now)).collect();
+    Ok(Json(build_page(objects, limit, |a| (a.created_at, a.id.clone()))))
+}
+
+#[derive(Debug, FromRow)]
+struct KernelListRow {
+    id: String,
+    source_ref: String,
+    kind: String,
+    proposed_action: Value,
+    status: String,
+    expires_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    resolved_at: Option<DateTime<Utc>>,
+    resolved_by: Option<String>,
+    action_hash: Option<String>,
+    action_class: Option<String>,
+    kernel_principal: Option<String>,
+    kernel_run_id: Option<String>,
+    kernel_check_receipt_id: Option<String>,
+    kernel_redemption_receipt_id: Option<String>,
+}
+
+impl KernelListRow {
+    fn object(self, now: DateTime<Utc>) -> Approval {
+        let kernel = json!({
+            "action_class": self.action_class,
+            "action_summary": self.proposed_action["summary"].as_str().unwrap_or(&self.kind),
+            "action_hash": self.action_hash,
+            "deadline": self.expires_at,
+            "human_only": self.proposed_action["human_only"].as_bool().unwrap_or(true),
+            "run_id": self.kernel_run_id,
+            "principal": self.kernel_principal,
+            "decided_by": self.resolved_by,
+            "check_receipt_id": self.kernel_check_receipt_id,
+            "redemption_receipt_id": self.kernel_redemption_receipt_id,
+        });
+        // The proposed action is not echoed in full: its args may carry content the console does not need.
+        let proposed = json!({ "summary": self.proposed_action["summary"], "tool": self.proposed_action["tool"] });
+        Approval {
+            id: self.id,
+            object: "approval",
+            source: crate::kernel_approvals::SOURCE.to_string(),
+            source_ref: self.source_ref,
+            account_id: None,
+            conversation_id: None,
+            response_id: None,
+            kind: self.kind,
+            proposed_action: proposed,
+            status: effective_status(&self.status, self.expires_at, now).to_string(),
+            expires_at: self.expires_at,
+            created_at: self.created_at,
+            resolved_at: self.resolved_at,
+            resolved_by: self.resolved_by,
+            kernel: Some(kernel),
+        }
+    }
+}
+
+/// `GET /v1/approvals?source=kernel`: this project's kernel requests, read-only. Shadow rows
+/// (dry records) never list. A key bound to one account sees none (kernel rows carry no account).
+async fn list_kernel(state: &Arc<ApiState>, caller: &PlatformCaller, q: &ListQuery) -> Result<Json<Page<Approval>>, PlatformError> {
+    let status = q.status.as_deref().filter(|s| !s.is_empty());
+    if let Some(s) = status {
+        if !STATUSES.contains(&s) {
+            return Err(PlatformError::invalid_request("invalid_status", format!("status is one of {}.", STATUSES.join(", "))).with_param("status"));
+        }
+    }
+    let limit = q.page.limit()?;
+    if caller.account_id.is_some() {
+        return Ok(Json(build_page(Vec::<Approval>::new(), limit, |a| (a.created_at, a.id.clone()))));
+    }
+    let (after_at, after_id) = match q.page.cursor()? {
+        Some((at, id)) => (Some(at), Some(id)),
+        None => (None, None),
+    };
+    let rows: Vec<KernelListRow> = sqlx::query_as(
+        "SELECT id, source_ref, kind, proposed_action, status, expires_at, created_at, resolved_at, resolved_by, \
+                action_hash, action_class, kernel_principal, kernel_run_id, kernel_check_receipt_id, kernel_redemption_receipt_id \
+           FROM platform_approvals WHERE project_id = $1 AND source = 'kernel' AND status <> 'shadow' \
+           AND ($2::text IS NULL \
+                OR ($2 = 'pending' AND status = 'pending' AND (expires_at IS NULL OR expires_at > NOW())) \
+                OR ($2 = 'expired' AND (status = 'expired' OR (status = 'pending' AND expires_at <= NOW()))) \
+                OR ($2 NOT IN ('pending', 'expired') AND status = $2)) \
+           AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4)) \
+         ORDER BY created_at DESC, id DESC LIMIT $5",
+    )
+    .bind(&caller.project_id)
+    .bind(status)
+    .bind(after_at)
+    .bind(after_id)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let now = Utc::now();
+    let objects: Vec<Approval> = rows.into_iter().map(|r| r.object(now)).collect();
     Ok(Json(build_page(objects, limit, |a| (a.created_at, a.id.clone()))))
 }
 
