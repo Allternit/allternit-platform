@@ -31,5 +31,6 @@ Pass `expected_state_version` from `get_state` so a command built on an out-of-d
 1. The tool publishes `shell.command.requested` on the runtime bus.
 2. The agent-sessions sync stream delivers it to the app as `shell_command_requested`, with `request_id`, `session_id`, `kind` (`command` or `get_state`), `command` and `time`.
 3. The app runs it and answers `POST /api/v1/shell/:requestID/reply` with the result. allternit-api passes the reply to the runtime's `/v1/shell/:requestID/reply`; on Allternit Cloud, cloud-api relays it to your computer first.
+4. The first reply wins. The runtime publishes `shell.command.replied`, the stream delivers it as `shell_command_replied` (`request_id`, `session_id`, `ok`), and any other open window or device stops running that command. A later reply for the same request is ignored.
 
 When you approve an `install_app` or `fork_app`, the command carries `check_id`, the id of the approval you gave. The app refuses either action with `approval_required` when `check_id` is missing.
