@@ -210,6 +210,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "allternit-apple-vf-driver",
+ "allternit-authority",
  "allternit-computer-cloud",
  "allternit-cowork-runtime",
  "allternit-cowork-scheduler",

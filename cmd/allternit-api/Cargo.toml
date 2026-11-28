@@ -66,6 +66,8 @@ cipher = "0.4"
 
 # Internal crates - the Factory engine & Cowork
 allternit-factory-engine = { path = "../../factory/engine" }
+# AllternitOS kernel interface (trait + os/v1 types); implemented in src/authority.
+allternit-authority = { path = "../../domains/kernel/authority" }
 # The terminal API over the pane engine (shared with allternit-node).
 allternit-terminal-service = { workspace = true }
 allternit-cowork-runtime = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
