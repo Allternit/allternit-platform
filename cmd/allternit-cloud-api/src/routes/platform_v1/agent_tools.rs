@@ -141,6 +141,12 @@ async fn tool_h(
         return refuse(StatusCode::FORBIDDEN, "tool_not_allowed", "This agent doesn't have that tool.");
     }
     let input = body.map(|Json(b)| b.input).unwrap_or(Value::Null);
+    // One kernel check per tool call, before it runs. The principal is the agent's project.
+    let class = crate::kernel_tools::agent_tool_class(&tool);
+    let gate = crate::kernel::Tool { surface: "agent_tools", name: &tool, args: &input, class: class.class, known: class.known, approved_by: None };
+    if let Some(r) = crate::kernel::check(&state.db, &format!("platform:{}", agent.project_id), &format!("agent:{}", agent.id), &gate).await.refusal() {
+        return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "error": r["code"], "message": r["message"], "approval_request_id": r["approval_request_id"], "action_hash": r["action_hash"], "action_class": r["action_class"], "receipt_id": r["receipt_id"] }))).into_response();
+    }
     match tool.as_str() {
         "knowledge_search" => knowledge_search(&state.db, &agent_id, &input).await,
         "send_text" => send_text(&state, &agent, &input).await,
@@ -564,6 +570,37 @@ mod tests {
         // No connection table yet (Phase 4): nothing to post to.
         let (s, b) = post(&state, Some(&token), "proj_f_agent_b", "channel_post", json!({ "text": "hello" })).await;
         assert_eq!((s, b["error"].as_str()), (StatusCode::CONFLICT, Some("no_channel_connected")), "{b}");
+    }
+
+    #[tokio::test]
+    async fn every_tool_call_gets_one_kernel_check_shadow_records_enforce_refuses_ask_class() {
+        use crate::kernel::{set_test_kernel, Mode};
+        let state = setup().await;
+        let db = &state.db;
+        crate::kernel::tests::receipts_schema(db).await;
+        seed(db, "proj_k", &["knowledge_search"]).await;
+        let token = device(db, "rt_k", "platform:proj_k").await;
+        let count = || async { sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kernel_receipts WHERE principal = 'platform:proj_k'").fetch_one(db).await.unwrap() };
+
+        // Shadow: a client_message tool is recorded as human_only and still runs (no connection, so 409).
+        set_test_kernel(Some(Mode::Shadow));
+        let (s, b) = post(&state, Some(&token), "proj_k_agent_b", "channel_post", json!({ "text": "hello" })).await;
+        assert_eq!((s, b["error"].as_str()), (StatusCode::CONFLICT, Some("no_channel_connected")), "{b}");
+        assert_eq!(count().await, 1);
+        let (decision, payload): (String, String) = sqlx::query_as("SELECT decision, payload FROM kernel_receipts WHERE principal = 'platform:proj_k'").fetch_one(db).await.unwrap();
+        assert_eq!(decision, "human_only");
+        assert!(payload.contains("\"surface\":\"agent_tools\"") && payload.contains("\"mode\":\"shadow\""), "{payload}");
+
+        // Enforce: the same call is refused with the action hash; a read tool still runs.
+        set_test_kernel(Some(Mode::Enforce));
+        let (s, b) = post(&state, Some(&token), "proj_k_agent_b", "channel_post", json!({ "text": "hello" })).await;
+        assert_eq!((s, b["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_required")), "{b}");
+        assert!(b["action_hash"].as_str().is_some_and(|h| h.starts_with("sha256:")), "{b}");
+        assert_eq!(count().await, 2);
+        let (s, _) = post(&state, Some(&token), "proj_k_agent_b", "knowledge_search", json!({ "query": "x" })).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(count().await, 3);
+        set_test_kernel(None);
     }
 
     #[derive(Default)]

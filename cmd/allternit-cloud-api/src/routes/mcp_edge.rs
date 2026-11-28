@@ -1345,6 +1345,14 @@ impl<'a> ProdBackend<'a> {
     fn new(state: &'a Arc<ApiState>) -> Self {
         Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db }, skills: crate::routes::cloud_skills::PgSkillStore { db: &state.db }, apps: super::mcp_edge_apps::PgAppsStore { state } }
     }
+
+    /// The authority kernel's one check for a project key's server-side tool call (phone, mail,
+    /// `decide`, `respond`). `Some(refusal)` = do not run it. Shadow mode records and returns `None`.
+    async fn kernel_gate(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Option<Value> {
+        let c = crate::kernel_tools::edge_class(name, args);
+        let tool = crate::kernel::Tool { surface: "mcp_edge", name, args, class: c.class, known: c.known, approved_by: None };
+        crate::kernel::check(&self.state.db, &key.owner_user_id, &format!("edge:{}", key.key_id), &tool).await.refusal()
+    }
 }
 
 #[async_trait::async_trait]
@@ -1382,18 +1390,28 @@ impl EdgeBackend for ProdBackend<'_> {
 
     async fn phone_call(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Value {
         use crate::routes::platform_v1::phones;
+        if let Some(refusal) = self.kernel_gate(key, name, args).await {
+            return json!({ "content": [{ "type": "text", "text": refusal.to_string() }], "structuredContent": refusal, "isError": true });
+        }
         let host = phones::ProdPhoneHost(self.state.clone());
         phones::mcp_result(phones::mcp_call(&self.state.db, &host, key, name, args).await)
     }
     // ─── mail tools (scope `mail`) ───
     async fn mail_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
         use crate::routes::platform_v1::mailboxes;
+        if let Some(refusal) = self.kernel_gate(key, name, args).await {
+            return Err(refusal.to_string());
+        }
         mailboxes::mcp_call(self.state, key, &mailboxes::ProdMailHost, name, args).await.map_err(|e| format!("{}: {}", e.code, e.message))
     }
 
     // ─── decide / respond tools ───
     async fn model_tool(&self, key: &crate::routes::platform_v1::PlatformCaller, name: &str, args: &Value) -> Result<Value, String> {
         use crate::routes::platform_v1 as p;
+        // `mcp_edge::model_tool_call` reaches here (also through `OwnedProdBackend`): one check per call.
+        if let Some(refusal) = self.kernel_gate(key, name, args).await {
+            return Err(refusal.to_string());
+        }
         // Lanes 1 and 2 expose these two functions.
         let out = match name {
             "decide" => p::decisions::decide_for_mcp(self.state, key, args.clone()).await,
@@ -2423,5 +2441,47 @@ mod tests {
             assert!(headers[header::WWW_AUTHENTICATE].to_str().unwrap().contains("oauth-protected-resource"), "{u}");
         }
         std::env::remove_var("MCP_PUBLIC_URL");
+    }
+
+    #[tokio::test]
+    async fn edge_tools_get_one_kernel_check_shadow_records_enforce_refuses_ask_class() {
+        use crate::kernel::{set_test_kernel, Mode};
+        use crate::routes::test_support::{test_state, MockGateway};
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/171_kernel_approval_relay.sql")).execute(&state.db).await.unwrap();
+        let key = crate::routes::platform_v1::PlatformCaller {
+            project_id: "proj_e".into(),
+            project_env: crate::routes::platform_v1::ProjectEnv::Sandbox,
+            account_id: None,
+            key_id: "ak_proj_e".into(),
+            scopes: vec!["phones".into(), "mail".into(), "inference".into()],
+            owner_user_id: "owner_e".into(),
+            org_id: None,
+            plan: crate::routes::platform_v1::caller::Plan::Sandbox,
+            rpm_override: None,
+            call_cap_override: None,
+        };
+        let backend = ProdBackend::new(&state);
+        let count = || async { sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kernel_receipts WHERE principal = 'owner_e'").fetch_one(&state.db).await.unwrap() };
+        let sms = json!({ "serial": "S1", "name": "phone.sms.send", "arguments": { "to": "+1", "text": "hi" } });
+
+        // Shadow: recorded (human_only), not refused.
+        set_test_kernel(Some(Mode::Shadow));
+        assert!(backend.kernel_gate(&key, "phone_tool", &sms).await.is_none());
+        assert_eq!(count().await, 1);
+
+        // Enforce: the phone send and an unlisted tool are refused through the real executors,
+        // with the action hash; a read and `respond` pass the gate.
+        set_test_kernel(Some(Mode::Enforce));
+        let out = backend.phone_call(&key, "phone_tool", &sms).await;
+        assert_eq!(out["isError"], true);
+        assert_eq!(out["structuredContent"]["code"], "approval_required");
+        assert!(out["structuredContent"]["action_hash"].as_str().is_some_and(|h| h.starts_with("sha256:")));
+        let err = backend.mail_tool(&key, "mail_read_otp", &json!({})).await.unwrap_err();
+        assert!(err.contains("approval_required"), "{err}");
+        assert!(backend.kernel_gate(&key, "mail_read", &json!({})).await.is_none());
+        assert!(backend.kernel_gate(&key, "respond", &json!({})).await.is_none());
+        assert_eq!(count().await, 5, "one receipt per call");
+        set_test_kernel(None);
     }
 }
