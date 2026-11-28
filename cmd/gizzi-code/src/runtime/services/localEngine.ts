@@ -147,7 +147,7 @@ export async function recommendRepos(
 export async function downloadRepo(
   repoId: string,
   quantization?: string,
-  opts?: { allowUnverified?: boolean; revision?: string },
+  opts?: { allowUnverified?: boolean; revision?: string; engine?: string },
 ): Promise<DownloadResult> {
   return request('/models/download', {
     method: 'POST',
@@ -155,6 +155,7 @@ export async function downloadRepo(
       repo_id: repoId,
       quantization,
       ...(opts?.revision ? { revision: opts.revision } : {}),
+      ...(opts?.engine ? { engine: opts.engine } : {}),
       ...(opts?.allowUnverified ? { allow_unverified: true } : {}),
     }),
   })
@@ -251,13 +252,13 @@ export interface HardwareResponse {
   apple_chip?: string | null
   disk_free_bytes: number
   models_dir: string
-  budget: { kind: 'discrete' | 'unified' | 'cpu'; fast_bytes: number; spill_bytes: number }
+  budget: { kind: 'discrete' | 'unified' | 'cpu'; fast_bytes: number; spill_bytes: number; disk_free_bytes?: number }
   engines: Array<{
-    id: 'llama.cpp' | 'mlx'
+    id: 'llama.cpp' | 'mlx' | 'colibri'
     backend: string
     version: string | null
     pack_id: string | null
-    state: 'ready' | 'installed' | 'fallback' | 'missing' | 'off'
+    state: 'ready' | 'installed' | 'fallback' | 'missing' | 'off' | 'available' | 'unsupported' | 'running'
   }>
 }
 
@@ -304,6 +305,7 @@ export async function listRuntimes(): Promise<{ runtimes: RuntimeInstance[] }> {
 export type LaunchRecipe =
   | { backend: 'llama_cpp'; model_path: string; n_gpu_layers: number; n_ctx?: number; flash_attn?: boolean }
   | { backend: 'mlx'; model_path: string; n_ctx?: number }
+  | { backend: 'colibri'; model_dir: string; colibri_model: string; host: '127.0.0.1'; port: number; metal: boolean }
 
 /** POST /runtimes/launch. Errors carry the engine's message (501 names the pack to install, 503 a failed pack check). */
 export async function launchRuntime(modelId: string, recipe: LaunchRecipe): Promise<{ runtime: RuntimeInstance }> {
@@ -342,7 +344,7 @@ export async function getPacks(): Promise<PacksResponse | null> {
 }
 
 /** POST /engines/packs/ensure (W6). null when the engine predates engine packs. */
-export async function ensurePacks(engines?: Array<'llamacpp' | 'mlx'>): Promise<PacksResponse | null> {
+export async function ensurePacks(engines?: Array<'llamacpp' | 'mlx' | 'colibri'>): Promise<PacksResponse | null> {
   try {
     return await request<PacksResponse>('/engines/packs/ensure', {
       method: 'POST',

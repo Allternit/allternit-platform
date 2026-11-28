@@ -14,9 +14,10 @@ import {
   stopRuntime,
   streamChat,
   type CachedModel,
+  type LaunchRecipe,
   type RuntimeInstance,
 } from "@/runtime/services/localEngine"
-import { fetchDeviceEntry, fit, fmtBytes, needBytes, readLocalDevice, type DeviceEntry, type FitResult, type LocalDevice, type Quant } from "@/runtime/services/deviceFit"
+import { fetchDeviceEntry, fit, fmtBytes, needBytes, readLocalDevice, type DeviceEntry, type FitResult, type LocalDevice, type Quant, type StreamQuant } from "@/runtime/services/deviceFit"
 import { pullModel } from "@/cli/commands/models-pull"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -70,18 +71,18 @@ export async function fitModel(id: string | undefined, json: boolean): Promise<n
   const loaded = await load(id)
   if (!loaded) return 1
   const { device, entry } = loaded
-  const r = fit(device.budget, entry?.quants ?? null)
+  const r = fit(device.budget, entry?.quants ?? null, undefined, entry?.stream_quants)
   if (json) {
     process.stdout.write(JSON.stringify({ id, device: { name: device.name, budget: device.budget, source: device.source }, ...r }, null, 2) + "\n")
   } else {
     UI.println(UI.Style.TEXT_HIGHLIGHT_BOLD + id + UI.Style.TEXT_NORMAL)
     row("Computer", deviceLine(device))
-    row("Fit", (r.k === "ok" ? style.ok : r.k === "unknown" ? style.dim : style.warn) + r.label + style.off)
+    row("Fit", (r.k === "ok" || r.k === "stream" ? style.ok : r.k === "unknown" ? style.dim : style.warn) + r.label + style.off)
     if (r.quant) row("Build", buildLine(r.quant, id))
     row("Why", r.why)
     if (device.source === "status") row("Note", "This engine has no /hardware yet; the budget was worked out from /status.")
   }
-  return r.k === "ok" || r.k === "slow" ? 0 : 1
+  return r.k === "ok" || r.k === "slow" || r.k === "stream" ? 0 : 1
 }
 
 async function waitFor<T>(what: string, fn: () => Promise<T | null>, timeoutMs: number): Promise<T | null> {
@@ -99,12 +100,30 @@ async function waitFor<T>(what: string, fn: () => Promise<T | null>, timeoutMs: 
 }
 
 /** Makes sure the engine for this build is ready. Returns an error string, or null when ready. */
-async function ensureEngine(engineId: "llama.cpp" | "mlx"): Promise<string | null> {
+type EngineId = "llama.cpp" | "mlx" | "colibri"
+
+/** Each build maps to one engine, explicitly. No "everything else is llama.cpp". */
+function engineOf(q: Quant): EngineId {
+  switch (q.engine) {
+    case "mlx":
+      return "mlx"
+    case "colibri":
+      return "colibri"
+    case "llama.cpp":
+      return "llama.cpp"
+    default:
+      throw new Error(`No local engine for the ${q.engine} build ${q.name}`)
+  }
+}
+
+const PACK_KEY: Record<EngineId, "llamacpp" | "mlx" | "colibri"> = { "llama.cpp": "llamacpp", mlx: "mlx", colibri: "colibri" }
+
+async function ensureEngine(engineId: EngineId): Promise<string | null> {
   const state = async () => (await getHardware())?.engines.find((e) => e.id === engineId)?.state
   const s0 = await state()
-  if (s0 === "ready" || s0 === "installed" || s0 === "fallback") return null
-  if (s0 === "off") return `The ${engineId} engine does not apply on this computer.`
-  const packKey = engineId === "mlx" ? "mlx" : "llamacpp"
+  if (s0 === "ready" || s0 === "installed" || s0 === "fallback" || s0 === "running") return null
+  if (s0 === "off" || s0 === "unsupported") return `The ${engineId} engine does not apply on this computer.`
+  const packKey = PACK_KEY[engineId]
   let packs
   try {
     packs = await ensurePacks([packKey])
@@ -114,10 +133,10 @@ async function ensureEngine(engineId: "llama.cpp" | "mlx"): Promise<string | nul
   if (!packs) return `The ${engineId} engine is ${s0 ?? "not available"} and this Local Engine cannot install engine packs yet. Update Allternit Desktop.`
   const done = await waitFor(`Installing the ${engineId} engine`, async () => {
     const p = await getPacks()
-    const jobs = p?.jobs.filter((j) => j.pack_id.startsWith(engineId === "mlx" ? "mlx" : "llamacpp")) ?? []
+    const jobs = p?.jobs.filter((j) => j.pack_id.startsWith(packKey)) ?? []
     if (jobs.some((j) => j.state === "failed")) return { failed: jobs.find((j) => j.state === "failed")!.error ?? "failed" }
     const s = await state()
-    return s === "ready" || s === "installed" ? { ok: true } : null
+    return s === "ready" || s === "installed" || s === "running" ? { ok: true } : null
   }, 5 * 60_000)
   process.stderr.write("\n")
   if (!done) return `The ${engineId} engine install did not finish in 5 minutes.`
@@ -131,7 +150,7 @@ function findCached(models: CachedModel[], repo: string): CachedModel | undefine
 
 function modelPath(m: CachedModel, q: Quant): string | null {
   if (!m.path) return null
-  if (q.engine === "mlx") return m.path
+  if (q.engine === "mlx" || q.engine === "colibri") return m.path
   if (m.path.toLowerCase().endsWith(".gguf")) return m.path
   const want = q.files?.[0]
   const f = want ? (m.files ?? []).find((x) => x.path === want || x.path.endsWith("/" + want)) : (m.files ?? []).find((x) => x.path.toLowerCase().endsWith(".gguf"))
@@ -163,6 +182,20 @@ async function turn(id: string, history: Array<{ role: "user" | "assistant"; con
   if (usage) await printTurnNumbers(usage)
 }
 
+/** The launch recipe for the chosen build, one explicit case per engine. */
+function recipeFor(quant: Quant, path: string, device: LocalDevice): LaunchRecipe {
+  switch (engineOf(quant)) {
+    case "mlx":
+      return { backend: "mlx", model_path: path }
+    case "colibri": {
+      const sq = quant as unknown as StreamQuant
+      return { backend: "colibri", model_dir: path, colibri_model: sq.colibri_model ?? sq.name, host: "127.0.0.1", port: 0, metal: false }
+    }
+    case "llama.cpp":
+      return { backend: "llama_cpp", model_path: path, n_gpu_layers: device.hardware?.gpus.length || device.budget.apple ? 999 : 0 }
+  }
+}
+
 /** gizzi models run <id> [--quant Q] [--prompt "text"] */
 export async function runModel(id: string | undefined, opts: { quant?: string; prompt?: string; allowUnverified?: boolean }): Promise<number> {
   if (!validId(id, "gizzi models run <org/model> [--quant Q4_K_M] [--prompt \"text\"]")) return 1
@@ -170,15 +203,19 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
   if (!loaded) return 1
   const { device, entry } = loaded
   let quants = entry?.quants ?? null
-  if (opts.quant && quants) {
-    const only = quants.filter((q) => q.name.toLowerCase() === opts.quant!.toLowerCase())
-    if (only.length === 0) {
-      UI.error(`No ${opts.quant} build of ${id}. Builds: ${quants.map((q) => q.name).join(", ")}`)
+  let streamQuants: StreamQuant[] | undefined = entry?.stream_quants
+  if (opts.quant && (quants || streamQuants)) {
+    const want = opts.quant.toLowerCase()
+    const only = (quants ?? []).filter((q) => q.name.toLowerCase() === want)
+    const onlyStream = (streamQuants ?? []).filter((q) => q.name.toLowerCase() === want)
+    if (only.length === 0 && onlyStream.length === 0) {
+      UI.error(`No ${opts.quant} build of ${id}. Builds: ${[...(quants ?? []), ...(streamQuants ?? [])].map((q) => q.name).join(", ")}`)
       return 1
     }
     quants = only
+    streamQuants = onlyStream
   }
-  let r: FitResult = fit(device.budget, quants)
+  let r: FitResult = fit(device.budget, quants, undefined, streamQuants)
   if (r.k === "unknown") {
     UI.error(`Size not checked: ${id} has no device data yet, so gizzi cannot tell if it fits. Nothing was downloaded.`)
     return 1
@@ -190,7 +227,7 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
 
   // The engine for the chosen build: install the pack when missing; fall back to GGUF if MLX cannot be made ready.
   let quant: Quant = r.quant
-  let err = await ensureEngine(quant.engine === "mlx" ? "mlx" : "llama.cpp")
+  let err = await ensureEngine(engineOf(quant))
   if (err && quant.engine === "mlx") {
     const ggufOnly = (quants ?? []).filter((q) => q.engine === "llama.cpp")
     const alt = ggufOnly.length ? fit({ ...device.budget, apple: false }, ggufOnly) : null
@@ -214,7 +251,7 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
   let cached = findCached(models, repo)
   const have = cached && modelPath(cached, quant)
   if (!have || !cached) {
-    const code = await pullModel(repo, quant.engine === "mlx" ? undefined : quant.name, Boolean(opts.allowUnverified))
+    const code = await pullModel(repo, quant.engine === "llama.cpp" ? quant.name : undefined, Boolean(opts.allowUnverified), undefined, quant.engine === "colibri" ? "colibri" : undefined)
     if (code !== 0) return code
     ;({ models } = await listModels())
     cached = findCached(models, repo)
@@ -230,7 +267,7 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
   let rt: RuntimeInstance | undefined = rts.find((x) => x.model_id === id && (x.status === "running" || x.status === "starting"))
   if (!rt) {
     try {
-      const recipe = quant.engine === "mlx" ? ({ backend: "mlx", model_path: path } as const) : ({ backend: "llama_cpp", model_path: path, n_gpu_layers: device.hardware?.gpus.length || device.budget.apple ? 999 : 0 } as const)
+      const recipe = recipeFor(quant, path, device)
       rt = (await launchRuntime(id, recipe)).runtime
     } catch (e) {
       const status = e instanceof LocalEngineError ? e.status : undefined
