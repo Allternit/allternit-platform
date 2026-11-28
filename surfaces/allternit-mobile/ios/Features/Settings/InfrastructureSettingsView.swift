@@ -13,7 +13,7 @@ struct InfrastructureSettingsView: View {
     @ObservedObject private var instanceStore = InstanceStore.shared
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Infrastructure") {
             environmentSection
             meshSection
             cloudInstancesSection

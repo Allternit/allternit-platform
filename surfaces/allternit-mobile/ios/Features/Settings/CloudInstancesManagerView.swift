@@ -13,12 +13,25 @@ struct CloudInstancesManagerView: View {
     @State private var actionError: String? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().background(Color("BorderSubtle"))
+        DockingTitleScrollView(title: "Cloud Instances", description: "BYO-VPS deployment wizard", chrome: .navigationBar) {
             content
         }
+        .refreshable {
+            await store.refresh()
+        }
         .background(Color("BgPrimary").edgesIgnoringSafeArea(.all))
+        .navigationTitle("Cloud Instances")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                .accessibilityLabel("Close")
+            }
+        }
         .task {
             store.fetchIfNeeded()
         }
@@ -27,46 +40,15 @@ struct CloudInstancesManagerView: View {
         }
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Cloud Instances")
-                    .font(.system(.title3, design: .serif))
-                    .fontWeight(.medium)
-                    .foregroundColor(Color("TextPrimary"))
-                Text("BYO-VPS deployment wizard")
-                    .font(.caption)
-                    .foregroundColor(Color("TextSecondary"))
-            }
-
-            Spacer()
-
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color("TextSecondary"))
-                    .frame(width: 32, height: 32)
-                    .background(Color("BgPanel"))
-                    .clipShape(Circle())
-            }
-            .accessibilityLabel("Close")
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-    }
-
     // MARK: - Content
 
     @ViewBuilder
     private var content: some View {
         if store.isLoading && store.sessions.isEmpty {
-            Spacer()
             ProgressView()
-            Spacer()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
         } else if let loadError = store.loadError, store.sessions.isEmpty {
-            Spacer()
             let offline = isConnectionFailure(loadError)
             FriendlyStateView(
                 style: offline ? .offline : .error,
@@ -76,25 +58,20 @@ struct CloudInstancesManagerView: View {
                 actionTitle: "Retry",
                 action: { store.fetchIfNeeded(force: true) }
             )
-            Spacer()
+            .padding(.vertical, 20)
         } else {
-            ScrollView {
-                VStack(spacing: 16) {
-                    actionBar
-                    if let actionError {
-                        errorBanner(actionError)
-                    }
-                    if store.activeSession != nil {
-                        runCard
-                    }
-                    sessionList
+            VStack(spacing: 16) {
+                actionBar
+                if let actionError {
+                    errorBanner(actionError)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
+                if store.activeSession != nil {
+                    runCard
+                }
+                sessionList
             }
-            .refreshable {
-                await store.refresh()
-            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
         }
     }
 

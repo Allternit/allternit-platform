@@ -703,7 +703,7 @@ struct SettingsView: View {
     /// Advanced ›: every page that is not on the root, in the web's
     /// sections, plus the native rows that used to sit on the root.
     private var advancedScreen: some View {
-        ScrollView {
+        DockingTitleScrollView(title: "Advanced", chrome: .navigationBar) {
             VStack(spacing: 4) {
                 ForEach(SettingsAdvancedSection.allCases, id: \.self) { section in
                     VStack(spacing: 0) {
@@ -725,9 +725,10 @@ struct SettingsView: View {
                 }
                 .padding(.top, 18)
             }
-            .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
+            .padding(EdgeInsets(top: 8, leading: 2, bottom: 32, trailing: 2))
         }
         .background(Color("BgPrimary").ignoresSafeArea())
+        // Kept for the back button label and VoiceOver, like PhoneSettingsPage.
         .navigationTitle("Advanced")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("settingsAdvanced")

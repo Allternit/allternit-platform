@@ -28,7 +28,7 @@ struct SubagentsSettingsView: View {
     private var custom: [SubagentTypeEntry] { types.filter { !$0.builtin } }
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Subagents") {
             Section {
                 Text("Your agents hand work to these when it can run in parallel, needs a fresh context, or needs other tools. Planning, debugging, docs and summaries are skills your agent runs itself.")
                     .font(.footnote)

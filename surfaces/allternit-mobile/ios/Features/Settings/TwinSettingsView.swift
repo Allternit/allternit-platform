@@ -27,7 +27,7 @@ struct TwinSettingsView: View {
     private var active: [TwinMemory] { items.filter { $0.status == "active" } }
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Your twin") {
             Section {
                 Text("One voice and one memory for all your bots. Set how they speak for you and what they may say, and see what they know and where they learned it.")
                     .font(.footnote)

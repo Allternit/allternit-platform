@@ -15,7 +15,7 @@ struct ProductsSettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
 
     var body: some View {
-        List {
+        DockingTitleList(title: title) {
             if part == nil || part == .gizziCode { gizziioCodeSection }
             if part == nil || part == .cowork { coworkSection }
             if part == nil || part == .extensions { extensionsSection }

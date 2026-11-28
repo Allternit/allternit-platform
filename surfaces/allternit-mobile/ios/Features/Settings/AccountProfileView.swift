@@ -19,7 +19,7 @@ struct AccountProfileView: View {
     @StateObject private var statusModel = UserStatusModel()
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Account") {
             Section {
                 HStack(spacing: 12) {
                     AccountAvatar(size: 52)
