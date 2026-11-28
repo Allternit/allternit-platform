@@ -55,6 +55,27 @@ pub const NEVER_GRANTED: [&str; 4] = ["pay", "delete", "credential", "money_app"
 pub const WAIT: Duration = Duration::from_secs(300);
 /// An approved hold must be used within this many seconds of approval.
 pub const RETRY_WINDOW_SECS: i64 = 600;
+/// Money holds: the approval is good for the kernel token's longest life (900 s cap); the kernel
+/// token's own TTL (300 s default) is enforced when it is spent.
+pub const MONEY_WINDOW_SECS: i64 = 900;
+
+/// Money-class effects (the kernel's `money` class, see `authority::adapters::gateway::class_for`
+/// plus `pay`, a confirm/submit-like tap): never covered by an earlier hold or a grant.
+pub fn is_money_effect(effect: &str) -> bool {
+    matches!(effect, "money_app" | "pay")
+}
+
+/// Plain words for a money hold: names the app and the action.
+fn money_text(tool: &str, app: Option<&str>, el: Option<&El>) -> String {
+    let app = app.filter(|a| !a.is_empty()).unwrap_or("a money app");
+    let t = tool.trim_start_matches("phone.");
+    let label = el.map(|e| e.label.trim()).filter(|l| !l.is_empty());
+    match (t, label) {
+        ("open_app" | "launch_app", _) => format!("Open {app}"),
+        (_, Some(l)) => format!("Tap \"{l}\" in {app}"),
+        _ => format!("Do an action in {app} ({t})"),
+    }
+}
 
 // ─── Caller context ────────────────────────────────────────────────────────
 
@@ -624,26 +645,16 @@ pub fn check(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<
     let hash = content_hash(&req.serial, app, &req.tool, req.el.as_ref(), effect, &typed);
     let run = run_of(req);
     let conn = db.connect().map_err(|e| e.to_string())?;
-    // One approved hold covers a money app for the rest of the run.
-    if effect == "money_app" && run != "direct" && !app.is_empty() {
-        let covered: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM gateway_approvals WHERE owner = ?1 AND authority = 'allternit' AND state = 'approved' AND correlation_id LIKE ?2
-                   AND json_extract(detail_json, '$.phone.effect') = 'money_app' AND json_extract(detail_json, '$.phone.app') = ?3",
-                params![owner, format!("phone:{run}:%"), app],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if covered > 0 {
-            return Ok(Decision::Allow { hold_id: None });
-        }
-    }
+    // Money is human-only: no earlier approval covers a later money action. Every consequential
+    // money action (`money_app`: open, element-less tap, actions.run; `pay`: confirm/submit-like
+    // tap) needs its own hold, and the hold's kernel token is spent on use (`gateway::consume`).
     let hold_id = req.hold_id.clone().or_else(|| req.args.get("_hold").and_then(Value::as_str).map(str::to_string)).filter(|h| !h.trim().is_empty());
     if let Some(hid) = hold_id {
         if let Some(row) = load(db, Some(owner), &hid)? {
             match row.state.as_str() {
                 "approved" if !row.consumed => {
-                    let fresh = row.resolved_at.as_deref().and_then(ts).map(|r| chrono::Utc::now() - r <= chrono::Duration::seconds(RETRY_WINDOW_SECS)).unwrap_or(false);
+                    let window = if is_money_effect(effect) { MONEY_WINDOW_SECS } else { RETRY_WINDOW_SECS };
+                    let fresh = row.resolved_at.as_deref().and_then(ts).map(|r| chrono::Utc::now() - r <= chrono::Duration::seconds(window)).unwrap_or(false);
                     if row.hash() != hash {
                         set_state(db, &row, "changed");
                     } else if !fresh {
@@ -726,6 +737,10 @@ fn create_hold(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn, effect: 
         "contentHash": hash,
         "botless": botless,
     });
+    if is_money_effect(effect) {
+        phone["actionText"] = json!(money_text(&tool, req.app.as_deref(), req.el.as_ref()));
+        phone["singleUse"] = json!(true);
+    }
     if is_type_tool(&tool) {
         phone["typedChars"] = json!(typed_text(&tool, &req.args).chars().count());
     }
@@ -947,7 +962,11 @@ where
         }
         let before = if run.is_empty() { None } else { live_status(&run).and_then(|l| l.get("step_label").cloned()) };
         if !run.is_empty() {
-            let label = format!("Waiting for your OK to {effect}");
+            let label = if is_money_effect(&effect) {
+                format!("Waiting for your OK: {}", money_text(&req.tool, req.app.as_deref(), req.el.as_ref()))
+            } else {
+                format!("Waiting for your OK to {effect}")
+            };
             merge_live(&run, json!({ "status": "waiting_approval", "approvalId": aid, "effect": effect, "step_label": label }));
             let trail = live_status(&run).and_then(|l| l.get("trail").and_then(Value::as_array).cloned());
             crate::phone_runs::post_run_card(
@@ -1290,6 +1309,47 @@ mod tests {
         let mut ok = pay_tap("task-1", "OK");
         ok.el = Some(el("Button", "OK", ""));
         assert_eq!(check(&st.db, None, &ok).unwrap(), Decision::Allow { hold_id: None });
+    }
+
+    fn money_open(run: &str, step: u32) -> CheckIn {
+        CheckIn {
+            serial: "link:1".into(),
+            tool: "phone.open_app".into(),
+            args: json!({ "app": "Chase" }).as_object().unwrap().clone(),
+            app: Some("Chase".into()),
+            ctx: TaskCtx { owner: "user-a".into(), source: "api".into(), ..Default::default() },
+            run_id: Some(run.into()),
+            step: Some(step as _),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_money_action_in_the_same_run_asks_again() {
+        let st = setup("money-twice").await;
+        let d = check(&st.db, None, &money_open("task-m", 1)).unwrap();
+        let id = hold_id(&d);
+        resolve(&st, &id, "approved", now());
+        let mut again = money_open("task-m", 1);
+        again.hold_id = Some(id.clone());
+        assert_eq!(check(&st.db, None, &again).unwrap(), Decision::Allow { hold_id: Some(id.clone()) });
+        // The next money action (same app, same run) gets a new hold, not the old approval.
+        let next = check(&st.db, None, &money_open("task-m", 2)).unwrap();
+        assert_ne!(hold_id(&next), id);
+        // The spent hold cannot be replayed.
+        assert_ne!(hold_id(&check(&st.db, None, &again).unwrap()), id);
+        let text: String = st.db.connect().unwrap().query_row(
+            "SELECT json_extract(detail_json, '$.phone.actionText') FROM gateway_approvals WHERE id = ?1", params![hold_id(&next)], |r| r.get(0)).unwrap();
+        assert_eq!(text, "Open Chase");
+    }
+
+    #[tokio::test]
+    async fn a_non_money_app_keeps_its_behaviour() {
+        let st = setup("money-not").await;
+        let mut open = money_open("task-n", 1);
+        open.args = json!({ "app": "Notes" }).as_object().unwrap().clone();
+        open.app = Some("Notes".into());
+        assert_eq!(check(&st.db, None, &open).unwrap(), Decision::Allow { hold_id: None });
     }
 
     #[tokio::test]
