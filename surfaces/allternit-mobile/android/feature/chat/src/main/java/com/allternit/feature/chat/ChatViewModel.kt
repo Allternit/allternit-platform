@@ -360,6 +360,24 @@ class ChatViewModel(
         }
     }
 
+    /** Save as test case (eval loop): Idle, Saving, Saved(needs a check), or the CONTRACT section 9 failure text. */
+    var testCase by mutableStateOf<TestCaseState>(TestCaseState.Idle)
+        private set
+
+    fun resetTestCase() { testCase = TestCaseState.Idle }
+
+    fun saveTestCase(good: Boolean, reason: String?, note: String?) {
+        val id = currentSessionId ?: return
+        if (testCase is TestCaseState.Saving) return
+        testCase = TestCaseState.Saving
+        scope.launch {
+            testCase = when (val r = backend.eval.saveCase(id, good, reason, note)) {
+                is EvalOutcome.Ok -> TestCaseState.Saved(r.value.needsCheck)
+                is EvalOutcome.Err -> TestCaseState.Failed(r.error.text)
+            }
+        }
+    }
+
     /** `DELETE agent-sessions/:id`, then a fresh chat (the ⋯ menu's Delete chat). */
     fun deleteCurrentSession(onDone: () -> Unit) {
         val id = currentSessionId ?: return
@@ -1163,4 +1181,12 @@ class ChatViewModel(
             put("research", r.research)
         }
     }
+}
+
+/** The Save as test case sheet's state. */
+sealed interface TestCaseState {
+    data object Idle : TestCaseState
+    data object Saving : TestCaseState
+    data class Saved(val needsCheck: Boolean) : TestCaseState
+    data class Failed(val text: String) : TestCaseState
 }
