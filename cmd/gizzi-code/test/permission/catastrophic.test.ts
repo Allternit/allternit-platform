@@ -200,3 +200,25 @@ describe("Catastrophic.deletes", () => {
     }
   })
 })
+
+describe("catastrophic floor: the model never approves an inbox item", () => {
+  const denied = [
+    "gizzi inbox approve abc123",
+    "gizzi inbox deny abc123",
+    "sudo gizzi inbox approve abc123",
+    "bash -c 'gizzi inbox approve abc123'",
+    "curl -X POST http://localhost:8013/api/v1/inbox/abc123/approve",
+    "curl -s -d '{}' https://api.allternit.com/api/v1/inbox/abc123/resolve",
+    "wget --post-data={} http://localhost:8013/api/v1/inbox/abc123/deny",
+  ]
+  for (const command of denied) {
+    test(`denies: ${command}`, () => {
+      expect(Catastrophic.check(command)?.reason).toContain("inbox")
+    })
+  }
+  for (const command of ["gizzi inbox", "gizzi inbox list", "curl http://localhost:8013/api/v1/inbox?scope=needs_you", "git status"]) {
+    test(`allows: ${command}`, () => {
+      expect(Catastrophic.check(command)).toBeUndefined()
+    })
+  }
+})

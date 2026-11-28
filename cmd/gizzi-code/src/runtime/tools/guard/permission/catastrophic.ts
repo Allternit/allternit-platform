@@ -16,6 +16,9 @@ import path from "path"
  *   - shutdown / reboot / halt / poweroff
  *   - a force push (`--force`, `-f`, `--force-with-lease`, `+ref`, `--mirror`)
  *     to main or master — or a force push whose target branch isn't named
+ *   - `gizzi inbox approve|deny` and a curl/wget/http write to
+ *     `/api/v1/inbox/<id>/approve|deny|resolve|dismiss` (AllternitOS CONTRACT 4.3, 7.2):
+ *     the model never approves an inbox item, a person does
  *   - `security find-generic-password` / `find-internet-password` /
  *     `dump-keychain` (macOS keychain reads)
  *
@@ -47,7 +50,7 @@ export namespace Catastrophic {
 
   /** Programs whose presence in an unparseable command means deny. */
   const GUARDED =
-    /(^|[^\w.-])(rm|mkfs(\.\w+)?|newfs\w*|dd|diskutil|shutdown|reboot|halt|poweroff|systemctl|security)([^\w.-]|$)|(^|[^\w.-])git([^\w.-]).*\bpush\b|(^|[^\w.-])init\s+[06]\b/
+    /(^|[^\w.-])(rm|mkfs(\.\w+)?|newfs\w*|dd|diskutil|shutdown|reboot|halt|poweroff|systemctl|security)([^\w.-]|$)|(^|[^\w.-])git([^\w.-]).*\bpush\b|(^|[^\w.-])init\s+[06]\b|(^|[^\w.-])gizzi([^\w.-]).*\binbox\b|\/api\/v1\/inbox\//
   const FORK_BOMB = /([\w:.-]+)\s*\(\s*\)\s*\{[^}]*?\1\s*\|\s*&?\s*\1\s*&/
 
   export function check(command: string, options: CheckOptions = {}): Verdict | undefined {
@@ -426,11 +429,31 @@ export namespace Catastrophic {
     }
     if (name === "init" && (args[0] === "0" || args[0] === "6")) return { reason: "init runlevel change stops the machine" }
     if (name === "git") return git(args)
+    const inbox = inboxVerdict(name, args)
+    if (inbox) return inbox
     if (name === "security") {
       const sub = args.find((a) => !a.startsWith("-"))
       if (sub && ["find-generic-password", "find-internet-password", "dump-keychain"].includes(sub)) {
         return { reason: `security ${sub} reads keychain secrets` }
       }
+    }
+    return
+  }
+
+  const INBOX_REFUSAL = "the model never approves an inbox item; a person does that in /inbox or with `gizzi inbox approve` at their own terminal"
+  const INBOX_VERBS = /^(approve|deny|resolve|dismiss)$/i
+  const INBOX_URL = /\/api\/v1\/inbox\/[^/\s?#]+\/(approve|deny|resolve|dismiss)\b/i
+
+  /** `gizzi inbox approve|deny <id>` and HTTP writes to the inbox's approve, deny and resolve routes. */
+  function inboxVerdict(name: string, args: string[]): Verdict | undefined {
+    if (name === "gizzi" || name === "gizzi-code") {
+      // Options before the subcommand are skipped; `inbox` must be the first word, its verb the next.
+      const rest = args.filter((a) => !a.startsWith("-"))
+      if (rest[0] === "inbox" && INBOX_VERBS.test(rest[1] ?? "")) return { reason: `gizzi inbox ${rest[1]}: ${INBOX_REFUSAL}` }
+      return
+    }
+    if (["curl", "wget", "http", "https", "xh", "xhs"].includes(name) || name === "fetch") {
+      if (args.some((a) => INBOX_URL.test(a))) return { reason: `an inbox approve, deny or resolve request: ${INBOX_REFUSAL}` }
     }
     return
   }

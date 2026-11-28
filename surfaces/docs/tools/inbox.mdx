@@ -1,0 +1,30 @@
+---
+title: 'inbox'
+description: 'The built-in tool an agent uses to list, summarise, snooze and prepare what is waiting on you, never to approve it'
+---
+
+## Overview
+
+`inbox` lets an agent see the items waiting on you, such as approvals and notices, and get them ready. It reads the same inbox every Allternit app shows (`/api/v1/inbox`).
+
+Not built, not live: this ships with AllternitOS Stage 1.
+
+## Actions
+
+| Action | What it does |
+|---|---|
+| `list` | Items for `needs_you`, `snoozed` or `all`, each with its owner, deadline and the exact action. |
+| `summarise` | A plain-words summary of the ids you give. |
+| `snooze` | Hide one item until a time. |
+| `prepare` | Store a draft answer for you to review. The item shows as prepared, with the exact action text. Nothing is resolved. |
+
+## What the agent cannot do
+
+There is no approve, deny or resolve action. You decide, in the inbox of any app, in `/inbox` in Gizzi Code, or with `gizzi inbox approve <id>` and `gizzi inbox deny <id>` in your own terminal.
+
+An agent that tries to reach those through its shell is refused. Gizzi's guard blocks `gizzi inbox approve`, `gizzi inbox deny` and a curl or wget write to an inbox approve, deny or resolve address, and no permission mode or setting turns that off. The server refuses a model caller as well.
+
+## Approve it yourself
+
+- In Gizzi Code, type `/inbox`. Move with the arrow keys, press `a` to approve or `d` to deny.
+- In a terminal, run `gizzi inbox` to list, then `gizzi inbox approve <id>` or `gizzi inbox deny <id>`.

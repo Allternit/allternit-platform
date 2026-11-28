@@ -1,0 +1,9 @@
+Read and prepare the user's inbox of things waiting on them (approvals and notices).
+
+Actions:
+- list: scope (needs_you, snoozed or all), optional limit. Returns the items with who owns each, the deadline and the exact action.
+- summarise: ids. Returns a plain-words summary of those items.
+- snooze: id, until (a timestamp). Hides one item until then.
+- prepare: id, draft (an object). Stores a draft answer for the person to review. It resolves nothing.
+
+You cannot approve, deny or resolve an item. A person does that in the inbox, in /inbox, or with `gizzi inbox approve`. Do not try to reach those through bash, curl or any other route; they are refused. After `prepare`, tell the person the item is ready for their decision.

@@ -1,0 +1,22 @@
+---
+title: "gizzi inbox"
+description: "See what is waiting on you and approve or deny it yourself from the terminal."
+---
+
+`gizzi inbox` lists the items waiting on you. You decide on each one. The agent cannot.
+
+```bash
+gizzi inbox
+gizzi inbox approve <id>
+gizzi inbox deny <id>
+```
+
+| Command | Meaning |
+| --- | --- |
+| `gizzi inbox [list] [--json]` | Items that need you, with urgency, deadline and the exact action. |
+| `gizzi inbox approve <id>` | Approve one item. |
+| `gizzi inbox deny <id>` | Deny one item. |
+
+In Gizzi Code, `/inbox` does the same: arrow keys to choose, `a` to approve, `d` to deny.
+
+Approving needs your own signed-in session (`gizzi login`). An agent's shell is refused when it runs `gizzi inbox approve` or `gizzi inbox deny`, or posts to an inbox approve or deny address. See the [inbox tool](/tools/inbox).
