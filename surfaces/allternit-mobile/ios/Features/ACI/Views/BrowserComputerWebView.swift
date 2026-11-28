@@ -48,6 +48,9 @@ final class BrowserComputerModel: NSObject, ObservableObject {
     }
 
     static let boxURL = URL(string: "https://box.allternit.com/")!
+    /// box.allternit.com is not deployed yet (train 20261127-1934). The Computers row stays
+    /// hidden until this is true; flip it in the store build that follows the box site going live.
+    static let isLive = false
     static let handlerName = "allternitBox"
     static let unsupportedLine = "The browser computer needs iOS 27 or later."
     static let memoryLine = "The computer stopped because the phone ran low on memory. Start it again."

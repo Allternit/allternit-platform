@@ -51,6 +51,9 @@ import kotlinx.serialization.json.put
  * The page must ship that mode before this works on a device.
  */
 internal const val BOX_ORIGIN = "https://box.allternit.com"
+
+/** box.allternit.com is not deployed yet (train 20261127-1934); the Computers row stays hidden until this is true. */
+internal const val BROWSER_COMPUTER_LIVE = false
 private const val BOX_HANDLER = "AllternitBoxNative"
 private const val WEBVIEW_PLAY_URL = "market://details?id=com.google.android.webview"
 private const val WEBVIEW_PLAY_WEB = "https://play.google.com/store/apps/details?id=com.google.android.webview"

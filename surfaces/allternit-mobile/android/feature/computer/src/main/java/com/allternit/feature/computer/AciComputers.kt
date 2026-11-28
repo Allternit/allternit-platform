@@ -121,7 +121,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
             if (consoleOn) AciConsoleSection(host.restorePoints)
             // A Linux computer that runs in this phone's WebView (CONTRACT section 5.1 label). Signed-in users only.
-            if (host.signedIn) {
+            if (host.signedIn && BROWSER_COMPUTER_LIVE) {
                 AciRoundedCard(Modifier.padding(bottom = 12.dp)) {
                     Column(
                         Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open Browser computer") { browserComputerOpen = true }

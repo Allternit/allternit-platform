@@ -38,7 +38,7 @@ struct ACIComputersPane: View {
                     .padding(.bottom, 12)
                     ACIWideButton(systemName: "display", title: "View a computer's screen") { isScreenPickerOpen = true }
                     if consoleOn { ACIConsoleSection() }
-                    if auth.isSignedIn { browserComputerRow }
+                    if auth.isSignedIn && BrowserComputerModel.isLive { browserComputerRow }
                     machines
                     ACILinkedPhonesSection()
                         .padding(.top, 24)
