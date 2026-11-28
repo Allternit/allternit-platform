@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "id": "req-1",
+  "ok": false,
+  "error": {
+    "code": "forbidden_caller",
+    "message": "Only a person can approve this.",
+    "receipt_id": null
+  }
+}

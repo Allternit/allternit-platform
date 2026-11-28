@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "id": "req-1",
+  "call": "approval.resolve",
+  "caller": {
+    "kind": "human",
+    "principal": "user:owner"
+  },
+  "body": {
+    "lease_id": "lease_01"
+  }
+}

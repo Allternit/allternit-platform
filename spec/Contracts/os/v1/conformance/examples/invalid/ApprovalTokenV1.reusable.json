@@ -1,0 +1,16 @@
+{
+  "schema_id": "allternit.os.ApprovalTokenV1",
+  "schema_version": "1.0.0",
+  "token_id": "tok_01",
+  "request_id": "apr_01",
+  "action_class": "deploy",
+  "action_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "principal": "agent:gizzi",
+  "approved_by": "user:owner",
+  "issued_at": "2026-11-27T12:00:00Z",
+  "expires_at": "2026-11-27T12:05:00Z",
+  "single_use": false,
+  "key_id": "kernel-key-1",
+  "signature": "c2lnbmF0dXJlLWJ5dGVzLWVkMjU1MTk",
+  "token": "eyJ0b2tlbl9pZCI6InRva18wMSJ9"
+}

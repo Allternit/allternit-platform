@@ -1,0 +1,1785 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/os/1.0.0/authority.schema.json",
+  "title": "AllternitOS contracts 1.0.0 - authority kernel",
+  "$comment": "DRAFT for gate G0 (CONTRACT.md, AllternitOS Stage 0). Sibling of the frozen Kernel ABI 1.0.0; ABI types are referenced by $ref, never redefined.",
+  "$defs": {
+    "DecimalString": {
+      "type": "string",
+      "pattern": "^\\d+(\\.\\d+)?$",
+      "$comment": "Decimal string, never a float."
+    },
+    "ActionClass": {
+      "enum": [
+        "read",
+        "ui_layout",
+        "run_control",
+        "file_write",
+        "network",
+        "app_install",
+        "inbox_prepare",
+        "money",
+        "client_message",
+        "deploy",
+        "secret_new_host",
+        "irreversible"
+      ],
+      "$comment": "CONTRACT.md 4.1. A class not listed is ask until the kernel is told otherwise."
+    },
+    "HumanOnlyActionClass": {
+      "enum": [
+        "money",
+        "client_message",
+        "deploy",
+        "secret_new_host",
+        "irreversible"
+      ],
+      "$comment": "CONTRACT.md 4.1/4.2: always needs a human-approved ApprovalTokenV1 at every autonomy level."
+    },
+    "AutonomyLevel": {
+      "enum": [
+        "ask_first",
+        "ask_risky",
+        "full"
+      ],
+      "$comment": "CONTRACT.md 4.2."
+    },
+    "KernelCall": {
+      "enum": [
+        "check",
+        "lease.acquire",
+        "lease.heartbeat",
+        "lease.release",
+        "secret.use",
+        "approval.request",
+        "approval.resolve",
+        "approval.redeem",
+        "audit.append",
+        "budget.reserve",
+        "budget.commit",
+        "budget.release",
+        "deploy.admit"
+      ]
+    },
+    "ReceiptKind": {
+      "enum": [
+        "check",
+        "approval",
+        "secret_use",
+        "budget",
+        "deploy",
+        "lease"
+      ],
+      "$comment": "CONTRACT.md 11.2."
+    },
+    "ErrorCode": {
+      "enum": [
+        "bad_request",
+        "unsupported_version",
+        "frame_too_large",
+        "unauthenticated",
+        "forbidden_caller",
+        "denied",
+        "approval_required",
+        "token_invalid",
+        "token_expired",
+        "token_replayed",
+        "hash_mismatch",
+        "budget_exceeded",
+        "not_found",
+        "conflict",
+        "chain_broken",
+        "kernel_unavailable"
+      ],
+      "$comment": "CONTRACT.md 2.0. Callers treat an unknown code as denied."
+    },
+    "Caller": {
+      "type": "object",
+      "required": [
+        "kind",
+        "principal"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "run",
+            "human",
+            "service"
+          ]
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Set by the transport (session type or SO_PEERCRED uid), never by the sender."
+    },
+    "KernelRequestV1": {
+      "type": "object",
+      "required": [
+        "v",
+        "id",
+        "call",
+        "caller",
+        "body"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "call": {
+          "$ref": "#/$defs/KernelCall"
+        },
+        "caller": {
+          "$ref": "#/$defs/Caller"
+        },
+        "body": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "title": "KernelRequestV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "check"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/PolicyCheckOsV1"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "lease.acquire"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/LeaseAcquireBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "lease.heartbeat"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/LeaseHeartbeatBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "lease.release"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/LeaseReleaseBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "secret.use"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/SecretUseV1"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "approval.request"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/ApprovalRequestBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "approval.resolve"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/ApprovalResolveBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "approval.redeem"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/ApprovalRedeemBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "audit.append"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/AuditAppendBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "budget.reserve"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/BudgetReserveBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "budget.commit"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/BudgetCommitBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "budget.release"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/BudgetReleaseBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "deploy.admit"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/DeployAdmitBody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "approval.resolve"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "caller": {
+                "properties": {
+                  "kind": {
+                    "const": "human"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "call": {
+                "const": "approval.request"
+              }
+            },
+            "required": [
+              "call"
+            ]
+          },
+          "then": {
+            "properties": {
+              "caller": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "run",
+                      "service"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "CONTRACT.md 2.0 request envelope. Unix socket framing: 4-byte big-endian length + UTF-8 JSON, max 1 MiB."
+    },
+    "KernelResponseV1": {
+      "title": "KernelResponseV1",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "v",
+            "id",
+            "ok",
+            "body"
+          ],
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "id": {
+              "type": "string"
+            },
+            "ok": {
+              "const": true
+            },
+            "body": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "v",
+            "id",
+            "ok",
+            "error"
+          ],
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "id": {
+              "type": "string"
+            },
+            "ok": {
+              "const": false
+            },
+            "error": {
+              "type": "object",
+              "required": [
+                "code",
+                "message",
+                "receipt_id"
+              ],
+              "properties": {
+                "code": {
+                  "$ref": "#/$defs/ErrorCode"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "receipt_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "code": {
+                        "not": {
+                          "enum": [
+                            "bad_request",
+                            "frame_too_large",
+                            "unsupported_version"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "receipt_id": {
+                        "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "CheckExtensionV1": {
+      "type": "object",
+      "required": [
+        "action_class",
+        "action_hash",
+        "approval_token",
+        "autonomy_level"
+      ],
+      "properties": {
+        "action_class": {
+          "$ref": "authority.schema.json#/$defs/ActionClass"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "approval_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "autonomy_level": {
+          "$ref": "#/$defs/AutonomyLevel"
+        }
+      },
+      "additionalProperties": false,
+      "title": "CheckExtensionV1",
+      "$comment": "CONTRACT.md 2.1 + 11.1: carried in PolicyCheckV1.extensions[\"x-os-v1\"] (and echoed in PolicyDecisionV1.extensions[\"x-os-v1\"])."
+    },
+    "PolicyCheckOsV1": {
+      "title": "PolicyCheckOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json#/$defs/PolicyCheckV1"
+        },
+        {
+          "required": [
+            "extensions"
+          ],
+          "properties": {
+            "extensions": {
+              "required": [
+                "x-os-v1"
+              ],
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/CheckExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "check body: ABI PolicyCheckV1 unchanged, with the os fields required under extensions[\"x-os-v1\"] (CONTRACT.md 11.1)."
+    },
+    "PolicyDecisionOsV1": {
+      "title": "PolicyDecisionOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json#/$defs/PolicyDecisionV1"
+        },
+        {
+          "properties": {
+            "extensions": {
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/CheckExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "check response: ABI PolicyDecisionV1 unchanged; extensions[\"x-os-v1\"], when present, echoes the CheckExtensionV1 of the check it answers (CONTRACT.md 11.1 names no other decision fields)."
+    },
+    "LeaseOsV1": {
+      "title": "LeaseOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/work.schema.json#/$defs/LeaseV1"
+        },
+        {
+          "properties": {
+            "extensions": {
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/LeaseExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "lease responses: ABI LeaseV1 unchanged; mined fields optional under extensions[\"x-os-v1\"] (CONTRACT.md 2.9 + 11.1)."
+    },
+    "LeaseExtensionV1": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "requested_vcpu": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requested_memory_mib": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requested_gpu_vram_mib": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "labels": {
+          "$ref": "#/$defs/Labels"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseExtensionV1",
+      "$comment": "CONTRACT.md 2.9 + 11.1 mined fields for LeaseV1.extensions[\"x-os-v1\"]."
+    },
+    "Labels": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "maxProperties": 32,
+      "$comment": "Mined from old AllternitOS fabric-os common.schema.json#/$defs/labels."
+    },
+    "LeaseAcquireBody": {
+      "type": "object",
+      "required": [
+        "holder",
+        "scope",
+        "host",
+        "process_or_session",
+        "heartbeat_interval_ms",
+        "expires_after_ms",
+        "reclaim_policy",
+        "check_id"
+      ],
+      "properties": {
+        "holder": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ResourceRef"
+          },
+          "minItems": 1
+        },
+        "host": {
+          "type": "string"
+        },
+        "process_or_session": {
+          "type": "string"
+        },
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expires_after_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reclaim_policy": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/work.schema.json#/$defs/LeaseV1/properties/reclaim_policy"
+        },
+        "check_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseAcquireBody"
+    },
+    "LeaseHeartbeatBody": {
+      "type": "object",
+      "required": [
+        "lease_id",
+        "state_version"
+      ],
+      "properties": {
+        "lease_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "state_version": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/StateVersion"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseHeartbeatBody"
+    },
+    "LeaseReleaseBody": {
+      "type": "object",
+      "required": [
+        "lease_id"
+      ],
+      "properties": {
+        "lease_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseReleaseBody"
+    },
+    "LeaseReleaseResult": {
+      "type": "object",
+      "required": [
+        "released",
+        "receipt_id"
+      ],
+      "properties": {
+        "released": {
+          "const": true
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "LeaseReleaseResult"
+    },
+    "SecretUseV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "use_id",
+        "secret_ref",
+        "purpose",
+        "action_hash",
+        "check_id"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.SecretUseV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "use_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "secret_ref": {
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "http_header",
+            "env_for_process",
+            "connector_call",
+            "sign"
+          ]
+        },
+        "target_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_process": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "check_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "approval_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_host": {
+          "type": "boolean"
+        },
+        "redaction_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "SecretUseV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "enum": [
+                  "http_header",
+                  "connector_call"
+                ]
+              }
+            },
+            "required": [
+              "purpose"
+            ]
+          },
+          "then": {
+            "required": [
+              "target_host"
+            ],
+            "properties": {
+              "target_host": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "env_for_process"
+              }
+            },
+            "required": [
+              "purpose"
+            ]
+          },
+          "then": {
+            "required": [
+              "target_process"
+            ],
+            "properties": {
+              "target_process": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "new_host": {
+                "const": true
+              }
+            },
+            "required": [
+              "new_host"
+            ]
+          },
+          "then": {
+            "required": [
+              "approval_token"
+            ],
+            "properties": {
+              "approval_token": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "new_host, redaction_id, receipt_id are server-set. secret_ref is a handle; the kernel rejects a value-shaped string (bad_request), which a schema cannot detect."
+    },
+    "SecretUseResult": {
+      "type": "object",
+      "required": [
+        "use_id",
+        "bound",
+        "redaction_id",
+        "receipt_id"
+      ],
+      "properties": {
+        "use_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "bound": {
+          "const": true
+        },
+        "redaction_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "SecretUseResult"
+    },
+    "ApprovalRequestV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "request_id",
+        "source_store",
+        "run_id",
+        "principal",
+        "assignee",
+        "action_class",
+        "action_summary",
+        "action_payload",
+        "action_hash",
+        "deadline",
+        "on_expiry",
+        "attention_id",
+        "check_id",
+        "status",
+        "created_at"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ApprovalRequestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "request_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "source_store": {
+          "enum": [
+            "kernel",
+            "factory",
+            "aci",
+            "permission_policy",
+            "gateway",
+            "cowork",
+            "cloud_platform",
+            "task_grant",
+            "sign_request"
+          ]
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "assignee": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            },
+            {
+              "const": "owner"
+            }
+          ]
+        },
+        "action_class": {
+          "$ref": "authority.schema.json#/$defs/ActionClass"
+        },
+        "action_summary": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "action_payload": {
+          "type": "object"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "deadline": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "on_expiry": {
+          "const": "reject"
+        },
+        "attention_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "check_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "approved",
+            "denied",
+            "expired",
+            "withdrawn"
+          ]
+        },
+        "created_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "resolved_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "resolved_by": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalRequestV1",
+      "$comment": "Server-set: request_id, status, created_at, attention_id, action_hash (RFC 8785 canonical JSON of action_payload, recomputed by the kernel)."
+    },
+    "ApprovalRequestBody": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "source_store",
+        "run_id",
+        "principal",
+        "assignee",
+        "action_class",
+        "action_summary",
+        "action_payload",
+        "deadline",
+        "on_expiry",
+        "check_id"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ApprovalRequestV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "request_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "source_store": {
+          "enum": [
+            "kernel",
+            "factory",
+            "aci",
+            "permission_policy",
+            "gateway",
+            "cowork",
+            "cloud_platform",
+            "task_grant",
+            "sign_request"
+          ]
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "assignee": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            },
+            {
+              "const": "owner"
+            }
+          ]
+        },
+        "action_class": {
+          "$ref": "authority.schema.json#/$defs/ActionClass"
+        },
+        "action_summary": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "action_payload": {
+          "type": "object"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "deadline": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "on_expiry": {
+          "const": "reject"
+        },
+        "attention_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "check_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "approved",
+            "denied",
+            "expired",
+            "withdrawn"
+          ]
+        },
+        "created_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "resolved_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "resolved_by": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalRequestBody"
+    },
+    "ApprovalResolveBody": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "decision",
+        "note"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "deny"
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalResolveBody",
+      "$comment": "HUMAN ONLY (CONTRACT.md 4.3): KernelRequestV1 forces caller.kind == human for approval.resolve."
+    },
+    "ApprovalRedeemBody": {
+      "type": "object",
+      "required": [
+        "token",
+        "action_hash"
+      ],
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalRedeemBody"
+    },
+    "ApprovalRedeemResult": {
+      "type": "object",
+      "required": [
+        "redeemed",
+        "request_id",
+        "spend_receipt_id"
+      ],
+      "properties": {
+        "redeemed": {
+          "const": true
+        },
+        "request_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "spend_receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalRedeemResult"
+    },
+    "ApprovalTokenV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "token_id",
+        "request_id",
+        "action_class",
+        "action_hash",
+        "principal",
+        "approved_by",
+        "issued_at",
+        "expires_at",
+        "single_use",
+        "key_id",
+        "signature",
+        "token"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ApprovalTokenV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "token_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "request_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "action_class": {
+          "$ref": "authority.schema.json#/$defs/ActionClass"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "approved_by": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "issued_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "single_use": {
+          "const": true
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+={0,2}$"
+        },
+        "token": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+={0,2}$"
+        },
+        "redemption_receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ApprovalTokenV1",
+      "$comment": "Ed25519, kernel-signed, single use. TTL default 300 s, max 900 s (expires_at - issued_at): enforced by the kernel, not expressible in JSON Schema."
+    },
+    "AuditAppendBody": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "domain",
+        "schema_id",
+        "schema_version",
+        "payload",
+        "idempotency_key"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "domain": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/receipts.schema.json#/$defs/ReceiptChainV1/properties/domain"
+        },
+        "schema_id": {
+          "type": "string"
+        },
+        "schema_version": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/SemVer"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "type": "object"
+            },
+            {
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "$ref": "#/$defs/ReceiptKind"
+                }
+              }
+            }
+          ],
+          "$comment": "Open object; kind is required (CONTRACT.md 11.2)."
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "title": "AuditAppendBody",
+      "$comment": "domain is ReceiptChainV1.domain (the one ABI value); the receipt kind goes in payload.kind (CONTRACT.md 11.2). Response body is ReceiptChainV1."
+    },
+    "BudgetReservationV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "reservation_id",
+        "run_id",
+        "principal",
+        "scope",
+        "amount_reserved",
+        "currency",
+        "status",
+        "expires_at",
+        "receipt_id"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.BudgetReservationV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "reservation_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "scope": {
+          "enum": [
+            "run",
+            "day",
+            "month"
+          ]
+        },
+        "amount_reserved": {
+          "$ref": "authority.schema.json#/$defs/DecimalString"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^([A-Z]{3}|credits)$"
+        },
+        "status": {
+          "enum": [
+            "reserved",
+            "committed",
+            "released",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "amount_committed": {
+          "$ref": "authority.schema.json#/$defs/DecimalString"
+        },
+        "placement_id": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "required": [
+            "event_type",
+            "quantity",
+            "unit",
+            "measured_at"
+          ],
+          "properties": {
+            "event_type": {
+              "type": "string"
+            },
+            "quantity": {
+              "type": "number",
+              "minimum": 0
+            },
+            "unit": {
+              "type": "string"
+            },
+            "measured_at": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+            }
+          },
+          "additionalProperties": false
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "BudgetReservationV1"
+    },
+    "BudgetReserveBody": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "run_id",
+        "principal",
+        "scope",
+        "amount_reserved",
+        "currency",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.BudgetReservationV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "reservation_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "scope": {
+          "enum": [
+            "run",
+            "day",
+            "month"
+          ]
+        },
+        "amount_reserved": {
+          "$ref": "authority.schema.json#/$defs/DecimalString"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^([A-Z]{3}|credits)$"
+        },
+        "status": {
+          "enum": [
+            "reserved",
+            "committed",
+            "released",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "amount_committed": {
+          "$ref": "authority.schema.json#/$defs/DecimalString"
+        },
+        "placement_id": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "required": [
+            "event_type",
+            "quantity",
+            "unit",
+            "measured_at"
+          ],
+          "properties": {
+            "event_type": {
+              "type": "string"
+            },
+            "quantity": {
+              "type": "number",
+              "minimum": 0
+            },
+            "unit": {
+              "type": "string"
+            },
+            "measured_at": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+            }
+          },
+          "additionalProperties": false
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "BudgetReserveBody"
+    },
+    "BudgetCommitBody": {
+      "type": "object",
+      "required": [
+        "reservation_id",
+        "actual_amount",
+        "quantity",
+        "unit",
+        "idempotency_key"
+      ],
+      "properties": {
+        "reservation_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "actual_amount": {
+          "$ref": "authority.schema.json#/$defs/DecimalString"
+        },
+        "quantity": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "title": "BudgetCommitBody"
+    },
+    "BudgetReleaseBody": {
+      "type": "object",
+      "required": [
+        "reservation_id"
+      ],
+      "properties": {
+        "reservation_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "BudgetReleaseBody"
+    },
+    "DeployAdmissionV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "admission_id",
+        "principal",
+        "target",
+        "artifact_digest",
+        "command_preview",
+        "action_hash",
+        "status",
+        "receipt_id"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.DeployAdmissionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "admission_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "target": {
+          "type": "string"
+        },
+        "artifact_digest": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "command_preview": {
+          "type": "string"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "status": {
+          "enum": [
+            "pending_approval",
+            "admitted",
+            "denied",
+            "expired"
+          ]
+        },
+        "approval_token_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DeployAdmissionV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "admitted"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "approval_token_id"
+            ]
+          }
+        }
+      ],
+      "$comment": "action_hash = sha256 of RFC 8785 JSON {target, artifact_digest, command_preview}. Deploy is human-only."
+    },
+    "DeployAdmitBody": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "principal",
+        "target",
+        "artifact_digest",
+        "command_preview"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.DeployAdmissionV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "admission_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "principal": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "target": {
+          "type": "string"
+        },
+        "artifact_digest": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "command_preview": {
+          "type": "string"
+        },
+        "action_hash": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
+        },
+        "status": {
+          "enum": [
+            "pending_approval",
+            "admitted",
+            "denied",
+            "expired"
+          ]
+        },
+        "approval_token_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "receipt_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "DeployAdmitBody"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "holder": "run_01",
+  "scope": [
+    "computer:desktop-1"
+  ],
+  "host": "mac-studio",
+  "process_or_session": "sess_01",
+  "heartbeat_interval_ms": 5000,
+  "expires_after_ms": 30000,
+  "reclaim_policy": "NEEDS_HUMAN",
+  "check_id": "chk_03"
+}

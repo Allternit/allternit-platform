@@ -1,0 +1,14 @@
+{
+  "v": 2,
+  "id": "req-1",
+  "call": "approval.resolve",
+  "caller": {
+    "kind": "human",
+    "principal": "user:owner"
+  },
+  "body": {
+    "request_id": "apr_01",
+    "decision": "approve",
+    "note": null
+  }
+}

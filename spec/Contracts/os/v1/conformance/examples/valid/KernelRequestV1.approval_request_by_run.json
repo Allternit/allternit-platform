@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "id": "req-2",
+  "call": "approval.request",
+  "caller": {
+    "kind": "run",
+    "principal": "run_01"
+  },
+  "body": {
+    "schema_id": "allternit.os.ApprovalRequestV1",
+    "schema_version": "1.0.0",
+    "source_store": "kernel",
+    "source_ref": "row-17",
+    "run_id": "run_01",
+    "principal": "agent:gizzi",
+    "assignee": "owner",
+    "action_class": "deploy",
+    "action_summary": "Deploy m.allternit.com from build 512.",
+    "action_payload": {
+      "target": "pages:allternit-m",
+      "build": 512
+    },
+    "deadline": "2026-11-27T13:00:00Z",
+    "on_expiry": "reject",
+    "check_id": "chk_01",
+    "evidence_refs": [
+      "evidence://build/512"
+    ],
+    "extensions": {
+      "x-note": "example"
+    }
+  }
+}
