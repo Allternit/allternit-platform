@@ -73,7 +73,7 @@ for group in $(cut -d'|' -f1 "$OUT/manifest.tmp" | sort -u); do
   for p in $(awk -v g="$group" '$3 == g {print $2}' "$OUT/firmware.list"); do
     bytes=$((bytes + $(wc -c < "$OUT/lib-firmware/$p.xz")))
   done
-  printf '%s\t%s\t%s\t%s\t%s\n' "$group" "$lic" "$(sha "$SRC/$lic")" "$count" "$bytes" >> "$OUT/groups.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$group" "$lic" "$(sha "$(lic_path "$lic")")" "$count" "$bytes" >> "$OUT/groups.tsv"
 done
 rm -f "$OUT/manifest.tmp"
 
