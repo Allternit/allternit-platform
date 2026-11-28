@@ -260,7 +260,8 @@ fn rfc3339(at: DateTime<Utc>) -> String {
 /// `resolve` is the store's own resolve route for a signed-in person
 /// (`{method, path, decisions}`; send `{"decision": <one of decisions>}`); platform
 /// rows have none here (`null`): a twin row is decided on its runtime with
-/// `source.source_ref`, a computer row through the Platform API.
+/// `source.source_ref`, a computer row through the Platform API. A kernel row
+/// (migration 171) points at `/api/v1/kernel/relay/approvals/cloud/{id}/resolve`.
 async fn routed_asks(db: &sqlx::PgPool, user_id: &str, limit: i64) -> Result<Vec<Value>, ApiError> {
     let platform: Vec<RoutedPlatformRow> = sqlx::query_as(
         "SELECT id, project_id, source, source_ref, account_id, kind, proposed_action, approver_user_id, \
@@ -290,6 +291,13 @@ async fn routed_asks(db: &sqlx::PgPool, user_id: &str, limit: i64) -> Result<Vec
     for r in platform {
         let summary = r.proposed_action.get("summary").and_then(Value::as_str).map(str::to_string);
         let tool = r.proposed_action.get("tool").and_then(Value::as_str).map(str::to_string);
+        // A kernel request (chat with no computer) resolves on the phone relay route; other
+        // platform rows have none here.
+        let resolve = if r.source == crate::kernel_approvals::SOURCE {
+            json!({ "method": "POST", "path": crate::kernel_approvals::resolve_route(&r.id), "decisions": ["approve", "deny"] })
+        } else {
+            Value::Null
+        };
         asks.push((
             r.created_at,
             json!({
@@ -305,7 +313,7 @@ async fn routed_asks(db: &sqlx::PgPool, user_id: &str, limit: i64) -> Result<Vec
                 "state": "pending",
                 "created_at": rfc3339(r.created_at),
                 "expires_at": r.expires_at.map(rfc3339),
-                "resolve": Value::Null,
+                "resolve": resolve,
                 "source": {
                     "kind": r.source, "source_ref": r.source_ref, "project_id": r.project_id,
                     "account_id": r.account_id, "proposed_action": r.proposed_action,

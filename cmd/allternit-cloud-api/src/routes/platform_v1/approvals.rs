@@ -32,6 +32,14 @@
 //!   past `expires_at` and emits `approval.expired`; reads report such a row as
 //!   `expired` even before the sweep reaches it.
 //!
+//! * **Kernel rows** (`source = 'kernel'`, migration 171): cloud-api's authority kernel files
+//!   its approval requests for chats with no computer in this table
+//!   ([`crate::kernel_approvals`]). They are never listed or shown here (no scope maps to
+//!   them), the sweep expires them without a webhook, and `POST /v1/approvals/{id}` refuses
+//!   them with a `resolve_refused` receipt: an API key never approves a kernel request. The
+//!   owner approves from their phone (`/api/v1/kernel/relay/approvals/cloud/{id}/resolve`,
+//!   Clerk session only).
+//!
 //! A Platform agent turn whose twin `call` needs an approval fails that tool
 //! call ("try again once they approve") and ends; the row links to that turn's
 //! response, and while it is pending `GET /v1/responses/{id}` reads
@@ -429,6 +437,10 @@ pub async fn expire_due(db: &PgPool) -> Result<usize, sqlx::Error> {
     .fetch_all(db)
     .await?;
     for row in &rows {
+        // Kernel requests are the owner's, not the developer's: no project webhook.
+        if row.source == crate::kernel_approvals::SOURCE {
+            continue;
+        }
         if let Err(e) = super::events::emit_event(db, &row.project_id, row.account_id.as_deref(), "approval.expired", event_payload(row)).await {
             tracing::warn!(approval = %row.id, "approval.expired not emitted: {e}");
         }
@@ -488,6 +500,10 @@ pub async fn resolve(
             let computer = row.proposed_action.get("computer_id").and_then(Value::as_str).ok_or_else(not_found)?;
             super::computers::decide_on_computer(state, hosts.computer, caller, computer, &row.source_ref, decision).await?
         }
+        "kernel" => {
+            crate::kernel_approvals::refuse_receipt(&state.db, &row.id, "api_key").await;
+            return Err(kernel_refused());
+        }
         _ => return Err(not_found()),
     };
     let moved = mark_resolved(&state.db, &row.id, decision.status(), &caller.key_id).await?;
@@ -505,6 +521,12 @@ pub async fn resolve(
         }
     };
     Ok((row, source_answer))
+}
+
+/// A kernel approval request reached through an API key: only the owner's signed-in session
+/// approves those (CONTRACT.md 4.3).
+fn kernel_refused() -> PlatformError {
+    PlatformError::permission("forbidden_caller", "Only the owner's signed-in session can approve this, in the Allternit app. API keys never can.")
 }
 
 fn not_found() -> PlatformError {
@@ -614,6 +636,15 @@ async fn decide(
 ) -> Result<Json<Approval>, PlatformError> {
     if body.reason.as_deref().is_some_and(|r| r.chars().count() > MAX_REASON) {
         return Err(PlatformError::invalid_request("invalid_reason", format!("reason is at most {MAX_REASON} characters.")).with_param("reason"));
+    }
+    // A kernel request in this project: refused with a receipt before anything else.
+    if id.starts_with("apr_") && id.len() <= 64 {
+        if let Some(r) = by_id(&state.db, &caller.project_id, &id).await? {
+            if r.source == crate::kernel_approvals::SOURCE {
+                crate::kernel_approvals::refuse_receipt(&state.db, &r.id, "api_key").await;
+                return Err(kernel_refused());
+            }
+        }
     }
     let row = visible(&state.db, &caller, &id).await?;
     let (row, _) = resolve(&state, Hosts { agent, computer }, &caller, row, body.decision, body.reason.as_deref())

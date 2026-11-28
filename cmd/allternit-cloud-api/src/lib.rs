@@ -15,6 +15,7 @@ pub mod db;
 pub mod error;
 /// AllternitOS kernel embedded in cloud-api: receipts, shadow `check` (plan step 18).
 pub mod kernel;
+pub mod kernel_approvals;
 /// Tool to action-class table for the tools cloud-api runs itself.
 pub mod kernel_tools;
 pub mod middleware;

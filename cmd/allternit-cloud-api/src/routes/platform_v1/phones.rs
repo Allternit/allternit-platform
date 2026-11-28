@@ -416,6 +416,12 @@ pub(crate) async fn on_run_completed(db: &PgPool, owner: &str, data: &Value) -> 
 /// new hold). A deny or expiry ends the run; its status comes with
 /// `phone.run.completed`. Fleet runs read the same rows.
 pub(crate) async fn on_approval_event(db: &PgPool, owner: &str, name: &str, data: &Value) -> Result<(), sqlx::Error> {
+    // Write-through: the phone guard's hold is the kernel approval for phone SMS / dial (cloud-api
+    // lets those through on the hold, `mcp_edge::phone_hold`), so its resolution goes on the
+    // owner's cloud receipt chain.
+    if name == "phone.approval.resolved" {
+        crate::kernel_approvals::record_hold(db, owner, "phone_hold", data).await;
+    }
     let Some(run_id) = data.get("run_id").and_then(Value::as_str).filter(|r| !r.is_empty()) else { return Ok(()) };
     let (to, from) = match (name, data.get("state").and_then(Value::as_str)) {
         ("phone.approval.requested", _) => ("waiting_approval", "running"),

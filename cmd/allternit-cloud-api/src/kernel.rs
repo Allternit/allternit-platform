@@ -11,14 +11,19 @@
 //!    itself, with a receipt written before the answer (CONTRACT.md 5 rule 1). Mode comes from
 //!    `ALLTERNIT_KERNEL_MODE` (`shadow` by default, like step 9 in allternit-api): in shadow the
 //!    decision and its receipt are recorded and the call always proceeds; `enforce` refuses an
-//!    `ask` or human-only class.
+//!    `ask` or human-only class unless the call redeems an approval token for that exact action.
+//!    The refusal opens an approval request in `platform_approvals` (source `kernel`, see
+//!    [`crate::kernel_approvals`]) and returns its id; a person approves it from their phone and
+//!    the retried call redeems the single-use token minted then.
 //!
 //! **Key.** `ALLTERNIT_KERNEL_SEED`: standard base64 of a 32-byte Ed25519 seed, set in
 //! cloud-api's secret env on the host (the same file as `ALLTERNIT_DP_JWT_SEED`), never a file in
 //! the repo. No seed means no receipt can be written, so [`check`] answers `kernel_unavailable`
 //! (DENY in enforce, logged in shadow) and the relay refuses to forward. This key signs only
 //! cloud-api's own receipts; it never signs an approval token for a device (that key stays on the
-//! device, CONTRACT.md 3.2).
+//! device, CONTRACT.md 3.2). It does sign the approval tokens for cloud-api's own requests
+//! (chats with no computer, [`crate::kernel_approvals`]): those actions run here, so this kernel
+//! is the one that verifies the token at redeem.
 //!
 //! **Receipts** (`kernel_receipts`, migration 171): one hash chain per (principal, tenant),
 //! `hash` = `sha256:` + hex SHA-256 over the canonical JSON of
@@ -30,7 +35,7 @@ use allternit_authority::policy::{class_rule, Rule};
 use allternit_authority::{ActionClass, AutonomyLevel};
 use base64::{engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -69,8 +74,15 @@ impl KernelKey {
         &self.kid
     }
 
-    fn sign(&self, msg: &[u8]) -> String {
+    pub(crate) fn sign(&self, msg: &[u8]) -> String {
         URL_SAFE_NO_PAD.encode(self.signing.sign(msg).to_bytes())
+    }
+
+    /// True when `sig` (base64url Ed25519) is this key's signature over `msg`.
+    pub(crate) fn verify(&self, msg: &[u8], sig: &str) -> bool {
+        let Ok(bytes) = URL_SAFE_NO_PAD.decode(sig) else { return false };
+        let Ok(arr) = <[u8; 64]>::try_from(bytes.as_slice()) else { return false };
+        self.signing.verifying_key().verify(msg, &Signature::from_bytes(&arr)).is_ok()
     }
 }
 
@@ -212,8 +224,15 @@ pub struct Tool<'a> {
     /// `false` = the tool is in no table: the rule is forced to `ask`, whatever `class` says.
     pub known: bool,
     /// Set when a person already approved this exact call through the path's own flow (the
-    /// meeting owner's approval). The receipt records it and the call proceeds.
+    /// meeting owner's approval, a phone hold, a platform-agent text hold). The receipt records
+    /// it and the call proceeds.
     pub approved_by: Option<&'a str>,
+    /// Where an approval request goes when this call needs one (the project the row belongs to
+    /// and who must approve). `None`: no request can be opened (the refusal has no id).
+    pub ask_to: Option<crate::kernel_approvals::AskTo<'a>>,
+    /// The `kernel_approval_token` the caller sent, already taken out of `args`
+    /// ([`crate::kernel_approvals::split_token`]).
+    pub token: Option<&'a str>,
 }
 
 impl Tool<'_> {
@@ -235,7 +254,7 @@ pub(crate) fn set_test_kernel(mode: Option<Mode>) {
     TEST_KERNEL.with(|k| k.set(mode));
 }
 
-fn key_from_env() -> Result<KernelKey, String> {
+pub(crate) fn key_from_env() -> Result<KernelKey, String> {
     #[cfg(test)]
     if TEST_KERNEL.with(|k| k.get()).is_some() {
         return Ok(KernelKey::from_seed(&[7u8; 32]));
@@ -253,13 +272,17 @@ pub struct Checked {
     pub receipt_id: Option<String>,
     pub action_hash: String,
     pub action_class: &'static str,
+    /// The `platform_approvals` row (source `kernel`) opened for this call, when one was.
+    pub approval_request_id: Option<String>,
+    /// Set when the call carried a token the kernel refused (`approval_token_spent`,
+    /// `approval_hash_mismatch`, `approval_token_expired`, `approval_token_invalid`).
+    pub token_refused: Option<&'static str>,
 }
 
 impl Checked {
-    /// `None` when the tool may run, else the refusal a tool caller gets. cloud-api has no
-    /// approval request store for chats with no computer yet, so `approval_request_id` is null
-    /// and the caller gets the `action_hash` to approve (the no-computer approval flow is the
-    /// next gap).
+    /// `None` when the tool may run, else the refusal a tool caller gets: `approval_required`
+    /// with the approval request id (approve it in the Allternit app, then repeat the same call),
+    /// or the token refusal.
     pub fn refusal(&self) -> Option<Value> {
         if self.proceed {
             return None;
@@ -270,27 +293,39 @@ impl Checked {
                 "message": "The authority kernel could not record this action, so it did not run.",
             }));
         }
+        if let Some(code) = self.token_refused {
+            return Some(json!({
+                "code": code, "error": code,
+                "message": "The approval token for this action was refused (spent, expired, or for a different action), so it did not run.",
+                "approval_request_id": null, "action_hash": self.action_hash, "action_class": self.action_class,
+                "receipt_id": self.receipt_id,
+            }));
+        }
         Some(json!({
             "code": "approval_required", "error": "approval_required",
-            "message": "This action needs a person's approval before it runs.",
-            "approval_request_id": null, "action_hash": self.action_hash, "action_class": self.action_class,
+            "message": "This action needs a person's approval before it runs. They approve it in the Allternit app; then repeat the same call.",
+            "approval_request_id": self.approval_request_id, "action_hash": self.action_hash, "action_class": self.action_class,
             "receipt_id": self.receipt_id,
         }))
     }
 }
 
 /// `check` for a tool call cloud-api runs itself. Call it exactly once per call, before the tool
-/// runs, and stop when [`Checked::refusal`] is `Some`. No approval token can exist for these yet
-/// (the phone relay resolves device-held requests), so `ask` and `human_only` are refused in
-/// enforce mode and only recorded in shadow mode. Autonomy is `ask_first` (no consent receipt
-/// exists for cloud chats, CONTRACT.md 4.4).
+/// runs, and stop when [`Checked::refusal`] is `Some`. An `ask` or human-only class proceeds in
+/// enforce mode only when the call redeems an approval token for this exact action (the one sent
+/// as `kernel_approval_token`, or the token minted when a person approved this principal's
+/// request for the same `action_hash`). Otherwise it opens an approval request
+/// ([`crate::kernel_approvals`]) and refuses with its id. Shadow mode records the decision (and a
+/// dry request row) and proceeds. Autonomy is `ask_first` (no consent receipt exists for cloud
+/// chats, CONTRACT.md 4.4).
 pub async fn check(db: &PgPool, principal: &str, run_id: &str, tool: &Tool<'_>) -> Checked {
     check_in(db, key_from_env(), mode(), principal, run_id, tool).await
 }
 
 /// [`check`] with the key and mode supplied (tests).
 pub async fn check_in(db: &PgPool, key: Result<KernelKey, String>, mode: Mode, principal: &str, run_id: &str, tool: &Tool<'_>) -> Checked {
-    let decision = if tool.approved_by.is_some() {
+    use crate::kernel_approvals::{self as ka, Redeem};
+    let policy = if tool.approved_by.is_some() {
         "allow"
     } else if !tool.known {
         "ask"
@@ -304,12 +339,14 @@ pub async fn check_in(db: &PgPool, key: Result<KernelKey, String>, mode: Mode, p
     let class_name = enum_name(tool.class);
     let mode_name = if mode == Mode::Shadow { "shadow" } else { "enforce" };
     let action_hash = tool.action_hash();
-    let done = |decision: &'static str, proceed: bool, receipt_id: Option<String>| Checked {
+    let done = |decision: &'static str, proceed: bool, receipt_id: Option<String>, request: Option<String>, token_refused: Option<&'static str>| Checked {
         decision,
         proceed,
         receipt_id,
         action_hash: action_hash.clone(),
         action_class: class_name,
+        approval_request_id: request,
+        token_refused,
     };
     let key = match key {
         Ok(k) => k,
@@ -317,15 +354,51 @@ pub async fn check_in(db: &PgPool, key: Result<KernelKey, String>, mode: Mode, p
             // One warning per process, not one per call. Shadow still runs (no receipt).
             static MISSING_KEY: std::sync::Once = std::sync::Once::new();
             MISSING_KEY.call_once(|| tracing::warn!("kernel check: no receipts will be written ({e})"));
-            return done("kernel_unavailable", mode == Mode::Shadow, None);
+            return done("kernel_unavailable", mode == Mode::Shadow, None, None, None);
         }
+    };
+    // An ask / human-only call: redeem a token for this exact action, if there is one.
+    let mut decision = policy;
+    let mut redeemed: Option<ka::Redeemed> = None;
+    let mut token_refused: Option<&'static str> = None;
+    if policy != "allow" {
+        match ka::redeem(db, &key, principal, &action_hash, tool.token).await {
+            Redeem::Ok(r) => {
+                decision = "allow";
+                redeemed = Some(r);
+            }
+            Redeem::Refused(code) => token_refused = Some(code),
+            Redeem::None => {}
+        }
+    }
+    // Still not allowed: the approval request this call raises (an open one for the same action
+    // is reused, so repeating the call does not ask twice). Its id goes on the receipt.
+    let request = if decision != "allow" && token_refused.is_none() {
+        match tool.ask_to.as_ref() {
+            Some(to) => ka::request_id_for(db, mode, to, principal, &action_hash).await,
+            None => None,
+        }
+    } else {
+        None
     };
     let mut payload = json!({
         "tool": tool.name, "action_class": class_name, "classified": if tool.known { "table" } else { "default_ask" },
         "autonomy_level": "ask_first", "mode": mode_name, "surface": tool.surface, "action_hash": action_hash,
+        "policy": policy,
     });
     if let Some(by) = tool.approved_by {
         payload["approved_by"] = json!(by);
+    }
+    if let Some(r) = &redeemed {
+        payload["approved_by"] = json!(r.approved_by);
+        payload["token_id"] = json!(r.token_id);
+        payload["approval_request_id"] = json!(r.request_id);
+    }
+    if let Some(code) = token_refused {
+        payload["token_refused"] = json!(code);
+    }
+    if let Some(req) = &request {
+        payload["approval_request_id"] = json!(req.id);
     }
     let receipt = append(
         db,
@@ -338,12 +411,22 @@ pub async fn check_in(db: &PgPool, key: Result<KernelKey, String>, mode: Mode, p
             if decision != "allow" {
                 tracing::info!(tool = tool.name, class = %class_name, decision, mode = mode_name, "kernel check (cloud)");
             }
-            done(decision, mode == Mode::Shadow || decision == "allow", Some(id))
+            if let Some(r) = &redeemed {
+                ka::note_redemption(db, &r.token_id, &id).await;
+            }
+            let request_id = match (request, tool.ask_to.as_ref()) {
+                (Some(req), Some(to)) => {
+                    let n = ka::NewRequest { mode, to: *to, principal, run_id, tool, action_hash: &action_hash, action_class: class_name, decision, receipt_id: &id };
+                    ka::open_request(db, n, req).await
+                }
+                _ => None,
+            };
+            done(decision, mode == Mode::Shadow || decision == "allow", Some(id), request_id, token_refused)
         }
         // Write before act: no receipt means DENY when enforcing.
         Err(e) => {
             tracing::warn!(tool = tool.name, "kernel check: receipt not written ({e})");
-            done("kernel_unavailable", mode == Mode::Shadow, None)
+            done("kernel_unavailable", mode == Mode::Shadow, None, None, None)
         }
     }
 }
@@ -387,7 +470,7 @@ pub(crate) mod tests {
     }
 
     fn tool<'a>(name: &'a str, args: &'a Value, class: ActionClass, known: bool) -> Tool<'a> {
-        Tool { surface: "test", name, args, class, known, approved_by: None }
+        Tool { surface: "test", name, args, class, known, approved_by: None, ask_to: None, token: None }
     }
 
     #[tokio::test]

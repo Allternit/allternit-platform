@@ -20,6 +20,12 @@
 //! `Authorization` and `x-allternit-human-proof`, so the device's own check
 //! (`authority::routes::caller_and_proof`, `PersonProof::Session`) decides again, on the device.
 //!
+//! **Chats with no computer.** cloud-api's own approval requests (`platform_approvals` rows with
+//! source `kernel`, [`crate::kernel_approvals`]) are listed here too, with `runtimeId` `"cloud"`,
+//! and resolved on the same route with `:runtime_id` = `cloud`: after the same machine-credential
+//! and session checks, cloud-api itself records the decision and, on approve, mints the token
+//! (the action runs on cloud-api, so its kernel is the one that verifies it).
+//!
 //! **Expiry.** A row's `deadline` is the request's deadline. Past it the row reads as expired, is
 //! marked `expired` by every list, and resolve answers 409 `token_expired` without forwarding (the
 //! device rejects on expiry; `on_expiry` is always reject). A decision made on the device itself
@@ -131,9 +137,10 @@ pub fn push_message(runtime_id: &str, kernel: &Value) -> PushMessage {
         "runtimeId": runtime_id, "requestId": request_id, "kernel": kernel,
         "resolve": format!("{APPROVALS_PATH}/{runtime_id}/{request_id}/resolve"),
     });
+    let title = if runtime_id == crate::kernel_approvals::CLOUD_RUNTIME { "Allternit needs your OK" } else { "Your computer needs your OK" };
     PushMessage {
         kind: PUSH_KIND,
-        title: "Your computer needs your OK".to_string(),
+        title: title.to_string(),
         body: summary,
         url: format!("/inbox?kernel={request_id}"),
         tag: format!("kernel-approval-{request_id}"),
@@ -252,18 +259,34 @@ pub(crate) async fn pending_items(db: &PgPool, owner: &str) -> Result<Vec<Value>
     .bind(owner)
     .fetch_all(db)
     .await?;
-    Ok(rows
+    let mut items: Vec<(DateTime<Utc>, Value)> = rows
         .into_iter()
         .map(|(request_id, runtime_id, k, attention_id, created_at)| {
-            json!({
-                "id": format!("kernel:{request_id}"), "kind": "kernel_approval", "source": "kernel",
-                "title": k["actionSummary"], "createdAt": created_at, "attentionId": attention_id,
-                "runtimeId": runtime_id, "actions": ["approve", "deny"],
-                "resolveRoute": format!("{APPROVALS_PATH}/{runtime_id}/{request_id}/resolve"),
-                "kernel": k,
-            })
+            (
+                created_at,
+                json!({
+                    "id": format!("kernel:{request_id}"), "kind": "kernel_approval", "source": "kernel",
+                    "title": k["actionSummary"], "createdAt": created_at, "attentionId": attention_id,
+                    "runtimeId": runtime_id, "actions": ["approve", "deny"],
+                    "resolveRoute": format!("{APPROVALS_PATH}/{runtime_id}/{request_id}/resolve"),
+                    "kernel": k,
+                }),
+            )
         })
-        .collect())
+        .collect();
+    // cloud-api's own requests (chats with no computer), same shape, runtimeId "cloud".
+    // A cloud store error never hides the device requests.
+    let cloud = crate::kernel_approvals::pending_items(db, owner).await.unwrap_or_else(|e| {
+        tracing::warn!("kernel relay: cloud requests not listed ({e})");
+        Vec::new()
+    });
+    for item in cloud {
+        let at = item["createdAt"].as_str().and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map(|d| d.with_timezone(&Utc)).unwrap_or_else(Utc::now);
+        items.push((at, item));
+    }
+    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.truncate(100);
+    Ok(items.into_iter().map(|(_, v)| v).collect())
 }
 
 /// `GET /api/v1/kernel/relay/approvals`: Clerk session only.
@@ -319,7 +342,12 @@ async fn resolve(
 pub(crate) async fn resolve_for(state: &ApiState, runtime_id: &str, request_id: &str, headers: &HeaderMap, body: PhoneDecision) -> Response {
     let db = &state.db;
     // 1. Never a machine credential, whatever else it carries. Receipt on the row owner's chain.
+    let cloud = runtime_id == crate::kernel_approvals::CLOUD_RUNTIME;
     if let Some(reason) = machine_marker(headers) {
+        if cloud {
+            crate::kernel_approvals::refuse_receipt(db, request_id, reason).await;
+            return err(StatusCode::FORBIDDEN, "forbidden_caller", "only a person's signed-in session can approve");
+        }
         let owner: Option<String> =
             sqlx::query_scalar("SELECT owner_user_id FROM kernel_approval_relay WHERE runtime_id = $1 AND request_id = $2")
                 .bind(runtime_id)
@@ -341,6 +369,10 @@ pub(crate) async fn resolve_for(state: &ApiState, runtime_id: &str, request_id: 
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
+    // cloud-api's own request: decided and (on approve) signed here.
+    if cloud {
+        return crate::kernel_approvals::resolve_cloud(db, &user, request_id, &body.decision, body.note.as_deref()).await;
+    }
     // 3. The row, scoped to this person.
     let row: Option<(String, DateTime<Utc>, Value)> = match sqlx::query_as(
         "SELECT status, deadline, kernel FROM kernel_approval_relay WHERE runtime_id = $1 AND request_id = $2 AND owner_user_id = $3",
