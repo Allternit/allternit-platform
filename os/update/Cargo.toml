@@ -1,0 +1,15 @@
+[package]
+name = "allternit-update"
+description = "AllternitOS A/B updater (step 30b): writes a system image into the inactive slot and makes it active + unconfirmed."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "allternit-update"
+path = "src/main.rs"
+
+[dependencies]
+# Slot names, devices and the boot-state record are shared with PID 1.
+allternit-init = { path = "../init" }

@@ -1,8 +1,10 @@
 use allternit_init::config::{self, Action, Config, Exit, Service};
-use allternit_init::verity::{self, Verity};
+use allternit_init::luks;
+use allternit_init::slot::{self, BootState};
+use allternit_init::verity::{self, Slot, Verity};
 use libc::{c_int, c_void};
 use std::ffi::CString;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
@@ -13,6 +15,15 @@ use std::time::{Duration, Instant};
 const CONFIG_PATH: &str = "/etc/allternit/init.toml";
 const AUTH_SOCK: &str = "/run/allternit/authority.sock";
 const READY_LINE: &str = "ALLTERNIT-OS READY kernel-interface=1";
+/// TEST ONLY: the LUKS2 volume key of the state partition, baked into the initramfs by
+/// mkimage.sh. Anyone with the disk image has it. TODO(31): TPM / Secure Boot key binding.
+const STATE_KEY: &str = "/etc/allternit/TEST-ONLY-state.key";
+/// Device-mapper name of the opened state partition.
+const STATE_DM: &str = "state";
+/// The service whose clean exit means "the shell answered its first tool call" (it prints
+/// `shell-tool-call ok` and exits 0 only then). That confirms the running slot.
+/// TODO: a long-running shell will report health over the authority socket instead.
+const HEALTH_SERVICE: &str = "shell";
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -89,13 +100,33 @@ fn set_hostname(name: &str) {
     }
 }
 
-fn mount_state(cfg: &Config) -> bool {
+fn mount_state(cfg: &Config, key: Option<&[u8]>) -> bool {
     let Some(dev) = &cfg.state_device else { return false };
     if !std::path::Path::new(dev).exists() {
         log(&format!("no state partition at {dev}, running without state"));
         return false;
     }
-    if mount(dev, &cfg.state_mount, &cfg.state_fstype, (libc::MS_NOSUID | libc::MS_NODEV) as u64, "") {
+    let mut src = dev.clone();
+    if is_luks_dev(dev) {
+        let Some(key) = key else {
+            println!("state: luks open FAIL (no key at {STATE_KEY} in the initramfs)");
+            return false;
+        };
+        match open_luks(dev, key) {
+            Ok(node) => {
+                println!("state: luks open ok");
+                let _ = std::io::stdout().flush();
+                src = node;
+            }
+            Err(e) => {
+                println!("state: luks open FAIL ({e})");
+                return false;
+            }
+        }
+    } else {
+        log(&format!("state partition {dev} is not LUKS2 (unencrypted image?)"));
+    }
+    if mount(&src, &cfg.state_mount, &cfg.state_fstype, (libc::MS_NOSUID | libc::MS_NODEV) as u64, "") {
         log(&format!("state mounted at {}", cfg.state_mount));
         true
     } else {
@@ -240,6 +271,7 @@ fn shutdown(running: &[Running], state_mounted: bool, cfg: &Config) -> ! {
         unsafe { libc::umount2(cstr(&cfg.state_mount).as_ptr(), 0) };
     }
     unsafe {
+        libc::umount2(cstr(slot::ESP_MOUNT).as_ptr(), 0);
         libc::umount2(cstr("/run").as_ptr(), 0);
         libc::sync();
         libc::reboot(libc::RB_POWER_OFF);
@@ -249,7 +281,7 @@ fn shutdown(running: &[Running], state_mounted: bool, cfg: &Config) -> ! {
     }
 }
 
-// --- system slot: dm-verity + switch root (plan step 30a) ------------------------------
+// --- system slot: dm-verity + switch root (plan step 30a), A/B state (30b) ---------------
 
 const SYSROOT: &str = "/sysroot";
 
@@ -265,11 +297,10 @@ fn halt() -> ! {
     }
 }
 
-/// The slot failed verification: say so on the console and do not boot it.
+/// The command line names no usable slot at all: nothing can boot.
 fn slot_fail(slot: &str, reason: &str) -> ! {
     println!("verity: FAIL slot={slot} ({reason})");
-    // TODO(30b): try the other slot (health-confirmed slot switch) instead of powering off.
-    log(&format!("slot {slot} is not booted; no fallback slot yet (step 30b), powering off"));
+    log(&format!("slot {slot} is not booted and there is no slot to fall back to, powering off"));
     halt()
 }
 
@@ -317,33 +348,43 @@ fn dm_call(ctl: &std::fs::File, nr: u32, buf: &mut [u8]) -> Result<(), String> {
     }
 }
 
-/// Create a read-only dm-verity device over the slot and read all of it once, so a bad
-/// block anywhere fails now (dm-verity checks blocks as they are read). Returns its node.
-fn open_verity(v: &Verity) -> Result<String, String> {
-    let dev = v.slot.device();
-    if !wait_for_path(dev, 10) {
-        return Err(format!("no partition at {dev}"));
-    }
-    let name = v.slot.dm_name();
+/// Create, load and resume one device-mapper device; returns its /dev/mapper node. The
+/// ioctl buffer holding the table (a dm-crypt key for the state partition) is zeroed after.
+fn dm_create(name: &str, flags: u32, sectors: u64, target: &str, params: &str) -> Result<String, String> {
     let ctl = dm_control()?;
     dm_call(&ctl, verity::DM_DEV_CREATE, &mut verity::dm_buffer(name, 0, None)?)?;
-    let (sectors, params) = v.table();
-    let loaded = verity::dm_buffer(name, verity::DM_READONLY_FLAG, Some((sectors, "verity", &params)))
-        .and_then(|mut b| dm_call(&ctl, verity::DM_TABLE_LOAD, &mut b));
+    let loaded = verity::dm_buffer(name, flags, Some((sectors, target, params))).and_then(|mut b| {
+        let r = dm_call(&ctl, verity::DM_TABLE_LOAD, &mut b);
+        b.fill(0);
+        r
+    });
     if let Err(e) = loaded {
-        if let Ok(mut b) = verity::dm_buffer(name, 0, None) {
-            let _ = dm_call(&ctl, verity::DM_DEV_REMOVE, &mut b);
-        }
+        dm_remove(name);
         return Err(format!("table load: {e}"));
     }
     // DEV_SUSPEND without the suspend flag = resume, which makes the loaded table live.
     let mut resume = verity::dm_buffer(name, 0, None)?;
-    dm_call(&ctl, verity::DM_DEV_SUSPEND, &mut resume)?;
+    if let Err(e) = dm_call(&ctl, verity::DM_DEV_SUSPEND, &mut resume) {
+        dm_remove(name);
+        return Err(e);
+    }
     let (major, minor) = verity::dm_dev(&resume);
     let node = format!("/dev/mapper/{name}");
     mknod_dev(&node, libc::S_IFBLK, major, minor)?;
+    Ok(node)
+}
 
-    let mut f = std::fs::File::open(&node).map_err(|e| format!("open {node}: {e}"))?;
+/// Best effort: drop a device-mapper device and its node (a slot that failed to verify).
+fn dm_remove(name: &str) {
+    if let (Ok(ctl), Ok(mut b)) = (dm_control(), verity::dm_buffer(name, 0, None)) {
+        let _ = dm_call(&ctl, verity::DM_DEV_REMOVE, &mut b);
+    }
+    let _ = std::fs::remove_file(format!("/dev/mapper/{name}"));
+}
+
+/// Read all of `node` once; it must be exactly `want` bytes.
+fn read_all(node: &str, want: u64) -> Result<(), String> {
+    let mut f = std::fs::File::open(node).map_err(|e| format!("open {node}: {e}"))?;
     let mut buf = vec![0u8; 1 << 20];
     let mut total: u64 = 0;
     loop {
@@ -354,8 +395,60 @@ fn open_verity(v: &Verity) -> Result<String, String> {
             Err(e) => return Err(format!("read failed at byte {total}: {e}")),
         }
     }
-    if total != v.data_bytes() {
-        return Err(format!("read {total} bytes, want {}", v.data_bytes()));
+    if total != want {
+        return Err(format!("read {total} bytes, want {want}"));
+    }
+    Ok(())
+}
+
+/// Create a read-only dm-verity device over the slot and read all of it once, so a bad
+/// block anywhere fails now (dm-verity checks blocks as they are read). Returns its node.
+fn open_verity(v: &Verity) -> Result<String, String> {
+    let dev = v.slot.device();
+    if !wait_for_path(dev, 10) {
+        return Err(format!("no partition at {dev}"));
+    }
+    let name = v.slot.dm_name();
+    let (sectors, params) = v.table();
+    let node = dm_create(name, verity::DM_READONLY_FLAG, sectors, "verity", &params)?;
+    if let Err(e) = read_all(&node, v.data_bytes()) {
+        dm_remove(name);
+        return Err(e);
+    }
+    Ok(node)
+}
+
+// --- LUKS2 state partition (plan step 30b) ---------------------------------------------
+
+fn is_luks_dev(dev: &str) -> bool {
+    let mut b = [0u8; 8];
+    std::fs::File::open(dev).and_then(|mut f| f.read_exact(&mut b)).is_ok() && luks::is_luks(&b)
+}
+
+/// Open the LUKS2 state partition with dm-crypt (TEST ONLY key from the initramfs) and check
+/// that an ext4 superblock is behind it, which catches a wrong key before the mount.
+fn open_luks(dev: &str, key: &[u8]) -> Result<String, String> {
+    let mut f = std::fs::File::open(dev).map_err(|e| format!("open {dev}: {e}"))?;
+    let mut hdr = vec![0u8; luks::BIN_HEADER];
+    f.read_exact(&mut hdr).map_err(|e| format!("read LUKS header: {e}"))?;
+    let size = luks::header_size(&hdr)? as usize;
+    hdr.resize(size, 0);
+    f.read_exact(&mut hdr[luks::BIN_HEADER..]).map_err(|e| format!("read LUKS2 JSON: {e}"))?;
+    let seg = luks::parse(&hdr)?;
+    let dev_bytes = f.seek(SeekFrom::End(0)).map_err(|e| format!("size of {dev}: {e}"))?;
+    drop(f);
+    let (sectors, params) = seg.table(dev, dev_bytes, key)?;
+    let mut params = params.into_bytes();
+    let made = std::str::from_utf8(&params)
+        .map_err(|e| e.to_string())
+        .and_then(|p| dm_create(STATE_DM, 0, sectors, "crypt", p));
+    params.fill(0);
+    let node = made?;
+    let mut start = vec![0u8; 2048];
+    let sb = std::fs::File::open(&node).and_then(|mut f| f.read_exact(&mut start));
+    if sb.is_err() || !luks::has_ext4_magic(&start) {
+        dm_remove(STATE_DM);
+        return Err("no ext4 superblock behind dm-crypt (wrong key?)".into());
     }
     Ok(node)
 }
@@ -400,33 +493,166 @@ fn switch_root(node: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Open the slot the kernel command line names, verify it, and switch root into it.
+/// What booted: the slot (None on a direct boot) and whether its state is on the ESP.
+struct Booted {
+    slot: Option<Slot>,
+    esp: bool,
+    confirmed_printed: bool,
+}
+
+fn state_path() -> String {
+    format!("{}/{}", slot::ESP_MOUNT, slot::STATE_FILE)
+}
+
+/// Mount the ESP (vda1, vfat) at /run/esp. It moves with /run into the new root, so the
+/// health confirm after the switch can still write the boot state.
+fn mount_esp() -> bool {
+    let dev = "/dev/vda1";
+    if !wait_for_path(dev, 10) {
+        log(&format!("no ESP at {dev}: no A/B boot state"));
+        return false;
+    }
+    let _ = std::fs::create_dir_all(slot::ESP_MOUNT);
+    let fl = libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
+    match sys_mount(dev, slot::ESP_MOUNT, "vfat", fl, "") {
+        Ok(()) => true,
+        Err(e) => {
+            log(&format!("{e} (CONFIG_VFAT_FS?): no A/B boot state"));
+            false
+        }
+    }
+}
+
+fn read_boot_state() -> Option<BootState> {
+    let text = std::fs::read_to_string(state_path()).ok()?;
+    match BootState::parse(&text) {
+        Ok(st) => Some(st),
+        Err(e) => {
+            log(&format!("{} is invalid ({e})", state_path()));
+            None
+        }
+    }
+}
+
+/// Write the record: temp file, fsync, rename over the old one, fsync the directory.
+fn write_boot_state(st: &BootState) -> Result<(), String> {
+    let path = state_path();
+    let dir = std::path::Path::new(&path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let tmp = format!("{path}.new");
+    let mut f = std::fs::File::create(&tmp).map_err(|e| format!("create {tmp}: {e}"))?;
+    f.write_all(st.render().as_bytes()).and_then(|_| f.sync_all()).map_err(|e| format!("write {tmp}: {e}"))?;
+    drop(f);
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {tmp}: {e}"))?;
+    if let Ok(d) = std::fs::File::open(&dir) {
+        let _ = d.sync_all();
+    }
+    unsafe { libc::sync() };
+    Ok(())
+}
+
+fn save_state(esp: bool, st: &BootState) {
+    if esp {
+        if let Err(e) = write_boot_state(st) {
+            log(&format!("boot state not saved: {e}"));
+        }
+    }
+}
+
+fn print_fallback(f: &slot::Fallback) {
+    println!("slot: fallback from={} to={} reason={}", f.from.name(), f.to.name(), f.reason);
+    let _ = std::io::stdout().flush();
+}
+
+/// Pick the slot from the ESP boot state (default: `allternit.slot=`), verify it, and switch
+/// root into it. A slot that fails dm-verity, or an unconfirmed slot out of tries, makes PID 1
+/// switch to the other slot once; if that one fails too the machine powers off.
 /// No slot on the command line (direct boot without a disk): stay on the initramfs.
-fn boot_slot() {
+fn boot_slot() -> Booted {
     let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    match verity::from_cmdline(&cmdline) {
-        None => log("no allternit.slot on the kernel command line: running from the initramfs"),
-        Some(Err(e)) => slot_fail(&e.slot, &e.reason),
-        Some(Ok(v)) => {
-            let slot = v.slot.name();
-            let node = open_verity(&v).unwrap_or_else(|e| slot_fail(slot, &e));
-            println!("verity: ok slot={slot}");
-            let _ = std::io::stdout().flush();
-            match switch_root(&node) {
-                Ok(()) => log(&format!("root is slot {slot} ({node}, read-only)")),
-                Err(e) => {
-                    log(&format!("slot {slot}: switch root failed ({e}), powering off"));
+    let Some(given) = verity::slot_named(&cmdline) else {
+        log("no allternit.slot on the kernel command line: running from the initramfs");
+        return Booted { slot: None, esp: false, confirmed_printed: false };
+    };
+    let Some(default) = Slot::parse(given) else { slot_fail(given, "unknown slot name") };
+    let esp = mount_esp();
+    let stored = if esp { read_boot_state() } else { None };
+    let st = stored.unwrap_or_else(|| {
+        log(&format!("no boot state: booting the default slot {}", default.name()));
+        slot::known_good(default)
+    });
+    let plan = slot::plan(st);
+    if let Some(f) = &plan.fallback {
+        print_fallback(f);
+    }
+    if plan.state != st || stored.is_none() {
+        save_state(esp, &plan.state);
+    }
+    println!(
+        "slot: booting slot={} confirmed={} tries-left={}",
+        plan.slot.name(),
+        plan.state.confirmed as u8,
+        plan.state.tries
+    );
+    let mut cur = plan.slot;
+    let mut switched = plan.fallback.is_some();
+    loop {
+        let opened = verity::for_slot(&cmdline, cur).and_then(|v| open_verity(&v));
+        match opened {
+            Ok(node) => {
+                println!("verity: ok slot={}", cur.name());
+                let _ = std::io::stdout().flush();
+                match switch_root(&node) {
+                    Ok(()) => log(&format!("root is slot {} ({node}, read-only)", cur.name())),
+                    Err(e) => {
+                        log(&format!("slot {}: switch root failed ({e}), powering off", cur.name()));
+                        halt()
+                    }
+                }
+                return Booted { slot: Some(cur), esp, confirmed_printed: false };
+            }
+            Err(e) => {
+                println!("verity: FAIL slot={} ({e})", cur.name());
+                if switched {
+                    log("the other slot already failed this boot: no slot left, powering off");
                     halt()
                 }
+                let (f, next) = slot::after_verity_fail(cur);
+                print_fallback(&f);
+                save_state(esp, &next);
+                cur = f.to;
+                switched = true;
             }
         }
+    }
+}
+
+/// The health check passed: record the running slot as confirmed.
+fn confirm_slot(b: &mut Booted) {
+    let Some(s) = b.slot else { return };
+    if b.confirmed_printed {
+        return;
+    }
+    if !b.esp {
+        log(&format!("slot {} is healthy but there is no ESP boot state to record it in", s.name()));
+        return;
+    }
+    match write_boot_state(&slot::known_good(s)) {
+        Ok(()) => {
+            b.confirmed_printed = true;
+            println!("slot: confirmed slot={}", s.name());
+            let _ = std::io::stdout().flush();
+        }
+        Err(e) => log(&format!("slot {} not confirmed: {e}", s.name())),
     }
 }
 
 pub fn run() {
     mount_basics();
     console_setup();
-    boot_slot();
+    // Read the TEST ONLY state key while the initramfs is still the root.
+    let state_key = std::fs::read(STATE_KEY).ok();
+    let mut booted = boot_slot();
     let cfg = match std::fs::read_to_string(CONFIG_PATH) {
         Ok(t) => match config::parse(&t) {
             Ok(c) => c,
@@ -438,7 +664,10 @@ pub fn run() {
         Err(_) => config::default_config(),
     };
     set_hostname(&cfg.hostname);
-    let state_mounted = mount_state(&cfg);
+    let state_mounted = mount_state(&cfg, state_key.as_deref());
+    if let Some(mut k) = state_key {
+        k.fill(0);
+    }
     prepare_run_dirs(&cfg);
     loopback_up();
 
@@ -482,6 +711,9 @@ pub fn run() {
             let r = running.remove(pos);
             let svc = &cfg.services[r.idx];
             log(&format!("{} exited ({exit:?})", svc.name));
+            if svc.name == HEALTH_SERVICE && exit.is_clean() {
+                confirm_slot(&mut booted);
+            }
             match config::on_exit(svc, exit) {
                 Action::PowerOff => {
                     shutdown(&running, state_mounted, &cfg);
