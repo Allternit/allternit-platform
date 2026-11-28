@@ -1,0 +1,15 @@
+{
+  "schema": "allternit.eval_baseline.v1",
+  "description": "Replay pass-rate baseline for scripts/gizzi-eval-gate.mjs. Replay grades the stored trace of the 3 synthetic session cases in suites/shared.v1; the workspace cases are skipped in replay. A bad case passes while its graders still fail on the recording.",
+  "max_drop_pp": 2,
+  "suites": {
+    "shared.v1": { "pass_rate": 1, "graded": 3 }
+  },
+  "extra": {
+    "per_case": [
+      { "id": "case_shared_session_good", "pass": true },
+      { "id": "case_shared_session_bad", "pass": true },
+      { "id": "case_shared_session_guardrail", "pass": true }
+    ]
+  }
+}
