@@ -47,7 +47,7 @@ class EvalBackendTest {
     }
 
     @Test fun errorsMapToTheNamedStates() = runBlocking {
-        fun err(status: Int, code: String?) = (EvalBackend(Fake(http(status, code))).deleteCaseErr())
+        suspend fun err(status: Int, code: String?) = (EvalBackend(Fake(http(status, code))).deleteCaseErr())
         assertEquals(EvalError.CaseLimit, EvalBackend.mapError(409, "case_limit", null))
         assertEquals(EvalError.EstimateRequired, EvalBackend.mapError(409, "estimate_required", null))
         assertEquals(EvalError.NotFound, EvalBackend.mapError(404, "session_not_found", null))
