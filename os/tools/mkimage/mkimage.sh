@@ -97,10 +97,6 @@ chmod 755 "$ROOT/sbin/init" "$ROOT/usr/lib/allternit/authority" "$ROOT/usr/lib/a
 
 # File list for the kernel's gen_init_cpio: no root needed for device nodes.
 cat > "$LIST" <<LIST_EOF
-if [ -n "$LLAMA" ]; then
-  chmod 755 "$ROOT/usr/lib/allternit/llama-server"
-  echo "file /usr/lib/allternit/llama-server $ROOT/usr/lib/allternit/llama-server 755 0 0" >> "$LIST"
-fi
 dir /dev 755 0 0
 nod /dev/console 600 0 0 c 5 1
 nod /dev/null 666 0 0 c 1 3
@@ -121,6 +117,11 @@ dir /etc 755 0 0
 dir /etc/allternit 755 0 0
 file /etc/allternit/init.toml $ROOT/etc/allternit/init.toml 644 0 0
 LIST_EOF
+# llama-server goes in only when the image carries a model (step 29).
+if [ -n "$LLAMA" ]; then
+  chmod 755 "$ROOT/usr/lib/allternit/llama-server"
+  echo "file /usr/lib/allternit/llama-server $ROOT/usr/lib/allternit/llama-server 755 0 0" >> "$LIST"
+fi
 
 # --- 3. kernel --------------------------------------------------------------
 if [ "$SKIP_KERNEL" -eq 1 ]; then
