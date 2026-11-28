@@ -306,6 +306,9 @@ internal fun ConnectionsSettingsScreen(
         }
     }
 
+    // Docking title (same as SPage): the big title sits under the bar and spells into it as the list scrolls.
+    val pageScroll = rememberScrollState()
+    com.allternit.core.design.ProvideDockScroll(pageScroll) {
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("settingsConnections")) {
         // One glass toolbar (approved List/Grid/Deck design): search and the menu in the trailing capsule.
@@ -336,7 +339,8 @@ internal fun ConnectionsSettingsScreen(
                 Icon(painterResource(DesignR.drawable.ph_x), "Clear filter", tint = c.sub, modifier = Modifier.size(12.dp))
             }
         }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
+            Spacer(Modifier.height(48.dp)) // room for the big docking title
             if (store.loadError != null) Text(store.loadError ?: "", color = c.errFg, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("connectionsError"))
             message?.let { Text(it, color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) }
             // The ChatGPT subscription and Codex CLI sit in one card at the top of Brains (List layout, when both rows
@@ -400,6 +404,7 @@ internal fun ConnectionsSettingsScreen(
         com.allternit.feature.bots.runtimes.RuntimeDetailScreen(r, botsHost, onBack = { runtimeOpen = null }, onBotCreated = { id -> runtimeOpen = null; onBotCreated(id) })
     }
     if (browse) ConnectionsBrowseScreen(store, connector, onFallback = ::fallback, onBack = { browse = false })
+    }
     }
     MoreConnectorDialog(connector)
 
