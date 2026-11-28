@@ -242,14 +242,14 @@ struct CodeSessionsOverview: View {
                             }
                         case .grid:
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                                ForEach(items) { sessionCard($0, tall: false) }
+                                ForEach(items) { sessionCell($0, tall: false) }
                             }
                             .padding(.vertical, 4)
                             .plainCodeRow()
                         case .deck:
                             ScrollView(.horizontal, showsIndicators: false) {
                                 LazyHStack(spacing: 12) {
-                                    ForEach(items) { sessionCard($0, tall: true).frame(width: OverviewDeck.width, height: 320) }
+                                    ForEach(items) { sessionCell($0, tall: true).frame(width: OverviewDeck.width, height: 366) }
                                 }
                                 .padding(.vertical, 8)
                                 .scrollTargetLayout()
@@ -307,7 +307,7 @@ struct CodeSessionsOverview: View {
                 case .deck:
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 12) {
-                            ForEach(terminals) { terminalRow($0).frame(width: OverviewDeck.width, height: 220) }
+                            ForEach(terminals) { terminalRow($0).frame(width: OverviewDeck.width, height: 266) }
                         }
                         .padding(.vertical, 8)
                         .scrollTargetLayout()
@@ -322,8 +322,14 @@ struct CodeSessionsOverview: View {
     }
 
     private func terminalRow(_ terminal: TerminalListItem) -> some View {
-        CodeTerminalPreviewRow(terminal: terminal, layout: layout) {
-            onOpenTerminal?(terminal.sessionId, TerminalPreview.title(terminal))
+        VStack(spacing: 6) {
+            CodeTerminalPreviewRow(terminal: terminal, layout: layout) {
+                onOpenTerminal?(terminal.sessionId, TerminalPreview.title(terminal))
+            }
+            ACIHoldButton(title: "Hold to end and delete", danger: true) {
+                let id = terminal.sessionId
+                Task { await terminalSessions.closeTerminal(sessionId: id) }
+            }
         }
     }
 
@@ -332,15 +338,37 @@ struct CodeSessionsOverview: View {
         let external = terminalSessions.externalSessions
         if terminalSessions.adoptSupport == .yes, !external.isEmpty {
             Section {
-                ForEach(external) { session in
-                    OnYourComputerRow(session: session, store: terminalSessions) { id, title in
-                        onOpenTerminal?(id, title)
+                switch layout {
+                case .list:
+                    ForEach(external) { session in
+                        externalRow(session).plainCodeRow()
                     }
+                case .grid:
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        ForEach(external) { externalRow($0) }
+                    }
+                    .padding(.vertical, 4)
+                    .plainCodeRow()
+                case .deck:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(external) { externalRow($0).frame(width: OverviewDeck.width) }
+                        }
+                        .padding(.vertical, 8)
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
                     .plainCodeRow()
                 }
             } header: {
                 sectionLabel(onYourComputerTitle)
             }
+        }
+    }
+
+    private func externalRow(_ session: LiveSession) -> some View {
+        OnYourComputerRow(session: session, store: terminalSessions, layout: layout) { id, title in
+            onOpenTerminal?(id, title)
         }
     }
 
@@ -375,6 +403,16 @@ struct CodeSessionsOverview: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 4)
+    }
+
+    /// A Grid / Deck card with its hold-to-delete under it.
+    private func sessionCell(_ session: AgentSession, tall: Bool) -> some View {
+        VStack(spacing: 6) {
+            sessionCard(session, tall: tall)
+            if let onDelete {
+                ACIHoldButton(title: "Hold to delete", danger: true) { onDelete(session) }
+            }
+        }
     }
 
     /// A card for Grid and Deck: title, ⋯ menu, the last exchange, its age.
@@ -549,7 +587,7 @@ struct CodeSessionsOverview: View {
     @ViewBuilder
     private func sessionRow(_ session: AgentSession) -> some View {
         sessionRowBody(session)
-        if status(session) == .archived, let onDelete {
+        if let onDelete {
             ACIHoldButton(title: "Hold to delete", danger: true) { onDelete(session) }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)

@@ -682,6 +682,8 @@ struct CodeModeView: View {
         sessions.removeAll { $0.id == sessionId }
         Task {
             do {
+                // Hold-to-delete works on any row: archive first (best effort), then delete.
+                try? await CodeSessionsClient().archive(sessionId: sessionId)
                 try await CodeSessionsClient().delete(sessionId: sessionId)
             } catch {
                 actionError = FriendlyErrorMessage.from(error.localizedDescription)

@@ -549,6 +549,20 @@ final class TerminalSessionsStore {
         adoptJobs[session.sessionId] = nil
     }
 
+    /// Hold to end and delete: closes the terminal on the computer
+    /// (`POST terminal/:id/close`) and drops it from the list at once.
+    func closeTerminal(sessionId: String) async {
+        guard let client = terminalClient else { return }
+        let before = terminals
+        terminals.removeAll { $0.sessionId == sessionId }
+        do {
+            try await client.close(sessionId: sessionId)
+        } catch {
+            terminals = before
+        }
+        await refresh()
+    }
+
     /// Clears a finished job (the row's Dismiss).
     func dismissJob(_ sessionId: String) {
         jobTasks[sessionId]?.cancel()
