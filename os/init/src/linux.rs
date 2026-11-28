@@ -1,7 +1,9 @@
 use allternit_init::config::{self, Action, Config, Exit, Service};
+use allternit_init::verity::{self, Verity};
 use libc::{c_int, c_void};
 use std::ffi::CString;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -247,9 +249,184 @@ fn shutdown(running: &[Running], state_mounted: bool, cfg: &Config) -> ! {
     }
 }
 
+// --- system slot: dm-verity + switch root (plan step 30a) ------------------------------
+
+const SYSROOT: &str = "/sysroot";
+
+/// Power off now. Used when no slot may boot.
+fn halt() -> ! {
+    let _ = std::io::stdout().flush();
+    unsafe {
+        libc::sync();
+        libc::reboot(libc::RB_POWER_OFF);
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+/// The slot failed verification: say so on the console and do not boot it.
+fn slot_fail(slot: &str, reason: &str) -> ! {
+    println!("verity: FAIL slot={slot} ({reason})");
+    // TODO(30b): try the other slot (health-confirmed slot switch) instead of powering off.
+    log(&format!("slot {slot} is not booted; no fallback slot yet (step 30b), powering off"));
+    halt()
+}
+
+fn wait_for_path(path: &str, secs: u64) -> bool {
+    let end = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
+        if Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn mknod_dev(path: &str, kind: libc::mode_t, major: u32, minor: u32) -> Result<(), String> {
+    let _ = std::fs::remove_file(path);
+    let rc = unsafe { libc::mknod(cstr(path).as_ptr(), kind | 0o600, libc::makedev(major, minor)) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("mknod {path}: {}", std::io::Error::last_os_error()))
+    }
+}
+
+/// /dev/mapper/control from devtmpfs, or our own node for misc 10:236 if it is missing.
+fn dm_control() -> Result<std::fs::File, String> {
+    let open = |p: &str| std::fs::OpenOptions::new().read(true).write(true).open(p);
+    if let Ok(f) = open("/dev/mapper/control") {
+        return Ok(f);
+    }
+    // Not under /run: it is mounted nodev.
+    let _ = std::fs::create_dir_all("/dev/mapper");
+    mknod_dev("/dev/mapper/control", libc::S_IFCHR, 10, 236)?;
+    open("/dev/mapper/control").map_err(|e| format!("device-mapper control: {e} (CONFIG_BLK_DEV_DM?)"))
+}
+
+fn dm_call(ctl: &std::fs::File, nr: u32, buf: &mut [u8]) -> Result<(), String> {
+    let rc = unsafe { libc::ioctl(ctl.as_raw_fd(), verity::dm_ioctl_request(nr) as _, buf.as_mut_ptr()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("dm ioctl {nr}: {}", std::io::Error::last_os_error()))
+    }
+}
+
+/// Create a read-only dm-verity device over the slot and read all of it once, so a bad
+/// block anywhere fails now (dm-verity checks blocks as they are read). Returns its node.
+fn open_verity(v: &Verity) -> Result<String, String> {
+    let dev = v.slot.device();
+    if !wait_for_path(dev, 10) {
+        return Err(format!("no partition at {dev}"));
+    }
+    let name = v.slot.dm_name();
+    let ctl = dm_control()?;
+    dm_call(&ctl, verity::DM_DEV_CREATE, &mut verity::dm_buffer(name, 0, None)?)?;
+    let (sectors, params) = v.table();
+    let loaded = verity::dm_buffer(name, verity::DM_READONLY_FLAG, Some((sectors, "verity", &params)))
+        .and_then(|mut b| dm_call(&ctl, verity::DM_TABLE_LOAD, &mut b));
+    if let Err(e) = loaded {
+        if let Ok(mut b) = verity::dm_buffer(name, 0, None) {
+            let _ = dm_call(&ctl, verity::DM_DEV_REMOVE, &mut b);
+        }
+        return Err(format!("table load: {e}"));
+    }
+    // DEV_SUSPEND without the suspend flag = resume, which makes the loaded table live.
+    let mut resume = verity::dm_buffer(name, 0, None)?;
+    dm_call(&ctl, verity::DM_DEV_SUSPEND, &mut resume)?;
+    let (major, minor) = verity::dm_dev(&resume);
+    let node = format!("/dev/mapper/{name}");
+    mknod_dev(&node, libc::S_IFBLK, major, minor)?;
+
+    let mut f = std::fs::File::open(&node).map_err(|e| format!("open {node}: {e}"))?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut total: u64 = 0;
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => total += n as u64,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(format!("read failed at byte {total}: {e}")),
+        }
+    }
+    if total != v.data_bytes() {
+        return Err(format!("read {total} bytes, want {}", v.data_bytes()));
+    }
+    Ok(node)
+}
+
+fn sys_mount(src: &str, target: &str, fstype: &str, flags: libc::c_ulong, data: &str) -> Result<(), String> {
+    let (s, t, f, d) = (cstr(src), cstr(target), cstr(fstype), cstr(data));
+    let fp = if fstype.is_empty() { std::ptr::null() } else { f.as_ptr() };
+    let rc = unsafe { libc::mount(s.as_ptr(), t.as_ptr(), fp, flags, d.as_ptr() as *const c_void) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("mount {src} on {target}: {}", std::io::Error::last_os_error()))
+    }
+}
+
+/// Mount the verified slot read-only and make it `/` (busybox switch_root order). The
+/// initramfs stays in memory; services and init.toml now come from the slot.
+fn switch_root(node: &str) -> Result<(), String> {
+    let _ = std::fs::create_dir_all(SYSROOT);
+    sys_mount(node, SYSROOT, "ext4", libc::MS_RDONLY | libc::MS_NODEV, "")?;
+    for d in ["/proc", "/sys", "/dev", "/run"] {
+        sys_mount(d, &format!("{SYSROOT}{d}"), "", libc::MS_MOVE, "")?;
+    }
+    let cd = |p: &str| {
+        if unsafe { libc::chdir(cstr(p).as_ptr()) } == 0 {
+            Ok(())
+        } else {
+            Err(format!("chdir {p}: {}", std::io::Error::last_os_error()))
+        }
+    };
+    cd(SYSROOT)?;
+    sys_mount(".", "/", "", libc::MS_MOVE, "")?;
+    if unsafe { libc::chroot(cstr(".").as_ptr()) } != 0 {
+        return Err(format!("chroot: {}", std::io::Error::last_os_error()));
+    }
+    cd("/")?;
+    // The root is read-only now; /tmp needs its own tmpfs.
+    let nsd = libc::MS_NOSUID | libc::MS_NODEV;
+    if let Err(e) = sys_mount("tmpfs", "/tmp", "tmpfs", nsd, "mode=1777,size=64m") {
+        log(&format!("{e}"));
+    }
+    Ok(())
+}
+
+/// Open the slot the kernel command line names, verify it, and switch root into it.
+/// No slot on the command line (direct boot without a disk): stay on the initramfs.
+fn boot_slot() {
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    match verity::from_cmdline(&cmdline) {
+        None => log("no allternit.slot on the kernel command line: running from the initramfs"),
+        Some(Err(e)) => slot_fail(&e.slot, &e.reason),
+        Some(Ok(v)) => {
+            let slot = v.slot.name();
+            let node = open_verity(&v).unwrap_or_else(|e| slot_fail(slot, &e));
+            println!("verity: ok slot={slot}");
+            let _ = std::io::stdout().flush();
+            match switch_root(&node) {
+                Ok(()) => log(&format!("root is slot {slot} ({node}, read-only)")),
+                Err(e) => {
+                    log(&format!("slot {slot}: switch root failed ({e}), powering off"));
+                    halt()
+                }
+            }
+        }
+    }
+}
+
 pub fn run() {
     mount_basics();
     console_setup();
+    boot_slot();
     let cfg = match std::fs::read_to_string(CONFIG_PATH) {
         Ok(t) => match config::parse(&t) {
             Ok(c) => c,

@@ -4,7 +4,10 @@ name: os-image
 # Gate G2a: the serial log must show "kernel-check ok" and
 # "ALLTERNIT-OS READY kernel-interface=1".
 # Step 29 / gate G2c: the log must also show "shell-tool-call ok" (static llama.cpp answered
-# one shell tool call); tok/s goes to the job summary. Reads no secrets, deploys nothing.
+# one shell tool call); tok/s goes to the job summary.
+# Step 30a: the disk has two read-only system slots (system-a, system-b) with dm-verity.
+# The log must also show "verity: ok slot=a", and a copy of the disk with one byte flipped
+# in system-a must print "verity: FAIL slot=a" and never READY. Reads no secrets, deploys nothing.
 
 on:
   pull_request:
@@ -38,7 +41,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             musl-tools qemu-system-x86 ovmf \
             build-essential cmake git bc bison flex libelf-dev libssl-dev xz-utils cpio curl file \
-            systemd-ukify systemd-boot-efi python3-pefile gdisk dosfstools mtools e2fsprogs
+            systemd-ukify systemd-boot-efi python3-pefile gdisk dosfstools mtools e2fsprogs \
+            cryptsetup-bin
 
       - name: Rust toolchain with the musl target
         run: |
@@ -102,12 +106,17 @@ jobs:
       - name: Boot in QEMU, check the serial log, record tok/s
         run: sh os/tools/mkimage/qemu-boot.sh
 
+      - name: Corrupted system-a must not boot (dm-verity negative case)
+        run: sh os/tools/mkimage/qemu-boot.sh --corrupt-slot a
+
       - name: Upload serial log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: os-serial-log
-          path: os/target/image/serial.log
+          path: |
+            os/target/image/serial.log
+            os/target/image/serial-bad-a.log
           if-no-files-found: warn
 
       - name: Upload image

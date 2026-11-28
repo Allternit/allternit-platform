@@ -8,7 +8,9 @@ standalone Cargo workspace (PLAN.md decision 10); the platform root
 
 - `init/` (crate `allternit-init`, binary `init`): PID 1. Linux only.
   `src/config.rs` holds the pure logic (config parser, service ordering,
-  restart policy) and its unit tests; `src/linux.rs` holds the syscalls.
+  restart policy) and its unit tests; `src/verity.rs` holds the slot/dm-verity logic
+  (command line, verity table, device-mapper ioctl buffer) and its tests; `src/linux.rs`
+  holds the syscalls.
 - `shell/` (binary `shell`): the boot shell loop. Waits for the model, sends one prompt with a
   `shell` tool, sends the tool call to the authority as a framed `check`, prints
   `shell-tool-call ok action=<a> decision=<d>` and `model tok/s=<n>`, exits 0.
@@ -22,8 +24,15 @@ standalone Cargo workspace (PLAN.md decision 10); the platform root
 
 1. Mount `/proc`, `/sys`, `/dev` (devtmpfs), `/run` (tmpfs).
 2. Open `/dev/console` as stdio and set `ttyS0` to 115200 8N1.
+2b. System slot (step 30a). If the kernel command line names `allternit.slot=<a|b>`, open
+   that slot (`a` = `/dev/vda2`, `b` = `/dev/vda3`) as a read-only dm-verity device with the
+   root hash from `allternit.verity.<slot>=<root>:<salt>:<data blocks>`, read it all once,
+   and print `verity: ok slot=<x>`. Then mount it read-only, move `/proc /sys /dev /run`
+   into it, switch root, and mount a tmpfs on `/tmp`. Any failure prints
+   `verity: FAIL slot=<x> (<reason>)` and powers off: that slot does not boot (falling back
+   to the other slot is step 30b). No `allternit.slot` (direct boot): stay on the initramfs.
 3. Read `/etc/allternit/init.toml` (compiled-in default if absent), set the hostname.
-4. Mount the state partition at `/state` if the device exists (default `/dev/vda3`, ext4).
+4. Mount the state partition at `/state` if the device exists (default `/dev/vda4`, ext4).
 5. Start services in `after` order: `authority`, `model`, `shell`.
 6. Self-check: one `check` that must be allowed, one (class `money`) that must be
    denied. On success init prints `kernel-check ok`, then exactly
@@ -48,7 +57,7 @@ Service fields in `init.toml`: `name`, `path`, `args`, `uid`, `gid`, `env`
 Step 27. CI does this in `.github/workflows/os-image.yml` (path-filtered to
 `os/**`); the same commands work on any x86_64 Linux host with `musl-tools`, the
 kernel build deps, `qemu-system-x86`, `ovmf`, and (for the UKI path) `systemd-ukify`,
-`gdisk`, `dosfstools`, `mtools`, `e2fsprogs`.
+`gdisk`, `dosfstools`, `mtools`, `e2fsprogs`, `cryptsetup-bin` (veritysetup).
 
 ```sh
 rustup target add x86_64-unknown-linux-musl
@@ -63,16 +72,27 @@ sh os/tools/mkimage/qemu-boot.sh          # boots it, judges the serial log
   (derived from the default in `init/src/config.rs`), embedded in the kernel through a
   `gen_init_cpio` file list, so no root is needed.
 - With `ukify` present: one UKI (`allternit-os.efi`) on the ESP of a GPT raw disk
-  `allternit-os.img` (ESP, `system-a` reserved for step 30, ext4 `state` = `/dev/vda3`),
-  booted through OVMF. Without it mkimage says so and `qemu-boot.sh` boots the bzImage
+  `allternit-os.img`, booted through OVMF. Partitions (step 30a): `esp` (vda1),
+  `system-a` (vda2), `system-b` (vda3, same size, written as a copy of A for now), ext4
+  `state` (vda4). A system slot is the userland (`/usr/lib/allternit/*`,
+  `/etc/allternit/init.toml`) as a read-only ext4 image without a journal, followed directly
+  by its dm-verity hash tree (`veritysetup format --no-superblock`, sha256, 4 KiB blocks, random
+  salt). The root hash, salt and data block count go on the UKI command line
+  (`allternit.slot=a allternit.verity.a=... allternit.verity.b=...`); a signed manifest is
+  step 31. The UKI path stops if `veritysetup` or `mke2fs` is missing, so it never writes an
+  unverified disk. The initramfs still carries the userland for the direct-boot fallback. Without it mkimage says so and `qemu-boot.sh` boots the bzImage
   directly (`boot.env` records which mode).
 - Flags: `--out DIR`, `--kernel-src DIR` (existing source tree), `--skip-kernel` (reuse
   `bzImage`; only valid if the initramfs is unchanged).
+- Negative case (step 30a): `qemu-boot.sh --corrupt-slot a` boots a copy of the disk with
+  one byte flipped 1 MiB into `system-a` and passes only on `verity: FAIL slot=a` with no
+  READY line.
+- Not yet (step 30b): LUKS for `state`, the health-confirmed slot switch, and the
+  bad-update fallback test.
 - Boot gate G2a: `-nographic -serial mon:stdio -no-reboot`, `-accel kvm` when `/dev/kvm`
-  is usable (120 s) else `-accel tcg` (600 s). Pass = `kernel-check ok` and
-  `ALLTERNIT-OS READY kernel-interface=1` in the log, no `Kernel panic`. `model` and
-  `shell` binaries do not exist yet, so init logs their failed start and QEMU is stopped by
-  the checker once READY appears.
+  is usable (300 s) else `-accel tcg` (1500 s). Pass = `verity: ok slot=a` (UKI disk
+  only), `kernel-check ok`, `ALLTERNIT-OS READY kernel-interface=1` and `shell-tool-call ok`
+  in the log, no `Kernel panic`; QEMU is stopped by the checker once they all appear.
 
 ## Build and boot
 
