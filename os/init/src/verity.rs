@@ -8,7 +8,9 @@
 //! Each slot partition holds the ext4 data image followed directly by its hash tree
 //! (`veritysetup format --no-superblock`), so the tree starts at block <data blocks>.
 //!
-//! TODO(30b): slot switch with health confirm, fallback to the other slot, LUKS state.
+//! Step 30b: each slot has its own root hash, salt and block count (`allternit.verity.a=` and
+//! `allternit.verity.b=`). `allternit.slot=` is now only the default when the ESP holds no
+//! boot state; `slot.rs` picks the slot to boot.
 
 /// Data and hash block size (bytes) used by mkimage.sh.
 pub const BLOCK: u64 = 4096;
@@ -38,6 +40,13 @@ impl Slot {
         match self {
             Slot::A => "/dev/vda2",
             Slot::B => "/dev/vda3",
+        }
+    }
+    /// The other slot of the pair.
+    pub fn other(self) -> Slot {
+        match self {
+            Slot::A => Slot::B,
+            Slot::B => Slot::A,
         }
     }
     /// Device-mapper name; the node is made at /dev/mapper/<name>.
@@ -85,8 +94,18 @@ pub fn from_cmdline(cmdline: &str) -> Option<Result<Verity, SlotError>> {
     Some(parse_slot(cmdline, given).map_err(|reason| SlotError { slot: given.to_string(), reason }))
 }
 
+/// The slot named by `allternit.slot=` (the default slot), or `None` on a direct boot.
+pub fn slot_named(cmdline: &str) -> Option<&str> {
+    param(cmdline, "allternit.slot")
+}
+
 fn parse_slot(cmdline: &str, given: &str) -> Result<Verity, String> {
     let slot = Slot::parse(given).ok_or("unknown slot name")?;
+    for_slot(cmdline, slot)
+}
+
+/// Verity parameters of one slot, from `allternit.verity.<slot>=` (step 30b: per slot).
+pub fn for_slot(cmdline: &str, slot: Slot) -> Result<Verity, String> {
     let key = format!("allternit.verity.{}", slot.name());
     let val = param(cmdline, &key).ok_or_else(|| format!("no {key} on the command line"))?;
     let parts: Vec<&str> = val.split(':').collect();
@@ -234,6 +253,21 @@ mod tests {
         assert!(from_cmdline("allternit.slot=a allternit.verity.a=abc:-:1").unwrap().is_err());
         assert!(from_cmdline(&format!("allternit.slot=a allternit.verity.a={ROOT}:0g:1")).unwrap().is_err());
         assert!(from_cmdline(&format!("allternit.slot=a allternit.verity.a={ROOT}:-:0")).unwrap().is_err());
+    }
+
+    #[test]
+    fn each_slot_has_its_own_params() {
+        let other = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let line = format!("allternit.slot=a allternit.verity.a={ROOT}:aa:10 allternit.verity.b={other}:bb:12");
+        assert_eq!(slot_named(&line), Some("a"));
+        let a = for_slot(&line, Slot::A).unwrap();
+        let b = for_slot(&line, Slot::B).unwrap();
+        assert_eq!((a.root_hash.as_str(), a.salt.as_str(), a.data_blocks), (ROOT, "aa", 10));
+        assert_eq!((b.root_hash.as_str(), b.salt.as_str(), b.data_blocks), (other, "bb", 12));
+        assert_eq!(Slot::A.other(), Slot::B);
+        assert_eq!(Slot::B.other(), Slot::A);
+        assert!(for_slot("allternit.slot=a", Slot::B).is_err());
+        assert_eq!(slot_named("console=ttyS0"), None);
     }
 
     #[test]
