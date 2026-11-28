@@ -248,6 +248,8 @@ class MainActivity : ComponentActivity() {
         val nonce = System.nanoTime()
         val url = tap.url.orEmpty()
         shellLaunch = when {
+            // A blocked Factory pane's push (data.openUrl): its terminal, or its row in Code.
+            com.allternit.feature.code.OnYourComputer.pushTarget(url) != null -> ShellLaunch(mode = ShellMode.Code, liveUrl = url, nonce = nonce)
             // A computer_alert push (or a /computers/<id> url): that computer's console detail.
             // An aci.attention push (`/computers/<id>?run=<run_id>`): that run's screen, not the console.
             tap.computer != null && tap.run != null -> ShellLaunch(mode = ShellMode.Aci, computerId = tap.computer, runId = tap.run, nonce = nonce)

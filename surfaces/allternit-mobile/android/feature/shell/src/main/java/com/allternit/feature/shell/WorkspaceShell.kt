@@ -310,6 +310,21 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // the Code home, the tools and the terminal come from :feature:code.
     val codeStore = remember { com.allternit.feature.code.CodeStore(chatBackend) }
     var codeRoute by remember { mutableStateOf<com.allternit.feature.code.CodeRoute?>(null) }
+    // A blocked Factory pane's push (data.openUrl): the terminal opens in Code; a Factory address opens
+    // "On your computer" (the threads overview) with that row (iOS CodeModeView.openLiveTarget).
+    LaunchedEffect(launch.nonce) {
+        val target = com.allternit.feature.code.OnYourComputer.pushTarget(launch.liveUrl) ?: return@LaunchedEffect
+        mode = ShellMode.Code
+        ShellModePrefs.save(context, ShellMode.Code)
+        page = ShellPage.Home
+        when (target) {
+            is com.allternit.feature.code.OnYourComputer.PushTarget.Terminal -> codeStore.openTerminal(target.id, "Terminal") { codeRoute = it }
+            is com.allternit.feature.code.OnYourComputer.PushTarget.FactorySession -> {
+                codeStore.sessions.pushTarget = target
+                codeRoute = com.allternit.feature.code.CodeRoute.Overview
+            }
+        }
+    }
     val codeHost = com.allternit.feature.code.CodeHost(
         backend = chatBackend,
         sessions = {
@@ -1086,6 +1101,8 @@ internal data class ShellLaunch(
     val computerId: String? = null,
     /** With [computerId]: the agent browser run a push named; its screen opens in ACI's Agent view. */
     val runId: String? = null,
+    /** A blocked Factory pane's `openUrl` (`/terminal/<id>`, `/factory/sessions/<address>`): Code opens its terminal or its row. */
+    val liveUrl: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

@@ -52,6 +52,58 @@ object OnYourComputer {
         }
     }
 
+    /**
+     * Factory panes running another CLI: rows the runtime tags with a pane and either a terminal to open, a steer
+     * route or a blocked state. An older runtime sends none of those, so nothing new appears there.
+     */
+    fun paneSessions(sessions: List<LiveSession>): List<LiveSession> =
+        sessions.filter { !it.external && it.paneId != null && (hasTerminal(it) || canSteer(it) || isBlocked(it)) }
+
+    /** The rows the section shows: external sessions, then panes. */
+    fun rowSessions(sessions: List<LiveSession>): List<LiveSession> = externalSessions(sessions) + paneSessions(sessions)
+
+    fun isBlocked(session: LiveSession): Boolean = session.status == "blocked"
+
+    fun hasTerminal(session: LiveSession): Boolean = !session.terminalId.isNullOrEmpty()
+
+    /** The steer field shows for `terminal` (needs a terminal id) and `delivery` (needs an address); never for `none` or no field. */
+    fun canSteer(session: LiveSession): Boolean = when (session.steer) {
+        "terminal" -> hasTerminal(session)
+        "delivery" -> session.address.isNotEmpty()
+        else -> false
+    }
+
+    /** "blocked 3m" for the Needs you badge; "blocked just now" under a minute. */
+    fun blockedLabel(since: String?, nowMs: Long = System.currentTimeMillis()): String {
+        val startMs = since?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() } ?: return "blocked"
+        val seconds = maxOf(0L, (nowMs - startMs) / 1000)
+        if (seconds < 60) return "blocked just now"
+        val minutes = seconds / 60
+        if (minutes < 60) return "blocked ${minutes}m"
+        val hours = minutes / 60
+        if (hours < 48) return "blocked ${hours}h"
+        return "blocked ${hours / 24}d"
+    }
+
+    /** Where a blocked push's `data.openUrl` leads: the terminal id, or the Factory address. */
+    sealed interface PushTarget {
+        data class Terminal(val id: String) : PushTarget
+        data class FactorySession(val address: String) : PushTarget
+    }
+
+    /** `/terminal/<terminalId>` or `/factory/sessions/<address>` (the address has a slash: `dev/allternit-claude`). */
+    fun pushTarget(openUrl: String?): PushTarget? {
+        val path = openUrl?.substringBefore('?') ?: return null
+        for (prefix in listOf("/terminal/", "/factory/sessions/")) {
+            if (!path.startsWith(prefix)) continue
+            val rest = path.removePrefix(prefix)
+            val id = runCatching { java.net.URLDecoder.decode(rest.replace("+", "%2B"), "UTF-8") }.getOrDefault(rest).trim('/')
+            if (id.isEmpty()) continue
+            return if (prefix == "/terminal/") PushTarget.Terminal(id) else PushTarget.FactorySession(id)
+        }
+        return null
+    }
+
     /** Sessions running outside Allternit that can be brought in. */
     fun externalSessions(sessions: List<LiveSession>): List<LiveSession> = sessions.filter { it.external && it.movable != "here" }
 
@@ -60,7 +112,7 @@ object OnYourComputer {
      * the list (its process stopped) while its progress or error still needs showing.
      */
     fun rowsWithJobs(sessions: List<LiveSession>, jobSessions: Map<String, LiveSession>): List<LiveSession> {
-        val shown = externalSessions(sessions)
+        val shown = rowSessions(sessions)
         val listed = sessions.mapTo(HashSet()) { it.sessionId }
         return shown + jobSessions.values.filter { it.sessionId !in listed }
     }
@@ -99,6 +151,7 @@ object OnYourComputer {
     }
 
     fun statusWord(status: String): String = when (status) {
+        "blocked" -> "Needs you"
         "busy" -> "Working"
         "idle" -> "Idle"
         "offline" -> "Offline"
@@ -286,6 +339,33 @@ class TerminalSessionsStore(private val backend: ChatBackend) {
 
     /** The row each job started from, so its progress and error stay after the session leaves the list. */
     private val jobSessions = mutableStateMapOf<String, LiveSession>()
+
+    /** A blocked push's target, until its row takes it. */
+    var pushTarget by mutableStateOf<OnYourComputer.PushTarget?>(null)
+
+    /** The row a blocked push points at (terminal id, or Factory address). */
+    fun session(target: OnYourComputer.PushTarget): LiveSession? = when (target) {
+        is OnYourComputer.PushTarget.Terminal -> liveSessions.firstOrNull { it.terminalId == target.id }
+        is OnYourComputer.PushTarget.FactorySession -> liveSessions.firstOrNull { it.address == target.address }
+    }
+
+    /**
+     * Sends text to a pane: typed into its terminal (a real pty reads '\r' as Enter), or as a Factory delivery.
+     * Returns an error sentence, null on success.
+     */
+    suspend fun steer(session: LiveSession, text: String): String? {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return "Type something to send."
+        val r = when (session.steer) {
+            "terminal" -> session.terminalId?.let { CodeApi.terminalInput(backend, it, trimmed + "\r") } ?: return "Couldn't reach this computer."
+            "delivery" -> CodeApi.sendDelivery(backend, session.address, trimmed)
+            else -> return "This session can't be steered from here."
+        }
+        return when (r) {
+            is CodeResult.Ok -> { pollLiveSessions(); null }
+            else -> "Couldn't send. Try again."
+        }
+    }
 
     /** A one-line note for the sessions view (a terminal that could not get a tab). */
     var notice by mutableStateOf<String?>(null)
