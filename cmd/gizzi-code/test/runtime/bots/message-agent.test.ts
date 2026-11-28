@@ -20,6 +20,9 @@ import {
 import {
   MessageAgentTool,
   isMessageAgentSession,
+  messageAgentOffered,
+  executeForLiveSession,
+  matchLiveTarget,
   matchMessageTarget,
   resolveMessageTarget,
 } from "../../../src/runtime/tools/builtins/message-agent"
@@ -340,5 +343,51 @@ describe("hop receipts and the loop guard", () => {
     expect(held.metadata.delivered).toBe(false)
     expect(held.metadata.receipt).toEqual({ state: "held", reason: "pair_limit" })
     expect(held.output).toStartWith("Held:")
+  })
+})
+
+describe("message_agent in normal sessions (D9)", () => {
+  const rows = [
+    { address: "eoj/allternit-claude", harness: "claude", status: "idle" },
+    { address: "eoj/codex-1", harness: "codex", status: "working" },
+    { address: "eoj/old", harness: "agy", status: "offline" },
+  ]
+  const mk = () => {
+    const asks: any[] = []
+    const sent: string[] = []
+    return {
+      asks,
+      sent,
+      ctx: { sessionID: "ses_normal", ask: async (i: any) => void asks.push(i) },
+      deps: {
+        fetchRows: async () => rows,
+        send: async (to: string) => (sent.push(to), { state: "verified", tier: "push", note: "ok" }),
+      },
+    }
+  }
+
+  test("offered in a normal session, not to subagents", async () => {
+    expect(await messageAgentOffered({ id: "ses_normal" })).toBe(true)
+    expect(await messageAgentOffered({ id: "ses_sub", parentID: "ses_normal" }, async () => false)).toBe(false)
+  })
+
+  test("second send to the same target does not prompt", async () => {
+    const t = mk()
+    await executeForLiveSession({ target: "codex-1", message: "hi" }, { ...t.ctx, sessionID: "ses_a" }, t.deps)
+    const r = await executeForLiveSession({ target: "eoj/codex-1", message: "again" }, { ...t.ctx, sessionID: "ses_a" }, t.deps)
+    expect(t.asks.length).toBe(1)
+    expect(t.sent).toEqual(["eoj/codex-1", "eoj/codex-1"])
+    expect(r.metadata.delivered).toBe(true)
+    await executeForLiveSession({ target: "allternit-claude", message: "x" }, { ...t.ctx, sessionID: "ses_a" }, t.deps)
+    expect(t.asks.length).toBe(2)
+  })
+
+  test("unknown target errors and lists live sessions", async () => {
+    const t = mk()
+    await expect(executeForLiveSession({ target: "nope", message: "hi" }, t.ctx, t.deps)).rejects.toThrow(
+      /no live session 'nope'[\s\S]*eoj\/allternit-claude[\s\S]*eoj\/codex-1/,
+    )
+    expect(t.asks.length).toBe(0)
+    expect(() => matchLiveTarget("old", rows)).toThrow(/no live session/)
   })
 })

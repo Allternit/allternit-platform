@@ -31,7 +31,7 @@ import { findBotByCanonicalSession, isCanonicalBotSession } from "@/runtime/bots
 import { createHash, randomBytes } from "node:crypto"
 import { appendBotInbox, checkInboxGuard, INBOX_PAIR_LIMIT } from "@/runtime/bots/bot-inbox"
 import { AppRoutingError, fetchAppRoster, isAppBotSession, routeToAppBot } from "@/runtime/bots/app-bot-routing"
-import { sendToAddress } from "@/runtime/live/team-mcp"
+import { api, rosterText, sendToAddress, type LiveSessionRow } from "@/runtime/live/team-mcp"
 
 /**
  * The single gating predicate (D5): message_agent is offered only when the
@@ -40,6 +40,19 @@ import { sendToAddress } from "@/runtime/live/team-mcp"
  * owns those bots). Regular chats, group rooms, subagents, and coordinator
  * workers never see the tool.
  */
+/**
+ * Normal sessions get the tool too (plan D9): it messages another live session
+ * through the engine. Only subagents and coordinator workers (sessions with a
+ * parent) stay without it, unless they are a bot chat.
+ */
+export async function messageAgentOffered(
+  session: { id: string; parentID?: string | null },
+  botSession: (id: string) => Promise<boolean> = isMessageAgentSession,
+): Promise<boolean> {
+  if (!session.parentID) return true
+  return botSession(session.id)
+}
+
 export async function isMessageAgentSession(sessionID: string): Promise<boolean> {
   if (!sessionID) return false
   if (await isCanonicalBotSession(sessionID)) return true
@@ -114,6 +127,11 @@ Terminal (gizzi) bots: fire-and-forget; the message lands in the target's
 inbox and the reply arrives in this chat as a background message
 ("Message from 🤖 <name> (@<name>): ...").
 
+In a normal Gizzi session: target is a live session's name or address
+(another gizzi session or a Factory pane running claude, codex or agy); call
+with target "list" to see them. The first send to each target asks the user;
+later sends to it in this session do not. The result says how it landed.
+
 Do not use it for external email (send_agent_email) or user-facing output.`
 
 /** One metadata shape for every outcome (list, held, delivered, app-bot handoff). */
@@ -153,9 +171,10 @@ export const MessageAgentTool = Tool.define("message_agent", {
   }),
   async execute(params, ctx): Promise<MessageAgentResult> {
     if (params.target.includes("/") && !LIST_TARGETS.has(params.target.trim().toLowerCase())) {
-      return executeForAddress(params, ctx.sessionID, ctx.callID)
+      if (await isMessageAgentSession(ctx.sessionID)) return executeForAddress(params, ctx.sessionID, ctx.callID)
+      return executeForLiveSession(params, { sessionID: ctx.sessionID, callID: ctx.callID, ask: ctx.ask })
     }
-    if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID, ctx.callID)
+    if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID, ctx.callID, ctx)
 
     // The sender is the bot whose canonical session is running this turn.
     // Gating guarantees this resolves; when it does not, fail closed with a
@@ -258,10 +277,13 @@ async function executeForAppBot(
   params: { target: string; message?: string },
   sessionID: string,
   callID?: string,
+  ctx?: { ask: (input: any) => Promise<unknown> },
 ): Promise<MessageAgentResult> {
   const roster = await fetchAppRoster(sessionID)
   if (!roster) {
-    throw new BotStoreError("message_agent: this chat isn't one of your bots' chats — the tool is unavailable here")
+    // A normal Gizzi session: message another live session through the engine.
+    if (!ctx) throw new BotStoreError("message_agent: this chat isn't one of your bots' chats — the tool is unavailable here")
+    return executeForLiveSession(params, { sessionID, callID, ask: ctx.ask })
   }
   const from = roster.caller.name
   const message = (params.message ?? "").trim()
@@ -324,5 +346,89 @@ async function executeForAppBot(
     title: `Handed to ${name}`,
     output: `${name} couldn't finish it (thread ${result.threadId}): ${result.error ?? "unknown error"}`,
     metadata: { ...base, delivered: false },
+  }
+}
+
+/** Live sessions on the team, from the engine (`GET /api/factory/sessions`). */
+async function fetchLiveRows(): Promise<LiveSessionRow[]> {
+  const body = await api("/api/factory/sessions").catch((e: Error) => {
+    throw new BotStoreError(`message_agent: couldn't read live sessions: ${e.message}`)
+  })
+  return Array.isArray(body) ? body : (body.sessions ?? [])
+}
+
+/**
+ * Resolve a session name or address against live rows: exact address, then a
+ * unique case-insensitive address or name (the part after "/"). Unknown and
+ * ambiguous targets are errors that list the live sessions.
+ */
+export function matchLiveTarget(target: string, rows: LiveSessionRow[]): LiveSessionRow {
+  const name = target.trim()
+  if (!name) throw new BotStoreError("message_agent: target must be a session name or address")
+  const live = rows.filter((r) => r.status !== "offline")
+  const lower = name.toLowerCase()
+  const exact = live.find((r) => r.address === name)
+  if (exact) return exact
+  const matches = live.filter(
+    (r) => r.address.toLowerCase() === lower || r.address.split("/").pop()!.toLowerCase() === lower,
+  )
+  if (matches.length === 1) return matches[0]!
+  if (matches.length > 1) {
+    throw new BotStoreError(
+      `message_agent: '${name}' is ambiguous — it matches: ${matches.map((r) => r.address).join(", ")}. Use the full address.`,
+    )
+  }
+  throw new BotStoreError(`message_agent: no live session '${name}'. Live sessions:\n${rosterText(live)}`)
+}
+
+/** Targets already allowed in this session: later sends to them do not ask again. */
+const approvedTargets = new Map<string, Set<string>>()
+
+export type LiveMessageDeps = {
+  fetchRows?: () => Promise<LiveSessionRow[]>
+  send?: typeof sendToAddress
+}
+
+/** message_agent from a normal session to another live session (gizzi, claude, codex, agy panes). */
+export async function executeForLiveSession(
+  params: { target: string; message?: string },
+  ctx: { sessionID: string; callID?: string; ask: (input: any) => Promise<unknown> },
+  deps: LiveMessageDeps = {},
+): Promise<MessageAgentResult> {
+  const rows = await (deps.fetchRows ?? fetchLiveRows)()
+  if (LIST_TARGETS.has(params.target.trim().toLowerCase())) {
+    return {
+      title: "Live sessions",
+      output: rosterText(rows),
+      metadata: { target: "list", from: ctx.sessionID, delivered: false },
+    }
+  }
+  const message = (params.message ?? "").trim()
+  if (!message) throw new BotStoreError("message_agent: message must not be empty")
+  const row = matchLiveTarget(params.target, rows)
+  const approved = approvedTargets.get(ctx.sessionID) ?? new Set<string>()
+  if (!approved.has(row.address)) {
+    await ctx.ask({
+      permission: "message_agent",
+      patterns: [row.address],
+      always: [row.address],
+      metadata: { target: row.address, harness: row.harness, message },
+    })
+    approved.add(row.address)
+    approvedTargets.set(ctx.sessionID, approved)
+  }
+  let r: Awaited<ReturnType<typeof sendToAddress>>
+  try {
+    r = await (deps.send ?? sendToAddress)(row.address, message, {
+      idempotencyKey: idempotencyKeyFor(ctx.sessionID, ctx.callID),
+    })
+  } catch (error) {
+    throw new BotStoreError(`message_agent: ${(error as Error).message}`)
+  }
+  const state = r.state === "verified" ? "delivered" : (r.state ?? "failed")
+  return {
+    title: `Messaged ${row.address}`,
+    output: c1Output(row.address, { ...r, state }),
+    metadata: { target: row.address, from: ctx.sessionID, delivered: state === "delivered", state, tier: r.tier ?? undefined, hopId: r.hopId, note: r.note ?? undefined },
   }
 }
