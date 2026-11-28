@@ -114,7 +114,19 @@ if [ "${COMPONENTS[*]}" = voice-docker ]; then
   # It compiles every C/C++ dependency and drives the link, and its libstdc++.a is
   # linked statically: a -L dir that holds only the .a makes the linker's explicit
   # -lstdc++ pick it over the system .so.
-  add-apt-repository -y ppa:ubuntu-toolchain-r/test >/dev/null
+  # Not add-apt-repository: on bionic it fetches the key over hkp and prints
+  # "retrieving gpg key timed out" to stdout, so a keyserver hiccup failed the
+  # release with no message (release-desktop run 46067811157, Linux x64).
+  # Fetch the PPA signing key (Launchpad's signing_key_fingerprint) over HTTPS with
+  # retries, check its fingerprint, then write the source line.
+  PPA_KEY_FPR=C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5
+  curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
+    "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$PPA_KEY_FPR" -o /tmp/toolchain-r.asc
+  gpg --with-colons --import-options show-only --import /tmp/toolchain-r.asc 2>/dev/null | grep -q "^fpr:::::::::$PPA_KEY_FPR:" \
+    || { echo "toolchain PPA key fingerprint is not $PPA_KEY_FPR" >&2; exit 1; }
+  apt-key add /tmp/toolchain-r.asc >/dev/null
+  echo "deb http://ppa.launchpad.net/ubuntu-toolchain-r/test/ubuntu $(. /etc/os-release; echo "$VERSION_CODENAME") main" \
+    > /etc/apt/sources.list.d/ubuntu-toolchain-r-test.list
   apt-get update -qq
   GXX=; for v in 12 11; do if apt-get install -y -qq "g++-$v" >/dev/null 2>&1; then GXX=$v; break; fi; done
   [ -n "$GXX" ] || { echo "no g++-12 or g++-11 in ppa:ubuntu-toolchain-r/test for $(. /etc/os-release; echo "$VERSION_CODENAME")" >&2; exit 1; }
