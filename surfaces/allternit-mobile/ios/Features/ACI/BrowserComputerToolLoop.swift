@@ -28,7 +28,8 @@ let browserPlanNoToolsLine = "Plan models cannot run commands. Open the Terminal
 
 enum BrowserToolDefinitions {
     /// OpenAI function format, copied from contract 7.1.
-    static let all: [[String: Any]] = {
+    /// Built once and never mutated, so sharing it across isolation domains is safe.
+    nonisolated(unsafe) static let all: [[String: Any]] = {
         let json = #"""
         [
           { "type": "function", "function": {
