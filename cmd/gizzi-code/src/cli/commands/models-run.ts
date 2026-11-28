@@ -251,7 +251,7 @@ export async function runModel(id: string | undefined, opts: { quant?: string; p
   let cached = findCached(models, repo)
   const have = cached && modelPath(cached, quant)
   if (!have || !cached) {
-    const code = await pullModel(repo, quant.engine === "llama.cpp" ? quant.name : undefined, Boolean(opts.allowUnverified))
+    const code = await pullModel(repo, quant.engine === "llama.cpp" ? quant.name : undefined, Boolean(opts.allowUnverified), undefined, quant.engine === "colibri" ? "colibri" : undefined)
     if (code !== 0) return code
     ;({ models } = await listModels())
     cached = findCached(models, repo)

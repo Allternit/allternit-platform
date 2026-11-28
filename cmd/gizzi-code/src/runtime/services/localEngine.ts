@@ -147,7 +147,7 @@ export async function recommendRepos(
 export async function downloadRepo(
   repoId: string,
   quantization?: string,
-  opts?: { allowUnverified?: boolean; revision?: string },
+  opts?: { allowUnverified?: boolean; revision?: string; engine?: string },
 ): Promise<DownloadResult> {
   return request('/models/download', {
     method: 'POST',
@@ -155,6 +155,7 @@ export async function downloadRepo(
       repo_id: repoId,
       quantization,
       ...(opts?.revision ? { revision: opts.revision } : {}),
+      ...(opts?.engine ? { engine: opts.engine } : {}),
       ...(opts?.allowUnverified ? { allow_unverified: true } : {}),
     }),
   })
