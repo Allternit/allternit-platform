@@ -2,9 +2,10 @@
 //!
 //! - `GET  /engines/packs`            installed packs, install jobs, feed info
 //! - `POST /engines/packs/ensure`     install the right pack(s) for this machine
-//!                                    if missing (body `{"engines":["llamacpp","mlx"],
+//!                                    if missing (body `{"engines":["llamacpp","mlx","colibri"],
 //!                                    "update":false}`; default: llama.cpp, plus MLX
-//!                                    on Apple silicon; `update` also re-checks the
+//!                                    on Apple silicon, plus colibri where a pack is
+//!                                    built (it is small; models are separate); `update` also re-checks the
 //!                                    feed for newer versions of installed packs)
 //! - `POST /engines/packs/install`    install one pack by id (`{"pack_id": ...}`)
 //! - `DELETE /engines/packs/:pack_id` remove a pack (409 while a runtime uses it)
@@ -117,7 +118,7 @@ async fn ensure(
     let input = pick_input().await;
     let body = body.map(|Json(b)| b).unwrap_or_default();
     let update = body.update;
-    let wanted = body.engines.unwrap_or_else(|| vec!["llamacpp".into(), "mlx".into()]);
+    let wanted = body.engines.unwrap_or_else(|| vec!["llamacpp".into(), "mlx".into(), "colibri".into()]);
     let packs = state.packs.clone();
     let installed = tokio::task::spawn_blocking(move || packs.list_installed()).await.unwrap_or_default();
     let jobs = state.packs.jobs().await;
@@ -128,6 +129,7 @@ async fn ensure(
         let choices: Vec<PackChoice> = match engine.as_str() {
             "llamacpp" | "llama.cpp" => pick::llamacpp_choices(&input),
             "mlx" => pick::mlx_choice(&input).into_iter().collect(),
+            "colibri" => pick::colibri_choices(&input),
             other => return Err(err(StatusCode::BAD_REQUEST, format!("unknown engine {other}"))),
         };
         if choices.is_empty() {
