@@ -1303,6 +1303,8 @@ async fn main() {
         // Kernel UI backend: agent rules, routing policy, decision types, templates, activity.
         .merge(allternit_api::kernel_ui::router())
         .merge(allternit_api::kernel_ui::api_router())
+        // AllternitOS authority kernel: /api/v1/kernel/approvals/{request,resolve,redeem}.
+        .merge(allternit_api::authority::routes::router())
         // Computers console node routes (`/v1/host/*`, host-probe). Relayed
         // calls also need the cloud's relay signature (host_routes docs).
         .merge(allternit_api::host_routes::router())

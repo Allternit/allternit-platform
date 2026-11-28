@@ -103,6 +103,8 @@ pub mod aai_facade;
 pub mod a2a_routes;
 pub mod agency_api;
 pub mod kernel_ui;
+// AllternitOS authority kernel: approval request/resolve/redeem (Stage 1, step 7).
+pub mod authority;
 pub mod teams_auth;
 pub mod discord_gateway;
 pub mod channel_discord_app;
