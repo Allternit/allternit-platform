@@ -224,14 +224,37 @@ fun rememberSystemReduceMotion(): Boolean {
 }
 
 /**
+ * The dock offset (dp) for a page scrolled [scroll] dp that can scroll [maxScroll] dp in all. A page that
+ * overflows by less than [DockSpec.DOCK] cannot scroll far enough to finish the dock, so its scroll is stretched
+ * to the dock distance: the bottom of the page is the docked title. No overflow ([maxScroll] up to 1 dp of
+ * rounding, as iOS `DockMath.bottomRoom`) is 0, so a short page never docks. Pass [Float.POSITIVE_INFINITY]
+ * when the range is not known yet (unscaled).
+ */
+fun dockOffsetFor(scroll: Float, maxScroll: Float): Float = when {
+    maxScroll <= 1f -> 0f
+    // Divide first: at the bottom scroll / maxScroll is exactly 1, so the offset is exactly DOCK and docks.
+    maxScroll < DockSpec.DOCK -> scroll.coerceIn(0f, maxScroll) / maxScroll * DockSpec.DOCK
+    else -> scroll
+}
+
+/**
  * A scroll offset provider in dp for [DockingBlockTitle] and [dockDescription]. When the content does not
  * overflow (nothing to scroll in either direction) the offset stays 0, so a short page's title does not dock.
+ * A page that overflows by less than the dock distance still docks at its bottom ([dockOffsetFor]).
  */
 @Composable
 fun rememberDockOffset(state: ScrollState): () -> Float {
     val d = LocalDensity.current.density
     return remember(state, d) {
-        { if (state.canScrollForward || state.canScrollBackward) state.value / d else 0f }
+        {
+            if (!state.canScrollForward && !state.canScrollBackward) {
+                0f
+            } else {
+                // maxValue is Int.MAX_VALUE until the first layout.
+                val max = if (state.maxValue == Int.MAX_VALUE) Float.POSITIVE_INFINITY else state.maxValue / d
+                dockOffsetFor(state.value / d, max)
+            }
+        }
     }
 }
 
@@ -243,10 +266,24 @@ fun rememberDockOffset(state: LazyListState): () -> Float {
             when {
                 !state.canScrollForward && !state.canScrollBackward -> 0f
                 state.firstVisibleItemIndex > 0 -> DockSpec.DOCK * 2f
-                else -> state.firstVisibleItemScrollOffset / d
+                else -> dockOffsetFor(state.firstVisibleItemScrollOffset / d, state.dockMaxScrollPx() / d)
             }
         }
     }
+}
+
+/**
+ * How far this list scrolls in all (px), known only while the first and the last item are both laid out
+ * (a short list); otherwise [Float.POSITIVE_INFINITY], and the offset stays unstretched until the end comes
+ * into view (the letter springs smooth the change).
+ */
+private fun LazyListState.dockMaxScrollPx(): Float {
+    val info = layoutInfo
+    val last = info.visibleItemsInfo.lastOrNull() ?: return Float.POSITIVE_INFINITY
+    if (firstVisibleItemIndex != 0 || last.index != info.totalItemsCount - 1) return Float.POSITIVE_INFINITY
+    // Item offsets start at the content start; at max scroll the last item ends where the after-padding begins.
+    val remaining = last.offset + last.size + info.afterContentPadding - info.viewportEndOffset
+    return (firstVisibleItemScrollOffset + remaining).toFloat()
 }
 
 /**

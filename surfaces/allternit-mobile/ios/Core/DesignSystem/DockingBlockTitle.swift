@@ -45,7 +45,26 @@ enum DockMath {
     nonisolated static func progress(t: Double, n: Int, letter l: Int) -> Double {
         ease(clamp(t * (Double(n) + 0.6) - Double(l)))
     }
+
+    /// Clear room to add below a page's content so its title can finish docking.
+    /// `maxScroll` is how far the page scrolls without that room. A page that
+    /// overflows by less than the dock distance could not scroll far enough, so
+    /// its last letters froze mid-flight; the room makes up the difference and
+    /// the title motion stays the same on every page. No overflow (up to 1 pt of
+    /// rounding) gets no room, so a short page stays put and never docks.
+    nonisolated static func bottomRoom(maxScroll: CGFloat) -> CGFloat {
+        let dock = PolishTokens.dock
+        guard maxScroll > 1, maxScroll < dock else { return 0 }
+        return ceil(dock - maxScroll)
+    }
 }
+
+/// Smallest height of the bottom-room row of a `DockingTitleList`. A List row
+/// is never shorter than its minimum row height (44 pt), so the row is drawn at
+/// least this tall and its height is always known exactly. A little extra
+/// scroll past the docked point is harmless; a guessed height could make the
+/// room flip on and off.
+private let dockListRoomMinimum: CGFloat = 64
 
 /// Big (wrapped) and docked (one row) cells of a title, paired by order.
 struct DockTitleLayout {
@@ -107,11 +126,21 @@ private struct DockOffsetKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+/// Height of a ScrollView page's content without its bottom room (iOS 17).
+private struct DockContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 /// A scroll page with a big block title that docks into the nav bar's
 /// principal area. Put it inside a NavigationStack. With the default chrome the
 /// nav bar is forced inline; the docked title is drawn by this view in the bar.
 ///
 /// - `chrome`: `.navigationBar` (default) or `.overlay(barCenter:)`.
+///
+/// A page that overflows by less than the dock distance gets clear room below
+/// its content so the title still finishes docking; a page that does not
+/// overflow gets none and its title stays big.
 struct DockingTitleScrollView<Content: View>: View {
     let title: String
     var description: String?
@@ -127,6 +156,10 @@ struct DockingTitleScrollView<Content: View>: View {
     @State private var baseline: CGFloat?
     @State private var flashStart: Date?
     @State private var layout: DockTitleLayout
+    /// Clear room below the content (`DockMath.bottomRoom`).
+    @State private var room: CGFloat = 0
+    /// iOS 17 ScrollView only: content height without the room.
+    @State private var contentH: CGFloat = 0
 
     init(title: String, description: String? = nil, taller: Bool = false,
          chrome: DockChrome = .navigationBar,
@@ -151,6 +184,23 @@ struct DockingTitleScrollView<Content: View>: View {
 
     private var usesNavBar: Bool { chrome == .navigationBar }
 
+    /// Height the room actually adds to the scroll range: the ScrollView pads
+    /// its content by `room`; the List adds a row at least `dockListRoomMinimum` tall.
+    private var roomHeight: CGFloat {
+        guard room > 0 else { return 0 }
+        return isList ? max(room, dockListRoomMinimum) : room
+    }
+
+    /// `range` is the measured scroll range, room included.
+    private func applyScrollRange(_ range: CGFloat) {
+        setRoom(forMaxScroll: range - roomHeight)
+    }
+
+    private func setRoom(forMaxScroll maxScroll: CGFloat) {
+        let r = DockMath.bottomRoom(maxScroll: maxScroll)
+        if r != room { room = r }
+    }
+
     var body: some View {
         GeometryReader { geo in
             let safeTop = geo.safeAreaInsets.top
@@ -159,13 +209,24 @@ struct DockingTitleScrollView<Content: View>: View {
             ZStack(alignment: .topLeading) {
                 scroller(safeTop: safeTop, titleH: titleH, f: f)
                     .scrollBounceBehavior(.basedOnSize)
-                    .modifier(DockScrollReader(offset: $offset))
+                    .modifier(DockScrollReader(offset: $offset, onRange: { applyScrollRange($0) }))
                     .onPreferenceChange(DockOffsetKey.self) { v in
                         if #unavailable(iOS 18.0) {
                             if usesNavBar { offset = v } else {
                                 if baseline == nil { baseline = v }
                                 offset = v - (baseline ?? 0)
                             }
+                        }
+                    }
+                    .onPreferenceChange(DockContentHeightKey.self) { h in
+                        if #unavailable(iOS 18.0) { contentH = h }
+                    }
+                    // iOS 17 ScrollView: the visible height is the safe-area
+                    // frame (the scroll view insets itself by the safe area), so
+                    // the page scrolls contentH - geo height without the room.
+                    .onChange(of: contentH - geo.size.height, initial: true) { _, maxScroll in
+                        if #unavailable(iOS 18.0), !isList, contentH > 0 {
+                            setRoom(forMaxScroll: maxScroll)
                         }
                     }
 
@@ -220,6 +281,13 @@ struct DockingTitleScrollView<Content: View>: View {
             List {
                 VStack(alignment: .leading, spacing: 0) {
                     offsetReader(safeTop: safeTop)
+                        .background {
+                            // iOS 17 has no scroll geometry and List rows are
+                            // lazy, so the range comes from the List's UIScrollView.
+                            if #available(iOS 18.0, *) { EmptyView() } else {
+                                DockScrollRangeProbe { applyScrollRange($0) }
+                            }
+                        }
                     Color.clear.frame(height: titleH + 8 + 12)
                     descView
                 }
@@ -229,6 +297,14 @@ struct DockingTitleScrollView<Content: View>: View {
                 .listRowBackground(Color.clear)
                 .onDisappear { if offset > 0 { offset = max(offset, PolishTokens.dock) } }
                 content()
+                if room > 0 {
+                    // Bottom room so the title can finish docking (DockMath.bottomRoom).
+                    Color.clear.frame(height: roomHeight)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .accessibilityHidden(true)
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -241,7 +317,12 @@ struct DockingTitleScrollView<Content: View>: View {
                     descView
                     content()
                 }
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: DockContentHeightKey.self, value: g.size.height)
+                })
                 .padding(.horizontal, 14)
+                // Bottom room so the title can finish docking (DockMath.bottomRoom).
+                .padding(.bottom, room)
             }
         }
     }
@@ -388,19 +469,87 @@ private struct DockNavChrome: ViewModifier {
     }
 }
 
-/// Reads the scroll offset: `onScrollGeometryChange` on iOS 18+; on iOS 17 the
-/// page reports it through a preference key instead.
+private struct DockScrollMetrics: Equatable {
+    var offset: CGFloat
+    var range: CGFloat
+}
+
+/// Reads the scroll offset and scroll range: `onScrollGeometryChange` on iOS
+/// 18+; on iOS 17 the page reports them through preference keys (ScrollView)
+/// or `DockScrollRangeProbe` (List) instead.
 private struct DockScrollReader: ViewModifier {
     @Binding var offset: CGFloat
+    /// How far the page scrolls (content plus insets past the container).
+    var onRange: (CGFloat) -> Void
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: CGFloat.self) { g in
-                g.contentOffset.y + g.contentInsets.top
+            content.onScrollGeometryChange(for: DockScrollMetrics.self) { g in
+                DockScrollMetrics(
+                    offset: g.contentOffset.y + g.contentInsets.top,
+                    range: g.contentSize.height + g.contentInsets.top + g.contentInsets.bottom
+                        - g.containerSize.height)
             } action: { _, new in
-                offset = max(0, new)
+                offset = max(0, new.offset)
+                onRange(new.range)
             }
         } else {
             content
+        }
+    }
+}
+
+/// iOS 17, List pages: reports the scroll range of the UIScrollView the List
+/// draws in. Before iOS 18 SwiftUI has no scroll geometry, and List rows below
+/// the screen are not laid out, so a geometry preference cannot see where the
+/// content ends. Sits in the List's header row; zero size, no touches.
+private struct DockScrollRangeProbe: UIViewRepresentable {
+    var onRange: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> ProbeView {
+        let v = ProbeView()
+        v.isUserInteractionEnabled = false
+        v.isAccessibilityElement = false
+        v.onRange = onRange
+        return v
+    }
+
+    func updateUIView(_ uiView: ProbeView, context: Context) {
+        uiView.onRange = onRange
+    }
+
+    final class ProbeView: UIView {
+        var onRange: ((CGFloat) -> Void)?
+        private weak var scrollView: UIScrollView?
+        private var observations: [NSKeyValueObservation] = []
+        private var last: CGFloat = .nan
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            var v = superview
+            while let s = v, !(s is UIScrollView) { v = s.superview }
+            guard let sv = v as? UIScrollView, sv !== scrollView else { return }
+            scrollView = sv
+            last = .nan
+            observations = [
+                sv.observe(\.contentSize, options: [.initial, .new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.report() }
+                },
+                sv.observe(\.bounds, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.report() }
+                },
+            ]
+        }
+
+        private func report() {
+            guard let sv = scrollView else { return }
+            let inset = sv.adjustedContentInset
+            let range = sv.contentSize.height + inset.top + inset.bottom - sv.bounds.height
+            guard range != last else { return }
+            last = range
+            // KVO fires inside UIKit layout, which can be inside a SwiftUI
+            // update; hand the value to SwiftUI on the next turn.
+            Task { @MainActor [weak self] in self?.onRange?(range) }
         }
     }
 }
