@@ -210,6 +210,14 @@ A bot project's team view (the project pane's **Team**, or **Open team lanes** o
 
 Cost per bot is not shown: the usage API has no per-bot spend yet. The cards show context used instead.
 
+## Spawn, message and list sessions
+
+Three small commands and tools cover most hand-offs between sessions. They work in a normal Gizzi session, not only in a bot team.
+
+- **`gizzi spawn <cli> "<prompt>"`** starts a session of another coding CLI on this computer. It is the short form of `gizzi start` (see [Start a session from your phone](/guides/start-anywhere) for `gizzi start` and starting on another computer). The prompt, and a hand-off file if you pass `--handoff`, go in a private task file under `~/.gizzi/spawn`, and the new session is told to read it. Flags: `--cwd`, `--handoff`, `--runtime`, `--mode`, `--window`, `--terminal`, `--dry-run`. `--window` opens a terminal window that runs only the attach command, so you can watch the session. `--dry-run` prints the request and the launch command without starting anything. See [Gizzi work views](/cli/work).
+- **`message_agent`** is now offered in normal Gizzi sessions. The target is the name or address of a live session; `list` shows the live sessions. The first message to each target asks you: **Allow once** or **Always for this target**. Later messages to that target in the same session do not ask. A name that is unknown or matches more than one session gives an error that lists the live sessions. Sends go through the existing Factory delivery, with its rate limit. Subagents and workers that have no bot chat do not get the tool.
+- **`/remote`** lists the other CLIs' panes next to this session, each with its status and how far you can reach it. See [Continue a session anywhere](/cli/continue-anywhere).
+
 ## Worktrees
 
 A Terminal bot that works in a worktree gets an [Agent Tree](/factory/trees): its own branch `ao/<slug>` from fresh `origin/main`, owned by the bot and seeded from the warm base. `gizzi agents down <bot> --rm-worktree` lands it, or pauses it when it holds unmerged or uncommitted work. People and sessions use the same `gizzi agents tree` verbs.
