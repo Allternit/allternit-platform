@@ -7,12 +7,12 @@ import WebKit
 /// which WebKit ships from iOS 27, so a capability probe runs first and the
 /// computer never boots without it.
 ///
-/// Bridge: the box page speaks the section 6.2 message format over
-/// `window.postMessage` with a parent window. A native host has no parent, so
-/// a document-start script gives the page a stand-in `window.parent` and hands
-/// it messages as if they came from `https://ai.allternit.com` (one of the
-/// origins the page already allows). Page replies go out through the
-/// `allternitBox` script message handler. The wire shapes are unchanged.
+/// Bridge: the box page has an explicit native host mode (ai PR "native host
+/// transport for box RPC"). When the `allternitBox` script message handler
+/// exists it posts every message to it, and the app answers by calling
+/// `window.__allternitBoxReceive(message)`. Same section 6.2 message shapes as
+/// the frame path; only the transport differs. The page must ship that mode
+/// before this works on a device.
 ///
 /// The WKWebView uses the default (persistent) website data store, so the
 /// disk in IndexedDB on the box origin survives app restarts.
@@ -142,39 +142,11 @@ final class BrowserComputerModel: NSObject, ObservableObject {
         configuration.websiteDataStore = .default()
         let controller = configuration.userContentController
         controller.add(WeakHandler(self), name: Self.handlerName)
-        controller.addUserScript(WKUserScript(source: Self.shim, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
         view.isInspectable = false
         return view
     }
-
-    /// Stand-in parent window for the box page (see the type comment).
-    private static let shim = """
-    (function () {
-      var NAME = '\(handlerName)', ORIGIN = 'https://ai.allternit.com';
-      var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[NAME];
-      if (!handler) return;
-      var fakeParent = { postMessage: function (msg) { handler.postMessage(JSON.stringify(msg)); } };
-      try { Object.defineProperty(window, 'parent', { value: fakeParent, configurable: true }); } catch (e) {}
-      var listeners = [];
-      var add = window.addEventListener.bind(window), rem = window.removeEventListener.bind(window);
-      window.addEventListener = function (type, fn, opts) {
-        if (type === 'message' && fn) listeners.push(fn);
-        return add(type, fn, opts);
-      };
-      window.removeEventListener = function (type, fn, opts) {
-        if (type === 'message') listeners = listeners.filter(function (l) { return l !== fn; });
-        return rem(type, fn, opts);
-      };
-      window.__allternitHostDeliver = function (data) {
-        var ev = { data: data, origin: ORIGIN, source: fakeParent, type: 'message' };
-        listeners.slice().forEach(function (l) {
-          try { typeof l === 'function' ? l.call(window, ev) : l.handleEvent(ev); } catch (e) {}
-        });
-      };
-    })();
-    """
 
     // MARK: RPC
 
@@ -187,7 +159,7 @@ final class BrowserComputerModel: NSObject, ObservableObject {
         let json = String(decoding: data, as: UTF8.self)
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
-            view.evaluateJavaScript("window.__allternitHostDeliver && window.__allternitHostDeliver(\(json))") { [weak self] _, error in
+            view.evaluateJavaScript("window.__allternitBoxReceive && window.__allternitBoxReceive(\(json))") { [weak self] _, error in
                 if error != nil { Task { @MainActor in self?.resolve(id, .failure(RPCError(code: "not_ready", message: "The page is not ready."))) } }
             }
             Task { [weak self] in
@@ -277,10 +249,12 @@ final class BrowserComputerModel: NSObject, ObservableObject {
 
     // MARK: Incoming
 
-    fileprivate func receive(_ raw: String) {
-        guard let data = raw.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (obj["v"] as? Int) == 1 else { return }
+    fileprivate func receive(_ body: Any) {
+        var parsed = body as? [String: Any]
+        if parsed == nil, let raw = body as? String, let data = raw.data(using: .utf8) {
+            parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+        guard let obj = parsed, (obj["v"] as? Int) == 1 else { return }
         switch obj["kind"] as? String {
         case "res":
             guard let id = obj["id"] as? String else { return }
@@ -349,10 +323,10 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
     weak var model: BrowserComputerModel?
     init(_ model: BrowserComputerModel) { self.model = model }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let raw = message.body as? String else { return }
         // Only the box origin may talk to the app.
         guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == "box.allternit.com" else { return }
-        Task { @MainActor in self.model?.receive(raw) }
+        let body = message.body
+        Task { @MainActor in self.model?.receive(body) }
     }
 }
 
