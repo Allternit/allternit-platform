@@ -300,7 +300,21 @@ export interface V1TracingTest {
 }
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "consumed";
-export type ApprovalSource = "twin" | "computer";
+export type ApprovalSource = "twin" | "computer" | "kernel";
+
+/** Unified kernel fields on a `source: "kernel"` approval (AllternitOS authority kernel). Read-only here. */
+export interface V1KernelApproval {
+  action_class: string;
+  action_summary: string;
+  action_hash: string;
+  deadline: string | null;
+  human_only: boolean;
+  run_id: string | null;
+  principal: string | null;
+  decided_by: string | null;
+  check_receipt_id: string | null;
+  redemption_receipt_id: string | null;
+}
 
 export interface V1Approval {
   id: string;
@@ -317,6 +331,8 @@ export interface V1Approval {
   created_at: string;
   resolved_at: string | null;
   resolved_by: string | null;
+  /** Present only when `source` is `kernel`. */
+  kernel?: V1KernelApproval | null;
 }
 
 /** A `/v1` client bound to one project. */
