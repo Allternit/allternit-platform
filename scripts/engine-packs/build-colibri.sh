@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build a colibri engine pack for Linux (x64, arm64) or Windows (x64). No compiling happens here.
+# Build a colibri engine pack for Linux (x64, arm64), Windows (x64) or macOS (arm64). No compiling happens here.
 # Contract: handoffs CONTRACT-colibri-unkernel.md section 3 (option A: bundled Python gateway).
 #
-# Usage: build-colibri.sh --os linux|windows --arch x64|arm64 [--out DIR] [--work DIR]
+# Usage: build-colibri.sh --os linux|windows|macos --arch x64|arm64 [--sign] [--out DIR] [--work DIR]
 # Output: <out>/colibri-<os>-<x86_64|aarch64>/ with
 #   python/                        python-build-standalone (install_only_stripped), pinned below
 #   colibri/c/openai_server.py     colibri's gateway .py files at the pin (+ c/tools), from the fork checkout
@@ -14,7 +14,12 @@
 # Why the .py files come from the checkout and not the archive: the engine finds its binaries next to
 # openai_server.py (default_engine in openai_server.py), and the archive contents are unverified
 # (contract 3.3). Files from the archive are copied as is, then the checkout's .py files overlay c/.
-# There are no macOS or Windows Arm colibri archives (contract 3.4), so those hosts get no pack here.
+# There are no macOS x86_64 or Windows Arm colibri archives (contract 3.4), so those hosts get no pack here.
+# macOS (colibri-macos-arm64) is a CPU pack. COLI_METAL stays off. A Metal pack is added only after a
+# measurement on a Mac shows Metal helps; it is not part of this script until then.
+# --sign (macOS only): Developer ID sign every Mach-O (engine binaries, python, .so/.dylib) with
+# sign-notarize.sh, the same as the llama.cpp Metal pack, BEFORE the manifest hashes the files.
+# The caller zips and notarizes (the workflow leaves it unsigned when the cert secret is missing).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -27,24 +32,27 @@ PBS_RELEASE="20261110"; PBS_PYTHON="3.12.16"                   # astral-sh/pytho
 PBS_SHA_LINUX_X64="6a9e62dad033790aef722dbd370e0ce76ce17b73627ba3ae679f537049350b39"
 PBS_SHA_LINUX_ARM64="b6a41defec4975d94b4ff1950236e7383e5c02ba40ea48c9ec33c66087a35aab"
 PBS_SHA_WINDOWS_X64="355ee61b8207b91574491b1c6dc9b0ebb4408fc56bfafe498f3ef439314b52dc"
+PBS_SHA_MACOS_ARM64="e956e60bc9465d577ef8062059aa05cd3a2665b4b8678a2ed24e432368330b8f"   # install_only (not _stripped)
 # -------------------------------------------------------------------------------------------------
 
-OS="" ARCH="" OUT="${ENGINE_PACK_OUT:-$PWD/out}" WORK="${ENGINE_PACK_WORK:-$PWD/work}"
+OS="" ARCH="" SIGN=0 OUT="${ENGINE_PACK_OUT:-$PWD/out}" WORK="${ENGINE_PACK_WORK:-$PWD/work}"
 while [ $# -gt 0 ]; do case "$1" in
   --os) OS="$2"; shift 2;; --arch) ARCH="$2"; shift 2;;
-  --out) OUT="$2"; shift 2;; --work) WORK="$2"; shift 2;; *) echo "unknown $1" >&2; exit 2;; esac; done
+  --out) OUT="$2"; shift 2;; --work) WORK="$2"; shift 2;; --sign) SIGN=1; shift;; *) echo "unknown $1" >&2; exit 2;; esac; done
 [ -n "$OS" ] && [ -n "$ARCH" ] || { echo "need --os --arch" >&2; exit 2; }
 
 case "$OS-$ARCH" in
   linux-x64)    ID_ARCH=x86_64;  ASSET="colibri-$COLIBRI_TAG-linux-x86_64.tar.gz";  PBS_TRIPLE="x86_64-unknown-linux-gnu";  PBS_SHA="$PBS_SHA_LINUX_X64";;
   linux-arm64)  ID_ARCH=aarch64; ASSET="colibri-$COLIBRI_TAG-linux-aarch64.tar.gz"; PBS_TRIPLE="aarch64-unknown-linux-gnu"; PBS_SHA="$PBS_SHA_LINUX_ARM64";;
   windows-x64)  ID_ARCH=x86_64;  ASSET="colibri-$COLIBRI_TAG-windows-x86_64.zip";   PBS_TRIPLE="x86_64-pc-windows-msvc";    PBS_SHA="$PBS_SHA_WINDOWS_X64";;
+  macos-arm64)  ID_ARCH=arm64;   ASSET="colibri-$COLIBRI_TAG-macos-arm64.tar.gz";   PBS_TRIPLE="aarch64-apple-darwin";      PBS_SHA="$PBS_SHA_MACOS_ARM64"; PBS_FLAVOR="install_only";;
   *) echo "no colibri archive for $OS-$ARCH" >&2; exit 2;;
 esac
-PBS_ASSET="cpython-$PBS_PYTHON+$PBS_RELEASE-$PBS_TRIPLE-install_only_stripped.tar.gz"
+PBS_ASSET="cpython-$PBS_PYTHON+$PBS_RELEASE-$PBS_TRIPLE-${PBS_FLAVOR:-install_only_stripped}.tar.gz"
 PACK_ID="colibri-$OS-$ID_ARCH"   # CONTRACT 3.4 pack names (no backend part)
 PACK="$OUT/$PACK_ID"; W="$WORK/$PACK_ID"
 if [ "$OS" = windows ]; then PYBIN="python/python.exe"; else PYBIN="python/bin/python3"; fi
+MIN_OS=""; [ "$OS" = macos ] && MIN_OS="13.0"
 PY="$(command -v python3 || command -v python)"
 
 sha256_of() { "$PY" -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
@@ -92,8 +100,12 @@ PYLIC="$(find "$PACK/python" -maxdepth 4 -name 'LICENSE.txt' | head -n 1)"
 [ -n "$PYLIC" ] || { echo "CPython LICENSE.txt not found in python/" >&2; exit 1; }
 cp "$PYLIC" "$PACK/LICENSE-python"
 
+if [ "$SIGN" = 1 ]; then
+  [ "$OS" = macos ] || { echo "--sign is macOS only" >&2; exit 2; }
+  "$HERE/sign-notarize.sh" "$PACK"
+fi
 "$PY" "$HERE/make-manifest.py" "$PACK" --engine colibri --backend cpu --version "$COLIBRI_TAG" \
-  --os "$OS" --arch "$ARCH" --min-os "" --source-commit "$COLIBRI_COMMIT" --entrypoint "$PYBIN"
+  --os "$OS" --arch "$ARCH" --min-os "$MIN_OS" --source-commit "$COLIBRI_COMMIT" --entrypoint "$PYBIN"
 # make-manifest.py names packs engine-backend-os-arch; the contract id has no backend part.
 "$PY" - "$PACK/pack.json" "$PACK_ID" <<'PYEOF'
 import json, sys

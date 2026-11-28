@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pack: [llamacpp-metal, mlx-metal]
+        pack: [llamacpp-metal, mlx-metal, colibri-macos-arm64]
     env:
       HAVE_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
@@ -184,6 +184,13 @@ jobs:
           SHA=$(python3 -c "import json;print(json.load(open('$RAW/BUILD-INFO.json'))['commit'])")
           python3 scripts/engine-packs/make-manifest.py "$PACK" --engine llamacpp --backend metal --version "$LLAMACPP_TAG" \
             --os macos --arch arm64 --min-os 13.0 --source-commit "$SHA" --entrypoint bin/llama-server
+      - name: Build colibri CPU pack
+        if: matrix.pack == 'colibri-macos-arm64'
+        # No compile: pinned release archive + bundled Python + colibri's .py gateway files. CPU only;
+        # a Metal pack waits for a Mac measurement. Signed like the llama.cpp pack when the cert exists.
+        run: |
+          SIGN=""; if [ "$HAVE_CERT" = true ]; then SIGN="--sign"; fi
+          scripts/engine-packs/build-colibri.sh --os macos --arch arm64 $SIGN --out "$PWD/out/pack" --work "$RUNNER_TEMP/colibri-work"
       - name: Build MLX sidecar
         if: matrix.pack == 'mlx-metal'
         env:
