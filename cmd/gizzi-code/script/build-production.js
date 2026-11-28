@@ -78,6 +78,16 @@ const packageJson = await Bun.file("./package.json").json();
 const VERSION = packageJson.version || "1.0.0";
 console.log(`Version: ${VERSION}`);
 console.log("");
+// The binary embeds catalog.snapshot.gen.json (generated from cli-catalog.json).
+// `bun run build` regenerates it first; a direct call (release-desktop.yml)
+// must not ship a snapshot older than the source.
+{
+    const snap = Bun.spawnSync({ cmd: [process.execPath, "script/gen-picker-snapshot.ts", "--check"], stdout: "inherit", stderr: "inherit" });
+    if (snap.exitCode !== 0) {
+        console.error("❌ Picker snapshot is stale. Run: bun script/gen-picker-snapshot.ts and commit the result.");
+        process.exit(1);
+    }
+}
 // Load and bundle migrations
 console.log("📦 Loading migrations...");
 const migrations = [];

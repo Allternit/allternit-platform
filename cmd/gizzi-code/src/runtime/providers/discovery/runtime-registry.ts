@@ -2,11 +2,13 @@
  * Runtime registry reader (Harness & Bots 2.0, contract: CONTRACT-harness-bots-2.md).
  *
  * The `runtimes[]` array of cli-catalog.json (version 3) is the one list of
- * runtimes a bot can run on. A runtime points at a catalog tool with `tool`
+ * runtimes a bot can run on. Gizzi does not import that file: it reads
+ * catalog.snapshot.gen.json, generated from it at build time by
+ * script/gen-picker-snapshot.ts (see `loadRuntimeSnapshot`). A runtime points at a catalog tool with `tool`
  * (null for the native Allternit runtime). Look configs are data only, so
  * Swift, Kotlin and web can draw them from the same JSON.
  */
-import catalog from "./cli-catalog.json"
+import snapshot from "./catalog.snapshot.gen.json"
 
 export type RuntimeCategory = "native" | "coding" | "personal" | "general" | "experimental"
 export type AdapterKind =
@@ -76,9 +78,35 @@ export interface BotBrainLike {
   runtime?: string
 }
 
-const DATA = catalog as unknown as { version: number; runtimes?: RuntimeEntry[] }
+/** A CLI row (`tools[]`) as far as this module reads it; subprocess.ts and sign-in.ts read more fields. */
+export interface SnapshotTool {
+  id: string
+  aliases?: string[]
+  [field: string]: unknown
+}
 
-export const RUNTIME_CATALOG_VERSION: number = DATA.version
+/** The picker data Gizzi starts from: the picker-catalog envelope plus the full runtime and CLI rows. */
+export interface RuntimeSnapshot {
+  schema: number
+  generatedAt: string
+  source: { path: string; sha256: string; catalogVersion: number }
+  runtimes: RuntimeEntry[]
+  tools: SnapshotTool[]
+}
+
+/**
+ * The runtime and CLI rows, from the snapshot built into this binary
+ * (catalog.snapshot.gen.json, generated from cli-catalog.json by
+ * script/gen-picker-snapshot.ts). This is the offline fallback: the live
+ * GET /api/v1/picker-catalog overlays it, so every reader goes through here.
+ */
+export function loadRuntimeSnapshot(): RuntimeSnapshot {
+  return snapshot as unknown as RuntimeSnapshot
+}
+
+const DATA = loadRuntimeSnapshot()
+
+export const RUNTIME_CATALOG_VERSION: number = DATA.source.catalogVersion
 
 const RUNTIMES: RuntimeEntry[] = DATA.runtimes ?? []
 
@@ -117,7 +145,7 @@ export function fits(runtime: RuntimeEntry | string, providerId: string): boolea
   if (r.brains.includes(p)) return true
   if (!r.tool) return false
   if (p === r.tool || p === r.id || (r.aliases ?? []).includes(p)) return true
-  const tool = (catalog as { tools?: { id: string; aliases?: string[] }[] }).tools?.find((t) => t.id === r.tool)
+  const tool = DATA.tools?.find((t) => t.id === r.tool)
   return (tool?.aliases ?? []).includes(p)
 }
 
@@ -125,7 +153,7 @@ export function fits(runtime: RuntimeEntry | string, providerId: string): boolea
 function isOwnCli(r: RuntimeEntry, providerId: string): boolean {
   if (!r.tool) return false
   if (providerId === r.tool || providerId === r.id || (r.aliases ?? []).includes(providerId)) return true
-  const tool = (catalog as { tools?: { id: string; aliases?: string[] }[] }).tools?.find((t) => t.id === r.tool)
+  const tool = DATA.tools?.find((t) => t.id === r.tool)
   return (tool?.aliases ?? []).includes(providerId)
 }
 
