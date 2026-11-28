@@ -31,7 +31,7 @@ use axum::{Extension, Json, Router};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use super::approvals::{Decision, ResolveBody, SqlAuthority};
+use super::approvals::{Decision, Resolution, ResolveBody, SqlAuthority};
 use super::audit::{self, Scope};
 use super::{presence, tokens};
 use crate::auth::{AuthUser, INTERNAL_SERVICE_USER_ID};
@@ -182,7 +182,14 @@ async fn request(
         Err(r) => return r,
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
-    with_kernel(&state, user.tenant_id.clone(), move |k| k.request(&caller, body)).await
+    // Step 18: a request for the owner also goes to cloud-api, which pushes it to their phones.
+    let (handle, owner) = (tokio::runtime::Handle::current(), user.user_id.clone());
+    with_kernel(&state, user.tenant_id.clone(), move |k| {
+        let created = k.request(&caller, body)?;
+        super::relay::notify(&handle, &created, &owner);
+        Ok(created)
+    })
+    .await
 }
 
 /// `approval.resolve`: HUMAN ONLY. A machine caller reaches the kernel as `run`/`service` and is
@@ -203,7 +210,17 @@ async fn resolve(
         tracing::info!("kernel approvals: Desktop approve without a user-presence proof, refused");
         return with_kernel(&state, user.tenant_id.clone(), move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
     }
-    with_kernel(&state, user.tenant_id.clone(), move |k| k.resolve(&caller, body)).await
+    // Step 18: a decision made here closes the phone's copy on cloud-api.
+    let handle = tokio::runtime::Handle::current();
+    with_kernel(&state, user.tenant_id.clone(), move |k| {
+        let resolved = k.resolve(&caller, body)?;
+        match &resolved {
+            Resolution::Approved(t) => super::relay::notify_closed(&handle, &t.request_id, "approved", &t.expires_at),
+            Resolution::Denied(r) => super::relay::notify(&handle, r, &caller.principal),
+        }
+        Ok(resolved)
+    })
+    .await
 }
 
 /// `approval.redeem`: spend a token before the action runs.
