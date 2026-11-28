@@ -597,8 +597,7 @@ internal fun AciBrowserComputerDetail(onDone: () -> Unit) {
                         CCard {
                             CTitle("Status")
                             val s = host.status
-                            CRow("State", when (s.state) { "idle" -> "Idle"; "loading" -> "Loading"; "booting" -> "Starting"; "ready" -> "Ready"; "resetting" -> "Resetting"; "error" -> "Error"; else -> s.state })
-                            if (s.state == "loading" && s.loaded != null && s.total != null && s.total > 0) CRow("Downloaded", "${consoleBytes(s.loaded.toDouble())} of ${consoleBytes(s.total.toDouble())}")
+                            CRow("State", when (s.state) { "loading" -> if (s.loaded != null && s.total != null && s.total > 0) "Downloading ${(s.loaded * 100 / s.total)}%" else "Downloading…"; "booting" -> "Starting…"; "ready" -> "Running"; "resetting" -> "Resetting…"; "error" -> "Problem"; else -> "Stopped" })
                             CRow("Disk used", bytesLabel(s.diskBytesUsed))
                             CRow("Kept on this phone", when (s.persisted) { true -> "Yes"; false -> "No"; null -> "Not measured" })
                             (error ?: host.message ?: s.error)?.let { CText(it, color = c.textPrimary) }
@@ -642,7 +641,7 @@ internal fun AciBrowserComputerDetail(onDone: () -> Unit) {
                         }
                         CCard {
                             CTitle("Reset disk")
-                            CText("Deletes everything on the browser computer's disk. This cannot be undone.")
+                            CText("Deletes everything on this computer's disk.")
                             AciPillButton("Reset disk", "aciBrowserComputerReset") { confirmReset = computerId != null }
                         }
                     }
@@ -652,8 +651,8 @@ internal fun AciBrowserComputerDetail(onDone: () -> Unit) {
     }
     if (confirmReset) androidx.compose.material3.AlertDialog(
         onDismissRequest = { confirmReset = false },
-        title = { Text("Reset the browser computer's disk?") },
-        text = { Text("Everything on it is deleted and cannot be brought back.") },
+        title = { Text("Reset this computer's disk?") },
+        text = { Text("Everything on its disk is deleted. This can't be undone.") },
         confirmButton = {
             androidx.compose.material3.TextButton(onClick = {
                 confirmReset = false

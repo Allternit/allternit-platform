@@ -129,7 +129,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text("Browser computer", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text("A Linux computer that runs on this phone.", color = c.textSecondary, fontSize = 13.sp)
+                        Text("Runs inside this app", color = c.textSecondary, fontSize = 13.sp)
                     }
                 }
             }
