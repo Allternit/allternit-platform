@@ -172,6 +172,8 @@ enum PersonChatClient {
     /// One Allternit Cloud turn that may call tools (contract 7): the browser
     /// computer's tool loop. Cloud models only; the server refuses tools for
     /// plan turns. Returns the tool calls the model made, in order.
+    /// Main actor: `loop.onDelta` updates the chat view model.
+    @MainActor
     static func streamCloudTools(model: String, request loop: BrowserToolRequest) async throws -> BrowserToolResponse {
         let vendor = PersonModels.vendorName(for: model)
         guard let token = try await AuthManager.shared.getToken(), !token.isEmpty else {
