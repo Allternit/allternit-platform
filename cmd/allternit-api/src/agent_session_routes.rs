@@ -3079,6 +3079,13 @@ async fn transform_bus_event(
             "command": props.get("command"),
             "time": props.get("time"),
         })),
+        // Answered on one surface: the others stop their shell executor.
+        "shell.command.replied" => Some(json!({
+            "type": "shell_command_replied",
+            "request_id": props.get("requestID"),
+            "session_id": props.get("sessionID"),
+            "ok": props.get("ok"),
+        })),
         // capture_screen_context: the app showing this session answers with
         // its front window (Desktop) or its own view (web, PWA, iOS) through
         // POST /api/v1/screen-context/:id/reply.
@@ -3654,6 +3661,14 @@ mod pane_and_screen_context_tests {
         let done = transform("screen.context.replied", json!({ "sessionID": "ses_1", "requestID": "que_9", "ok": true })).await;
         assert_eq!(done["type"], "screen_context_replied");
         assert_eq!(done["request_id"], "que_9");
+    }
+
+    #[tokio::test]
+    async fn shell_command_replied_reaches_the_app() {
+        let done = transform("shell.command.replied", json!({ "sessionID": "ses_1", "requestID": "que_4", "ok": true })).await;
+        assert_eq!(done["type"], "shell_command_replied");
+        assert_eq!(done["request_id"], "que_4");
+        assert_eq!(done["ok"], true);
     }
 
     #[test]

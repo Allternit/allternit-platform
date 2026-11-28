@@ -422,6 +422,14 @@ export const AgentCompatRoutes = () =>
               command: props.command ?? null,
               time: props.time ?? null,
             }
+          case "shell.command.replied":
+            // Answered on one surface: the others stop their shell executor.
+            return {
+              type: "shell_command_replied",
+              request_id: props.requestID ?? null,
+              session_id: props.sessionID ?? null,
+              ok: props.ok ?? null,
+            }
           case "pane_render.requested":
             return {
               type: "pane_render_requested",
