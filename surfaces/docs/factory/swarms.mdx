@@ -79,7 +79,7 @@ If the engine isn't serving, the board says so and shows `○ offline`.
 
 ## In the TUI: `/board`, `/swarm` and the footer badge
 
-- `/board` opens the same board as a full-screen view, with the same keys, plus `f` for the factory floor. On the factory floor (`ctrl+x f` or `/factory`), `b` opens the board.
+- `/sessions` lists every live session, swarm workers included. A swarm worker shows `l land` there. Press `b` in it for the board, the same rows as `gizzi board` in a full-screen view with the same keys, and `f` for the factory floor. `/board` and `/factory` now open the sessions view. See [Sessions view](/cli/sessions-view).
 - `/swarm <task> [-n 2] [--brain claude-cli/claude-sonnet-5]` starts a swarm from the TUI and opens the board. Workers appear on it as their panes start.
 - While any bot is working or waiting, the footer shows a badge such as `⚙ 3 bots · 1 waiting`. It turns yellow when a bot is waiting on you.
 

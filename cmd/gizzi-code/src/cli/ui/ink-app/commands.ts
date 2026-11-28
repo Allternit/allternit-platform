@@ -32,6 +32,7 @@ import away from './commands/away/index.js'
 import customize from './commands/customize/index.js'
 import factory from './commands/factory/index.js'
 import board from './commands/board/index.js'
+import sessions from './commands/sessions/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
@@ -355,6 +356,7 @@ const COMMANDS = memoize((): Command[] => [
   customize,
   factory,
   board,
+  sessions,
   swarm,
   mission,
   diff,

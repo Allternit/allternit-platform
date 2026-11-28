@@ -41,6 +41,7 @@ import { getGlobalConfig, saveGlobalConfig } from '../../utils/config';
 import { getPlatform } from '../../utils/platform';
 import { PrBadge } from '../PrBadge';
 import { useFactoryBadge } from '../FactoryBadge';
+import { useBlockedSessionsCount } from '../../screens/sessions/useLiveSessions';
 import { useMissionBadge } from '../MissionBadge';
 
 // Dead code elimination: conditional import for proactive mode
@@ -183,6 +184,7 @@ function ModeIndicator({
   const showSpinnerTree = expandedView === 'teammates';
   const prStatus = usePrStatus(isLoading, isPrStatusEnabled());
   const factoryBadge = useFactoryBadge();
+  const blockedSessions = useBlockedSessionsCount();
   const missionBadge = useMissionBadge(process.cwd());
   // @ts-expect-error TODO(types) verbatim upstream dead comparison ("external" === 'ant' is always false)
   const hasTmuxSession = useAppState(s_4 => "external" === 'ant' && s_4.tungstenActiveSession !== undefined);
@@ -283,6 +285,7 @@ function ModeIndicator({
   // @ts-expect-error TODO(types) verbatim upstream dead code ("external" === 'ant' is always false; TungstenPill is never defined — the branch never renders)
   ...("external" === 'ant' && hasTmuxSession ? [<TungstenPill key="tmux" selected={tmuxSelected} />] : []), ...(isAgentSwarmsEnabled() && hasTeams ? [<TeamStatus key="teams" teamsSelected={teamsSelected} showHint={showHint && !hasBackgroundTasks} />] : []), ...(shouldShowPrStatus ? [<PrBadge key="pr-status" number={prStatus.number!} url={prStatus.url!} reviewState={prStatus.reviewState!} checks={prStatus.checks} />] : [])];
   // Factory bots running (factory lane): "⚙ 3 bots · 1 waiting" while any work or wait.
+  if (blockedSessions > 0) parts.push(<Text key="sessions-blocked" color="warning" bold>{`● ${blockedSessions} blocked · /sessions`}</Text>);
   if (factoryBadge) parts.push(<Text key="factory" color={factoryBadge.waiting ? 'warning' : 'gizzi'}>{factoryBadge.text}</Text>);
   if (missionBadge) parts.push(<Text key="mission" color={missionBadge.needsYou ? 'warning' : 'gizzi'}>{missionBadge.text}</Text>);
 

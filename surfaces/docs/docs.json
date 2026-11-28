@@ -513,6 +513,7 @@
               "cli/session",
               "cli/memory",
               "cli/knowledge",
+              "cli/sessions-view",
               "cli/native-sessions",
               "cli/continue-anywhere",
               "cli/work",

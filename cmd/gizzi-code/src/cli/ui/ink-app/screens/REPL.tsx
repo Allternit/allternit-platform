@@ -403,6 +403,7 @@ import { DashboardScreen } from './DashboardScreen';
 import { BotsPaneScreen } from './bots-pane/BotsPaneScreen';
 import { FactoryFloorScreen } from './factory-floor/FactoryFloorScreen';
 import { SwarmBoardScreen } from './factory-floor/SwarmBoardScreen';
+import { SessionsScreen } from './sessions/SessionsScreen';
 import { InProcessDashboardSource } from '../dashboard/InProcessSource';
 import { ScrollKeybindingHandler } from '../components/ScrollKeybindingHandler';
 import { useMessageActions, MessageActionsKeybindings, MessageActionsBar, type MessageActionsState, type MessageActionsNav, type MessageActionCaps } from '../components/messageActions';
@@ -5085,6 +5086,20 @@ export function REPL({
       </KeybindingSetup>;
     return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
         {factoryReturn}
+      </AlternateScreen>;
+  }
+
+  if (screen === 'sessions') {
+    // Full-screen live sessions view (/sessions; /dash, /dashboard, /board,
+    // /live and /factory open it too). Same shape as the board branch; the
+    // screen exits back to 'prompt' itself.
+    const sessionsReturn = <KeybindingSetup>
+        <AnimatedTerminalTitle isAnimating={titleIsAnimating} title={terminalTitle} disabled={titleDisabled} noPrefix={showStatusInTerminalTab} />
+        <GlobalKeybindingHandlers {...globalKeybindingProps} />
+        <SessionsScreen />
+      </KeybindingSetup>;
+    return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
+        {sessionsReturn}
       </AlternateScreen>;
   }
 
