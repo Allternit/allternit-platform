@@ -944,6 +944,7 @@ struct SettingsView: View {
         case .webhooks: WebhooksSettingsView()
         case .deviceAccess: DeviceAccessSettingsView()
         case .selfHosted: SelfHostedSettingsView()
+        case .testCases: TestCasesView()
         }
     }
 
