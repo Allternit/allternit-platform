@@ -17,6 +17,8 @@ import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.design.FriendlyErrorMessage
 import com.allternit.core.design.ModeAccents
 import com.allternit.core.design.R as DesignR
+import com.allternit.feature.chat.PlanThreadClient
+import com.allternit.feature.chat.asSession
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -231,13 +233,18 @@ internal fun relativeTime(millis: Long, now: Long = System.currentTimeMillis()):
 internal object ShellApi {
     val okHttp: okhttp3.OkHttpClient by lazy { ApiClients.okHttp(bearer = AllternitAuth.tokenProvider) }
     val api: AllternitApi by lazy { AllternitApi(okHttp, ApiConfig()) }
+    val planThreads: PlanThreadClient by lazy { PlanThreadClient(okHttp) { ApiConfig().cloudBaseUrl } }
 }
 
 /**
  * The user's sessions for the drawer and the home (iOS ShellSessionsStore, list only).
  * Compose state, so screens recompose on change. Errors keep the last good list.
  */
-internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) {
+internal class ShellSessionsStore(
+    private val api: AllternitApi = ShellApi.api,
+    /** No-computer chats stored in cloud-api, listed beside computer chats (iOS ShellSessionsStore.fetchPlanThreads). */
+    private val planThreads: PlanThreadClient = ShellApi.planThreads,
+) {
     var sessions by mutableStateOf<List<AgentSession>>(emptyList())
         private set
     var isLoading by mutableStateOf(false)
@@ -316,10 +323,11 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
         if (isLoading) return
         isLoading = true
         try {
+            // Computer chats and stored no-computer chats load together; a failed store list only hides those rows.
+            val stored = planThreads.list()?.map { it.asSession() }.orEmpty()
             when (val r = api.listAgentSessions()) {
                 is ApiResult.Ok -> {
-                    sessions = r.value.sessions
-                        .filter { !it.ephemeral }
+                    sessions = (r.value.sessions.filter { !it.ephemeral } + stored)
                         .sortedByDescending { it.timestampMillis }
                     loadError = null
                     noComputer = false
@@ -332,7 +340,7 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
                 is ApiResult.HttpError -> if (isNoComputer(r)) {
                     // No computer is not an error (iOS ShellSessionsStore.isNoComputer): the list is
                     // just empty, and the composer's computer chip says why.
-                    sessions = emptyList()
+                    sessions = stored.sortedByDescending { it.timestampMillis }
                     cloudPlaces = emptyMap()
                     noComputer = true
                     loadError = null
@@ -392,6 +400,12 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
     suspend fun delete(id: String): String? {
         val before = sessions
         sessions = sessions.filterNot { it.id == id }
+        if (PlanThreadClient.isThreadId(id)) {
+            // DELETE api/v1/plan-threads/:id (iOS OverviewBulkActions).
+            if (planThreads.delete(id)) return null
+            sessions = before
+            return "Something went wrong on our side. Try again."
+        }
         val error = describe(ApiCall.executeUnit(ShellApi.okHttp, ApiJson.default, ApiCall.request("DELETE", sessionUrl(id), null)))
         if (error != null) sessions = before
         return error

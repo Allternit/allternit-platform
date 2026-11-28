@@ -48,6 +48,9 @@ class ChatBackend(
     /** No-computer turns straight to cloud-api `/v1/chat/completions` (Allternit Cloud and plan models). */
     val personChat = PersonChatClient(okHttp) { config.cloudBaseUrl }
 
+    /** cloud-api's plan chat store: no-computer chats saved after each turn and listed in history (iOS PlanThreadClient). */
+    val planThreads = PlanThreadClient(okHttp) { config.cloudBaseUrl }
+
     /** Public fetches (GitHub raw files, link-preview images): never carries the bearer. */
     internal val publicHttp: OkHttpClient by lazy {
         OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
