@@ -1,0 +1,38 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// Box relay: Wisp v1 over WebSocket for the browser computer
+	// (CONTRACT-colibri-unkernel.md section 9, plan step 71).
+	//
+	// NOT DEPLOYED. No routes, custom domain or workers.dev URL are bound on
+	// purpose. The route (proposed wss://relay.allternit.com/wisp/v1), the DNS
+	// record and the first `wrangler deploy` all wait for Eoj's go-ahead.
+	// RELAY_ENABLED stays "false" until then, so even a deployed copy answers
+	// 503 {"error":"relay_off"}.
+	"name": "allternit-box-relay",
+	"main": "./src/index.ts",
+	"compatibility_date": "2026-05-20",
+	"workers_dev": false,
+	"preview_urls": false,
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "BOX_RELAY",
+				"class_name": "BoxRelay",
+			},
+		],
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["BoxRelay"],
+		},
+	],
+	"vars": {
+		"RELAY_ENABLED": "false",
+		"CLERK_JWKS_URL": "https://clerk.allternit.com/.well-known/jwks.json",
+		"CLERK_ISSUERS": "https://clerk.allternit.com,https://allternit.com/__clerk",
+	},
+	"observability": {
+		"enabled": true,
+	},
+}
