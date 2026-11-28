@@ -531,7 +531,7 @@ struct ModelPickerSheet: View {
                 if locked {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill").font(.system(size: 9.5, weight: .semibold))
-                        Text("Needs credits").font(.system(size: 11, weight: .medium))
+                        Text(modelStore.lockReason(for: model.id) ?? "Needs credits").font(.system(size: 11, weight: .medium))
                     }
                     .foregroundColor(Color("TextSecondary"))
                 }
@@ -557,7 +557,7 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([model.name, model.isDefault ? "default" : nil, locked ? "needs credits" : nil].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([model.name, model.isDefault ? "default" : nil, locked ? (modelStore.lockReason(for: model.id) ?? "needs credits") : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
     }
 
@@ -580,7 +580,18 @@ struct ModelPickerSheet: View {
         Haptics.selection()
         // A locked Cloud row opens the credits sheet and keeps the old selection.
         if modelStore.isCloudLocked(model.id) {
-            creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: modelStore.openLockReason(for: model.id) ?? plan.cloudModels?.reason)
+            // The server's action routes the tap; no action (or add_credits /
+            // upgrade) opens the credits sheet, the old behavior.
+            switch modelStore.pickerAccess(for: model.id)?.action {
+            case .signIn:
+                AuthManager.shared.signIn()
+            case .acceptTerms:
+                UIApplication.shared.open(OpenModelsCopy.termsURL)
+            case .retry:
+                modelStore.fetchCloudCatalogIfNeeded(force: true)
+            default:
+                creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: modelStore.openLockReason(for: model.id) ?? plan.cloudModels?.reason)
+            }
             return
         }
         modelStore.userSelectedModel(model.id)
