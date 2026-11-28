@@ -1,0 +1,161 @@
+---
+title: 'Gizzi evals'
+description: 'Case format, graders, replay and live runs, the CLI, the shared suite and the gate, and the routes.'
+---
+
+<Note>
+**Coming in the next release.** This describes the eval loop as planned. Names can still change before it ships.
+</Note>
+
+Gizzi evals turn a session into a graded test. They reuse the suite format and grader names of the [Agency evals](/api/agency/evals). The users' view is in [Test cases](/guides/test-cases).
+
+## Storage
+
+Cases live in the engine data dir, never on a server.
+
+```text
+<data>/eval/
+  suites/<suite_id>/suite.json
+  suites/<suite_id>/cases/<case_id>/case.json
+  suites/<suite_id>/cases/<case_id>/trace.json
+  suites/<suite_id>/cases/<case_id>/workspace.tar.gz
+  runs/<run_id>/report.json
+  runs/<run_id>/attempts/<case_id>-<n>/events.jsonl
+```
+
+Writes are atomic. The default suite is `my-cases`. A suite holds up to 100 cases. This is not the skill eval store.
+
+## Case format
+
+A case has the schema `allternit.gizzi_eval_case.v1`.
+
+| Field | Meaning |
+|---|---|
+| `label` | `good` or `bad` |
+| `quick_check` | For bad cases: `wrong_answer`, `broke_file`, `ignored_instructions`, `too_slow`, `other` |
+| `split` | `dev` (default) or `holdout` |
+| `turns` | Up to 10 redacted user prompts |
+| `workspace` | An `archive` of the first step snapshot (50 MB cap), or `none` with a reason |
+| `checks` | File checks: `tests`, `contains`, `absent`, `unchanged`, `exists` |
+| `effects` | `block` (default) or `allow` |
+| `graders` | Grader list, see below |
+| `k`, `pass_rule` | Attempts per live run, and `all_of_k` or `n_of_k` |
+| `recorded` | The saved trajectory, its grades and the result |
+| `needs_check` | True if the verdict and the self-test disagree |
+
+Workspace reasons when there is no archive: `not_git`, `snapshot_off`, `pruned`, `too_large`, `no_project`.
+
+On save, Gizzi adds default graders: `status` equals `completed`, and cost and latency ceilings at twice the recorded values. For a bad case, `too_slow` uses 0.5 times, and `broke_file` adds a `forbidden_step` for the failed write tool.
+
+Suites use `allternit.eval_suite.v1` with `"runner": "gizzi"`. A case source is `session` or `workspace_task`.
+
+## Dev and holdout
+
+Each case has a `split`. The staged gate uses `dev`. The full gate adds `holdout`. Holdout cases are never shown to a model that proposes a change.
+
+## Trajectory mapping
+
+Graders read a `Trajectory`. It is built from the session trace.
+
+| Field | Source |
+|---|---|
+| `steps` | One per finished tool part. `node` is the last agent that started a request, else `main`. `primitive` is the tool. `ok` is true when the tool completed. |
+| `effects` | Tool parts whose tool is a write tool: `write`, `edit`, `patch`, `multiedit`, `bash`, or any MCP tool. `committed` equals `ok`. |
+| `status` | `stopped` if a guardrail tripped, else `failed` on a session error or failed request, else `completed`. |
+| `stopped_at` | The kind of the last guardrail that tripped. |
+| `texts` | The final assistant text. |
+| `cost_usd`, `tokens` | The sum over completed requests. |
+| `latency_ms` | Last entry time minus first entry time. |
+| `verifier` | `null` in replay. `true` or `false` from file checks in a live run. |
+
+## Graders
+
+Grader parameter names match the Agency engine. Unknown fields are rejected.
+
+| Grader | Params |
+|---|---|
+| `step_order` | `steps` |
+| `required_steps` | `steps` |
+| `forbidden_step` | `steps` |
+| `effect_count` | `min`, `max`, `tool` (one of `min` or `max` is needed) |
+| `must_cite` | `min`, `marker` |
+| `verifier_pass` | none |
+| `cost_ceiling` | `max_usd`, `max_tokens` |
+| `latency_ceiling` | `max_ms` |
+| `status` | `equals` |
+| `stopped_at` | `step` |
+| `missing_evidence` | `equals` (a list of criteria ids) |
+
+The graders are written twice, in Rust and in TypeScript. Both run the shared vectors in `contracts/eval/grader-vectors.v1.json`.
+
+## Replay and live
+
+- **Replay** grades the stored trace. It uses no model and is free. It tests the grading machinery, not prompt changes. CI runs replay only.
+- **Live** restores the workspace into a temp dir, runs `gizzi run --format json --dir <tmp>`, runs the file checks, and grades. It costs money or plan usage, and starts only after a fresh price estimate. A live run without one gets `409 estimate_required`. An estimate expires after 10 minutes.
+
+## CLI
+
+```bash
+gizzi eval case save <session> --good|--bad [--note ...] [--through <msg>] [--suite ...]
+gizzi eval case list | show | rm
+gizzi eval case export <id> --out <dir>
+gizzi eval estimate
+gizzi eval run --mode replay|live [--suite|--suite-dir] [--k] [--model] [--fraction] [--seed] [--json] [--yes]
+gizzi eval report <run>
+gizzi eval baseline write
+```
+
+In the TUI, `/testcase [good|bad] [note]` saves the current session.
+
+## Redaction
+
+A private save removes secrets with the support-bundle redactor, drops streaming deltas, and keeps at most 5,000 entries. Prompts stay, because live runs need them. The self-test runs after redaction.
+
+`gizzi eval case export` is for the shared suite and is stricter. It also removes emails, home paths and host names, truncates tool output, scans the archive for secrets and refuses on a hit, and writes `redaction_report.json`. A person reviews the output before it is committed.
+
+## The shared suite and the gate
+
+The shared suite is in `domains/agent-evals/gizzi/`, with the same layout as a user suite (`suites/shared.v1/`). It is the protected suite for harness changes.
+
+`scripts/gizzi-eval-gate.mjs` replays the suite and compares the report with the stored baseline using the same comparison as `scripts/agency-eval-gate.mjs`. On pull requests it is advisory: it reports, and does not block. Refresh the baseline with `gizzi eval baseline write` in the same PR as the change.
+
+## Engine routes
+
+| Method and path | Purpose |
+|---|---|
+| `POST /eval/cases` | Save a session as a case. Returns the case, the self-test and `needs_check`. |
+| `GET /eval/cases` | List cases, filter by `session_id` or `suite`. |
+| `GET /eval/cases/:id` | The full case file. |
+| `DELETE /eval/cases/:id` | Delete a case. |
+| `GET /eval/suites` | Suites with case counts and the last run. |
+| `POST /eval/runs/estimate` | Price a run. |
+| `POST /eval/runs` | Start a run. Replay returns 200 with a report. Live returns 202 with a `run_id`. |
+| `GET /eval/runs/:id` | State, progress and report. |
+| `POST /eval/runs/:id/cancel` | Cancel a run. |
+| `GET /eval/runs` | Recent runs, newest first, 50 at most. |
+
+Errors are `{"error": "<code>", "message": "<sentence>"}`. Codes include `session_not_found`, `case_limit`, `empty_session`, `case_not_found`, `run_not_found` and `estimate_required`.
+
+## App routes
+
+allternit-api proxies each engine route under `/api/v1/agent-evals/*`.
+
+| App route | Engine route |
+|---|---|
+| `/api/v1/agent-evals/cases` | `/eval/cases` |
+| `/api/v1/agent-evals/cases/:id` | `/eval/cases/:id` |
+| `/api/v1/agent-evals/suites` | `/eval/suites` |
+| `/api/v1/agent-evals/runs/estimate` | `/eval/runs/estimate` |
+| `/api/v1/agent-evals/runs` | `/eval/runs` |
+| `/api/v1/agent-evals/runs/:id` | `/eval/runs/:id` |
+| `/api/v1/agent-evals/runs/:id/cancel` | `/eval/runs/:id/cancel` |
+
+Saving a case and listing by session go to the server that holds the session. Everything else goes to the local engine. If the engine can't be reached, the proxy returns 502.
+
+## Related pages
+
+- [Test cases (user guide)](/guides/test-cases)
+- [Agency evals](/api/agency/evals)
+- [Subagent evals](/guides/subagent-evals)
+- [Trace events](/architecture/observability/trace-events)
+- [Self-Improve](/core/self-improve)
