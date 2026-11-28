@@ -6178,21 +6178,74 @@
       "id": "feature:authority-kernel",
       "label": "Authority kernel and model shell",
       "product": "product:ai-allternit",
-      "status": "planned",
+      "status": "building",
       "description": "The model is the shell and deterministic code is the kernel. Six calls plus admit (check, lease, secret.use, approval, audit.append, budget, deploy.admit), human-only action classes, approval tokens and a signed receipt chain; the model drives the screen through shell and inbox tools and never approves. Contract v1 draft; the build is in progress.",
       "touches": [
         "allternit/surfaces/docs/architecture/authority-kernel.mdx",
-        "allternit/surfaces/docs/architecture/model-shell.mdx"
+        "allternit/surfaces/docs/architecture/model-shell.mdx",
+        "allternit/cmd/allternit-api/src",
+        "allternit/cmd/allternit-cloud-api/src/routes",
+        "allternit/surfaces/allternit-desktop/src/main"
       ],
       "decisions": [
         {
           "on": "2026-11-27",
           "note": "Contract v1 drafted: five human-only classes (money, client_message, deploy, secret_new_host, irreversible); platform owns the os contracts."
+        },
+        {
+          "on": "2026-11-28",
+          "note": "G0 passed: Eoj approved the contract. Approvals go through the kernel; the model never approves; five human-only classes; check at every tool path starts in shadow (ALLTERNIT_KERNEL_CHECK, default shadow) before enforce. Desktop approves with Touch ID or Windows Hello; Linux and no-biometric Desktops approve from web or phone. Stage 1 PRs are train-ready, not built, not live. Files in the train-ready PRs (not on main yet): cmd/allternit-api/src/authority, cmd/allternit-api/migrations/V300__kernel_authority.sql, cmd/allternit-api/migrations/V311__kernel_standing_grants.sql, cmd/allternit-cloud-api/src/kernel_approvals.rs, cmd/allternit-cloud-api/migrations_pg/171_kernel_approval_relay.sql, surfaces/allternit-desktop/src/main/kernel-key.ts, surfaces/allternit-desktop/src/main/presence.ts."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/architecture/authority-kernel.mdx",
-        "allternit/surfaces/docs/architecture/model-shell.mdx"
+        "allternit/surfaces/docs/architecture/model-shell.mdx",
+        "allternit/surfaces/docs/guides/inbox-approvals.mdx"
+      ]
+    },
+    {
+      "id": "feature:gizzi-shell-tool",
+      "label": "Gizzi shell tool",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The assistant opens, closes, focuses and arranges windows, starts and stops runs and installs apps through a shell tool that emits a ShellCommandV1 the app executes. Every call passes the authority kernel check first. Not live.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/registry.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/permission/next.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/permission"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-28",
+          "note": "G0 passed: the shell is a tool the model calls and the app executes; the kernel check runs before any command. Train-ready, not built, not live. Files in the train-ready PRs (not on main yet): cmd/gizzi-code/src/runtime/tools/builtins/shell.ts."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/authority-kernel.mdx"
+      ]
+    },
+    {
+      "id": "feature:inbox-approvals",
+      "label": "Inbox approvals",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Approval requests from every older store and the kernel appear in one inbox on Desktop, web, phone layout, PWA, iOS, Android and the Gizzi terminal. The exact action is shown; only a signed-in person can approve, with Touch ID or Windows Hello on Desktop; requests expire after 5 minutes by default (15 at most). The inbox tool lists items and has no approve action. Not live.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/approvals.rs",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins",
+        "allternit/cmd/allternit-api/src",
+        "allternit/cmd/allternit-cloud-api/src/routes",
+        "allternit/surfaces/allternit-desktop/src/main"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-28",
+          "note": "G0 passed: one inbox for all approvals; the model never approves; money, messages, deploys, secret to a new host and irreversible always need a person. Train-ready, not built, not live. Files in the train-ready PRs (not on main yet): cmd/gizzi-code/src/runtime/tools/builtins/inbox.ts, cmd/gizzi-code/src/cli/commands/inbox.ts, cmd/allternit-api/src/authority/approvals.rs, cmd/allternit-cloud-api/src/routes/kernel_relay.rs, surfaces/allternit-desktop/src/main/presence.ts."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/inbox-approvals.mdx"
       ]
     }
   ],

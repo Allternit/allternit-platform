@@ -506,3 +506,7 @@ The top of the sidebar shows the mode's wordmark, the same as the phone menu: A:
 The selected mode, rail tab and **New** row have a translucent glass highlight with a fine Allternit double-slash detail, and no coloured strip on the left edge. Icons respond to hover and press; keyboard focus stays visible. Motion and transparency follow your system accessibility preferences.
 
 Developer notes: the controls are `RailControls` in `src/shell/FloatingWidgets.tsx`; the mode list is `src/shell/mode-buttons.ts`. `src/shell/titlebar-clearance.ts` owns the traffic-light offset (72px in Electron, 4px on the web and in full screen). It listens for the Desktop preload's `enter-full-screen` / `leave-full-screen` window events, and it updates `--titlebar-traffic-w` / `--titlebar-controls-w` for any top bar that pads past the controls. The sidebar wordmark is `src/shell/rail/RailWordmark.tsx`.
+
+## Approvals
+
+Requests that need your say-so appear in the inbox with the exact action. On a Mac the app asks for Touch ID before an approval is sent, and on Windows it asks for Windows Hello. Desktop on Linux, or a computer with no biometric, cannot approve: approve from the web or your phone. Rolling out with the next release, not live yet. See [Approvals in your inbox](/guides/inbox-approvals).

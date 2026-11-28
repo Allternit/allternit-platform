@@ -1,0 +1,85 @@
+---
+title: 'Approvals in your inbox'
+description: 'What an approval request is, where you see it, how to read it, who can approve, and how to check the receipts'
+---
+
+**Rolling out with the next release. Not live yet.** This page describes the AllternitOS kernel and shell approvals as built. Check your app version before relying on it.
+
+## What an approval request is
+
+When an assistant wants to do something that needs your say-so, it does not do it. It asks. The request goes to your inbox with the exact action it wants to take: the tool, the target and the values. You approve or deny. If you approve, the request becomes a single-use approval that works for that one action only.
+
+The assistant never approves its own request. Only you can, from your own signed-in session. A bot, a run, an agent credential or a tool connection cannot resolve a request, and the refusal is recorded.
+
+## Where you see it
+
+| Where | How |
+|---|---|
+| Desktop and web inbox | Needs you inbox. See [Needs you inbox](/guides/needs-you-inbox). |
+| Phone layout and the PWA | The same inbox, sized for the phone. See [Web phone and PWA](/surfaces/web-phone). |
+| iOS | The inbox in the Allternit app. See [iPhone app](/guides/iphone-app#approvals). |
+| Android | The inbox in the Allternit app. See [Android app](/guides/android-app#approvals). |
+| Push | One notification when a request is waiting. Tapping it opens the request. |
+| Gizzi Code | `/inbox` in the terminal, or `gizzi inbox` from a shell you run yourself. See [Permission profiles](/cli/permission-profiles#approvals). |
+
+Requests from older approval screens (agent runs, factory, phone approvals) now appear in the same inbox. Approving in any of them is one decision, recorded once.
+
+## Read the action before you approve
+
+Each request shows the exact action, not a summary. Read these before you tap Approve:
+
+- the tool and what it will do (run a command, send, pay, write a file);
+- the target: the host, the file path, the recipient, the amount;
+- the values it will use.
+
+If the request is changed after it is shown, the approval no longer matches and is refused. If something looks different from what you expected, deny it and ask the assistant why.
+
+## Touch ID and Windows Hello on Desktop
+
+On Allternit Desktop, approving also asks you to prove you are there: Touch ID on a Mac or Windows Hello on Windows. The proof is good for that one request only.
+
+A Desktop with no biometric, and Desktop on Linux, cannot give that proof. Approve from the web or from your phone instead. Desktop will say so when you try to approve.
+
+## Actions only a person can approve
+
+These five kinds of action always need your approval, at every autonomy level, and a standing Allow never covers them:
+
+- **Money:** payments, purchases, plan changes.
+- **Messages to other people:** email, texts, posts and replies sent as you.
+- **Deploys:** anything that publishes to a live site or service.
+- **A secret sent to a new host:** the first time a stored credential is used toward a host it has not been used with.
+- **Anything irreversible:** deleting data that cannot be restored, for example.
+
+Other actions follow your autonomy choice. See [Autonomy modes](/guides/autonomy-modes).
+
+## Expiry
+
+A request waits 5 minutes by default. The longest it can wait is 15 minutes. After that it expires, the action does not run, and the assistant has to ask again. An approval token is single-use: it cannot be reused for a second action.
+
+## Standing Allow
+
+In Customize you can set a tool to Allow. That is a standing decision that you made, and it lets that tool run without asking each time.
+
+- It applies to the one tool you set, not to a group of tools.
+- It does not cover the five human-only kinds above. Those still ask every time.
+- Scheduled routines use the same Allow settings for their owner.
+- Set the tool back to Ask or Block to remove it. The change takes effect on the next call.
+
+## Receipts
+
+Every decision writes a receipt before the action runs: what was asked, the answer, who resolved it and when. Receipts form one chain per account. Each receipt is signed, and a receipt that was edited later fails the check.
+
+To see your receipts, use the receipts list in your inbox, or `GET /api/v1/kernel/receipts`. To check the chain, use `GET /api/v1/kernel/receipts/verify`. It reports whether the chain is intact and, if not, the first bad receipt.
+
+## Rollout notes
+
+The check at each tool path starts in shadow mode: it records what it would have done and does not block. Enforce mode comes after the receipts show the shadow results are right. Until then, older permission settings still apply.
+
+## For developers
+
+See [Authority kernel](/architecture/authority-kernel) for the check, the action classes, tokens, the receipt chain and the modes. The tool pages for the shell and inbox tools (`tools/shell`, `tools/inbox`, `cli/inbox`) come in with their own pull requests.
+
+Other developer notes:
+
+- The platform API lists kernel rows read-only with `GET /v1/approvals?source=kernel`. See [Approvals API](/api/platform/approvals). The console shows them under a Kernel source filter, see [Approvals and decisions](/console/approvals-and-decisions).
+- `spec/Contracts/os/v1/conformance/local_model/fixture.json` holds prompts with the expected `shell` open and `inbox` list calls, plus a refusal case (the model has no way to approve). The offline checks run in the os/v1 pytest suite. The live check against a local model is manual: `ALLTERNIT_LOCAL_MODEL=<model> pytest spec/Contracts/os/v1/conformance -k live`.
