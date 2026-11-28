@@ -1,5 +1,6 @@
 //! Backend-specific runtime launch logic.
 
+pub mod colibri;
 pub mod llamacpp;
 pub mod mlx;
 
