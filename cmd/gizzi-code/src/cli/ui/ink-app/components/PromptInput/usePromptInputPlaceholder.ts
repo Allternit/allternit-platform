@@ -1,5 +1,4 @@
 // @ts-nocheck
-import { feature } from 'bun:bundle'
 import { useMemo } from 'react'
 import { useCommandQueue } from './../../hooks/useCommandQueue.ts'
 import { useAppState } from './../../state/AppState.tsx'
@@ -7,12 +6,6 @@ import { getGlobalConfig } from './../../utils/config.ts'
 import { getExampleCommandFromCache } from './../../utils/exampleCommands.ts'
 import { isQueuedCommandEditable } from './../../utils/messageQueueManager.ts'
 
-// Dead code elimination: conditional import for proactive mode
-/* eslint-disable @typescript-eslint/no-require-imports */
-const proactiveModule =
-  feature('PROACTIVE') || feature('KAIROS')
-    ? require('../../proactive/index.js')
-    : null
 
 type Props = {
   input: string
@@ -56,13 +49,7 @@ export function usePromptInputPlaceholder({
     }
 
     // Show example command if user has not submitted yet and suggestions are enabled.
-    // Skip in proactive mode — the model drives the conversation so onboarding
-    // examples are irrelevant and block prompt suggestions from showing.
-    if (
-      submitCount < 1 &&
-      promptSuggestionEnabled &&
-      !proactiveModule?.isProactiveActive()
-    ) {
+    if (submitCount < 1 && promptSuggestionEnabled) {
       return getExampleCommandFromCache()
     }
   }, [

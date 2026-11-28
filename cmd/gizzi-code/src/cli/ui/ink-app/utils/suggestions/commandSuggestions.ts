@@ -357,7 +357,7 @@ export function generateCommandSuggestions(
       }
     })
 
-    // Built-ins follow Grok's category order (Session, Model, Memory, …).
+    // Built-ins follow the job groups (Session, Code, Workspace, Account, Settings).
     // Skills stay alphabetical within their source group.
     const sortAlphabetically = (a: Command, b: Command) =>
       getCommandName(a).localeCompare(getCommandName(b))

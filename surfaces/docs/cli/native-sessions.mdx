@@ -18,14 +18,14 @@ Three things you can do:
 Inside a Gizzi Code session, type:
 
 ```
-/native                 # list native CLI sessions (newest first)
-/native harnesses       # show all adapters and which stores are present
-/native pickup claude 5f3a…c9  # pick up a session into Gizzi
-/native fetch           # pull newer turns from the origin session
-/native export claude   # write back out to a NEW claude session id
+/remote native                 # list native CLI sessions (newest first)
+/remote native harnesses       # show all adapters and which stores are present
+/remote native pickup claude 5f3a…c9  # pick up a session into Gizzi
+/remote native fetch           # pull newer turns from the origin session
+/remote native export claude   # write back out to a NEW claude session id
 ```
 
-`/native` also answers to `/cli-session`.
+The old `/native` (and `/cli-session`) still works as a hidden alias of `/remote` for one release, with the same arguments.
 
 The same operations are available in the **desktop and web app**: open the session picker (rail icon or Agent Hub), choose a native session, and it opens as a new chat with an origin badge showing where it came from.
 
@@ -45,7 +45,7 @@ Safety guarantees:
 
 ## Fetch and divergence
 
-If you keep working in the origin CLI after picking a session up, `/native fetch` (or the fetch button on the origin banner) reconciles:
+If you keep working in the origin CLI after picking a session up, `/remote native fetch` (or the fetch button on the origin banner) reconciles:
 
 - `clean` — origin hasn't changed since pickup.
 - `native_ahead` — new origin turns were found; they're appended to `session_source_event` and shown as inert history. Your Allternit turns are never rewritten.
@@ -53,7 +53,7 @@ If you keep working in the origin CLI after picking a session up, `/native fetch
 
 ## Export back out
 
-`/native export [ses_id] [harness]` converts the session to the target CLI's native format and writes it under a **new** session id. Direct writers cover `claude`, `gizzi`, `qwen`, `codex`, `grok`, `copilot`, and `kimi-cli`; every other harness is converted through the vendored [session-migrate](https://github.com/xhluca/session-migrate) bridge. The command prints the exact resume hint for the target CLI, e.g. `claude --resume <new-id>`.
+`/remote native export [ses_id] [harness]` converts the session to the target CLI's native format and writes it under a **new** session id. Direct writers cover `claude`, `gizzi`, `qwen`, `codex`, `grok`, `copilot`, and `kimi-cli`; every other harness is converted through the vendored [session-migrate](https://github.com/xhluca/session-migrate) bridge. The command prints the exact resume hint for the target CLI, e.g. `claude --resume <new-id>`.
 
 ## Harness support
 

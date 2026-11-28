@@ -2772,3 +2772,4 @@ src/cli/ui/ink-app/commands/thinkback/index.ts
 src/cli/ui/ink-app/commands/thinkback/thinkback.tsx
 src/cli/ui/ink-app/commands/upgrade/index.ts
 src/cli/ui/ink-app/commands/upgrade/upgrade.tsx
+src/cli/ui/ink-app/proactive/index.ts

@@ -1775,7 +1775,7 @@
     {
       "path": "src/cli/ui/ink-app/screens/REPL.tsx",
       "reason": "suspect-dead-shim",
-      "detail": "unresolved: ../components/AntModelSwitchCallout.js, ../components/FeedbackSurvey/useFrustrationDetection.js, ../components/UndercoverAutoCallout.js, ../hooks/notifs/useAntOrgWarningNotification.js, ../proactive/useProactive.js, ../tools/WebBrowserTool/WebBrowserPanel.js"
+      "detail": "unresolved: ../components/AntModelSwitchCallout.js, ../components/FeedbackSurvey/useFrustrationDetection.js, ../components/UndercoverAutoCallout.js, ../hooks/notifs/useAntOrgWarningNotification.js, ../tools/WebBrowserTool/WebBrowserPanel.js"
     }
   ]
 }

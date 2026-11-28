@@ -1,0 +1,126 @@
+---
+title: Slash commands
+description: "Every listed Gizzi Code slash command, grouped by job, and the old names that still work as hidden aliases"
+---
+
+## Overview
+
+Type `/` in the Gizzi Code terminal UI to open the slash menu. `/help` shows the same commands on its **commands** tab, grouped by job: Session, Code, Workspace, Account and Settings. Commands that fit none of these are listed last under **More**.
+
+Each job has one owner command. When two commands did the same job, the older name became a hidden alias of the owner. A hidden alias still runs when you type it, but it is not offered in the slash menu, `/help` or typeahead. Hidden aliases stay for one release.
+
+## Session
+
+This conversation, its model and mode, and where it runs.
+
+| Command | What it does |
+|---|---|
+| `/clear` (also `/new`) | Start a new session |
+| `/resume` | Resume a previous conversation. `/resume now` and `/resume keep-going` continue the last one |
+| `/compact` | Clear history but keep a summary in context |
+| `/context` | Show context usage; `/context files` lists the files in context |
+| `/copy` | Copy Gizzi's last response |
+| `/export` | Export the conversation to a file or the clipboard |
+| `/rename`, `/tag` | Rename the conversation, or toggle a searchable tag |
+| `/rewind` (also `/undo`), `/edit` | Go back to an earlier point, or put your last message back in the prompt |
+| `/branch`, `/fork` | Branch the conversation at this point |
+| `/btw` | Ask a side question without interrupting |
+| `/history`, `/edit-prompt` | Reuse an earlier prompt, or write one in your editor |
+| `/share` | Share the conversation as a read-only link |
+| `/transcript`, `/recap`, `/queue` | Open the transcript, summarize the session, or show the queue |
+| `/answer` | Answer a question an agent saved for later |
+| `/status` | Status, Usage, Cost and Stats tabs. `/status usage` opens a tab directly |
+| `/remote` | Continue this session on your phone, the web app or Desktop. `/remote desktop`, `/remote mobile`, `/remote native` and `/remote session` open the other views |
+| `/model` (also `/models`, `/m`) | Pick the model |
+| `/runtime`, `/effort`, `/think`, `/fast` | Pick the runtime and brain, effort, thinking and fast mode |
+| `/plan` | Turn on plan mode. `/plan view` shows the current plan |
+| `/goal`, `/mission` | Run a goal to completion; `/mission` plans it as milestones first |
+| `/loops`, `/tasks` | Loops and background tasks |
+
+## Code
+
+The repository in front of you.
+
+| Command | What it does |
+|---|---|
+| `/commit` | Create a git commit interactively |
+| `/commit-push-pr` | Commit, push and open a pull request. It never merges |
+| `/diff`, `/files` | Uncommitted changes and per-turn diffs; your computers' files |
+| `/review`, `/security-review` | Review local changes or a pull request |
+| `/pr-comments` | Read the comments on a pull request |
+| `/init` | Write a GIZZI.md file with codebase documentation |
+| `/add-dir`, `/cd` | Add a working directory, or change where tools run |
+| `/find`, `/grep` | Search files by name or by content |
+| `/fix` | Fix the last failed command |
+| `/ide`, `/install-github-app` | IDE integrations and the GitHub app |
+
+## Workspace
+
+Everything beyond this one chat.
+
+| Command | What it does |
+|---|---|
+| `/sessions` | Every live session and Factory pane: working, blocked or idle |
+| `/pods` | Your pods (Chief, one per active project, Team) with their bots |
+| `/connections` | Connections as List, Grid or Deck |
+| `/sleep` | Allternit Sleep: last and next run, last report. `/memory sleep` opens it too |
+| `/routines` | Your routines with next and last runs (named in `/help`; in the slash menu it sits under `/loops`) |
+| `/memory` | Your Memory Drive. `/memory search`, `/memory add`, `/memory view`, `/memory log`, `/memory sync` |
+| `/knowledge` | Review what agents want to learn |
+| `/agents`, `/bots`, `/swarm`, `/autopilot` | Agents, bots, multi-agent runs and Autopilot |
+| `/away`, `/decisions` | What happened while you were away; everything waiting on you |
+| `/projects`, `/computers`, `/pr` | Projects, computers, and this branch's pull request |
+| `/factory`, `/board`, `/dashboard` | The Factory floor and its board, until `/sessions` takes them over |
+| `/artifact`, `/design`, `/image` | Artifacts, A:// Studio, and pictures from a brief |
+
+<Note>
+`/sessions`, `/pods`, `/connections` and `/sleep` come from their own changes. Until a build includes one of them, it is simply not listed.
+</Note>
+
+## Account
+
+| Command | What it does |
+|---|---|
+| `/login`, `/logout` | Sign in or out |
+| `/privacy-settings` | View and change privacy settings |
+| `/passes` | Share a free week of Gizzi Code with friends (shown when your account can) |
+
+## Settings
+
+How Gizzi behaves and looks, and what it can reach.
+
+| Command | What it does |
+|---|---|
+| `/config` | Open the settings panel |
+| `/theme`, `/color`, `/statusline`, `/timestamps` | How the terminal UI looks |
+| `/keybindings`, `/vim`, `/multiline`, `/voice` | How you type and talk |
+| `/permissions`, `/always-approve`, `/auto`, `/sandbox` | What Gizzi may do without asking |
+| `/plugin`, `/skills`, `/hooks`, `/mcp`, `/reload-plugins`, `/customize` | Extensions |
+| `/advisor`, `/remote-env` | Advisor model and remote environment |
+| `/doctor`, `/terminal-setup` | Check the install and set up the terminal |
+| `/help`, `/release-notes`, `/feedback` | Help, release notes and feedback |
+
+## Hidden aliases
+
+These old names still run for one release. Use the owner instead.
+
+| Old name | Use instead |
+|---|---|
+| `/usage`, `/cost`, `/stats`, `/session-info`, `/extra-usage` | `/status` (opens the matching tab) |
+| `/resume-now`, `/keep-going` | `/resume now`, `/resume keep-going` |
+| `/view-plan` | `/plan view` |
+| `/routines` | `/loops` (still listed in `/help` under Workspace) |
+| `/session` | `/remote session` |
+| `/desktop` (also `/app`) | `/remote desktop` |
+| `/mobile` (also `/ios`, `/android`) | `/remote mobile` |
+| `/native` (also `/cli-session`) | `/remote native`, with the same arguments |
+| `/memory-search` | `/memory search` |
+| `/remember` | `/memory add` |
+| `/dash`, `/dashboard`, `/board`, `/live`, `/factory` | `/sessions`, once a build includes it |
+
+## Related
+
+- [Session management](/cli/session)
+- [Memory Drive](/cli/memory)
+- [Continue anywhere](/cli/continue-anywhere)
+- [Usage and status](/cli/usage)

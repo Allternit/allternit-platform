@@ -98,11 +98,11 @@ describe('Grok-style slash menu presentation', () => {
     expect(getCommandArgumentHint(promptCmd)).toBe('<message>')
   })
 
-  test('empty slash menu sorts Session commands before Configuration', () => {
+  test('empty slash menu sorts Session commands before Settings', () => {
     const configCmd = localCommand('theme')
     const sessionCmd = localCommand('compact')
     expect(getCommandCategory(sessionCmd)).toBe('Session')
-    expect(getCommandCategory(configCmd)).toBe('Configuration')
+    expect(getCommandCategory(configCmd)).toBe('Settings')
     expect(compareCommandsForSlashMenu(sessionCmd, configCmd)).toBeLessThan(0)
   })
 })

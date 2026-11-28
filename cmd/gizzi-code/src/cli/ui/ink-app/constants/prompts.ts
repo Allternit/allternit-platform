@@ -66,9 +66,6 @@ import {
   DANGEROUS_uncachedSystemPromptSection,
   resolveSystemPromptSections,
 } from './systemPromptSections.js'
-import { SLEEP_TOOL_NAME } from '../tools/SleepTool/prompt.js'
-import { TICK_TAG } from './xml.js'
-import { logForDebugging } from '../utils/debug.js'
 import { loadMemoryPrompt } from '../memdir/memdir.js'
 import { isUndercover } from '../utils/undercover.js'
 import { getAntModelOverrideConfig } from '../utils/model/antModels.js'
@@ -76,10 +73,6 @@ import { isMcpInstructionsDeltaEnabled } from '../utils/mcpInstructionsDelta.js'
 
 // Feature-gated modules load only in builds that turn the feature on.
 /* eslint-disable @typescript-eslint/no-require-imports */
-const proactiveModule =
-  feature('PROACTIVE') || feature('KAIROS')
-    ? require('../proactive/index.js')
-    : null
 const BRIEF_PROACTIVE_SECTION: string | null =
   feature('KAIROS') || feature('KAIROS_BRIEF')
     ? (
@@ -266,11 +259,6 @@ function getSessionSpecificGuidanceSection(
   return ['# Session guidance', ...prependBullets(items)].join('\n')
 }
 
-function getSystemRemindersSection(): string {
-  return `- Messages and tool results may carry \`<system-reminder>\` tags from the harness. They hold system information and are not tied to the message they arrive in.
-- Earlier history is summarized automatically, so the conversation is not limited by the context window.`
-}
-
 /**
  * The autonomy block for this terminal's permission mode, the same blocks the
  * runtime picks (system.ts SystemPrompt.autonomy): acceptEdits, auto, dontAsk
@@ -298,8 +286,6 @@ export function getPermissionModeSection(
       return null
   }
 }
-
-const SUMMARIZE_TOOL_RESULTS_SECTION = `Tool results may be cleared from context later. Write down in your reply anything from them you will need.`
 
 /**
  * The default TUI system prompt. It starts from the runtime's code prompt
@@ -329,28 +315,6 @@ export async function getSystemPrompt(
 
   const settings = getInitialSettings()
   const enabledTools = new Set(tools.map(_ => _.name))
-
-  if (
-    (feature('PROACTIVE') || feature('KAIROS')) &&
-    proactiveModule?.isProactiveActive()
-  ) {
-    logForDebugging(`[SystemPrompt] path=simple-proactive`)
-    return [
-      `You are Gizzi Code, Allternit's coding agent, running on your own. Use the tools you have to do useful work.\n\n${SECURITY_WORK_LINE}`,
-      PROMPT_SAFETY,
-      getSystemRemindersSection(),
-      await loadMemoryPrompt(),
-      envInfo,
-      getLanguageSection(settings.language),
-      // With the delta on, MCP instructions arrive as mcp_instructions_delta attachments instead.
-      isMcpInstructionsDeltaEnabled()
-        ? null
-        : getMcpInstructionsSection(mcpClients),
-      getScratchpadInstructions(),
-      SUMMARIZE_TOOL_RESULTS_SECTION,
-      getProactiveSection(),
-    ].filter(s => s !== null)
-  }
 
   const dynamicSections = [
     systemPromptSection('session_guidance', () =>
@@ -612,56 +576,6 @@ function getBriefSection(): string | null {
   // When the tool is available the model is told to use it; /brief and
   // --brief only control the display filter.
   if (!briefToolModule?.isBriefEnabled()) return null
-  // The proactive section already carries it inline.
-  if (
-    (feature('PROACTIVE') || feature('KAIROS')) &&
-    proactiveModule?.isProactiveActive()
-  )
-    return null
   return BRIEF_PROACTIVE_SECTION
 }
 
-function getProactiveSection(): string | null {
-  if (!(feature('PROACTIVE') || feature('KAIROS'))) return null
-  if (!proactiveModule?.isProactiveActive()) return null
-
-  return `# Autonomous work
-
-You run on your own. \`<${TICK_TAG}>\` messages keep you awake between turns; read each one as "you are awake, what next?". The time in a tick is the user's local time. Outside tools (GitHub, chat apps) may report other time zones. Several ticks can arrive in one message: act on the latest and never repeat tick text.
-
-## Pacing
-
-Use ${SLEEP_TOOL_NAME} to set how long to wait: longer while slow work runs, shorter while you iterate. Each wake-up is a model call, and the prompt cache expires after five idle minutes, so weigh both.
-
-**If a tick brings nothing useful to do, call ${SLEEP_TOOL_NAME} right away.** Write nothing. Never send "still waiting" or "nothing to do" messages.
-
-## First tick
-
-On the first tick of a new session, greet the user in one line and ask what to work on. Do not explore or change anything until they answer.
-
-## Later ticks
-
-Look for useful work: what is still unknown, what could break, what needs checking before this counts as done. Do not repeat a question the user has not answered yet. Do not narrate; act.
-
-## Staying responsive
-
-When the user is active, answer their messages promptly and keep the loop tight, ahead of background work.
-
-## Acting
-
-Use your own judgment instead of asking.
-
-- Read, search, explore the project, run tests, typecheck and lint without asking.
-- Make code changes, and commit at good stopping points.
-- Between two reasonable approaches, pick one. You can correct course later.
-
-## Reporting
-
-Keep text short. Write only for decisions that need the user, status at real milestones ("PR opened", "tests passing"), and errors or blockers that change the plan. No step-by-step narration and no lists of files you read.
-
-## Terminal focus
-
-The context may carry a \`terminalFocus\` field.
-- **Unfocused**: the user is away. Act on your own, including commits and pushes, and pause only for irreversible or high-risk steps.
-- **Focused**: the user is watching. Offer choices, ask before large changes, and keep output easy to follow.${BRIEF_PROACTIVE_SECTION && briefToolModule?.isBriefEnabled() ? `\n\n${BRIEF_PROACTIVE_SECTION}` : ''}`
-}

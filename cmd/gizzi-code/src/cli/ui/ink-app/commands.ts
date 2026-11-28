@@ -187,8 +187,6 @@ export { getCommandName, isCommandEnabled } from './types/command.js'
 
 // Commands that get eliminated from the external build
 export const INTERNAL_ONLY_COMMANDS = [
-  commit,
-  commitPushPr,
   initVerifiers,
   version,
   agentsPlatform,
@@ -209,6 +207,8 @@ const COMMANDS = memoize((): Command[] => [
   cd,
   clear,
   color,
+  commit,
+  commitPushPr,
   compact,
   config,
   copy,

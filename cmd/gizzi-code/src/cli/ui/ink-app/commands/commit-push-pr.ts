@@ -18,13 +18,11 @@ const ALLOWED_TOOLS = [
   'Bash(gh pr create:*)',
   'Bash(gh pr edit:*)',
   'Bash(gh pr view:*)',
-  'Bash(gh pr merge:*)',
   'ToolSearch',
   'mcp__slack__send_message',
-  'mcp__claude_ai_Slack__slack_send_message',
 ]
 
-function getPromptContent(
+export function getPromptContent(
   defaultBranch: string,
   prAttribution?: string,
 ): string {
@@ -36,22 +34,11 @@ function getPromptContent(
   const username = process.env.USER || ''
 
   let prefix = ''
-  let reviewerArg = ' and `--reviewer anthropics/claude-code`'
-  let addReviewerArg = ' (and add `--add-reviewer anthropics/claude-code`)'
-  let changelogSection = `
-
-## Changelog
-<!-- CHANGELOG:START -->
-[If this PR contains user-facing changes, add a changelog entry here. Otherwise, remove this section.]
-<!-- CHANGELOG:END -->`
   let slackStep = `
 
-5. After creating/updating the PR, check if the user's CLAUDE.md mentions posting to Slack channels. If it does, use ToolSearch to search for "slack send message" tools. If ToolSearch finds a Slack tool, ask the user if they'd like you to post the PR URL to the relevant Slack channel. Only post if the user confirms. If ToolSearch returns no results or errors, skip this step silently—do not mention the failure, do not attempt workarounds, and do not try alternative approaches.`
+5. After creating/updating the PR, check if the project's GIZZI.md or AGENTS.md mentions posting to Slack channels. If it does, use ToolSearch to search for "slack send message" tools. If ToolSearch finds a Slack tool, ask the user if they'd like you to post the PR URL to the relevant Slack channel. Only post if the user confirms. If ToolSearch returns no results or errors, skip this step silently—do not mention the failure, do not attempt workarounds, and do not try alternative approaches.`
   if (process.env.USER_TYPE === 'ant' && isUndercover()) {
     prefix = getUndercoverInstructions() + '\n'
-    reviewerArg = ''
-    addReviewerArg = ''
-    changelogSection = ''
     slackStep = ''
   }
 
@@ -88,7 +75,7 @@ EOF
 )"
 \`\`\`
 3. Push the branch to origin
-4. If a PR already exists for this branch (check the gh pr view output above), update the PR title and body using \`gh pr edit\` to reflect the current diff${addReviewerArg}. Otherwise, create a pull request using \`gh pr create\` with heredoc syntax for the body${reviewerArg}.
+4. If a PR already exists for this branch (check the gh pr view output above), update the PR title and body using \`gh pr edit\` to reflect the current diff. Otherwise, create a pull request using \`gh pr create\` with heredoc syntax for the body.
    - IMPORTANT: Keep PR titles short (under 70 characters). Use the body for details.
 \`\`\`
 gh pr create --title "Short, descriptive title" --body "$(cat <<'EOF'
@@ -96,7 +83,7 @@ gh pr create --title "Short, descriptive title" --body "$(cat <<'EOF'
 <1-3 bullet points>
 
 ## Test plan
-[Bulleted markdown checklist of TODOs for testing the pull request...]${changelogSection}${effectivePrAttribution ? `\n\n${effectivePrAttribution}` : ''}
+[Bulleted markdown checklist of TODOs for testing the pull request...]${effectivePrAttribution ? `\n\n${effectivePrAttribution}` : ''}
 EOF
 )"
 \`\`\`
