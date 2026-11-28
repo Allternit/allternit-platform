@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
+const { withRetry, guardSocket } = require('./retry-download.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 
 const desktopDir = path.resolve(__dirname, '..');
@@ -95,7 +96,7 @@ function targets() {
 function download(url, destination, redirects = 0) {
   if (redirects > 5) return Promise.reject(new Error('Too many redirects'));
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
+    guardSocket(https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         download(response.headers.location, destination, redirects + 1).then(resolve, reject);
@@ -110,7 +111,8 @@ function download(url, destination, redirects = 0) {
       response.pipe(file);
       file.on('finish', () => file.close(resolve));
       file.on('error', reject);
-    }).on('error', reject);
+      response.on('error', reject);
+    }), url).on('error', reject);
   });
 }
 
@@ -144,7 +146,7 @@ async function stagePython(key) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `allternit-driver-py-${key}-`));
   try {
     const archive = path.join(tmp, 'python.tar.gz');
-    await download(url, archive);
+    await withRetry(`Python ${key}`, () => download(url, archive));
     const actual = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
     if (actual !== sha256) throw new Error(`Python checksum mismatch for ${key}: expected ${sha256}, got ${actual}`);
     const untar = spawnSync('tar', ['-xzf', archive, '-C', tmp], { encoding: 'utf8' });

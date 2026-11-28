@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
+const { withRetry, guardSocket } = require('./retry-download.cjs');
 const { spawnSync } = require('node:child_process');
 
 const VERSION = '0.34.0';
@@ -58,7 +59,7 @@ function packTargets() {
 function download(url, destination, redirects = 0) {
   if (redirects > 5) return Promise.reject(new Error('Too many redirects while downloading Cua Driver'));
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
+    guardSocket(https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         download(response.headers.location, destination, redirects + 1).then(resolve, reject);
@@ -73,7 +74,8 @@ function download(url, destination, redirects = 0) {
       response.pipe(file);
       file.on('finish', () => file.close(resolve));
       file.on('error', reject);
-    }).on('error', reject);
+      response.on('error', reject);
+    }), url).on('error', reject);
   });
 }
 
@@ -136,7 +138,7 @@ async function prepareTarget(platform) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `allternit-cua-driver-${platform}-`));
   const archive = path.join(tempDir, spec.asset);
   try {
-    await download(url, archive);
+    await withRetry('Cua Driver', () => download(url, archive));
     const actual = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
     if (actual !== spec.sha256) {
       throw new Error(`Cua Driver checksum mismatch for ${platform}: expected ${spec.sha256}, got ${actual}`);

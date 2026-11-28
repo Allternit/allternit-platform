@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
+const { withRetry, guardSocket } = require('./retry-download.cjs');
 const { spawnSync } = require('node:child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -114,7 +115,7 @@ function stageFromBuild() {
 function request(url, redirects = 0) {
   if (redirects > 5) return Promise.reject(new Error('Too many redirects'));
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
+    guardSocket(https.get(url, { headers: { 'User-Agent': 'allternit-desktop-packager' } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         request(response.headers.location, redirects + 1).then(resolve, reject);
@@ -126,7 +127,7 @@ function request(url, redirects = 0) {
         return;
       }
       resolve(response);
-    }).on('error', reject);
+    }), url).on('error', reject);
   });
 }
 
@@ -137,19 +138,22 @@ async function download(url, destination) {
   return new Promise((resolve, reject) => {
     file.on('finish', () => file.close(resolve));
     file.on('error', reject);
+    response.on('error', reject);
   });
 }
 
 async function stageFromDownload() {
   const spec = RELEASE_ASSET[PLATFORM_ARCH];
   if (!spec) return false;
-  const response = await request(`https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20`);
-  const releases = JSON.parse(await new Promise((resolve, reject) => {
-    let body = '';
-    response.on('data', (chunk) => { body += chunk; });
-    response.on('end', () => resolve(body));
-    response.on('error', reject);
-  }));
+  const releases = await withRetry('mesh-node release list', async () => {
+    const response = await request(`https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20`);
+    return JSON.parse(await new Promise((resolve, reject) => {
+      let body = '';
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve(body));
+      response.on('error', reject);
+    }));
+  });
   // Releases come back newest-first; the first gizzi-code tag is the latest
   // sidecar build (v0.2.2+ all ship mesh-node in the asset archive).
   for (const release of releases) {
@@ -159,7 +163,7 @@ async function stageFromDownload() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'allternit-mesh-node-'));
     try {
       const archive = path.join(tempDir, asset.name);
-      await download(asset.browser_download_url, archive);
+      await withRetry(`mesh-node ${asset.name}`, () => download(asset.browser_download_url, archive));
       // tar handles .tar.gz everywhere and .zip via the bsdtar shipped with
       // macOS and Windows 10+ — no extra tooling needed on any CI runner.
       if (!run('tar', ['-xf', archive, '-C', tempDir, spec.member], { stdio: 'inherit' })) {
