@@ -1175,10 +1175,15 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 if hasAttachments { throw PersonChatRefusal(code: "text_only", message: nil, vendor: vendor) }
                 self.streamRequestStartedAt = Date()
                 self.streamFirstDeltaAt = nil
-                for try await event in PersonChatClient.stream(model: modelId, messages: history) {
-                    try Task.checkCancellation()
-                    if case .delta(let chunk) = event {
-                        _ = self.apply(.textDelta(.init(messageId: nil, partId: nil, text: chunk)), to: assistantId)
+                if let computer = BrowserComputerRegistry.shared.attached, let brain = Self.browserToolBrain(for: modelId) {
+                    try await self.runBrowserComputerTurn(computer: computer, brain: brain, model: modelId,
+                                                          history: history, assistantId: assistantId)
+                } else {
+                    for try await event in PersonChatClient.stream(model: modelId, messages: history) {
+                        try Task.checkCancellation()
+                        if case .delta(let chunk) = event {
+                            _ = self.apply(.textDelta(.init(messageId: nil, partId: nil, text: chunk)), to: assistantId)
+                        }
                     }
                 }
                 self.finishStreaming(messageId: assistantId)
@@ -1207,6 +1212,54 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 self.failStreaming(messageId: assistantId, error: error)
             }
         }
+    }
+
+    // MARK: - Browser computer tools (contract §7)
+
+    /// Which brains get the browser computer: Allternit Cloud models run the
+    /// tool loop, vendor plan brains get the plain "cannot run commands" line,
+    /// on-device and other-device models stay text only (nil).
+    nonisolated static func browserToolBrain(for modelId: String) -> BrowserToolBrain? {
+        if OnDeviceModelId.isOnDevice(modelId) || OtherDeviceModelId.isOtherDevice(modelId) { return nil }
+        if ModelStore.cloudAlias(modelId) != nil { return .tools }
+        return PersonModels.isPersonOnly(modelId) ? .plan : nil
+    }
+
+    /// One send with the browser computer attached. Tool steps land in the
+    /// message's tool calls, the same rows the rest of the chat draws.
+    private func runBrowserComputerTurn(computer: BrowserComputerModel, brain: BrowserToolBrain, model: String,
+                                        history: [PersonChatMessage], assistantId: String) async throws {
+        let wire = history.map { BrowserWireMessage.text(role: $0.role, content: $0.content) }
+        var callbacks = BrowserToolLoopCallbacks()
+        callbacks.onChunk = { [weak self] chunk in
+            _ = self?.apply(.textDelta(.init(messageId: nil, partId: nil, text: chunk)), to: assistantId)
+        }
+        callbacks.onToolCall = { [weak self] id, name, input in
+            var detail = AgentChatEvent.ToolDetail()
+            detail.input = input
+            detail.title = input["command"] ?? input["path"] ?? name
+            detail.startedAt = Date()
+            _ = self?.apply(.toolCall(.init(toolCallId: id, toolName: name, detail: detail)), to: assistantId)
+        }
+        callbacks.onToolResult = { [weak self] id, name, result in
+            var detail = AgentChatEvent.ToolDetail()
+            detail.output = result
+            detail.finishedAt = Date()
+            _ = self?.apply(.toolResult(.init(toolCallId: id, toolName: name, detail: detail)), to: assistantId)
+        }
+        callbacks.onToolError = { [weak self] id, name, error in
+            _ = self?.apply(.toolError(.init(toolCallId: id, toolName: name, error: error)), to: assistantId)
+        }
+        _ = try await BrowserToolLoop.run(brain: brain, messages: wire, executor: computer, streamCall: { request in
+            if brain == .plan {
+                // The server refuses tools for plan turns: a text turn, then the plain line.
+                for try await event in PersonChatClient.stream(model: model, messages: history) {
+                    if case .delta(let chunk) = event { request.onDelta(chunk) }
+                }
+                return BrowserToolResponse()
+            }
+            return try await PersonChatClient.streamCloudTools(model: model, request: request)
+        }, callbacks: callbacks)
     }
 
     // MARK: - Plan chat store (contract §9.10)

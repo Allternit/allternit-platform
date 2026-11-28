@@ -95,6 +95,7 @@ final class BrowserComputerModel: NSObject, ObservableObject {
             let record = try await ensureComputer()
             computerId = record
             phase = .running
+            BrowserComputerRegistry.shared.model = self
             _ = try await call("boot", ["computer_id": record, "memory_mib": 256, "cpus": 1,
                                         "network": ["mode": "off", "custom_url": NSNull()]])
         } catch let e as RPCError {
@@ -114,6 +115,7 @@ final class BrowserComputerModel: NSObject, ObservableObject {
     }
 
     private func tearDown() {
+        if BrowserComputerRegistry.shared.model === self { BrowserComputerRegistry.shared.model = nil }
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.handlerName)
         webView?.stopLoading()
         webView = nil
