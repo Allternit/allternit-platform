@@ -456,6 +456,7 @@ dependencies = [
 name = "allternit-cloud-api"
 version = "0.1.0"
 dependencies = [
+ "allternit-authority",
  "allternit-cloud-core",
  "allternit-cloud-hetzner",
  "allternit-cloud-ssh",

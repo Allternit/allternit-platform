@@ -13,6 +13,8 @@ pub mod carriers;
 pub mod channels;
 pub mod db;
 pub mod error;
+/// AllternitOS kernel embedded in cloud-api: receipts, shadow `check` (plan step 18).
+pub mod kernel;
 pub mod middleware;
 pub mod model_router;
 pub mod routes;
@@ -631,6 +633,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Routed approvals for the runtime device token / Clerk session
         // (lane 14b); `/api/v1/approvals` itself stays API-token only.
         .merge(routes::approvals::routed_routes())
+        // AllternitOS kernel approval relay to phones (step 18): runtime signature on
+        // /requests, Clerk session only on the phone routes; self-authenticating.
+        .merge(routes::kernel_relay::routes())
         // API keys verify the Clerk session per-request and store only hashes.
         .merge(routes::api_keys::routes())
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console

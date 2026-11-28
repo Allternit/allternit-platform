@@ -81,6 +81,31 @@ An edited row fails with the first bad row named: `payload_hash_mismatch`, `hash
 
 A pending approval request shows in the one inbox (`GET /api/v1/inbox?scope=needs_you`) as a `kernel_approval` row with a `kernel` object: `requestId`, `runId`, `assignee`, `actionClass`, `actionSummary`, `actionHash`, `deadline`, `humanOnly`. The row id is `kernel:<request_id>`. Only open, unexpired requests assigned to you (or to "owner") appear; a request past its deadline drops out and gets an `expired` receipt. You decide it only through `POST /api/v1/kernel/approvals/resolve`, which needs a person's session and, from Desktop, a presence check. The inbox approve and dismiss verbs on a kernel row answer 409 `USE_KERNEL_ROUTE` and change nothing; snooze hides the row until a time, and the deadline still applies. `GET /api/v1/kernel/approvals?state=pending` returns the same list directly (person's session only).
 
+## Approvals on your phone
+
+When a request is for the computer's owner, the computer also sends it to cloud-api, which pushes it to your phones and lists it for them. The computer reaches cloud-api the same way it sends every other runtime call: a request signed with its device token. Only the `kernel` object above travels, never the action payload or a token.
+
+| Route (cloud-api) | Who may call | What it does |
+|---|---|---|
+| `POST /api/v1/kernel/relay/requests` | A paired computer (device-token signature) | Stores the request (`kernel_approval_relay`). The first time a pending request arrives, it sends one push (category `KERNEL_APPROVAL`: approve needs device unlock, deny is shown as destructive). If the same request is sent again with a new status (approved, denied, expired, closed), the stored copy is closed. |
+| `GET /api/v1/kernel/relay/approvals` | Your signed-in session only | Your pending, unexpired requests as `kernel_approval` rows, each with `runtimeId` and `resolveRoute`. |
+| `POST /api/v1/kernel/relay/approvals/:runtime_id/:request_id/resolve` | Your signed-in session only | Body `{decision: "approve"\|"deny", note?}`. Sends the decision to that computer's own `POST /api/v1/kernel/approvals/resolve` and returns what the computer says: the signed token on approve, the denied request on deny, or the computer's error. |
+
+Rules:
+
+- **A person decides, on the computer.** The forwarded request carries your session token as the person proof. The computer checks it again and signs the token with its own key. That key never leaves the computer.
+- **Never a bot.** A request that carries a run, agent, internal-service, MCP-client or computer credential is refused with `forbidden_caller` and a `relay_refused` receipt before anything else happens. API keys are refused too.
+- **Expiry.** A copy past its deadline reads as expired and drops out of the list, and resolve answers 409 `token_expired` without contacting the computer. If the computer is offline, resolve answers 503 `kernel_unavailable` and nothing changes.
+- **Receipts on both sides.** cloud-api writes `relay_received`, `relay_forwarded` (before the decision is sent) and `relay_result` to its own log. The computer writes its usual resolve receipt.
+
+## The kernel in cloud-api
+
+cloud-api has its own copy of the kernel for chats with no computer, plus the relay receipts.
+
+- **Key:** `ALLTERNIT_KERNEL_SEED` (standard base64 of a 32-byte Ed25519 seed), kept in cloud-api's secret settings on the server, never in the repo. It signs only cloud-api's own receipts, never a token for a computer. With no seed set, no receipt can be written: the relay will not send decisions, and `check` answers `kernel_unavailable`.
+- **Receipts:** the `kernel_receipts` table (migration 171), one hash chain per person, signed, append-only (database triggers refuse UPDATE and DELETE).
+- **`check`:** the policy decision for a tool call that cloud-api runs itself. Autonomy is `ask_first`. The mode is set by `ALLTERNIT_KERNEL_MODE`. The default, `shadow`, records the decision and its receipt but always lets the call run. `enforce` refuses `ask` and human-only classes.
+
 ## The four depths
 
 The interface is written once and reused unchanged:
