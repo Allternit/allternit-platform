@@ -1,0 +1,247 @@
+[
+ {
+  "sequence": 1,
+  "sessionID": "ses_1",
+  "kind": "message.updated",
+  "data": {
+   "id": "m1",
+   "role": "user"
+  },
+  "time": 1000000,
+  "messageID": "m1"
+ },
+ {
+  "sequence": 2,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "text",
+   "text": "fix a.ts and run tests"
+  },
+  "time": 1000010,
+  "messageID": "m1"
+ },
+ {
+  "sequence": 3,
+  "sessionID": "ses_1",
+  "kind": "request.started",
+  "data": {
+   "requestID": "m1",
+   "agent": "build",
+   "providerID": "p",
+   "modelID": "x"
+  },
+  "time": 1000100
+ },
+ {
+  "sequence": 4,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c1",
+   "tool": "edit",
+   "state": {
+    "status": "pending",
+    "input": {},
+    "raw": ""
+   }
+  },
+  "time": 1000500,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 5,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c1",
+   "tool": "edit",
+   "state": {
+    "status": "running",
+    "input": {
+     "filePath": "a.ts"
+    },
+    "time": {
+     "start": 1
+    }
+   }
+  },
+  "time": 1000600,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 6,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c1",
+   "tool": "edit",
+   "state": {
+    "status": "completed",
+    "input": {
+     "filePath": "a.ts"
+    },
+    "output": "ok",
+    "title": "edit",
+    "metadata": {},
+    "time": {
+     "start": 1,
+     "end": 2
+    }
+   }
+  },
+  "time": 1000900,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 7,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c2",
+   "tool": "bash",
+   "state": {
+    "status": "pending",
+    "input": {},
+    "raw": ""
+   }
+  },
+  "time": 1001000,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 8,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c2",
+   "tool": "bash",
+   "state": {
+    "status": "running",
+    "input": {
+     "command": "bun test"
+    },
+    "time": {
+     "start": 3
+    }
+   }
+  },
+  "time": 1001100,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 9,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c2",
+   "tool": "bash",
+   "state": {
+    "status": "error",
+    "input": {
+     "command": "bun test"
+    },
+    "error": "exit 1",
+    "time": {
+     "start": 3,
+     "end": 4
+    }
+   }
+  },
+  "time": 1002000,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 10,
+  "sessionID": "ses_1",
+  "kind": "part.delta",
+  "data": {
+   "field": "text",
+   "delta": "Edited a.ts"
+  },
+  "time": 1002100,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 11,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "text",
+   "text": "Edited a.ts; the test run failed."
+  },
+  "time": 1002200,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 12,
+  "sessionID": "ses_1",
+  "kind": "request.completed",
+  "data": {
+   "requestID": "m1",
+   "providerID": "p",
+   "modelID": "x",
+   "attempt": 1,
+   "finish": "stop",
+   "tokens": {
+    "input": 1000,
+    "output": 200,
+    "reasoning": 50,
+    "cache": {
+     "read": 300,
+     "write": 10
+    }
+   },
+   "cost": 0.0125
+  },
+  "time": 1002300,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 13,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "step-finish",
+   "reason": "stop"
+  },
+  "time": 1002400,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 14,
+  "sessionID": "ses_1",
+  "kind": "message.updated",
+  "data": {
+   "id": "m2",
+   "role": "assistant"
+  },
+  "time": 1002500,
+  "messageID": "m2"
+ },
+ {
+  "sequence": 15,
+  "sessionID": "ses_1",
+  "kind": "part.updated",
+  "data": {
+   "type": "tool",
+   "callID": "c3",
+   "tool": "read",
+   "state": {
+    "status": "running",
+    "input": {},
+    "time": {
+     "start": 5
+    }
+   }
+  },
+  "time": 1003100,
+  "messageID": "m2"
+ }
+]
