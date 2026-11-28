@@ -1,0 +1,10 @@
+# Pinned linux-firmware release for the PC image (plan step 32). Bump the three lines together.
+# The sha256 is the one kernel.org publishes for the tarball
+# (https://cdn.kernel.org/pub/linux/kernel/firmware/sha256sums.asc, looked up 2026-11-28).
+# fetch.sh refuses a tarball that does not match, so every blob in the image is a byte of this tag.
+FW_TAG=20261019
+FW_URL=https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20261019.tar.xz
+FW_SHA256=a10d1ab5baf2c74ba92e8c7cf313e691696c26bddfa6df00db795e48d70cd4ca
+# Upper bound for the xz-compressed tree (MB). Built-in drivers load from the initramfs, so
+# this is also UKI size. Trim MANIFEST if a build hits it.
+FW_MAX_MB=256

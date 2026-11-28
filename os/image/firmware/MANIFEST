@@ -1,0 +1,44 @@
+# Firmware blobs the PC image carries (plan step 32). One line per glob:
+#   GROUP|LICENCE-FILE|GLOB
+# GLOB is relative to the linux-firmware tarball root, expanded by sh, and must match at least
+# one file (the tag is pinned, so a miss means a typo or a tag bump). LICENCE-FILE is the
+# licence text at the tarball root that WHENCE names for that driver (checked to exist; copied
+# into the image under /usr/share/licenses/linux-firmware/ and recorded in the SBOM).
+# Only what the built-in drivers in kernel/x86_64-pc.config can use. Nothing here is GPL-only:
+# these are redistributable binary blobs under the vendors' own terms (see the licence files).
+
+# Wi-Fi, Intel iwlwifi (driver iwlmvm): 9000/9260, Quz/Qu, cc, so, ty, ma, bz, gl and PNVM files
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-9000-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-9260-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-Qu-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-QuZ-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-cc-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-so-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-ty-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-ma-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-bz-*
+iwlwifi|LICENCE.iwlwifi_firmware|intel/iwlwifi/iwlwifi-gl-*
+
+# Wi-Fi, MediaTek mt7921e (MT7921/MT7961) and mt7922
+mt7921|LICENCE.mediatek|mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
+mt7921|LICENCE.mediatek|mediatek/WIFI_MT7961_patch_mcu_1a_2_hdr.bin
+mt7921|LICENCE.mediatek|mediatek/WIFI_RAM_CODE_MT7961_1.bin
+mt7921|LICENCE.mediatek|mediatek/WIFI_RAM_CODE_MT7961_1a.bin
+mt7921|LICENCE.mediatek|mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin
+mt7921|LICENCE.mediatek|mediatek/WIFI_RAM_CODE_MT7922_1.bin
+
+# Ethernet, Realtek r8169 (8168/8125 PHY and MAC patches)
+r8169|LICENSE.r8169|rtl_nic/*
+
+# GPU, Intel i915: display microcode (DMC). GuC/HuC are left out: i915 runs without them.
+i915|LICENSE.i915|i915/*_dmc*.bin
+
+# GPU, AMD amdgpu: Polaris, Vega10, Raven, Renoir, Navi10, Navi14 (more families: add lines)
+amdgpu|LICENSE.amdgpu|amdgpu/polaris10_*
+amdgpu|LICENSE.amdgpu|amdgpu/polaris11_*
+amdgpu|LICENSE.amdgpu|amdgpu/polaris12_*
+amdgpu|LICENSE.amdgpu|amdgpu/vega10_*
+amdgpu|LICENSE.amdgpu|amdgpu/raven_*
+amdgpu|LICENSE.amdgpu|amdgpu/renoir_*
+amdgpu|LICENSE.amdgpu|amdgpu/navi10_*
+amdgpu|LICENSE.amdgpu|amdgpu/navi14_*
