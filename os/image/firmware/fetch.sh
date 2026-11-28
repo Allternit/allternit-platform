@@ -40,8 +40,13 @@ mkdir -p "$OUT/lib-firmware" "$OUT/licenses"
 : > "$OUT/files.tmp"
 export LC_ALL=C
 grep -v '^[[:space:]]*#' "$HERE/MANIFEST" | grep -v '^[[:space:]]*$' > "$OUT/manifest.tmp"
+# Newer linux-firmware tags keep licence texts under LICENSES/ (20261019 does), older ones at
+# the top level. Accept either.
+lic_path() {
+  if [ -f "$SRC/$1" ]; then echo "$SRC/$1"; elif [ -f "$SRC/LICENSES/$1" ]; then echo "$SRC/LICENSES/$1"; fi
+}
 while IFS='|' read -r group lic glob; do
-  [ -f "$SRC/$lic" ] || die "licence file $lic for group $group is not in the $FW_TAG tarball"
+  [ -n "$(lic_path "$lic")" ] || die "licence file $lic for group $group is not in the $FW_TAG tarball (top level or LICENSES/)"
   n=0
   # shellcheck disable=SC2086
   for f in $(cd "$SRC" && ls -1d $glob 2>/dev/null); do
@@ -62,7 +67,7 @@ done < "$OUT/firmware.list"
 : > "$OUT/groups.tsv"
 for group in $(cut -d'|' -f1 "$OUT/manifest.tmp" | sort -u); do
   lic=$(grep "^$group|" "$OUT/manifest.tmp" | head -1 | cut -d'|' -f2)
-  cp "$SRC/$lic" "$OUT/licenses/$group.$lic"
+  cp "$(lic_path "$lic")" "$OUT/licenses/$group.$lic"
   count=$(awk -v g="$group" '$3 == g' "$OUT/firmware.list" | wc -l | tr -d ' ')
   bytes=0
   for p in $(awk -v g="$group" '$3 == g {print $2}' "$OUT/firmware.list"); do
