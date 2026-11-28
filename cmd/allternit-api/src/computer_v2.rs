@@ -203,6 +203,14 @@ pub async fn execute_v2(
             let code = if decision_needs_token(&refusal) { "approval_required" } else { "kernel_denied" };
             return Err(Fail { message: refusal.to_string(), browser_state: None, code: Some(code) });
         }
+        // secret.use (plan step 10): record the (credential, target) pair once a person approved
+        // its first use, receipt every later use.
+        if member == "use_credential" {
+            let receipt = match &decision { crate::authority::check::Decision::Allow { receipt_id } => receipt_id.clone(), _ => None };
+            if let Err(refusal) = crate::authority::secrets::bind_computer_credential(&ctx, &args, receipt).await {
+                return Err(Fail { message: refusal, browser_state: None, code: Some("approval_required") });
+            }
+        }
     }
     match member {
         "read_ui" | "act" | "run_batch" | "verify" => {
@@ -1029,6 +1037,9 @@ async fn use_credential(user: &AuthUser, target: &Target, input: &Value) -> Resu
     // only an element value write, never typing into the front window.
     secret_route(target, element_id.as_deref())?;
     let resolved = resolve_credential(user, input).await?;
+    // Every tool result is screened for this value from now on (keychain / Bitwarden / 1Password
+    // values are not in the vault's screening set).
+    crate::authority::secrets::attach_for_user(&user.user_id, &resolved.value);
 
     // The binding check: a bound credential only types into its app/domain.
     if let Some(bind) = &resolved.bind {

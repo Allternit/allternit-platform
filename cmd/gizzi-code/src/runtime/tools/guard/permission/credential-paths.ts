@@ -6,6 +6,10 @@
  * Order matters: the last matching pattern wins (PermissionNext's findLast),
  * so the template and public-key variants listed after the deny patterns stay
  * ordinary files. Free of runtime state, so the Ink adapters can use it too.
+ *
+ * An "ask" here only gates the read. Once the person approves it, the read tool still masks
+ * every value (`maskCredentialFileLines` in shared/util/secret-redactor.ts, AllternitOS step 10),
+ * so the model sees variable names, never secrets.
  */
 import { Wildcard } from "@/shared/util/wildcard"
 

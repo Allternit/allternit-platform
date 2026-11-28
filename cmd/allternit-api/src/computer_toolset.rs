@@ -1936,7 +1936,38 @@ pub fn action_descriptor(computer_id: &str, req: &ToolsetRequest) -> Value {
 // ---------------------------------------------------------------------------
 
 /// Run one toolset call. Returns the HTTP status and the result body.
+/// One toolset call, its result masked by the authority kernel's redactor before it can reach a
+/// model (plan step 10): the account's vault secrets, every value the kernel attached (a
+/// `use_credential` from the keychain, Bitwarden or 1Password included) and anything
+/// credential-shaped. Screenshot bytes are left alone (the PNG redaction covers pixels).
 pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap, req: ToolsetRequest) -> (StatusCode, Value) {
+    let run_id = req.run_id.clone();
+    let (status, mut body) = execute_unredacted(state, user, id, headers, req).await;
+    let redactor = crate::authority::secrets::result_redactor(&user.user_id, run_id.as_deref());
+    redact_toolset_body(&redactor, &mut body);
+    (status, body)
+}
+
+fn redact_toolset_body(r: &crate::authority::redact::Redactor, v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            if map.get("type").and_then(Value::as_str) == Some("image") {
+                return;
+            }
+            map.values_mut().for_each(|x| redact_toolset_body(r, x));
+        }
+        Value::Array(items) => items.iter_mut().for_each(|x| redact_toolset_body(r, x)),
+        Value::String(s) => {
+            let masked = r.text(s);
+            if masked != *s {
+                *s = masked;
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn execute_unredacted(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap, req: ToolsetRequest) -> (StatusCode, Value) {
     let c = contract(req.toolset);
     let respond = |status: StatusCode, r: ToolsetResult| (status, serde_json::to_value(r).unwrap_or_default());
 

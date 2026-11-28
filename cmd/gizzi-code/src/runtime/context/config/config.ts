@@ -1401,7 +1401,9 @@ export namespace Config {
             .describe(
               "Extra environment variables the bash tool passes to commands, by exact name or 'PREFIX_*' glob. " +
                 "Commands otherwise get only an allowlisted base environment with credential-looking variables " +
-                "(*_KEY, *_TOKEN, *_SECRET, *PASSWORD, *_PAT) removed; listing one here passes it anyway.",
+                "(*_KEY, *_TOKEN, *_SECRET, *PASSWORD, *_PAT) removed. A non-credential name listed here passes. " +
+                "A credential-named variable passes only after you approve that exact name when a command first needs it " +
+                "(an env_secret ask; a glob never approves one), and its value is masked in command output.",
             ),
         })
         .optional()

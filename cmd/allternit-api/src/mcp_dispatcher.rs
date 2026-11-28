@@ -148,7 +148,20 @@ impl McpDispatcher {
             check(kernel_ctx, &Action::new(Source::Mcp, namespaced_name, &arguments)).await.into_tool_result()?;
         }
 
-        Self::call_tool_remote(&server.url, &server.headers, tool_name, arguments).await
+        // The kernel attached the server's headers (its credentials) to this call: mask their
+        // values, the account's vault secrets and anything credential-shaped in the result,
+        // `Ok` and `Err`, before it can reach the model (plan step 10).
+        let out = Self::call_tool_remote(&server.url, &server.headers, tool_name, arguments).await;
+        let header_values = server.headers.iter().filter(|(name, _)| {
+            let n = name.to_ascii_lowercase();
+            ["auth", "token", "key", "secret", "cookie", "session", "password"].iter().any(|w| n.contains(w))
+        }).flat_map(|(_, v)| {
+            let v = v.trim();
+            [v.to_string(), v.split_once(' ').map(|(_, t)| t.trim().to_string()).unwrap_or_default()]
+        });
+        crate::authority::secrets::result_redactor(&kernel_ctx.user_id, kernel_ctx.run_id.as_deref())
+            .with(header_values)
+            .result(out)
     }
 
     /// Open a connection: the crate client negotiates the era (modern

@@ -15,8 +15,13 @@
  *      family — e.g. HOMEBREW_GITHUB_API_TOKEN,
  *   3. plus the variables the user opted in to, by name or `PREFIX_*` glob,
  *      via `bash.env_passthrough` in gizzi config or the comma-separated
- *      GIZZI_BASH_ENV_PASSTHROUGH env var. An opt-in beats the credential
- *      filter: `"env_passthrough": ["NPM_TOKEN"]` passes NPM_TOKEN,
+ *      GIZZI_BASH_ENV_PASSTHROUGH env var. An opt-in does NOT beat the
+ *      credential filter on its own (AllternitOS step 10): a credential-named
+ *      variable passes only when its exact name is in `approvedSecrets`, which
+ *      the bash tool fills after the person approves that name (`env_secret`
+ *      ask). A glob never approves a credential. Paths with no ask (selfhost
+ *      worker, environment setup) drop them. The value is still masked in the
+ *      command's output (`secretValues` + SecretRedactor),
  *   4. plus whatever `shell.env` plugins set (they chose to set it).
  */
 export namespace ShellEnv {
@@ -185,19 +190,44 @@ export namespace ShellEnv {
   }
 
   /**
+   * Credential-named variables in `source` that the opt-in list (config or
+   * flag) asks to pass. They pass only once approved by name (see `child`).
+   */
+  export function requestedSecrets(source: NodeJS.ProcessEnv, passthrough: string[] = []): string[] {
+    const optedIn = matcher([...passthrough, ...fromFlag(source)])
+    return Object.keys(source)
+      .filter((name) => source[name] !== undefined && isSecret(name) && optedIn(name))
+      .sort()
+  }
+
+  /**
+   * The values of credential-named variables in a child env: the call's
+   * attached values, masked in everything the command prints.
+   */
+  export function secretValues(env: Record<string, string>): string[] {
+    return Object.entries(env)
+      .filter(([name, value]) => isSecret(name) && value.length > 0)
+      .map(([, value]) => value)
+  }
+
+  /**
    * Build a child command's environment from the host env, the opt-in list
-   * and plugin-provided `shell.env` values.
+   * and plugin-provided `shell.env` values. A credential-named opt-in passes
+   * only when its exact name is in `approvedSecrets`.
    */
   export function child(
     source: NodeJS.ProcessEnv,
     extra: Record<string, string | undefined> = {},
     passthrough: string[] = [],
+    approvedSecrets: Iterable<string> = [],
   ): Record<string, string> {
     const optedIn = matcher([...passthrough, ...fromFlag(source)])
+    const approved = new Set(approvedSecrets)
     const env: Record<string, string> = {}
     for (const [name, value] of Object.entries(source)) {
       if (value === undefined) continue
-      if (optedIn(name) || (allowed(name) && !isSecret(name))) env[name] = value
+      const secret = isSecret(name)
+      if (secret ? optedIn(name) && approved.has(name) : optedIn(name) || allowed(name)) env[name] = value
     }
     for (const [name, value] of Object.entries(extra)) {
       if (value !== undefined) env[name] = value

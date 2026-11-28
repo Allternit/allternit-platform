@@ -182,11 +182,11 @@ impl CheckCtx {
         self
     }
 
-    fn mode(&self) -> Mode {
+    pub(crate) fn mode(&self) -> Mode {
         self.mode.unwrap_or_else(Mode::from_env)
     }
 
-    fn data_dir(&self) -> PathBuf {
+    pub(crate) fn data_dir(&self) -> PathBuf {
         self.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
     }
 }
@@ -266,8 +266,7 @@ fn computer_class(member: &str, risk: Option<&str>) -> Classified {
     let class = match member {
         "read_ui" | "verify" | "skills" | "resolve_access" => Read,
         "request_human" => RunControl,
-        // Until `secret.use` (step 10) knows which host a secret has been used toward, every
-        // credential use counts as a first use.
+        // Classified by `secrets::classify_credential_use` in `classify` (known pair: read, new: human-only).
         "use_credential" => SecretNewHost,
         _ => match risk {
             Some("irreversible") => Irreversible,
@@ -284,6 +283,7 @@ pub fn classify(ctx: &CheckCtx, action: &Action) -> Classified {
     }
     match action.source {
         Source::Native => native_class(&action.tool).map_or_else(Classified::unknown, |c| Classified::known(c, "native_table")),
+        Source::Computer if action.tool == "use_credential" => super::secrets::classify_credential_use(ctx, &action.args),
         Source::Computer => computer_class(&action.tool, action.risk.as_deref()),
         Source::Mcp => match action.tool.split_once('.').map(|(_, t)| t) {
             // An app's checkout fulfilment moves an order to paid: money, human-only.

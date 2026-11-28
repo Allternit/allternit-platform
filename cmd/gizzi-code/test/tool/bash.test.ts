@@ -442,22 +442,56 @@ describe("tool.bash environment", () => {
     })
   })
 
-  test("bash.env_passthrough in config opts variables back in", async () => {
+  // AllternitOS step 10: a credential-named opt-in reaches the command only after the person
+  // approves that exact name (env_secret ask), and its value never reaches the model.
+  test("bash.env_passthrough passes an approved credential, masked in the output", async () => {
     await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: undefined }, async () => {
       await using tmp = await tmpdir({ git: true, config: { bash: { env_passthrough: ["OPENROUTER_*"] } } })
       await Instance.provide({
         directory: tmp.path,
         fn: async () => {
+          const asked: any[] = []
           const bash = await BashTool.init()
-          const result = await bash.execute({ command: "env", description: "Print environment" }, ctx)
-          expect(result.output).toContain("OPENROUTER_API_KEY=sk-or-test-secret")
+          const result = await bash.execute(
+            { command: "env; printf %s \"$OPENROUTER_API_KEY\" | wc -c", description: "Print environment" },
+            { ...ctx, ask: async (req: any) => void asked.push(req) },
+          )
+          const envAsk = asked.find((r) => r.permission === "env_secret")
+          expect(envAsk?.patterns).toEqual(["OPENROUTER_API_KEY"])
+          expect(result.output).toContain("OPENROUTER_API_KEY=[REDACTED]")
+          expect(result.output).toContain(String("sk-or-test-secret".length))
+          expect(result.output).not.toContain("sk-or-test-secret")
+          expect(result.metadata.output).not.toContain("sk-or-test-secret")
           expect(result.output).not.toContain("ANTHROPIC_API_KEY")
         },
       })
     })
   })
 
-  test("GIZZI_BASH_ENV_PASSTHROUGH opts variables in by name", async () => {
+  test("a refused env_secret ask runs the command without the variable", async () => {
+    await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: "ANTHROPIC_API_KEY" }, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await BashTool.init()
+          const result = await bash.execute(
+            { command: "env", description: "Print environment" },
+            {
+              ...ctx,
+              ask: async (req: any) => {
+                if (req.permission === "env_secret") throw new Error("rejected")
+              },
+            },
+          )
+          expect(result.output).not.toContain("ANTHROPIC_API_KEY")
+          expect(result.output).not.toContain("sk-ant-test-secret")
+        },
+      })
+    })
+  })
+
+  test("GIZZI_BASH_ENV_PASSTHROUGH passes an approved name, masked", async () => {
     await withEnv({ ...SECRETS, GIZZI_BASH_ENV_PASSTHROUGH: "ANTHROPIC_API_KEY" }, async () => {
       await using tmp = await tmpdir({ git: true })
       await Instance.provide({
@@ -465,7 +499,8 @@ describe("tool.bash environment", () => {
         fn: async () => {
           const bash = await BashTool.init()
           const result = await bash.execute({ command: "env", description: "Print environment" }, ctx)
-          expect(result.output).toContain("ANTHROPIC_API_KEY=sk-ant-test-secret")
+          expect(result.output).toContain("ANTHROPIC_API_KEY=[REDACTED]")
+          expect(result.output).not.toContain("sk-ant-test-secret")
           expect(result.output).not.toContain("OPENROUTER_API_KEY")
         },
       })

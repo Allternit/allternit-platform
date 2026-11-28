@@ -21,6 +21,7 @@ import { BashArity } from "@/runtime/tools/guard/permission/arity"
 import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { ShellEnv } from "@/runtime/integrations/shell/env"
+import { SecretRedactor } from "@/shared/util/secret-redactor"
 import { Config } from "@/runtime/context/config/config"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { Plugin } from "@/runtime/integrations/plugin"
@@ -118,6 +119,11 @@ export const BashTool = Tool.define("bash", async () => {
         .optional(),
     }),
     async execute(params, ctx): Promise<BashResult> {
+      // AllternitOS step 10: no secret value reaches model context. Everything this tool returns
+      // (stdout + stderr, VM and local, foreground and background) passes the secret redactor:
+      // the values of credential-named variables the command got, plus credential shapes.
+      let redactor = new SecretRedactor()
+      const result = await (async (): Promise<BashResult> => {
       const cwd = params.workdir || Instance.workdir
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
@@ -257,10 +263,13 @@ export const BashTool = Tool.define("bash", async () => {
       // base env, minus anything credential-shaped, plus the user's
       // bash.env_passthrough opt-ins and plugin-provided shell.env values.
       const passthrough = (await Config.get().catch(() => undefined))?.bash?.env_passthrough ?? []
+      // A credential-named opt-in passes only once the person approves that exact name.
+      const approvedSecrets = await approveEnvSecrets(ctx, ShellEnv.requestedSecrets(process.env, passthrough))
       // A cloud code environment adds its .env vars, secrets and network-policy
       // proxy here ({} for local sessions).
       const sessionEnv = EnvironmentRuntime.toolEnv(ctx.sessionID)
-      const childEnv = ShellEnv.child(process.env, { ...shellEnv.env, ...sessionEnv }, passthrough)
+      const childEnv = ShellEnv.child(process.env, { ...shellEnv.env, ...sessionEnv }, passthrough, approvedSecrets)
+      redactor = new SecretRedactor(ShellEnv.secretValues(childEnv))
 
       // ── VM Session execution ───────────────────────────────────────────────
       // When GIZZI_VM_SESSIONS is enabled (or the session has an active VM),
@@ -308,11 +317,13 @@ export const BashTool = Tool.define("bash", async () => {
               })()
             : undefined
 
+          const vmEnv = { ...(shellEnv.env as Record<string, string>), ...EnvironmentRuntime.toolEnv(ctx.sessionID, { proxy: false }) }
+          redactor = new SecretRedactor([...ShellEnv.secretValues(childEnv), ...ShellEnv.secretValues(vmEnv)])
           const vmResult = await VmSession.exec(
             ctx.sessionID,
             params.command,
             {
-              env: { ...(shellEnv.env as Record<string, string>), ...EnvironmentRuntime.toolEnv(ctx.sessionID, { proxy: false }) },
+              env: vmEnv,
               timeoutSecs: Math.ceil(timeout / 1000),
               workdir: vmWorkdir,
             },
@@ -428,6 +439,7 @@ export const BashTool = Tool.define("bash", async () => {
           sessionID: ctx.sessionID,
           command: params.command,
           description: params.description || params.command,
+          redact: (text) => redactor.text(text),
         })
       }
 
@@ -443,10 +455,11 @@ export const BashTool = Tool.define("bash", async () => {
 
       const append = (chunk: Buffer) => {
         output += chunk.toString()
+        const shown = redactor.text(output)
         ctx.metadata({
           metadata: {
             // truncate the metadata to avoid GIANT blobs of data (has nothing to do w/ what agent can access)
-            output: output.length > MAX_METADATA_LENGTH ? output.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : output,
+            output: shown.length > MAX_METADATA_LENGTH ? shown.slice(0, MAX_METADATA_LENGTH) + "\n\n..." : shown,
             description: params.description,
           },
         })
@@ -520,16 +533,54 @@ export const BashTool = Tool.define("bash", async () => {
         },
         output,
       }
+      })()
+      return redactBashResult(result, redactor)
     },
   }
 })
+
+/** The tool result with stdout/stderr masked (the model and the UI see the same masked text). */
+function redactBashResult(result: BashResult, redactor: SecretRedactor): BashResult {
+  return {
+    ...result,
+    output: redactor.text(result.output),
+    metadata: { ...result.metadata, output: redactor.text(result.metadata.output) },
+  }
+}
+
+/** `env_secret`: the person approves passing a credential-named variable to commands. */
+export const ENV_SECRET_PERMISSION = "env_secret"
+
+/**
+ * Ask once per variable name (remembered for the session when the person chooses "always"):
+ * `bash.env_passthrough` / GIZZI_BASH_ENV_PASSTHROUGH may name a credential, but it reaches a
+ * command only after this approval. A refusal runs the command without those variables.
+ */
+async function approveEnvSecrets(ctx: Tool.Context, names: string[]): Promise<string[]> {
+  if (names.length === 0) return []
+  try {
+    await ctx.ask({
+      permission: ENV_SECRET_PERMISSION,
+      patterns: names,
+      always: names,
+      metadata: {
+        summary: `Pass ${names.join(", ")} to this command (its value stays hidden from the model)`,
+        variables: names,
+      },
+    })
+    return names
+  } catch (error) {
+    log.info("env_passthrough credentials not approved; the command runs without them", { names })
+    return []
+  }
+}
 
 // A background shell is a durable BackgroundTask (kind "shell"): its output
 // tail streams as `background.task.updated`, it settles on exit, and
 // task_stop / the cancel route kill its process tree.
 export async function runInBackground(
   proc: ReturnType<typeof spawn>,
-  input: { sessionID: string; command: string; description: string },
+  input: { sessionID: string; command: string; description: string; redact?: (text: string) => string },
 ): Promise<BashResult> {
   const taskID = Identifier.ascending("task")
   const header = `$ ${input.command}\n`
@@ -549,7 +600,8 @@ export async function runInBackground(
     await Shell.killTree(proc, { exited: () => exited })
   })
 
-  const snapshot = () => header + BackgroundTask.tail(body, BackgroundTask.MAX_LIVE_OUTPUT - header.length)
+  const redact = input.redact ?? ((text: string) => text)
+  const snapshot = () => redact(header + BackgroundTask.tail(body, BackgroundTask.MAX_LIVE_OUTPUT - header.length))
   const flush = () => {
     pending = undefined
     void BackgroundTask.progress(taskID, snapshot()).catch((error) => {

@@ -104,3 +104,23 @@ BEFORE DELETE ON kernel_receipts
 BEGIN
     SELECT RAISE(ABORT, 'kernel_receipts is append-only');
 END;
+
+-- Plan step 10, `secret.use` (CONTRACT.md 2.3): every (secret, host) pair the kernel has bound.
+-- The first use of a secret toward a host not listed here is `secret_new_host` (human-only); the
+-- pair is written only after that use was approved by a person. Later uses to the same host are
+-- allowed and receipted. A handle and a host only: never a secret value.
+CREATE TABLE IF NOT EXISTS kernel_secret_hosts (
+    owner_user_id     TEXT NOT NULL,
+    tenant            TEXT NOT NULL,
+    secret_ref        TEXT NOT NULL,
+    -- A normalised host (`api.github.com`), or `process:<name>` / `computer:<id>` for a target
+    -- that is not a network host.
+    host              TEXT NOT NULL,
+    first_use_id      TEXT NOT NULL,
+    -- The receipt that recorded the person's approval of the first use.
+    approval_receipt  TEXT NOT NULL,
+    use_count         INTEGER NOT NULL DEFAULT 1 CHECK (use_count >= 1),
+    first_used_at     TEXT NOT NULL,
+    last_used_at      TEXT NOT NULL,
+    PRIMARY KEY (owner_user_id, tenant, secret_ref, host)
+);

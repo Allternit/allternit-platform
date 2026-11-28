@@ -12,9 +12,11 @@
 //! | [`audit`] | The receipt log: per (principal, tenant) hash chain, Ed25519 signed, `append` + `verify_chain` |
 //! | [`approvals`] | [`approvals::SqlAuthority`]: request, resolve, redeem; receipts written before acting |
 //! | [`check`] | `check` at every tool-execution path: classify, apply autonomy, redeem a token for ask/human-only classes, receipt first; `ALLTERNIT_KERNEL_CHECK=off\|shadow\|enforce` |
+//! | [`secrets`] | `secret.use`: bind a credential by handle, first use toward a new host is human-only `secret_new_host` (step 10) |
+//! | [`redact`] | The one redactor every tool result passes before it reaches the model: attached values + credential shapes (step 10) |
 //! | [`routes`] | `POST /api/v1/kernel/approvals/{request,resolve,redeem}`; `GET /api/v1/kernel/receipts[/verify]`; resolve and verify need a person's session |
 //!
-//! Not here yet: `secret.use` (10), moving the nine old
+//! Not here yet: moving the nine old
 //! approval stores onto this one (11), budgets and leases (12).
 
 pub mod approvals;
@@ -22,7 +24,9 @@ pub mod audit;
 pub mod check;
 pub mod keystore;
 pub mod presence;
+pub mod redact;
 pub mod routes;
+pub mod secrets;
 pub mod tokens;
 
 /// `ReceiptChainV1.domain`: one fixed ABI value; the kernel kind rides in `payload.kind` (CONTRACT.md 11.2).
