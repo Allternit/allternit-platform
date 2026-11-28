@@ -53,8 +53,8 @@ struct Opts {
     /// How many propose-and-gate rounds `run` may do.
     #[arg(long, global = true, default_value_t = 1)]
     max_generations: u32,
-    /// Hard stop on spend, in US dollars.
-    #[arg(long, global = true)]
+    /// Hard stop on spend, in US dollars. Negative numbers parse so validate() can refuse them with a clear message.
+    #[arg(long, global = true, allow_negative_numbers = true)]
     max_usd: Option<f64>,
     /// Share of the dev cases the staged eval runs (0 < f <= 1).
     #[arg(long, global = true, default_value_t = 0.3)]

@@ -537,8 +537,9 @@ mod tests {
         snap.files.get(path).cloned()
     }
 
+    /// Commit messages on user-a's drive; none when no drive was ever made (a reject writes nothing).
     fn history(st: &Arc<AppState>) -> Vec<String> {
-        let drive = crate::memory_drive_service::resolve(&st.db, "user-a").unwrap();
+        let Ok(drive) = crate::memory_drive_service::resolve(&st.db, "user-a") else { return Vec::new() };
         drive.storage().unwrap().history(None, 20).unwrap().into_iter().map(|c| c.message).collect()
     }
 
