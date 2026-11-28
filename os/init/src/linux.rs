@@ -1,5 +1,7 @@
 use allternit_init::config::{self, Action, Config, Exit, Service};
 use allternit_init::luks;
+use allternit_init::manifest;
+use allternit_init::secureboot;
 use allternit_init::slot::{self, BootState};
 use allternit_init::verity::{self, Slot, Verity};
 use libc::{c_int, c_void};
@@ -16,7 +18,8 @@ const CONFIG_PATH: &str = "/etc/allternit/init.toml";
 const AUTH_SOCK: &str = "/run/allternit/authority.sock";
 const READY_LINE: &str = "ALLTERNIT-OS READY kernel-interface=1";
 /// TEST ONLY: the LUKS2 volume key of the state partition, baked into the initramfs by
-/// mkimage.sh. Anyone with the disk image has it. TODO(31): TPM / Secure Boot key binding.
+/// mkimage.sh. Anyone with the disk image has it. TODO(hardware): TPM-sealed key (needs a
+/// real TPM and PCR 7 policy; CI has none), then this file goes away.
 const STATE_KEY: &str = "/etc/allternit/TEST-ONLY-state.key";
 /// Device-mapper name of the opened state partition.
 const STATE_DM: &str = "state";
@@ -425,8 +428,8 @@ fn is_luks_dev(dev: &str) -> bool {
     std::fs::File::open(dev).and_then(|mut f| f.read_exact(&mut b)).is_ok() && luks::is_luks(&b)
 }
 
-/// Open the LUKS2 state partition with dm-crypt (TEST ONLY key from the initramfs) and check
-/// that an ext4 superblock is behind it, which catches a wrong key before the mount.
+/// Open the LUKS2 state partition with dm-crypt (TEST ONLY key from the initramfs), after
+/// checking the key against the LUKS2 digest, and check that an ext4 superblock is behind it.
 fn open_luks(dev: &str, key: &[u8]) -> Result<String, String> {
     let mut f = std::fs::File::open(dev).map_err(|e| format!("open {dev}: {e}"))?;
     let mut hdr = vec![0u8; luks::BIN_HEADER];
@@ -435,6 +438,10 @@ fn open_luks(dev: &str, key: &[u8]) -> Result<String, String> {
     hdr.resize(size, 0);
     f.read_exact(&mut hdr[luks::BIN_HEADER..]).map_err(|e| format!("read LUKS2 JSON: {e}"))?;
     let seg = luks::parse(&hdr)?;
+    // Step 31: the key must match the LUKS2 digest before dm-crypt is set up.
+    luks::verify_key(&hdr, key)?;
+    println!("state: luks digest ok");
+    let _ = std::io::stdout().flush();
     let dev_bytes = f.seek(SeekFrom::End(0)).map_err(|e| format!("size of {dev}: {e}"))?;
     drop(f);
     let (sectors, params) = seg.table(dev, dev_bytes, key)?;
@@ -564,11 +571,58 @@ fn print_fallback(f: &slot::Fallback) {
     let _ = std::io::stdout().flush();
 }
 
+/// Step 31: the slot's dm-verity parameters come from its signed manifest on the ESP
+/// (`allternit/manifest-<slot>.json` + `.sig`), checked with the public key baked into the
+/// initramfs. A missing, unsigned or changed manifest fails the slot like a verity failure.
+fn slot_verity(esp: bool, pubkey: Option<&[u8]>, s: Slot) -> Result<Verity, String> {
+    let r = (|| {
+        if !esp {
+            return Err("no ESP, so no signed manifest".to_string());
+        }
+        let Some(pk) = pubkey else {
+            return Err(format!("no public key at {} in the initramfs", manifest::PUBKEY_PATH));
+        };
+        let state = state_path();
+        let dir = std::path::Path::new(&state).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let jp = dir.join(format!("manifest-{}.json", s.name()));
+        let sp = dir.join(format!("manifest-{}.sig", s.name()));
+        let json = std::fs::read(&jp).map_err(|e| format!("read {}: {e}", jp.display()))?;
+        let sig = std::fs::read(&sp).map_err(|e| format!("read {}: {e}", sp.display()))?;
+        let m = manifest::verified(&json, &sig, pk)?;
+        if m.slot != s.name() {
+            return Err(format!("the manifest is for slot {}, not {}", m.slot, s.name()));
+        }
+        Ok(m)
+    })();
+    match r {
+        Ok(m) => {
+            println!("manifest: ok slot={} version={}", s.name(), m.version);
+            let _ = std::io::stdout().flush();
+            verity::for_slot(&m.verity_param(), s)
+        }
+        Err(e) => {
+            println!("manifest: FAIL slot={} ({e})", s.name());
+            let _ = std::io::stdout().flush();
+            Err(format!("manifest: {e}"))
+        }
+    }
+}
+
+/// Report the UEFI Secure Boot state on the serial line (step 31). The kernel needs
+/// CONFIG_EFIVAR_FS; a direct (non-UEFI) boot has no variable and prints "unknown".
+fn report_secure_boot() {
+    let _ = std::fs::create_dir_all(secureboot::EFIVARFS_MOUNT);
+    let _ = sys_mount("efivarfs", secureboot::EFIVARFS_MOUNT, "efivarfs", 0, "");
+    let state = std::fs::read(secureboot::VAR_PATH).ok().and_then(|b| secureboot::parse(&b));
+    println!("{}", secureboot::line(state));
+    let _ = std::io::stdout().flush();
+}
+
 /// Pick the slot from the ESP boot state (default: `allternit.slot=`), verify it, and switch
 /// root into it. A slot that fails dm-verity, or an unconfirmed slot out of tries, makes PID 1
 /// switch to the other slot once; if that one fails too the machine powers off.
 /// No slot on the command line (direct boot without a disk): stay on the initramfs.
-fn boot_slot() -> Booted {
+fn boot_slot(pubkey: Option<&[u8]>) -> Booted {
     let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
     let Some(given) = verity::slot_named(&cmdline) else {
         log("no allternit.slot on the kernel command line: running from the initramfs");
@@ -597,7 +651,7 @@ fn boot_slot() -> Booted {
     let mut cur = plan.slot;
     let mut switched = plan.fallback.is_some();
     loop {
-        let opened = verity::for_slot(&cmdline, cur).and_then(|v| open_verity(&v));
+        let opened = slot_verity(esp, pubkey, cur).and_then(|v| open_verity(&v));
         match opened {
             Ok(node) => {
                 println!("verity: ok slot={}", cur.name());
@@ -650,9 +704,11 @@ fn confirm_slot(b: &mut Booted) {
 pub fn run() {
     mount_basics();
     console_setup();
-    // Read the TEST ONLY state key while the initramfs is still the root.
+    report_secure_boot();
+    // Read the TEST ONLY state key and the update public key while the initramfs is the root.
     let state_key = std::fs::read(STATE_KEY).ok();
-    let mut booted = boot_slot();
+    let pubkey = std::fs::read(manifest::PUBKEY_PATH).ok();
+    let mut booted = boot_slot(pubkey.as_deref());
     let cfg = match std::fs::read_to_string(CONFIG_PATH) {
         Ok(t) => match config::parse(&t) {
             Ok(c) => c,
