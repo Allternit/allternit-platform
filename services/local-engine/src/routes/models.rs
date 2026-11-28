@@ -25,6 +25,11 @@ pub struct DownloadRequest {
     #[serde(default = "default_revision")]
     pub revision: String,
     pub quantization: Option<String>,
+    /// Engine the model is for, from the stream quant's `engine` field
+    /// (`"colibri"`). Optional. When set it decides how the download is
+    /// installed; when absent, a repo id that names colibri is the fallback.
+    #[serde(default)]
+    pub engine: Option<String>,
     /// Let files with no hash anywhere (no manifest entry, no publisher
     /// hash) download with state `unverified`. Off by default: such a file
     /// fails the download.
@@ -380,6 +385,7 @@ async fn download_model(
         repo_id,
         payload.revision,
         quantization,
+        payload.engine,
         payload.allow_unverified,
         state.models_dir.clone(),
     );

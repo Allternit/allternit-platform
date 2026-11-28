@@ -9,7 +9,7 @@
 use crate::cache::model::{CachedModel, FileVerification};
 use crate::cache::store::ModelStore;
 use crate::download::huggingface::{
-    self, is_colibri_repo, is_weight_file, select_colibri_files, select_files,
+    self, is_colibri_download, is_weight_file, select_colibri_files, select_files,
 };
 use allternit_model_source::{
     Client, FetchOptions, Resolution, Verification, VerificationState,
@@ -33,6 +33,7 @@ pub fn spawn_download_task(
     repo_id: String,
     revision: String,
     quantization: Option<String>,
+    engine: Option<String>,
     allow_unverified: bool,
     models_dir: PathBuf,
 ) {
@@ -43,6 +44,7 @@ pub fn spawn_download_task(
             &repo_id,
             &revision,
             quantization.as_deref(),
+            engine.as_deref(),
             allow_unverified,
             &models_dir,
         )
@@ -161,6 +163,7 @@ async fn run_download(
     repo_id: &str,
     revision: &str,
     quantization: Option<&str>,
+    engine: Option<&str>,
     allow_unverified: bool,
     models_dir: &Path,
 ) -> Result<(), DownloadError> {
@@ -174,7 +177,7 @@ async fn run_download(
     }
     // Colibri packs are whole container directories installed into the
     // models folder (not the HF cache), resumed like any other download.
-    let colibri = is_colibri_repo(repo_id);
+    let colibri = is_colibri_download(engine, repo_id);
     let files = if colibri {
         select_colibri_files(&res.files)?
     } else {
