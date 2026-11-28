@@ -739,6 +739,12 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Model option values starred as favorites in the /model picker.',
         ),
+      modelRecent: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'The 5 most recently picked models, newest first; F2 in the /model picker cycles them.',
+        ),
       advisorModel: z
         .string()
         .optional()

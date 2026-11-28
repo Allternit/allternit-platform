@@ -18,6 +18,7 @@ export type Key = {
   ctrl: boolean
   shift: boolean
   fn: boolean
+  f2: boolean
   tab: boolean
   backspace: boolean
   delete: boolean
@@ -40,6 +41,7 @@ function parseKey(keypress: ParsedKey): [Key, string] {
     return: keypress.name === 'return',
     escape: keypress.name === 'escape',
     fn: keypress.fn,
+    f2: keypress.name === 'f2',
     ctrl: keypress.ctrl,
     shift: keypress.shift,
     tab: keypress.name === 'tab',
