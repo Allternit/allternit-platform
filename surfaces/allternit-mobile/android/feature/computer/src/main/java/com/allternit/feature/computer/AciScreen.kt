@@ -44,7 +44,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import com.allternit.core.design.DockSpec
-import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.core.design.LocalDockOffset
 import com.allternit.core.design.PixelWordmark
 import androidx.compose.runtime.LaunchedEffect
@@ -439,12 +439,15 @@ private val TAGLINES = listOf("AI-Powered Browsing", "Navigate with Intelligence
 /**
  * A page whose [title] is the standard docking block title (same as Projects and Artifacts): drawn once over the
  * whole page, driven by [scroll]. The page's [AciViewHeader] only reserves the space the resting title occupies.
+ * The ACI pane starts below the screen's menu row, so the title is pinned to the screen origin ([AciDockOverlay]):
+ * it docks into the top bar at [DockSpec.BAR_CENTER] like Settings, not 72 dp lower inside the pane.
  */
 @Composable
 internal fun AciDockPage(title: String, scroll: ScrollState, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val offset = rememberDockOffset(scroll)
     Box(modifier) {
         content()
-        DockingBlockTitle(title, scroll, modifier = Modifier.fillMaxSize())
+        AciDockOverlay(title, offset, counterScroll = false, titleTop = { y -> (y + DockSpec.TOP).dp }, barCenter = { DockSpec.BAR_CENTER.dp })
     }
 }
 
