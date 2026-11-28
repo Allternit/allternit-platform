@@ -11,7 +11,8 @@ final class AccountPairAnswerRoomTests: XCTestCase {
     }
 
     func testChatGPTRowIsTheSubscriptionWithAModelCount() throws {
-        let row = ConnectionWire(id: "chatgpt", state: .on, models: ["a", "b", "c"])
+        var row = ConnectionWire(id: "chatgpt", state: .on)
+        row.models = ["a", "b", "c"]
         let extras = try XCTUnwrap(AccountPair.extras(id: "chatgpt", row: row, paired: true))
         XCTAssertEqual(extras.title, "ChatGPT subscription")
         XCTAssertEqual(extras.badge, "Device sign-in")
@@ -23,7 +24,9 @@ final class AccountPairAnswerRoomTests: XCTestCase {
     func testNoModelCountWhenNoneAreKnown() throws {
         let extras = try XCTUnwrap(AccountPair.extras(id: "chatgpt", row: ConnectionWire(id: "chatgpt", state: .on), paired: false))
         XCTAssertEqual(AccountPair.statusLine(extras, state: .on, fallback: "x"), "Signed in on this iPhone")
-        let one = try XCTUnwrap(AccountPair.extras(id: "chatgpt", row: ConnectionWire(id: "chatgpt", state: .on, models: ["a"]), paired: false))
+        var oneRow = ConnectionWire(id: "chatgpt", state: .on)
+        oneRow.models = ["a"]
+        let one = try XCTUnwrap(AccountPair.extras(id: "chatgpt", row: oneRow, paired: false))
         XCTAssertEqual(AccountPair.statusLine(one, state: .on, fallback: "x"), "Signed in on this iPhone · 1 model")
     }
 
