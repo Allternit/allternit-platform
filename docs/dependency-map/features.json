@@ -5840,8 +5840,12 @@
       "description": "Replay of bot-to-bot messages reads from and preview on each delivery; Gizzi prints them as from to to with the preview.",
       "touches": [
         "allternit/cmd/gizzi-code/src/cli/factory/render.ts",
-        "allternit/factory/engine/src/orchestration/send.rs"
-      , "allternit-ai/src/components/factory/views/TeamGraph.tsx", "allternit-ai/src/lib/factory", "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift", "allternit/surfaces/allternit-mobile/android/feature/bots"],
+        "allternit/factory/engine/src/orchestration/send.rs",
+        "allternit-ai/src/components/factory/views/TeamGraph.tsx",
+        "allternit-ai/src/lib/factory",
+        "allternit/surfaces/allternit-mobile/ios/Features/Bots/BotProjectFactoryPanes.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/bots"
+      ],
       "decisions": [
         {
           "on": "2026-11-26",
@@ -5969,6 +5973,27 @@
       "evidence": [
         "allternit/surfaces/docs/architecture/session-start.mdx",
         "allternit/cmd/agent-daemon/src/index.ts"
+      ]
+    },
+    {
+      "id": "feature:authority-kernel",
+      "label": "Authority kernel and model shell",
+      "product": "product:ai-allternit",
+      "status": "planned",
+      "description": "The model is the shell and deterministic code is the kernel. Six calls plus admit (check, lease, secret.use, approval, audit.append, budget, deploy.admit), human-only action classes, approval tokens and a signed receipt chain; the model drives the screen through shell and inbox tools and never approves. Contract v1 draft; the build is in progress.",
+      "touches": [
+        "allternit/surfaces/docs/architecture/authority-kernel.mdx",
+        "allternit/surfaces/docs/architecture/model-shell.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Contract v1 drafted: five human-only classes (money, client_message, deploy, secret_new_host, irreversible); platform owns the os contracts."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/authority-kernel.mdx",
+        "allternit/surfaces/docs/architecture/model-shell.mdx"
       ]
     }
   ],

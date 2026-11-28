@@ -1,0 +1,62 @@
+---
+title: Authority kernel
+description: The kernel interface that decides what happens when a model proposes an action, the action classes, approval tokens, the receipt chain and the four depths
+---
+
+**Contract v1 draft; the build is in progress.** Nothing on this page ships today. The wire shapes live in `spec/Contracts/os/v1`.
+
+## The rule
+
+The model is the shell. Deterministic code is the kernel. The model decides what to try; the kernel decides what happens. The model can propose tool calls but receives no executor authority. These are enforced in code, not in prompts:
+
+1. Every tool execution passes `check` first. No `check`, no execution.
+2. The model never approves. Only a human session can resolve an approval.
+3. No secret value reaches model context. The kernel attaches credentials at the call.
+4. Every decision writes a receipt before the action runs.
+5. Protected screens are never drawn by a model or an app.
+
+## The six calls plus admit
+
+| Call | What it does |
+|---|---|
+| `check` | Takes a policy check and returns allow, ask or deny. |
+| `lease` | Issues a time-limited grant for a resource or for machine control. |
+| `secret.use` | Uses a stored secret toward a host without showing the value. |
+| `approval.request` and `approval.redeem` | Ask a human, then redeem the approved token once. |
+| `audit.append` | Adds a row to the receipt chain. |
+| `budget.reserve` and `budget.commit` | Hold and then spend a budget. |
+| `deploy.admit` | Admits a deploy; always human-approved. |
+
+## Action classes and autonomy
+
+Each action has a class: `read`, `ui_layout`, `run_control`, `file_write`, `network`, `app_install`, `inbox_prepare`, `money`, `client_message`, `deploy`, `secret_new_host` and `irreversible`. A class the kernel does not know is `ask`, never allow.
+
+The person picks one of three autonomy levels in onboarding: "Ask me first", "Ask only for risky actions" or "Full autonomy". The level changes what is allowed without asking for the first seven classes.
+
+## Human-only classes
+
+`money`, `client_message`, `deploy`, `secret_new_host` and `irreversible` always need a human approval, at every autonomy level. Policy may allow other classes; it never approves these five.
+
+## Approval tokens
+
+A request carries the exact action payload and a deadline. A human session resolves it and the kernel issues a single-use approval token. The kernel rejects any resolve from a run token, bot token, agent credential, MCP client token or model request, and writes a receipt for the rejection. A human cannot approve a request made by a run they control.
+
+## The receipt chain
+
+One append-only hash chain, `kernel_receipts`. Each row holds the previous hash, its own hash and an Ed25519 signature. The kernel writes the receipt before it returns the answer that lets an action run; if the write fails, the answer is deny. Edited rows fail chain verification, and the kernel refuses to extend a broken chain. See [Receipts](/architecture/receipts).
+
+## The four depths
+
+The interface is written once and reused unchanged:
+
+1. **Hosted:** in process inside the API server. This gives process separation, not privilege separation.
+2. **PID 1:** a Rust init process with separate users.
+3. **Own kernel:** kernel IPC.
+4. **Hardware:** the same calls on dedicated hardware.
+
+## See also
+
+- [Model shell](/architecture/model-shell)
+- [Kernel](/architecture/kernel)
+- [Policy and safety](/architecture/policy)
+- [Receipts](/architecture/receipts)
