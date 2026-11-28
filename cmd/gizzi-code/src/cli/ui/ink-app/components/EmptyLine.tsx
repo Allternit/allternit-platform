@@ -23,8 +23,8 @@ export function EmptyLine({ children }: { children: React.ReactNode }): React.Re
       <Box flexDirection="column" width={GIZZI_PET_WIDTH} flexShrink={0} marginRight={2}>
         {IDLE_ROWS.map((row, i) => (
           <Text key={i}>
-            {row.map(([t, color, bg], j) => (
-              <Text key={j} color={color || undefined} backgroundColor={bg}>{t}</Text>
+            {row.map(([t, color, bg, inverse], j) => (
+              <Text key={j} color={color || undefined} backgroundColor={bg} inverse={inverse}>{t}</Text>
             ))}
           </Text>
         ))}

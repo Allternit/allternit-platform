@@ -1,7 +1,7 @@
 import z from "zod/v4"
 import { EOL } from "os"
 import { NamedError } from "@allternit/gizzi-util/error.js"
-import { logo as glyphs } from "@/cli/ui/logo"
+import { helpBannerLines } from "@/cli/ui/logo"
 import chalk from "@/shared/util/chalk"
 import { Highlight } from "@/shared/util/highlight"
 
@@ -53,61 +53,9 @@ export namespace UI {
   }
 
   export function logo(pad?: string) {
-    const result: string[] = []
-    const reset = "\x1b[0m"
-    const left = {
-      fg: "\x1b[38;2;212;176;140m", // #D4B08C (Sand)
-      shadow: "\x1b[38;2;42;33;26m", // #2A211A (Dark Sand)
-      bg: "\x1b[48;2;26;22;18m", // #1A1612 (Obsidian)
-    }
-    const right = {
-      fg: "\x1b[38;2;212;176;140m", // #D4B08C (Sand)
-      shadow: "\x1b[38;2;42;33;26m", // #2A211A (Dark Sand)
-      bg: "\x1b[48;2;26;22;18m", // #1A1612 (Obsidian)
-    }
-    const gap = " "
-    const draw = (line: string, fg: string, shadow: string, bg: string) => {
-      const parts: string[] = []
-      for (const char of line) {
-        if (char === "_") {
-          parts.push(bg, " ", reset)
-          continue
-        }
-        if (char === "^") {
-          parts.push(fg, bg, "▀", reset)
-          continue
-        }
-        if (char === "~") {
-          parts.push(shadow, "▀", reset)
-          continue
-        }
-        if (char === "#") {
-          parts.push(fg, "█", reset)
-          continue
-        }
-        if (char === "*") {
-          parts.push(shadow, "█", reset)
-          continue
-        }
-        if (char === " ") {
-          parts.push(" ")
-          continue
-        }
-        parts.push(fg, char, reset)
-      }
-      return parts.join("")
-    }
-    glyphs.left.forEach((row, index) => {
-      if (pad) result.push(pad)
-      result.push(draw(row, left.fg, left.shadow, left.bg))
-      result.push(gap)
-      const other = glyphs.right[index] ?? ""
-      result.push(draw(other, right.fg, right.shadow, right.bg))
-      result.push(EOL)
-    })
-    const combined = result.join("").trimEnd()
-    const coffee = `\n\n  ${reset}GIZZI ${left.fg}CODE${reset}\n`
-    return combined + coffee
+    return helpBannerLines()
+      .map((line) => (pad ? pad : "") + line)
+      .join(EOL)
   }
 
   export async function input(prompt: string): Promise<string> {
