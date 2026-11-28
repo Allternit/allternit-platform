@@ -140,10 +140,35 @@ async fn tool_h(
     if !agent.tools.iter().any(|t| t == &tool) {
         return refuse(StatusCode::FORBIDDEN, "tool_not_allowed", "This agent doesn't have that tool.");
     }
-    let input = body.map(|Json(b)| b.input).unwrap_or(Value::Null);
-    // One kernel check per tool call, before it runs. The principal is the agent's project.
+    let raw = body.map(|Json(b)| b.input).unwrap_or(Value::Null);
+    // `kernel_approval_token` is the kernel's, never hashed and never seen by the tool.
+    let (input, token) = crate::kernel_approvals::split_token(&raw);
+    // One kernel check per tool call, before it runs. The principal is the agent's project; an
+    // approval request goes to the project's owner. A text or call that carries an approved twin
+    // hold (`approval_id`, the developer's own approval flow) counts as the approval: no second
+    // ask. The tool re-checks and consumes that hold below.
     let class = crate::kernel_tools::agent_tool_class(&tool);
-    let gate = crate::kernel::Tool { surface: "agent_tools", name: &tool, args: &input, class: class.class, known: class.known, approved_by: None };
+    let hold = match tool.as_str() {
+        "send_text" | "call" => {
+            let verb = if tool == "send_text" { "text" } else { "call" };
+            let to = input["to"].as_str().unwrap_or("").trim();
+            match check_approval(&state.db, &agent, &input, verb, to).await {
+                Ok(Some(a)) => Some(format!("platform_approval:{}", a.id)),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let gate = crate::kernel::Tool {
+        surface: "agent_tools",
+        name: &tool,
+        args: &input,
+        class: class.class,
+        known: class.known,
+        approved_by: hold.as_deref(),
+        ask_to: Some(crate::kernel_approvals::AskTo { project_id: &agent.project_id, assignee: None }),
+        token: token.as_deref(),
+    };
     if let Some(r) = crate::kernel::check(&state.db, &format!("platform:{}", agent.project_id), &format!("agent:{}", agent.id), &gate).await.refusal() {
         return (StatusCode::FORBIDDEN, Json(json!({ "ok": false, "error": r["code"], "message": r["message"], "approval_request_id": r["approval_request_id"], "action_hash": r["action_hash"], "action_class": r["action_class"], "receipt_id": r["receipt_id"] }))).into_response();
     }
@@ -983,6 +1008,77 @@ mod phone_tests {
         let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Hi", "approval_id": "apr_2" })).await;
         assert_eq!((s, r["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_mismatch")), "{r}");
         assert_eq!(messages().await, 1);
+    }
+
+    /// Step 11b: in enforce mode a text with no approval opens a kernel request for the project
+    /// owner; the owner's approval mints a token the retried call redeems once; a replayed token is
+    /// refused; a text that carries an approved twin hold counts as approved (no second ask).
+    #[tokio::test]
+    async fn enforce_text_opens_a_kernel_request_approve_redeems_once_and_a_twin_hold_counts() {
+        use crate::kernel::{set_test_kernel, Mode};
+        let c = ctx().await;
+        let db = &c.state.db;
+        crate::kernel::tests::receipts_schema(db).await;
+        let p = sandbox(&c, "dev_kern").await;
+        let a = agent(&c, &p).await;
+        let (n, _) = number(&c, &p, Some(&a)).await;
+        let to = "+14155550123";
+        consent(&c, &p, &n, to).await;
+        let messages = || async { sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM platform_messages WHERE project_id = $1").bind(&p.id).fetch_one(db).await.unwrap() };
+        let input = json!({ "to": to, "text": "See you at 10." });
+        set_test_kernel(Some(Mode::Enforce));
+
+        // No approval: refused, with the id of a pending kernel row for the owner.
+        let (s, r) = tool(&c, &p, &a, "send_text", input.clone()).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_required")), "{r}");
+        let req = r["approval_request_id"].as_str().expect("request id").to_string();
+        let (source, status, approver): (String, String, Option<String>) =
+            sqlx::query_as("SELECT source, status, approver_user_id FROM platform_approvals WHERE id = $1").bind(&req).fetch_one(db).await.unwrap();
+        assert_eq!((source.as_str(), status.as_str(), approver.as_deref()), ("kernel", "pending", Some("dev_kern")));
+        // Asking again reuses the open request; it is in the owner's phone list as runtime "cloud".
+        let (_, r2) = tool(&c, &p, &a, "send_text", input.clone()).await;
+        assert_eq!(r2["approval_request_id"].as_str(), Some(req.as_str()));
+        let items = crate::routes::kernel_relay::pending_items(db, "dev_kern").await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!((items[0]["runtimeId"].as_str(), items[0]["kernel"]["requestId"].as_str()), (Some("cloud"), Some(req.as_str())));
+        assert_eq!(items[0]["resolveRoute"].as_str(), Some(format!("/api/v1/kernel/relay/approvals/cloud/{req}/resolve").as_str()));
+        assert_eq!(messages().await, 0);
+
+        // Someone else can't resolve it; the owner approves and gets a token.
+        assert_eq!(crate::kernel_approvals::resolve_cloud(db, "intruder", &req, "approve", None).await.status(), StatusCode::NOT_FOUND);
+        let resp = crate::kernel_approvals::resolve_cloud(db, "dev_kern", &req, "approve", None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap()).unwrap();
+        let token = body["token"]["token"].as_str().unwrap().to_string();
+        assert_eq!(body["token"]["approved_by"], "dev_kern");
+
+        // The retry with the token runs once; the same token again is refused as spent.
+        let mut with_token = input.clone();
+        with_token["kernel_approval_token"] = json!(token);
+        let (s, r) = tool(&c, &p, &a, "send_text", with_token.clone()).await;
+        assert_eq!((s, r["ok"].as_bool()), (StatusCode::OK, Some(true)), "{r}");
+        let (s, r) = tool(&c, &p, &a, "send_text", with_token).await;
+        assert_eq!((s, r["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_token_spent")), "{r}");
+        assert_eq!(messages().await, 1, "one approval, one text");
+        let status: String = sqlx::query_scalar("SELECT status FROM platform_approvals WHERE id = $1").bind(&req).fetch_one(db).await.unwrap();
+        assert_eq!(status, "consumed");
+        // A token for one text never covers a different text.
+        let other = json!({ "to": to, "text": "Different words.", "kernel_approval_token": token });
+        let (_, r) = tool(&c, &p, &a, "send_text", other).await;
+        assert_eq!(r["error"].as_str(), Some("approval_hash_mismatch"), "{r}");
+
+        // The developer's twin hold, approved, counts as the approval: it sends with no kernel ask.
+        approval(db, &p, "apr_hold", "gap_hold", &format!("text {to}"), &a, "approved").await;
+        let (s, r) = tool(&c, &p, &a, "send_text", json!({ "to": to, "text": "Held and approved.", "approval_id": "gap_hold" })).await;
+        assert_eq!((s, r["ok"].as_bool()), (StatusCode::OK, Some(true)), "{r}");
+        assert_eq!(messages().await, 2);
+        let payload: String = sqlx::query_scalar("SELECT payload FROM kernel_receipts WHERE principal = $1 ORDER BY idx DESC LIMIT 1")
+            .bind(format!("platform:{}", p.id))
+            .fetch_one(db)
+            .await
+            .unwrap();
+        assert!(payload.contains("\"approved_by\":\"platform_approval:apr_hold\""), "{payload}");
+        set_test_kernel(None);
     }
 
     #[tokio::test]

@@ -731,7 +731,7 @@ async fn run_connector_tool(state: &ApiState, session: &SessionRow, call_id: &st
     // One kernel check before the call runs. The meeting owner already approved it (the caller
     // only gets here on an approved `meeting_tool_approvals` row), recorded on the receipt.
     let class = crate::kernel_tools::connector_class(tool);
-    let gate = crate::kernel::Tool { surface: "meeting_pod", name: tool, args, class: class.class, known: class.known, approved_by: Some("meeting_owner") };
+    let gate = crate::kernel::Tool { surface: "meeting_pod", name: tool, args, class: class.class, known: class.known, approved_by: Some("meeting_owner"), ask_to: None, token: None };
     if let Some(refusal) = crate::kernel::check(db, &session.user_id, &format!("meeting:{}", session.id), &gate).await.refusal() {
         return Ok(json!({ "status": "error", "error": refusal["code"], "detail": refusal }));
     }

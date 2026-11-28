@@ -19,6 +19,17 @@
 --    with the cloud kernel key (ALLTERNIT_KERNEL_SEED, cloud-api secret env).
 --    Append-only: UPDATE and DELETE raise.
 --
+-- 3. platform_approvals (migration 122) is the cloud approval store; the
+--    kernel adapter (src/kernel_approvals.rs) writes its requests there with
+--    source 'kernel' instead of adding another store. New columns hold the
+--    kernel side: the action hash and class, the requesting principal and
+--    run, the mode that raised it (enforce = a live request; shadow = a dry
+--    record with status 'shadow', never pending, never listed), the check
+--    receipt, and the single-use ApprovalTokenV1 minted when a person
+--    approves (spent when the retried call redeems it: approved -> consumed).
+--    Wrapped in a table-exists guard so a schema without migration 122 (unit
+--    tests that apply only this file) still applies it.
+--
 -- Additive and idempotent. Applied before the binary swap by
 -- deploy-contabo.sh through the ops_applied_migrations ledger (prod runs with
 -- ALLTERNIT_SKIP_MIGRATIONS=1); never edit after it ships.
@@ -86,3 +97,33 @@ CREATE TRIGGER kernel_receipts_no_update BEFORE UPDATE ON kernel_receipts
 DROP TRIGGER IF EXISTS kernel_receipts_no_delete ON kernel_receipts;
 CREATE TRIGGER kernel_receipts_no_delete BEFORE DELETE ON kernel_receipts
     FOR EACH ROW EXECUTE FUNCTION kernel_receipts_append_only();
+
+DO $$
+BEGIN
+    IF to_regclass('platform_approvals') IS NOT NULL THEN
+        ALTER TABLE platform_approvals
+            ADD COLUMN IF NOT EXISTS action_hash text,
+            ADD COLUMN IF NOT EXISTS action_class text,
+            ADD COLUMN IF NOT EXISTS kernel_principal text,
+            ADD COLUMN IF NOT EXISTS kernel_run_id text,
+            ADD COLUMN IF NOT EXISTS kernel_mode text,
+            ADD COLUMN IF NOT EXISTS kernel_check_receipt_id text,
+            ADD COLUMN IF NOT EXISTS kernel_token_id text,
+            ADD COLUMN IF NOT EXISTS kernel_token text,
+            ADD COLUMN IF NOT EXISTS kernel_token_expires_at timestamp with time zone,
+            ADD COLUMN IF NOT EXISTS kernel_redeemed_at timestamp with time zone,
+            ADD COLUMN IF NOT EXISTS kernel_redemption_receipt_id text;
+        ALTER TABLE platform_approvals DROP CONSTRAINT IF EXISTS platform_approvals_source_check;
+        ALTER TABLE platform_approvals ADD CONSTRAINT platform_approvals_source_check
+            CHECK (source IN ('twin', 'computer', 'kernel'));
+        ALTER TABLE platform_approvals DROP CONSTRAINT IF EXISTS platform_approvals_status_check;
+        ALTER TABLE platform_approvals ADD CONSTRAINT platform_approvals_status_check
+            CHECK (status IN ('pending', 'approved', 'denied', 'expired', 'consumed', 'shadow'));
+        CREATE INDEX IF NOT EXISTS idx_platform_approvals_kernel_action
+            ON platform_approvals (kernel_principal, action_hash, status)
+            WHERE source = 'kernel';
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_approvals_kernel_token
+            ON platform_approvals (kernel_token_id)
+            WHERE kernel_token_id IS NOT NULL;
+    END IF;
+END $$;
