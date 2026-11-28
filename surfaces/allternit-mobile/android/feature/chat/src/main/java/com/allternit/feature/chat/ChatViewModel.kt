@@ -717,14 +717,51 @@ class ChatViewModel(
             if (hasAttachments) throw PersonChatRefusal("text_only", null, vendor)
             // No tools here: the web search / research markers mean nothing to the vendor.
             val history = PersonChatClient.history(messages.filter { it.id != assistantId }, strippedText(text))
-            backend.personChat.stream(modelId, history).collect { e ->
-                if (e is PersonChatEvent.Delta) apply(ChatStreamEvent.TextDelta(null, null, e.text), assistantId)
+            val computer = BrowserComputerRegistry.executor
+            val brain = Companion.browserToolBrain(modelId)
+            if (computer != null && brain != null) {
+                runBrowserComputerTurn(computer, brain, modelId, history, assistantId)
+            } else {
+                backend.personChat.stream(modelId, history).collect { e ->
+                    if (e is PersonChatEvent.Delta) apply(ChatStreamEvent.TextDelta(null, null, e.text), assistantId)
+                }
             }
         } catch (r: PersonChatRefusal) {
             flushPending()
             update(assistantId) { it.copy(error = r.card()) }
         }
         finishStreaming(assistantId)
+    }
+
+    /**
+     * One send with the browser computer attached (iOS runBrowserComputerTurn, contract 7). Tool steps land in the
+     * message's tool calls, the same rows the rest of the chat draws.
+     */
+    private suspend fun runBrowserComputerTurn(computer: BrowserComputerExecutor, brain: BrowserToolBrain, model: String, history: List<JsonObject>, assistantId: String) {
+        val callbacks = BrowserToolLoopCallbacks(
+            onChunk = { apply(ChatStreamEvent.TextDelta(null, null, it), assistantId) },
+            onToolCall = { id, name, input ->
+                val title = input["command"] ?: input["path"] ?: name
+                update(assistantId) {
+                    it.upsertToolCall(ToolCallRecord(id, name, ToolState.Running, title = title, input = JsonObject(input.mapValues { (_, v) -> JsonPrimitive(v) }), startedAt = System.currentTimeMillis()))
+                }
+            },
+            onToolResult = { id, name, result ->
+                apply(ChatStreamEvent.ToolResult(id, name, JsonObject(mapOf("output" to JsonPrimitive(result)))), assistantId)
+            },
+            onToolError = { id, name, error -> apply(ChatStreamEvent.ToolError(id, name, error), assistantId) },
+        )
+        BrowserToolLoop.run(brain, history, computer, { request ->
+            var calls = emptyList<PersonToolCall>()
+            backend.personChat.stream(model, request.messages, request.tools, request.toolChoiceNone).collect { e ->
+                when (e) {
+                    is PersonChatEvent.Delta -> request.onDelta(e.text)
+                    is PersonChatEvent.ToolCalls -> calls = e.calls
+                    PersonChatEvent.Done -> {}
+                }
+            }
+            BrowserToolResponse(calls.map { BrowserToolCall(it.id, it.name, it.arguments) })
+        }, callbacks)
     }
 
     private class GateException(val reason: ComputeGateReason) : Exception()
@@ -1183,6 +1220,13 @@ class ChatViewModel(
     }
 
     companion object {
+        /** Which brains get the browser computer: Allternit Cloud models run the tool loop, vendor plan brains get the plain "cannot run commands" line, anything else stays text only (null). */
+        internal fun browserToolBrain(modelId: String): BrowserToolBrain? = when {
+            PersonModels.cloudAlias(modelId) != null -> BrowserToolBrain.Tools
+            PersonModels.isPersonOnly(modelId) -> BrowserToolBrain.Plan
+            else -> null
+        }
+
         private const val WEB_SEARCH = "[web_search_enabled]"
         private const val RESEARCH = "[research_enabled]"
 
