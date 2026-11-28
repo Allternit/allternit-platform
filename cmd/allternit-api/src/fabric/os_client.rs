@@ -1,8 +1,13 @@
 //! LEGACY. Kept only because `fabric_resources_routes.rs` still calls it.
 //!
 //! `ALLTERNITOS_CONTROL_PLANE_URL` is unset in every deploy, so no OS control
-//! plane is running. The kernel `lease` call (os contract v1, section 2, plan
-//! step 12) replaces this client; remove it then.
+//! plane is running. The kernel `lease` call (os contract v1, section 2) is the
+//! successor, and as of plan step 12 it exists (`authority::leases`, `LeaseV1` view
+//! over control leases), but it does not yet model compute leases (placement,
+//! `LeaseV1.extensions["x-os-v1"].resources`), which is all this client issues for
+//! `create_resource_via_os`. Rerouting it now would change fabric behavior, so the
+//! caller stays behind `state.os_control_plane` (always `None` in deploys) until Stage 2
+//! adds compute leases to `lease`; then delete this module and that branch.
 //!
 //! HTTP client for the canonical AllternitOS control-plane lease API.
 //!

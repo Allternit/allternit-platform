@@ -123,6 +123,11 @@ impl SqlAuthority {
         self.now.unwrap_or_else(Utc::now)
     }
 
+    /// Store, signer, chain tenant and clock, for the sibling kernel modules (`budget`, `leases`).
+    pub(super) fn parts(&self) -> (DbHandle, Arc<ReceiptSigner>, String, DateTime<Utc>) {
+        (self.db.clone(), self.signer.clone(), self.tenant.clone(), self.now())
+    }
+
     fn connect(&self) -> Result<Connection, AuthorityError> {
         self.db.connect().map_err(db_err)
     }
@@ -515,8 +520,8 @@ impl Authority for SqlAuthority {
             "the wire-level check has no transport in allternit-api yet; tool paths use authority::check (fail closed)",
         ))
     }
-    fn lease(&mut self, _: &Caller, _: LeaseRequest) -> Result<LeaseResponse, AuthorityError> {
-        Err(not_yet("lease", 12))
+    fn lease(&mut self, caller: &Caller, req: LeaseRequest) -> Result<LeaseResponse, AuthorityError> {
+        super::leases::lease(self, caller, req)
     }
     fn secret_use(&mut self, _: &Caller, _: SecretUseV1) -> Result<SecretUseResult, AuthorityError> {
         Err(not_yet("secret.use", 10))
@@ -530,14 +535,14 @@ impl Authority for SqlAuthority {
     fn audit_append(&mut self, _: &Caller, _: AuditAppendBody) -> Result<ReceiptChain, AuthorityError> {
         Err(not_yet("audit.append", 8))
     }
-    fn budget_reserve(&mut self, _: &Caller, _: BudgetReservationV1) -> Result<BudgetReservationV1, AuthorityError> {
-        Err(not_yet("budget.reserve", 12))
+    fn budget_reserve(&mut self, caller: &Caller, body: BudgetReservationV1) -> Result<BudgetReservationV1, AuthorityError> {
+        super::budget::reserve(self, caller, body)
     }
-    fn budget_commit(&mut self, _: &Caller, _: BudgetCommitBody) -> Result<BudgetReservationV1, AuthorityError> {
-        Err(not_yet("budget.commit", 12))
+    fn budget_commit(&mut self, caller: &Caller, body: BudgetCommitBody) -> Result<BudgetReservationV1, AuthorityError> {
+        super::budget::commit(self, caller, body)
     }
-    fn budget_release(&mut self, _: &Caller, _: BudgetReleaseBody) -> Result<BudgetReservationV1, AuthorityError> {
-        Err(not_yet("budget.release", 12))
+    fn budget_release(&mut self, caller: &Caller, body: BudgetReleaseBody) -> Result<BudgetReservationV1, AuthorityError> {
+        super::budget::release(self, caller, body)
     }
     fn deploy_admit(&mut self, _: &Caller, _: DeployAdmissionV1) -> Result<DeployAdmissionV1, AuthorityError> {
         Err(not_yet("deploy.admit", 12))

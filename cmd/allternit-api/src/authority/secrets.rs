@@ -28,7 +28,7 @@ use std::time::{Duration as StdDuration, Instant};
 
 use allternit_authority::policy::Condition;
 use allternit_authority::{
-    ActionClass, ApprovalRedeemBody, ApprovalRequestV1, AuthorityError, Caller, ErrorCode, ReceiptKind, SecretPurpose,
+    ActionClass, ApprovalRedeemBody, ApprovalRequestV1, AuthorityError, Caller, CallerKind, ErrorCode, ReceiptKind, SecretPurpose,
     SecretUseResult, SecretUseV1, SourceStore,
 };
 use allternit_factory_engine::receipts::sign::ReceiptSigner;
@@ -542,6 +542,62 @@ pub async fn bind_computer_credential(ctx: &CheckCtx, args: &Value, check_receip
 fn refusal(e: &AuthorityError) -> String {
     let code = serde_json::to_value(e.code).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     json!({ "code": code, "error": code, "message": e.message, "receipt_id": e.receipt_id }).to_string()
+}
+
+// ─── HTTP: POST /api/v1/kernel/secrets/use ──────────────────────────────────────
+
+/// `secret.use` for a caller outside this process (gizzi's shell and connector runtimes). Run and
+/// service callers only. The answer carries the receipt id and `bound`; the value is never in it.
+/// Handles: `vault:<name>` (the account's credential vault). First use toward a new host is
+/// `approval_required` (403 with the request opened and a receipt id): a person approves, then the
+/// caller retries with `approval_token`.
+pub async fn use_handler(
+    axum::extract::State(state): axum::extract::State<Arc<crate::AppState>>,
+    axum::Extension(user): axum::Extension<crate::auth::AuthUser>,
+    credential: Option<axum::Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let body: SecretUseV1 = match super::routes::parse(body) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let caller = super::routes::caller_for(&state, &headers, &user, credential.is_some()).await;
+    if caller.kind == CallerKind::Human {
+        return super::routes::error_response(AuthorityError::without_receipt(
+            ErrorCode::ForbiddenCaller,
+            "secret.use is for runs and tools; a person enters a credential in Settings",
+        ));
+    }
+    let data_dir = state.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let signer = match tokens::kernel_signer(&data_dir) {
+        Ok(s) => s,
+        Err(e) => return super::routes::error_response(e),
+    };
+    let run_id = headers.get("x-allternit-run-id").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let mut ctx = CheckCtx::new(state.db.clone(), &user.user_id, user.tenant_id.as_deref()).with_run_id(run_id);
+    ctx.caller_kind = caller.kind;
+    let user_id = user.user_id.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        secret_use_blocking(
+            &ctx,
+            signer,
+            &body,
+            |handle| {
+                let name = handle.strip_prefix("vault:")?;
+                crate::aci_credentials::CREDENTIALS.open_for_computer_use(&user_id, name).map(|(_, value, _)| value)
+            },
+            Utc::now(),
+        )
+        .map(|bound| bound.result)
+    })
+    .await
+    .unwrap_or_else(|e| Err(AuthorityError::kernel_unavailable(format!("secret.use task: {e}"))));
+    match out {
+        Ok(result) => (axum::http::StatusCode::OK, axum::Json(json!({ "ok": true, "body": result }))).into_response(),
+        Err(e) => super::routes::error_response(e),
+    }
 }
 
 #[cfg(test)]
