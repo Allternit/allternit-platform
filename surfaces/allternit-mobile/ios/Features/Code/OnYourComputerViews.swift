@@ -111,6 +111,8 @@ struct CodeTerminalPreviewRow: View {
 struct OnYourComputerRow: View {
     let session: LiveSession
     let store: TerminalSessionsStore
+    /// List row, or a Grid / Deck card like the other sessions.
+    var layout: OverviewLayout = .list
     /// Opens a terminal by its session id in the Code terminal.
     let onOpenTerminal: (String, String) -> Void
 
@@ -205,7 +207,12 @@ struct OnYourComputerRow: View {
                 paneButtons
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, layout == .list ? 10 : 0)
+        .padding(layout == .list ? 0 : 10)
+        .frame(maxWidth: .infinity, maxHeight: layout == .deck ? .infinity : nil, alignment: .topLeading)
+        .background(layout == .list ? Color.clear : Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: layout == .list ? 0 : 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: layout == .list ? 0 : 1))
         .animation(reduced ? nil : .easeOut(duration: 0.2), value: job)
         .sheet(isPresented: $steering) {
             SteerSheet(session: session, name: name, store: store, onDone: { steering = false })
