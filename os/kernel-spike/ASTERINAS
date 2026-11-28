@@ -1,0 +1,10 @@
+# Pin for the Stage 3 kernel spike (plan step 34). Sourced by run-asterinas.sh and CI.
+ASTERINAS_REPO=https://github.com/asterinas/asterinas
+# v0.19.0 and v0.18.1 name dev images (0.19.0-20261012, 0.18.1-20260805) that were never
+# pushed to Docker Hub (checked 11-28; CI run 46138150127 failed on the pull). v0.18.0's
+# image 0.18.0-20260603 exists. Move the pin up when a newer image is published.
+ASTERINAS_TAG=v0.18.0
+# The dev image is named by the DOCKER_IMAGE_VERSION file at the root of the tag:
+#   asterinas/asterinas:$(cat DOCKER_IMAGE_VERSION)
+# CI reads it from the clone, so the image always matches the tag.
+ASTERINAS_IMAGE_REPO=asterinas/asterinas

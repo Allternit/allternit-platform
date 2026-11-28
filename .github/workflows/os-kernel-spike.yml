@@ -1,0 +1,115 @@
+name: os-kernel-spike
+
+# AllternitOS Stage 3 step 34: boot the Stage 2 userland on the Asterinas kernel (tag in
+# os/kernel-spike/ASTERINAS) inside the Asterinas Docker dev image. Gate G3 progress:
+#   "Boot and check READY"  must pass: kernel-check ok + ALLTERNIT-OS READY kernel-interface=1
+#   "Model lines"           continue-on-error: shell-tool-call ok + model tok/s=
+# A failing model step is information (gap list in os/kernel-spike/README.md), not a blocker.
+# Does not edit os-image.yml; it reuses that workflow's cache keys. Reads no secrets.
+
+on:
+  pull_request:
+    paths:
+      - 'os/kernel-spike/**'
+      - '.github/workflows/os-kernel-spike.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: os-kernel-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools build-essential cmake git cpio curl file fakeroot xz-utils
+
+      - name: Rust toolchain with the musl target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build the userland (init, authority, shell)
+        run: cargo build --manifest-path os/Cargo.toml --target x86_64-unknown-linux-musl --release
+
+      # Same keys and paths as os-image.yml, so both workflows share the cache.
+      - name: Cache static llama-server
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/llama/llama-server
+          key: os-llama-${{ hashFiles('os/model/LLAMA', 'os/model/build-llama.sh') }}
+
+      - name: Build static llama-server
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: sh os/model/build-llama.sh
+
+      - name: Cache the model GGUF
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/model/model.gguf
+          key: os-model-${{ hashFiles('os/model/MODEL') }}
+
+      - name: Download and verify the model GGUF
+        run: |
+          . os/model/MODEL
+          mkdir -p os/target/model
+          if [ ! -f os/target/model/model.gguf ]; then
+            curl -fsSL -o os/target/model/model.gguf.part "$MODEL_URL"
+            mv os/target/model/model.gguf.part os/target/model/model.gguf
+          fi
+          echo "$MODEL_SHA256  os/target/model/model.gguf" | sha256sum -c -
+
+      - name: Build the initramfs (userland + GGUF, no ext4 state partition)
+        run: fakeroot sh os/kernel-spike/run-asterinas.sh initramfs
+
+      - name: Clone Asterinas at the pinned tag
+        run: |
+          . os/kernel-spike/ASTERINAS
+          git clone --depth 1 --branch "$ASTERINAS_TAG" "$ASTERINAS_REPO" os/target/asterinas
+          IMG="$ASTERINAS_IMAGE_REPO:$(cat os/target/asterinas/DOCKER_IMAGE_VERSION)"
+          echo "ASTERINAS_IMAGE=$IMG" >> "$GITHUB_ENV"
+          echo "Asterinas $ASTERINAS_TAG, dev image $IMG" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Pull the Asterinas dev image
+        run: docker pull "$ASTERINAS_IMAGE"
+
+      - name: Boot and check READY (gate G3 progress)
+        run: |
+          KVM=""
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            KVM="--device /dev/kvm"
+          fi
+          # shellcheck disable=SC2086
+          docker run --rm $KVM -v "$PWD:/work" -w /work "$ASTERINAS_IMAGE" \
+            sh -c 'sh os/kernel-spike/run-asterinas.sh boot --asterinas /work/os/target/asterinas --out /work/os/target/kernel-spike'
+          sudo chown -R "$(id -u):$(id -g)" os/target/kernel-spike os/target/asterinas || true
+          sh os/kernel-spike/run-asterinas.sh judge
+
+      - name: Model lines (shell-tool-call ok, tok/s) - information, may fail
+        continue-on-error: true
+        run: |
+          LOG=os/target/kernel-spike/serial.log
+          grep 'model tok/s=' "$LOG" | tail -1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          grep -q 'shell-tool-call ok' "$LOG"
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-kernel-spike-serial-log
+          path: os/target/kernel-spike/serial.log
+          if-no-files-found: warn

@@ -250,7 +250,7 @@ fn shutdown(running: &[Running], state_mounted: bool, cfg: &Config) -> ! {
 pub fn run() {
     mount_basics();
     console_setup();
-    let cfg = match std::fs::read_to_string(CONFIG_PATH) {
+    let mut cfg = match std::fs::read_to_string(CONFIG_PATH) {
         Ok(t) => match config::parse(&t) {
             Ok(c) => c,
             Err(e) => {
@@ -260,6 +260,12 @@ pub fn run() {
         },
         Err(_) => config::default_config(),
     };
+    // Kernel command-line switches (Asterinas spike): allternit.state=none, allternit.model=PATH.
+    if let Ok(cl) = std::fs::read_to_string("/proc/cmdline") {
+        if allternit_init::cmdline::apply(&mut cfg, &cl) {
+            log("kernel command line adjusted the service table");
+        }
+    }
     set_hostname(&cfg.hostname);
     let state_mounted = mount_state(&cfg);
     prepare_run_dirs(&cfg);
