@@ -366,7 +366,7 @@ The owner's browser proxy (`POST /api/v1/runtime-devices/:id/proxy`) also sends 
 
 A browser computer is a Linux computer that lives in one browser profile: the VM and its disk run in the tab, with no server row. The runtime API (`cmd/allternit-api`) knows the kind so every client and the database agree on the string, but it never creates one.
 
-- **Kind string.** `"browser"` (`ComputerKind::Browser` in `cmd/allternit-api/src/computer_routes.rs`). It is a valid value of the runtime's `computers.kind`, next to `local`, `byo_vps`, `managed`, `byoc` and `cloud_desktop`. Client label: `Browser computer`.
+- **Kind string.** `"browser"` (`ComputerKind::Browser` in `cmd/allternit-api/src/computer_routes.rs`). The runtime parses it next to `local`, `byo_vps`, `managed`, `byoc` and `cloud_desktop`. Client label: `Browser computer`.
 - **Create is refused.** `POST /api/v1/computers` with `kind: "browser"` returns **400** before any template lookup, and nothing is stored:
 
   ```json
@@ -378,7 +378,7 @@ A browser computer is a Linux computer that lives in one browser profile: the VM
 
   Clients show `message` as is and start the computer in the browser instead. There is no other route for this kind.
 - **Where the record lives.** In IndexedDB on the box origin (`box.allternit.com`, database `allternit-box`, store `computers`), next to its disk. The app reads it over the frame's RPC (`computers.list`). It is not in `GET /api/v1/computers` or in the console list above.
-- **Runtime migration.** `cmd/allternit-api/migrations/V299__computers_kind_browser.sql` adds `'browser'` to the `computers.kind` CHECK from V99. SQLite cannot change a CHECK in place, so it rebuilds the table. Foreign keys are on and refinery runs the migration in a transaction, so the four side tables (`computer_cloud_desktop`, `computer_managed`, `computer_byo_vps`, `computer_byoc`) are copied to temp tables before the old table is dropped and put back after. Ids, columns from V135, V136 and V139, indexes and the `updated_at` trigger are kept. The cloud-api schema has no kind CHECK and needs no change.
+- **No migration.** The runtime database never stores a browser computer, so `computers.kind` keeps the CHECK from V99 (it does not list `browser`). The cloud-api schema has no kind CHECK.
 
 ## Migrations
 

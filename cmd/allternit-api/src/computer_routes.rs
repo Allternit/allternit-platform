@@ -2917,69 +2917,6 @@ mod tests {
         assert_eq!(kind_to_str(&ComputerKind::Browser), "browser");
     }
 
-    /// V299 rebuilds `computers` with foreign keys on, inside a transaction
-    /// (as refinery runs it). The side tables must keep their rows, still
-    /// point at the new table, and `browser` must pass the CHECK.
-    #[test]
-    fn v299_keeps_side_rows_and_accepts_browser() {
-        let conn = computers_test_db_before_v299();
-        conn.execute_batch(
-            "INSERT INTO agents (id, user_id) VALUES ('bot-1', 'user-1');
-             INSERT INTO computers (id, kind, provider, owner_type, owner_id, bot_id, name, role)
-                 VALUES ('c1', 'cloud_desktop', 'tart', 'bot', 'bot-1', 'bot-1', 'Desk', 'golden');
-             INSERT INTO computer_cloud_desktop (computer_id, sandbox_id) VALUES ('c1', 'sb-1');",
-        )
-        .unwrap();
-        assert!(conn
-            .execute(
-                "INSERT INTO computers (id, kind, provider, owner_type, owner_id, name) VALUES ('b0', 'browser', 'browser', 'user', 'user-1', 'B')",
-                [],
-            )
-            .is_err());
-
-        conn.execute_batch(&format!(
-            "BEGIN; {} COMMIT;",
-            include_str!("../migrations/V299__computers_kind_browser.sql")
-        ))
-        .unwrap();
-
-        let (bot, role): (Option<String>, String) = conn
-            .query_row("SELECT bot_id, role FROM computers WHERE id = 'c1'", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .unwrap();
-        assert_eq!(bot.as_deref(), Some("bot-1"));
-        assert_eq!(role, "golden");
-        let sandbox: String = conn
-            .query_row(
-                "SELECT sandbox_id FROM computer_cloud_desktop WHERE computer_id = 'c1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(sandbox, "sb-1");
-
-        conn.execute(
-            "INSERT INTO computers (id, kind, provider, owner_type, owner_id, name) VALUES ('b1', 'browser', 'browser', 'user', 'user-1', 'Browser computer')",
-            [],
-        )
-        .unwrap();
-        // The side table's foreign key follows the rebuilt table.
-        conn.execute("DELETE FROM computers WHERE id = 'c1'", []).unwrap();
-        let left: i64 = conn
-            .query_row("SELECT COUNT(*) FROM computer_cloud_desktop", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(left, 0);
-        let triggers: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'computers_updated_at'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(triggers, 1);
-    }
-
     #[test]
     fn persistence_to_str_matches_db_values() {
         assert_eq!(persistence_to_str(&Persistence::Ephemeral), "ephemeral");
@@ -3534,17 +3471,6 @@ pub(crate) async fn clone_computer(
 
 #[cfg(test)]
 pub(crate) fn phase_two_test_db() -> rusqlite::Connection {
-    let conn = computers_test_db_before_v299();
-    conn.execute_batch(include_str!(
-        "../migrations/V299__computers_kind_browser.sql"
-    ))
-    .unwrap();
-    conn
-}
-
-/// The computers schema as V99..V139 leave it, before the V299 rebuild.
-#[cfg(test)]
-fn computers_test_db_before_v299() -> rusqlite::Connection {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys=ON; CREATE TABLE agents (id TEXT PRIMARY KEY, user_id TEXT);",
