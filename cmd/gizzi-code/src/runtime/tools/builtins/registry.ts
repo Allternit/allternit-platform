@@ -17,6 +17,7 @@ import { TaskTool } from "@/runtime/tools/builtins/task"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { ShellTool } from "@/runtime/tools/builtins/shell"
+import { InboxTool } from "@/runtime/tools/builtins/inbox"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { LookupTool } from "@/runtime/tools/builtins/lookup"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
@@ -236,6 +237,8 @@ export namespace ToolRegistry {
       ...(question ? [PaneBrowserTool] : []),
       // Drives the screen (views, runs, app install/fork); needs an app client. install/fork ask every time.
       ...(appClient ? [ShellTool] : []),
+      // List, summarise, snooze and prepare the inbox; never approve (a person does that).
+      InboxTool,
       // Sees what the user sees in the app (asks once per session); app clients only.
       ...(appClient ? [CaptureScreenContextTool] : []),
       // Parallel hidden browser tasks on the user's own machine (each call asks).
