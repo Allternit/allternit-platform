@@ -25,6 +25,18 @@ The command inspects the runtime, required dependencies, configured providers, t
 
 The command groups checks into the following sections.
 
+### Install and updates
+
+| Item | What it shows |
+|---|---|
+| Install method | Native, npm, brew, scoop, choco, pnpm, bun, yarn, or Desktop |
+| Channel | `stable` or `latest` |
+| Last check | When Gizzi last read the release feed, and the result (for example current, paused, or feed key not set) |
+| Last update | The version and time of the last update |
+| Other copies on PATH | Each other `gizzi` copy, with the command to remove it |
+
+Two copies of `gizzi` on your PATH is a problem. The copy you run may not be the copy that updates. Run the printed remove command for the copy you do not want. See [Update Gizzi](/cli/update).
+
 ### Runtime
 
 | Check | Passing result | Failure result |
@@ -132,6 +144,8 @@ When a check fails, `gizzi doctor` prints an `✗` line with a specific message:
 - **Database or config directory missing** — These are created automatically during normal use. If they remain missing, verify permissions in `~/.local/share/gizzi` and `~/.config/gizzi-code`.
 - **Factory home move warning** — Follow the "What to do" column in [Factory: home move](#factory-home-move).
 
+- **Other gizzi copies on PATH** — Run the remove command that doctor prints for each extra copy.
+
 ## Interactive diagnostics
 
 Inside the interactive TUI (`gizzi` with no arguments), the `/doctor` screen provides the same core checks plus additional context: installation type, auto-update status, version locks, agent parse errors, plugin errors, MCP parsing warnings, keybinding warnings, and environment-variable validation. Use `/doctor` when you want a more detailed, interactive view of the same health data.
@@ -142,7 +156,8 @@ Inside the interactive TUI (`gizzi` with no arguments), the `/doctor` screen pro
 
 ## Related docs
 
-- [Installation](/cli/installation) — Install or upgrade Gizzi Code
+- [Installation](/cli/installation) — Install Gizzi Code
+- [Update Gizzi](/cli/update) — How updates work
 - [Configuration](/cli/configuration) — Manage profiles, models, and runtime options
 - [Authentication](/cli/authentication) — Log in to providers with `gizzi connect login`
 - [CLI Overview](/cli/overview) — How Gizzi Code fits into the Allternit platform

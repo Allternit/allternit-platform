@@ -62,6 +62,18 @@ gizzi config profile set-active strict
 gizzi config profile remove strict
 ```
 
+## Config folder and gizzi.json
+
+Gizzi keeps its files in `~/.config/gizzi-code/`. Provider and model settings are in `~/.config/gizzi-code/gizzi.json`. A `gizzi.jsonc` file also works.
+
+Before the rename, files were in `~/.config/gizzi`. Gizzi copies `gizzi.json`, `gizzi.jsonc`, `preferences.json`, and theme files from that folder to the new folder once. It never overwrites a file that exists in the new folder. It never deletes the old folder. After the copy, Gizzi reads only the new folder. Edit the files in `~/.config/gizzi-code/`.
+
+## Local providers
+
+Add a server on this computer to `gizzi.json` as a provider with a `baseURL` on `localhost` or `127.0.0.1`. Gizzi asks the server for its models. The picker shows only the models the server lists.
+
+If the server does not answer in 1 second, the picker and `gizzi models` show one "offline" row for it. The row names the config file and tells you what to fix. Start the server, or correct the `baseURL`, then open the picker again. See [Models and providers](/cli/models#local-servers-and-offline-rows).
+
 ## Models for each job
 
 Which providers the `/model` picker and `gizzi models` offer, how CLI brains such as `claude-cli` run in the TUI, and what each failure message means are in [Models and providers](/cli/models).

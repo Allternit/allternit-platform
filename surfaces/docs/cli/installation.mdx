@@ -44,6 +44,25 @@ bun run --cwd cmd/gizzi-code build
 
 The binary is produced at `cmd/gizzi-code/dist/gizzi`.
 
+## All install methods
+
+Gizzi Code knows how it was installed. This decides how it updates. See [Update Gizzi](/cli/update).
+
+| Method | How you install | How it updates |
+|---|---|---|
+| Native (curl) | The one-line installer | Automatic |
+| npm | `npm install -g @allternit/gizzi-code` | Automatic: runs `npm i -g` when you exit |
+| pnpm, bun, yarn | The package manager command | Prints the command to run |
+| Homebrew (macOS, Linux) | `brew install allternit/tap/gizzi-code` | Prints the command to run |
+| Scoop (Windows) | `scoop install gizzi-code` | Prints the command to run |
+| Chocolatey (Windows) | `choco install gizzi-code` | Prints the command to run |
+| Allternit Desktop | Comes with the Desktop app | Managed by Desktop |
+| Source build | See above | You rebuild it |
+
+<Warning>
+  Keep one copy of `gizzi` on your PATH. Two copies is a problem: the one you run may not be the one that updates. `gizzi doctor` lists other copies and prints the command to remove each one. See [gizzi doctor](/cli/doctor).
+</Warning>
+
 ## Verify the installation
 
 ```bash
@@ -52,7 +71,7 @@ gizzi --version
 
 ## Post-install
 
-Configuration lives at `~/.config/gizzi-code/config.toml` by default. Run `gizzi auth login` to authenticate — see [Authentication](/cli/authentication).
+Configuration lives in `~/.config/gizzi-code/`. Provider and model settings are in `gizzi.json` there. See [Configuration](/cli/configuration). Run `gizzi auth login` to authenticate — see [Authentication](/cli/authentication). To keep Gizzi current, see [Update Gizzi](/cli/update).
 
 <Tip>
   On macOS you can also install via Homebrew. Newer Homebrew asks you to trust a third-party tap before installing from it:
