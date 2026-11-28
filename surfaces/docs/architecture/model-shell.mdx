@@ -1,0 +1,34 @@
+---
+title: Model shell
+description: How a model drives the desktop through the shell and inbox tools, and why it can never approve anything
+---
+
+**Contract v1 draft; the build is in progress.** Nothing on this page ships today. The wire shapes live in `spec/Contracts/os/v1`.
+
+The model is the shell: it arranges the screen and starts work. The [authority kernel](/architecture/authority-kernel) decides what actually happens.
+
+## The `shell` tool
+
+One model tool, `shell`. Its input is a `ShellCommandV1` with one of these actions: `open`, `close`, `focus`, `arrange`, `start_run`, `stop_run`, `install_app` or `fork_app`. A second read-only action, `get_state`, returns the current shell state. The tool sends the command over the runtime event channel and the app executes it. The model never writes to the page itself. Each command passes `check` first. On phones, `arrange` becomes `open` plus `focus`.
+
+## The `inbox` tool
+
+One model tool, `inbox`, with exactly four actions: `list`, `summarise`, `snooze` and `prepare`. `prepare` stores a draft for a human to review and resolves nothing. There is no approve, deny or resolve action. An unknown action is a bad request.
+
+## Views: `app:<id>`
+
+An installed app registers a view with the id `app:` followed by its app id. `install_app` runs `check` for the `app_install` class, stores the view descriptor and mounts the app through the app host. `fork_app` copies a descriptor to a new app id. Each capability an app uses goes through `check` at the call.
+
+## The model never approves
+
+The resolve route accepts only an authenticated human session. The Gizzi guard blocks `gizzi inbox approve` from the model's own shell. Human approval happens in the inbox on each surface.
+
+## Protected screens
+
+Approval, login, evidence and emergency stop are protected views. The shell draws them itself. A model cannot open or close one; a command that names a protected view is denied with a receipt. The kernel raises them.
+
+## See also
+
+- [Authority kernel](/architecture/authority-kernel)
+- [Kernel](/architecture/kernel)
+- [Policy and safety](/architecture/policy)

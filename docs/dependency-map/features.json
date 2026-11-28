@@ -6173,6 +6173,27 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_routes.rs"
       ]
+    },
+    {
+      "id": "feature:authority-kernel",
+      "label": "Authority kernel and model shell",
+      "product": "product:ai-allternit",
+      "status": "planned",
+      "description": "The model is the shell and deterministic code is the kernel. Six calls plus admit (check, lease, secret.use, approval, audit.append, budget, deploy.admit), human-only action classes, approval tokens and a signed receipt chain; the model drives the screen through shell and inbox tools and never approves. Contract v1 draft; the build is in progress.",
+      "touches": [
+        "allternit/surfaces/docs/architecture/authority-kernel.mdx",
+        "allternit/surfaces/docs/architecture/model-shell.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-27",
+          "note": "Contract v1 drafted: five human-only classes (money, client_message, deploy, secret_new_host, irreversible); platform owns the os contracts."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/authority-kernel.mdx",
+        "allternit/surfaces/docs/architecture/model-shell.mdx"
+      ]
     }
   ],
   "journeys": [
