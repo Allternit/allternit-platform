@@ -34,6 +34,9 @@ pub fn build_argv(config: LlamaCppConfig<'_>) -> Vec<String> {
         config.n_gpu_layers.to_string(),
         "-c".to_string(),
         config.n_ctx.to_string(),
+        // Use the model's own chat template. llama-server needs this for OpenAI
+        // `tools` / `tool_calls` (supported since early-2025 builds; pin is b12414).
+        "--jinja".to_string(),
     ];
     if config.flash_attn {
         argv.push("-fa".to_string());
@@ -49,4 +52,24 @@ pub fn health_url(port: u16) -> String {
 /// OpenAI-compatible chat completions endpoint URL for a running llama.cpp server.
 pub fn chat_completions_url(port: u16) -> String {
     format!("http://127.0.0.1:{}/v1/chat/completions", port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn argv_enables_jinja_for_tool_calls() {
+        let argv = build_argv(LlamaCppConfig {
+            program: Path::new("llama-server"),
+            model_path: Path::new("/m/model.gguf"),
+            port: 8081,
+            n_gpu_layers: 99,
+            n_ctx: 4096,
+            flash_attn: true,
+        });
+        assert!(argv.iter().any(|a| a == "--jinja"));
+        assert_eq!(argv.last().map(String::as_str), Some("-fa"));
+    }
 }
