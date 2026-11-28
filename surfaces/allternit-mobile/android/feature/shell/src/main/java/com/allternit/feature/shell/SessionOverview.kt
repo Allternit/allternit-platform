@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -222,6 +223,8 @@ internal fun SessionOverviewScreen(
         prefs.edit().putString(LAYOUT_KEY, l.raw).apply()
     }
 
+    var armedId by remember { mutableStateOf<String?>(null) }
+
     fun open(s: AgentSession) {
         Haptics.perform(view, Haptics.Kind.Tap)
         onOpen(s)
@@ -240,6 +243,12 @@ internal fun SessionOverviewScreen(
     fun close(s: AgentSession) {
         Haptics.perform(view, Haptics.Kind.Tap)
         scope.launch { store.setArchived(s.id, true)?.let { actionError = it } }
+    }
+
+    fun deleteRow(s: AgentSession) {
+        armedId = null
+        Haptics.perform(view, Haptics.Kind.Tap)
+        scope.launch { store.delete(s.id)?.let { actionError = it } }
     }
 
     fun commitRename(s: AgentSession) {
@@ -285,6 +294,10 @@ internal fun SessionOverviewScreen(
             editingId = s.id
         },
         onClose = ::close,
+        armedId = armedId,
+        onArm = { armedId = it.id },
+        onDisarm = { armedId = null },
+        onDelete = ::deleteRow,
     )
 
     Column(Modifier.fillMaxSize().statusBarsPadding().background(c.bgPrimary).testTag("phoneOverview")) {
@@ -522,7 +535,25 @@ private class CardActions(
     val onOpen: (AgentSession) -> Unit,
     val onRename: (AgentSession) -> Unit,
     val onClose: (AgentSession) -> Unit,
+    /** Long-press arms a row: a "Hold to delete" strip opens under it (terminal rows say "Hold to end and delete"). */
+    val armedId: String?,
+    val onArm: (AgentSession) -> Unit,
+    val onDisarm: () -> Unit,
+    val onDelete: (AgentSession) -> Unit,
 )
+
+/** The per-row hold-to-delete strip (the same 1 s hold as the bulk bar's, with Cancel). */
+@Composable
+private fun RowDeleteStrip(s: AgentSession, actions: CardActions) {
+    if (actions.armedId != s.id) return
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.allternit.core.design.HoldButton(
+            if (s.isTerminal) "Hold to end and delete" else "Hold to delete", "overviewDelete${s.id}",
+            modifier = Modifier.weight(1f), danger = true, onHeld = { actions.onDelete(s) },
+        )
+        Text("Cancel", color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.clickable(role = Role.Button, onClick = actions.onDisarm).padding(horizontal = 10.dp, vertical = 12.dp))
+    }
+}
 
 @Composable
 private fun HeaderText(title: String, align: Alignment, onClick: () -> Unit) {
@@ -667,6 +698,7 @@ private fun CardControls(s: AgentSession, actions: CardActions, deck: Boolean) {
     ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(if (deck) 13.dp else 11.dp)) }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun OverviewListRow(
     s: AgentSession,
@@ -682,7 +714,7 @@ private fun OverviewListRow(
         Modifier
             .fillMaxWidth()
             .testTag("overviewRow${s.id}")
-            .clickable(role = Role.Button, onClick = onTap)
+            .combinedClickable(role = Role.Button, onLongClickLabel = "Delete", onLongClick = if (selecting || !actions.editable) null else ({ actions.onArm(s) })) { if (actions.armedId == s.id) actions.onDisarm() else onTap() }
             .alpha(if (selecting && !selectable) 0.45f else 1f)
             .semantics {
                 contentDescription = if (working) "${s.title}, Working" else if (actions.unread(s)) "${s.title}, New reply" else s.title
@@ -712,11 +744,13 @@ private fun OverviewListRow(
             s.description?.takeIf { it.isNotEmpty() }?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             StatusPill(s, working, actions)
             PlaceBadge(s, actions)
+            RowDeleteStrip(s, actions)
         }
         if (actions.editable) Row { CardControls(s, actions, deck = false) }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun OverviewCard(s: AgentSession, tall: Boolean, working: Boolean, actions: CardActions, onTap: () -> Unit, modifier: Modifier = Modifier) {
     val c = AllternitTheme.colors
@@ -730,7 +764,7 @@ private fun OverviewCard(s: AgentSession, tall: Boolean, working: Boolean, actio
             .background(c.bgPanel)
             .border(1.dp, if (working) Coral else c.borderSubtle, shape)
             .testTag("overviewCard${s.id}")
-            .clickable(role = Role.Button, onClick = onTap)
+            .combinedClickable(role = Role.Button, onLongClickLabel = "Delete", onLongClick = if (!actions.editable) null else ({ actions.onArm(s) })) { if (actions.armedId == s.id) actions.onDisarm() else onTap() }
             .semantics { contentDescription = if (working) "${s.title}, Working" else if (actions.unread(s)) "${s.title}, New reply" else s.title }
             .then(if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(min = 150.dp))
             .padding(12.dp),
@@ -750,6 +784,7 @@ private fun OverviewCard(s: AgentSession, tall: Boolean, working: Boolean, actio
         s.description?.takeIf { it.isNotEmpty() }?.let {
             Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = if (tall) 12 else 4, overflow = TextOverflow.Ellipsis)
         }
+        RowDeleteStrip(s, actions)
         Spacer(Modifier.weight(1f, fill = true))
         Text("$count message${if (count == 1) "" else "s"}", color = c.textTertiary, fontSize = 11.sp)
     }
