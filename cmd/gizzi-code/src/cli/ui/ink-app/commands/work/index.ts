@@ -47,3 +47,21 @@ export const sleep = {
   isHidden: true,
   load: () => import('./sleep.js'),
 } satisfies Command
+
+/** Pods view (the Office floor's grouping). Hidden: reached from the team/factory entry, not a new top-level command (D11). */
+export const pods = {
+  type: 'local-jsx',
+  name: 'pods',
+  description: 'Your pods: Chief, one per active project, Team, with their bots and state',
+  isHidden: true,
+  load: () => import('./pods.js'),
+} satisfies Command
+
+/** Connections as List, Grid or Deck over the live catalog. Hidden like Sleep (D11). */
+export const connections = {
+  type: 'local-jsx',
+  name: 'connections',
+  description: 'Connections as List, Grid or Deck with a capped More (tab mode · / filter · m more)',
+  isHidden: true,
+  load: () => import('./connections.js'),
+} satisfies Command

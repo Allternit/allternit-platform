@@ -32,6 +32,19 @@ Each line is the name, what it is for, and its state. An app that needs a comput
 
 `gizzi connect <id>` also accepts an id from the catalog. A `<provider>-key` id runs the key flow. An app says **Runs on a computer.** and points you to Settings → Connections in Allternit.
 
+## Browse connections in the terminal
+
+Inside Gizzi, `/connections` shows the same catalog as **List**, **Grid** or **Deck** (one card at a time), with a dot for each connection that is on. It is not listed in the slash menu; type it.
+
+| Key | What it does |
+| --- | --- |
+| Tab | Switch List, Grid, Deck |
+| Arrows | Move (left and right change the card in Deck) |
+| `/` | Filter by name |
+| `m` | Load the next page in place (stops after 96; use `/` to narrow) |
+| Enter | Shows the `gizzi connect` command for the selected connection |
+| Esc | Close |
+
 ## Reach this computer from your phone
 
 `gizzi pair` pairs this computer with your Allternit account. With `gizzi serve` running (or Desktop), your phone can start sessions here. See [Start a session from your phone](/guides/start-anywhere).
