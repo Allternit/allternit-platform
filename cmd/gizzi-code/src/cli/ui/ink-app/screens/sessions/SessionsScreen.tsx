@@ -8,6 +8,7 @@
  *   Enter      attach to the session's pane (Gizzi comes back on detach)
  *   s          steer: type a line, Enter sends it once
  *   n          new session: "<cli> <task>" → `gizzi spawn <cli> <task> --window`
+ *   | / -      split the focused pane session right / down (pane sessions only)
  *   x          stop: type the session's name to confirm (never stops without it)
  *   l          land a finished swarm worker (merge its branch; asks first)
  *   b          the swarm board      f  the factory floor
@@ -29,7 +30,7 @@ import { fetchWithPlatformToken } from '@/runtime/bots/platform-api'
 import { gatewayBase } from '@/shared/constants/allternitGateway'
 import { handOff } from '../factory-floor/FactoryFloorScreen'
 import { clip, SessionRow, SessionTile } from './SessionTile'
-import { confirmMatches, parseNewSession, spawnCommandText, steerSession, type LiveSessionRow } from './liveSessions'
+import { confirmMatches, parseNewSession, spawnCommandText, splitArgvFor, steerSession, stopPlanFor, type LiveSessionRow, type SplitDirection } from './liveSessions'
 import { useLiveSessions } from './useLiveSessions'
 
 type Mode =
@@ -62,6 +63,7 @@ export function keysFor(row: LiveSessionRow, isWorker: boolean): string {
   const k: string[] = []
   if (row.paneId) k.push('enter attach')
   if (row.steer !== 'none') k.push('s steer')
+  if (row.paneId) k.push('| split right', '- split down')
   k.push('x stop')
   if (isWorker) k.push('l land')
   return k.join(' · ')
@@ -69,22 +71,27 @@ export function keysFor(row: LiveSessionRow, isWorker: boolean): string {
 
 /** Stop one session. Only called after the typed confirm matched. */
 async function stopSession(row: LiveSessionRow, worker: { swarm: SwarmRecord; worker: SwarmWorker } | null): Promise<string> {
-  if (worker) {
-    await stopWorker(readSwarm(worker.swarm.id) ?? worker.swarm, worker.worker.bot)
-    return `■ stopped ${row.name}; its worktree stays at ${worker.worker.workdir}`
+  const plan = stopPlanFor(row, !!worker)
+  switch (plan.via) {
+    case 'swarm':
+      await stopWorker(readSwarm(worker!.swarm.id) ?? worker!.swarm, worker!.worker.bot)
+      return `■ stopped ${row.name}; its worktree stays at ${worker!.worker.workdir}`
+    case 'agents-down':
+      await runEngine(['agents', 'down', plan.slug], { timeoutMs: 30000 })
+      return `■ stopped ${row.name}`
+    case 'pane-close':
+      await runEngine(plan.argv, { timeoutMs: 30000 })
+      return `■ stopped ${row.name}`
+    case 'terminal-close': {
+      const url = `${gatewayBase()}/terminal/${encodeURIComponent(plan.terminalId)}/close`
+      const init: RequestInit = { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(8000) }
+      const res = (await fetchWithPlatformToken(url, init)) ?? (await fetch(url, init))
+      if (!res.ok) throw new Error(`The terminal refused to close (HTTP ${res.status})`)
+      return `■ stopped ${row.name}`
+    }
+    default:
+      throw new Error(plan.reason)
   }
-  if (row.botId && row.botId.startsWith('local:')) {
-    await runEngine(['agents', 'down', row.botId.slice('local:'.length)], { timeoutMs: 30000 })
-    return `■ stopped ${row.name}`
-  }
-  if (row.terminalId) {
-    const url = `${gatewayBase()}/terminal/${encodeURIComponent(row.terminalId)}/close`
-    const init: RequestInit = { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(8000) }
-    const res = (await fetchWithPlatformToken(url, init)) ?? (await fetch(url, init))
-    if (!res.ok) throw new Error(`The terminal refused to close (HTTP ${res.status})`)
-    return `■ stopped ${row.name}`
-  }
-  throw new Error(`${row.name} runs in ${row.app ?? 'another terminal'}; stop it there`)
 }
 
 let spawnAvailable: boolean | null = null
@@ -167,6 +174,17 @@ export function SessionsScreen(): React.ReactNode {
         setBusy(null)
         refresh()
       })
+  }
+
+  /** Split the session's pane through the pane server's `pane.split` call. */
+  const splitPane = (r: LiveSessionRow, dir: SplitDirection) => {
+    const argv = splitArgvFor(r, dir)
+    if (!argv) return
+    setStatus(null)
+    act(`splitting ${r.name}`, async () => {
+      await runEngine(argv, { timeoutMs: 15000 })
+      return `⊞ split ${r.name} ${dir}; the new pane shows here once its session starts`
+    })
   }
 
   const attach = (r: LiveSessionRow) => {
@@ -263,6 +281,11 @@ export function SessionsScreen(): React.ReactNode {
       if (row.steer === 'none') return setStatus({ text: `${row.name} can't be steered from here`, tone: 'error' })
       setStatus(null)
       return setMode({ kind: 'steer', row, text: '' })
+    }
+    if (input === '|' || input === '-') {
+      const dir: SplitDirection = input === '|' ? 'right' : 'down'
+      if (!splitArgvFor(row, dir)) return setStatus({ text: `${row.name} isn't in an Allternit pane; only pane sessions split`, tone: 'error' })
+      return splitPane(row, dir)
     }
     if (input === 'x') {
       setStatus(null)
