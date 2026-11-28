@@ -14,6 +14,8 @@
 //! Only then is the transport caller `human`. The caller kind is set here, never read from the
 //! body, and [`super::approvals::SqlAuthority::resolve`] refuses every other kind with a receipt.
 //!
+//! `GET /api/v1/kernel/approvals?state=pending` lists the caller's own open requests (person's session only).
+//!
 //! 3. CONTRACT.md 12.3: when the person proof was Desktop's window proof, an approve also needs
 //!    Electron main's user-presence proof for that request ([`super::presence`]), or it is
 //!    refused with `forbidden_caller` and a receipt. Deny needs none.
@@ -41,6 +43,7 @@ use crate::AppState;
 /// (`kernel_ui::api_router`), which use none of them.
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/api/v1/kernel/approvals", get(list_approvals))
         .route("/api/v1/kernel/approvals/request", post(request))
         .route("/api/v1/kernel/approvals/resolve", post(resolve))
         .route("/api/v1/kernel/approvals/redeem", post(redeem))
@@ -217,6 +220,55 @@ async fn redeem(
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
     with_kernel(&state, user.tenant_id.clone(), move |k| k.redeem(&caller, body)).await
+}
+
+/// Close the caller's requests that are past their deadline (an `expired` receipt each), so the
+/// inbox feed and the pending list never show them and the log has the receipt. Best effort:
+/// when the kernel key is unavailable nothing is written and expired rows are still filtered
+/// out of every read by deadline.
+pub async fn sweep_expired(state: &AppState, user: &AuthUser) {
+    let data_dir = state.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let Ok(signer) = tokens::kernel_signer(&data_dir) else { return };
+    let (db, owner, tenant) = (state.db.clone(), user.user_id.clone(), user.tenant_id.clone());
+    let done = tokio::task::spawn_blocking(move || SqlAuthority::new(db, signer).with_tenant(tenant).expire_due(&owner)).await;
+    if let Ok(Err(e)) = done {
+        tracing::warn!("kernel approvals: expiry sweep failed: {}", e.message);
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PendingQuery {
+    #[serde(default)]
+    state: Option<String>,
+}
+
+/// `GET /api/v1/kernel/approvals?state=pending`: the caller's own open, unexpired requests,
+/// newest first, in the inbox `kernel` shape. Person's session only. `pending` is the only state.
+async fn list_approvals(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<CredentialContext>>,
+    headers: HeaderMap,
+    Query(q): Query<PendingQuery>,
+) -> Response {
+    if q.state.as_deref().unwrap_or("pending") != "pending" {
+        return error_response(AuthorityError::without_receipt(ErrorCode::BadRequest, "state must be pending"));
+    }
+    if caller_for(&state, &headers, &user, credential.is_some()).await.kind != CallerKind::Human {
+        return error_response(AuthorityError::without_receipt(ErrorCode::ForbiddenCaller, "only a person's session can list approvals"));
+    }
+    sweep_expired(&state, &user).await;
+    let (db, owner) = (state.db.clone(), user.user_id.clone());
+    let out = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| AuthorityError::kernel_unavailable(format!("kernel store: {e}")))?;
+        super::approvals::pending_requests(&conn, &owner, chrono::Utc::now()).map_err(|e| AuthorityError::kernel_unavailable(format!("kernel store: {e}")))
+    })
+    .await;
+    match out {
+        Ok(Ok(rows)) => (StatusCode::OK, Json(json!({ "ok": true, "body": { "approvals": rows } }))).into_response(),
+        Ok(Err(e)) => error_response(e),
+        Err(e) => error_response(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
+    }
 }
 
 /// The caller's own chain. Reads need a person's session, the same check as resolve: a run,

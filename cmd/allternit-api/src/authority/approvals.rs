@@ -61,6 +61,36 @@ pub struct SqlAuthority {
     tenant: String,
 }
 
+/// The kernel's view of the caller's pending approvals (CONTRACT.md 6.4): the inbox row and
+/// `GET /api/v1/kernel/approvals?state=pending` both build from this. Open, unexpired,
+/// assigned to `owner` or to the literal "owner". Newest first. Read-only.
+pub fn pending_requests(conn: &Connection, owner: &str, now: DateTime<Utc>) -> rusqlite::Result<Vec<Value>> {
+    let mut st = conn.prepare(
+        "SELECT request_id, run_id, assignee, action_class, action_summary, action_hash, deadline, attention_id, created_at
+         FROM approval_requests
+         WHERE owner_user_id = ?1 AND status = 'open' AND (assignee = 'owner' OR assignee = ?1)
+         ORDER BY created_at DESC LIMIT 100",
+    )?;
+    let rows = st.query_map(params![owner], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (request_id, run_id, assignee, class, summary, hash, deadline, attention_id, created_at) = row?;
+        if tokens::parse_ts(&deadline).map_or(true, |d| now > d) {
+            continue;
+        }
+        // An unreadable class is treated as the strictest one, like `load`.
+        let human_only = enum_from::<ActionClass>(&class).map_or(true, allternit_authority::policy::is_human_only);
+        out.push(json!({
+            "requestId": request_id, "runId": run_id, "assignee": assignee, "actionClass": class,
+            "actionSummary": summary, "actionHash": hash, "deadline": deadline, "humanOnly": human_only,
+            "attentionId": attention_id, "createdAt": created_at,
+        }));
+    }
+    Ok(out)
+}
+
 struct Stored {
     request: ApprovalRequestV1,
     owner_user_id: String,
@@ -121,6 +151,44 @@ impl SqlAuthority {
 
     fn now(&self) -> DateTime<Utc> {
         self.now.unwrap_or_else(Utc::now)
+    }
+
+    /// Close every open request of `owner` that is past its deadline: write the `expired`
+    /// receipt and set `status = 'expired'`, the same as a late resolve does (nothing is ever
+    /// auto-approved). Idempotent; returns how many were closed. Called before the inbox feed
+    /// and the pending list are read, so an expired request has its receipt even if nobody
+    /// tried to resolve it.
+    pub fn expire_due(&self, owner: &str) -> Result<usize, AuthorityError> {
+        let now = self.now();
+        let due: Vec<(String, String, String)> = {
+            let conn = self.connect()?;
+            let mut st = conn
+                .prepare("SELECT request_id, run_id, deadline FROM approval_requests WHERE owner_user_id = ?1 AND status = 'open'")
+                .map_err(db_err)?;
+            let rows = st
+                .query_map(params![owner], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(db_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(db_err)?;
+            rows.into_iter().filter(|(_, _, d)| tokens::parse_ts(d).map_or(true, |d| now > d)).collect()
+        };
+        let mut closed = 0;
+        for (request_id, run_id, _) in due {
+            let mut conn = self.connect()?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_err)?;
+            let resolved_at = tokens::ts(now);
+            let payload = json!({
+                "event": "expired", "op": "expire", "request_id": request_id, "decision": "expired",
+                "caller_kind": enum_str(CallerKind::Service), "caller": owner,
+            });
+            append_in_tx(&tx, &self.signer, self.input(&run_id, owner, "expired", payload), now)?;
+            if open_guard(&tx, "UPDATE approval_requests SET status = 'expired', resolved_at = ?2 WHERE request_id = ?1 AND status = 'open'", &[&request_id, &resolved_at]).is_err() {
+                continue; // someone resolved it meanwhile; the dropped tx writes no receipt
+            }
+            tx.commit().map_err(db_err)?;
+            closed += 1;
+        }
+        Ok(closed)
     }
 
     fn connect(&self) -> Result<Connection, AuthorityError> {
@@ -654,7 +722,7 @@ mod tests {
     fn redeem_after_expiry_is_denied_and_ttl_is_capped_at_900s() {
         let k = kernel();
         let (req, token) = approved(&k, Some(60));
-        let late = SqlAuthority { db: k.db.clone(), signer: k.signer.clone(), now: Some(t0() + Duration::seconds(61)) };
+        let late = SqlAuthority { db: k.db.clone(), signer: k.signer.clone(), now: Some(t0() + Duration::seconds(61)), tenant: k.tenant.clone() };
         let err = late.redeem(&run(), ApprovalRedeemBody { token: token.token, action_hash: req.action_hash.unwrap() }).unwrap_err();
         assert_eq!(err.code, ErrorCode::TokenExpired);
         assert!(err.receipt_id.is_some());
@@ -718,5 +786,21 @@ mod tests {
             .query_row("SELECT prev_hash FROM kernel_receipts WHERE run_id = 'run_1' AND idx = 0", [], |r| r.get(0))
             .unwrap();
         assert_eq!(first_prev, super::super::GENESIS_HASH);
+    }
+
+    #[test]
+    fn expire_due_writes_one_expired_receipt_and_pending_list_skips_it() {
+        let k = kernel();
+        let req = k.request(&human(), body(None)).unwrap();
+        let id = req.request_id.unwrap();
+        let conn = k.db.connect().unwrap();
+        assert_eq!(pending_requests(&conn, OWNER, t0()).unwrap().len(), 1);
+        let late = SqlAuthority { db: k.db.clone(), signer: k.signer.clone(), now: Some(t0() + Duration::days(2)), tenant: k.tenant.clone() };
+        assert!(pending_requests(&conn, OWNER, t0() + Duration::days(2)).unwrap().is_empty());
+        assert_eq!(late.expire_due(OWNER).unwrap(), 1);
+        assert_eq!(late.expire_due(OWNER).unwrap(), 0, "idempotent: no second receipt");
+        let status: String = conn.query_row("SELECT status FROM approval_requests WHERE request_id = ?1", params![id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "expired");
+        assert_eq!(count(&k, "SELECT COUNT(*) FROM approval_requests WHERE status = 'open'"), 0);
     }
 }
