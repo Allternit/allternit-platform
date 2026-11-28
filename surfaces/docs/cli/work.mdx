@@ -104,6 +104,20 @@ gizzi run --on "Allternit cloud computer" "fix the failing test in api/"
 
 The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_TOKEN` (**Settings → API keys**). The device token from `gizzi pair` only identifies this machine and can't drive another one.
 
+### Start a session with a prompt, and open a window for it
+
+```bash
+gizzi spawn gizzi "fix the failing test in api/" --cwd ~/code/api
+```
+
+`gizzi spawn <tool> "<prompt>"` starts a session of that coding tool on this computer, the same way `gizzi start` does, so the phone, the web app and Desktop see it too. The tool is any runtime id from the runtime list. It prints the session id and the command that attaches to it. The prompt, and a handoff file passed with `--handoff <file>`, are saved as a task file under `~/.gizzi/spawn/` and the session is told to read it, so nothing is typed into a shell. `--dry-run` prints the request without starting anything.
+
+```bash
+gizzi spawn gizzi "review the diff on this branch" --window
+```
+
+`--window` opens a new terminal window that attaches to the new session. It picks Apple Terminal, iTerm2 or Ghostty on a Mac, Windows Terminal on Windows, and `$TERMINAL` or the first terminal it finds on Linux; `--terminal <name>` overrides. Closing the window only detaches: the session keeps running, and the attach command it printed opens it again.
+
 ## Phone tasks
 
 ```bash

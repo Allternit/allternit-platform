@@ -13,6 +13,7 @@ import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
 import { ComputersCommand } from "@/cli/commands/computers"
 import { StartCommand } from "@/cli/commands/start"
+import { SpawnCommand } from "@/cli/commands/factory/spawn"
 import { FilesCommand } from "@/cli/commands/files"
 import { MeetingsCommand } from "@/cli/commands/meetings"
 import { SleepCommand } from "@/cli/commands/sleep"
@@ -132,6 +133,7 @@ export const COMMANDS: RegisteredCommand[] = [
   PairCommand,
   ComputersCommand,
   StartCommand,
+  SpawnCommand,
   // Files drive: your computers' files (ls, put, share, mount …), contracts/files-drive.
   FilesCommand,
   MeetingsCommand,
