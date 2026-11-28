@@ -27,6 +27,8 @@ export const routines = {
   type: 'local-jsx',
   name: 'routines',
   aliases: ['routine'],
+  // Hidden alias of /loops (overhaul plan D4): still opens the routines view.
+  isHidden: true,
   description: 'Your routines with next and last runs (p pauses or resumes)',
   load: () => import('./routines.js'),
 } satisfies Command

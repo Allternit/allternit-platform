@@ -122,7 +122,8 @@ describe('Grok muscle-memory aliases', () => {
     expect((dashboard as Command).isHidden).toBe(true)
     expect((dash as Command).aliases ?? []).not.toContain('dashboard')
     expect((dash as Command).aliases ?? []).not.toContain('sessions')
-    expect(status.aliases).toContain('session-info')
+    // session-info is now its own hidden alias command (opens the Status tab).
+    expect(status.aliases).not.toContain('session-info')
     expect(status.aliases).toContain('info')
     expect(model.aliases).toContain('m')
     expect(theme.aliases).toContain('t')
