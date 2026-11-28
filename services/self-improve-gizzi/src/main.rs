@@ -5,14 +5,14 @@
 //! merges and never marks anything train-ready. `--open-pr` (off by default)
 //! is the only way it touches a remote, and that PR is a draft.
 //!
-//! Built in steps: this one has the CLI, the harness view and the validity
-//! check. The evaluator (step 3.3) and the proposer (step 3.4) are stubs that
-//! return a clear "not built yet" error.
+//! `--dry-run` (or env `HARNESS_IMPROVE_FAKE=1`) swaps in a fake proposer and
+//! a fake evaluator, so the whole flow runs with no network and no price.
 
+mod evaluator;
+mod proposer;
 mod validity;
 mod view;
 
-use allternit_self_improve::eval::{Evaluator, StagedGate};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -68,6 +68,12 @@ struct Opts {
     /// Skip the price prompt.
     #[arg(long, global = true)]
     yes: bool,
+    /// The baseline eval report (`allternit.eval_report.v1`) to score against.
+    #[arg(long, global = true)]
+    baseline: Option<PathBuf>,
+    /// Where patch.diff and report.md go. Default: .harness-improve/out/<id> in the repo.
+    #[arg(long, global = true)]
+    out: Option<PathBuf>,
     /// Open a draft PR with an accepted patch. Off by default.
     #[arg(long, global = true)]
     open_pr: bool,
@@ -110,14 +116,42 @@ impl Opts {
     }
 }
 
-/// The evaluator: the candidate's Gizzi runs the protected suite. Step 3.3.
-fn make_evaluator(_opts: &Opts) -> Result<Box<dyn Evaluator>> {
-    bail!("the evaluator is not built yet (step 3.3)")
+/// Fake proposer and evaluator: `--dry-run`, or env `HARNESS_IMPROVE_FAKE=1`.
+fn is_fake(opts: &Opts) -> bool {
+    opts.dry_run || std::env::var("HARNESS_IMPROVE_FAKE").map(|v| v == "1").unwrap_or(false)
 }
 
-/// The proposer: one patch from the person's brain. Step 3.4.
-fn propose_patch(_opts: &Opts, _view: &view::ViewDir) -> Result<String> {
-    bail!("the proposer is not built yet (step 3.4)")
+/// The evaluator: the candidate's Gizzi runs the protected suite.
+fn make_evaluator(opts: &Opts, repo: &Path, baseline: Option<&evaluator::Report>) -> Result<Box<dyn evaluator::ScoredEvaluator>> {
+    if is_fake(opts) {
+        return Ok(Box::new(evaluator::FakeEvaluator));
+    }
+    let Some(baseline) = baseline else { bail!("--baseline <report.json> is required: the first live baseline is made by hand") };
+    let suite_dir = opts.suite_dir.clone().unwrap_or_else(|| repo.join("domains/agent-evals/gizzi/suites/shared.v1"));
+    Ok(Box::new(evaluator::GizziEvaluator::new(evaluator::EvalSettings {
+        launcher: evaluator::Launcher::Dev,
+        suite_dir,
+        baseline: baseline.clone(),
+        seed: opts.seed.unwrap_or(0),
+        model: opts.model.clone(),
+        yes: opts.yes,
+        max_usd: opts.max_usd,
+    })))
+}
+
+fn make_proposer(opts: &Opts) -> Box<dyn proposer::Proposer> {
+    if is_fake(opts) {
+        Box::new(proposer::FakeProposer)
+    } else {
+        Box::new(proposer::GizziProposer { model: opts.model.clone() })
+    }
+}
+
+fn load_baseline(opts: &Opts) -> Result<Option<evaluator::Report>> {
+    match &opts.baseline {
+        Some(path) => Ok(Some(evaluator::load_report(path)?)),
+        None => Ok(None),
+    }
 }
 
 fn main() -> Result<()> {
@@ -142,7 +176,8 @@ fn propose(opts: &Opts) -> Result<()> {
     if opts.dry_run {
         print_settings(opts)?;
     }
-    let patch = propose_patch(opts, &view)?;
+    let baseline = load_baseline(opts)?.unwrap_or_default();
+    let patch = make_proposer(opts).propose(&view, &proposer::build_brief(&baseline))?;
     print!("{patch}");
     Ok(())
 }
@@ -165,33 +200,56 @@ fn gate(opts: &Opts, patch_file: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Fail before making a checkout if the evaluator is missing.
-    let evaluator = make_evaluator(opts)?;
-    let checkout = view::CandidateCheckout::create(&repo)?;
-    view::apply_to_checkout(&patch, checkout.path())?;
-    let validity = validity::HarnessValidity::new(&repo, patch, Box::new(validity::BunGuardTests));
-    let report = StagedGate::new(&validity, evaluator.as_ref(), opts.fraction).run(checkout.path())?;
-    for reason in validity.rejections() {
+    // Fail before making a checkout if the evaluator cannot be made.
+    let baseline = load_baseline(opts)?;
+    let evaluator = make_evaluator(opts, &repo, baseline.as_ref())?;
+    let run = proposer::gate_patch(&repo, &patch, evaluator.as_ref(), is_fake(opts), opts.fraction)?;
+    for reason in &run.rejections {
         eprintln!("rejected: {reason}");
     }
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    if !report.valid {
-        bail!("the patch did not pass the gate");
+    let id = format!("gate-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+    let out_dir = opts.out.clone().unwrap_or_else(|| repo.join(proposer::OUT_DIR).join(&id));
+    proposer::record(&repo, &out_dir, &id, None, &patch, &run, "(patch given with --patch)")?;
+    eprintln!("wrote {}", out_dir.display());
+    println!("{}", serde_json::to_string_pretty(&run.report)?);
+    if !run.decision.accepted {
+        for reason in &run.decision.reasons {
+            eprintln!("not accepted: {reason}");
+        }
+        bail!("the patch was not accepted");
     }
     Ok(())
 }
 
 fn run(opts: &Opts) -> Result<()> {
     let repo = opts.repo()?;
-    let view = view::export_view(&repo)?;
-    eprintln!("harness view: {} editable files in {}", view.files().len(), view.root().display());
     if opts.dry_run {
         print_settings(opts)?;
     }
-    // Step 3.4 fills this loop: propose, gate, record lineage, write the
-    // patch and report.md, and open a draft PR only with --open-pr.
-    let _evaluator = make_evaluator(opts)?;
-    let _patch = propose_patch(opts, &view)?;
+    if opts.open_pr && is_fake(opts) {
+        bail!("--open-pr cannot be used with HARNESS_IMPROVE_FAKE=1");
+    }
+    let baseline = load_baseline(opts)?;
+    let evaluator = make_evaluator(opts, &repo, baseline.as_ref())?;
+    let baseline_report = baseline.clone().unwrap_or_default();
+    let cfg = proposer::LoopConfig {
+        repo: &repo,
+        out: opts.out.clone(),
+        fraction: opts.fraction,
+        max_generations: opts.max_generations,
+        fake: is_fake(opts),
+        open_pr: opts.open_pr,
+        baseline: &baseline_report,
+    };
+    let outcomes = proposer::run_loop(&cfg, make_proposer(opts).as_ref(), evaluator.as_ref())?;
+    for o in &outcomes {
+        if let Some(url) = &o.pr_url {
+            println!("draft PR: {url}");
+        }
+    }
+    if !outcomes.iter().any(|o| o.accepted) {
+        eprintln!("no patch was accepted; see report.md in each output folder");
+    }
     Ok(())
 }
 
@@ -228,12 +286,5 @@ mod tests {
         assert!(parse(&["run", "--max-usd", "-1"]).opts.validate().is_err());
         assert!(parse(&["run", "--dry-run", "--open-pr"]).opts.validate().is_err());
         assert!(parse(&["run", "--max-usd", "2.5", "--seed", "7", "--brain", "local", "--model", "m"]).opts.validate().is_ok());
-    }
-
-    #[test]
-    fn the_unbuilt_steps_say_so() {
-        let opts = parse(&["run"]).opts;
-        let err = make_evaluator(&opts).err().unwrap().to_string();
-        assert!(err.contains("step 3.3"), "{err}");
     }
 }
