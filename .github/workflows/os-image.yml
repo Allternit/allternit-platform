@@ -2,7 +2,9 @@ name: os-image
 
 # AllternitOS Stage 2 step 27: build the pinned-kernel image and boot it in QEMU.
 # Gate G2a: the serial log must show "kernel-check ok" and
-# "ALLTERNIT-OS READY kernel-interface=1". Reads no secrets, deploys nothing.
+# "ALLTERNIT-OS READY kernel-interface=1".
+# Step 29 / gate G2c: the log must also show "shell-tool-call ok" (static llama.cpp answered
+# one shell tool call); tok/s goes to the job summary. Reads no secrets, deploys nothing.
 
 on:
   pull_request:
@@ -35,7 +37,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             musl-tools qemu-system-x86 ovmf \
-            build-essential bc bison flex libelf-dev libssl-dev xz-utils cpio curl file \
+            build-essential cmake git bc bison flex libelf-dev libssl-dev xz-utils cpio curl file \
             systemd-ukify systemd-boot-efi python3-pefile gdisk dosfstools mtools e2fsprogs
 
       - name: Rust toolchain with the musl target
@@ -55,8 +57,38 @@ jobs:
             os/target/image/kbuild
           key: os-kernel-${{ hashFiles('os/image/kernel/VERSION', 'os/image/kernel/x86_64-vm.config') }}
 
+      - name: Cache static llama-server
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/llama/llama-server
+          key: os-llama-${{ hashFiles('os/model/LLAMA', 'os/model/build-llama.sh') }}
+
+      - name: Build static llama-server
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: sh os/model/build-llama.sh
+
+      - name: Cache the model GGUF
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/model/model.gguf
+          key: os-model-${{ hashFiles('os/model/MODEL') }}
+
+      - name: Download and verify the model GGUF
+        run: |
+          . os/model/MODEL
+          mkdir -p os/target/model
+          if [ ! -f os/target/model/model.gguf ]; then
+            curl -fsSL -o os/target/model/model.gguf.part "$MODEL_URL"
+            mv os/target/model/model.gguf.part os/target/model/model.gguf
+          fi
+          echo "$MODEL_SHA256  os/target/model/model.gguf" | sha256sum -c -
+
       - name: Build the image
-        run: sh os/tools/mkimage/mkimage.sh
+        run: |
+          sh os/tools/mkimage/mkimage.sh \
+            --llama os/target/llama/llama-server --model os/target/model/model.gguf
 
       - name: Check for /dev/kvm
         run: |
@@ -67,7 +99,7 @@ jobs:
           fi
           ls -l /dev/kvm || echo "no /dev/kvm: the boot step falls back to TCG (600 s limit)"
 
-      - name: Boot in QEMU and check the serial log
+      - name: Boot in QEMU, check the serial log, record tok/s
         run: sh os/tools/mkimage/qemu-boot.sh
 
       - name: Upload serial log

@@ -11,7 +11,7 @@
 //! irreversible. Everything else is allowed. Malformed requests are denied.
 
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -34,12 +34,68 @@ fn decide(line: &str) -> Value {
     }
 }
 
+/// Contract section 2.0 envelope: {"v":1,"id","call":"check","caller","body"}. The class is
+/// body.extensions["os.v1"].action_class. Stub rule only; the real crate replaces this.
+fn decide_framed(frame: &[u8]) -> Value {
+    let req: Value = match serde_json::from_slice(frame) {
+        Ok(v) => v,
+        Err(_) => return json!({"v":1,"id":null,"ok":false,"error":{"code":"bad_request","message":"not json","receipt_id":null}}),
+    };
+    let id = req.get("id").cloned().unwrap_or(Value::Null);
+    if req.get("v") != Some(&json!(1)) || req.get("call").and_then(Value::as_str) != Some("check") {
+        return json!({"v":1,"id":id,"ok":false,"error":{"code":"bad_request","message":"stub supports v1 check only","receipt_id":null}});
+    }
+    let class = req.pointer("/body/extensions/os.v1/action_class").and_then(Value::as_str);
+    let (decision, reason) = match class {
+        Some(c) if DENY_CLASSES.contains(&c) => ("DENY", format!("class {c} needs human approval")),
+        Some(_) => ("ALLOW", "stub rule: class not restricted".to_string()),
+        None => ("DENY", "missing action_class".to_string()),
+    };
+    json!({"v":1,"id":id,"ok":true,"body":{"decision":decision,"reason":reason,"receipt_id":null,"stub":true}})
+}
+
+fn serve_framed<R: Read>(mut r: R, out: &mut UnixStream) {
+    loop {
+        let mut len = [0u8; 4];
+        if r.read_exact(&mut len).is_err() {
+            return;
+        }
+        let n = u32::from_be_bytes(len) as usize;
+        let reply = if n > 1 << 20 {
+            json!({"v":1,"id":null,"ok":false,"error":{"code":"frame_too_large","message":"max frame 1 MiB","receipt_id":null}})
+        } else {
+            let mut buf = vec![0u8; n];
+            if r.read_exact(&mut buf).is_err() {
+                return;
+            }
+            decide_framed(&buf)
+        };
+        let bytes = reply.to_string().into_bytes();
+        if out.write_all(&(bytes.len() as u32).to_be_bytes()).is_err() || out.write_all(&bytes).is_err() {
+            return;
+        }
+        if n > 1 << 20 {
+            return;
+        }
+    }
+}
+
+/// A first byte of `{` is the old line protocol (init's self-check); anything else is a
+/// 4-byte big-endian length frame (contract section 2.0).
 fn serve(stream: UnixStream) {
     let mut out = match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
     };
-    for line in BufReader::new(stream).lines() {
+    let mut reader = BufReader::new(stream);
+    let first = match reader.fill_buf() {
+        Ok(b) if !b.is_empty() => b[0],
+        _ => return,
+    };
+    if first != b'{' {
+        return serve_framed(reader, &mut out);
+    }
+    for line in reader.lines() {
         let Ok(line) = line else { return };
         let reply = decide(&line);
         if writeln!(out, "{reply}").is_err() {
@@ -90,6 +146,17 @@ mod tests {
         for c in DENY_CLASSES {
             assert_eq!(d(&format!(r#"{{"op":"check","class":"{c}"}}"#)), "deny");
         }
+    }
+
+    #[test]
+    fn framed_check_allows_ui_layout_and_denies_money() {
+        let f = |c: &str| {
+            let r = json!({"v":1,"id":"1","call":"check","caller":{"kind":"service","principal":"s"},
+                "body":{"extensions":{"os.v1":{"action_class":c}}}});
+            decide_framed(r.to_string().as_bytes())["body"]["decision"].as_str().unwrap().to_string()
+        };
+        assert_eq!(f("ui_layout"), "ALLOW");
+        assert_eq!(f("money"), "DENY");
     }
 
     #[test]

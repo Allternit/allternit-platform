@@ -1,0 +1,10 @@
+# The one small instruct GGUF baked into the step 29 image (sourced by mkimage.sh and CI).
+# Qwen2.5-0.5B-Instruct Q4_K_M, Apache-2.0, chat template with tool calling.
+# SHA256 is the Hugging Face LFS oid of the file at the pinned repo revision (HF API tree
+# listing at that revision and the X-Linked-ETag header agree).
+MODEL_REPO=Qwen/Qwen2.5-0.5B-Instruct-GGUF
+MODEL_REVISION=9217f5db79a29953eb74d5343926648285ec7e67
+MODEL_FILE=qwen2.5-0.5b-instruct-q4_k_m.gguf
+MODEL_URL=https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf
+MODEL_SHA256=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+MODEL_SIZE=491400032
