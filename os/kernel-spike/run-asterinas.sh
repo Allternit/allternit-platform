@@ -18,7 +18,12 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 OS_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 TARGET=x86_64-unknown-linux-musl
-BIN="$OS_DIR/target/$TARGET/release"
+# The repo's .cargo/config.toml sets target-dir, so ask cargo where the binaries go
+# (same fix as mkimage.sh, f3851a8e6).
+TARGET_DIR=$(cargo metadata --manifest-path "$OS_DIR/Cargo.toml" --no-deps --format-version 1 2>/dev/null \
+  | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+[ -n "$TARGET_DIR" ] || TARGET_DIR="$OS_DIR/target"
+BIN="$TARGET_DIR/$TARGET/release"
 LLAMA="$OS_DIR/target/llama/llama-server"
 MODEL="$OS_DIR/target/model/model.gguf"
 OUT="$OS_DIR/target/kernel-spike"
