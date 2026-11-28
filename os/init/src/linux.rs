@@ -701,10 +701,64 @@ fn confirm_slot(b: &mut Booted) {
     }
 }
 
+/// The disk layout is esp, system-a, system-b, state (partition 1..4), and PID 1 names them
+/// /dev/vda1..4 (virtio-blk in the VM image). On a PC they are /dev/nvme0n1p1 or /dev/sda1,
+/// so find them by GPT partition name (sysfs uevent PARTNAME) and make /dev/vdaN symlinks.
+/// Does nothing when /dev/vda1 already exists (the VM), so the VM boot is unchanged. With
+/// more than one disk carrying these names, the first one found wins (TODO: match the disk
+/// the UKI was booted from, via the loader's LoaderDevicePartUUID EFI variable).
+fn link_partition_aliases() {
+    if std::path::Path::new("/dev/vda1").exists() {
+        return;
+    }
+    const NAMES: [(&str, u32); 4] = [("esp", 1), ("system-a", 2), ("system-b", 3), ("state", 4)];
+    let end = Instant::now() + Duration::from_secs(15);
+    let mut linked = [false; 4];
+    loop {
+        if let Ok(rd) = std::fs::read_dir("/sys/class/block") {
+            let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+            entries.sort();
+            for dir in entries {
+                let Ok(uevent) = std::fs::read_to_string(dir.join("uevent")) else { continue };
+                let (mut partname, mut devname) = (None, None);
+                for line in uevent.lines() {
+                    if let Some(v) = line.strip_prefix("PARTNAME=") {
+                        partname = Some(v.to_string());
+                    } else if let Some(v) = line.strip_prefix("DEVNAME=") {
+                        devname = Some(v.to_string());
+                    }
+                }
+                let (Some(pn), Some(dn)) = (partname, devname) else { continue };
+                for (i, (name, n)) in NAMES.iter().enumerate() {
+                    if !linked[i] && pn == *name {
+                        let alias = format!("/dev/vda{n}");
+                        let target = format!("/dev/{dn}");
+                        match std::os::unix::fs::symlink(&target, &alias) {
+                            Ok(()) => {
+                                log(&format!("partition {pn}: {alias} -> {target}"));
+                                linked[i] = true;
+                            }
+                            Err(e) => log(&format!("symlink {alias} -> {target}: {e}")),
+                        }
+                    }
+                }
+            }
+        }
+        if linked.iter().all(|l| *l) || Instant::now() >= end {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    if !linked.iter().all(|l| *l) {
+        log("not every partition (esp, system-a, system-b, state) was found by GPT name");
+    }
+}
+
 pub fn run() {
     mount_basics();
     console_setup();
     report_secure_boot();
+    link_partition_aliases();
     // Read the TEST ONLY state key and the update public key while the initramfs is the root.
     let state_key = std::fs::read(STATE_KEY).ok();
     let pubkey = std::fs::read(manifest::PUBKEY_PATH).ok();

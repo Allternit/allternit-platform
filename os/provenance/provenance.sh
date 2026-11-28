@@ -5,10 +5,15 @@
 #       TEST keys, fresh: Ed25519 update-signing key + Secure Boot PK/KEK/db (RSA-2048 certs).
 #       Private files stay in KEYDIR (never committed, never uploaded); KEYDIR/public/ holds
 #       the public halves (certs, update-pub.pem, update-pub.key = raw 32 bytes).
-#   provenance.sh sbom OUT.json --os-dir DIR --bin-dir DIR [--kconfig F] [--llama F] [--model F]
+#   provenance.sh sbom OUT.json --os-dir DIR --bin-dir DIR [--target vm|pc] [--kconfig F] [--llama F] [--model F] [--firmware DIR]
 #       SPDX 2.3 JSON: kernel (version, tarball sha256, config hash), llama.cpp tag + commit,
 #       the GGUF sha256, each Rust binary (sha256) with its resolved crates from Cargo.lock
 #       (`cargo tree` per binary, so only crates that binary links).
+#       --target pc hashes x86_64-pc.config. --firmware DIR (os/image/firmware/fetch.sh output)
+#       adds the linux-firmware tag + tarball sha256 and one package per group (iwlwifi, mt7921,
+#       r8169, i915, amdgpu): checksum = sha256 of the group's sorted "sha256 path" lines, the
+#       file count in the comment, and the licence as a LicenseRef with its text and sha256 in
+#       hasExtractedLicensingInfos.
 #   provenance.sh manifest OUTDIR KEY.pem VERSION UKI SBOM  A-VERITY A-SHA A-BYTES  B-VERITY B-SHA B-BYTES
 #       manifest-a.json/.sig and manifest-b.json/.sig. VERITY is root:salt:blocks. The JSON is
 #       compact with sorted keys; the Ed25519 signature (raw, 64 bytes) covers those exact bytes.
@@ -55,10 +60,11 @@ keygen)
 
 sbom)
   OUTF=${1:?sbom OUT.json}; shift
-  OS_DIR=""; BIN_DIR=""; KCONF=""; LLAMA=""; MODEL=""
+  OS_DIR=""; BIN_DIR=""; KCONF=""; LLAMA=""; MODEL=""; ITARGET=vm; FWDIR=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --os-dir) OS_DIR=$2; shift 2 ;; --bin-dir) BIN_DIR=$2; shift 2 ;;
+      --target) ITARGET=$2; shift 2 ;; --firmware) FWDIR=$2; shift 2 ;;
       --kconfig) KCONF=$2; shift 2 ;; --llama) LLAMA=$2; shift 2 ;; --model) MODEL=$2; shift 2 ;;
       *) die "sbom: unknown flag $1" ;;
     esac
@@ -81,11 +87,30 @@ sbom)
   rel() { jq -nc --arg a "$1" --arg t "$2" --arg b "$3" '{spdxElementId:$a, relationshipType:$t, relatedSpdxElement:$b}' >> "$TMP/rels"; }
 
   . "$OS_DIR/image/kernel/VERSION"
-  KCFG_SHA=$(sha "$OS_DIR/image/kernel/x86_64-vm.config")
+  KCFG_SHA=$(sha "$OS_DIR/image/kernel/x86_64-$ITARGET.config")
   KC="config fragment sha256 $KCFG_SHA"
   [ -z "$KCONF" ] || [ ! -f "$KCONF" ] || KC="$KC; final .config sha256 $(sha "$KCONF")"
   pkg SPDXRef-kernel linux-kernel "$KERNEL_VERSION" "$KERNEL_SHA256" "-" "kernel.org tarball sha256; $KC"
   rel SPDXRef-DOCUMENT DESCRIBES SPDXRef-kernel
+
+  : > "$TMP/lics"
+  if [ -n "$FWDIR" ]; then
+    [ -f "$FWDIR/firmware.list" ] && [ -f "$FWDIR/groups.tsv" ] || die "sbom: $FWDIR has no firmware.list / groups.tsv"
+    ( . "$OS_DIR/image/firmware/LINUX_FIRMWARE"
+      pkg SPDXRef-linux-firmware linux-firmware "$FW_TAG" "$FW_SHA256" "-" "kernel.org tarball $FW_URL; only the blobs of the groups below are in the image, xz-compressed, byte-identical to this tag before compression" )
+    rel SPDXRef-DOCUMENT DESCRIBES SPDXRef-linux-firmware
+    while IFS="$(printf '\t')" read -r grp lic licsha cnt bytes; do
+      gsum=$(awk -v g="$grp" '$3 == g {print $1 "  " $2}' "$FWDIR/firmware.list" | sha256sum | cut -d' ' -f1)
+      lid="LicenseRef-linux-firmware-$grp"
+      pkg "SPDXRef-firmware-$grp" "linux-firmware-$grp" "$(. "$OS_DIR/image/firmware/LINUX_FIRMWARE"; echo "$FW_TAG")" "$gsum" "-" "$cnt blobs, $bytes bytes xz-compressed; checksum is sha256 of the sorted 'sha256  path' list; licence file $lic (sha256 $licsha)"
+      # licence on the package: declared and concluded are the vendor's redistributable terms
+      jq -c --arg id "SPDXRef-firmware-$grp" --arg l "$lid" \
+        'if .SPDXID == $id then .licenseDeclared = $l | .licenseConcluded = $l else . end' "$TMP/pkgs" > "$TMP/pkgs.new" && mv "$TMP/pkgs.new" "$TMP/pkgs"
+      jq -nc --arg id "$lid" --arg name "$lic" --rawfile text "$FWDIR/licenses/$grp.$lic" \
+        '{licenseId:$id, name:$name, extractedText:$text}' >> "$TMP/lics"
+      rel SPDXRef-linux-firmware CONTAINS "SPDXRef-firmware-$grp"
+    done < "$FWDIR/groups.tsv"
+  fi
 
   . "$OS_DIR/model/LLAMA"
   LSUM="-"; [ -z "$LLAMA" ] || [ ! -f "$LLAMA" ] || LSUM=$(sha "$LLAMA")
@@ -124,11 +149,12 @@ sbom)
     done < "$TMP/crates-$bname"
   done
 
-  jq -n --slurpfile pk "$TMP/pkgs" --slurpfile rl "$TMP/rels" --arg created "$CREATED" --arg commit "$COMMIT" '
+  jq -n --slurpfile pk "$TMP/pkgs" --slurpfile rl "$TMP/rels" --slurpfile li "$TMP/lics" --arg created "$CREATED" --arg commit "$COMMIT" '
     {spdxVersion:"SPDX-2.3", dataLicense:"CC0-1.0", SPDXID:"SPDXRef-DOCUMENT",
      name:("allternit-os-" + $commit), documentNamespace:("https://allternit.com/spdx/os/" + $commit),
      creationInfo:{created:$created, creators:["Tool: allternit-os-provenance"]},
-     packages:$pk, relationships:$rl}' | jq -S . > "$OUTF"
+     packages:$pk, relationships:$rl}
+    + (if ($li | length) > 0 then {hasExtractedLicensingInfos:$li} else {} end)' | jq -S . > "$OUTF"
   say "SBOM $OUTF: $(jq '.packages|length' "$OUTF") packages, sha256 $(sha "$OUTF")"
   ;;
 

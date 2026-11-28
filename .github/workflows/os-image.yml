@@ -23,6 +23,11 @@ name: os-image
 # mismatched updates; slot A is built twice and the sha256 compared. SBOM, signed manifests and
 # the public keys/certs are uploaded as the os-provenance artifact; the Verify step checks the
 # signatures with openssl.
+# Step 32 (PC target): the boot-pc job builds `mkimage --target pc` (x86_64-pc.config, pinned
+# linux-firmware blobs from os/image/firmware) and boots it under enforcing OVMF on emulated PC
+# hardware (q35, AHCI then NVMe disk, e1000e, qemu-xhci + usb-kbd, std VGA). It requires the same
+# serial lines as the vm job plus "init: partition state: /dev/vda4 -> /dev/" (PID 1 found the
+# GPT partitions by name on the non-virtio disk). The vm job above is unchanged.
 # Reads no repo or org secrets, deploys nothing.
 
 on:
@@ -190,4 +195,126 @@ jobs:
         with:
           name: os-provenance
           path: os/target/image/provenance/
+          if-no-files-found: warn
+
+  boot-pc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and boot dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools qemu-system-x86 ovmf \
+            build-essential cmake git bc bison flex libelf-dev libssl-dev xz-utils cpio curl file \
+            systemd-ukify systemd-boot-efi python3-pefile gdisk dosfstools mtools e2fsprogs \
+            cryptsetup-bin sbsigntool jq openssl uuid-runtime pipx
+          pipx install virt-firmware
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Rust toolchain with the musl target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Cache kernel source, build tree and firmware tarball
+        uses: actions/cache@v4
+        with:
+          path: |
+            os/target/image-pc/cache
+            os/target/image-pc/kbuild
+          key: os-pc-kernel-${{ hashFiles('os/image/kernel/VERSION', 'os/image/kernel/x86_64-vm.config', 'os/image/kernel/x86_64-pc.config', 'os/image/firmware/LINUX_FIRMWARE', 'os/image/firmware/MANIFEST') }}
+
+      - name: Cache static llama-server
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/llama/llama-server
+          key: os-llama-${{ hashFiles('os/model/LLAMA', 'os/model/build-llama.sh') }}
+
+      - name: Build static llama-server
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: sh os/model/build-llama.sh
+
+      - name: Cache the model GGUF
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: os/target/model/model.gguf
+          key: os-model-${{ hashFiles('os/model/MODEL') }}
+
+      - name: Download and verify the model GGUF
+        run: |
+          . os/model/MODEL
+          mkdir -p os/target/model
+          if [ ! -f os/target/model/model.gguf ]; then
+            curl -fsSL -o os/target/model/model.gguf.part "$MODEL_URL"
+            mv os/target/model/model.gguf.part os/target/model/model.gguf
+          fi
+          echo "$MODEL_SHA256  os/target/model/model.gguf" | sha256sum -c -
+
+      - name: Build the PC image (--target pc)
+        run: |
+          sh os/tools/mkimage/mkimage.sh --target pc --out os/target/image-pc \
+            --llama os/target/llama/llama-server --model os/target/model/model.gguf
+
+      - name: Verify provenance and firmware (signatures, SBOM, licences, reproducibility)
+        run: |
+          P=os/target/image-pc/provenance
+          F=os/target/image-pc/firmware
+          for n in a b; do
+            sh os/provenance/provenance.sh verify $P/update-pub.pem $P/manifest-$n.json $P/manifest-$n.sig
+          done
+          . os/image/firmware/LINUX_FIRMWARE
+          # the SBOM names the pinned linux-firmware tag, its tarball sha256 and one package + licence per group
+          jq -e --arg t "$FW_TAG" --arg s "$FW_SHA256" '.packages[] | select(.name == "linux-firmware" and .versionInfo == $t and .checksums[0].checksumValue == $s)' $P/sbom.spdx.json
+          jq -e '[.packages[] | select(.name | startswith("linux-firmware-"))] | length >= 5' $P/sbom.spdx.json
+          jq -e '[.packages[] | select(.name | startswith("linux-firmware-")) | .licenseDeclared | startswith("LicenseRef-")] | all' $P/sbom.spdx.json
+          jq -e '.hasExtractedLicensingInfos | length >= 5' $P/sbom.spdx.json
+          # every blob listed is in the image tree, and nothing else is
+          test "$(wc -l < $F/firmware.list)" = "$(find $F/lib-firmware -type f | wc -l)"
+          cat $F/groups.tsv
+          ls -l os/target/image-pc/allternit-os.efi
+          cat $P/reproducibility.txt
+          grep -q '^reproducible=yes' $P/reproducibility.txt
+          if grep -l 'PRIVATE KEY' $P/* 2>/dev/null; then echo 'private key material in provenance folder'; exit 1; fi
+
+      - name: Check for /dev/kvm
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm || true
+          fi
+          ls -l /dev/kvm || echo "no /dev/kvm: the boot steps fall back to TCG (long limit)"
+
+      - name: Boot the PC image in QEMU, disk on AHCI
+        run: sh os/tools/mkimage/qemu-boot.sh --out os/target/image-pc --disk-bus ahci
+
+      - name: Boot the PC image in QEMU, disk on NVMe
+        run: sh os/tools/mkimage/qemu-boot.sh --out os/target/image-pc --disk-bus nvme
+
+      - name: Upload serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-pc-serial-log
+          path: |
+            os/target/image-pc/serial-pc-ahci.log
+            os/target/image-pc/serial-pc-nvme.log
+          if-no-files-found: warn
+
+      # Public files only. The image itself is large (it carries the firmware): not uploaded.
+      - name: Upload provenance and firmware list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-pc-provenance
+          path: |
+            os/target/image-pc/provenance/
+            os/target/image-pc/firmware/firmware.list
+            os/target/image-pc/firmware/groups.tsv
           if-no-files-found: warn

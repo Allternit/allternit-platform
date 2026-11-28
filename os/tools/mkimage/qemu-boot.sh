@@ -5,6 +5,15 @@
 #   qemu-boot.sh [--out DIR] --bad-update       bad update falls back to the old slot (step 30b)
 #   qemu-boot.sh [--out DIR] --refused-update   allternit-update refuses unsigned/mismatched updates (step 31)
 #   qemu-boot.sh [--out DIR] --unsigned-uki     enforcing Secure Boot refuses an unsigned UKI (step 31)
+#   qemu-boot.sh [--out DIR] --disk-bus ahci|nvme|usb|virtio   PC image only (boot.env TARGET=pc, step 32)
+#
+# PC image (mkimage --target pc): the good boot runs on emulated PC hardware instead of virtio:
+# q35, the disk on AHCI (default) or NVMe or a USB stick, an e1000e NIC, qemu-xhci + usb-kbd +
+# usb-mouse, std VGA, 4 GB, OVMF with Secure Boot enforcing like the vm image. PID 1 finds the
+# GPT partitions by name and prints "init: partition state: /dev/vda4 -> /dev/<real device>"
+# (required, right after "secureboot: enabled"); then the same lines as below. The disk is
+# booted from a copy, so one image can be run once per bus. The negative cases stay on the vm
+# image (the PC image changes the drivers, not the slot, update or Secure Boot code).
 #
 # Good boot, required lines in this order (the UKI disk; direct boot needs only the three
 # marked *):
@@ -48,6 +57,7 @@ CORRUPT=""
 BAD_UPDATE=0
 REFUSED=0
 UNSIGNED=0
+BUS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -55,6 +65,7 @@ while [ $# -gt 0 ]; do
     --bad-update) BAD_UPDATE=1; shift ;;
     --refused-update) REFUSED=1; shift ;;
     --unsigned-uki) UNSIGNED=1; shift ;;
+    --disk-bus) BUS=$2; shift 2 ;;
     *) echo "unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -96,6 +107,15 @@ copy_disk() {
 }
 
 FORBID=""
+IMG_TARGET=${TARGET:-vm}
+PCLINE=""
+if [ "$IMG_TARGET" = pc ]; then
+  [ "$MODE" = uki ] || { echo "the PC image needs the UKI disk (MODE=uki)" >&2; exit 2; }
+  [ -n "$BUS" ] || BUS=ahci
+  PCLINE="init: partition state: /dev/vda4 -> /dev/|"
+elif [ -n "$BUS" ]; then
+  echo "--disk-bus is for the PC image (mkimage --target pc)" >&2; exit 2
+fi
 # Step 31: on the UKI disk OVMF runs with Secure Boot enforcing, and PID 1 says so first.
 SB=""
 [ "${SECUREBOOT:-0}" = 1 ] && [ "$MODE" = uki ] && SB="secureboot: enabled|"
@@ -207,7 +227,14 @@ elif [ "$BAD_UPDATE" -eq 1 ]; then
   REQUIRED="${SB}slot: booting slot=b|manifest: ok slot=b|verity: FAIL slot=b|slot: fallback from=b to=a reason=verity|verity: ok slot=a|state: luks open ok|ALLTERNIT-OS READY kernel-interface=1|shell-tool-call ok|slot: confirmed slot=a"
   FORBID="verity: ok slot=b"
 elif [ "$MODE" = uki ]; then
-  REQUIRED="${SB}slot: booting slot=a|manifest: ok slot=a|verity: ok slot=a|state: luks digest ok|state: luks open ok|kernel-check ok|ALLTERNIT-OS READY kernel-interface=1|shell-tool-call ok|slot: confirmed slot=a"
+  if [ "$IMG_TARGET" = pc ]; then
+    # boot a copy: each bus run starts from a fresh image (unconfirmed slot a, 3 tries)
+    BAD="$OUT/allternit-os-pc-$BUS.img"
+    copy_disk "$BAD"
+    DISK=$BAD
+    LOG="$OUT/serial-pc-$BUS.log"
+  fi
+  REQUIRED="${SB}${PCLINE}slot: booting slot=a|manifest: ok slot=a|verity: ok slot=a|state: luks digest ok|state: luks open ok|kernel-check ok|ALLTERNIT-OS READY kernel-interface=1|shell-tool-call ok|slot: confirmed slot=a"
 else
   # Direct boot has no disk: no slots, no boot state, no state partition.
   REQUIRED="kernel-check ok|ALLTERNIT-OS READY kernel-interface=1|shell-tool-call ok"
@@ -221,6 +248,20 @@ fi
 
 MACHINE="q35"
 SBFLAGS=""
+MEM=2G
+# Disk and NIC. vm: virtio. pc: emulated PC hardware, so the built-in PC drivers are what runs.
+DEVS="-drive if=virtio,format=raw,file=$DISK -netdev user,id=n0 -device virtio-net-pci,netdev=n0"
+if [ "$IMG_TARGET" = pc ]; then
+  MEM=4G
+  case "$BUS" in
+    ahci) DISKDEV="-device ide-hd,drive=d0,bus=ide.0" ;;
+    nvme) DISKDEV="-device nvme,drive=d0,serial=allternit0" ;;
+    usb) DISKDEV="-device usb-storage,drive=d0,bootindex=0" ;;
+    virtio) DISKDEV="-device virtio-blk-pci,drive=d0" ;;
+    *) echo "--disk-bus takes ahci, nvme, usb or virtio" >&2; exit 2 ;;
+  esac
+  DEVS="-drive if=none,id=d0,format=raw,file=$DISK $DISKDEV -netdev user,id=n0 -device e1000e,netdev=n0 -device qemu-xhci -device usb-kbd -device usb-mouse -vga std"
+fi
 if [ "$MODE" = uki ]; then
   CODE=""
   if [ "${SECUREBOOT:-0}" = 1 ]; then
@@ -253,8 +294,8 @@ if [ "$MODE" = uki ]; then
     FW="-bios $CODE"
   fi
   # shellcheck disable=SC2086
-  set -- qemu-system-x86_64 -machine "$MACHINE" $SBFLAGS $ACCEL -m 2G -smp 2 -nographic -serial mon:stdio -no-reboot \
-    $FW -drive if=virtio,format=raw,file="$DISK" -netdev user,id=n0 -device virtio-net-pci,netdev=n0
+  set -- qemu-system-x86_64 -machine "$MACHINE" $SBFLAGS $ACCEL -m $MEM -smp 2 -nographic -serial mon:stdio -no-reboot \
+    $FW $DEVS
 else
   # shellcheck disable=SC2086
   set -- qemu-system-x86_64 -machine q35 $ACCEL -m 2G -smp 2 -nographic -serial mon:stdio -no-reboot \
@@ -327,9 +368,10 @@ if [ -n "$CORRUPT" ] || [ "$BAD_UPDATE" -eq 1 ] || [ "$UNSIGNED" -eq 1 ]; then
   [ "$RESULT" = ok ]
   exit
 fi
+[ "$IMG_TARGET" != pc ] || rm -f "$DISK"
 TPS=$(grep -o 'model tok/s=[0-9.]*' "$LOG" | tail -1)
 echo "boot: ${TPS:-model tok/s=unknown}"
 [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {
-  echo "### os-image boot (steps 29, 30a, 30b, 31)"; echo; echo "- result: $RESULT after ${T}s"; echo "- ${TPS:-model tok/s=unknown}";
-  grep -E 'secureboot:|manifest:|slot:|verity:|state:|shell-tool-call' "$LOG" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+  echo "### os-image boot (steps 29, 30a, 30b, 31${BUS:+, 32: pc/$BUS})"; echo; echo "- result: $RESULT after ${T}s"; echo "- ${TPS:-model tok/s=unknown}";
+  grep -E 'secureboot:|partition |manifest:|slot:|verity:|state:|shell-tool-call' "$LOG" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
 [ "$RESULT" = ok ]

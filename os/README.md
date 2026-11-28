@@ -171,6 +171,61 @@ Tooling: `os/provenance/provenance.sh` (`keygen`, `sbom`, `manifest`, `verify`, 
   key; kernel build determinism is not asserted). `mke2fs -d` copies directory entries in
   readdir order; if CI shows that flaking, the fix is building the tree through a sorted tar.
 
+## Targets: vm and pc (step 32)
+
+`mkimage.sh --target vm|pc` (default `vm`). Both targets share the PID 1, services, A/B slots,
+dm-verity, LUKS2 state, signed manifests and Secure Boot path; they differ in the kernel config,
+the firmware and the console.
+
+| | `vm` | `pc` |
+|---|---|---|
+| Kernel config | `image/kernel/x86_64-vm.config` | `image/kernel/x86_64-pc.config` (the VM config plus drivers; mkimage fails if a VM line is dropped, except `CONFIG_VT`) |
+| Disk, NIC | virtio-blk, virtio-net | NVMe, AHCI/SATA, USB mass storage; e1000e, igb, igc, r8169; Wi-Fi iwlwifi (mvm) and mt7921e |
+| Input, display | none (serial) | USB xHCI/EHCI/OHCI/UHCI + HID, PS/2; simpledrm/efifb, i915, amdgpu, bochs (QEMU VGA); VT + framebuffer console |
+| Firmware | none | pinned linux-firmware blobs, see below |
+| Console | `ttyS0` | `tty0` + `ttyS0` |
+
+**No kernel modules.** PID 1 has no module loader, so every driver in the PC config is built in
+(`=y`) and `CONFIG_MODULES` stays off. Adding a module later needs a loader in PID 1 first.
+
+**Partitions by name.** The disk layout is the same, but a PC disk is `/dev/nvme0n1` or
+`/dev/sda`, not `/dev/vda`. PID 1 reads each partition's GPT name (`esp`, `system-a`, `system-b`,
+`state`) from sysfs and makes `/dev/vda1`..`/dev/vda4` symlinks to the real devices when `/dev/vda1`
+does not exist (`link_partition_aliases` in `init/src/linux.rs`; the VM boot is unchanged). It logs
+`init: partition state: /dev/vda4 -> /dev/sda4`. With two disks that carry these names, the first
+found wins (TODO: match the disk the UKI booted from).
+
+**Firmware** (`image/firmware/`). `LINUX_FIRMWARE` pins one linux-firmware tag (`20261019`) with
+the tarball sha256 kernel.org publishes; `MANIFEST` lists the globs per group (iwlwifi, mt7921,
+r8169, i915 DMC, amdgpu) and the licence file WHENCE names for each. `fetch.sh` checks the
+tarball sha256 before it reads anything, stages each blob xz-compressed
+(`CONFIG_FW_LOADER_COMPRESS_XZ`), and writes `firmware.list` (sha256 of each upstream blob),
+`groups.tsv` and the licence texts. The tree is in `/lib/firmware` of the initramfs (built-in
+drivers probe before the slot is mounted) and of the system slot (loads after the switch), and the
+licences are in `/usr/share/licenses/linux-firmware`. The SBOM gets the tag + tarball sha256, one
+package per group with a hash of its file list, and each licence as a `LicenseRef` with the text.
+The tree is capped by `FW_MAX_MB` (UKI size follows it); the PC ESP is sized to the UKI.
+Not included: GuC/HuC, other AMD families, Bluetooth, `regulatory.db` (Wi-Fi uses the built-in
+world regulatory domain). Add a line to `MANIFEST` for more.
+
+**Boot to the shell.** On the PC target the shell service is the same boot shell loop as the VM
+(`shell/`), writing to `/dev/console`: the screen (tty0) when the PC has no serial port, the
+serial line when it has one (and always in CI, where the log is the evidence). The Gizzi TUI is
+the next step, not in this build: the Gizzi binary is a Bun-compiled glibc executable
+(FINDINGS-stage2.md), and this image has no glibc, no ICU data, no terminfo and no CA bundle in
+the slot, plus no keyboard-reading TTY service in init. First step later: a glibc runtime layer
+in the slot (built from a pinned source, verity-covered like the rest), `tty1` with a login-less
+`[[service]]` that runs `gizzi` on `/dev/tty1`, and a `tty` field in the service table.
+
+**Wi-Fi is driver + firmware only.** Nothing in the image brings a Wi-Fi link up (no wpa_supplicant
+or iwd). Wired NICs are probed (the kernel logs the link) but init only brings loopback up, as on the VM: no NIC gets an address yet.
+
+**GPU userland** is separate: see `image/drivers/README.md` (Vulkan Mesa first, NVIDIA optional).
+
+**Real hardware: not checked.** CI boots the PC image on emulated PC devices: `qemu-boot.sh
+--disk-bus ahci|nvme` (q35, e1000e, qemu-xhci + usb-kbd + usb-mouse, std VGA, OVMF Secure
+Boot enforcing). Real NVMe/SATA/Wi-Fi/GPU behaviour is unverified until a PC runs it.
+
 ## Accounts
 
 | Service | uid/gid | Notes |

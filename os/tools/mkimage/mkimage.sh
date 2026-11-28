@@ -1,7 +1,7 @@
 #!/bin/sh
 # AllternitOS image builder (plan step 27). POSIX sh plus common tools.
 #
-#   mkimage.sh [--out DIR] [--kernel-src DIR] [--skip-kernel] [--llama F --model F]
+#   mkimage.sh [--target vm|pc] [--out DIR] [--kernel-src DIR] [--skip-kernel] [--llama F --model F]
 #
 # Steps: static musl build of os/ -> initramfs file list -> kernel (tinyconfig +
 # image/kernel/x86_64-vm.config, initramfs embedded) -> two read-only system slot images
@@ -24,6 +24,15 @@
 #     images. The slot is built twice and compared (--skip-repro-check turns that off).
 #   - the SBOM (SPDX 2.3 JSON) is OUT/provenance/sbom.spdx.json.
 #
+# Step 32 (--target vm|pc, default vm): vm is the virtio-only image above. pc uses
+# image/kernel/x86_64-pc.config (the VM config plus NVMe/SATA/USB/NIC/Wi-Fi/KMS drivers, all
+# built in, no modules) and carries the linux-firmware blobs listed in image/firmware/MANIFEST
+# (pinned tag + sha256, fetched by image/firmware/fetch.sh): xz-compressed in /lib/firmware of
+# the initramfs (built-in drivers probe before the slot is mounted) and of the system slot
+# (later loads). Their licences go in /usr/share/licenses/linux-firmware and the SBOM. The
+# kernel console is tty0 + ttyS0 (userland logs stay on the serial line); the ESP is sized to
+# the UKI. The same UKI, A/B, dm-verity, LUKS2, manifest and Secure Boot path as vm.
+#
 # Outputs in --out (default os/target/image):
 #   bzImage  allternit-os.efi (UKI, if ukify)  allternit-os.img (GPT disk, if UKI)  boot.env
 #   boot.env says MODE=uki or MODE=direct; qemu-boot.sh reads it. The UKI path needs
@@ -31,6 +40,7 @@
 #   (cryptsetup open fills the LUKS2 state through dm-crypt); it never writes an
 #   unverified slot or an unencrypted state partition.
 #
+#   --target T      vm (default) or pc
 #   --out DIR       output directory
 #   --kernel-src D  use an existing, already-extracted kernel source tree (skips download)
 #   --llama FILE    static llama-server (os/model/build-llama.sh). With --model it is put in the image.
@@ -49,6 +59,7 @@ REPRO_CHECK=1
 LLAMA=""
 MODEL=""
 TARGET=x86_64-unknown-linux-musl
+IMG_TARGET=vm
 CMDLINE="console=ttyS0,115200 rdinit=/sbin/init panic=-1 loglevel=4"
 
 die() { echo "mkimage: $*" >&2; exit 1; }
@@ -57,6 +68,7 @@ say() { echo "mkimage: $*"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a value"; OUT=$2; shift 2 ;;
+    --target) [ $# -ge 2 ] || die "--target needs vm or pc"; IMG_TARGET=$2; shift 2 ;;
     --kernel-src) [ $# -ge 2 ] || die "--kernel-src needs a value"; KSRC=$2; shift 2 ;;
     --llama) [ $# -ge 2 ] || die "--llama needs a value"; LLAMA=$2; shift 2 ;;
     --model) [ $# -ge 2 ] || die "--model needs a value"; MODEL=$2; shift 2 ;;
@@ -67,6 +79,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+case "$IMG_TARGET" in vm|pc) ;; *) die "--target takes vm or pc, got $IMG_TARGET" ;; esac
+# pc: tty0 (screen) and ttyS0 (serial); the last console= is /dev/console, so PID 1 and the
+# services log to the serial line when there is one, else to the screen.
+[ "$IMG_TARGET" != pc ] || CMDLINE="console=tty0 console=ttyS0,115200 rdinit=/sbin/init panic=-1 loglevel=4"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 [ -z "$KSRC" ] || KSRC=$(cd "$KSRC" && pwd)
@@ -162,6 +178,17 @@ fi
 chmod 755 "$ROOT/sbin/init" "$ROOT/usr/lib/allternit/authority" "$ROOT/usr/lib/allternit/shell" \
   "$ROOT/usr/lib/allternit/allternit-update"
 
+# Step 32: PC firmware. Pinned linux-firmware blobs, xz-compressed, in /lib/firmware of the
+# initramfs: the built-in drivers (iwlwifi, mt7921e, amdgpu, i915, r8169) probe before PID 1
+# mounts the slot, so a copy only in the slot would be missed. The slot gets the same tree.
+FW="$OUT/firmware"
+if [ "$IMG_TARGET" = pc ]; then
+  sh "$OS_DIR/image/firmware/fetch.sh" "$FW" "$OUT/cache" || die "firmware fetch failed"
+  mkdir -p "$ROOT/lib" "$ROOT/usr/share/licenses"
+  cp -R "$FW/lib-firmware" "$ROOT/lib/firmware"
+  cp -R "$FW/licenses" "$ROOT/usr/share/licenses/linux-firmware"
+fi
+
 # Stable mtimes: gen_init_cpio copies them into the archive.
 find "$ROOT" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} + 2>/dev/null || true
 
@@ -192,6 +219,18 @@ file /etc/allternit/TEST-ONLY-state.key $ROOT/etc/allternit/TEST-ONLY-state.key 
 LIST_EOF
 [ ! -f "$ROOT/etc/allternit/update-pub.key" ] || \
   echo "file /etc/allternit/update-pub.key $ROOT/etc/allternit/update-pub.key 444 0 0" >> "$LIST"
+if [ "$IMG_TARGET" = pc ]; then
+  # dirs before their files (sorted, so parents come first), then the blobs and licences.
+  {
+    echo "dir /lib 755 0 0"
+    echo "dir /usr/share 755 0 0"
+    echo "dir /usr/share/licenses 755 0 0"
+    for top in lib/firmware usr/share/licenses/linux-firmware; do
+      ( cd "$ROOT" && find "$top" -type d | LC_ALL=C sort ) | while IFS= read -r d; do echo "dir /$d 755 0 0"; done
+      ( cd "$ROOT" && find "$top" -type f | LC_ALL=C sort ) | while IFS= read -r f; do echo "file /$f $ROOT/$f 644 0 0"; done
+    done
+  } >> "$LIST"
+fi
 # llama-server goes in only when the image carries a model (step 29).
 if [ -n "$LLAMA" ]; then
   chmod 755 "$ROOT/usr/lib/allternit/llama-server"
@@ -227,9 +266,17 @@ else
 
   mkdir -p "$KB"
   FRAG="$OUT/kernel.frag"
-  cp "$OS_DIR/image/kernel/x86_64-vm.config" "$FRAG"
+  KCONF_SRC="$OS_DIR/image/kernel/x86_64-$IMG_TARGET.config"
+  if [ "$IMG_TARGET" = pc ]; then
+    # The PC config is the VM config plus drivers: no VM line may be dropped or changed,
+    # except VT (the PC needs the console on).
+    grep '^CONFIG_' "$OS_DIR/image/kernel/x86_64-vm.config" | grep -v '^CONFIG_VT=' | while IFS= read -r l; do
+      grep -qxF "$l" "$KCONF_SRC" || { echo "mkimage: x86_64-pc.config lacks the VM line: $l" >&2; exit 1; }
+    done || exit 1
+  fi
+  cp "$KCONF_SRC" "$FRAG"
   echo "CONFIG_INITRAMFS_SOURCE=\"$LIST\"" >> "$FRAG"
-  say "configuring kernel (tinyconfig + x86_64-vm.config)"
+  say "configuring kernel (tinyconfig + x86_64-$IMG_TARGET.config)"
   make -C "$KSRC" O="$KB" ARCH=x86_64 tinyconfig >/dev/null
   "$KSRC/scripts/kconfig/merge_config.sh" -m -O "$KB" "$KB/.config" "$FRAG" >/dev/null
   make -C "$KSRC" O="$KB" ARCH=x86_64 olddefconfig >/dev/null
@@ -240,6 +287,13 @@ else
              FAT_FS VFAT_FS NLS_CODEPAGE_437 NLS_ISO8859_1; do
     grep -q "^CONFIG_$opt=y" "$KB/.config" || die "CONFIG_$opt is not =y after merge (missing dependency?)"
   done
+  if [ "$IMG_TARGET" = pc ]; then
+    for opt in VT FRAMEBUFFER_CONSOLE DRM DRM_SIMPLEDRM DRM_I915 DRM_AMDGPU BLK_DEV_NVME ATA SATA_AHCI BLK_DEV_SD \
+               USB USB_XHCI_PCI USB_EHCI_PCI USB_STORAGE USB_HID INPUT_EVDEV E1000E IGB R8169 \
+               CFG80211 MAC80211 IWLWIFI IWLMVM MT7921E FW_LOADER_COMPRESS_XZ; do
+      grep -q "^CONFIG_$opt=y" "$KB/.config" || die "CONFIG_$opt is not =y after merge (missing dependency?)"
+    done
+  fi
   grep -q '^CONFIG_MODULES=y' "$KB/.config" && die "modules must be off"
   say "building kernel with $JOBS jobs"
   make -C "$KSRC" O="$KB" ARCH=x86_64 -j"$JOBS" bzImage
@@ -278,6 +332,13 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   cp -p "$ROOT/etc/allternit/init.toml" "$SEED/etc/allternit/init.toml"
   cp "$KEYS/public/update-pub.key" "$SEED/etc/allternit/update-pub.key"
   chmod 444 "$SEED/etc/allternit/update-pub.key"
+  if [ "$IMG_TARGET" = pc ]; then
+    mkdir -p "$SEED/lib" "$SEED/usr/share/licenses"
+    cp -R "$FW/lib-firmware" "$SEED/lib/firmware"
+    cp -R "$FW/licenses" "$SEED/usr/share/licenses/linux-firmware"
+    find "$SEED/lib" "$SEED/usr/share" -type d -exec chmod 755 {} +
+    find "$SEED/lib" "$SEED/usr/share" -type f -exec chmod 644 {} +
+  fi
   # Same mtimes everywhere (mke2fs -d copies them), so the image does not depend on the clock.
   find "$SEED" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} + 2>/dev/null || true
   chmod 755 "$SEED" "$SEED/usr" "$SEED/usr/bin" "$SEED/usr/lib" "$SEED/usr/lib/allternit" "$SEED/etc" "$SEED/etc/allternit"
@@ -377,8 +438,10 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   # 4c2. provenance: SBOM + one signed manifest per slot (image sha256, verity root, UKI and
   # SBOM sha256, version). Public files only go in OUT/provenance (that folder is uploaded).
   VERSION_ID="os-$(printf '%s' "$COMMIT" | cut -c1-12)"
+  FW_ARG=""; [ "$IMG_TARGET" != pc ] || FW_ARG="--firmware $FW"
   sh "$PROV_SH" sbom "$PROV_OUT/sbom.spdx.json" --os-dir "$OS_DIR" --bin-dir "$BIN" \
-    ${KB:+--kconfig "$KB/.config"} ${LLAMA:+--llama "$LLAMA"} ${MODEL:+--model "$MODEL"}
+    --target "$IMG_TARGET" ${KB:+--kconfig "$KB/.config"} ${LLAMA:+--llama "$LLAMA"} ${MODEL:+--model "$MODEL"} \
+    $FW_ARG
   sh "$PROV_SH" manifest "$PROV_OUT" "$KEYS/update-sign.pem" "$VERSION_ID" "$OUT/allternit-os.efi" \
     "$PROV_OUT/sbom.spdx.json" "$VERITY_a" "$SHA_a" "$BYTES_a" "$VERITY_b" "$SHA_b" "$BYTES_b"
   cp "$KEYS/public/"* "$PROV_OUT/"
@@ -389,6 +452,9 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   # 4d. GPT disk. The GGUF lives on the state partition (plan step 29), so the disk grows with
   # the model. The state partition is LUKS2: a 16 MiB header, then the encrypted ext4.
   ESP_MB=64; LUKS_MB=16; STATE_DATA_MB=64
+  # pc: the UKI carries the firmware, so the ESP is its size plus room for A/B state and a
+  # second UKI during an update.
+  [ "$IMG_TARGET" != pc ] || ESP_MB=$(( $(wc -c < "$OUT/allternit-os.efi") / 1048576 * 2 + 64 ))
   if [ -n "$MODEL" ]; then
     MODEL_MB=$(( ($(wc -c < "$MODEL") / 1048576) + 1 ))
     STATE_DATA_MB=$((MODEL_MB + 128))
@@ -465,15 +531,15 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   rm -f "$PLAIN_IMG"
   dd if="$STATE_IMG" of="$DISK" bs=1M seek="$STATE_OFF_MB" conv=notrunc 2>/dev/null
   rm -f "$ESP_IMG" "$STATE_IMG"
-  printf 'MODE=uki\nDISK=%s\nSLOT_MB=%s\nESP_OFF_MB=%s\nSYS_A_OFF_MB=%s\nSYS_B_OFF_MB=%s\nSTATE_OFF_MB=%s\nROOT_HASH=%s\nROOT_HASH_B=%s\nUPDATE_BIN=%s\nSECUREBOOT=1\nKEYS_DIR=%s\nPROV_DIR=%s\nPROV_SH=%s\nUKI_UNSIGNED=%s\n' \
-    "$OUT/allternit-os.img" "$SLOT_MB" "$ESP_OFF_MB" "$SYS_A_OFF_MB" "$SYS_B_OFF_MB" "$STATE_OFF_MB" \
+  printf 'TARGET=%s\nMODE=uki\nDISK=%s\nSLOT_MB=%s\nESP_OFF_MB=%s\nSYS_A_OFF_MB=%s\nSYS_B_OFF_MB=%s\nSTATE_OFF_MB=%s\nROOT_HASH=%s\nROOT_HASH_B=%s\nUPDATE_BIN=%s\nSECUREBOOT=1\nKEYS_DIR=%s\nPROV_DIR=%s\nPROV_SH=%s\nUKI_UNSIGNED=%s\n' \
+    "$IMG_TARGET" "$OUT/allternit-os.img" "$SLOT_MB" "$ESP_OFF_MB" "$SYS_A_OFF_MB" "$SYS_B_OFF_MB" "$STATE_OFF_MB" \
     "$ROOT_a" "$ROOT_b" "$BIN/allternit-update" "$KEYS" "$PROV_OUT" "$PROV_SH" "$OUT/allternit-os-unsigned.efi" > "$OUT/boot.env"
   say "UKI path: wrote $OUT/allternit-os.img"
 else
   say "ukify/sgdisk/mkfs.vfat/mcopy not all available: FALLBACK, no UKI and no disk image."
   say "no system slot either: init runs the userland from the initramfs (no dm-verity)."
   say "the bzImage (initramfs embedded) is booted directly with: -kernel bzImage -append '$CMDLINE'"
-  printf 'MODE=direct\nKERNEL=%s\nCMDLINE=%s\n' "$OUT/bzImage" "$CMDLINE" > "$OUT/boot.env"
+  printf 'TARGET=%s\nMODE=direct\nKERNEL=%s\nCMDLINE=%s\n' "$IMG_TARGET" "$OUT/bzImage" "$CMDLINE" > "$OUT/boot.env"
 fi
 cat "$OUT/boot.env"
 say "done: $OUT"
