@@ -15,7 +15,7 @@
 //!
 //! Portions adapted from Reason Network (reason-machines/reason-network), Apache-2.0. Copyright 2026 Reason Machines, Inc.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -61,9 +61,25 @@ pub struct LiveSession {
     pub repo: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
-    /// `busy | idle | offline`.
+    /// `busy | idle | blocked | offline`. `blocked`: the agent is waiting on a person (a permission
+    /// prompt or a question), as the pane engine detects it. Clients that only know `busy | idle`
+    /// show the word as it is.
     pub status: String,
     pub since: String,
+    /// When `status` turned `blocked` (RFC 3339). Left out unless the session is blocked; cleared
+    /// as soon as it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_since: Option<String>,
+    /// The Allternit terminal this session's pane is (start-anywhere's terminal id). Clients open it
+    /// with the terminal thread view and type into it with `POST /terminal/<terminalId>/input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    /// How a client steers it: `terminal` (type into `terminalId` with the terminal input route),
+    /// `delivery` (`POST /api/factory/send {to: address, text}`: the delivery ladder, with its rate
+    /// limit and envelope) or `none` (nothing reaches it; open it on the computer). Empty from an
+    /// older runtime: treat as unknown and hide steer controls.
+    #[serde(default)]
+    pub steer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doing: Option<String>,
     /// `push | turn | pull` (C1).
@@ -402,7 +418,8 @@ pub fn doing(harness: &str, session: &str, transcript: Option<&Path>) -> Option<
 fn norm_status(s: &str) -> Option<&'static str> {
     match s {
         "busy" | "working" | "running" | "thinking" => Some("busy"),
-        "idle" | "waiting" | "done" | "blocked" | "ready" => Some("idle"),
+        "blocked" => Some("blocked"),
+        "idle" | "waiting" | "done" | "ready" => Some("idle"),
         _ => None,
     }
 }
@@ -693,11 +710,24 @@ pub fn discover_full_paths(person: &str, panes: Option<Vec<super::backend::LiveP
 }
 
 fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, full_paths: bool) -> Vec<LiveSession> {
+    // Terminal ids come from the same pane engine as the panes; injected panes (tests) bring none.
+    let (panes, terminals) = match panes {
+        Some(p) => (p, BTreeMap::new()),
+        None => match super::backend::backend() {
+            Ok(b) => (b.list().unwrap_or_default(), b.terminal_ids().unwrap_or_default()),
+            Err(_) => (Vec::new(), BTreeMap::new()),
+        },
+    };
+    discover_from(person, panes, &terminals, full_paths)
+}
+
+/// [`discover`] over a given pane list and pane id → terminal id map.
+fn discover_from(person: &str, panes: Vec<super::backend::LivePane>, terminals: &BTreeMap<String, String>, full_paths: bool) -> Vec<LiveSession> {
     let share_paths = full_paths || matches!(std::env::var("ALLTERNIT_SHARE_PATHS").as_deref(), Ok("1" | "true"));
     let (machine_id, machine_name) = machine();
-    let panes = panes.unwrap_or_else(|| super::backend::backend().and_then(|b| b.list()).unwrap_or_default());
     let hooks = read_hooks();
     let now = Utc::now();
+    let bots = pane_bots();
     let mut found: Vec<Found> = Vec::new();
     // The process table (read-only), for holders: which app each process runs under, its tty and start time.
     let rows = super::proc_scan::snapshot();
@@ -801,8 +831,16 @@ fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, ful
         };
         let (repo, branch) = git_info(&f.cwd);
         let m = moves(&f, pane.map(|p| p.pane_id.as_str()), status, unresolved.contains(&f.harness));
+        let terminal_id = pane.and_then(|p| terminals.get(&p.pane_id)).cloned();
+        let mut holders = m.holders;
+        for h in holders.iter_mut().filter(|h| h.pane_id.is_some()) {
+            h.terminal_id = terminal_id.clone();
+        }
         out.push(LiveSession {
-            holders: m.holders,
+            steer: steer_for(terminal_id.as_deref(), status, pane.map(|p| p.session.as_str())).into(),
+            bot_id: pane.and_then(|p| bots.get(&p.session).cloned()),
+            terminal_id,
+            holders,
             carried_flags: m.carried_flags,
             can_copy: m.can_copy,
             move_command: m.move_command,
@@ -831,7 +869,12 @@ fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, ful
         let cwd = p.cwd.clone().unwrap_or_default();
         let harness = pane_harness(&p.session);
         let (repo, branch) = git_info(&cwd);
+        let status = p.agent_status.as_deref().and_then(norm_status).unwrap_or("idle");
+        let terminal_id = terminals.get(&p.pane_id).cloned();
         out.push(LiveSession {
+            steer: steer_for(terminal_id.as_deref(), status, Some(p.session.as_str())).into(),
+            bot_id: bots.get(&p.session).cloned(),
+            terminal_id,
             name: format!("{}-{harness}", base_name(&cwd)),
             harness: harness.into(),
             session_id: p.session.clone(),
@@ -839,7 +882,7 @@ fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, ful
             cwd: if share_paths { cwd } else { base_name(&cwd) },
             repo,
             branch,
-            status: p.agent_status.as_deref().and_then(norm_status).unwrap_or("idle").into(),
+            status: status.into(),
             since: now.to_rfc3339(),
             tier: "push".into(),
             // Already inside Allternit; the pane label is not a resumable session id.
@@ -864,7 +907,78 @@ fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, ful
         s.machine = machine_id.clone();
         s.machine_name = machine_name.clone();
     }
+    {
+        let mut since = blocked_log().lock().unwrap_or_else(|e| e.into_inner());
+        for s in &mut out {
+            s.blocked_since = stamp_blocked(&mut since, &blocked_key(s), &s.status, now);
+        }
+    }
     out
+}
+
+/// Pane session label -> bot id (`local:<slug>`), for panes the Factory registry says a bot owns.
+/// `agents down <slug>` stops such a pane; clients read it from `botId`.
+fn pane_bots() -> HashMap<String, String> {
+    match super::registry::Registry::open_default().load() {
+        Ok(file) => bots_of(&file),
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn bots_of(file: &super::registry::RegistryFile) -> HashMap<String, String> {
+    file.sessions
+        .iter()
+        .filter_map(|(session, e)| e.bot.as_ref().map(|b| (session.clone(), b.id.clone())))
+        .collect()
+}
+
+/// A pane a person opened and started an agent in (not an `ao-` workspace): the pane engine
+/// backend lists it as session `ao-pane-<paneId>`. It has no Factory agent record, so the
+/// delivery ladder's pane path cannot reach it.
+const ADOPTED_PANE_PREFIX: &str = "ao-pane-";
+
+/// The `steer` field: the terminal route when the pane is an Allternit terminal, else the delivery
+/// ladder, else nothing. `pane_session` is the pane's session label when the session sits in a pane.
+fn steer_for(terminal_id: Option<&str>, status: &str, pane_session: Option<&str>) -> &'static str {
+    if terminal_id.is_some() {
+        "terminal"
+    } else if status == "offline" || pane_session.is_some_and(|s| s.starts_with(ADOPTED_PANE_PREFIX)) {
+        "none"
+    } else {
+        "delivery"
+    }
+}
+
+/// When each blocked session turned blocked, by [`blocked_key`], across discovery runs.
+fn blocked_log() -> &'static Mutex<HashMap<String, String>> {
+    static LOG: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    LOG.get_or_init(Default::default)
+}
+
+/// The pane when there is one (a pane outlives the session id it shows), else harness + session id.
+fn blocked_key(s: &LiveSession) -> String {
+    match &s.pane_id {
+        Some(p) => format!("pane:{p}"),
+        None if !s.session_id.is_empty() => format!("{}:{}", s.harness, s.session_id),
+        None => format!("addr:{}", s.address),
+    }
+}
+
+/// Most entries kept. A run that would pass it starts the log over (stamps restart); entries
+/// leave as soon as their session is seen not blocked, so this only bounds sessions that vanished while blocked.
+const MAX_BLOCKED_LOG: usize = 512;
+
+/// `blockedSince` for one session: kept from the first run that saw it blocked, cleared by the
+/// first run that sees it any other way.
+fn stamp_blocked(log: &mut HashMap<String, String>, key: &str, status: &str, now: DateTime<Utc>) -> Option<String> {
+    if status != "blocked" {
+        log.remove(key);
+        return None;
+    }
+    if log.len() >= MAX_BLOCKED_LOG && !log.contains_key(key) {
+        log.clear();
+    }
+    Some(log.entry(key.to_string()).or_insert_with(|| now.to_rfc3339()).clone())
 }
 
 // ---------------------------------------------------------------- route
@@ -941,6 +1055,89 @@ mod tests {
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi" && s.status == "busy" && s.tier == "push"));
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi-2" && s.status == "idle"));
         assert_eq!(repo_slug("git@github.com:Allternit/allternit-platform.git").as_deref(), Some("Allternit/allternit-platform"));
+    }
+
+    fn live_pane(session: &str, id: &str, cwd: &str, status: &str) -> super::super::backend::LivePane {
+        super::super::backend::LivePane { session: session.into(), pane_id: id.into(), cwd: Some(cwd.into()), agent_status: Some(status.into()) }
+    }
+
+    #[test]
+    fn registered_bot_panes_get_bot_id_and_others_do_not() {
+        let mut file = super::super::registry::RegistryFile::default();
+        file.sessions.insert(
+            "ao-lead-bonsai-lead".into(),
+            super::super::registry::Entry {
+                bot: Some(super::super::registry::BotRef::placeholder("lead-bonsai-lead")),
+                ..Default::default()
+            },
+        );
+        let bots = bots_of(&file);
+        assert_eq!(bots.get("ao-lead-bonsai-lead").map(String::as_str), Some("local:lead-bonsai-lead"));
+        assert_eq!(bots.get("ao-pane-w3:p1"), None);
+    }
+
+    #[test]
+    fn blocked_pane_stays_blocked_with_blocked_since() {
+        let panes = vec![live_pane("ao-blk", "p-blk-1", "/nonexistent/blk/app", "blocked"), live_pane("ao-wrk", "p-blk-2", "/nonexistent/blk/other", "working")];
+        let list = discover_from("eoj", panes, &BTreeMap::new(), false);
+        let blocked = list.iter().find(|s| s.pane_id.as_deref() == Some("p-blk-1")).unwrap();
+        assert_eq!(blocked.status, "blocked");
+        let since = blocked.blocked_since.clone().expect("blockedSince set while blocked");
+        assert!(DateTime::parse_from_rfc3339(&since).is_ok());
+        let working = list.iter().find(|s| s.pane_id.as_deref() == Some("p-blk-2")).unwrap();
+        assert_eq!((working.status.as_str(), working.blocked_since.as_deref()), ("busy", None));
+        // The next run keeps the first stamp; once it is idle the stamp goes.
+        let again = discover_from("eoj", vec![live_pane("ao-blk", "p-blk-1", "/nonexistent/blk/app", "blocked")], &BTreeMap::new(), false);
+        assert_eq!(again.iter().find(|s| s.pane_id.as_deref() == Some("p-blk-1")).unwrap().blocked_since.as_deref(), Some(since.as_str()));
+        let idle = discover_from("eoj", vec![live_pane("ao-blk", "p-blk-1", "/nonexistent/blk/app", "idle")], &BTreeMap::new(), false);
+        let row = idle.iter().find(|s| s.pane_id.as_deref() == Some("p-blk-1")).unwrap();
+        assert_eq!((row.status.as_str(), row.blocked_since.as_deref()), ("idle", None));
+    }
+
+    #[test]
+    fn blocked_since_is_set_on_block_and_cleared_otherwise() {
+        let mut log = HashMap::new();
+        let t0 = Utc.with_ymd_and_hms(2026, 11, 27, 9, 0, 0).unwrap();
+        let t1 = t0 + chrono::Duration::minutes(5);
+        assert_eq!(stamp_blocked(&mut log, "pane:p1", "blocked", t0), Some(t0.to_rfc3339()));
+        assert_eq!(stamp_blocked(&mut log, "pane:p1", "blocked", t1), Some(t0.to_rfc3339()));
+        assert_eq!(stamp_blocked(&mut log, "pane:p1", "busy", t1), None);
+        assert_eq!(stamp_blocked(&mut log, "pane:p1", "blocked", t1), Some(t1.to_rfc3339()));
+        assert_eq!(stamp_blocked(&mut log, "pane:p1", "idle", t1), None);
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn pane_steer_uses_the_terminal_route_when_the_pane_is_a_terminal() {
+        let terminals = BTreeMap::from([("p-st-1".to_string(), "term_7c1e9a40".to_string())]);
+        let panes = vec![
+            live_pane("ao-pane-p-st-1", "p-st-1", "/nonexistent/st/a", "blocked"),
+            live_pane("ao-pane-p-st-2", "p-st-2", "/nonexistent/st/b", "idle"),
+            live_pane("ao-build", "p-st-3", "/nonexistent/st/c", "idle"),
+        ];
+        let list = discover_from("eoj", panes, &terminals, false);
+        let row = |id: &str| list.iter().find(|s| s.pane_id.as_deref() == Some(id)).unwrap();
+        assert_eq!((row("p-st-1").steer.as_str(), row("p-st-1").terminal_id.as_deref()), ("terminal", Some("term_7c1e9a40")));
+        // A pane someone opened, not a terminal: nothing reaches it from another device.
+        assert_eq!((row("p-st-2").steer.as_str(), row("p-st-2").terminal_id.as_deref()), ("none", None));
+        // A Factory agent pane: the delivery ladder (`POST /api/factory/send`).
+        assert_eq!(row("p-st-3").steer, "delivery");
+        assert_eq!(steer_for(None, "offline", None), "none");
+    }
+
+    #[test]
+    fn contract_fixture_reads_and_round_trips() {
+        let raw = include_str!("../../../../docs/contracts/live-sessions/session.pane.blocked.json");
+        let s: LiveSession = serde_json::from_str(raw).unwrap();
+        assert_eq!((s.status.as_str(), s.steer.as_str(), s.terminal_id.as_deref()), ("blocked", "terminal", Some("term_7c1e9a40")));
+        assert!(s.blocked_since.is_some());
+        let back = serde_json::to_value(&s).unwrap();
+        for key in ["terminalId", "steer", "blockedSince"] {
+            assert!(back.get(key).is_some(), "{key} serialized");
+        }
+        // An older runtime's row (no new fields) still reads.
+        let old: LiveSession = serde_json::from_str(include_str!("../../../../docs/contracts/live-sessions/session.pane.legacy.json")).unwrap();
+        assert_eq!((old.steer.as_str(), old.terminal_id, old.blocked_since), ("", None, None));
     }
 
     fn held(harness: &str, id: &str, pid: u32, app: &str, since: &str, argv: &[&str]) -> Found {

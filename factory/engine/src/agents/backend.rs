@@ -94,6 +94,12 @@ pub trait PaneBackend: Send + Sync {
     fn input(&self, session: &str, _text: &str, _keys: &[String]) -> Result<()> {
         Err(anyhow::anyhow!("this pane engine cannot take input ({session})"))
     }
+    /// Pane id → Allternit terminal id, for the panes that are Allternit terminals (the id
+    /// `/terminal/<id>/input` and the terminal thread view take). Live sessions report it as
+    /// `terminalId` so clients steer the pane through the terminal route. Default: none known.
+    fn terminal_ids(&self) -> Result<BTreeMap<String, String>> {
+        Ok(BTreeMap::new())
+    }
     /// The session's queued messages, oldest first (see [`PaneBackend::send`]).
     fn mailbox(&self, _root: &std::path::Path, session: &str) -> Result<Vec<Queued>> {
         Err(anyhow::anyhow!("this pane engine has no mailbox ({session})"))
