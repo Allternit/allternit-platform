@@ -19,14 +19,13 @@ xcodegen generate
 xcodebuild -scheme Allternit -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```
 
-The first time you build, copy the secrets template and add your Clerk publishable key:
+The first time you build, copy the secrets template. It already holds the production Clerk publishable key (client-public by design), so sign-in works without edits:
 
 ```bash
 cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
-# Edit Config/Secrets.xcconfig and set CLERK_PUBLISHABLE_KEY
 ```
 
-`Config/Secrets.xcconfig` is gitignored so the key is never committed.
+`Config/Secrets.xcconfig` is gitignored. Change the key in it only to use your own Clerk instance. A build whose key is still the old `pk_test_your_key_here` placeholder has no Sign in button (AppConfig treats it as no key).
 
 The vendored binaries `Frameworks/Mesh.xcframework`, `Frameworks/libgit2.xcframework`, `Frameworks/SherpaOnnxC.xcframework` and `Packages/OnDeviceLLM/Frameworks/llama.xcframework` aren't in git either; their build scripts are listed in the repo `.gitignore`. In a new worktree, symlink them and copy `Secrets.xcconfig` from a checkout that already has them. Without them, `xcodebuild` fails with "There is no XCFramework found":
 
