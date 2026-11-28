@@ -10,6 +10,7 @@ import btw from './commands/btw/index.js'
 import goodClaude from './commands/good-claude/index.js'
 import issue from './commands/issue/index.js'
 import feedback from './commands/feedback/index.js'
+import testcase from './commands/testcase/index.js'
 import clear from './commands/clear/index.js'
 import color from './commands/color/index.js'
 import commit from './commands/commit.js'
@@ -414,6 +415,7 @@ const COMMANDS = memoize((): Command[] => [
   timestamps,
   transcript,
   feedback,
+  testcase,
   review,
   ultrareview,
   rewind,
@@ -732,6 +734,7 @@ export const REMOTE_SAFE_COMMANDS: Set<Command> = new Set([
   copy, // Copy last message
   btw, // Quick note
   feedback, // Send feedback
+  testcase, // Save this chat as a test case
   plan, // Plan mode toggle
   keybindings, // Keybinding management
   statusline, // Status line toggle
