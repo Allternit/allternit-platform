@@ -46,6 +46,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/v1/kernel/approvals/redeem", post(redeem))
         .route("/api/v1/kernel/receipts", get(list_receipts))
         .route("/api/v1/kernel/receipts/verify", get(verify_receipts))
+        .route("/api/v1/kernel/leases", get(super::leases::list_handler))
+        .route("/api/v1/kernel/secrets/use", post(super::secrets::use_handler))
+        .route("/api/v1/kernel/budget/reserve", post(super::budget::reserve_handler))
+        .route("/api/v1/kernel/budget/commit", post(super::budget::commit_handler))
+        .route("/api/v1/kernel/budget/release", post(super::budget::release_handler))
 }
 
 /// Headers only machine callers send (the server sets them when it hands work to gizzi or an
@@ -88,7 +93,7 @@ pub(crate) fn machine_marker(headers: &HeaderMap, api_credential: bool, user_id:
 }
 
 /// The transport caller for this request. `principal` is always the authenticated account.
-async fn caller_for(state: &AppState, headers: &HeaderMap, user: &AuthUser, api_credential: bool) -> Caller {
+pub(super) async fn caller_for(state: &AppState, headers: &HeaderMap, user: &AuthUser, api_credential: bool) -> Caller {
     caller_and_proof(state, headers, user, api_credential).await.0
 }
 
@@ -138,17 +143,17 @@ fn status_for(code: ErrorCode) -> StatusCode {
     }
 }
 
-fn error_response(e: AuthorityError) -> Response {
+pub(super) fn error_response(e: AuthorityError) -> Response {
     (status_for(e.code), Json(json!({ "ok": false, "error": e }))).into_response()
 }
 
-fn parse<T: DeserializeOwned>(body: Value) -> Result<T, Response> {
+pub(super) fn parse<T: DeserializeOwned>(body: Value) -> Result<T, Response> {
     serde_json::from_value(body)
         .map_err(|e| error_response(AuthorityError::without_receipt(ErrorCode::BadRequest, format!("invalid body: {e}"))))
 }
 
 /// Load the signer, then run `f` on a blocking thread with a fresh [`SqlAuthority`].
-async fn with_kernel<T, F>(state: &AppState, tenant: Option<String>, f: F) -> Response
+pub(super) async fn with_kernel<T, F>(state: &AppState, tenant: Option<String>, f: F) -> Response
 where
     T: serde::Serialize + Send + 'static,
     F: FnOnce(SqlAuthority) -> Result<T, AuthorityError> + Send + 'static,

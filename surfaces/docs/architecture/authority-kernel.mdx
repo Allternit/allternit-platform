@@ -118,6 +118,8 @@ Hosts are normalised (`https://API.GitHub.com:443/x` is `api.github.com`). Known
 
 Computer `use_credential` follows the same rule. `check` classifies it as `secret_new_host` for a new (credential, domain) pair and `read` for a known one. After an allowed check, `computer_v2::execute_v2` records the pair, but only when that check redeemed a person's token for the same action.
 
+The same call is reachable over HTTP for callers outside the API process, such as Gizzi's shell and connector runtimes: `POST /api/v1/kernel/secrets/use` with a `SecretUseV1` body. Run and service callers only; a person's session is refused. The answer holds `use_id`, `bound`, `redaction_id` and `receipt_id`, never the value. Handles resolve as `vault:<name>` from the account's credential vault. A new host answers `approval_required` with the receipt id and an open request, and the retry carries `approval_token`.
+
 ### The redactor
 
 One redactor masks every tool result in allternit-api before it is returned: `execute_tool_internal` (HTTP, MCP `tools/call`, routines), `dispatch_call` (attached MCP servers), MCP `tools/call` as a whole, the computer toolset, and ACI run frames (`scrub_frame`, which it replaced). It masks, in order:
@@ -140,6 +142,38 @@ Gizzi Code applies the same rules (`shared/util/secret-redactor.ts`, a port test
 ### Test vectors
 
 `spec/Contracts/os/v1/conformance/redaction-vectors.json` holds the shared cases. Each case lists an input, the attached values, the strings that must disappear and the strings that must stay. The Rust tests (`authority::redact`) and the TS tests (`test/util/secret-redactor.test.ts`) both read it. A rule change goes into both redactors, with a vector.
+
+## Budget
+
+`budget.reserve` takes an amount before a run spends it, and `budget.commit` records what it actually spent. The limit is the one that already exists: a bot's monthly limit, set in the bot's spend settings (`agents.config.spendLimit.monthlyUsd`). The kernel adds no second limits store. Its own table, `kernel_budget_reservations` (migration V310), holds only the reserve and commit ledger.
+
+| Route | Does |
+|---|---|
+| `POST /api/v1/kernel/budget/reserve` | Body is a `BudgetReservationV1` without the server fields. Returns it with `status: "reserved"`. |
+| `POST /api/v1/kernel/budget/commit` | Body: `reservation_id`, `actual_amount`, `quantity`, `unit`, `idempotency_key`. Returns it with `status: "committed"`. |
+| `POST /api/v1/kernel/budget/release` | Body: `reservation_id`. Gives the whole reservation back. |
+
+- **Over the limit.** A reserve fails with `budget_exceeded` and a receipt when committed spend plus live reservations this month plus the new amount pass the limit. The refused call reserves nothing. A principal with no limit set, or a currency other than USD, has no limit to pass: the reservation is still recorded and receipted.
+- **Commit below the reservation.** The unused remainder is released at once and counts as free again. Commit above the reservation is allowed only if the extra still fits the limit; otherwise `budget_exceeded` and the reservation stays open.
+- **Retries.** A commit repeated with the same `idempotency_key` returns the same result. A second commit with another key is `conflict`. A reservation not committed by `expires_at` stops counting and is marked `expired`.
+- **Receipts.** Every reserve, commit, release and refusal writes a `budget` receipt before the change.
+- **Money.** Amounts are decimal strings with up to six decimals. A reservation is not a charge: sending an invoice or taking a payment is still the human-only `money` class, and `check` still needs a person's token for it.
+
+## Leases
+
+`computer_control_lease.rs` stays the store for who controls a computer (one controller, 120 second TTL, renewed by a heartbeat, a person can take over from an agent). The kernel shows each live control lease as a `LeaseV1` and runs `lease.acquire`, `lease.heartbeat` and `lease.release` on it.
+
+| Field | Value |
+|---|---|
+| `lease_id` | `ccl_<computer_id>` |
+| `scope` | `["computer:<computer_id>"]` |
+| `holder` | `user:<id>`, `agent:<id>`, `bot:<id>` or `session:<id>` |
+| `state_version` | always 0; the store keeps no version, so a heartbeat with another value is `conflict` |
+| `extensions["x-os-v1"]` | `kind: "computer_control"`, `expires_at`, `holder_label` |
+
+`GET /api/v1/kernel/leases` lists the live leases for your account: those on computers you own (directly or through a bot) and those you hold. It is read-only and writes no receipt. A person's session or a run of the same account may call it; service, API-key and MCP callers may not.
+
+Acquire needs `check_id` to name an `allow` `check` receipt of your account, else `denied`. A scope that is not a single `computer:<id>` is `bad_request`. A computer already leased is `conflict`. A person holds a lease as themselves, a run never holds as `user`. Compute leases (placement, vCPU, memory) are not in this view yet. The old fabric lease client (`fabric/os_client.rs`) stays behind its unset configuration until they are.
 
 ## The four depths
 
