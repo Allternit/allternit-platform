@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { KERNEL_KEY_SECRET, kernelSeedLine, loadOrCreateKernelSeed, type KernelKeyStore } from './kernel-key.js';
+import { KERNEL_KEY_SECRET, KernelKeyLostError, kernelKeyMarkerPath, kernelSeedLine, loadOrCreateKernelSeed, type KernelKeyStore } from './kernel-key.js';
 
 const SEED = 'ab'.repeat(32);
 
@@ -70,6 +70,22 @@ describe('kernel signing key in the OS keystore (CONTRACT.md 12.3)', () => {
     const result = loadOrCreateKernelSeed(memoryStore({ [KERNEL_KEY_SECRET]: SEED }), file);
     expect(result).toEqual({ seedHex: SEED, source: 'keystore' });
     expect(fs.readFileSync(file, 'utf8')).toBe(other);
+  });
+
+  it('a damaged entry after a seed was stored fails closed and mints no new seed', () => {
+    const file = legacyFile();
+    const marker = kernelKeyMarkerPath(path.dirname(path.dirname(file)));
+    const store = memoryStore();
+    const first = loadOrCreateKernelSeed(store, file, marker);
+    expect(first.source).toBe('generated');
+    expect(fs.existsSync(marker)).toBe(true);
+    expect(fs.readFileSync(marker, 'utf8')).not.toContain(first.seedHex);
+    delete store.data[KERNEL_KEY_SECRET]; // readSecret() returns null for a damaged entry
+    expect(() => loadOrCreateKernelSeed(store, file, marker)).toThrow(KernelKeyLostError);
+    expect(store.data[KERNEL_KEY_SECRET]).toBeUndefined();
+    // The normal path keeps working while the entry is intact.
+    store.data[KERNEL_KEY_SECRET] = first.seedHex;
+    expect(loadOrCreateKernelSeed(store, file, marker)).toEqual({ seedHex: first.seedHex, source: 'keystore' });
   });
 
   it('frames the stdin line, and sends an empty line when there is no seed', () => {

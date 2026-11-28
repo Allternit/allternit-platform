@@ -21,15 +21,16 @@
 use std::sync::Arc;
 
 use allternit_authority::{ApprovalRedeemBody, ApprovalRequestV1, AuthorityError, Caller, CallerKind, ErrorCode};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::approvals::{Decision, ResolveBody, SqlAuthority};
+use super::audit::{self, Scope};
 use super::{presence, tokens};
 use crate::auth::{AuthUser, INTERNAL_SERVICE_USER_ID};
 use crate::enterprise_auth::CredentialContext;
@@ -43,6 +44,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/v1/kernel/approvals/request", post(request))
         .route("/api/v1/kernel/approvals/resolve", post(resolve))
         .route("/api/v1/kernel/approvals/redeem", post(redeem))
+        .route("/api/v1/kernel/receipts", get(list_receipts))
+        .route("/api/v1/kernel/receipts/verify", get(verify_receipts))
 }
 
 /// Headers only machine callers send (the server sets them when it hands work to gizzi or an
@@ -145,7 +148,7 @@ fn parse<T: DeserializeOwned>(body: Value) -> Result<T, Response> {
 }
 
 /// Load the signer, then run `f` on a blocking thread with a fresh [`SqlAuthority`].
-async fn with_kernel<T, F>(state: &AppState, f: F) -> Response
+async fn with_kernel<T, F>(state: &AppState, tenant: Option<String>, f: F) -> Response
 where
     T: serde::Serialize + Send + 'static,
     F: FnOnce(SqlAuthority) -> Result<T, AuthorityError> + Send + 'static,
@@ -156,7 +159,7 @@ where
         Err(e) => return error_response(e),
     };
     let db = state.db.clone();
-    match tokio::task::spawn_blocking(move || f(SqlAuthority::new(db, signer))).await {
+    match tokio::task::spawn_blocking(move || f(SqlAuthority::new(db, signer).with_tenant(tenant))).await {
         Ok(Ok(body)) => (StatusCode::OK, Json(json!({ "ok": true, "body": body }))).into_response(),
         Ok(Err(e)) => error_response(e),
         Err(e) => error_response(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
@@ -176,7 +179,7 @@ async fn request(
         Err(r) => return r,
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
-    with_kernel(&state, move |k| k.request(&caller, body)).await
+    with_kernel(&state, user.tenant_id.clone(), move |k| k.request(&caller, body)).await
 }
 
 /// `approval.resolve`: HUMAN ONLY. A machine caller reaches the kernel as `run`/`service` and is
@@ -195,9 +198,9 @@ async fn resolve(
     let (caller, proof) = caller_and_proof(&state, &headers, &user, credential.is_some()).await;
     if caller.kind == CallerKind::Human && presence_missing(proof, &body, &headers, chrono::Utc::now().timestamp()) {
         tracing::info!("kernel approvals: Desktop approve without a user-presence proof, refused");
-        return with_kernel(&state, move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
+        return with_kernel(&state, user.tenant_id.clone(), move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
     }
-    with_kernel(&state, move |k| k.resolve(&caller, body)).await
+    with_kernel(&state, user.tenant_id.clone(), move |k| k.resolve(&caller, body)).await
 }
 
 /// `approval.redeem`: spend a token before the action runs.
@@ -213,7 +216,89 @@ async fn redeem(
         Err(r) => return r,
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
-    with_kernel(&state, move |k| k.redeem(&caller, body)).await
+    with_kernel(&state, user.tenant_id.clone(), move |k| k.redeem(&caller, body)).await
+}
+
+/// The caller's own chain. Reads need a person's session, the same check as resolve: a run,
+/// agent, bot or API key never reads or verifies the receipt log. Read-only, writes no receipt.
+async fn own_scope(
+    state: &AppState,
+    headers: &HeaderMap,
+    user: &AuthUser,
+    api_credential: bool,
+) -> Result<Scope, Response> {
+    let caller = caller_for(state, headers, user, api_credential).await;
+    if caller.kind != CallerKind::Human {
+        return Err(error_response(AuthorityError::without_receipt(
+            ErrorCode::ForbiddenCaller,
+            "only a person's session can read the receipt log",
+        )));
+    }
+    let tenant = user.tenant_id.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| audit::DEFAULT_TENANT.to_string());
+    Ok(Scope { principal: caller.principal, tenant })
+}
+
+#[derive(serde::Deserialize)]
+struct ListQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    /// Return rows older than this `idx` (paging, newest first).
+    #[serde(default)]
+    before: Option<i64>,
+}
+
+/// `GET /api/v1/kernel/receipts`: the caller's own receipts, newest first.
+async fn list_receipts(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<CredentialContext>>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    let scope = match own_scope(&state, &headers, &user, credential.is_some()).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let db = state.db.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| AuthorityError::kernel_unavailable(format!("receipt log: {e}")))?;
+        audit::list(&conn, &scope, q.limit.unwrap_or(100), q.before)
+    })
+    .await;
+    match out {
+        Ok(Ok(rows)) => (StatusCode::OK, Json(json!({ "ok": true, "body": { "receipts": rows } }))).into_response(),
+        Ok(Err(e)) => error_response(e),
+        Err(e) => error_response(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
+    }
+}
+
+/// `GET /api/v1/kernel/receipts/verify`: recompute every hash, link and signature of the
+/// caller's chain. Returns the first bad row, and how many rows were signed by a previous key
+/// (reported as such, not as tampering).
+async fn verify_receipts(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<CredentialContext>>,
+    headers: HeaderMap,
+) -> Response {
+    let scope = match own_scope(&state, &headers, &user, credential.is_some()).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let data_dir = state.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+    // No seed (Desktop keystore locked) is fine for verifying: old rows carry their own public key.
+    let current_kid = tokens::kernel_signer(&data_dir).ok().map(|s| s.kid().to_string());
+    let db = state.db.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().map_err(|e| AuthorityError::kernel_unavailable(format!("receipt log: {e}")))?;
+        audit::verify_chain(&conn, &scope, current_kid.as_deref())
+    })
+    .await;
+    match out {
+        Ok(Ok(report)) => (StatusCode::OK, Json(json!({ "ok": true, "body": report }))).into_response(),
+        Ok(Err(e)) => error_response(e),
+        Err(e) => error_response(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
+    }
 }
 
 #[cfg(test)]

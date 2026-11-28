@@ -25,7 +25,7 @@ import log from 'electron-log';
 import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
-import { KERNEL_KEY_STDIN_ENV, kernelSeedLine, legacyKernelKeyPath, loadOrCreateKernelSeed } from './kernel-key.js';
+import { KERNEL_KEY_SECRET, KERNEL_KEY_STDIN_ENV, KernelKeyLostError, kernelKeyMarkerPath, kernelSeedLine, legacyKernelKeyPath, loadOrCreateKernelSeed } from './kernel-key.js';
 import { mintPresenceProof, PRESENCE_TTL_SECS } from './presence.js';
 import { keychainSettled, readSecret, writeSecret } from './secure-store.js';
 import { allternitDriverPython } from './computer-use-driver-manager.js';
@@ -628,11 +628,15 @@ export class BackendManager {
     if (this.kernelSeedHex) return;
     try {
       if (app.isPackaged) await keychainSettled();
-      const result = loadOrCreateKernelSeed({ read: readSecret, write: writeSecret }, legacyKernelKeyPath(dataDir));
+      const result = loadOrCreateKernelSeed({ read: readSecret, write: writeSecret }, legacyKernelKeyPath(dataDir), kernelKeyMarkerPath(dataDir));
       this.kernelSeedHex = result.seedHex;
       log.info(`[BackendManager] Kernel signing key: ${result.source === 'file-fallback' ? 'old key file (OS keystore unavailable; import retried next launch)' : `OS keystore (${result.source})`}`);
     } catch (error) {
-      // Fail closed: allternit-api gets no seed and refuses kernel approvals.
+      // Fail closed: allternit-api gets no seed and refuses kernel approvals (kernel_unavailable).
+      if (error instanceof KernelKeyLostError) {
+        log.error(`[BackendManager] ${error.message}. AllternitOS approvals are off. Restore the "${KERNEL_KEY_SECRET}" keystore entry (or remove ${kernelKeyMarkerPath(dataDir)} to accept a new key; old receipts then read as signed by a previous key).`);
+        return;
+      }
       log.warn('[BackendManager] Kernel signing key unavailable from the OS keystore; AllternitOS approvals are off until it unlocks:', error instanceof Error ? error.message : String(error));
     }
   }
