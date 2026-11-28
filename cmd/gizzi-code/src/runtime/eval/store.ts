@@ -104,6 +104,9 @@ export namespace EvalStore {
   }
 
   async function summarize(c: Case, dir: string): Promise<CaseSummary> {
+    const last = (await readJson(path.join(dir, "last_result.json"))) as
+      | { last_result?: "pass" | "fail"; last_run_at?: number }
+      | undefined
     return {
       id: c.id,
       suite: c.suite,
@@ -111,7 +114,8 @@ export namespace EvalStore {
       label: c.label,
       saved_at: c.origin.saved_at,
       needs_check: c.needs_check,
-      last_result: null,
+      last_result: last?.last_result ?? null,
+      ...(last?.last_run_at ? { last_run_at: last.last_run_at } : {}),
       bytes: await dirBytes(dir),
       workspace_kind: c.workspace.kind,
       session_id: c.origin.session_id,
@@ -306,5 +310,12 @@ export namespace EvalStore {
       suite.cases = suite.cases.filter((c) => c.id !== id)
       await writeAtomic(path.join(suiteDir(at.suite), "suite.json"), JSON.stringify(suite, null, 2))
     }
+  }
+
+  /** Remember the result of the latest run on a case (kept beside case.json). */
+  export async function setLastResult(id: string, result: "pass" | "fail", at: number = Date.now()): Promise<void> {
+    const found = await locate(id)
+    if (!found) throw new EvalError("case_not_found", "That test case was not found.")
+    await writeAtomic(path.join(found.dir, "last_result.json"), JSON.stringify({ last_result: result, last_run_at: at }))
   }
 }
