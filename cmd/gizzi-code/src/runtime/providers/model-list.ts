@@ -10,10 +10,14 @@
  * the vendor's order (`rank`), never alphabetical.
  */
 
+import path from "node:path"
 import { sortBy } from "remeda"
+import { Config } from "@/runtime/context/config/config"
+import { Global } from "@/runtime/context/global"
+import { isLocalBaseURL } from "./discovery/local"
 import type { DiscoveredModel, DiscoveredProvider } from "./discovery"
 import { Discovery } from "./discovery"
-import { SUBPROCESS_PROVIDERS } from "./discovery/subprocess"
+import { subprocessProviders } from "./discovery/subprocess"
 import { SelfhostInference } from "./selfhost-inference"
 import { ProviderOffer } from "./offer"
 import { ModelsDev } from "./adapters/models"
@@ -33,7 +37,7 @@ export namespace ModelList {
    */
   export function sortModels<T extends { id: string; providerID?: string }>(models: T[]): T[] {
     const catalog = new Map(
-      (SUBPROCESS_PROVIDERS.find((s) => s.id === models[0]?.providerID)?.models ?? []).map((m) => [m.id, m]),
+      (subprocessProviders().find((s) => s.id === models[0]?.providerID)?.models ?? []).map((m) => [m.id, m]),
     )
     return sortBy(
       models,
@@ -66,6 +70,12 @@ export namespace ModelList {
   export type ProviderRows = {
     id: string
     name: string
+    /**
+     * A provider declared in config on a localhost server that did not answer:
+     * one greyed row (`<name> — offline`), zero models. The picker greys it
+     * and shows `reason` and `fix`.
+     */
+    offline?: { reason: string; fix: string }
     /** Subprocess CLIs: sign-in check result (unset = not checked). */
     signedIn?: boolean
     models: Row[]
@@ -99,6 +109,10 @@ export namespace ModelList {
     currentRef?: string | null
     /** Every provider and model, aggregators and hidden aliases included. */
     all?: boolean
+    /** Config-declared localhost providers whose server did not answer (id → baseURL). */
+    offlineLocal?: Record<string, string>
+    /** Where the user's config lives, named in the offline fix text. */
+    configFile?: string
   }
 
   let _last: Section[] = []
@@ -131,7 +145,7 @@ export namespace ModelList {
   }
 
   function catalogModel(providerID: string, modelID: string): DiscoveredModel | undefined {
-    return SUBPROCESS_PROVIDERS.find((s) => s.id === providerID)?.models.find((m) => m.id === modelID)
+    return subprocessProviders().find((s) => s.id === providerID)?.models.find((m) => m.id === modelID)
   }
 
   /**
@@ -212,12 +226,33 @@ export namespace ModelList {
     const isConnected =
       input.connected ?? ((providerID: string) => connected(providerID, discoveredMap, input.configured))
 
-    const ids = new Set<string>([...input.discovered.map((p) => p.id), ...Object.keys(input.configured)])
+    const ids = new Set<string>([
+      ...input.discovered.map((p) => p.id),
+      ...Object.keys(input.configured),
+      ...Object.keys(input.offlineLocal ?? {}),
+    ])
     const byKind = new Map<ProviderOffer.Kind, Array<ProviderRows & { defaultRank?: number }>>()
 
     for (const id of ids) {
       const dp = discoveredMap[id]
       const info = input.configured[id]
+      const offlineURL = input.offlineLocal?.[id]
+      if (offlineURL && !dp) {
+        const name = info?.name ?? id
+        const file = input.configFile ?? "gizzi.json"
+        const list = byKind.get("local") ?? []
+        list.push({
+          id,
+          name: `${name} \u2014 offline`,
+          offline: {
+            reason: `Nothing answered at ${offlineURL}`,
+            fix: `Start the server, or remove "${id}" from provider in ${file}.`,
+          },
+          models: [],
+        })
+        byKind.set("local", list)
+        continue
+      }
       const candidate: ProviderOffer.Candidate = {
         id,
         source: dp?.source ?? info?.source,
@@ -265,6 +300,26 @@ export namespace ModelList {
     return sections
   }
 
+  /** Providers the user declared in config on a localhost server, probed in parallel (1 s): the ones that did not answer. */
+  async function offlineConfigured(
+    discovered: DiscoveredProvider[],
+  ): Promise<{ offlineLocal: Record<string, string>; configFile: string }> {
+    const configFile = path.join(Global.Path.config, "gizzi.json")
+    try {
+      const cfg = await Config.get()
+      const declared = Object.entries(cfg.provider ?? {}).flatMap(([id, p]) => {
+        const baseURL = (p as { options?: { baseURL?: unknown } }).options?.baseURL
+        return typeof baseURL === "string" && isLocalBaseURL(baseURL) && !discovered.some((d) => d.id === id)
+          ? [[id, baseURL] as const]
+          : []
+      })
+      const up = await Promise.all(declared.map(([, baseURL]) => localServerAnswers(baseURL)))
+      return { offlineLocal: Object.fromEntries(declared.filter((_, i) => !up[i])), configFile }
+    } catch {
+      return { offlineLocal: {}, configFile }
+    }
+  }
+
   /**
    * Build the list from this machine's sources: discovery plus the
    * configured providers (needs an Instance for those; without one the
@@ -288,7 +343,8 @@ export namespace ModelList {
       configured = { ...fromDev, ...configured }
     }
     const brain = await currentDefaultBrain().catch(() => null)
-    _last = compose({ discovered, configured, currentRef: brain?.model ?? null, all: opts.all })
+    const { offlineLocal, configFile } = await offlineConfigured(discovered)
+    _last = compose({ discovered, configured, currentRef: brain?.model ?? null, all: opts.all, offlineLocal, configFile })
     return _last
   }
 }

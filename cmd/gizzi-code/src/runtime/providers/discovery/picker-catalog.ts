@@ -16,7 +16,7 @@ import path from "node:path"
 import { GlobalPaths } from "@/runtime/context/global/paths"
 import { cloudInferenceToken, cloudOrigin } from "./allternit-cloud"
 import type { DiscoveredModel } from "./index"
-import type { RuntimeEntry, RuntimeSnapshot, SnapshotTool } from "./runtime-registry"
+import { setSnapshotOverlay, type RuntimeEntry, type RuntimeSnapshot, type SnapshotTool } from "./runtime-registry"
 
 export const PICKER_CATALOG_TTL_MS = 6 * 60 * 60 * 1000
 export const PICKER_CATALOG_TIMEOUT_MS = 4000
@@ -137,11 +137,29 @@ export async function fetchPickerCatalog(opts: FetchOptions = {}): Promise<Picke
 // One lookup per process; discovery and the picker share it.
 let shared: Promise<PickerCatalogResult> | undefined
 export function pickerCatalog(): Promise<PickerCatalogResult> {
-  return (shared ??= fetchPickerCatalog())
+  return (shared ??= fetchPickerCatalog().then((result) => {
+    installOverlay(result.status === "ok" ? result.catalog : undefined)
+    return result
+  }))
+}
+
+/** After the catalog loads, sync readers (`currentRuntimeSnapshot`) see it; memoized per snapshot object. */
+export function installOverlay(catalog: PickerCatalog | undefined): void {
+  if (!catalog) return setSnapshotOverlay(undefined)
+  let from: RuntimeSnapshot | undefined
+  let out: LiveSnapshot | undefined
+  setSnapshotOverlay((snapshot) => {
+    if (from !== snapshot || !out) {
+      from = snapshot
+      out = overlaySnapshot(snapshot, catalog)
+    }
+    return out as unknown as RuntimeSnapshot
+  })
 }
 /** Test hook and `gizzi models --refresh`: forget the shared lookup. */
 export function resetPickerCatalog(): void {
   shared = undefined
+  setSnapshotOverlay(undefined)
 }
 
 // ── Cloud models: apply `access` ─────────────────────────────────────────────

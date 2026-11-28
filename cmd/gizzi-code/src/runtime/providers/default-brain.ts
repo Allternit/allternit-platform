@@ -25,7 +25,7 @@ import {
   type AllternitPlan,
 } from "./discovery/allternit-cloud"
 import { Discovery, type DiscoveredProvider } from "./discovery"
-import { CLI_CATALOG, retiredModelId } from "./discovery/subprocess"
+import { cliCatalog, retiredModelId } from "./discovery/subprocess"
 
 export { isPaidAllternitPlan }
 
@@ -73,7 +73,7 @@ function mapRetired(ref: string): string {
 /** The provider's `defaultRank`, falling back to the built-in catalog (user-added CLIs never have one). */
 export function defaultRankOf(provider: Pick<DiscoveredProvider, "id" | "defaultRank">): number | undefined {
   if (provider.defaultRank !== undefined) return provider.defaultRank
-  return CLI_CATALOG.find((tool) => tool.id === provider.id && !tool.custom)?.defaultRank
+  return cliCatalog().find((tool) => tool.id === provider.id && !tool.custom)?.defaultRank
 }
 
 /**
@@ -87,7 +87,7 @@ function preferredModel(provider: DiscoveredProvider): string | null {
   const flagged =
     visible.find((m) => m.default) ??
     (() => {
-      const catalogDefault = CLI_CATALOG.find((tool) => tool.id === provider.id)?.models?.find((m) => m.default)
+      const catalogDefault = cliCatalog().find((tool) => tool.id === provider.id)?.models?.find((m) => m.default)
       return catalogDefault ? visible.find((m) => m.id === catalogDefault.id) : undefined
     })()
   const model = flagged ?? visible[0]
