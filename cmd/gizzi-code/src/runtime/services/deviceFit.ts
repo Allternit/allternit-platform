@@ -11,8 +11,10 @@ export interface DeviceBudget {
   apple?: boolean
   browser?: boolean
   webgpu?: boolean
+  /** Free bytes on the volume that holds the models folder. Only hosts that can run a colibri pack set it. */
+  disk_free_bytes?: number
 }
-export type QuantEngine = "llama.cpp" | "mlx" | "webgpu"
+export type QuantEngine = "llama.cpp" | "mlx" | "webgpu" | "colibri"
 export interface Quant {
   name: string
   format: "gguf" | "mlx" | "onnx"
@@ -24,7 +26,22 @@ export interface Quant {
   /** Other Freeweights id that holds this build. */
   repo?: string
 }
-export type FitKind = "ok" | "slow" | "no" | "na" | "unknown"
+/** A colibri pack that streams its weights from disk. ram_est is resident weights and is required. */
+export interface StreamQuant {
+  name: string
+  format: string
+  engine: "colibri"
+  size: number
+  ram_est: number
+  tier?: "chat" | "background"
+  files?: string[]
+  best_for?: string[]
+  repo?: string
+  /** The `coli setup` model id. */
+  colibri_model?: string
+  metal_ok?: boolean
+}
+export type FitKind = "ok" | "slow" | "stream" | "no" | "na" | "unknown"
 export interface FitResult {
   k: FitKind
   label: string
@@ -117,12 +134,42 @@ function naResult(d: DeviceBudget): FitResult {
   };
 }
 
+/** Best stream quant that fits this budget (contract 1.3 and 1.4), or null. */
+export function streamPick(budget: DeviceBudget, streamQuants: StreamQuant[] | null | undefined): StreamQuant | null {
+  if (budget.browser || budget.disk_free_bytes == null || !streamQuants) return null;
+  const disk = budget.disk_free_bytes;
+  const ok = streamQuants.filter(
+    (q) =>
+      q.engine === "colibri" &&
+      q.size <= disk &&
+      (budget.kind === "discrete" ? q.ram_est * 10 <= budget.spill_bytes * 6 : q.ram_est <= budget.fast_bytes),
+  );
+  if (ok.length === 0) return null;
+  const rank = (q: StreamQuant) => (q.tier === "chat" ? 0 : 1);
+  ok.sort((a, b) => rank(a) - rank(b) || b.size - a.size || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return ok[0];
+}
+
+function streamResult(q: StreamQuant): FitResult {
+  return {
+    k: "stream",
+    label: "Streams from disk",
+    why:
+      q.tier === "background"
+        ? "Slow. Best for jobs you leave running"
+        : `Keeps ${gbFixed(q.ram_est)} GB in memory, reads the rest from disk`,
+    quant: q as unknown as Quant,
+  };
+}
+
 export function fit(
   budget: DeviceBudget,
   quants: Quant[] | null | undefined,
   _opts?: { ctx?: number },
+  streamQuants?: StreamQuant[] | null,
 ): FitResult {
-  if (quants == null) {
+  const hasStream = Array.isArray(streamQuants) && streamQuants.length > 0
+  if (quants == null && !hasStream) {
     return {
       k: "unknown",
       label: "Size not checked",
@@ -131,8 +178,11 @@ export function fit(
     };
   }
   if (budget.browser && budget.webgpu === false) return naResult(budget);
-  const cands = candidates(budget, quants);
-  if (cands.length === 0) return naResult(budget);
+  const cands = candidates(budget, quants ?? []);
+  if (cands.length === 0) {
+    const sp = streamPick(budget, streamQuants);
+    return sp ? streamResult(sp) : naResult(budget);
+  }
 
   const bySize = [...cands].sort((a, b) => needBytes(a) - needBytes(b));
   let pick = bySize[0];
@@ -165,6 +215,8 @@ export function fit(
     }
     return { k: "slow", label: "Tight fit", why: "Close other apps first", quant: pick };
   }
+  const sp = streamPick(budget, streamQuants);
+  if (sp) return streamResult(sp);
   return {
     k: "no",
     label: "Won't fit",
@@ -180,6 +232,7 @@ const FREEWEIGHTS = (process.env.FREEWEIGHTS_URL?.trim().replace(/\/$/, "")) || 
 export interface DeviceEntry {
   id: string
   quants: Quant[]
+  stream_quants?: StreamQuant[]
   device_formats: string[]
   generated_at?: string
 }
