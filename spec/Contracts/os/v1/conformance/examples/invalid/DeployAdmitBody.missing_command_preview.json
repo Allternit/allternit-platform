@@ -1,0 +1,7 @@
+{
+  "schema_id": "allternit.os.DeployAdmissionV1",
+  "schema_version": "1.0.0",
+  "principal": "agent:train",
+  "target": "train:main",
+  "artifact_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

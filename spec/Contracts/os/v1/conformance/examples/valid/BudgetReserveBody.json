@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.os.BudgetReservationV1",
+  "schema_version": "1.0.0",
+  "run_id": "run_01",
+  "principal": "agent:gizzi",
+  "scope": "day",
+  "amount_reserved": "10",
+  "currency": "credits",
+  "expires_at": "2026-11-27T13:00:00Z"
+}

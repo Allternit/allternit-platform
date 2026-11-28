@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/os/1.0.0/inbox.schema.json",
+  "title": "AllternitOS contracts 1.0.0 - inbox",
+  "$comment": "DRAFT for gate G0 (CONTRACT.md, AllternitOS Stage 0). Sibling of the frozen Kernel ABI 1.0.0; ABI types are referenced by $ref, never redefined.",
+  "$defs": {
+    "InboxItemV1": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "action_class",
+        "action_summary",
+        "action_payload",
+        "assignee",
+        "deadline",
+        "urgency",
+        "run_id",
+        "source_store",
+        "status",
+        "attention_id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/attention.schema.json#/$defs/AttentionRequestV1/properties/kind"
+        },
+        "action_class": {
+          "$ref": "authority.schema.json#/$defs/ActionClass"
+        },
+        "action_summary": {
+          "$ref": "authority.schema.json#/$defs/ApprovalRequestV1/properties/action_summary"
+        },
+        "action_payload": {
+          "type": "object"
+        },
+        "assignee": {
+          "$ref": "authority.schema.json#/$defs/ApprovalRequestV1/properties/assignee"
+        },
+        "deadline": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+        },
+        "urgency": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/attention.schema.json#/$defs/AttentionRequestV1/properties/urgency"
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "source_store": {
+          "$ref": "authority.schema.json#/$defs/ApprovalRequestV1/properties/source_store"
+        },
+        "status": {
+          "$ref": "authority.schema.json#/$defs/ApprovalRequestV1/properties/status"
+        },
+        "attention_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        }
+      },
+      "additionalProperties": false,
+      "title": "InboxItemV1",
+      "$comment": "CONTRACT.md 7.2 row: an ApprovalRequestV1 joined with its AttentionRequestV1. id = request_id."
+    },
+    "InboxAction": {
+      "enum": [
+        "list",
+        "summarise",
+        "snooze",
+        "prepare"
+      ],
+      "$comment": "CONTRACT.md 7.2: exactly these four. There is NO approve, deny or resolve action."
+    },
+    "InboxToolInputV1": {
+      "title": "InboxToolInputV1",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "scope"
+          ],
+          "properties": {
+            "action": {
+              "const": "list"
+            },
+            "scope": {
+              "enum": [
+                "needs_you",
+                "snoozed",
+                "all"
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "ids"
+          ],
+          "properties": {
+            "action": {
+              "const": "summarise"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "id",
+            "until"
+          ],
+          "properties": {
+            "action": {
+              "const": "snooze"
+            },
+            "id": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            },
+            "until": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "id",
+            "draft"
+          ],
+          "properties": {
+            "action": {
+              "const": "prepare"
+            },
+            "id": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            },
+            "draft": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "InboxListResult": {
+      "title": "InboxListResult",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InboxItemV1"
+      }
+    },
+    "InboxSnoozeResult": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "title": "InboxSnoozeResult"
+    }
+  }
+}

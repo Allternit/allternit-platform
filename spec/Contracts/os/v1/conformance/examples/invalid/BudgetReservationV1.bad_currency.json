@@ -1,0 +1,22 @@
+{
+  "schema_id": "allternit.os.BudgetReservationV1",
+  "schema_version": "1.0.0",
+  "reservation_id": "bud_01",
+  "run_id": "run_01",
+  "principal": "agent:gizzi",
+  "scope": "run",
+  "amount_reserved": "2.50",
+  "currency": "usd",
+  "status": "committed",
+  "expires_at": "2026-11-27T13:00:00Z",
+  "amount_committed": "1.75",
+  "placement_id": "plc_01",
+  "resource_id": "gpu-a",
+  "usage": {
+    "event_type": "inference",
+    "quantity": 1200,
+    "unit": "tokens",
+    "measured_at": "2026-11-27T12:05:00Z"
+  },
+  "receipt_id": "rcpt_03"
+}

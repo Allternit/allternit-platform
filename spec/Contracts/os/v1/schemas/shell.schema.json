@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allternit.com/os/1.0.0/shell.schema.json",
+  "title": "AllternitOS contracts 1.0.0 - model shell",
+  "$comment": "DRAFT for gate G0 (CONTRACT.md, AllternitOS Stage 0). Sibling of the frozen Kernel ABI 1.0.0; ABI types are referenced by $ref, never redefined.",
+  "$defs": {
+    "Surface": {
+      "enum": [
+        "desktop",
+        "web",
+        "phone",
+        "pwa",
+        "ios",
+        "android",
+        "tui"
+      ]
+    },
+    "ShellAction": {
+      "enum": [
+        "open",
+        "close",
+        "focus",
+        "arrange",
+        "start_run",
+        "stop_run",
+        "install_app",
+        "fork_app"
+      ]
+    },
+    "ViewDescriptorV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "view_id",
+        "kind",
+        "title",
+        "surfaces"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ViewDescriptorV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "view_id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "builtin",
+            "app",
+            "protected"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "app_id": {
+          "type": "string"
+        },
+        "app_version": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "type": {
+              "const": "app-host"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Surface"
+          }
+        },
+        "singleton": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "params_schema": {
+          "type": "object"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ViewDescriptorV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "app"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "app_id",
+              "entry"
+            ],
+            "properties": {
+              "view_id": {
+                "pattern": "^app:"
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "A protected descriptor is built in only; install_app can never create one (kernel rule)."
+    },
+    "ShellStateV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "state_version",
+        "surface",
+        "views",
+        "focused_instance",
+        "arrangement",
+        "runs",
+        "installed_apps",
+        "inbox_counts",
+        "protected_open"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ShellStateV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "surface": {
+          "$ref": "#/$defs/Surface"
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "instance_id",
+              "view_id",
+              "title",
+              "focused",
+              "region"
+            ],
+            "properties": {
+              "instance_id": {
+                "type": "string"
+              },
+              "view_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "focused": {
+                "type": "boolean"
+              },
+              "region": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "focused_instance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "arrangement": {
+          "enum": [
+            "single",
+            "split",
+            "grid",
+            "free"
+          ]
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "run_id",
+              "status",
+              "title"
+            ],
+            "properties": {
+              "run_id": {
+                "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+              },
+              "status": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "installed_apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "app_id",
+              "app_version",
+              "view_id"
+            ],
+            "properties": {
+              "app_id": {
+                "type": "string"
+              },
+              "app_version": {
+                "type": "string"
+              },
+              "view_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "inbox_counts": {
+          "type": "object",
+          "required": [
+            "needs_you",
+            "snoozed"
+          ],
+          "properties": {
+            "needs_you": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "snoozed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "protected_open": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ShellStateV1"
+    },
+    "ShellCommandV1": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "schema_version",
+        "command_id",
+        "action"
+      ],
+      "properties": {
+        "schema_id": {
+          "const": "allternit.os.ShellCommandV1"
+        },
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$"
+        },
+        "command_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "action": {
+          "$ref": "#/$defs/ShellAction"
+        },
+        "expected_state_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "view_id": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "arrangement": {
+          "type": "object",
+          "required": [
+            "layout",
+            "slots"
+          ],
+          "properties": {
+            "layout": {
+              "enum": [
+                "single",
+                "split",
+                "grid",
+                "free"
+              ]
+            },
+            "slots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "instance_id",
+                  "region"
+                ],
+                "properties": {
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/task_ir.schema.json#/$defs/TaskIRV1"
+            },
+            {
+              "type": "object",
+              "required": [
+                "prompt",
+                "profile_id"
+              ],
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "profile_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "run_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "app_source": {
+          "type": "object",
+          "required": [
+            "app_id",
+            "source",
+            "ref",
+            "digest"
+          ],
+          "properties": {
+            "app_id": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "catalog",
+                "url"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            },
+            "digest": {
+              "$ref": "authority.schema.json#/$defs/Sha256Hex"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fork_of": {
+          "type": "object",
+          "required": [
+            "app_id",
+            "app_version"
+          ],
+          "properties": {
+            "app_id": {
+              "type": "string"
+            },
+            "app_version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "new_app_id": {
+          "type": "string"
+        },
+        "check_id": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+        },
+        "extensions": {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ExtensionMap"
+        }
+      },
+      "additionalProperties": false,
+      "title": "ShellCommandV1",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "view_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "close",
+                  "focus"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "instance_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "arrange"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "arrangement"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "start_run"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "task"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "stop_run"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "run_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "install_app"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "app_source"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "fork_app"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "fork_of",
+              "new_app_id"
+            ]
+          }
+        }
+      ],
+      "$comment": "Class map (CONTRACT.md 3.8): open/close/focus/arrange = ui_layout; start_run/stop_run = run_control; install_app/fork_app = app_install. check_id is server-set. A command naming a protected view_id is denied by the kernel."
+    },
+    "ShellToolResultV1": {
+      "title": "ShellToolResultV1",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "ok",
+            "command_id",
+            "state_version"
+          ],
+          "properties": {
+            "ok": {
+              "const": true
+            },
+            "command_id": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            },
+            "state_version": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ok",
+            "error",
+            "receipt_id"
+          ],
+          "properties": {
+            "ok": {
+              "const": false
+            },
+            "error": {
+              "$ref": "authority.schema.json#/$defs/ErrorCode"
+            },
+            "receipt_id": {
+              "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

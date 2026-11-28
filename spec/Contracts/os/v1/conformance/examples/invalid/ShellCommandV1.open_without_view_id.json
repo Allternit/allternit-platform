@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.os.ShellCommandV1",
+  "schema_version": "1.0.0",
+  "command_id": "cmd_01",
+  "action": "open",
+  "expected_state_version": 7,
+  "params": {
+    "note": "today"
+  }
+}
