@@ -1,0 +1,16 @@
+[package]
+name = "allternit-authority"
+version = "0.1.0"
+edition = "2021"
+description = "AllternitOS kernel interface: the Authority trait and os/v1 wire types. Trait and types only, no implementation."
+license = "UNLICENSED"
+publish = false
+
+[features]
+default = ["std", "serde"]
+std = ["serde?/std", "serde_json?/std"]
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
