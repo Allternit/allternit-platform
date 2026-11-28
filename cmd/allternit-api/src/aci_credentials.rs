@@ -691,31 +691,12 @@ impl RunCredentialAllows {
 
 pub static RUN_CREDENTIAL_ALLOWS: Lazy<RunCredentialAllows> = Lazy::new(RunCredentialAllows::default);
 
-/// Recursively replace every occurrence of any bound secret in a run-event
-/// frame with `***`. Applied to frames before they enter the run buffer so a
-/// sandbox that echoes its own environment cannot leak values into streamed,
-/// snapshotted, or replayed output.
+/// Mask every bound secret in a run-event frame, plus anything credential-shaped, with the
+/// authority kernel's one redactor (`authority::redact`, plan step 10; this was the only scrubber
+/// before it). Applied to frames before they enter the run buffer so a sandbox that echoes its
+/// own environment cannot leak values into streamed, snapshotted, or replayed output.
 pub fn scrub_frame(value: &mut serde_json::Value, secrets: &[String]) {
-    match value {
-        serde_json::Value::String(text) => {
-            for secret in secrets {
-                if !secret.is_empty() && text.contains(secret.as_str()) {
-                    *text = text.replace(secret.as_str(), "***");
-                }
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                scrub_frame(item, secrets);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for item in map.values_mut() {
-                scrub_frame(item, secrets);
-            }
-        }
-        _ => {}
-    }
+    crate::authority::redact::Redactor::new(secrets).value(value);
 }
 
 // ─── TOTP (RFC 6238) ──────────────────────────────────────────────────────────
@@ -1310,7 +1291,7 @@ mod tests {
         scrub_frame(&mut frame, &secrets);
         let text = frame.to_string();
         assert!(!text.contains("s3cr3t-value"));
-        assert!(text.contains("***"));
+        assert!(text.contains(crate::authority::redact::MASK));
         assert_eq!(frame["data"]["num"], 42);
     }
 

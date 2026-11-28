@@ -235,9 +235,9 @@ fn buffer_push(run_id: &str, mut frame: serde_json::Value, done: bool) {
     // Scrub credential values before a frame can enter the buffer (and its
     // on-disk snapshot): a sandbox that echoes its own environment must not
     // be able to smuggle a bound value into streamed/replayed output.
-    if let Some(binding) = crate::aci_credentials::RUN_BINDINGS.get(run_id) {
-        crate::aci_credentials::scrub_frame(&mut frame, binding.secrets());
-    }
+    // Frames of a run with no bound credential still get the credential-shape rules.
+    let bound = crate::aci_credentials::RUN_BINDINGS.get(run_id);
+    crate::aci_credentials::scrub_frame(&mut frame, bound.as_ref().map(|b| b.secrets()).unwrap_or(&[]));
     // The chat card for a computer run follows the same (scrubbed) frames.
     if let Some((db, _)) = crate::phone_guard::installed() {
         post_frame_cards(&db, run_id, &frame, done);
@@ -2583,8 +2583,8 @@ mod credential_binding_http_tests {
         assert!(
             frames
                 .iter()
-                .any(|frame| frame.to_string().contains("***")),
-            "echoed value should be replaced with ***"
+                .any(|frame| frame.to_string().contains(crate::authority::redact::MASK)),
+            "echoed value should be replaced with the mask"
         );
 
         // On-disk snapshot of the buffer must be scrubbed too. Snapshot

@@ -320,10 +320,43 @@ const NATIVE_TOOLS: &[&str] = &[
     "computer_create", "computer_list", "computer_start", "computer_stop", "computer_resize", "computer_clone",
 ];
 
-/// `pub(crate)`: also called by `mcp_server_routes.rs`'s `tools/call` handler,
+/// Every tool result, `Ok` or `Err`, passes the authority kernel's one redactor before it is
+/// returned (plan step 10): the account's vault secrets and every value the kernel attached are
+/// masked, as is anything credential-shaped. An approved read of a `.env` or credential file
+/// (`file.read`, `computer_file_read`) also masks every assignment value. Callers: the HTTP route,
+/// MCP `tools/call`, the routine scheduler — all get the masked result.
+pub(crate) async fn execute_tool_internal(
+    state: &Arc<AppState>,
+    request: &ExecuteToolRequest,
+    user_id: &str,
+    tenant_id: Option<&str>,
+) -> Result<Value, String> {
+    let out = execute_tool_unredacted(state, request, user_id, tenant_id).await;
+    let redactor = crate::authority::secrets::result_redactor(user_id, request.run_id.as_deref());
+    let credential_read = matches!(request.tool.as_str(), "file.read" | "computer_file_read")
+        && request.args.get("path").and_then(Value::as_str).is_some_and(crate::authority::redact::is_credential_path);
+    match out {
+        Ok(mut v) if credential_read => {
+            mask_credential_file(&redactor, &mut v);
+            Ok(v)
+        }
+        other => redactor.result(other),
+    }
+}
+
+fn mask_credential_file(r: &crate::authority::redact::Redactor, v: &mut Value) {
+    match v {
+        Value::String(s) => *s = r.credential_file(s),
+        Value::Array(items) => items.iter_mut().for_each(|i| mask_credential_file(r, i)),
+        Value::Object(map) => map.values_mut().for_each(|i| mask_credential_file(r, i)),
+        _ => {}
+    }
+}
+
+/// `pub(crate)` via [`execute_tool_internal`]: also called by `mcp_server_routes.rs`'s `tools/call` handler,
 /// so the same tool set is reachable both as a plain REST call and as an
 /// MCP server tool — one registry, two front doors, same auth gate.
-pub(crate) async fn execute_tool_internal(
+async fn execute_tool_unredacted(
     state: &Arc<AppState>,
     request: &ExecuteToolRequest,
     user_id: &str,

@@ -707,6 +707,9 @@ async fn dispatch_method(
                 };
                 execute_tool_internal(state, &exec_request, user_id, org_id).await
             };
+            // Every tools/call result passes the kernel's redactor before it reaches the model
+            // (plan step 10; idempotent for paths that already masked).
+            let result = crate::authority::secrets::result_redactor(user_id, None).result(result);
 
             match result {
                 Ok(result) => success(

@@ -1,0 +1,177 @@
+{
+  "schema": "allternit.os.redaction-vectors.v1",
+  "about": "Shared test vectors for the one secret redactor (plan step 10, CONTRACT.md 2.3). Read by the Rust tests in cmd/allternit-api/src/authority/redact.rs and the TS tests in cmd/gizzi-code/test/util/secret-redactor.test.ts. `input` is a string or an array of strings joined with no separator (provider-shaped fakes are split so secret scanners do not flag this file; none of them is a real key). `secrets` are the exact values the kernel attached during the call. `mode` is `tool_result` (default) or `credential_file` (an approved read of a .env or credential file: every assignment value is masked). After redaction no `absent` string may appear and every `present` string must still appear.",
+  "mask": "[REDACTED]",
+  "vectors": [
+    {
+      "name": "attached value echoed by a command",
+      "input": "export DEPLOY_KEY_VALUE=my-plain-vault-value-42 && echo done",
+      "secrets": ["my-plain-vault-value-42"],
+      "absent": ["my-plain-vault-value-42"],
+      "present": ["echo done"]
+    },
+    {
+      "name": "attached value echoed base64-encoded",
+      "input": "encoded: bXktcGxhaW4tdmF1bHQtdmFsdWUtNDI=",
+      "secrets": ["my-plain-vault-value-42"],
+      "absent": ["bXktcGxhaW4tdmF1bHQtdmFsdWUtNDI"],
+      "present": ["encoded:"]
+    },
+    {
+      "name": "attached value with no credential shape",
+      "input": "the shared phrase is plum orchard seven",
+      "secrets": ["plum orchard seven"],
+      "absent": ["plum orchard seven"],
+      "present": ["the shared phrase is"]
+    },
+    {
+      "name": "openai project key",
+      "input": ["OPENAI says: ", "sk-", "proj-", "Zx9TestOnlyNotARealKey00000000abcd", " was used"],
+      "secrets": [],
+      "absent": ["Zx9TestOnlyNotARealKey00000000abcd"],
+      "present": ["OPENAI says:", "was used"]
+    },
+    {
+      "name": "anthropic key",
+      "input": ["key ", "sk-ant-", "api03-TestOnlyNotARealKey000000000000"],
+      "secrets": [],
+      "absent": ["api03-TestOnlyNotARealKey000000000000"],
+      "present": ["key "]
+    },
+    {
+      "name": "github personal token",
+      "input": ["remote: ", "ghp", "_", "TestOnlyNotARealToken000000000000abcd"],
+      "secrets": [],
+      "absent": ["TestOnlyNotARealToken000000000000abcd"],
+      "present": ["remote:"]
+    },
+    {
+      "name": "github oauth token",
+      "input": ["token=", "gho", "_", "TestOnlyNotARealToken000000000000wxyz"],
+      "secrets": [],
+      "absent": ["TestOnlyNotARealToken000000000000wxyz"],
+      "present": ["token="]
+    },
+    {
+      "name": "slack bot token",
+      "input": ["slack: ", "xox", "b-", "000000000000-000000000000-TestOnlyNotReal"],
+      "secrets": [],
+      "absent": ["000000000000-000000000000-TestOnlyNotReal"],
+      "present": ["slack:"]
+    },
+    {
+      "name": "aws access key id (AWS documentation example)",
+      "input": ["aws_access_key_id = ", "AKIA", "IOSFODNN7EXAMPLE"],
+      "secrets": [],
+      "absent": ["IOSFODNN7EXAMPLE"],
+      "present": ["aws_access_key_id"]
+    },
+    {
+      "name": "google api key",
+      "input": ["maps key ", "AIza", "SyTestOnlyNotARealKey_000000000000a"],
+      "secrets": [],
+      "absent": ["SyTestOnlyNotARealKey_000000000000a"],
+      "present": ["maps key"]
+    },
+    {
+      "name": "stripe secret key",
+      "input": ["STRIPE ", "sk_", "live_", "TestOnlyNotARealKey0000"],
+      "secrets": [],
+      "absent": ["TestOnlyNotARealKey0000"],
+      "present": ["STRIPE"]
+    },
+    {
+      "name": "jwt",
+      "input": ["session ", "eyJhbGciOiJIUzI1NiJ9", ".", "eyJzdWIiOiJ0ZXN0In0", ".", "TestOnlySignature000"],
+      "secrets": [],
+      "absent": ["eyJzdWIiOiJ0ZXN0In0", "TestOnlySignature000"],
+      "present": ["session"]
+    },
+    {
+      "name": "pem private key block",
+      "input": ["before\n", "-----BEGIN ", "RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKTestOnlyBody\nQ29udGVudA==\n", "-----END ", "RSA PRIVATE KEY-----\nafter"],
+      "secrets": [],
+      "absent": ["MIIBOgIBAAJBAKTestOnlyBody", "Q29udGVudA=="],
+      "present": ["before", "after"]
+    },
+    {
+      "name": "pem private key with no end line",
+      "input": ["-----BEGIN ", "OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAATestOnly"],
+      "secrets": [],
+      "absent": ["b3BlbnNzaC1rZXktdjEAAAAATestOnly"],
+      "present": []
+    },
+    {
+      "name": "bearer header",
+      "input": "Authorization: Bearer abcdefghijklmnop0123456789",
+      "secrets": [],
+      "absent": ["abcdefghijklmnop0123456789"],
+      "present": ["Authorization:"]
+    },
+    {
+      "name": "password in a url",
+      "input": "DATABASE_URL is postgres://app:hunter2hunter@db.example.com:5432/app",
+      "secrets": [],
+      "absent": ["hunter2hunter"],
+      "present": ["postgres://app:", "@db.example.com:5432/app"]
+    },
+    {
+      "name": "password assignment",
+      "input": "login with password=correct-horse-battery today",
+      "secrets": [],
+      "absent": ["correct-horse-battery"],
+      "present": ["login with password=", "today"]
+    },
+    {
+      "name": "json api_key field",
+      "input": "{\"api_key\": \"Q9vT2mXw8LpR4sYb7NcK\", \"region\": \"us-east-1\"}",
+      "secrets": [],
+      "absent": ["Q9vT2mXw8LpR4sYb7NcK"],
+      "present": ["\"api_key\"", "us-east-1"]
+    },
+    {
+      "name": "env line with a token name",
+      "input": "GITHUB_TOKEN=abcdEFGH1234ijklMNOP5678\nPATH=/usr/bin",
+      "secrets": [],
+      "absent": ["abcdEFGH1234ijklMNOP5678"],
+      "present": ["GITHUB_TOKEN=", "PATH=/usr/bin"]
+    },
+    {
+      "name": "client secret yaml",
+      "input": "client_secret: Zm9vYmFyYmF6cXV4MTIzNDU2",
+      "secrets": [],
+      "absent": ["Zm9vYmFyYmF6cXV4MTIzNDU2"],
+      "present": ["client_secret:"]
+    },
+    {
+      "name": "ordinary output stays readable",
+      "input": "max_tokens=4096 PWD=/Users/joe/project token_count: 12345678901234567890 author: Joe Smith password: true commit 3f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+      "secrets": [],
+      "absent": [],
+      "present": ["max_tokens=4096", "PWD=/Users/joe/project", "token_count: 12345678901234567890", "author: Joe Smith", "password: true", "3f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39"]
+    },
+    {
+      "name": "redaction is stable when applied twice",
+      "input": "password=[REDACTED] token=[REDACTED]",
+      "secrets": [],
+      "absent": [],
+      "present": ["password=[REDACTED]", "token=[REDACTED]"]
+    },
+    {
+      "name": "credential file: every assignment value",
+      "mode": "credential_file",
+      "input": "# local settings\nDATABASE_URL=postgres://localhost/app\nPORT=3000\nexport NAME=\"demo-app\"\nEMPTY=\n",
+      "secrets": [],
+      "absent": ["postgres://localhost/app", "3000", "demo-app"],
+      "present": ["# local settings", "DATABASE_URL=", "PORT=", "export NAME=", "EMPTY="]
+    },
+    {
+      "name": "credential file: aws credentials ini",
+      "mode": "credential_file",
+      "input": "[default]\naws_access_key_id = TESTONLYNOTAREALID00\naws_secret_access_key = TestOnly/NotARealSecret/0000000000000000\n",
+      "secrets": [],
+      "absent": ["TESTONLYNOTAREALID00", "TestOnly/NotARealSecret/0000000000000000"],
+      "present": ["[default]", "aws_access_key_id", "aws_secret_access_key"]
+    }
+  ]
+}

@@ -7,6 +7,7 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { VaultManager } from "@/vault"
+import { SecretRedactor } from "@/shared/util/secret-redactor"
 
 const DESCRIPTION = `Query the Allternit Knowledge Vault for relevant notes, people, projects, meetings, and decisions.
 
@@ -43,6 +44,9 @@ export const VaultQueryTool = Tool.define("vault_query", {
       limit: params.limit,
     })
 
+    // A secret saved in a note (or in a note written before vault_write refused them) never
+    // reaches the model: previews are masked whole, before they are cut (AllternitOS step 10).
+    const redactor = new SecretRedactor()
     const lines: string[] = [
       `Vault query: "${params.query}"`,
       `Found ${result.total} note(s)${result.truncated ? " (truncated)" : ""}`,
@@ -50,7 +54,7 @@ export const VaultQueryTool = Tool.define("vault_query", {
     ]
 
     for (const note of result.notes) {
-      lines.push(`## ${note.title}`)
+      lines.push(`## ${redactor.text(note.title)}`)
       lines.push(`- **Folder:** ${note.folder || "root"}`)
       lines.push(`- **Tags:** ${note.frontmatter.tags?.join(", ") || "none"}`)
       lines.push(`- **Path:** ${note.relPath}`)
@@ -60,14 +64,15 @@ export const VaultQueryTool = Tool.define("vault_query", {
         const connectedTitles = Array.from(connected.values())
           .filter(n => n.relPath !== note.relPath)
           .slice(0, 5)
-          .map(n => `[[${n.title}]]`)
+          .map(n => `[[${redactor.text(n.title)}]]`)
         if (connectedTitles.length) {
           lines.push(`- **Connected:** ${connectedTitles.join(", ")}`)
         }
       }
 
-      const preview = note.content.slice(0, 300).replace(/\n/g, " ")
-      lines.push(`- **Preview:** ${preview}${note.content.length > 300 ? "..." : ""}`)
+      const masked = redactor.text(note.content)
+      const preview = masked.slice(0, 300).replace(/\n/g, " ")
+      lines.push(`- **Preview:** ${preview}${masked.length > 300 ? "..." : ""}`)
       lines.push("")
     }
 

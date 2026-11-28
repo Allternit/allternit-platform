@@ -7,6 +7,7 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { VaultManager } from "@/vault"
+import { looksLikeSecret } from "@/shared/util/secret-redactor"
 
 const DESCRIPTION = `Write or update a note in the Allternit Knowledge Vault.
 
@@ -35,6 +36,14 @@ export const VaultWriteTool = Tool.define("vault_write", {
       .describe("If true, appends to today's daily note instead of creating a standalone note."),
   }),
   async execute(params) {
+    // Notes are plain Markdown that vault_query hands back to the model: a credential saved here
+    // would reach model context. Credentials go to the secrets vault, which the kernel attaches
+    // by handle (AllternitOS secret.use).
+    if (looksLikeSecret(params.content) || looksLikeSecret(params.title)) {
+      throw new Error(
+        "This note holds what looks like a credential (an API key, token, password or private key). Notes are plain text the model reads back, so it was not saved. Store the credential in Allternit's credential vault and save a note that names it instead.",
+      )
+    }
     const vault = new VaultManager()
     await vault.initialize()
 

@@ -46,7 +46,7 @@ In allternit-api, `check` runs inside the functions that execute tools, not in t
 | Native tools (`POST /tools/execute`, MCP `tools/call`, routine monitors) | `tool_routes::execute_tool_internal` | A fixed table: `file.read` is `read`, `file.write` and the shell tools are `file_write`, `http.*` is `network`, `file.remove` is `irreversible` |
 | Org server tools | `server_tool_routes::execute_server_tool` | Always `ask`. A server tool can share a name with a native tool, so its name is never trusted |
 | Attached MCP servers | `mcp_dispatcher::dispatch_call` | `ask`, except an app's `complete_checkout`, which is `money` |
-| Computer members (`read_ui`, `act`, `use_credential`, ...) | `computer_v2::execute_v2` | The computer contract's `risk` field; `use_credential` is `secret_new_host` |
+| Computer members (`read_ui`, `act`, `use_credential`, ...) | `computer_v2::execute_v2` | The computer contract's `risk` field; `use_credential` is `secret_new_host` the first time a credential goes to a domain, `read` after a person approved that pair (see [Secrets](#secrets)) |
 
 A tool that is not in a table is `ask`, never allow. Until onboarding records an autonomy level, every account is "Ask me first".
 
@@ -103,6 +103,43 @@ Both routes need a person's session (the same check as resolve) and read only yo
 ### The verify rule
 
 An edited row fails with the first bad row named: `payload_hash_mismatch`, `hash_mismatch`, `broken_link` or `bad_signature`. A row signed by a different key than the one in use is not tampering: if its signature verifies against the public key stored on that row, it counts under `signed_by_previous_key` and the chain still passes. A signature that does not verify against its own stored key fails. Deleting or updating a row is refused by database triggers.
+
+## Secrets
+
+No secret value reaches model context. The kernel attaches credentials at the call and masks every tool result before the model sees it.
+
+### `secret.use`
+
+A caller names a secret by handle (`vault:github-deploy`, `computer:vault:github-login`), a purpose (`http_header`, `env_for_process`, `connector_call`, `sign`) and a target host or process. The kernel resolves the value only inside the tool execution and hands it to the code that puts it on the wire. The caller never receives it, and no request, response, receipt or log holds it. A value where a handle belongs is refused with `bad_request`.
+
+The first use of a secret toward a host it has never been used with is `secret_new_host`, a human-only class. Without a token, the kernel writes a receipt, opens an approval request for that exact use and refuses with `approval_required`. After a person approves, the retry binds the secret and the kernel records the pair. Later uses toward the same host are allowed without asking, and each one writes a `secret_use` receipt. A different host is new again.
+
+Hosts are normalised (`https://API.GitHub.com:443/x` is `api.github.com`). Known pairs live in `kernel_secret_hosts` (migration V300), per account and tenant. Rows are written only after a person's approval. Shadow mode binds a new host with a `shadow_would_ask` receipt and records nothing.
+
+Computer `use_credential` follows the same rule. `check` classifies it as `secret_new_host` for a new (credential, domain) pair and `read` for a known one. After an allowed check, `computer_v2::execute_v2` records the pair, but only when that check redeemed a person's token for the same action.
+
+### The redactor
+
+One redactor masks every tool result in allternit-api before it is returned: `execute_tool_internal` (HTTP, MCP `tools/call`, routines), `dispatch_call` (attached MCP servers), MCP `tools/call` as a whole, the computer toolset, and ACI run frames (`scrub_frame`, which it replaced). It masks, in order:
+
+1. **The exact values the kernel attached during the call.** These are the account's vault secrets, a credential bound by `secret.use` or `use_credential` (keychain, Bitwarden and 1Password included), an MCP server's credential headers, and this process's credential-named environment values. Their base64 form is masked too.
+2. **Credential-shaped strings:** the `sk-`, `ghp_`, `gho_`, `xox?-`, `AKIA`, `AIza` and `sk_live_` prefixes, PEM private key blocks, JWTs, bearer and basic header values, passwords in URLs, and long or mixed values assigned to a key named like a credential (`password=`, `"api_key":`, `GITHUB_TOKEN=`).
+
+Masked text reads `[REDACTED]`. An approved read of a `.env` or credential file also masks every assignment value, so the model sees the names and not the values.
+
+### Gizzi
+
+Gizzi Code applies the same rules (`shared/util/secret-redactor.ts`, a port tested against the same vectors) to:
+
+- `vault_query` note previews, masked before they are cut. `vault_write` refuses to save a note that holds a credential.
+- Bash stdout and stderr, both foreground and background and both local and VM.
+- Approved reads of credential paths (`.env`, SSH keys, `credentials`), where every value is masked.
+
+`bash.env_passthrough` and `GIZZI_BASH_ENV_PASSTHROUGH` no longer pass a credential-named variable on their own. The bash tool asks the person once for that exact name (an `env_secret` ask), and a glob never approves one. Paths with no ask, such as the selfhost worker and environment setup, leave it out. An approved value is still masked in the command's output.
+
+### Test vectors
+
+`spec/Contracts/os/v1/conformance/redaction-vectors.json` holds the shared cases. Each case lists an input, the attached values, the strings that must disappear and the strings that must stay. The Rust tests (`authority::redact`) and the TS tests (`test/util/secret-redactor.test.ts`) both read it. A rule change goes into both redactors, with a vector.
 
 ## The four depths
 

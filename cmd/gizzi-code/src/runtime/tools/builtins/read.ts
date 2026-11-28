@@ -13,6 +13,8 @@ import { Instance } from "@/runtime/context/project/instance"
 import { assertExternalDirectory } from "@/runtime/tools/builtins/external-directory"
 import { InstructionPrompt } from "@/runtime/session/instruction"
 import { Filesystem } from "@/shared/util/filesystem"
+import { isCredentialPath } from "@/runtime/tools/guard/permission/credential-paths"
+import { maskCredentialFileLines } from "@/shared/util/secret-redactor"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -209,6 +211,10 @@ export const ReadTool = Tool.define("read", {
     if (lines < offset && !(lines === 0 && offset === 1)) {
       throw new Error(`Offset ${offset} is out of range for this file (${lines} lines)`)
     }
+
+    // A .env or credential file is an "ask" before the read (credential-paths.ts). Once the person
+    // approved it, the model still gets names, never values (AllternitOS step 10).
+    if (isCredentialPath(filepath)) raw.splice(0, raw.length, ...maskCredentialFileLines(raw))
 
     const content = raw.map((line, index) => {
       return `${index + offset}: ${line}`
