@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Pane } from '../../components/design-system/Pane'
 import { Box, Text } from '../../ink'
 import { useKeybinding } from '../../keybindings/useKeybinding'
-import { getLiveSession, liveLinks, onLiveSessionChange, type LiveLinks } from '../../services/liveSession'
+import { fetchPaneSessions, getLiveSession, liveLinks, onLiveSessionChange, paneSessionLine, type LiveLinks, type PaneSession } from '../../services/liveSession'
 import type { LocalJSXCommandCall } from '../../types/command'
 
 function useLive() {
@@ -55,10 +55,44 @@ function ReachabilityLine(): React.ReactNode {
   )
 }
 
+/** Other CLIs running in panes on this computer, with who can reach each one. */
+export function PaneSessionList({ rows }: { rows: PaneSession[] }): React.ReactNode {
+  if (rows.length === 0) return null
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>Other sessions on this computer</Text>
+      {rows.map(r => (
+        <Text key={r.address} color={r.status === 'blocked' ? 'warning' : undefined}>
+          {paneSessionLine(r)}
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
+function usePaneSessions(): PaneSession[] {
+  const [rows, setRows] = useState<PaneSession[]>([])
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      void fetchPaneSessions()
+        .then(next => alive && setRows(next))
+        .catch(() => alive && setRows([]))
+    load()
+    const timer = setInterval(load, 5_000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+  return rows
+}
+
 export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode {
   const live = useLive()
   const [links, setLinks] = useState<LiveLinks | null>(null)
   const [qr, setQr] = useState('')
+  const panes = usePaneSessions()
   useKeybinding('confirm:no', onDone, { context: 'Confirmation' })
 
   useEffect(() => {
@@ -75,6 +109,7 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
         <Text color="warning">This session is not live yet: the Allternit engine is not reachable at {live.engineURL}.</Text>
         <Text dimColor>Open Allternit Desktop (or run `gizzi serve`) and it connects within 15 seconds.</Text>
         <ReachabilityLine />
+        <PaneSessionList rows={panes} />
         <Text dimColor>(press esc to close)</Text>
       </Pane>
     )
@@ -116,6 +151,7 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
         <Text color="ide">/desktop</Text>
         <Text dimColor> (it is already in Desktop's session list)</Text>
       </Box>
+      <PaneSessionList rows={panes} />
       <Box marginTop={1}>
         <Text dimColor>Messages, Stop and approvals from any of them reach this terminal at once. (press esc to close)</Text>
       </Box>
