@@ -83,6 +83,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var pickerOpen by remember { mutableStateOf(false) }
     var openComputer by remember { mutableStateOf<ComputerRecord?>(null) }
     var detail by remember { mutableStateOf<AciDevice?>(null) }
+    var browserComputerOpen by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     // Account flag `computers_console` (iOS AccountFlagsClient): off = today's screen, unchanged.
     var consoleOn by remember { mutableStateOf(host.signedIn) }
@@ -119,6 +120,19 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             }
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
             if (consoleOn) AciConsoleSection(host.restorePoints)
+            // A Linux computer that runs in this phone's WebView (CONTRACT section 5.1 label). Signed-in users only.
+            if (host.signedIn) {
+                AciRoundedCard(Modifier.padding(bottom = 12.dp)) {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open Browser computer") { browserComputerOpen = true }
+                            .padding(vertical = 16.dp).testTag("aciBrowserComputerRow"),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Browser computer", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text("A Linux computer that runs on this phone.", color = c.textSecondary, fontSize = 13.sp)
+                    }
+                }
+            }
             when {
                 devices == null -> Text("Loading computers…", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))
@@ -153,6 +167,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
         }
     }
     if (pairOpen) AciPairComputerSheet { pairOpen = false }
+    if (browserComputerOpen) AciBrowserComputerDetail { browserComputerOpen = false }
     if (pickerOpen) AciComputerScreenSheet(onDismiss = { pickerOpen = false })
     detail?.let { d ->
         Dialog(onDismissRequest = { detail = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {

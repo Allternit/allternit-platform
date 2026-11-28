@@ -49,6 +49,8 @@ dependencies {
     // PtySession + PtyTerminalView: the console Terminal tab reuses the Code shell over the relay (computers-console step 5.4).
     implementation(project(":feature:code"))
     implementation(libs.okhttp)
+    // BrowserComputerWebView: origin-scoped message listener and document-start script (same pin as Office and Artifacts).
+    implementation(libs.androidx.webkit)
     // BackHandler (the browser and a run go back like the system Back on iOS swipe).
     implementation(libs.activity.compose)
     implementation(libs.kotlinx.serialization.json)
