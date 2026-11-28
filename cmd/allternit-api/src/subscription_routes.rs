@@ -792,6 +792,14 @@ fn desktop_proof_matches(token: &str) -> bool {
     }
 }
 
+/// Tests: a valid Desktop window proof header value (the same fixed secret the subscription
+/// tests use; the first test to set the process secret wins, so read it back).
+#[cfg(test)]
+pub(crate) fn test_desktop_proof() -> String {
+    let _ = DESKTOP_HUMAN_PROOF.set("d".repeat(64));
+    format!("{DESKTOP_PROOF_PREFIX}{}", DESKTOP_HUMAN_PROOF.get().expect("desktop proof set"))
+}
+
 /// `Ok` when this request was made by the person `user_id`: Desktop's own
 /// proof (see [`desktop_proof_matches`]), or a Clerk session
 /// token — the human-proof header, else the bearer (the web calls the API

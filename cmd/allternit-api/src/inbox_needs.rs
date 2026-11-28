@@ -628,7 +628,14 @@ fn body(b: Option<Json<ActBody>>) -> ActBody {
     b.map(|Json(b)| b).unwrap_or_default()
 }
 
-async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, headers: axum::http::HeaderMap, b: Option<Json<ActBody>>) -> Response {
+async fn approve(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    b: Option<Json<ActBody>>,
+) -> Response {
     let b = body(b);
     let approve = match b.decision.as_deref() {
         None | Some("approve") => true,
@@ -700,7 +707,8 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
         }
         "factory_approval" => {
             let aid = id.trim_start_matches("factory:");
-            match crate::factory_approvals::resolve(&state, aid, approve, &user.user_id, crate::factory_approvals::Provenance::app(), None).await {
+            let gate = crate::authority::adapters::gate(&state, &headers, &user, credential.is_some()).await;
+            match crate::factory_approvals::resolve(&state, aid, approve, &user.user_id, &gate, crate::factory_approvals::Provenance::app(), None).await {
                 Ok(a) => Ok(json!({ "state": a.state, "approval": a.to_json() })),
                 Err(e) => Err(e.into_response()),
             }

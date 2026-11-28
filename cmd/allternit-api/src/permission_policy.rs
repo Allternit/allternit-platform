@@ -303,13 +303,24 @@ pub struct ApprovalRequest {
     pub args: Value,
     pub status: ApprovalStatus,
     pub created_at: String,
+    /// The authority kernel's `approval_requests.request_id` (plan step 11a). Never serialized:
+    /// old responses keep their shape.
+    #[serde(skip)]
+    pub kernel_request_id: Option<String>,
+    /// The kernel's `ApprovalTokenV1.token` once a person approved; spent by the ACI redeem.
+    #[serde(skip)]
+    pub kernel_token: Option<String>,
 }
 
 /// In-memory store for pending/resolved approval requests. All operations are
 /// synchronous and short-lived; the store is kept behind `Arc` in `AppState`.
+///
+/// [`ApprovalStore::linked`] (the running server) also opens an authority-kernel request for
+/// every new record (`authority::adapters::tool_approvals`). `new()` (most tests) does not.
 #[derive(Debug, Default)]
 pub struct ApprovalStore {
     requests: Mutex<HashMap<String, ApprovalRequest>>,
+    kernel: Option<crate::db::DbHandle>,
 }
 
 impl ApprovalStore {
@@ -317,8 +328,25 @@ impl ApprovalStore {
         Self::default()
     }
 
-    /// Record a new pending approval request and return its id.
+    /// A store whose records write through the authority kernel in `db` (plan step 11a).
+    pub fn linked(db: crate::db::DbHandle) -> Self {
+        Self { requests: Mutex::new(HashMap::new()), kernel: Some(db) }
+    }
+
+    /// The kernel database, when linked.
+    pub fn kernel_db(&self) -> Option<&crate::db::DbHandle> {
+        self.kernel.as_ref()
+    }
+
+    /// Record a new pending approval request and return its id. Chain scope `default`; callers
+    /// that know the caller's organization use [`ApprovalStore::create_in`].
     pub fn create(&self, user_id: &str, tool: &str, args: &Value) -> String {
+        self.create_in(user_id, None, tool, args)
+    }
+
+    /// [`ApprovalStore::create`] with the caller's organization-or-tenant id
+    /// (`authority::org_or_tenant`), the kernel chain scope.
+    pub fn create_in(&self, user_id: &str, org_or_tenant: Option<&str>, tool: &str, args: &Value) -> String {
         let id = Uuid::new_v4().to_string();
         let request = ApprovalRequest {
             id: id.clone(),
@@ -327,9 +355,29 @@ impl ApprovalStore {
             args: args.clone(),
             status: ApprovalStatus::Pending,
             created_at: Utc::now().to_rfc3339(),
+            kernel_request_id: None,
+            kernel_token: None,
         };
+        // Open the kernel row first (it never blocks the old create: a failure is logged and the
+        // first resolve opens it lazily).
+        let kernel_request_id = self.kernel.as_ref().and_then(|db| {
+            crate::authority::adapters::tool_approvals::link(db, &request, crate::authority::scope_of(org_or_tenant))
+        });
+        let request = ApprovalRequest { kernel_request_id, ..request };
         self.requests.lock().expect("approval store lock").insert(id.clone(), request);
         id
+    }
+
+    /// Record the kernel side of a record (request id and/or approve token).
+    pub fn set_kernel(&self, id: &str, request_id: Option<String>, token: Option<String>) {
+        if let Some(req) = self.requests.lock().expect("approval store lock").get_mut(id) {
+            if request_id.is_some() {
+                req.kernel_request_id = request_id;
+            }
+            if token.is_some() {
+                req.kernel_token = token;
+            }
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<ApprovalRequest> {

@@ -575,6 +575,8 @@ async fn main() {
     let dp_jwks = allternit_api::auth_dp_jwt::DataPlaneJwks::from_env();
 
     // Create application state
+    // Plan step 11a: every ApprovalStore record writes through the authority kernel.
+    let approval_store = Arc::new(ApprovalStore::linked(db.clone()));
     let state = Arc::new(AppState {
         config: app_config.clone(),
         db,
@@ -602,7 +604,7 @@ async fn main() {
         design_skill_cache,
         terminal_sessions: TerminalSessionStore::new(),
         mcp_dispatcher: allternit_api::mcp_dispatcher::McpDispatcher::new(),
-        approval_store: Arc::new(ApprovalStore::new()),
+        approval_store,
         passkey_state,
         resource_class_catalog,
         fabric_node_provider,

@@ -776,17 +776,22 @@ async fn start_run(state: Arc<AppState>, user: AuthUser, mut body: AciRunBody) -
             // single-use, and — critically — that this payload hashes to the
             // granted action hash.
             if let Some(ref approval_id) = body.approval_id {
-                match crate::aci_approvals::GRANTS.redeem(&user.user_id, approval_id, &action_hash)
+                match crate::aci_approvals::GRANTS
+                    .redeem(&user.user_id, approval_id, &action_hash)
+                    .map_err(|d| d.reason().to_string())
+                    // Plan step 11a: the grant is the kernel token's old-client view; spend the
+                    // kernel token too (enforce refuses without it).
+                    .and_then(|_| crate::authority::adapters::tool_approvals::redeem(&state, approval_id))
                 {
                     Ok(_) => granted = true,
-                    Err(denial) => {
+                    Err(reason) => {
                         return (
                             StatusCode::FORBIDDEN,
                             Json(json!({
                                 "error": "approval_denied",
                                 "approval_id": approval_id,
                                 "action_hash": action_hash,
-                                "reason": denial.reason(),
+                                "reason": reason,
                             })),
                         )
                             .into_response();
@@ -802,8 +807,9 @@ async fn start_run(state: Arc<AppState>, user: AuthUser, mut body: AciRunBody) -
             }
 
             if !granted {
-                let approval_id = state.approval_store.create(
+                let approval_id = state.approval_store.create_in(
                     &user.user_id,
+                    crate::authority::org_or_tenant(&user),
                     "aci.sensitive_action",
                     &json!({
                         "goal": decision.sanitized_goal,
@@ -1460,6 +1466,28 @@ pub(crate) fn may_decide(state: &AppState, user: &AuthUser, headers: &axum::http
     .unwrap_or(false)
 }
 
+/// Plan step 11a: only a person answers a handoff (agent, run, API-key, MCP and service
+/// credentials are refused, in every kernel mode), and the authority kernel resolves the linked
+/// `approval_requests` row first, so the approval has one kernel row and one receipt.
+async fn kernel_decide(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    credential: Option<&crate::enterprise_auth::CredentialContext>,
+    headers: &axum::http::HeaderMap,
+    id: &str,
+    approve: bool,
+) -> Result<(), Response> {
+    let gate = crate::authority::adapters::gate(state, headers, user, credential.is_some()).await;
+    if let crate::authority::adapters::Gate::Refuse(why) = &gate {
+        warn!(approval_id = %id, "handoff decision refused: not a person's session");
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden_caller", "message": why}))).into_response());
+    }
+    crate::authority::adapters::tool_approvals::resolve(state, &gate, id, approve, &user.user_id).await.map_err(|e| {
+        let status = if e.code == allternit_authority::ErrorCode::Conflict { StatusCode::CONFLICT } else { StatusCode::FORBIDDEN };
+        (status, Json(json!({"error": "approval_refused", "message": e.message, "code": e.code, "receipt_id": e.receipt_id}))).into_response()
+    })
+}
+
 fn handoff_not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -1485,6 +1513,7 @@ fn not_the_owner() -> Response {
 pub(crate) async fn aci_handoff_approve(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     body: axum::body::Bytes,
@@ -1493,6 +1522,9 @@ pub(crate) async fn aci_handoff_approve(
     if !may_decide(&state, &user, &headers, &req) {
         warn!(approval_id = %id, "handoff approve refused: caller isn't the run's owner");
         return not_the_owner();
+    }
+    if let Err(r) = kernel_decide(&state, &user, credential.as_ref().map(|c| &c.0), &headers, &id, true).await {
+        return r;
     }
     let wants_run = serde_json::from_slice::<serde_json::Value>(&body)
         .ok()
@@ -1532,6 +1564,7 @@ fn allow_credential_for_run(state: &AppState, id: &str) -> &'static str {
 pub(crate) async fn aci_handoff_deny(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
@@ -1539,6 +1572,9 @@ pub(crate) async fn aci_handoff_deny(
     if !may_decide(&state, &user, &headers, &req) {
         warn!(approval_id = %id, "handoff deny refused: caller isn't the run's owner");
         return not_the_owner();
+    }
+    if let Err(r) = kernel_decide(&state, &user, credential.as_ref().map(|c| &c.0), &headers, &id, false).await {
+        return r;
     }
     if state.approval_store.deny(&id) {
         crate::aci_approvals::GRANTS.deny(&id);
@@ -1576,15 +1612,15 @@ mod tests {
 
         for (decide, label) in [(true, "approve"), (false, "deny")] {
             let res = if decide {
-                super::aci_handoff_approve(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await
+                super::aci_handoff_approve(State(st.clone()), Extension(who("intruder")), None, HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await
             } else {
-                super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(id.clone())).await
+                super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), None, HeaderMap::new(), Path(id.clone())).await
             };
             assert_eq!(res.status(), StatusCode::FORBIDDEN, "a non-owner {label} is refused");
             assert_eq!(st.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Pending);
         }
 
-        let res = super::aci_handoff_approve(State(st.clone()), Extension(who("owner-a")), HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await;
+        let res = super::aci_handoff_approve(State(st.clone()), Extension(who("owner-a")), None, HeaderMap::new(), Path(id.clone()), axum::body::Bytes::new()).await;
         assert_eq!(res.status(), StatusCode::OK, "the owner approves");
         assert_eq!(st.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Approved);
 
@@ -1595,10 +1631,41 @@ mod tests {
             [],
         ).unwrap();
         let other = st.approval_store.create("svc", "computer.confirmation_required", &json!({ "computer_id": "cmp_1" }));
-        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), HeaderMap::new(), Path(other.clone())).await;
+        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("intruder")), None, HeaderMap::new(), Path(other.clone())).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
-        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("owner-b")), HeaderMap::new(), Path(other.clone())).await;
+        let res = super::aci_handoff_deny(State(st.clone()), Extension(who("owner-b")), None, HeaderMap::new(), Path(other.clone())).await;
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    /// Plan step 11a: a person approving a handoff resolves its one kernel row (one approve
+    /// receipt); an agent credential for the same owner is refused and changes nothing.
+    #[tokio::test]
+    async fn handoff_approve_writes_one_kernel_row_and_refuses_agents() {
+        use axum::extract::{Extension, Path, State};
+        use axum::http::{HeaderMap, StatusCode};
+        let dir = std::env::temp_dir().join(format!("aci-kernel-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let id = st.approval_store.create("owner-a", "aci.sensitive_action", &json!({ "goal": "pay the invoice" }));
+        let count = |sql: &str| -> i64 { st.db.connect().unwrap().query_row(sql, [&id], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM approval_requests WHERE source_store = 'aci' AND source_ref = ?1 AND status = 'open'"), 1);
+
+        let mut agent = HeaderMap::new();
+        agent.insert("x-allternit-agent-id", "agent_1".parse().unwrap());
+        let res = super::aci_handoff_approve(State(st.clone()), Extension(who("owner-a")), None, agent, Path(id.clone()), axum::body::Bytes::new()).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert_eq!(st.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Pending);
+
+        let mut person = HeaderMap::new();
+        person.insert("x-allternit-human-proof", crate::subscription_routes::test_desktop_proof().parse().unwrap());
+        let res = super::aci_handoff_approve(State(st.clone()), Extension(who("owner-a")), None, person, Path(id.clone()), axum::body::Bytes::new()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(count("SELECT COUNT(*) FROM approval_requests WHERE source_ref = ?1"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM approval_requests WHERE source_ref = ?1 AND status = 'approved'"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') = (SELECT request_id FROM approval_requests WHERE source_ref = ?1)"),
+            1
+        );
     }
 
     #[tokio::test]

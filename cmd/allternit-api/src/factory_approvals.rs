@@ -110,6 +110,11 @@ fn parse_ts(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
 }
 
+/// `expires_at` as a time (the kernel request's deadline, `authority::adapters::factory`).
+pub(crate) fn parse_deadline(s: &str) -> Option<DateTime<Utc>> {
+    parse_ts(s)
+}
+
 // ---------------------------------------------------------------- events
 
 /// `approval.requested` / `approval.resolved` for the Factory events stream
@@ -459,6 +464,9 @@ pub enum ResolveError {
     HighRisk(Approval),
     /// The Gate refused the decision (`code`, fact).
     Refused(String, String),
+    /// Not a person's session (agent, run, API key, MCP, service), or the authority kernel
+    /// refused the decision (plan step 11a). `(code, fact)`.
+    Kernel(String, String),
     Internal(String),
 }
 
@@ -478,6 +486,10 @@ impl ResolveError {
                 .into_response(),
             ResolveError::HighRisk(_) => api_err(StatusCode::FORBIDDEN, "refused", "high-risk approvals are app and push only", "Approve it in the Allternit app"),
             ResolveError::Refused(code, fact) => api_err(StatusCode::CONFLICT, "refused", &format!("{code}: {fact}"), "Open the node to see its current state"),
+            ResolveError::Kernel(code, fact) if code == "forbidden_caller" => {
+                api_err(StatusCode::FORBIDDEN, "forbidden_caller", &fact, "Approve it yourself in the Allternit app")
+            }
+            ResolveError::Kernel(code, fact) => api_err(StatusCode::CONFLICT, "refused", &format!("{code}: {fact}"), "Open the approval in the Allternit inbox"),
             ResolveError::Internal(e) => api_err(StatusCode::INTERNAL_SERVER_ERROR, "transport", &e, "Try again"),
         }
     }
@@ -505,7 +517,14 @@ static RESOLVE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// Record the decision as a Gate event (owner as actor, surface as
 /// provenance), mark the approval, expire the other codes, emit
 /// `approval.resolved` and update the other surfaces.
-pub async fn resolve(state: &Arc<AppState>, id: &str, approve: bool, actor_user: &str, prov: Provenance, note: Option<String>) -> Result<Approval, ResolveError> {
+///
+/// `gate` says who answered (`authority::adapters::gate`; a channel reply from the owner's
+/// verified identity with its one-time code counts as the person). The authority kernel resolves
+/// the linked `approval_requests` row first (one approve/deny receipt), then the Gate event runs.
+pub async fn resolve(state: &Arc<AppState>, id: &str, approve: bool, actor_user: &str, gate: &crate::authority::adapters::Gate, prov: Provenance, note: Option<String>) -> Result<Approval, ResolveError> {
+    if let crate::authority::adapters::Gate::Refuse(why) = gate {
+        return Err(ResolveError::Kernel("forbidden_caller".into(), (*why).to_string()));
+    }
     let _guard = RESOLVE_LOCK.lock().await;
     let conn = state.db.connect().map_err(|e| ResolveError::Internal(e.to_string()))?;
     let a = get(&conn, id).map_err(|e| ResolveError::Internal(e.to_string()))?.ok_or(ResolveError::NotFound)?;
@@ -519,6 +538,7 @@ pub async fn resolve(state: &Arc<AppState>, id: &str, approve: bool, actor_user:
     if a.expired_at(now) {
         let _ = conn.execute("UPDATE factory_approvals SET state = 'expired', resolved_at = ?2, resolved_via = 'expiry' WHERE id = ?1 AND state = 'pending'", params![a.id, now.to_rfc3339()]);
         let _ = expire_codes(&conn, &a.id, now);
+        crate::authority::adapters::factory::unlink(&state.db, &a.id, "factory approval expired");
         let a = get(&conn, id).ok().flatten().unwrap_or(a);
         return Err(ResolveError::Expired(a));
     }
@@ -526,6 +546,45 @@ pub async fn resolve(state: &Arc<AppState>, id: &str, approve: bool, actor_user:
         return Err(ResolveError::HighRisk(a));
     }
     drop(conn);
+
+    // The kernel first: a person's decision, one receipt, written before the Gate acts.
+    let linked = crate::authority::adapters::factory::request_id(&state.db, &a.id);
+    let db = state.db.clone();
+    let (kernel_gate, kernel_a, kernel_note) = (gate.clone(), a.clone(), note.clone());
+    let kernel = tokio::task::spawn_blocking(move || {
+        crate::authority::adapters::resolve(&db, &kernel_gate, linked, &kernel_a.owner, approve, kernel_note, || {
+            crate::authority::adapters::factory::link(&db, &kernel_a)
+        })
+    })
+    .await
+    .map_err(|e| ResolveError::Internal(e.to_string()))?;
+    if let Err(e) = kernel {
+        let code = serde_json::to_value(e.code).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "kernel".into());
+        return Err(ResolveError::Kernel(code, e.message));
+    }
+    finish(state, a, approve, actor_user, prov, note).await
+}
+
+/// The kernel inbox resolved this approval (`authority::adapters::write_back`): run the Gate
+/// event and close the old row. Never calls the kernel, so a kernel decision cannot loop back.
+pub async fn resolve_from_kernel(state: &Arc<AppState>, id: &str, approve: bool, actor_user: &str) -> Result<Approval, ResolveError> {
+    let _guard = RESOLVE_LOCK.lock().await;
+    let conn = state.db.connect().map_err(|e| ResolveError::Internal(e.to_string()))?;
+    let a = get(&conn, id).map_err(|e| ResolveError::Internal(e.to_string()))?.ok_or(ResolveError::NotFound)?;
+    drop(conn);
+    if a.owner != actor_user {
+        return Err(ResolveError::NotFound);
+    }
+    if a.state != "pending" {
+        return Err(ResolveError::AlreadyResolved(a));
+    }
+    finish(state, a, approve, actor_user, Provenance { surface: "app".into(), sender: Some("kernel inbox".into()), ..Default::default() }, None).await
+}
+
+/// The Gate event and the old row update, shared by [`resolve`] and [`resolve_from_kernel`].
+async fn finish(state: &Arc<AppState>, a: Approval, approve: bool, actor_user: &str, prov: Provenance, note: Option<String>) -> Result<Approval, ResolveError> {
+    let id = a.id.clone();
+    let id = id.as_str();
 
     let reason = format!(
         "{} via {}{}{} (factory approval {})",
@@ -717,6 +776,7 @@ pub async fn sync_from_ledger(state: &Arc<AppState>) -> anyhow::Result<SyncRepor
             let (risk, risk_reason) = classify_risk(&n.labels, autonomy_level(state, &owner, bot_id.as_deref()).as_deref());
             let new = NewApproval { owner, dag_id: n.dag_id.clone(), node_id: n.node_id.clone(), gate: n.gate.clone(), bot_id, title: n.title.clone(), summary: n.summary.clone(), evidence_ref: n.evidence_ref.clone(), risk, risk_reason };
             if let Some(a) = insert_if_absent(&conn, &new, now)? {
+                crate::authority::adapters::factory::link_logged(&state.db, &a);
                 report.created.push(a.id.clone());
                 fresh.push(a);
             }
@@ -738,6 +798,7 @@ pub async fn sync_from_ledger(state: &Arc<AppState>) -> anyhow::Result<SyncRepor
             )?;
             if n == 1 {
                 let _ = expire_codes(&conn, &a.id, now);
+                crate::authority::adapters::factory::unlink(&state.db, &a.id, "closed by the Factory ledger (answered elsewhere or no longer waiting)");
                 report.closed.push(a.id.clone());
                 if let Ok(Some(done)) = get(&conn, &a.id) {
                     emit(state, "approval.resolved", &done);
@@ -891,11 +952,20 @@ fn decision(s: &str) -> Option<bool> {
     }
 }
 
-async fn resolve_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> Response {
+async fn resolve_h(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<ResolveBody>,
+) -> Response {
     let Some(approve) = decision(&b.decision) else {
         return api_err(StatusCode::BAD_REQUEST, "usage", "decision must be approve or reject", "Send { decision: 'approve' | 'reject' }");
     };
-    match resolve(&state, &id, approve, &user.user_id, Provenance::app(), b.note).await {
+    // Only a person resolves (plan step 11a): agent, run, API-key and service credentials are refused.
+    let gate = crate::authority::adapters::gate(&state, &headers, &user, credential.is_some()).await;
+    match resolve(&state, &id, approve, &user.user_id, &gate, Provenance::app(), b.note).await {
         Ok(a) => Json(a.to_json()).into_response(),
         Err(e) => e.into_response(),
     }
@@ -904,10 +974,21 @@ async fn resolve_h(State(state): State<Arc<AppState>>, Extension(user): Extensio
 /// Approve / Reject pressed on a push notification. The device must hold a
 /// session for the owner, and the notification's one-time push code must
 /// match (so a stale or copied notification can't answer).
-async fn push_action_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> Response {
+async fn push_action_h(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<ResolveBody>,
+) -> Response {
     let Some(approve) = decision(&b.decision) else {
         return api_err(StatusCode::BAD_REQUEST, "usage", "decision must be approve or reject", "Send { decision, code }");
     };
+    let gate = crate::authority::adapters::gate(&state, &headers, &user, credential.is_some()).await;
+    if let crate::authority::adapters::Gate::Refuse(why) = &gate {
+        return api_err(StatusCode::FORBIDDEN, "forbidden_caller", why, "Approve it yourself in the Allternit app");
+    }
     let code = b.code.unwrap_or_default();
     {
         let conn = match state.db.connect() {
@@ -931,7 +1012,7 @@ async fn push_action_h(State(state): State<Arc<AppState>>, Extension(user): Exte
             Err(e) => return api_err(StatusCode::INTERNAL_SERVER_ERROR, "transport", &e.to_string(), "Try again"),
         }
     }
-    match resolve(&state, &id, approve, &user.user_id, Provenance { surface: "push".into(), ..Default::default() }, b.note).await {
+    match resolve(&state, &id, approve, &user.user_id, &gate, Provenance { surface: "push".into(), ..Default::default() }, b.note).await {
         Ok(a) => Json(a.to_json()).into_response(),
         Err(e) => e.into_response(),
     }
@@ -1265,9 +1346,9 @@ mod tests {
         let acct = crate::channel_transports::accounts(&state.db, "telegram", Some("acct-tg")).remove(0);
         crate::factory_approvals_channels::telegram_update(&state, &acct, &tg_reply_update(4242, &format!("approve {node} ABCDEF"), json!({}))).await;
         assert_eq!(get(&c, &a.id).unwrap().unwrap().state, "pending");
-        let err = resolve(&state, &a.id, true, "user-a", Provenance { surface: "sms".into(), ..Default::default() }, None).await.unwrap_err();
+        let err = resolve(&state, &a.id, true, "user-a", &crate::authority::adapters::Gate::Person, Provenance { surface: "sms".into(), ..Default::default() }, None).await.unwrap_err();
         assert!(matches!(err, ResolveError::HighRisk(_)));
-        let done = resolve(&state, &a.id, true, "user-a", Provenance::app(), None).await.unwrap();
+        let done = resolve(&state, &a.id, true, "user-a", &crate::authority::adapters::Gate::Person, Provenance::app(), None).await.unwrap();
         assert_eq!(done.state, "approved");
         crate::factory_approvals_channels::set_http(None);
     }
@@ -1387,5 +1468,78 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["result"]["state"], "rejected");
         assert!(crate::inbox_needs::collect(&c, "user-a", 30).unwrap().iter().all(|i| i["kind"] != "factory_approval"));
+    }
+
+    fn count(db: &crate::db::DbHandle, sql: &str, id: &str) -> i64 {
+        db.connect().unwrap().query_row(sql, params![id], |r| r.get(0)).unwrap()
+    }
+
+    const KERNEL_ROWS: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'factory' AND source_ref = ?1";
+    const KERNEL_APPROVED: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'factory' AND source_ref = ?1 AND status = 'approved'";
+    const APPROVE_RECEIPTS: &str = "SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') = (SELECT request_id FROM approval_requests WHERE source_ref = ?1)";
+
+    /// Plan step 11a: approving through the old app route resolves the linked kernel row: one
+    /// `approval_requests` row, one approve receipt, and the old row says approved.
+    #[tokio::test]
+    async fn app_route_approve_writes_one_kernel_row_and_one_receipt() {
+        let _g = SERIAL.lock().await;
+        let state = setup().await;
+        waiting_node(&state, &[]).await;
+        sync_from_ledger(&state).await.unwrap();
+        let a = list(&state.db.connect().unwrap(), "user-a", Some("pending")).unwrap().remove(0);
+        assert_eq!(count(&state.db, KERNEL_ROWS, &a.id), 1, "create opened one kernel request");
+        assert!(crate::authority::adapters::factory::request_id(&state.db, &a.id).is_some(), "old row keeps the kernel id");
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-allternit-human-proof", crate::subscription_routes::test_desktop_proof().parse().unwrap());
+        let res = resolve_h(State(state.clone()), Extension(user("user-a")), None, headers, Path(a.id.clone()), Json(ResolveBody { decision: "approve".into(), note: None, code: None })).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(get(&state.db.connect().unwrap(), &a.id).unwrap().unwrap().state, "approved");
+        assert_eq!(count(&state.db, KERNEL_ROWS, &a.id), 1);
+        assert_eq!(count(&state.db, KERNEL_APPROVED, &a.id), 1);
+        assert_eq!(count(&state.db, APPROVE_RECEIPTS, &a.id), 1);
+    }
+
+    /// Plan step 11a: an agent credential on the old resolve route is refused (it used to be
+    /// accepted for the owner's account); nothing changes on either side.
+    #[tokio::test]
+    async fn agent_credential_cannot_resolve_a_factory_approval() {
+        let _g = SERIAL.lock().await;
+        let state = setup().await;
+        waiting_node(&state, &[]).await;
+        sync_from_ledger(&state).await.unwrap();
+        let a = list(&state.db.connect().unwrap(), "user-a", Some("pending")).unwrap().remove(0);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-allternit-agent-id", "agent_1".parse().unwrap());
+        let res = resolve_h(State(state.clone()), Extension(user("user-a")), None, headers, Path(a.id.clone()), Json(ResolveBody { decision: "approve".into(), note: None, code: None })).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert_eq!(get(&state.db.connect().unwrap(), &a.id).unwrap().unwrap().state, "pending");
+        assert_eq!(count(&state.db, KERNEL_APPROVED, &a.id), 0);
+        assert_eq!(count(&state.db, APPROVE_RECEIPTS, &a.id), 0);
+    }
+
+    /// Plan step 11a: approving in the kernel inbox closes the old row too, and a second approve
+    /// through the old route adds no second receipt.
+    #[tokio::test]
+    async fn kernel_inbox_approve_writes_back_to_the_factory_row() {
+        let _g = SERIAL.lock().await;
+        let state = setup().await;
+        waiting_node(&state, &[]).await;
+        sync_from_ledger(&state).await.unwrap();
+        let a = list(&state.db.connect().unwrap(), "user-a", Some("pending")).unwrap().remove(0);
+        let rid = crate::authority::adapters::factory::request_id(&state.db, &a.id).unwrap();
+        let k = crate::authority::adapters::kernel(&state.db, crate::authority::audit::DEFAULT_TENANT).unwrap();
+        let human = allternit_authority::Caller { kind: allternit_authority::CallerKind::Human, principal: "user-a".into() };
+        let body = crate::authority::approvals::ResolveBody { request_id: rid.clone(), decision: crate::authority::approvals::Decision::Approve, note: None };
+        k.resolve(&human, body).unwrap();
+        crate::authority::adapters::write_back(&state, &rid, true, None, "user-a").await;
+        assert_eq!(get(&state.db.connect().unwrap(), &a.id).unwrap().unwrap().state, "approved");
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-allternit-human-proof", crate::subscription_routes::test_desktop_proof().parse().unwrap());
+        let res = resolve_h(State(state.clone()), Extension(user("user-a")), None, headers, Path(a.id.clone()), Json(ResolveBody { decision: "approve".into(), note: None, code: None })).await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(count(&state.db, KERNEL_ROWS, &a.id), 1);
+        assert_eq!(count(&state.db, APPROVE_RECEIPTS, &a.id), 1);
     }
 }

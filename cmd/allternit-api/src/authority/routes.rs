@@ -148,22 +148,34 @@ fn parse<T: DeserializeOwned>(body: Value) -> Result<T, Response> {
 }
 
 /// Load the signer, then run `f` on a blocking thread with a fresh [`SqlAuthority`].
+async fn run_kernel<T, F>(state: &AppState, tenant: Option<String>, f: F) -> Result<T, AuthorityError>
+where
+    T: Send + 'static,
+    F: FnOnce(SqlAuthority) -> Result<T, AuthorityError> + Send + 'static,
+{
+    let data_dir = state.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let signer = tokens::kernel_signer(&data_dir)?;
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || f(SqlAuthority::new(db, signer).with_tenant(tenant))).await {
+        Ok(r) => r,
+        Err(e) => Err(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
+    }
+}
+
+fn respond<T: serde::Serialize>(r: Result<T, AuthorityError>) -> Response {
+    match r {
+        Ok(body) => (StatusCode::OK, Json(json!({ "ok": true, "body": body }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// [`run_kernel`] answered as the route's JSON.
 async fn with_kernel<T, F>(state: &AppState, tenant: Option<String>, f: F) -> Response
 where
     T: serde::Serialize + Send + 'static,
     F: FnOnce(SqlAuthority) -> Result<T, AuthorityError> + Send + 'static,
 {
-    let data_dir = state.db.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
-    let signer = match tokens::kernel_signer(&data_dir) {
-        Ok(s) => s,
-        Err(e) => return error_response(e),
-    };
-    let db = state.db.clone();
-    match tokio::task::spawn_blocking(move || f(SqlAuthority::new(db, signer).with_tenant(tenant))).await {
-        Ok(Ok(body)) => (StatusCode::OK, Json(json!({ "ok": true, "body": body }))).into_response(),
-        Ok(Err(e)) => error_response(e),
-        Err(e) => error_response(AuthorityError::kernel_unavailable(format!("kernel task: {e}"))),
-    }
+    respond(run_kernel(state, tenant, f).await)
 }
 
 /// `approval.request`. Callers: runs and services (a person may raise one too).
@@ -200,7 +212,20 @@ async fn resolve(
         tracing::info!("kernel approvals: Desktop approve without a user-presence proof, refused");
         return with_kernel(&state, Some(super::kernel_scope(&user)), move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
     }
-    with_kernel(&state, Some(super::kernel_scope(&user)), move |k| k.resolve(&caller, body)).await
+    // Plan step 11a: a kernel decision also closes the old store's row (factory approval, ACI
+    // handoff, /beta/approvals record). The write-back never calls the kernel again: no loop, no
+    // second receipt.
+    let request_id = body.request_id.clone();
+    let approve = body.decision == Decision::Approve;
+    let resolved = run_kernel(&state, Some(super::kernel_scope(&user)), move |k| k.resolve(&caller, body)).await;
+    if let Ok(res) = &resolved {
+        let token = match res {
+            super::approvals::Resolution::Approved(t) => Some(t.token.clone()),
+            super::approvals::Resolution::Denied(_) => None,
+        };
+        super::adapters::write_back(&state, &request_id, approve, token, &user.user_id).await;
+    }
+    respond(resolved)
 }
 
 /// `approval.redeem`: spend a token before the action runs.
