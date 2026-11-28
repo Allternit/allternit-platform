@@ -104,7 +104,16 @@ cloud-api has its own copy of the kernel for chats with no computer, plus the re
 
 - **Key:** `ALLTERNIT_KERNEL_SEED` (standard base64 of a 32-byte Ed25519 seed), kept in cloud-api's secret settings on the server, never in the repo. It signs only cloud-api's own receipts, never a token for a computer. With no seed set, no receipt can be written: the relay will not send decisions, and `check` answers `kernel_unavailable`.
 - **Receipts:** the `kernel_receipts` table (migration 171), one hash chain per person, signed, append-only (database triggers refuse UPDATE and DELETE).
-- **`check`:** the policy decision for a tool call that cloud-api runs itself. Autonomy is `ask_first`. The mode is set by `ALLTERNIT_KERNEL_MODE`. The default, `shadow`, records the decision and its receipt but always lets the call run. `enforce` refuses `ask` and human-only classes.
+- **`check`:** the policy decision for a tool call that cloud-api runs itself. Autonomy is `ask_first`. The mode is set by `ALLTERNIT_KERNEL_MODE`. The default, `shadow`, records the decision and its receipt but always lets the call run. `enforce` refuses `ask` and human-only classes with `approval_required` and the `action_hash` of the call. cloud-api has no approval request store for chats with no computer yet, so `approval_request_id` is null: that approval flow is the next gap. With no seed, `shadow` still runs and writes no receipt, with one warning in the log (not one per call).
+- **Where it runs:** exactly once per tool call, before the tool runs, in the paths that execute tools on the server.
+
+  | Path | Tools | Principal and run |
+  |---|---|---|
+  | `routes/mcp_edge.rs` (`ProdBackend`: `model_tool`, `phone_call`, `mail_tool`) | `decide`, `respond`, the `phone_*` tools, the mail tools | the key's owner, `edge:<key id>` |
+  | `routes/meeting_pod.rs` (`run_connector_tool`) | the owner's connector tools in a meeting | the meeting owner, `meeting:<session id>` (the owner's approval is recorded on the receipt) |
+  | `routes/platform_v1/agent_tools.rs` (`tool_h`) | `knowledge_search`, `channel_post`, `send_text`, `call` | `platform:<project id>`, `agent:<agent id>` |
+
+- **Classes** (`kernel_tools.rs`): reads allow. A connector tool whose name says it sends (send, reply, post, message, email, sms, call) is `client_message`. A name that pays (pay, charge, refund, invoice, checkout, transfer) is `money`. Both are human-only. A tool in no table is `ask`, never allow.
 
 ## The four depths
 

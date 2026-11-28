@@ -728,6 +728,13 @@ async fn tool_call(
 /// and the pod gets `connectors_unavailable` (it may retry later).
 async fn run_connector_tool(state: &ApiState, session: &SessionRow, call_id: &str, tool: &str, args: &Value) -> Result<Value> {
     let db = &state.db;
+    // One kernel check before the call runs. The meeting owner already approved it (the caller
+    // only gets here on an approved `meeting_tool_approvals` row), recorded on the receipt.
+    let class = crate::kernel_tools::connector_class(tool);
+    let gate = crate::kernel::Tool { surface: "meeting_pod", name: tool, args, class: class.class, known: class.known, approved_by: Some("meeting_owner") };
+    if let Some(refusal) = crate::kernel::check(db, &session.user_id, &format!("meeting:{}", session.id), &gate).await.refusal() {
+        return Ok(json!({ "status": "error", "error": refusal["code"], "detail": refusal }));
+    }
     let claimed = sqlx::query(
         "INSERT INTO meeting_tool_calls (session_id, call_id, tool, status) VALUES ($1, $2, $3, 'running') \
          ON CONFLICT (session_id, call_id) DO NOTHING",

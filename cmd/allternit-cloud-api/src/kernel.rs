@@ -189,10 +189,58 @@ pub enum Mode {
 }
 
 pub fn mode() -> Mode {
+    #[cfg(test)]
+    if let Some(m) = TEST_KERNEL.with(|k| k.get()) {
+        return m;
+    }
     match std::env::var(MODE_ENV).as_deref().map(str::trim) {
         Ok("enforce") => Mode::Enforce,
         _ => Mode::Shadow,
     }
+}
+
+/// One server-side tool call to check. Built by the path that runs the tool (never from model
+/// output), classified by [`crate::kernel_tools`].
+#[derive(Clone, Debug)]
+pub struct Tool<'a> {
+    /// Which cloud-api path runs it (`mcp_edge`, `meeting_pod`, `agent_tools`).
+    pub surface: &'a str,
+    pub name: &'a str,
+    /// The arguments the tool runs with. Hashed into `action_hash`, never written to a receipt.
+    pub args: &'a Value,
+    pub class: ActionClass,
+    /// `false` = the tool is in no table: the rule is forced to `ask`, whatever `class` says.
+    pub known: bool,
+    /// Set when a person already approved this exact call through the path's own flow (the
+    /// meeting owner's approval). The receipt records it and the call proceeds.
+    pub approved_by: Option<&'a str>,
+}
+
+impl Tool<'_> {
+    /// `sha256:<hex>` of the canonical `{tool, args}`, the same shape allternit-api binds tokens to.
+    pub fn action_hash(&self) -> String {
+        sha256_tagged(canonical(&json!({ "tool": self.name, "args": self.args })).as_bytes())
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests on this thread: the mode to use, with the test key, instead of the process env.
+    static TEST_KERNEL: std::cell::Cell<Option<Mode>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run kernel checks on this test thread in `mode` with the test key (the env is process-wide).
+#[cfg(test)]
+pub(crate) fn set_test_kernel(mode: Option<Mode>) {
+    TEST_KERNEL.with(|k| k.set(mode));
+}
+
+fn key_from_env() -> Result<KernelKey, String> {
+    #[cfg(test)]
+    if TEST_KERNEL.with(|k| k.get()).is_some() {
+        return Ok(KernelKey::from_seed(&[7u8; 32]));
+    }
+    KernelKey::from_env()
 }
 
 /// What [`check`] says.
@@ -203,64 +251,118 @@ pub struct Checked {
     /// Whether the caller may run the tool now. Always true in shadow mode.
     pub proceed: bool,
     pub receipt_id: Option<String>,
+    pub action_hash: String,
+    pub action_class: &'static str,
 }
 
-/// `check` for a tool call in a chat with no computer. No approval token can exist for these yet
+impl Checked {
+    /// `None` when the tool may run, else the refusal a tool caller gets. cloud-api has no
+    /// approval request store for chats with no computer yet, so `approval_request_id` is null
+    /// and the caller gets the `action_hash` to approve (the no-computer approval flow is the
+    /// next gap).
+    pub fn refusal(&self) -> Option<Value> {
+        if self.proceed {
+            return None;
+        }
+        if self.decision == "kernel_unavailable" {
+            return Some(json!({
+                "code": "kernel_unavailable", "error": "kernel_unavailable",
+                "message": "The authority kernel could not record this action, so it did not run.",
+            }));
+        }
+        Some(json!({
+            "code": "approval_required", "error": "approval_required",
+            "message": "This action needs a person's approval before it runs.",
+            "approval_request_id": null, "action_hash": self.action_hash, "action_class": self.action_class,
+            "receipt_id": self.receipt_id,
+        }))
+    }
+}
+
+/// `check` for a tool call cloud-api runs itself. Call it exactly once per call, before the tool
+/// runs, and stop when [`Checked::refusal`] is `Some`. No approval token can exist for these yet
 /// (the phone relay resolves device-held requests), so `ask` and `human_only` are refused in
 /// enforce mode and only recorded in shadow mode. Autonomy is `ask_first` (no consent receipt
 /// exists for cloud chats, CONTRACT.md 4.4).
-pub async fn check(db: &PgPool, principal: &str, run_id: &str, tool: &str, class: ActionClass) -> Checked {
-    check_in(db, KernelKey::from_env(), mode(), principal, run_id, tool, class).await
+pub async fn check(db: &PgPool, principal: &str, run_id: &str, tool: &Tool<'_>) -> Checked {
+    check_in(db, key_from_env(), mode(), principal, run_id, tool).await
 }
 
 /// [`check`] with the key and mode supplied (tests).
-pub async fn check_in(
-    db: &PgPool,
-    key: Result<KernelKey, String>,
-    mode: Mode,
-    principal: &str,
-    run_id: &str,
-    tool: &str,
-    class: ActionClass,
-) -> Checked {
-    let decision = match class_rule(class, AutonomyLevel::AskFirst) {
-        Rule::Allow => "allow",
-        Rule::Ask => "ask",
-        Rule::HumanOnly => "human_only",
+pub async fn check_in(db: &PgPool, key: Result<KernelKey, String>, mode: Mode, principal: &str, run_id: &str, tool: &Tool<'_>) -> Checked {
+    let decision = if tool.approved_by.is_some() {
+        "allow"
+    } else if !tool.known {
+        "ask"
+    } else {
+        match class_rule(tool.class, AutonomyLevel::AskFirst) {
+            Rule::Allow => "allow",
+            Rule::Ask => "ask",
+            Rule::HumanOnly => "human_only",
+        }
     };
-    let class_name = serde_json::to_value(class).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let class_name = enum_name(tool.class);
     let mode_name = if mode == Mode::Shadow { "shadow" } else { "enforce" };
-    let receipt = match key {
-        Ok(key) => append(
-            db,
-            &key,
-            ReceiptIn {
-                run_id,
-                principal,
-                kind: "check",
-                schema_id: "allternit.os.PolicyCheck",
-                decision,
-                payload: json!({ "tool": tool, "action_class": class_name, "autonomy_level": "ask_first", "mode": mode_name, "surface": "cloud_chat" }),
-                idempotency_key: None,
-            },
-        )
-        .await
-        .map_err(|e| e.to_string()),
-        Err(e) => Err(e),
+    let action_hash = tool.action_hash();
+    let done = |decision: &'static str, proceed: bool, receipt_id: Option<String>| Checked {
+        decision,
+        proceed,
+        receipt_id,
+        action_hash: action_hash.clone(),
+        action_class: class_name,
     };
+    let key = match key {
+        Ok(k) => k,
+        Err(e) => {
+            // One warning per process, not one per call. Shadow still runs (no receipt).
+            static MISSING_KEY: std::sync::Once = std::sync::Once::new();
+            MISSING_KEY.call_once(|| tracing::warn!("kernel check: no receipts will be written ({e})"));
+            return done("kernel_unavailable", mode == Mode::Shadow, None);
+        }
+    };
+    let mut payload = json!({
+        "tool": tool.name, "action_class": class_name, "classified": if tool.known { "table" } else { "default_ask" },
+        "autonomy_level": "ask_first", "mode": mode_name, "surface": tool.surface, "action_hash": action_hash,
+    });
+    if let Some(by) = tool.approved_by {
+        payload["approved_by"] = json!(by);
+    }
+    let receipt = append(
+        db,
+        &key,
+        ReceiptIn { run_id, principal, kind: "check", schema_id: "allternit.os.PolicyCheck", decision, payload, idempotency_key: None },
+    )
+    .await;
     match receipt {
         Ok(id) => {
-            let proceed = mode == Mode::Shadow || decision == "allow";
             if decision != "allow" {
-                tracing::info!(tool, class = %class_name, decision, mode = mode_name, "kernel check (cloud chat)");
+                tracing::info!(tool = tool.name, class = %class_name, decision, mode = mode_name, "kernel check (cloud)");
             }
-            Checked { decision, proceed, receipt_id: Some(id) }
+            done(decision, mode == Mode::Shadow || decision == "allow", Some(id))
         }
         // Write before act: no receipt means DENY when enforcing.
         Err(e) => {
-            tracing::warn!(tool, "kernel check: receipt not written ({e})");
-            Checked { decision: "kernel_unavailable", proceed: mode == Mode::Shadow, receipt_id: None }
+            tracing::warn!(tool = tool.name, "kernel check: receipt not written ({e})");
+            done("kernel_unavailable", mode == Mode::Shadow, None)
         }
+    }
+}
+
+fn enum_name(class: ActionClass) -> &'static str {
+    use ActionClass::*;
+    match class {
+        Read => "read",
+        UiLayout => "ui_layout",
+        RunControl => "run_control",
+        FileWrite => "file_write",
+        Network => "network",
+        AppInstall => "app_install",
+        InboxPrepare => "inbox_prepare",
+        Money => "money",
+        ClientMessage => "client_message",
+        Deploy => "deploy",
+        SecretNewHost => "secret_new_host",
+        Irreversible => "irreversible",
     }
 }
 
@@ -284,24 +386,45 @@ pub(crate) mod tests {
         assert_eq!(canonical(&v), r#"{"a":{"c":"x","d":[true,null]},"b":1}"#);
     }
 
+    fn tool<'a>(name: &'a str, args: &'a Value, class: ActionClass, known: bool) -> Tool<'a> {
+        Tool { surface: "test", name, args, class, known, approved_by: None }
+    }
+
     #[tokio::test]
     async fn shadow_records_but_proceeds_and_enforce_refuses_a_human_only_class() {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         receipts_schema(&state.db).await;
-        let shadow = check_in(&state.db, Ok(test_key()), Mode::Shadow, "user_1", "chat_1", "send_invoice", ActionClass::Money).await;
+        let a = json!({});
+        let inv = tool("send_invoice", &a, ActionClass::Money, true);
+        let shadow = check_in(&state.db, Ok(test_key()), Mode::Shadow, "user_1", "chat_1", &inv).await;
         assert_eq!((shadow.decision, shadow.proceed), ("human_only", true));
         assert!(shadow.receipt_id.is_some());
-        let enforce = check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", "send_invoice", ActionClass::Money).await;
+        let enforce = check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", &inv).await;
         assert_eq!((enforce.decision, enforce.proceed), ("human_only", false));
-        let read = check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", "web_search", ActionClass::Read).await;
+        let r = enforce.refusal().unwrap();
+        assert_eq!(r["code"], "approval_required");
+        assert!(r["action_hash"].as_str().unwrap().starts_with("sha256:"));
+        let ws = tool("web_search", &a, ActionClass::Read, true);
+        let read = check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", &ws).await;
         assert_eq!((read.decision, read.proceed), ("allow", true));
-        // No key: no receipt, so enforce denies.
-        let nokey = check_in(&state.db, Err("unset".into()), Mode::Enforce, "user_1", "chat_1", "web_search", ActionClass::Read).await;
+        assert!(read.refusal().is_none());
+        // Unknown tool: ask in enforce, never allow.
+        let unk = tool("mystery", &a, ActionClass::Read, false);
+        let u = check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", &unk).await;
+        assert_eq!((u.decision, u.proceed), ("ask", false));
+        // No key: no receipt, so enforce denies and shadow runs.
+        let nokey = check_in(&state.db, Err("unset".into()), Mode::Enforce, "user_1", "chat_1", &ws).await;
         assert_eq!((nokey.decision, nokey.proceed), ("kernel_unavailable", false));
+        let nokey = check_in(&state.db, Err("unset".into()), Mode::Shadow, "user_1", "chat_1", &ws).await;
+        assert!(nokey.proceed && nokey.receipt_id.is_none());
+        // A call a person already approved is recorded and runs.
+        let mut ok = tool("send_invoice", &a, ActionClass::Money, true);
+        ok.approved_by = Some("meeting_owner");
+        assert!(check_in(&state.db, Ok(test_key()), Mode::Enforce, "user_1", "chat_1", &ok).await.proceed);
         // One chain, linked, and the table refuses edits.
         let rows: Vec<(i64, String, String)> =
             sqlx::query_as("SELECT idx, prev_hash, hash FROM kernel_receipts WHERE principal = 'user_1' ORDER BY idx").fetch_all(&state.db).await.unwrap();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 5);
         assert_eq!(rows[0].1, GENESIS_HASH);
         assert_eq!(rows[1].1, rows[0].2);
         assert_eq!(rows[2].1, rows[1].2);

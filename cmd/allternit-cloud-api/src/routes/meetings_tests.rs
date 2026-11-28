@@ -602,3 +602,34 @@ async fn full_router_serves_meetings_without_route_collisions() {
     }
     assert!(gateway.recorded().is_empty(), "never relayed to a runtime");
 }
+
+#[tokio::test]
+async fn an_approved_connector_call_writes_one_kernel_receipt_before_it_runs() {
+    let (router, db) = setup().await;
+    sqlx::raw_sql(include_str!("../../migrations_pg/171_kernel_approval_relay.sql")).execute(&db).await.expect("kernel schema applies");
+    let a = who("user_k");
+    subscribe(&db, "user_k", "plus").await;
+    let ma = add(&router, &a, MEET).await;
+    let (_, session) = send_now(&router, &a, &ma).await;
+    let sid = session["id"].as_str().unwrap().to_string();
+    let token = issue_pod_token(&db, Uuid::parse_str(&sid).unwrap()).await.unwrap();
+    let tools = format!("/api/v1/meeting-sessions/{sid}/tool-calls");
+    let gmail = json!({ "call_id": "k1", "tool": "gmail__send", "args": { "to": "x@y.z" }, "asked_by": "Jordan", "speaker_confidence": 0.9 });
+    let (_, first) = pod(&router, &tools, &token, gmail.clone()).await;
+    let aid = first["approval_id"].as_str().unwrap();
+    call(&router, "POST", &format!("/api/v1/meeting-sessions/{sid}/approvals/{aid}"), &a, Some(json!({ "decision": "approve" }))).await;
+    // Shadow, in enforce too: the owner's approval is on the receipt and the call is let through
+    // (no paired runtime here, so it ends as connectors_unavailable after the check).
+    for mode in [crate::kernel::Mode::Shadow, crate::kernel::Mode::Enforce] {
+        crate::kernel::set_test_kernel(Some(mode));
+        let (_, out) = pod(&router, &tools, &token, gmail.clone()).await;
+        assert_eq!(out, json!({ "status": "error", "error": "connectors_unavailable" }));
+    }
+    crate::kernel::set_test_kernel(None);
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT decision, payload FROM kernel_receipts WHERE principal = 'user_k' ORDER BY idx").fetch_all(&db).await.unwrap();
+    assert_eq!(rows.len(), 2, "one receipt per call");
+    for (decision, payload) in rows {
+        assert_eq!(decision, "allow");
+        assert!(payload.contains("\"surface\":\"meeting_pod\"") && payload.contains("\"action_class\":\"client_message\"") && payload.contains("meeting_owner"), "{payload}");
+    }
+}
