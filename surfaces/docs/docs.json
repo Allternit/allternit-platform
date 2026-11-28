@@ -543,6 +543,7 @@
               "tools/lookup",
               "tools/send-user-message",
               "tools/ask-user-later",
+              "tools/shell",
               "tools/memory",
               "tools/past-chats",
               "tools/resources",

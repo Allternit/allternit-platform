@@ -121,6 +121,9 @@ export namespace PermissionNext {
    * `folder_access` gates a grant to folders outside the project (and
    * `request_delete`, real deletes there); builtins/folder-access.ts.
    *
+   * `app_install` gates the shell tool's install_app and fork_app (AllternitOS
+   * CONTRACT section 12): a person approves every call until the app sandbox exists.
+   *
    * `computer.access` gates a computer access tier for an app (request_access,
    * or the ask an access_required step raises); computer-toolset/index.ts.
    *
@@ -132,6 +135,7 @@ export namespace PermissionNext {
     "mcp_app",
     "project_send",
     "folder_access",
+    "app_install",
     "computer.access",
     "computer.credential",
     "computer.human",

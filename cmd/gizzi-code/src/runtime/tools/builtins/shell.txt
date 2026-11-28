@@ -1,0 +1,12 @@
+Drive the screen the user sees: open, close, focus and arrange views, start and stop runs, and install or fork apps.
+
+Actions:
+- open: view_id (and optional params). Opens a view.
+- close, focus: instance_id from get_state.
+- arrange: arrangement {layout: single|split|grid|free, slots: [{instance_id, region}]}. Phones show one view, so arrange there is open plus focus.
+- start_run: task, either {prompt, profile_id} or a full task. stop_run: run_id.
+- install_app: app_source {app_id, source: catalog|url, ref, digest}. Asks the user every time.
+- fork_app: fork_of {app_id, app_version}. Asks the user every time. The result has new_app_id.
+- get_state: read the screen (views, focus, runs, installed apps). Read before you act; pass its state_version as expected_state_version so a changed screen is refused with `conflict`.
+
+You cannot open or close approval, login, evidence or emergency-stop screens. You cannot approve anything; the user does that. If no app answers, the user has no app open for this session.

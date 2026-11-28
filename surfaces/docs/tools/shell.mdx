@@ -1,0 +1,27 @@
+---
+title: 'shell'
+description: 'The built-in tool an agent uses to open and arrange views, start and stop runs, and install apps on your screen'
+---
+
+## Overview
+
+`shell` lets an agent drive the screen you see. It sends one command to your app, the app runs it, and the agent gets the result. The agent never edits the page itself.
+
+Not built, not live: this ships with AllternitOS Stage 1. The app side that runs the commands is a later step, so until then the tool answers `no_app`.
+
+## Actions
+
+| Action | What it does | Asks you |
+|---|---|---|
+| `open`, `close`, `focus`, `arrange` | Show, hide or arrange views. On a phone, `arrange` opens and focuses one view. | No |
+| `start_run`, `stop_run` | Start a run from a prompt and profile, or stop one. | No |
+| `install_app`, `fork_app` | Install an app, or make your own copy of one. `fork_app` returns the new app id. | Every time |
+| `get_state` | Read the views, focus, runs and installed apps on screen. | No |
+
+## What the agent cannot do
+
+- Approve anything. Approvals are yours, in the inbox.
+- Open or close approval, login, evidence or emergency-stop screens. The system raises those.
+- Install or copy an app without your answer. Every `install_app` and `fork_app` asks, at every autonomy level.
+
+Pass `expected_state_version` from `get_state` so a command built on an out-of-date screen is refused with `conflict`.
