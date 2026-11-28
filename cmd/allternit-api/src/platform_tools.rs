@@ -258,6 +258,10 @@ pub async fn phone_tool(db: &DbHandle, cloud: &dyn CloudTools, owner: &str, name
                     if let Some(approved) = detail.get(field).and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
                         content = approved.to_string();
                     }
+                    // Plan step 11a: spend the kernel approval token before the text or call goes out.
+                    if let Err(why) = crate::authority::adapters::gateway::consume(db, &id) {
+                        return Ok(refusal("approval_required", &format!("{why} Ask the developer to approve it again.")));
+                    }
                     approval = Some(id);
                 }
                 None => {
@@ -483,7 +487,7 @@ mod tests {
 
         // The developer approves through the runtime's real path.
         let tx = crate::gateway_runner::transport(&state);
-        crate::gateway_runner::respond_approval(&db, tx.as_ref(), OWNER, &aid, "approve", ("user", "dev")).await.unwrap();
+        crate::gateway_runner::respond_approval(&db, tx.as_ref(), OWNER, &aid, "approve", ("user", "dev"), &crate::authority::adapters::Gate::Person).await.unwrap();
         let out = phone_tool(&db, &cloud, OWNER, "phone_text", args("Something else entirely"), Some(&meta("ses_a"))).await.unwrap();
         assert_eq!(out["message_id"], "msg_1", "{out}");
         let calls = cloud.calls.lock().unwrap().clone();

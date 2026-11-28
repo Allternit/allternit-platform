@@ -3196,7 +3196,12 @@ async fn agent_chat_bridge(
                             let (ap_db, ap_uid, ap_rid, ap_content) = (db.clone(), uid.clone(), rid.clone(), content.clone());
                             let fresh = tokio::task::spawn_blocking(
                                 move || -> Result<bool, rusqlite::Error> {
-                                    record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)
+                                    let fresh = record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)?;
+                                    if fresh {
+                                        // Plan step 11a: the ask is also a kernel approval request.
+                                        crate::authority::adapters::cowork::link_row(&db, &rid);
+                                    }
+                                    Ok(fresh)
                                 },
                             )
                             .await;

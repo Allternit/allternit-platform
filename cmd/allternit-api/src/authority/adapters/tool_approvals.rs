@@ -64,6 +64,7 @@ pub fn open_for(db: &DbHandle, req: &ApprovalRequest, tenant: String) -> Open {
         summary: format!("Run {}", req.tool),
         payload,
         deadline,
+        token_ttl_secs: None,
     }
 }
 

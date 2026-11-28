@@ -2327,6 +2327,11 @@ pub async fn cancel_job(db: &DbHandle, engine: &dyn BarEngine, user_id: &str, jo
             return Err(r);
         }
     };
+    // Plan step 11a: a routed ask withdrawn by its requester closes its kernel row too (a no-op
+    // when it was already answered).
+    if let Some(ask) = &job.approval_id {
+        crate::authority::adapters::cowork::unlink(db, ask, "withdrawn by its requester (Island bar job cancelled)");
+    }
     announce(&job);
     if let Some(task) = job.task_id.as_deref() {
         if !engine.cancel_task(task).await {

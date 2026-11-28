@@ -673,7 +673,8 @@ async fn approve(
         "approval" | "held_send" => {
             let aid = id.trim_start_matches("approval:").to_string();
             let tx = crate::gateway_runner::transport(&state);
-            match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &user.user_id, &aid, if approve { "approve" } else { "deny" }, ("user", &user.user_id)).await {
+            let gate = crate::authority::adapters::gate(&state, &headers, &user, credential.is_some()).await;
+            match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &user.user_id, &aid, if approve { "approve" } else { "deny" }, ("user", &user.user_id), &gate).await {
                 Err(e) => Err(e.into_response()),
                 Ok(v) if approve && it["kind"] == "held_send" => {
                     // A held iMessage already ran its send inside respond_approval.
@@ -715,7 +716,7 @@ async fn approve(
         }
         "gizzi_permission" => {
             let rid = id.trim_start_matches("permission:");
-            crate::cowork_routes::decide_from_inbox(&state, &user, &headers, rid, approve).await
+            crate::cowork_routes::decide_from_inbox(&state, &user, credential.clone(), &headers, rid, approve).await
         }
         _ => Err(err(StatusCode::BAD_REQUEST, "NOT_APPROVABLE", "open this item to deal with it, or dismiss it")),
     };
@@ -1241,5 +1242,84 @@ mod tests {
         let (dismissed, decision): (i64, Option<String>) = c.query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = 'per_9'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((dismissed, decision.as_deref()), (1, Some("rejected")));
         assert!(collect(&c, "user-a", 30).unwrap().iter().all(|i| i["id"] != "permission:per_9"));
+    }
+
+    // ---- plan step 11a: cowork_approvals through the authority kernel
+
+    async fn call_with(app: &Router, user_id: &str, path: &str, body: Value, headers: &[(&str, String)]) -> (StatusCode, Value) {
+        let mut req = Request::builder().method("POST").uri(path).header("content-type", "application/json").extension(user(user_id));
+        for (k, v) in headers {
+            req = req.header(*k, v.as_str());
+        }
+        let resp = app.clone().oneshot(req.body(Body::from(body.to_string())).unwrap()).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    const CW_KERNEL_ROWS: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'cowork' AND source_ref = ?1";
+    const CW_KERNEL_APPROVED: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'cowork' AND source_ref = ?1 AND status = 'approved'";
+    const CW_APPROVE_RECEIPTS: &str = "SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') IN (SELECT request_id FROM approval_requests WHERE source_store = 'cowork' AND source_ref = ?1)";
+
+    fn cw_count(c: &Connection, sql: &str, id: &str) -> i64 {
+        c.query_row(sql, params![id], |r| r.get(0)).unwrap()
+    }
+
+    fn permission_ask(st: &Arc<AppState>, id: &str) {
+        let c = st.db.connect().unwrap();
+        let content = json!({ "actionId": id, "sessionId": "", "summary": "edit requested by edit", "toolName": "edit", "requestId": id, "details": { "actionType": "edit", "target": "src/a.rs" } }).to_string();
+        crate::v1_routes::record_gizzi_permission_ask(&c, "user-a", id, &content).unwrap();
+        crate::authority::adapters::cowork::link_row(&st.db, id);
+    }
+
+    /// A person approving a coding-session ask from the inbox resolves its kernel row: one
+    /// `approval_requests` row, one approve receipt (whatever happens to the gizzi relay).
+    #[tokio::test]
+    async fn cowork_inbox_approve_writes_one_kernel_row_and_one_receipt() {
+        let st = setup().await;
+        permission_ask(&st, "per_k1");
+        let c = st.db.connect().unwrap();
+        assert_eq!(cw_count(&c, CW_KERNEL_ROWS, "per_k1"), 1, "create opened one kernel request");
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let proof = crate::subscription_routes::test_desktop_proof();
+        let (s, v) = call_with(&app, "user-a", "/inbox/permission:per_k1/approve", json!({}), &[("x-allternit-human-proof", proof)]).await;
+        assert!(s == StatusCode::OK || s == StatusCode::BAD_GATEWAY, "{s} {v}");
+        assert_eq!(cw_count(&c, CW_KERNEL_ROWS, "per_k1"), 1);
+        assert_eq!(cw_count(&c, CW_KERNEL_APPROVED, "per_k1"), 1);
+        assert_eq!(cw_count(&c, CW_APPROVE_RECEIPTS, "per_k1"), 1);
+    }
+
+    /// An agent credential deciding a cowork card is refused with 403; the card stays open and
+    /// the kernel row unresolved.
+    #[tokio::test]
+    async fn cowork_inbox_refuses_agent_credentials() {
+        let st = setup().await;
+        permission_ask(&st, "per_k2");
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let (s, v) = call_with(&app, "user-a", "/inbox/permission:per_k2/approve", json!({}), &[("x-allternit-agent-id", "agent_1".into())]).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+        let c = st.db.connect().unwrap();
+        let dismissed: i64 = c.query_row("SELECT dismissed FROM cowork_approvals WHERE id = 'per_k2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(dismissed, 0);
+        assert_eq!(cw_count(&c, CW_KERNEL_APPROVED, "per_k2"), 0);
+        assert_eq!(cw_count(&c, CW_APPROVE_RECEIPTS, "per_k2"), 0);
+    }
+
+    /// The gateway `approval` item in the inbox: a machine credential is refused before the
+    /// gateway row or its kernel row move.
+    #[tokio::test]
+    async fn gateway_inbox_item_refuses_agent_credentials() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        thread(&c, "t-k", "bot-a", "user-a", "needs_you", "");
+        let cx = crate::gateway_runner::Cx { owner: "user-a".into(), thread_id: "t-k".into(), bot_id: "bot-a".into(), generation: 1, session_id: String::new(), exec: json!({}) };
+        let aid = crate::gateway_runner::create_approval(&st.db, &cx, "allternit", "post to slack", None, json!({ "text": "hi" }), None).unwrap_or_else(|_| panic!("create_approval"));
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        let (s, v) = call_with(&app, "user-a", &format!("/inbox/approval:{aid}/approve"), json!({}), &[("x-allternit-agent-id", "agent_1".into())]).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
+        let state: String = c.query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "pending");
+        let approved: i64 = c.query_row("SELECT COUNT(*) FROM approval_requests WHERE source_store = 'gateway' AND source_ref = ?1 AND status = 'approved'", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(approved, 0);
     }
 }

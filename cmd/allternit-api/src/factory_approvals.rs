@@ -798,7 +798,7 @@ pub async fn sync_from_ledger(state: &Arc<AppState>) -> anyhow::Result<SyncRepor
             )?;
             if n == 1 {
                 let _ = expire_codes(&conn, &a.id, now);
-                crate::authority::adapters::factory::unlink(&state.db, &a.id, "closed by the Factory ledger (answered elsewhere or no longer waiting)");
+                crate::authority::adapters::factory::unlink_from_ledger(&state.db, &a.id, state_to, by.as_deref());
                 report.closed.push(a.id.clone());
                 if let Ok(Some(done)) = get(&conn, &a.id) {
                     emit(state, "approval.resolved", &done);

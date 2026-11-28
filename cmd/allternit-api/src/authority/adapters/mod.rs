@@ -24,8 +24,14 @@
 //! |---|---|---|---|---|
 //! | `factory_approvals` | [`factory`] | `sync_from_ledger` | `factory_approvals::resolve` (app, push, inbox, channels) | the Gate event |
 //! | `ApprovalStore` (`/beta/approvals`) + ACI grants | [`tool_approvals`] | `ApprovalStore::create_in` | `/beta/approvals/:id/{approve,deny}`, `/aci/handoff/:id/{approve,deny}` | `aci.run` grant redeem |
+//! | `gateway_approvals` (V199) | [`gateway`] | `gateway_runner::create_approval` | `gateway_runner::respond_approval` (gateway route, unified inbox `approval` / `held_send`, Platform twin) | held iMessage send, phone hold, vendor send, Platform text/call |
+//! | `cowork_approvals` (V169) | [`cowork`] | every insert (coding-session asks, subscription MCP, team rules, team store) | `POST /cowork/approvals` and `cowork_routes::decide_from_inbox` | the gizzi relay |
+//! | `task_grants` (V276) | [`task_grant`] | `task_grants::create` | revoke = withdraw | `task_grants::live_grant_for` (a `check` receipt per use) |
 
+pub mod cowork;
 pub mod factory;
+pub mod gateway;
+pub mod task_grant;
 pub mod tool_approvals;
 
 use std::path::PathBuf;
@@ -81,6 +87,9 @@ pub struct Open {
     pub summary: String,
     pub payload: Map<String, Value>,
     pub deadline: DateTime<Utc>,
+    /// The approve token's lifetime the store asks for (clamped by the kernel to 900 s). `None`:
+    /// the kernel default (300 s).
+    pub token_ttl_secs: Option<u64>,
 }
 
 /// `approval.request` for an old store's new row. The tenant rides in
@@ -89,7 +98,11 @@ pub fn open_with(k: &SqlAuthority, o: Open) -> Result<String, AuthorityError> {
     let summary: String = o.summary.trim().chars().take(280).collect();
     let summary = if summary.is_empty() { format!("Approve {}", o.source_ref) } else { summary };
     let mut ext = Map::new();
-    ext.insert(OS_EXTENSION_KEY.into(), json!({ "tenant": o.tenant }));
+    let mut os = json!({ "tenant": o.tenant });
+    if let Some(ttl) = o.token_ttl_secs {
+        os["token_ttl_secs"] = json!(ttl);
+    }
+    ext.insert(OS_EXTENSION_KEY.into(), os);
     let body = ApprovalRequestV1 {
         schema_id: REQUEST_SCHEMA_ID.into(),
         schema_version: tokens::SCHEMA_VERSION.into(),
@@ -149,6 +162,42 @@ pub fn request_for(db: &DbHandle, store: SourceStore, source_ref: &str) -> Optio
     .optional()
     .ok()
     .flatten()
+}
+
+/// [`request_for`], skipping withdrawn rows: a card reopened after a withdraw (a failed relay,
+/// an autopilot claim undone) gets a fresh kernel row on its next resolve.
+pub fn request_for_live(db: &DbHandle, store: SourceStore, source_ref: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    conn.query_row(
+        "SELECT request_id FROM approval_requests WHERE source_store = ?1 AND source_ref = ?2 AND status != 'withdrawn'
+         ORDER BY created_at DESC LIMIT 1",
+        params![store_str(store), source_ref],
+        |r| r.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Append one kernel receipt on the `(principal, tenant)` chain (a `check` for a task-grant use).
+pub fn append_receipt(
+    db: &DbHandle,
+    run_id: &str,
+    principal: &str,
+    tenant: &str,
+    kind: allternit_authority::ReceiptKind,
+    schema_id: &str,
+    decision: &str,
+    payload: Value,
+) -> Result<String, AuthorityError> {
+    let signer = tokens::kernel_signer(&data_dir(db))?;
+    let mut conn = db.connect().map_err(|e| AuthorityError::kernel_unavailable(format!("kernel store: {e}")))?;
+    super::audit::append(
+        &mut conn,
+        &signer,
+        super::audit::ReceiptInput { run_id, principal, tenant, kind, schema_id, decision, payload, idempotency_key: None },
+        Utc::now(),
+    )
 }
 
 /// A kernel row as the adapters need it.
@@ -322,6 +371,11 @@ pub fn redeem(db: &DbHandle, request_id: &str, owner: &str, token: &str) -> Resu
 
 /// Close the kernel row of an old row that closed on its own (ledger, expiry).
 pub fn withdraw(db: &DbHandle, request_id: Option<&str>, reason: &str) {
+    withdraw_with(db, request_id, reason, Map::new());
+}
+
+/// [`withdraw`] with extra receipt fields (`approver_source`, `resolved_by`, `outcome`).
+pub fn withdraw_with(db: &DbHandle, request_id: Option<&str>, reason: &str, detail: Map<String, Value>) {
     if mode() == Mode::Off {
         return;
     }
@@ -330,7 +384,7 @@ pub fn withdraw(db: &DbHandle, request_id: Option<&str>, reason: &str) {
     if row.status != "open" {
         return;
     }
-    match kernel(db, &row.tenant).and_then(|k| k.withdraw(rid, reason)) {
+    match kernel(db, &row.tenant).and_then(|k| k.withdraw_with(rid, reason, detail)) {
         Ok(_) => {}
         Err(e) => tracing::warn!(code = ?e.code, error = %e.message, request_id = rid, "kernel withdraw failed"),
     }
@@ -347,8 +401,30 @@ pub async fn write_back(state: &Arc<AppState>, request_id: &str, approve: bool, 
         Some(SourceStore::PermissionPolicy) | Some(SourceStore::Aci) => {
             tool_approvals::write_back(state, &source_ref, request_id, approve, token)
         }
-        // Kernel-native rows (from `check`) have no old row; gateway, cowork and task grants are
-        // wired in a later run of step 11.
+        Some(SourceStore::Gateway) => gateway::write_back(state, &source_ref, request_id, approve, token, actor).await,
+        Some(SourceStore::Cowork) => cowork::write_back(state, &source_ref, approve, actor).await,
+        Some(SourceStore::TaskGrant) => task_grant::write_back(&state.db, &source_ref, &row.owner, approve),
+        // Kernel-native rows (from `check`) have no old row; cloud-api stores are step 11b.
         _ => {}
     }
+}
+
+/// `sha256:<hex>` of a text, for binding a kernel request to an old row's exact content
+/// without copying the content (it can hold secrets) into `approval_requests`.
+pub fn content_hash(text: &str) -> String {
+    let mut m = Map::new();
+    m.insert("text".into(), Value::String(text.to_string()));
+    tokens::action_hash(&m).unwrap_or_default()
+}
+
+/// Gate an approve/deny from a caller that is never a person session but stands for a decision
+/// recorded elsewhere (a Platform API runtime, step 11b). The old route finishes and the kernel
+/// row is withdrawn with `why` on the receipt, in every mode.
+pub fn delegated(why: &'static str) -> Gate {
+    Gate::Unproven(why)
+}
+
+/// The `code` of an [`AuthorityError`] as its wire string.
+pub fn code_str(e: &AuthorityError) -> String {
+    serde_json::to_value(e.code).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "kernel".into())
 }

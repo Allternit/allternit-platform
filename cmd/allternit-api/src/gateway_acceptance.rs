@@ -205,10 +205,10 @@ async fn first_milestone_walk() {
     assert_eq!((pending.len(), pending[0]["authority"].as_str()), (1, Some("vendor")));
     let gap = pending[0]["id"].as_str().unwrap().to_string();
     assert_eq!(events_of(&st, "th-1", "agent.approval.requested")[0]["data"]["gatewayApprovalId"], gap.as_str());
-    let e = gr::respond_approval(&st.db, &host, "user-a", &gap, "approve", ("bot", "bot-nova")).await.unwrap_err();
+    let e = gr::respond_approval(&st.db, &host, "user-a", &gap, "approve", ("bot", "bot-nova"), &crate::authority::adapters::Gate::Person).await.unwrap_err();
     assert_eq!((e.status, e.code.as_str()), (403, "HUMAN_REQUIRED"));
     assert!(host.inputs("agent.approvals").is_empty(), "nothing forwarded for a bot");
-    gr::respond_approval(&st.db, &host, "user-a", &gap, "approve", ("user", "user-a")).await.unwrap();
+    gr::respond_approval(&st.db, &host, "user-a", &gap, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.unwrap();
     let fwd = host.inputs("agent.approvals");
     assert_eq!((fwd[0]["approvalId"].as_str(), fwd[0]["actor"]["type"].as_str()), (Some("va-1"), Some("human")));
 

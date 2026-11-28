@@ -426,15 +426,40 @@ impl SqlAuthority {
     /// route calls this. Writes a `withdraw` receipt on the request's chain, then sets
     /// `withdrawn`, in one transaction. `Ok(false)` when there is no such open request.
     pub fn withdraw(&self, request_id: &str, reason: &str) -> Result<bool, AuthorityError> {
+        self.withdraw_with(request_id, reason, Map::new())
+    }
+
+    /// [`Self::withdraw`] with extra fields on the receipt (for example `approver_source` when a
+    /// surface with no person proof, such as the Factory CLI, answered the old row). The extra
+    /// fields never replace `event`, `request_id`, `reason` or `caller_kind`.
+    pub fn withdraw_with(&self, request_id: &str, reason: &str, detail: Map<String, Value>) -> Result<bool, AuthorityError> {
+        self.close(request_id, reason, detail, false)
+    }
+
+    /// End a standing permission (a task grant, plan step 11a): like [`Self::withdraw`], but an
+    /// `approved` request is closed too, so its token can never be redeemed and no check counts it
+    /// any more. Writes a `withdraw` receipt with `revoked: true`. Host code only.
+    pub fn revoke(&self, request_id: &str, reason: &str, mut detail: Map<String, Value>) -> Result<bool, AuthorityError> {
+        detail.insert("revoked".into(), json!(true));
+        self.close(request_id, reason, detail, true)
+    }
+
+    fn close(&self, request_id: &str, reason: &str, detail: Map<String, Value>, approved_too: bool) -> Result<bool, AuthorityError> {
         let now = self.now();
         let conn = self.connect()?;
         let Some(stored) = self.load(&conn, request_id)? else {
             return Ok(false);
         };
         drop(conn);
-        if stored.request.status != Some(ApprovalStatus::Open) {
+        let closable = match stored.request.status {
+            Some(ApprovalStatus::Open) => true,
+            Some(ApprovalStatus::Approved) => approved_too,
+            _ => false,
+        };
+        if !closable {
             return Ok(false);
         }
+        let from = if stored.request.status == Some(ApprovalStatus::Approved) { "approved" } else { "open" };
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_err)?;
         append_in_tx(
@@ -444,15 +469,22 @@ impl SqlAuthority {
                 &stored.request.run_id,
                 &stored.owner_user_id,
                 "withdraw",
-                json!({ "event": "withdraw", "request_id": request_id, "reason": reason, "caller_kind": "service" }),
+                {
+                    let mut p = detail;
+                    p.insert("event".into(), json!("withdraw"));
+                    p.insert("request_id".into(), json!(request_id));
+                    p.insert("reason".into(), json!(reason));
+                    p.insert("caller_kind".into(), json!("service"));
+                    Value::Object(p)
+                },
             ),
             now,
         )?;
         let n = tx
             .execute(
                 "UPDATE approval_requests SET status = 'withdrawn', resolved_at = ?2, resolve_note = ?3
-                 WHERE request_id = ?1 AND status = 'open'",
-                params![request_id, tokens::ts(now), reason],
+                 WHERE request_id = ?1 AND status = ?4",
+                params![request_id, tokens::ts(now), reason, from],
             )
             .map_err(db_err)?;
         if n != 1 {

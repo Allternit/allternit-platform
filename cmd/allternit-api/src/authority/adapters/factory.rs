@@ -5,7 +5,8 @@
 //! - Resolve: `factory_approvals::resolve` (app route, push action, unified inbox, channel reply)
 //!   calls `adapters::resolve` before the Gate event.
 //! - Kernel inbox: [`write_back`] runs the Gate event and closes the old row, no kernel call.
-//! - Closed by the ledger (answered in Gizzi or the CLI) or expired: [`unlink`] withdraws it.
+//! - Closed by the ledger (answered in Gizzi or the CLI) or expired: [`unlink_from_ledger`] /
+//!   [`unlink`] withdraw it; a CLI answer's receipt names `factory_cli` as the approver source.
 
 use std::sync::Arc;
 
@@ -40,6 +41,7 @@ pub fn open_for(a: &Approval) -> Open {
         summary: format!("Factory: {}", a.title),
         payload,
         deadline: crate::factory_approvals::parse_deadline(&a.expires_at).unwrap_or_else(|| Utc::now() + crate::factory_approvals::approval_ttl()),
+        token_ttl_secs: None,
     }
 }
 
@@ -72,6 +74,38 @@ pub fn link_logged(db: &DbHandle, a: &Approval) {
 /// The old row closed without a person (ledger, expiry): withdraw its kernel row.
 pub fn unlink(db: &DbHandle, id: &str, reason: &str) {
     super::withdraw(db, request_id(db, id).as_deref(), reason);
+}
+
+/// Where a ledger-closed approval was answered, for the withdraw receipt.
+pub const CLI_SOURCE: &str = "factory_cli";
+
+/// The ledger closed a pending approval (`sync_from_ledger`). An approve or reject recorded in
+/// the ledger but not through allternit-api came from the Factory engine directly: `gizzi
+/// workspace approve`, `allternit-factory workspace approve`, or the Gizzi factory floor, which
+/// all run the engine on this machine with the terminal's device credential. That credential is
+/// the same one an agent on this machine holds, so there is no person proof to resolve the kernel
+/// row with: it is withdrawn, and the receipt names the CLI as the approver source, who the
+/// ledger recorded, and the outcome. Anything else (expired, node gone) is a plain withdraw.
+pub fn unlink_from_ledger(db: &DbHandle, id: &str, outcome: &str, resolved_by: Option<&str>) {
+    let rid = request_id(db, id);
+    if !matches!(outcome, "approved" | "rejected") {
+        super::withdraw(db, rid.as_deref(), "closed by the Factory ledger (expired or no longer waiting)");
+        return;
+    }
+    let mut detail = serde_json::Map::new();
+    detail.insert("approver_source".into(), json!(CLI_SOURCE));
+    detail.insert("outcome".into(), json!(outcome));
+    detail.insert("resolved_by".into(), json!(resolved_by));
+    detail.insert("person_proof".into(), json!(false));
+    super::withdraw_with(
+        db,
+        rid.as_deref(),
+        &format!(
+            "{outcome} in the Factory CLI (gizzi workspace approve) by {}; the CLI has no person proof, so the kernel row is withdrawn, not {outcome}",
+            resolved_by.unwrap_or("an unnamed actor")
+        ),
+        detail,
+    );
 }
 
 /// Kernel inbox resolved a factory approval: record the Gate event and close the old row.

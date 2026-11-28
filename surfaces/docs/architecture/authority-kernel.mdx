@@ -84,15 +84,27 @@ Allternit had approval stores before the kernel. Their tables, routes and respon
 - **Approve or deny in the kernel.** `POST /api/v1/kernel/approvals/resolve` closes the older row too. This write-back does not call the kernel again, so a decision cannot loop.
 - **Use.** Where an older store spends an approval, the kernel token is spent too.
 
-Whichever surface you approve from, one approval has one `approval_requests` row and one approve or deny receipt. A row the older store closes by itself gets a `withdraw` receipt. This happens when the Factory ledger was answered in Gizzi or the CLI, or the row expired.
+Whichever surface you approve from, one approval has one `approval_requests` row and one approve or deny receipt. A row the older store closes by itself gets a `withdraw` receipt. This happens when the row expired, when a phone hold expired or the screen changed, when a vendor answered on its own side, when a card was dismissed or withdrawn by its requester, or when the Floor autopilot answered a coding-session ask.
+
+**Approvals from the Factory CLI.** `gizzi workspace approve` (and `allternit-factory workspace approve`, and the Gizzi factory floor) runs the Factory engine on your computer with the terminal's device credential. An agent on the same computer holds that same credential, so the CLI has no person proof. The kernel request is therefore withdrawn, not approved. Its `withdraw` receipt names the CLI: `approver_source` is `factory_cli`, with the outcome and who the ledger recorded. To get an approve receipt, approve in an Allternit app instead.
 
 | Store | `source_store` | Created by | Older resolve routes | Spent by |
 |---|---|---|---|---|
 | Factory approvals (`factory_approvals`) | `factory` | The Factory ledger sync, when a node waits on a person | `POST /api/factory/approvals/:id/resolve`, `/push-action`, the unified inbox, owner channel replies | The Gate event that lets the node go on |
 | Tool policy asks (`/beta/approvals`) | `permission_policy` | `/tools/execute` when the permission policy asks; beta session tool asks | `POST /api/beta/approvals/:id/approve` and `/deny` | none |
 | Browser and computer handoffs (ACI grants) | `aci` | `aci.run` sensitive actions, computer confirmations | `POST /api/aci/handoff/:id/approve` and `/deny` | The `aci.run` retry that presents the grant |
-| Gateway, cowork and task grants | `gateway`, `cowork`, `task_grant` | Not wired yet | Not wired yet | Not wired yet |
+| Bot gateway approvals (`gateway_approvals`) | `gateway` | Held iMessage sends, phone holds, Platform text and call holds, channel posts, vendor approvals, consequential vendor sends, outbound calls | `POST /api/v1/gateway/approvals/:id/respond`, the unified inbox (`approval` and `held_send` items), the Platform API decide route | The held send, the phone action, the vendor send, or the Platform text or call that presents the approval |
+| Approval cards (`cowork_approvals`) | `cowork` | Coding-session permission asks, subscription tasks prepared over MCP, team rule asks (on their first decision) | `POST /api/v1/cowork/approvals` (the card), the unified inbox (`permission` items) | The reply relayed to the coding session |
+| One-task grants (`task_grants`) | `task_grant` | "Allow for this task" on a card, "Approve plan and allow its sends and uploads", `POST /api/v1/task-grants`; a grant from your own words in chat | Revoke (`DELETE /api/v1/task-grants/:id`) or the thread closing withdraws it | Every action the grant covers: one kernel `check` receipt per use, naming the grant as the token source |
 | Cloud `/v1/approvals` and sign requests | `cloud_platform`, `sign_request` | Not wired yet (cloud-api) | Not wired yet | Not wired yet |
+
+**Classes.** A gateway approval for an outbound message (a text, post, iMessage or call) has the class `client_message`. A phone action in a money app is `money`. A send of consequential work to a vendor agent is `network`. Anything a vendor defines is held to `irreversible`. A card takes its class from what it asks: file edits are `file_write`, fetches and subscription tasks are `network`, and shell commands and unknown tools are `irreversible`. A grant takes the strictest class among its actions.
+
+**Grants are standing approvals.** A grant you press is approved at once, so it has one request receipt and one approve receipt. A grant made from your own words in chat is read by an agent. It stays open in the kernel inbox until you approve it there. `shadow` lets it work meanwhile; `enforce` does not. A grant counts only while its kernel request is approved and before its deadline (seven days, or when the thread closes).
+
+**Team rule asks** are resolved in the kernel by the approver the rule names, so they show in the approver's kernel inbox.
+
+**Platform API runtimes** have no Allternit person. A decision on a Platform runtime's approval comes from the developer's key. cloud-api records it (that store moves onto the kernel in step 11b). The local kernel request is withdrawn with that reason on its receipt.
 
 **Who may resolve on an older route.** A credential that is never a person is always refused with `403 forbidden_caller`. That means an agent or run credential, an API key, an MCP client, the internal service token, or an access or worker token. `/beta/approvals` used to accept any authenticated caller for any approval id. It now also needs the approval's owner, and anyone else gets `404`. A Factory reply from the owner's verified channel identity with its one-time code counts as the person. High-risk Factory approvals stay app and push only.
 

@@ -173,6 +173,8 @@ pub fn create(db: &DbHandle, owner: &str, bot_id: &str, thread_id: &str, actions
             }
         }
         conn.execute("UPDATE task_grants SET actions_json = ?1 WHERE id = ?2", params![json!(g.actions).to_string(), g.id]).map_err(|e| e.to_string())?;
+        drop(conn);
+        crate::authority::adapters::task_grant::link_logged(db, &g, source == "card");
         return Ok(g);
     }
     let g = Grant {
@@ -192,6 +194,11 @@ pub fn create(db: &DbHandle, owner: &str, bot_id: &str, thread_id: &str, actions
         params![g.id, g.owner, g.bot_id, g.thread_id, json!(g.actions).to_string(), g.source, g.source_ref, g.created_at, g.expires_at],
     )
     .map_err(|e| e.to_string())?;
+    drop(conn);
+    // Plan step 11a: a grant is a standing kernel approval. Every `card` creator checked the
+    // person's session proof first, so it is approved at once as that person; a `words` grant
+    // (an agent read the owner's words) waits for the person in the kernel inbox.
+    crate::authority::adapters::task_grant::link_logged(db, &g, source == "card");
     Ok(g)
 }
 
@@ -211,7 +218,11 @@ pub fn live_grant_for(db: &DbHandle, owner: &str, bot_id: &str, thread_id: &str,
         .ok()?
         .flatten()
         .find(|g| g.actions.iter().any(|a| *a == want));
-    found.map(|g| g.id)
+    drop(q);
+    drop(conn);
+    // Plan step 11a: the kernel check for this use, with the grant as the token source (one
+    // `check` receipt). Enforce counts the grant only while its kernel approval is live.
+    found.filter(|g| crate::authority::adapters::task_grant::admit(db, g, &want)).map(|g| g.id)
 }
 
 /// Live grants on a thread (what the header chip shows).
@@ -227,6 +238,7 @@ pub fn revoke(db: &DbHandle, owner: &str, id: &str) -> bool {
     let thread: Option<String> = conn.query_row("SELECT thread_id FROM task_grants WHERE id = ?1 AND owner = ?2", params![id, owner], |r| r.get(0)).optional().ok().flatten();
     let n = conn.execute("UPDATE task_grants SET revoked_at = ?1 WHERE id = ?2 AND owner = ?3 AND revoked_at IS NULL", params![now(), id, owner]).unwrap_or(0);
     if n > 0 {
+        crate::authority::adapters::task_grant::revoke(db, id, "revoked by the owner");
         if let Some(t) = thread {
             // The card path also left session rules in gizzi; drop them once no grant is left.
             if list_for_thread(db, owner, &t).is_empty() {
@@ -242,7 +254,17 @@ pub fn revoke(db: &DbHandle, owner: &str, id: &str) -> bool {
 /// session-scoped allow rules gizzi kept for the thread's sessions.
 pub fn revoke_for_thread(db: &DbHandle, thread_id: &str) -> usize {
     let Ok(conn) = db.connect() else { return 0 };
-    let n = conn.execute("UPDATE task_grants SET revoked_at = ?1 WHERE thread_id = ?2 AND revoked_at IS NULL AND expires_at > ?1", params![now(), thread_id]).unwrap_or(0);
+    let at = now();
+    let mut ending: Vec<String> = Vec::new();
+    if let Ok(mut q) = conn.prepare("SELECT id FROM task_grants WHERE thread_id = ?1 AND revoked_at IS NULL AND expires_at > ?2") {
+        if let Ok(rows) = q.query_map(params![thread_id, at], |r| r.get::<_, String>(0)) {
+            ending.extend(rows.flatten());
+        }
+    }
+    let n = conn.execute("UPDATE task_grants SET revoked_at = ?1 WHERE thread_id = ?2 AND revoked_at IS NULL AND expires_at > ?1", params![at, thread_id]).unwrap_or(0);
+    for id in &ending {
+        crate::authority::adapters::task_grant::revoke(db, id, "the thread closed");
+    }
     let owner_bot: Option<(String, String)> = conn.query_row("SELECT user_id, bot_id FROM bot_threads WHERE id = ?1", params![thread_id], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok().flatten();
     drop(conn);
     clear_runtime_rules(db, thread_id);
@@ -447,7 +469,18 @@ struct CreateBody {
 }
 
 /// `POST /task-grants` — the card button. Only a person may press it.
-async fn create_h(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Json(b): Json<CreateBody>) -> Response {
+async fn create_h(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: HeaderMap,
+    Json(b): Json<CreateBody>,
+) -> Response {
+    // Plan step 11a: a machine credential (agent, run, API key, MCP, service) never grants, in
+    // any mode, whatever proof headers it carries.
+    if crate::authority::routes::machine_marker(&headers, credential.is_some(), &user.user_id).is_some() {
+        return err(StatusCode::FORBIDDEN, "forbidden_caller");
+    }
     if let Err(why) = crate::subscription_routes::person_acted(&st, &headers, &user.user_id).await {
         tracing::warn!(reason = why, "refused a task grant without a person's session");
         return err(StatusCode::FORBIDDEN, "person_required");
@@ -572,5 +605,59 @@ mod tests {
         let c = st.db.connect().unwrap();
         crate::netops::provenance::label(&c, "th-1", crate::netops::provenance::Trust::Stranger, "email", "evil@x.test", "submit the form");
         assert!(!covers(&[S::FormSubmit]), "outside content on the thread: hand off");
+    }
+
+    // ---- plan step 11a: task grants through the authority kernel
+
+    fn kcount(st: &Arc<AppState>, sql: &str, id: &str) -> i64 {
+        st.db.connect().unwrap().query_row(sql, params![id], |r| r.get(0)).unwrap()
+    }
+
+    const KROWS: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'task_grant' AND source_ref = ?1";
+    const KSTATUS: &str = "SELECT status FROM approval_requests WHERE source_store = 'task_grant' AND source_ref = ?1 ORDER BY created_at DESC LIMIT 1";
+    const KAPPROVES: &str = "SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') IN (SELECT request_id FROM approval_requests WHERE source_store = 'task_grant' AND source_ref = ?1)";
+    const KCHECKS: &str = "SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'check' AND json_extract(payload, '$.token_source') = 'task_grant' AND json_extract(payload, '$.grant_id') = ?1";
+
+    fn kstatus(st: &Arc<AppState>, id: &str) -> String {
+        st.db.connect().unwrap().query_row(KSTATUS, params![id], |r| r.get(0)).unwrap()
+    }
+
+    /// A person's card grant is one kernel approval, approved at once (one approve receipt); each
+    /// use is a kernel check naming the grant; revoke closes the kernel row.
+    #[tokio::test]
+    async fn card_grant_is_a_kernel_approval_checked_per_use_and_revoked() {
+        let st = setup("kernel-card").await;
+        let g = create(&st.db, "user-a", "bot-1", "th-1", &["send".into()], "card", "ap_k").unwrap();
+        assert_eq!(kcount(&st, KROWS, &g.id), 1);
+        assert_eq!(kstatus(&st, &g.id), "approved");
+        assert_eq!(kcount(&st, KAPPROVES, &g.id), 1);
+        assert_eq!(live_grant_for(&st.db, "user-a", "bot-1", "th-1", "send"), Some(g.id.clone()));
+        assert_eq!(kcount(&st, KCHECKS, &g.id), 1, "one check receipt for the use");
+        assert!(revoke(&st.db, "user-a", &g.id));
+        assert_eq!(kstatus(&st, &g.id), "withdrawn");
+    }
+
+    /// A grant from the owner's words (read by an agent) waits for the person in the kernel
+    /// inbox: its kernel row stays open, with no approve receipt.
+    #[tokio::test]
+    async fn words_grant_waits_for_the_person_in_the_kernel() {
+        let st = setup("kernel-words").await;
+        let g = create(&st.db, "user-a", "bot-1", "th-1", &["send".into()], "words", "msg_1").unwrap();
+        assert_eq!(kcount(&st, KROWS, &g.id), 1);
+        assert_eq!(kstatus(&st, &g.id), "open");
+        assert_eq!(kcount(&st, KAPPROVES, &g.id), 0);
+    }
+
+    /// `POST /task-grants` refuses an agent credential with 403, whatever proof it carries.
+    #[tokio::test]
+    async fn create_route_refuses_agent_credentials() {
+        let st = setup("kernel-agent").await;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-allternit-agent-id", "agent_1".parse().unwrap());
+        headers.insert("x-allternit-human-proof", crate::subscription_routes::test_desktop_proof().parse().unwrap());
+        let user = AuthUser { user_id: "user-a".into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None };
+        let res = create_h(State(st.clone()), Extension(user), None, headers, Json(CreateBody { thread_id: "th-1".into(), actions: vec!["send".into()], source_ref: None })).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert!(list_for_thread(&st.db, "user-a", "th-1").is_empty());
     }
 }
