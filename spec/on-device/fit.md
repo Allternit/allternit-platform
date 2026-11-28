@@ -5,8 +5,8 @@ One spec for "will this model run on this device". The TypeScript port (`alltern
 ## Function
 
 ```
-fit(budget: DeviceBudget, quants: Quant[] | null, opts?: {ctx?: number}) -> FitResult
-FitResult = { k: 'ok'|'slow'|'no'|'na'|'unknown', label: string, why: string, quant: Quant | null }
+fit(budget: DeviceBudget, quants: Quant[] | null, opts?: {ctx?: number}, stream_quants?: StreamQuant[] | null) -> FitResult
+FitResult = { k: 'ok'|'slow'|'stream'|'no'|'na'|'unknown', label: string, why: string, quant: Quant | StreamQuant | null }
 ```
 
 `opts.ctx` is accepted and ignored in v1 (`ram_est` is measured at the default context).
@@ -25,8 +25,9 @@ All sizes are bytes. 1 GB = 1,000,000,000 bytes.
 | `apple` | optional bool. Apple silicon (Mac or iPhone). Prefer MLX |
 | `browser` | optional bool. A browser tab. Only webgpu builds run |
 | `webgpu` | optional bool, browser only. `false` = no WebGPU adapter. Default true |
+| `disk_free_bytes` | optional integer, bytes. Free space on the volume that holds the models folder. Only a host that can run a colibri pack sets it. See "Stream (colibri)" |
 
-`kind`, `fast_bytes` and `spill_bytes` are the `budget` object of local-engine `GET /hardware`. The other three flags come from the client.
+`kind`, `fast_bytes` and `spill_bytes` are the `budget` object of local-engine `GET /hardware`. The other flags come from the client.
 
 How `fast_bytes` is built (done by the detector, not by `fit`):
 
@@ -74,6 +75,42 @@ Use integer comparisons as written so ports agree at the boundaries.
 
 iPhone, Android and browser are `unified` rows; the thresholds are the same, only `fast_bytes` differs.
 
+## Stream (colibri)
+
+Some models are larger than memory but run through colibri, which keeps part of the weights resident and reads the rest from disk. This adds a fourth verdict, `stream`. The pick above is unchanged. The stream step runs after it.
+
+**StreamQuant** (one entry of `stream_quants` in device.json, a sibling of `quants`): `name`, `format` (`colibri`|`gguf`, informational), `engine` (always `colibri`), `size` (download bytes, must be free on disk), `ram_est` (required, integer bytes of resident weights, not file size), `tier` (`chat`|`background`), plus `colibri_model`, `repo`, optional `metal_ok`, optional `best_for` that `fit` does not read. There is no `size x 1.2 + 0.4` fallback for `colibri`. Old clients ignore the key. A `colibri` entry never goes inside `quants`, because shipped iOS builds decode `engine` as a strict enum.
+
+**Budget.** `disk_free_bytes` is set only on Mac arm64, Windows x64, Linux x64 and Linux arm64. If it is missing, no stream verdict is ever returned. Phones, browsers, Windows Arm and Intel Macs never see `stream` for themselves. They see it for another device whose budget has the field.
+
+**When it runs.** All of these must hold:
+
+1. The budget is not a browser (`browser` is not true).
+2. `disk_free_bytes` is present.
+3. The in-memory result is `no`, or it is `na` because there were no candidates (an empty list counts). `ok`, `slow` and `unknown` are never replaced. `quants = null` with a non-empty `stream_quants` is treated as `quants = []`. `unknown` is returned only when both are null or empty.
+
+**A StreamQuant qualifies** when `engine == 'colibri'`, `ram_est <= stream_ram` and `size <= disk_free_bytes`. `stream_ram` uses integer compares:
+
+| Budget kind | Test |
+|---|---|
+| unified, cpu | `ram_est <= fast_bytes` |
+| discrete | `ram_est * 10 <= spill_bytes * 6` (0.6 x system RAM; VRAM is not used) |
+
+If at least one qualifies, the result is `stream` and `quant` is the chosen StreamQuant. If none qualifies, the original result (`no` with its smallest quant, or `na`) is returned unchanged.
+
+**Sort order.** Verdict order, best first: `ok`, `slow`, `stream`, `no`. Among qualifying stream quants: `tier == 'chat'` before `tier == 'background'`, then larger `size` first, then `name` ascending (byte order). Take the first.
+
+**Strings (exact).**
+
+| Field | Value |
+|---|---|
+| k | `stream` |
+| label | `Streams from disk` |
+| why, chat tier | `Keeps N GB in memory, reads the rest from disk` |
+| why, background tier | `Slow. Best for jobs you leave running` |
+
+`N` = `ram_est` in GB, one decimal, always shown (`10.0`, `9.6`), rounded half away from zero (same rule as the other `N`). No speed number appears in any string until one is measured. The client shows the disk need from `quant.size` (for example "23.1 GB on disk"); it is not part of `why`.
+
 ## Output strings
 
 Labels are exact (ASCII apostrophe in "Won't fit"):
@@ -83,6 +120,7 @@ Labels are exact (ASCII apostrophe in "Won't fit"):
 | ok | `Fits` |
 | slow, discrete or cpu | `May be slow` |
 | slow, unified | `Tight fit` |
+| stream | `Streams from disk` |
 | no | `Won't fit` |
 | na, browser without WebGPU | `No WebGPU` |
 | na, browser, no webgpu build | `No browser build` |
@@ -105,12 +143,14 @@ Labels are exact (ASCII apostrophe in "Won't fit"):
 | na, No browser build | `Run it in Desktop or the phone app` |
 | na, other | `Pick another model or device` |
 | unknown | `No device data for this model yet` |
+| stream, chat tier | `Keeps N GB in memory, reads the rest from disk` |
+| stream, background tier | `Slow. Best for jobs you leave running` |
 
-`quant` is the chosen Quant for `ok`, `slow` and `no`, and null for `na` and `unknown`. `fit-vectors.json` checks `k`, `label` and the chosen quant `name` (null when `quant` is null). `why` is not in the vectors.
+`quant` is the chosen Quant for `ok`, `slow` and `no` (a StreamQuant for `stream`), and null for `na` and `unknown`. `fit-vectors.json` checks `k`, `label` and the chosen quant `name` (null when `quant` is null). `why` is not in the vectors.
 
 ## Vectors
 
-`fit-vectors.json` is an array of `{name, budget, quants, opts?, expect:{k, label, quant}}` where `expect.quant` is the quant name or null. Profiles come from `mockups/data.js` (Mac 31 GB, Windows NVIDIA 12 GB VRAM + 32 GB RAM, Windows Arm 19 GB, Linux AMD 24 GB VRAM + 64 GB RAM, Linux CPU 9.6 GB, browser 2 GB, phone browser 0.45 GB, iPhone 4.5 GB, Android 5 GB) with realistic quants, and each threshold above is tested exactly at, and one byte past, its edge. A port is done when it passes every vector.
+`fit-vectors.json` is an array of `{name, budget, quants, stream_quants?, opts?, expect:{k, label, quant}}` where `expect.quant` is the quant name or null. Profiles come from `mockups/data.js` (Mac 31 GB, Windows NVIDIA 12 GB VRAM + 32 GB RAM, Windows Arm 19 GB, Linux AMD 24 GB VRAM + 64 GB RAM, Linux CPU 9.6 GB, browser 2 GB, phone browser 0.45 GB, iPhone 4.5 GB, Android 5 GB) with realistic quants, and each threshold above is tested exactly at, and one byte past, its edge. The last 15 vectors cover the stream step: the ok and slow verdicts that win over it, the disk and RAM edges (unified and discrete), cpu, a phone with no disk field, empty and null `quants`, a browser, and the tier sort. A port is done when it passes every vector (80).
 
 ## Differences from the mockup `data.js`
 

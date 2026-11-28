@@ -1639,5 +1639,491 @@
    "label": "Won't fit",
    "quant": "Q4_K_M"
   }
+ },
+ {
+  "name": "stream mac 70B no, chat stream fits",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream mac in-memory ok wins over stream",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 4900000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "ok",
+   "label": "Fits",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream mac in-memory slow wins over stream",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 24600000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "slow",
+   "label": "Tight fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream mac disk one byte short is no",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 23099999999
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream mac disk exactly size streams",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 23100000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream mac ram one byte past is no",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "reap-i4",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 84700000000,
+    "ram_est": 31000000001,
+    "tier": "background"
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream mac ram exactly fast streams background",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "reap-i4",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 84700000000,
+    "ram_est": 31000000000,
+    "tier": "background"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "reap-i4"
+  }
+ },
+ {
+  "name": "stream win nvidia ram exactly 0.6 spill streams",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 19200000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream win nvidia ram one byte past 0.6 spill is no",
+  "budget": {
+   "kind": "discrete",
+   "fast_bytes": 12000000000,
+   "spill_bytes": 32000000000,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 19200000001,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream linux cpu 9.6 GB streams",
+  "budget": {
+   "kind": "cpu",
+   "fast_bytes": 9600000000,
+   "spill_bytes": 0,
+   "disk_free_bytes": 100000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 20000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "gguf",
+    "engine": "colibri",
+    "size": 18300000000,
+    "ram_est": 9600000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream iphone has no disk field so never streams",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 4500000000,
+   "spill_bytes": 0,
+   "apple": true
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 2000000000,
+    "ram_est": 4000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "no",
+   "label": "Won't fit",
+   "quant": "Q4_K_M"
+  }
+ },
+ {
+  "name": "stream mac empty quants streams",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream mac null quants with stream entry streams",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": null,
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
+ },
+ {
+  "name": "stream browser never streams",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 2000000000,
+   "spill_bytes": 0,
+   "browser": true,
+   "webgpu": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 4000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "na",
+   "label": "No browser build",
+   "quant": null
+  }
+ },
+ {
+  "name": "stream chat tier wins over larger background",
+  "budget": {
+   "kind": "unified",
+   "fast_bytes": 31000000000,
+   "spill_bytes": 0,
+   "apple": true,
+   "disk_free_bytes": 500000000000
+  },
+  "quants": [
+   {
+    "name": "Q4_K_M",
+    "format": "gguf",
+    "engine": "llama.cpp",
+    "size": 40000000000
+   }
+  ],
+  "stream_quants": [
+   {
+    "name": "reap-i4",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 84700000000,
+    "ram_est": 16000000000,
+    "tier": "background"
+   },
+   {
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat"
+   }
+  ],
+  "expect": {
+   "k": "stream",
+   "label": "Streams from disk",
+   "quant": "i4-gs64"
+  }
  }
 ]
