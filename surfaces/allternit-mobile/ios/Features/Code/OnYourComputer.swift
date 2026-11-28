@@ -102,8 +102,75 @@ enum OnYourComputer {
         return "Open in \(holders.count) places: \(names). Close one to move it."
     }
 
+    /// Factory panes running another CLI: rows the runtime tags with a pane and
+    /// either a terminal to open, a steer route or a blocked state. An older
+    /// runtime sends none of those, so nothing new appears there.
+    static func paneSessions(_ sessions: [LiveSession]) -> [LiveSession] {
+        sessions.filter { !$0.external && $0.paneId != nil && (hasTerminal($0) || canSteer($0) || isBlocked($0)) }
+    }
+
+    /// The rows the section shows: external sessions, then panes.
+    static func rowSessions(_ sessions: [LiveSession]) -> [LiveSession] {
+        externalSessions(sessions) + paneSessions(sessions)
+    }
+
+    static func isBlocked(_ session: LiveSession) -> Bool { session.status == "blocked" }
+
+    static func hasTerminal(_ session: LiveSession) -> Bool {
+        !(session.terminalId ?? "").isEmpty
+    }
+
+    /// The steer field shows for `terminal` (needs a terminal id) and `delivery` (needs an address); never for `none`.
+    static func canSteer(_ session: LiveSession) -> Bool {
+        switch session.steer {
+        case "terminal": return hasTerminal(session)
+        case "delivery": return !session.address.isEmpty
+        default: return false
+        }
+    }
+
+    /// "blocked 3m" for the Needs you badge; "blocked just now" under a minute.
+    static func blockedLabel(since: String?, now: Date = Date()) -> String {
+        guard let since, let date = parseISO(since) else { return "blocked" }
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 60 { return "blocked just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "blocked \(minutes)m" }
+        let hours = minutes / 60
+        if hours < 48 { return "blocked \(hours)h" }
+        return "blocked \(hours / 24)d"
+    }
+
+    private static func parseISO(_ text: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let d = plain.date(from: text) { return d }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: text)
+    }
+
+    /// Where a blocked push's `data.openUrl` leads: the terminal id, or the Factory address.
+    enum PushTarget: Equatable, Sendable {
+        case terminal(String)
+        case factorySession(String)
+    }
+
+    /// `/terminal/<terminalId>` or `/factory/sessions/<address>` (the address has a slash: `dev/allternit-claude`).
+    static func pushTarget(openUrl: String?) -> PushTarget? {
+        guard let openUrl else { return nil }
+        let path = openUrl.split(separator: "?", maxSplits: 1).first.map(String.init) ?? openUrl
+        for (prefix, make) in [("/terminal/", { PushTarget.terminal($0) }), ("/factory/sessions/", { PushTarget.factorySession($0) })] as [(String, (String) -> PushTarget)] {
+            guard path.hasPrefix(prefix) else { continue }
+            let rest = String(path.dropFirst(prefix.count))
+            let id = (rest.removingPercentEncoding ?? rest).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if !id.isEmpty { return make(id) }
+        }
+        return nil
+    }
+
     static func statusWord(_ status: String) -> String {
         switch status {
+        case "blocked": return "Needs you"
         case "busy": return "Working"
         case "idle": return "Idle"
         case "offline": return "Offline"
@@ -338,6 +405,8 @@ final class TerminalSessionsStore {
     /// Copy / New in flight, by live session id.
     private(set) var pending: [String: OnYourComputer.RowAction] = [:]
     private(set) var failedOnce = false
+    /// A blocked push's target, until its row takes it.
+    var pushTarget: OnYourComputer.PushTarget? = nil
 
     /// The computer's name for the section title, when the relay knows it.
     private(set) var machineName: String? = nil
@@ -356,6 +425,38 @@ final class TerminalSessionsStore {
     static let phoneSize = (cols: 48, rows: 30)
 
     var externalSessions: [LiveSession] { OnYourComputer.externalSessions(liveSessions) }
+    /// External sessions and Factory panes: every row the section shows.
+    var rowSessions: [LiveSession] { OnYourComputer.rowSessions(liveSessions) }
+
+    /// The row a blocked push points at (terminal id, or Factory address).
+    func session(for target: OnYourComputer.PushTarget) -> LiveSession? {
+        switch target {
+        case .terminal(let id): return liveSessions.first { $0.terminalId == id }
+        case .factorySession(let address): return liveSessions.first { $0.address == address }
+        }
+    }
+
+    /// Sends text to a pane: into its terminal, or as a Factory delivery. Returns an error sentence, nil on success.
+    func steer(_ session: LiveSession, text: String) async -> String? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "Type something to send." }
+        do {
+            switch session.steer {
+            case "terminal":
+                guard let id = session.terminalId, let client = terminalClient else { return "Couldn't reach this computer." }
+                try await client.input(sessionId: id, text + "\r")
+            case "delivery":
+                guard let client = liveClient else { return "Couldn't reach this computer." }
+                try await client.sendDelivery(to: session.address, text: text)
+            default:
+                return "This session can't be steered from here."
+            }
+            Task { await pollLiveSessions() }
+            return nil
+        } catch {
+            return "Couldn't send. Try again."
+        }
+    }
 
     /// Start (or stop) polling: the view is on screen and the app is active.
     func setActive(_ on: Bool) {

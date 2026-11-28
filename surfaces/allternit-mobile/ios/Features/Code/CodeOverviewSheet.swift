@@ -329,7 +329,7 @@ struct CodeSessionsOverview: View {
 
     @ViewBuilder
     private var onYourComputerSection: some View {
-        let external = terminalSessions.externalSessions
+        let external = terminalSessions.rowSessions
         if terminalSessions.adoptSupport == .yes, !external.isEmpty {
             Section {
                 ForEach(external) { session in

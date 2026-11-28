@@ -215,6 +215,11 @@ struct DeepLinkHost: ViewModifier {
             // The in-app bar (Features/IslandBar) opens on this with the
             // values filled in; nothing runs until the person reviews it.
             router.setBarRequest(request)
+        case .liveSession(let target):
+            // A blocked pane: Code opens its terminal or its "On your computer" row.
+            router.pendingLiveTarget = target
+            modeStore.selectBarItem(.code)
+            NotificationCenter.default.post(name: .codeOpenLiveSession, object: nil)
         case .handoff:
             // The bots launchpad composer hands a task to the team (a new bot
             // project + its coordinator), same as HandOffTaskIntent.

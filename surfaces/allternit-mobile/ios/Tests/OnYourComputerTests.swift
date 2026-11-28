@@ -137,4 +137,68 @@ final class OnYourComputerTests: XCTestCase {
         XCTAssertEqual(rows.first?.moveCommand, ["claude", "--resume", "s1"])
         XCTAssertTrue(rows.first?.canCopy == true)
     }
+
+    // MARK: Factory panes (blocked, Open, steer)
+
+    private static let blockedFixture = """
+    {"address":"dev/allternit-claude","name":"allternit-claude","harness":"claude","machine":"m_4f2a",
+     "machineName":"Dev MacBook","sessionId":"ao-pane-w3:p1","paneId":"w3:p1","cwd":"allternit",
+     "status":"blocked","since":"2026-11-27T09:00:00+00:00","blockedSince":"2026-11-27T09:12:30+00:00",
+     "terminalId":"term_7c1e9a40","steer":"terminal","tier":"push","unread":0,"holders":[],
+     "carriedFlags":[],"canCopy":false,"movable":"here","external":false}
+    """
+
+    private static let legacyFixture = """
+    {"address":"dev/allternit-gizzi","name":"allternit-gizzi","harness":"gizzi","machine":"m_4f2a",
+     "machineName":"Dev MacBook","sessionId":"ao-build","paneId":"w1:p1","cwd":"allternit","status":"idle",
+     "since":"2026-11-27T09:00:00+00:00","tier":"push","unread":0,"holders":[],"carriedFlags":[],
+     "canCopy":false,"movable":"here","external":false}
+    """
+
+    func testBlockedPaneFixtureDecodes() throws {
+        let row = try JSONDecoder().decode(LiveSession.self, from: Data(Self.blockedFixture.utf8))
+        XCTAssertEqual(row.status, "blocked")
+        XCTAssertEqual(row.terminalId, "term_7c1e9a40")
+        XCTAssertEqual(row.steer, "terminal")
+        XCTAssertEqual(row.blockedSince, "2026-11-27T09:12:30+00:00")
+        XCTAssertTrue(OnYourComputer.isBlocked(row))
+        XCTAssertEqual(OnYourComputer.statusWord(row.status), "Needs you")
+        XCTAssertTrue(OnYourComputer.canSteer(row))
+        XCTAssertTrue(OnYourComputer.hasTerminal(row))
+        XCTAssertEqual(OnYourComputer.paneSessions([row]).map(\.sessionId), ["ao-pane-w3:p1"])
+    }
+
+    func testLegacyPaneRowIsUnchanged() throws {
+        let row = try JSONDecoder().decode(LiveSession.self, from: Data(Self.legacyFixture.utf8))
+        XCTAssertEqual(row.steer, "none")
+        XCTAssertNil(row.terminalId)
+        XCTAssertFalse(OnYourComputer.isBlocked(row))
+        XCTAssertFalse(OnYourComputer.canSteer(row), "steer stays hidden for none")
+        XCTAssertTrue(OnYourComputer.paneSessions([row]).isEmpty, "an older runtime adds no pane rows")
+        XCTAssertEqual(OnYourComputer.statusWord(row.status), "Idle")
+    }
+
+    func testSteerHiddenWithoutItsRoute() {
+        XCTAssertFalse(OnYourComputer.canSteer(LiveSession(sessionId: "a", steer: "none")))
+        XCTAssertFalse(OnYourComputer.canSteer(LiveSession(sessionId: "a", steer: "terminal")), "terminal needs an id")
+        XCTAssertTrue(OnYourComputer.canSteer(LiveSession(address: "dev/x", sessionId: "a", steer: "delivery")))
+        XCTAssertFalse(OnYourComputer.canSteer(LiveSession(address: "", sessionId: "a", steer: "delivery")))
+    }
+
+    func testBlockedBadgeAge() {
+        let now = ISO8601DateFormatter().date(from: "2026-11-27T09:15:30+00:00")!
+        XCTAssertEqual(OnYourComputer.blockedLabel(since: "2026-11-27T09:12:30+00:00", now: now), "blocked 3m")
+        XCTAssertEqual(OnYourComputer.blockedLabel(since: "2026-11-27T09:15:00+00:00", now: now), "blocked just now")
+        XCTAssertEqual(OnYourComputer.blockedLabel(since: "2026-11-27T06:15:30+00:00", now: now), "blocked 3h")
+        XCTAssertEqual(OnYourComputer.blockedLabel(since: nil, now: now), "blocked")
+    }
+
+    func testBlockedPushOpenUrlRoutes() {
+        XCTAssertEqual(OnYourComputer.pushTarget(openUrl: "/terminal/term_7c1e9a40"), .terminal("term_7c1e9a40"))
+        XCTAssertEqual(OnYourComputer.pushTarget(openUrl: "/factory/sessions/dev/allternit-claude"),
+                       .factorySession("dev/allternit-claude"))
+        XCTAssertNil(OnYourComputer.pushTarget(openUrl: "/inbox"))
+        XCTAssertNil(OnYourComputer.pushTarget(openUrl: nil))
+        XCTAssertEqual(DeepLink.parse(path: "/terminal/term_1"), .liveSession(.terminal("term_1")))
+    }
 }

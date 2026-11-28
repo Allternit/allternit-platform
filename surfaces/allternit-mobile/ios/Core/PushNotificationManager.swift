@@ -153,8 +153,13 @@ final class PushNotificationManager: NSObject {
     /// An approval opens Decisions, where it can be answered; the rest open
     /// their link.
     func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil, sessionId: String? = nil,
-                   type: String? = nil, computerId: String? = nil) {
+                   type: String? = nil, computerId: String? = nil, openUrl: String? = nil) {
         clearBadge()
+        // A blocked Factory pane: its terminal, or its row in Code.
+        if let target = OnYourComputer.pushTarget(openUrl: openUrl) {
+            DeepLinkRouter.shared.enqueue(.liveSession(target))
+            return
+        }
         // Computer alerts (offline, cpu, disk) open that computer's console detail.
         if type == "computer_alert", let computerId, !computerId.isEmpty {
             DeepLinkRouter.shared.enqueue(.computerConsole(computerId))
