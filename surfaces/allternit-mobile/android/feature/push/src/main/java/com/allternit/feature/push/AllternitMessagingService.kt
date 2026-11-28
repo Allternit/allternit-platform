@@ -79,8 +79,22 @@ class AllternitMessagingService : FirebaseMessagingService() {
         return out
     }
 
+    /**
+     * AllternitOS kernel approval push (platform #3306): `kind` is `kernel_approval` with `runtimeId` and `requestId`.
+     * Gets the KERNEL_APPROVAL category (Open only), one notification per request, and plain text when the push has none.
+     */
+    private fun withKernelText(data: Map<String, String>): Map<String, String> {
+        if ((data["kind"] ?: data["type"]) != "kernel_approval" && data["category"] != PushNotifications.KERNEL_APPROVAL) return data
+        val out = data.toMutableMap()
+        out["category"] = PushNotifications.KERNEL_APPROVAL
+        if (out["tag"].isNullOrBlank()) out["tag"] = "kernel-${data["runtimeId"].orEmpty()}-${data["requestId"].orEmpty()}"
+        if (out["title"].isNullOrBlank()) out["title"] = "Your bot needs you"
+        if (out["body"].isNullOrBlank()) out["body"] = "An action is waiting for your answer. Open Allternit to read it."
+        return out
+    }
+
     override fun onMessageReceived(message: RemoteMessage) {
-        val data = withAciText(withComputerAlertText(message.data))
+        val data = withKernelText(withAciText(withComputerAlertText(message.data)))
         // Wave I2: every push also refreshes the status snapshot (widget, tiles, shortcuts) and the ongoing run notification.
         refreshSystemSurfaces()
         if (data["event"] == "notification.revoke") {

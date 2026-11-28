@@ -1041,6 +1041,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             InboxSheet(
                 store = inbox,
                 focusedId = launch.inboxItem,
+                focusedKernel = launch.kernelApproval,
                 onOpenBot = { openPage(ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu))) },
                 onOpenSettings = { openPage(ShellPage.Settings) },
                 onDismiss = { inboxOpen = false },
@@ -1091,6 +1092,8 @@ internal data class ShellLaunch(
     val sheet: String? = null,
     /** The inbox item a link asked for (iOS `allternit://inbox/<id>`). */
     val inboxItem: String? = null,
+    /** The kernel approval a link or KERNEL_APPROVAL push asked for (`<runtime_id>/<request_id>`). */
+    val kernelApproval: String? = null,
     /** Non-zero for a notification tap (wave I1): a new value re-applies the launch to a workspace already up. */
     val nonce: Long = 0L,
     /** Open this bot's chat in Bots mode (a widget, tile or shortcut link, wave I2). */

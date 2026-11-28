@@ -48,6 +48,10 @@ object PushNotifications {
     const val ACI_APPROVAL = "ACI_APPROVAL"
     const val ACI_HUMAN = "ACI_HUMAN"
     const val ACI_BLOCKED = "ACI_BLOCKED"
+    /** An AllternitOS kernel approval (data.kind `kernel_approval`). Open only: the exact action is read in the app first. */
+    const val KERNEL_APPROVAL = "KERNEL_APPROVAL"
+    /** The only button on a KERNEL_APPROVAL notification: never Approve or Deny from the notification. */
+    val KERNEL_APPROVAL_ACTION_IDS = listOf("OPEN")
 
     /** Button identifiers (iOS NotificationActionID). */
     const val ACTION_APPROVE = "APPROVE"
@@ -82,7 +86,7 @@ object PushNotifications {
 
     /** The channel for a push's category and `type`. */
     fun channelFor(category: String?, type: String?): String = when {
-        category == APPROVAL_INLINE || category == APPROVAL_REVIEW || category == ACI_APPROVAL || category == ACI_HUMAN || category == ACI_BLOCKED -> CHANNEL_APPROVALS
+        category == APPROVAL_INLINE || category == APPROVAL_REVIEW || category == ACI_APPROVAL || category == ACI_HUMAN || category == ACI_BLOCKED || category == KERNEL_APPROVAL -> CHANNEL_APPROVALS
         category == BOT_REPLY || category == AGENT_MESSAGE -> CHANNEL_MESSAGES
         category == RUN_DONE || category == NEEDS_FIX -> CHANNEL_RUNS
         category == COMPUTER_ALERT || type == "computer_alert" -> CHANNEL_COMPUTER_ALERTS
@@ -174,6 +178,7 @@ object PushNotifications {
             ACI_APPROVAL -> listOfNotNull(confirmApprove(), background(ACTION_DENY, "Deny", authRequired = false), foreground(ACTION_OPEN, "Open"))
             ACI_HUMAN -> listOfNotNull(background(ACTION_CONTINUE, "Continue"), background(ACTION_STOP, "Stop", authRequired = false), foreground(ACTION_OPEN, "Open"))
             ACI_BLOCKED -> listOfNotNull(foreground(ACTION_OPEN, "Open"))
+            KERNEL_APPROVAL -> KERNEL_APPROVAL_ACTION_IDS.mapNotNull { foreground(it, "Open") }
             APPROVAL_INLINE -> listOf(background(ACTION_APPROVE, "Approve"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
             APPROVAL_REVIEW -> listOfNotNull(foreground(ACTION_REVIEW, "Review"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
             BOT_REPLY -> listOfNotNull(background(ACTION_REPLY, "Reply", "Message the bot"), foreground(ACTION_OPEN, "Open"))
@@ -186,7 +191,7 @@ object PushNotifications {
 
     /** The data keys a button needs (iOS reads them from `userInfo["data"]`). */
     val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId", "computerId",
-        "run_id", "computer_id", "approval_id", "approval_kind", "kind")
+        "run_id", "computer_id", "approval_id", "approval_kind", "kind", "requestId")
 
     internal fun openIntent(context: Context, key: String, data: Map<String, String>): PendingIntent? {
         val intent = AllternitPush.tapIntent(context, data) ?: return null

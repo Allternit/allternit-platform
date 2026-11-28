@@ -216,7 +216,9 @@ class MainActivity : ComponentActivity() {
         }
         val nonce = System.nanoTime()
         shellLaunch = when (segments.firstOrNull()) {
-            "inbox" -> ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)
+            "inbox" -> KernelApprovalLink.parse(segments)
+                ?.let { ShellLaunch(sheet = "inbox", kernelApproval = it, nonce = nonce) }
+                ?: ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)
             // Bots mode opens the bot's chat; "main" is the first bot of the roster (BotsLaunch.openBotId null opens the launchpad).
             "bot" -> ShellLaunch(mode = ShellMode.Bots, botId = segments.getOrNull(1)?.takeIf { it != "main" }, nonce = nonce)
             // iOS DeepLinkHost .callMain: the main bot's chat in Bots mode (its voice button starts the call).
@@ -248,6 +250,8 @@ class MainActivity : ComponentActivity() {
         val nonce = System.nanoTime()
         val url = tap.url.orEmpty()
         shellLaunch = when {
+            // AllternitOS kernel approval (KERNEL_APPROVAL): its row in Needs you, never answered from the notification.
+            tap.kernelApproval != null -> ShellLaunch(sheet = "inbox", kernelApproval = tap.kernelApproval, nonce = nonce)
             // A blocked Factory pane's push (data.openUrl): its terminal, or its row in Code.
             com.allternit.feature.code.OnYourComputer.pushTarget(url) != null -> ShellLaunch(mode = ShellMode.Code, liveUrl = url, nonce = nonce)
             // A computer_alert push (or a /computers/<id> url): that computer's console detail.

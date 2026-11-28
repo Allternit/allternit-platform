@@ -49,6 +49,9 @@ object AllternitPush {
     const val EXTRA_BOT_ID = "com.allternit.push.botId"
     /** A `computer_alert` push: the console row id. */
     const val EXTRA_COMPUTER_ID = "com.allternit.push.computerId"
+    /** A KERNEL_APPROVAL push: the relay row (`data.runtimeId` and `data.requestId`). */
+    const val EXTRA_RUNTIME_ID = "com.allternit.push.runtimeId"
+    const val EXTRA_REQUEST_ID = "com.allternit.push.requestId"
 
     /** What this build does with a push (cloud `KNOWN_CAPABILITIES`): notification buttons. */
     val CAPABILITIES = listOf("actions")
@@ -161,11 +164,17 @@ object AllternitPush {
             (data["sessionId"] ?: data["threadSessionId"])?.let { putExtra(EXTRA_SESSION_ID, it) }
             data["botId"]?.let { putExtra(EXTRA_BOT_ID, it) }
             data["computerId"]?.let { putExtra(EXTRA_COMPUTER_ID, it) }
+            // iOS AppDelegate: category KERNEL_APPROVAL or kind kernel_approval, with both ids.
+            val kernel = data["category"] == PushNotifications.KERNEL_APPROVAL || data["kind"] == "kernel_approval"
+            if (kernel && !data["runtimeId"].isNullOrBlank() && !data["requestId"].isNullOrBlank()) {
+                putExtra(EXTRA_RUNTIME_ID, data["runtimeId"])
+                putExtra(EXTRA_REQUEST_ID, data["requestId"])
+            }
         }
 
     /** The push a notification tap carried, once (the extras are removed). Null for any other intent. */
     fun readTap(intent: Intent): PushTap? {
-        val keys = listOf(EXTRA_URL, EXTRA_EVENT, EXTRA_INBOX_ID, EXTRA_SESSION_ID, EXTRA_BOT_ID, EXTRA_COMPUTER_ID)
+        val keys = listOf(EXTRA_URL, EXTRA_EVENT, EXTRA_INBOX_ID, EXTRA_SESSION_ID, EXTRA_BOT_ID, EXTRA_COMPUTER_ID, EXTRA_RUNTIME_ID, EXTRA_REQUEST_ID)
         if (keys.none { intent.hasExtra(it) }) return null
         val tap = PushTap(
             url = intent.getStringExtra(EXTRA_URL),
@@ -174,6 +183,8 @@ object AllternitPush {
             sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() },
             botId = intent.getStringExtra(EXTRA_BOT_ID)?.takeIf { it.isNotBlank() },
             computerId = intent.getStringExtra(EXTRA_COMPUTER_ID)?.takeIf { it.isNotBlank() },
+            runtimeId = intent.getStringExtra(EXTRA_RUNTIME_ID)?.takeIf { it.isNotBlank() },
+            requestId = intent.getStringExtra(EXTRA_REQUEST_ID)?.takeIf { it.isNotBlank() },
         )
         keys.forEach { intent.removeExtra(it) }
         return tap
@@ -200,7 +211,13 @@ data class PushTap(
     val sessionId: String?,
     val botId: String?,
     val computerId: String? = null,
+    val runtimeId: String? = null,
+    val requestId: String? = null,
 ) {
+    /** The kernel approval a KERNEL_APPROVAL push names, as `<runtime_id>/<request_id>` (the inbox's row key). */
+    val kernelApproval: String?
+        get() = if (runtimeId != null && requestId != null) "$runtimeId/$requestId" else null
+
     /** The computer a `computer_alert` points at: `computerId`, else the url `/computers/<id>` (iOS DeepLink.computerConsole). */
     val computer: String?
         get() = computerId ?: url?.let { Regex("""^/computers/([^/?#]+)""").find(it)?.groupValues?.get(1) }

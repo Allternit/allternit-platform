@@ -209,14 +209,37 @@ internal class InboxStore(private val backend: ChatBackend) {
     /** True when the last answer was "no computer" (no device, 428, compute_required), not a timeout. */
     var noComputer by mutableStateOf(false)
         private set
+    /** AllternitOS kernel approvals waiting on you (cloud relay, not the computer's inbox). */
+    var kernelItems by mutableStateOf<List<KernelApproval>>(emptyList())
+        private set
     val failures = mutableStateMapOf<String, String>()
     val busy = mutableStateMapOf<String, Boolean>()
 
+    /**
+     * Answers one kernel approval. The row leaves only after the relay accepts; a failure returns the
+     * plain reason to the detail sheet. A request that ran out of time also leaves the list (iOS).
+     */
+    suspend fun resolveKernel(approval: KernelApproval, approve: Boolean): String? =
+        when (val r = KernelApprovalClient.resolve(approval, approve)) {
+            KernelResolve.Done -> {
+                kernelItems = kernelItems.filterNot { it.id == approval.id }
+                null
+            }
+            is KernelResolve.Failed -> {
+                if (r.expired) kernelItems = kernelItems.filterNot { it.id == approval.id }
+                r.message
+            }
+        }
+
     suspend fun refresh() {
+        // Kernel approvals come from the cloud, not the computer's runtime inbox; a failure leaves the last list.
+        KernelApprovalClient.list()?.let { kernelItems = it }
         when (val r = backend.runtimeJson("GET", "/api/v1/inbox?scope=needs_you")) {
             is RuntimeCall.Ok -> {
                 items = ((r.body as? JsonObject)?.get("needsYou") as? JsonArray).orEmpty()
                     .mapNotNull { (it as? JsonObject)?.let(InboxItem::from) }
+                    // `kernel:<request_id>` rows are answered through the relay (kernelItems); the generic verb answers 409.
+                    .filterNot { it.id.startsWith("kernel:") }
                 isAvailable = true
                 noComputer = false
                 error = null
@@ -399,6 +422,7 @@ internal fun inboxAgo(iso: String, now: Long = System.currentTimeMillis()): Stri
 internal fun InboxSheet(
     store: InboxStore,
     focusedId: String? = null,
+    focusedKernel: String? = null,
     onOpenBot: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onDismiss: () -> Unit,
@@ -407,12 +431,16 @@ internal fun InboxSheet(
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     var reviewing by remember { mutableStateOf<InboxItem?>(null) }
+    /** A kernel approval open in its detail (the exact action, whole). */
+    var kernelDetail by remember { mutableStateOf<KernelApproval?>(null) }
     // Team map (flag `team.map`, lane 38): approval rows get "Who approves this" (iOS FabricApprovalsView).
     val teamMapOn = com.allternit.core.api.FeatureFlags.isOn(LocalContext.current, com.allternit.core.api.FeatureFlags.TEAM_MAP)
     var teamMapOpen by remember { mutableStateOf(false) }
     LaunchedEffect(store) {
         store.refresh()
         focusedId?.let { id -> store.items.firstOrNull { it.id == id && it.isPhoneAction }?.let { reviewing = it } }
+        // A KERNEL_APPROVAL push lands here: open its detail to read the action.
+        focusedKernel?.let { key -> kernelDetail = store.kernelItems.firstOrNull { it.id == key } }
     }
     // Items that arrive while the sheet is open wait behind "Show N new" so the list does not jump
     // under the finger. Urgent items and the one a link points at show at once.
@@ -421,7 +449,11 @@ internal fun InboxSheet(
     val knownIds = known
     val held = if (knownIds == null) emptyList() else store.items.filter { it.id !in knownIds && !it.isCritical && it.id != focusedId }
     val shownItems = if (held.isEmpty()) store.items else store.items.filterNot { it in held }
-    val focusedIsGone = focusedId != null && store.hasLoaded && store.error == null && store.items.none { it.id == focusedId }
+    val focusedIsGone = store.hasLoaded && store.error == null && when {
+        focusedKernel != null -> store.kernelItems.none { it.id == focusedKernel }
+        focusedId != null -> store.items.none { it.id == focusedId }
+        else -> false
+    }
 
     fun open(item: InboxItem) {
         onDismiss()
@@ -449,14 +481,14 @@ internal fun InboxSheet(
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
                     Text("Checking what needs you…", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
                 }
-                !store.isAvailable -> FriendlyState(
+                !store.isAvailable && store.kernelItems.isEmpty() -> FriendlyState(
                     style = FriendlyStyle.Offline,
                     title = if (store.noComputer) NoComputerCopy.TITLE else "No inbox on this computer yet",
                     message = if (store.noComputer) NoComputerCopy.DETAIL else "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you.",
                     art = if (store.noComputer) com.allternit.core.design.EmptyArtKind.ConnectScene else com.allternit.core.design.EmptyArtKind.Envelope,
                     modifier = Modifier.align(Alignment.Center).padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_desktop), contentDescription = null, tint = c.textSecondary) }
-                store.error != null && store.items.isEmpty() -> FriendlyState(
+                store.error != null && store.items.isEmpty() && store.kernelItems.isEmpty() -> FriendlyState(
                     style = FriendlyStyle.Error,
                     title = "Couldn't load the inbox",
                     message = store.error.orEmpty(),
@@ -464,7 +496,7 @@ internal fun InboxSheet(
                     onAction = { scope.launch { store.refresh() } },
                     modifier = Modifier.align(Alignment.Center).padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_warning), contentDescription = null, tint = c.textSecondary) }
-                store.items.isEmpty() -> {
+                store.items.isEmpty() && store.kernelItems.isEmpty() -> {
                     // Team approvals live on the runtime's team store, not in the inbox list,
                     // so they still show when the inbox itself is empty.
                     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
@@ -514,6 +546,10 @@ internal fun InboxSheet(
                             }
                         }
                         if (teamMapOn) item(key = "teamAsks") { com.allternit.feature.bots.TeamAsksSection(reloadKey = refreshing) }
+                        items(store.kernelItems, key = { "kernel:" + it.id }) { approval ->
+                            KernelApprovalRow(approval = approval, focused = approval.id == focusedKernel, onOpen = { kernelDetail = approval })
+                            HorizontalDivider(color = c.borderSubtle, modifier = Modifier.padding(start = 20.dp))
+                        }
                         items(shownItems, key = { it.id }) { item ->
                             InboxEntry(
                                 item = item,
@@ -538,6 +574,9 @@ internal fun InboxSheet(
 
     reviewing?.let { item ->
         PhoneHoldReviewSheet(item = item, store = store, onClose = { reviewing = null })
+    }
+    kernelDetail?.let { approval ->
+        KernelApprovalSheet(approval = approval, store = store, onClose = { kernelDetail = null })
     }
     if (teamMapOpen) com.allternit.feature.bots.TeamMapSheet(onDismiss = { teamMapOpen = false })
 }
@@ -643,7 +682,7 @@ private fun InboxRow(
 }
 
 @Composable
-private fun InboxButton(title: String, prominent: Boolean, enabled: Boolean, testTag: String, onClick: () -> Unit) {
+internal fun InboxButton(title: String, prominent: Boolean, enabled: Boolean, testTag: String, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val shape = RoundedCornerShape(10.dp)
     Box(
