@@ -311,6 +311,7 @@ class ChatViewModel(
         stopStreamingInternal(cancelImage = false)
         transientError = null
         computeGate = null
+        resetPlanThread()
         messages = emptyList()
         branches = emptyList()
         editedVersions = emptyMap()
@@ -332,6 +333,9 @@ class ChatViewModel(
         messages = emptyList()
         branches = emptyList()
         editedVersions = emptyMap()
+        resetPlanThread()
+        // A stored no-computer chat (iOS loadPlanThread): its turns come from cloud-api, and it keeps taking new ones.
+        if (PlanThreadClient.isThreadId(sessionId)) { loadPlanThread(sessionId); return }
         isLoadingHistory = true
         val local = localImages?.messages(sessionId, browserImages?.request?.call).orEmpty()
         messages = local
@@ -373,6 +377,13 @@ class ChatViewModel(
         if (browserImages?.request?.session == id) browserImages?.cancel()
         localImages?.delete(id); refreshLocalImages()
         if (id.startsWith("android-local-")) { startNewSession(); onSessionsChanged(); onDone(); return }
+        if (PlanThreadClient.isThreadId(id)) {
+            scope.launch {
+                if (backend.planThreads.delete(id)) { startNewSession(); onSessionsChanged(); onDone() }
+                else transientError = "Couldn't delete this chat: Something went wrong on our side. Try again."
+            }
+            return
+        }
         scope.launch {
             when (val r = backend.deleteSession(id)) {
                 is ApiResult.Ok -> {
@@ -469,7 +480,7 @@ class ChatViewModel(
         if (index < 0) return
         val sessionId = currentSessionId
         // A no-computer chat lives on this phone only: cut the feed back to that message and send the new text (iOS).
-        if (sessionId == null && binding == null && (PersonModels.isPersonOnly(request.runtimeModelId) || PersonModels.cloudAlias(request.runtimeModelId) != null)) {
+        if ((sessionId == null || PlanThreadClient.isThreadId(sessionId)) && binding == null && (PersonModels.isPersonOnly(request.runtimeModelId) || PersonModels.cloudAlias(request.runtimeModelId) != null)) {
             messages = messages.subList(0, index)
             send(request)
             return
@@ -566,7 +577,7 @@ class ChatViewModel(
             try {
                 // No computer needed (iOS startPersonStream): plan models always, Allternit Cloud models when the
                 // chat is not on a computer and no computer serves the model. Never throws NoComputer for them.
-                val route = SendRoutes.route(runtimeModelId, chatOnComputer = currentSessionId != null || binding != null, computerLists = runtimeModelId?.let { computerListsModel?.invoke(it) })
+                val route = SendRoutes.route(runtimeModelId, chatOnComputer = (currentSessionId != null && !PlanThreadClient.isThreadId(currentSessionId)) || binding != null, computerLists = runtimeModelId?.let { computerListsModel?.invoke(it) })
                 val direct = route == SendRoute.Person || (route == SendRoute.CheckComputer && backend.relay.resolve().let { it == RelayPick.NoComputer || (it is RelayPick.Failed && it.gate) })
                 if (direct && runtimeModelId != null) {
                     isCreatingSession = false
@@ -715,6 +726,7 @@ class ChatViewModel(
         firstDeltaAt = null
         try {
             if (hasAttachments) throw PersonChatRefusal("text_only", null, vendor)
+            if (PlanThreadClient.isStored(modelId)) savePlanTurn("user", strippedText(text), modelId)
             // No tools here: the web search / research markers mean nothing to the vendor.
             val history = PersonChatClient.history(messages.filter { it.id != assistantId }, strippedText(text))
             val computer = BrowserComputerRegistry.executor
@@ -731,6 +743,58 @@ class ChatViewModel(
             update(assistantId) { it.copy(error = r.card()) }
         }
         finishStreaming(assistantId)
+        // The finished reply joins the stored chat (iOS startPersonStream); a refused or stopped turn stores nothing.
+        if (PlanThreadClient.isStored(modelId)) {
+            messages.firstOrNull { it.id == assistantId }?.takeIf { it.error == null && it.content.isNotEmpty() }
+                ?.let { savePlanTurn("assistant", it.content, modelId) }
+        }
+    }
+
+    // MARK: Plan chat store (iOS ChatViewModel, contract 9.10)
+
+    private var planThreadId: String? = null
+    /** Set by any store failure: the rest of this chat stays on this phone. */
+    private var planStoreOff = false
+    private var planSyncTail: Job? = null
+
+    private fun resetPlanThread() {
+        planThreadId = null
+        planStoreOff = false
+        planSyncTail = null
+    }
+
+    /**
+     * Saves one turn to the store in order: the first one creates the thread. Any failure drops this chat to
+     * phone-only, silently (iOS savePlanTurn).
+     */
+    private fun savePlanTurn(role: String, content: String, model: String) {
+        if (planStoreOff) return
+        val previous = planSyncTail
+        planSyncTail = scope.launch {
+            previous?.join()
+            if (planStoreOff) return@launch
+            val message = PlanThreadMessage(role, content, model)
+            val id = planThreadId
+            if (id != null) {
+                if (backend.planThreads.append(id, listOf(message)) == null) planStoreOff = true
+            } else {
+                val thread = backend.planThreads.create(model, PlanThreadClient.titleFor(content), listOf(message))
+                if (thread == null) planStoreOff = true else { planThreadId = thread.id; onSessionsChanged() }
+            }
+        }
+    }
+
+    /** Opens a stored plan chat; the thread keeps taking new turns (iOS loadPlanThread). */
+    private fun loadPlanThread(id: String) {
+        isLoadingHistory = true
+        scope.launch {
+            val detail = backend.planThreads.get(id)
+            if (currentSessionId != id) return@launch
+            isLoadingHistory = false
+            if (detail == null) { transientError = "Couldn't load the conversation: Something went wrong on our side. Try again."; return@launch }
+            messages = detail.messages.mapIndexed { i, m -> MessageRecord(id = "$id-$i", role = m.role, content = m.content) }
+            planThreadId = id
+        }
     }
 
     /**
@@ -922,7 +986,7 @@ class ChatViewModel(
                 delay(1_500)
                 if (currentSessionId == sessionId) refreshPermissions()
             }
-        } else if (wasStreaming && sessionId != null) {
+        } else if (wasStreaming && sessionId != null && !PlanThreadClient.isThreadId(sessionId)) {
             scope.launch { backend.abort(sessionId) }
             scope.launch {
                 delay(1_500)
@@ -1181,7 +1245,7 @@ class ChatViewModel(
         streamJob = null
         permissionJob?.cancel()
         permissionJob = null
-        if (currentSessionId != null) {
+        if (currentSessionId != null && !PlanThreadClient.isThreadId(currentSessionId)) {
             scope.launch {
                 refreshPermissions()
                 if (reloadBranchesAfterStream) {
