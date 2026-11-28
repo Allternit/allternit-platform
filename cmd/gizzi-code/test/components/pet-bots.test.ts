@@ -128,7 +128,7 @@ describe("pet sprites", () => {
     const eyeCells = (p: "idle" | "blink" | "wink" | "glance") => {
       let n = 0
       for (const row of petBotRows(bot, p)) {
-        for (const [text, fg, bg] of row as Array<[string, string?, string?]>) {
+        for (const [text, fg, bg] of row as unknown as Array<[string, string?, string?]>) {
           for (const ch of text) {
             if (ch === "█") n += fg === eye ? 2 : 0
             else if (ch === "▀") n += (fg === eye ? 1 : 0) + (bg === eye ? 1 : 0)

@@ -6,7 +6,6 @@ import { logEvent } from './../../services/analytics/index.ts';
 import { useAppState } from './../../state/AppState.tsx';
 import { useVoiceState } from '../../context/voice';
 import type { VerificationStatus } from '../../hooks/useApiKeyVerification';
-import { useIdeConnectionStatus } from '../../hooks/useIdeConnectionStatus';
 import type { IDESelection } from '../../hooks/useIdeSelection';
 import { useMainLoopModel } from '../../hooks/useMainLoopModel';
 import { useVoiceEnabled } from '../../hooks/useVoiceEnabled';
@@ -19,7 +18,6 @@ import { calculateTokenWarningState } from '../../services/compact/autoCompact';
 import type { MCPServerConnection } from '../../services/mcp/types';
 import type { Message } from '../../types/message';
 import { getApiKeyHelperElapsedMs, getConfiguredApiKeyHelper, getSubscriptionType } from '../../utils/auth';
-import type { AutoUpdaterResult } from '../../utils/autoUpdater';
 import { getExternalEditor } from '../../utils/editor';
 import { isEnvTruthy } from '../../utils/envUtils';
 import { formatDuration } from '../../utils/format';
@@ -42,13 +40,9 @@ const VoiceIndicator: typeof import('./VoiceIndicator.js').VoiceIndicator = requ
 export const FOOTER_TEMPORARY_STATUS_TIMEOUT = 5000;
 type Props = {
   apiKeyStatus: VerificationStatus;
-  autoUpdaterResult: AutoUpdaterResult | null;
-  isAutoUpdating: boolean;
   debug: boolean;
   verbose: boolean;
   messages: Message[];
-  onAutoUpdaterResult: (result: AutoUpdaterResult) => void;
-  onChangeIsUpdating: (isUpdating: boolean) => void;
   ideSelection: IDESelection | undefined;
   mcpClients?: MCPServerConnection[];
   isInputWrapped?: boolean;
@@ -56,13 +50,9 @@ type Props = {
 };
 export function Notifications({
     apiKeyStatus,
-    autoUpdaterResult,
     debug,
-    isAutoUpdating,
     verbose,
     messages,
-    onAutoUpdaterResult,
-    onChangeIsUpdating,
     ideSelection,
     mcpClients,
     isInputWrapped: t1,
@@ -78,9 +68,6 @@ export function Notifications({
   const t4 = calculateTokenWarningState(tokenUsage, mainLoopModel);
 
   const isShowingCompactMessage = t4.isAboveWarningThreshold;
-  const {
-    status: ideStatus
-  } = useIdeConnectionStatus(mcpClients);
   const notifications = useAppState(_temp);
   const {
     addNotification,
@@ -115,8 +102,6 @@ export function Notifications({
       });
     });
   }, [addNotification]);
-  const shouldShowIdeSelection = ideStatus === "connected" && (ideSelection?.filePath || ideSelection?.text && ideSelection.lineCount > 0);
-  const shouldShowAutoUpdater = !shouldShowIdeSelection || isAutoUpdating || autoUpdaterResult?.status !== "success";
   const isInOverageMode = claudeAiLimits.isUsingOverage;
   const t7 = getSubscriptionType();
 
@@ -144,7 +129,7 @@ export function Notifications({
   useEffect(t9, t10);
   const t11 = isNarrow ? "flex-start" : "flex-end";
   const t12 = isInOverageMode ?? false;
-  const t13 = <NotificationContent ideSelection={ideSelection} mcpClients={mcpClients} notifications={notifications} isInOverageMode={t12} isTeamOrEnterprise={isTeamOrEnterprise} apiKeyStatus={apiKeyStatus} debug={debug} verbose={verbose} tokenUsage={tokenUsage} mainLoopModel={mainLoopModel} shouldShowAutoUpdater={shouldShowAutoUpdater} autoUpdaterResult={autoUpdaterResult} isAutoUpdating={isAutoUpdating} isShowingCompactMessage={isShowingCompactMessage} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={onChangeIsUpdating} />;
+  const t13 = <NotificationContent ideSelection={ideSelection} mcpClients={mcpClients} notifications={notifications} isInOverageMode={t12} isTeamOrEnterprise={isTeamOrEnterprise} apiKeyStatus={apiKeyStatus} debug={debug} verbose={verbose} tokenUsage={tokenUsage} mainLoopModel={mainLoopModel} />;
 
   const t14 = <SentryErrorBoundary><Box flexDirection="column" alignItems={t11} flexShrink={0} overflowX="hidden">{t13}</Box></SentryErrorBoundary>;
 
@@ -177,13 +162,7 @@ function NotificationContent({
   debug,
   verbose,
   tokenUsage,
-  mainLoopModel,
-  shouldShowAutoUpdater,
-  autoUpdaterResult,
-  isAutoUpdating,
-  isShowingCompactMessage,
-  onAutoUpdaterResult,
-  onChangeIsUpdating
+  mainLoopModel
 }: {
   ideSelection: IDESelection | undefined;
   mcpClients?: MCPServerConnection[];
@@ -198,12 +177,6 @@ function NotificationContent({
   verbose: boolean;
   tokenUsage: number;
   mainLoopModel: string;
-  shouldShowAutoUpdater: boolean;
-  autoUpdaterResult: AutoUpdaterResult | null;
-  isAutoUpdating: boolean;
-  isShowingCompactMessage: boolean;
-  onAutoUpdaterResult: (result: AutoUpdaterResult) => void;
-  onChangeIsUpdating: (isUpdating: boolean) => void;
 }): ReactNode {
   // Poll apiKeyHelper inflight state to show slow-helper notice.
   // Gated on configuration — most users never set apiKeyHelper, so the
@@ -268,7 +241,7 @@ function NotificationContent({
           </Text>
         </Box>}
       {!isBriefOnly && <TokenWarning tokenUsage={tokenUsage} model={mainLoopModel} />}
-      {shouldShowAutoUpdater && <AutoUpdaterWrapper verbose={verbose} onAutoUpdaterResult={onAutoUpdaterResult} autoUpdaterResult={autoUpdaterResult} isUpdating={isAutoUpdating} onChangeIsUpdating={onChangeIsUpdating} showSuccessMessage={!isShowingCompactMessage} />}
+      <AutoUpdaterWrapper />
       {voiceEnabled && voiceError && <Box>
               <Text color="error" wrap="truncate">
                 {voiceError}

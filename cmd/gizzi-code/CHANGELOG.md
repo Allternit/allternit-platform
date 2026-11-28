@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Updates.** One update notice, driven by a signed release feed. `gizzi update` (same as `gizzi upgrade`) updates by your install method, and `gizzi doctor` shows the method, channel and every other `gizzi` on your PATH. Install scripts read the same feed and always check the sha256.
+- **Models.** The model picker shows Runtime, Brain and Bot layers with an access badge per row, locked and offline rows with the fix, and F2 for recent models. `gizzi models` shows the same. Locks come from the server's picker catalog, also used by the iOS and Android pickers.
+- **Sessions.** `/sessions` lists every live session, including other CLIs' panes, with Enter to attach, `s` to steer and a "needs you" bell. `gizzi spawn <cli> "<prompt>"` starts a session, and `message_agent` works in normal sessions.
+- **Remote.** `/remote` lists other CLIs' panes. A blocked session sends one "needs you" push, and you can steer it from phone, web and Desktop. `ALLTERNIT_BLOCKED_PUSH=off` turns the push off.
+
+Full list:
+
+- **Release feed.** The release workflow signs `latest.json` (Ed25519) and uploads it to `runtime.allternit.com/gizzi/<channel>/`, with channels `stable` and `latest`, and pushes the Homebrew formula and Scoop manifest. The updater fails closed on a bad signature, wrong channel or hash mismatch. A paused feed updates nothing. Desktop's copy says it is managed by Desktop.
+- **Updater cleanup.** The old shared updater, the storage-bucket paths, the version kill switch and three footer updaters are removed. `gizzi uninstall` on a Desktop copy removes only the symlink.
+- **What's new.** After a version change the header shows up to four highlight lines once. `showWhatsNew` turns it off. `/release-notes` points at Allternit.
+- **Picker catalog.** `GET /api/v1/picker-catalog` on cloud-api and allternit-api. A snapshot built at build time is the fallback, then a six-hour cached live copy. `gizzi models --refresh` skips the cache and `--json` adds `rows`.
+- **Local models.** Local models are what the server lists, with no placeholder rows. A local server that does not answer in one second shows as one offline row naming the config file to fix.
+- **Mascot.** The approved mascot and a one-row wordmark in the header and `--help`, drawn without gaps between half blocks.
+- **Slash commands.** 47 unused commands are removed. `/status` has Status, Usage, Cost and Stats tabs, with `/usage`, `/cost` and `/stats` as aliases. `/resume now`, `/resume keep-going` and `/plan view` replace separate commands; the old names still work. `/cost` and `/usage` keep their text form over Remote Control.
+- **Sessions view.** `/sessions` polls every two seconds and shows status, the doing line and the last three output lines. `n` starts a session, `x` stops one after you type its exact name. `sessionsBlockedNotice` turns off the bell.
+- **Spawn.** `gizzi spawn` keeps the prompt in a private task file; `--window` opens a terminal that runs only the attach command; `--dry-run` shows the plan.
+- **Message tool.** The first message to a target asks you. Later ones in the session do not.
+- **Live sessions.** Status keeps `blocked`, with `blockedSince`, `terminalId` and `steer` (`terminal`, `delivery` or `none`).
+- **Blocked push.** One push per time a session becomes blocked, none while it stays blocked.
+- **Sleep, pods and connections.** `gizzi sleep status|now|pause|resume|report`. The `/pods` and `/connections` panes (List, Grid, Deck) are hidden panes you type.
+
 ## 2.24.0 (2026-11-27)
 
 - **Start anywhere.** `gizzi start` (and `--list` for your computers) and the StartSession tool start a session on another computer or folder, after you approve it. A session can't start one in a higher mode than its own, and only three levels deep. `POST /v1/session-start` reaches the engine through the cloud relay, even when Desktop is quit, and a paired engine opens the relay itself.

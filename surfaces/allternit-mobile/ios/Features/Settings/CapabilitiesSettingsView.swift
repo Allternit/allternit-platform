@@ -269,7 +269,7 @@ struct CapabilityDetailView: View {
     private var noun: String { item.kind == .skill ? "skill" : "plugin" }
 
     var body: some View {
-        List {
+        DockingTitleList(title: current.name) {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(current.name)

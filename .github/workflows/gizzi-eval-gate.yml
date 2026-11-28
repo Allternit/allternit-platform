@@ -1,0 +1,61 @@
+name: Gizzi eval gate
+
+# ADVISORY, not a required check. Do not add it to branch protection.
+#
+# Replays the shared Gizzi eval suite (domains/agent-evals/gizzi/suites/shared.v1) with no model, no
+# network and no secrets, then compares the report with
+# domains/agent-evals/gizzi/baseline.replay.v1.json (scripts/gizzi-eval-gate.mjs). Replay grades the
+# stored traces: it checks the grading machinery and the suite, not prompt changes. A red run means
+# a case flipped or the pass rate dropped more than 2 points; refresh the baseline with
+# `node scripts/gizzi-eval-gate.mjs --write-baseline` when the change is on purpose.
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/gizzi-code/src/runtime/eval/**'
+      - 'cmd/gizzi-code/src/runtime/session/prompt/**'
+      - 'cmd/gizzi-code/src/runtime/tools/builtins/*.txt'
+      - 'domains/agent-evals/gizzi/**'
+      - 'contracts/eval/**'
+      - 'scripts/gizzi-eval-gate.mjs'
+      - '.github/workflows/gizzi-eval-gate.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Replay gate (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        # Same install as gizzi-code-quality.yml: gizzi-code imports packages
+        # it does not declare, so a filtered install misses them.
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Gate script self-test
+        run: node --test scripts/gizzi-eval-gate.test.mjs
+
+      - name: Replay gate
+        run: node scripts/gizzi-eval-gate.mjs

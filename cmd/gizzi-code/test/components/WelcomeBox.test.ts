@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { WelcomeBox, headerArtMode, headerCanAnimate, headerMascotSize, idleFrame, welcomeRows } from "../../src/cli/ui/ink-app/components/WelcomeBox"
-import { CORAL, EYE, FONT35, FONT45, brailleRows, mascotRows, wordmarkRows } from "../../src/cli/ui/ink-app/components/welcomeArt"
+import { CORAL, EYE, MASCOT_MID, mascotRows, pixelCell, wordmarkRows } from "../../src/cli/ui/ink-app/components/welcomeArt"
 
 describe("WelcomeBox", () => {
   test("exports a component", () => {
@@ -23,20 +23,17 @@ describe("header rows", () => {
 })
 
 describe("braille wordmark", () => {
-  test("GIZZI CODE in 2 rows of one-column braille; coral G is its own run", async () => {
+  test("GIZZI CODE is one braille row; the G core cell is coral, the rest text", async () => {
     const { stringWidth } = await import("../../src/cli/ui/ink-app/ink/stringWidth")
-    const rows = wordmarkRows(FONT45, true)
-    expect(rows).toHaveLength(2)
-    expect(rows[0]![0]![1]).toBe(CORAL)
-    for (const row of rows) {
-      const line = row.map(([t]) => t).join("")
-      expect(line).toMatch(/^[\u2800-\u28ff ]+$/)
-      expect(stringWidth(line)).toBe(line.length)
-      expect(line).toHaveLength(rows[0]!.map(([t]) => t).join("").length)
-    }
-    expect(wordmarkRows(FONT35, false)[0]).toHaveLength(1)
-    // FONT45 G: top row .### -> dots in the first two cells' upper rows
-    expect(brailleRows(["##", "#.", "#.", ".#"])).toEqual([String.fromCharCode(0x2800 + 0x01 + 0x02 + 0x04 + 0x08 + 0x80)])
+    const rows = wordmarkRows()
+    expect(rows).toHaveLength(1)
+    const line = rows[0]!.map(([t]) => t).join("")
+    expect(line).toBe("⢎⣭⢈⣏⢈⣝⡁⣩⣋⢈⣏ ⢎⣉⠰⣉⠆⣏⡱⢸⣭⡁")
+    expect(stringWidth(line)).toBe(line.length)
+    expect(rows[0]![0]).toEqual(["⢎", "text"])
+    expect(rows[0]![1]).toEqual(["⣭", CORAL])
+    const coral = rows[0]!.filter(([, c]) => c === CORAL)
+    expect(coral).toHaveLength(1)
   })
 })
 
@@ -95,10 +92,29 @@ describe("half-block mascot", () => {
     expect(rows).toHaveLength(8)
     for (const line of text(rows)) {
       expect(line).toHaveLength(18)
-      expect(line).toMatch(/^[ ▀▄█]+$/)
+      expect(line).toMatch(/^[ ▄]+$/)
     }
     const colors = new Set(rows.flat().flatMap(([, fg, bg]) => [fg, bg]).filter(Boolean))
     expect([...colors].sort()).toEqual([CORAL, EYE, "gizziSand", "gizziVisor"].sort())
+  })
+
+  test("mid: the approved 18 x 16 drawing", () => {
+    expect(MASCOT_MID).toEqual([
+      "........BB........", "..................", "...TTTTE..ETTTT...", "..................",
+      "...TTTTTTTTTTTT...", "..TTVVVVVVVVVVTT..", "..TVVEEVVVVEEVVT..", ".TTVVEEVVVVEEVVTT.",
+      ".TTVVVVVBBVVVVVTT.", "..TVVVVBBBBVVVVT..", "..TTVVVVVVVVVVTT..", "...TTTTTTTTTTTT...",
+      "...TTTTTTTTTTTT...", "....TTTTTTTTTT....", "...TT.TT..TT.TT...", "...TT.TT..TT.TT...",
+    ])
+  })
+
+  test("gap-free cell rule", () => {
+    expect(pixelCell(undefined, undefined)).toEqual([" ", ""])
+    expect(pixelCell("a", "a")).toEqual([" ", "", "a"]) // same color: space with bg
+    expect(pixelCell("a", "b")).toEqual(["▄", "b", "a"]) // split: fg = bottom, bg = top
+    expect(pixelCell(undefined, "b")).toEqual(["▄", "b"]) // empty top: no bg
+    expect(pixelCell("a", undefined)).toEqual(["▄", "a", undefined, true]) // empty bottom: reverse-video ▄, fg = top
+    const all = mascotRows("mid").flat().map(([t]) => t).join("")
+    expect(all).not.toContain("█")
   })
 
   test("tiny: 10 x 3", () => {

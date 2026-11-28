@@ -1,0 +1,22 @@
+{
+  "schema_id": "allternit.os.ViewDescriptorV1",
+  "schema_version": "1.0.0",
+  "view_id": "app:notes",
+  "kind": "app",
+  "title": "Notes",
+  "icon": "note",
+  "app_id": "notes",
+  "app_version": "1.2.0",
+  "surfaces": [
+    "desktop",
+    "web",
+    "phone"
+  ],
+  "singleton": true,
+  "capabilities": [
+    "cap.files.read"
+  ],
+  "params_schema": {
+    "type": "object"
+  }
+}

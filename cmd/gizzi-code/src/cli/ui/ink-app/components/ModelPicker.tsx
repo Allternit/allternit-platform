@@ -13,7 +13,7 @@ import { useAppState, useSetAppState } from '../state/AppState';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model';
 import { buildModelPickerRows, getModelListSections, getModelOptions, refreshModelListSections, type ModelListSection, type ModelPickerRow } from '../utils/model/modelOptions';
-import { formatContext, quotaMarker, toggleFavorite, visibleWindow, type PickerQuotaResult } from '../utils/model/modelPickerModel';
+import { formatContext, lockedNotice, nextRecentModel, offlineNotice, pushRecentModel, quotaMarker, toggleFavorite, visibleWindow, type PickerQuotaResult } from '../utils/model/modelPickerModel';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint';
 import { Byline } from './design-system/Byline';
@@ -24,6 +24,9 @@ import { ModelThinking } from '@/runtime/providers/discovery/model-thinking';
 import { CloudContinue } from '@/runtime/session/cloud-continue';
 import { cloudCreditsDisclosure, type CloudCreditsCode } from '@/shared/util/provider-error';
 import { cloudEntitlement } from '../services/allternitAccount';
+import { CLOUD_BILLING_URL } from '@/shared/util/provider-error';
+import { getActiveBotChat } from '../bootstrap/state';
+import { listRuntimes } from '@/runtime/providers/discovery/runtime-registry';
 export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
@@ -57,10 +60,10 @@ function loginCommandFor(providerId: string | undefined): string | undefined {
   try {
     const {
       findSubprocessSpec,
-      CLI_CATALOG
+      cliCatalog
     } = require('../../../../runtime/providers/discovery/subprocess.js') as typeof import('../../../../runtime/providers/discovery/subprocess.js');
     const spec = findSubprocessSpec(providerId);
-    const tool = CLI_CATALOG.find(t => t.id === providerId) as {
+    const tool = cliCatalog().find(t => t.id === providerId) as {
       login?: unknown;
     } | undefined;
     const login = Array.isArray(tool?.login) ? tool!.login.filter((a): a is string => typeof a === 'string') : [];
@@ -86,6 +89,7 @@ export function ModelPicker({
   const [focusedValue, setFocusedValue] = useState(initialValue);
   const [filter, setFilter] = useState('');
   const [favorites, setFavorites] = useState<string[]>(() => getSettingsForSource("userSettings")?.modelFavorites ?? []);
+  const [recent, setRecent] = useState<string[]>(() => getSettingsForSource("userSettings")?.modelRecent ?? []);
   const [quotas, setQuotas] = useState<Record<string, PickerQuotaResult>>({});
   const isFastMode = useAppState(s => isFastModeEnabled() ? s.fastMode : false);
   const [hasToggledEffort, setHasToggledEffort] = useState(false);
@@ -110,6 +114,7 @@ export function ModelPicker({
       cancelled = true;
     };
   }, []);
+  const isListLocked = (value: string | undefined): boolean => Boolean(value && rowsLockedRef.current.has(value));
   const isCloudLocked = (value: string | undefined): boolean => {
     const prefix = `${CloudContinue.PROVIDER_ID}/`;
     return Boolean(cloudLock && value?.startsWith(prefix) && cloudLock.check(value.slice(prefix.length)));
@@ -153,6 +158,8 @@ export function ModelPicker({
     // With no pick, the session runs the TUI's resolved default.
     current: initial ?? getDefaultMainLoopModel()
   }), [sections, extras, favorites, filter, initial]);
+  const rowsLockedRef = React.useRef(new Map<string, { reason: string; action?: string }>());
+  rowsLockedRef.current = useMemo(() => new Map(rows.flatMap(r => r.kind === "option" && r.locked ? [[r.value, r.locked] as const] : [])), [rows]);
   const values = useMemo(() => rows.flatMap(r => r.kind === "option" ? [r.value] : []), [rows]);
   // With no model chosen, focus starts on the running default.
   const currentValue = rows.find((r): r is OptionRow => r.kind === "option" && r.isCurrent)?.value;
@@ -248,6 +255,13 @@ export function ModelPicker({
     context: "ModelPicker"
   });
   const handleSelect = (value_0: string) => {
+    const listLock = rowsLockedRef.current.get(value_0);
+    if (listLock) {
+      // A locked row never selects: show how to unlock it.
+      setNotice(lockedNotice(listLock, CLOUD_BILLING_URL));
+      if (listLock.action === 'retry') void refreshModelListSections().then(next => setSections(next));
+      return;
+    }
     if (isCloudLocked(value_0)) {
       setNotice(cloudCreditsDisclosure(cloudLock?.reason));
       return;
@@ -267,6 +281,13 @@ export function ModelPicker({
         ...prev_0,
         effortValue: effortLevel
       }));
+    }
+    if (value_0 !== NO_PREFERENCE) {
+      const nextRecent = pushRecentModel(recent, value_0);
+      setRecent(nextRecent);
+      updateSettingsForSource("userSettings", {
+        modelRecent: nextRecent
+      });
     }
     const selectedModel = resolveOptionModel(value_0);
     const selectedEffort = (hasToggledEffort && selectedModel && modelSupportsEffort(selectedModel) ? effort : undefined) as EffortLevel | undefined;
@@ -309,6 +330,12 @@ export function ModelPicker({
       }
       return;
     }
+    if (key.f2) {
+      // F2: the next of the 5 most recent models (focus only; Enter picks).
+      const next = nextRecentModel(recent, effectiveFocused, v => values.includes(v) && !rowsLockedRef.current.has(v));
+      if (next !== undefined) handleFocus(next);
+      return;
+    }
     if (key.tab) {
       handleToggleFavorite();
       return;
@@ -334,19 +361,26 @@ export function ModelPicker({
       if (row.kind === "section") {
         return <Box key={row.key}><Text bold={true}>{row.title}</Text></Box>;
       }
+      if (row.kind === "offline") {
+        // One grey row, not selectable; the fix is in the footer line below.
+        return <Box key={row.key} paddingLeft={1}><Text dimColor={true}>{row.title}</Text><Box flexGrow={1} /><Text dimColor={true}>{row.fix}</Text></Box>;
+      }
       if (row.kind === "provider") {
         const headerQuota = row.providerId ? quotaMarker(quotas[row.providerId], quotaFetchers.has(row.providerId)) : null;
         return <Box key={row.key} paddingLeft={1}><Text dimColor={true} bold={true}>{row.title}{headerQuota ? ` · ${headerQuota}` : ''}</Text></Box>;
       }
       const isFocused = row.value === effectiveFocused;
+      const locked = row.locked;
       const dim = row.signedIn === false && !isFocused;
       const tags = [row.isDefault ? 'default' : '', row.isCurrent ? 'current' : '', isCloudLocked(row.value) ? 'needs credits' : ''].filter(Boolean).join(' · ');
       const contextLabel = row.context ? formatContext(row.context) : null;
       const thinking = thinkingCell(row.value, isFocused ? displayEffort : undefined);
       return <Box key={row.key} flexDirection="row">
-              <Text color={isFocused ? "suggestion" : undefined} dimColor={dim}>{isFocused ? figures.pointer : ' '}{' '}{row.favorite ? '★ ' : ''}{row.label}</Text>
+              <Text color={isFocused && !locked ? "suggestion" : undefined} dimColor={dim || Boolean(locked)}>{isFocused ? figures.pointer : ' '}{' '}{row.favorite ? '★ ' : ''}{row.label}</Text>
               {tags !== '' && <Text dimColor={true}>{' '}{tags}</Text>}
+              {row.access && <Text dimColor={true}>{' '}[{row.access}]</Text>}
               <Box flexGrow={1} />
+              {locked && <Text dimColor={true}>{locked.reason}{' '}</Text>}
               {contextLabel && <Text dimColor={true}>{contextLabel}</Text>}
               <Box width={THINKING_COLUMN} flexShrink={0} justifyContent="flex-end">
                 <Text color={isFocused && thinking !== '—' ? "suggestion" : undefined} dimColor={!isFocused}>{isFocused && thinking !== '—' ? `‹ ${thinking} ›` : thinking}</Text>
@@ -361,11 +395,19 @@ export function ModelPicker({
   const focusedDetail = focusedDetailParts.length > 0 ? <Box marginBottom={1}><Text dimColor={true}>{focusedDetailParts.join(' · ')}</Text></Box> : null;
   const effortRow = focusedThinking ? <Box marginBottom={1} flexDirection="column"><Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{focusedThinking.term}:{" "}{focusedThinking.levels.map((l, i) => <Text key={l.id} bold={l.id === displayEffort} dimColor={l.id !== displayEffort}>{i > 0 ? ' · ' : ''}{l.label}{l.id === focusedThinking.default ? '*' : ''}</Text>)}{" "}<Text color="subtle">← → change · * default</Text></Text></Box> : <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort as EffortLevel} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
   const header = <Box marginBottom={1} flexDirection="column"><BlockTitle title="MODELS" /><Text dimColor={true}>{headerText ?? "Switch models. Applies to this session and future Gizzi Code sessions. For other/previous model names, specify with --model."}</Text>{sessionModel && <Text dimColor={true}>Currently using {modelDisplayString(sessionModel)} for this session (set by plan mode). Selecting a model will undo this.</Text>}</Box>;
-  const footerHint = <Box marginBottom={1}><Text dimColor={true}>↑/↓ navigate · Enter select · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'} · gizzi connect to add an account</Text></Box>;
+  // Layers, same names as Desktop's "Runtime · Brain" chip: the Runtime runs the
+  // turn, the Brain is picked below, the Bot is the identity (read-only here: Gizzi has
+  // no bot list route; /runtime and \`gizzi agents bot\` change it).
+  const layerBrain = focusedRow?.value ?? (initial ?? getDefaultMainLoopModel());
+  const layerProvider = layerBrain.split('/')[0];
+  const layerRuntime = listRuntimes().find(r => r.tool && r.tool === layerProvider)?.name ?? 'Allternit (Gizzi)'; // native runtime: no sign-in hint
+  const layerBot = getActiveBotChat()?.botName;
+  const layers = <Box marginBottom={1} flexDirection="column"><Text dimColor={true}>Runtime · <Text bold={true}>{layerRuntime}</Text>  (/runtime to change)</Text><Text dimColor={true}>Brain · <Text bold={true}>{focusedRow?.label ?? 'default'}</Text>{focusedRow?.access ? ` [${focusedRow.access}]` : ''}  (pick below)</Text><Text dimColor={true}>Bot · <Text bold={true}>{layerBot ?? 'none'}</Text>{layerBot ? '  (read-only here)' : '  (no bot in this session)'}</Text></Box>;
+  const footerHint = <Box marginBottom={1}><Text dimColor={true}>↑/↓ navigate · Enter select · F2 recent · Tab ★ favorite · type to filter · Esc {filter ? 'clear filter' : 'cancel'} · gizzi connect to add an account</Text></Box>;
   const fastModeNotice = isFastModeEnabled() ? showFastModeNotice ? <Box marginBottom={1}><Text dimColor={true}>Fast mode is <Text bold={true}>ON</Text> and available with{" "}{FAST_MODE_MODEL_DISPLAY} only (/fast). Switching to other models turn off fast mode.</Text></Box> : isFastModeAvailable() && !isFastModeCooldown() ? <Box marginBottom={1}><Text dimColor={true}>Use <Text bold={true}>/fast</Text> to turn on Fast mode ({FAST_MODE_MODEL_DISPLAY} only).</Text></Box> : null : null;
   const standaloneHints = isStandaloneCommand && <Text dimColor={true} italic={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Byline><KeyboardShortcutHint shortcut="Enter" action="confirm" /><ConfigurableShortcutHint action="select:cancel" context="Select" fallback="Esc" description="exit" /></Byline>}</Text>;
   const creditsNotice = notice ? <Box marginBottom={1}><Text color="warning" wrap="wrap">{notice}</Text></Box> : null;
-  const content = <Box flexDirection="column">{header}{listContent}{focusedDetail}{creditsNotice}{effortRow}{footerHint}{fastModeNotice}{standaloneHints}</Box>;
+  const content = <Box flexDirection="column">{header}{layers}{listContent}{focusedDetail}{creditsNotice}{effortRow}{footerHint}{fastModeNotice}{standaloneHints}</Box>;
   if (!isStandaloneCommand) {
     return content;
   }

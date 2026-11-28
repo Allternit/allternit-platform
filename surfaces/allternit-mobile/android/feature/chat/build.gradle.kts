@@ -8,6 +8,8 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    // EvalBackend's @Serializable models (eval loop test cases).
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // sherpa-onnx's Android AAR (version in gradle/libs.versions.toml, repository in settings.gradle.kts).
@@ -62,6 +64,7 @@ dependencies {
     // Kokoro; Commons Compress unpacks the .tar.bz2 packs. The packs download at run time, never into the APK.
     implementation(sherpaOnnxAar)
     implementation(libs.commons.compress)
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
 }
 

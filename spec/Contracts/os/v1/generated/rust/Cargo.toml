@@ -1,0 +1,16 @@
+[package]
+name = "allternit-os-contracts"
+version = "1.0.0"
+edition = "2021"
+description = "Serde types for AllternitOS contracts os/v1 (DRAFT, gate G0). Normative source: spec/Contracts/os/v1/schemas."
+license = "UNLICENSED"
+publish = false
+
+# Standalone: deliberately NOT a member of the repo root workspace (root Cargo.toml/Cargo.lock untouched),
+# same as the frozen ABI crate it depends on.
+[workspace]
+
+[dependencies]
+allternit-kernel-abi = { path = "../../../../kernel/v1/generated/rust" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,10 +1,12 @@
 import type { Command } from '../../commands'
 
+// Merged into /sessions (SLASH-LIST MERGE): a hidden name that opens the sessions view.
 const board = {
   type: 'local-jsx',
   name: 'board',
-  description: 'Live Factory board: every running bot and swarm worker, its state, age and last line (enter attach · s steer · x stop · l land)',
+  description: 'Open the live sessions view (same as /sessions)',
+  isHidden: true,
   immediate: true,
-  load: () => import('./board.js'),
+  load: () => import('../sessions/sessions.js'),
 } satisfies Command
 export default board

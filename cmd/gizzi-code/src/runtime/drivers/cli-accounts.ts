@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { CLI_CATALOG } from "@/runtime/providers/discovery/subprocess"
+import { cliCatalog } from "@/runtime/providers/discovery/subprocess"
 
 /**
  * Extra signed-in accounts for a coding CLI. allternit-api keeps the rows
@@ -37,7 +37,7 @@ export namespace CliAccounts {
    * user's default.
    */
   export function env(cliName: string, requested?: string, bot?: string): Record<string, string> | undefined {
-    const tool = CLI_CATALOG.find((t) => t.id === cliName || t.bin === cliName || t.aliases?.includes(cliName))
+    const tool = cliCatalog().find((t) => t.id === cliName || t.bin === cliName || t.aliases?.includes(cliName))
     if (!tool?.accountHomeEnv) return undefined
     const id = requested || bot || defaults()[tool.id]
     if (!id || id === "default" || !safe(id)) return undefined

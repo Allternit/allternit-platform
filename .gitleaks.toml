@@ -74,9 +74,6 @@ paths = [
   # quickstart examples (localhost dev only)
   '''^cmd/allternit-cloud-api/QUICKSTART\.md$''',
 
-  # 'rateLimitTier' string false-positive
-  '''^cmd/gizzi-code/src/cli/ui/ink-app/commands/upgrade/upgrade\.tsx$''',
-
   # publishable-by-design keys (safe to expose: Clerk pk_ test keys, Datadog
   # RUM client tokens, localhost-build publishable key fallback)
   '''^resources/company\.json$''',

@@ -1,0 +1,18 @@
+[package]
+name = "allternit-self-improve-gizzi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "harness-improve: proposes, gates and scores edits to Gizzi's prompts and turn limits, on top of allternit-self-improve"
+
+[[bin]]
+name = "harness-improve"
+path = "src/main.rs"
+
+[dependencies]
+allternit-self-improve = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

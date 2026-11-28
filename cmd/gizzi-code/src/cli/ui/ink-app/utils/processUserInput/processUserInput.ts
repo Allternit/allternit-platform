@@ -432,7 +432,28 @@ async function processUserInputBase(
     const cmd = parsed
       ? findCommand(parsed.commandName, context.options.commands)
       : undefined
-    if (cmd) {
+    // A terminal-UI twin (e.g. /cost opening the /status Cost tab) can shadow
+    // a text form of the same name that Remote Control may run. Over the
+    // bridge, use the text form and drop the twin for this input only.
+    const bridgeTwin =
+      cmd && !isBridgeSafeCommand(cmd)
+        ? context.options.commands.find(
+            c =>
+              c !== cmd &&
+              getCommandName(c) === getCommandName(cmd) &&
+              isBridgeSafeCommand(c),
+          )
+        : undefined
+    if (cmd && bridgeTwin) {
+      effectiveSkipSlash = false
+      context = {
+        ...context,
+        options: {
+          ...context.options,
+          commands: context.options.commands.filter(c => c !== cmd),
+        },
+      }
+    } else if (cmd) {
       if (isBridgeSafeCommand(cmd)) {
         effectiveSkipSlash = false
       } else {

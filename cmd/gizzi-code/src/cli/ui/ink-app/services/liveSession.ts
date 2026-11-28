@@ -334,3 +334,40 @@ export async function liveLinks(sessionID: string): Promise<LiveLinks> {
     signedIn,
   }
 }
+
+// ── pane sessions (other CLIs on this computer) for /remote ───────────────
+
+/** A session from `GET /api/v1/live-sessions` (the fields /remote shows). */
+export type PaneSession = {
+  address: string
+  name?: string
+  harness: string
+  status: string
+  doing?: string
+  steer?: string
+  terminalId?: string
+  paneId?: string
+}
+
+/** Which devices can reach it: `steer` is "terminal" or "delivery" when a phone, the web or Desktop can type into it. */
+export function paneReach(s: Pick<PaneSession, 'steer'>): 'phone, web and Desktop' | 'view only' {
+  return s.steer === 'terminal' || s.steer === 'delivery' ? 'phone, web and Desktop' : 'view only'
+}
+
+/** Pane sessions only: the ones in a terminal pane, never this gizzi session itself. */
+export function paneSessions(rows: PaneSession[], ownSessionID?: string): PaneSession[] {
+  return rows.filter(r => r.harness !== LIVE_HARNESS && r.status !== 'offline' && (r.paneId || r.terminalId) && r.address && r.address !== ownSessionID)
+}
+
+/** One line per pane session: name, status, doing, and who can reach it. */
+export function paneSessionLine(s: PaneSession): string {
+  const doing = s.doing ? ` · ${s.doing}` : ''
+  return `${s.name || s.address} (${s.harness}) · ${s.status}${doing} · ${paneReach(s)}`
+}
+
+export async function fetchPaneSessions(
+  load: () => Promise<unknown> = () => import('@/runtime/live/team-mcp').then(m => m.api('/api/v1/live-sessions')),
+): Promise<PaneSession[]> {
+  const body = (await load()) as { sessions?: PaneSession[] } | PaneSession[]
+  return paneSessions(Array.isArray(body) ? body : (body.sessions ?? []))
+}

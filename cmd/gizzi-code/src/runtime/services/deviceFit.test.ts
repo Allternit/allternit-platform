@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "fs"
 import { join } from "path"
-import { budgetFromStatus, fit, type DeviceBudget, type Quant } from "./deviceFit"
+import { budgetFromStatus, fit, type DeviceBudget, type Quant, type StreamQuant } from "./deviceFit"
 
 // Canonical vectors from spec/on-device/fit-vectors.json (repo root).
 const vectors = JSON.parse(
   readFileSync(join(import.meta.dir, "../../../../../spec/on-device/fit-vectors.json"), "utf8"),
-) as Array<{ name: string; budget: DeviceBudget; quants: Quant[] | null; opts?: { ctx?: number }; expect: { k: string; label: string; quant: string | null } }>
+) as Array<{ name: string; budget: DeviceBudget; quants: Quant[] | null; stream_quants?: StreamQuant[]; opts?: { ctx?: number }; expect: { k: string; label: string; quant: string | null } }>
 
 describe("on-device fit vectors", () => {
-  test("has the full vector set", () => expect(vectors.length).toBe(65))
+  test("has the full vector set", () => expect(vectors.length).toBe(80))
   for (const v of vectors) {
     test(v.name, () => {
-      const r = fit(v.budget, v.quants, v.opts)
+      const r = fit(v.budget, v.quants, v.opts, v.stream_quants)
       expect({ k: r.k, label: r.label, quant: r.quant?.name ?? null }).toEqual(v.expect as any)
     })
   }

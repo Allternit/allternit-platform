@@ -6,6 +6,7 @@ import { MemoryFileSelector } from '../../components/memory/MemoryFileSelector';
 import { getRelativeMemoryPath } from '../../components/memory/MemoryUpdateNotification';
 import { Box, Link, Text } from '../../ink';
 import type { LocalJSXCommandCall } from '../../types/command';
+import { memoryRoute, SLEEP_COMMAND_NAME } from './subcommand';
 import { clearMemoryFileCaches, getMemoryFiles } from '../../utils/gizzimd';
 import { getGizziConfigHomeDir } from '../../utils/envUtils';
 import { getErrnoCode } from '../../utils/errors';
@@ -21,10 +22,13 @@ type OnDone = (result?: string, options?: { display?: CommandResultDisplay }) =>
 
 const USAGE = [
   'Usage: /memory                 show your Memory Drive and edit memory files',
+  '       /memory search <words>  search your Memory Drive',
+  '       /memory add <note>      save a note to memory now',
   '       /memory view <path>     show one drive file (e.g. /memory view preferences.md)',
   '       /memory log             recent drive history',
   '       /memory sync            commit edits in the checkout and sync now',
-  '       /memory sleep [on|off]  show Sleep, or switch it on or off',
+  '       /memory sleep           open Sleep (last and next run, last report)',
+  '       /memory sleep on|off    switch Sleep on or off',
 ].join('\n');
 
 function MemoryCommand({ onDone, driveSummary }: { onDone: OnDone; driveSummary?: string }): React.ReactNode {
@@ -89,6 +93,7 @@ function MemoryCommand({ onDone, driveSummary }: { onDone: OnDone; driveSummary?
           <Box flexDirection="column" marginBottom={1}>
             <Text>{driveSummary}</Text>
             <Text dimColor>/memory view &lt;path&gt; shows a file · /memory sync syncs now</Text>
+            <Text dimColor>/memory search &lt;words&gt; · /memory add &lt;note&gt; · Sleep: /memory sleep</Text>
           </Box>
         ) : null}
         <React.Suspense fallback={null}>
@@ -156,7 +161,20 @@ export async function memoryDriveSubcommand(args: string): Promise<string | unde
   return undefined;
 }
 
-export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
+export const call: LocalJSXCommandCall = async (onDone, context, args) => {
+  // `/memory search`, `/memory add` (were /memory-search, /remember) and the Sleep entry.
+  const route = memoryRoute(String(args ?? ''));
+  if (route?.kind === 'search') return (await import('../memory-search/memory-search')).call(onDone, context, route.rest);
+  if (route?.kind === 'add') {
+    const result = await (await import('../remember/remember')).call(route.rest, context);
+    onDone(result.type === 'text' ? result.value : undefined, { display: 'system' });
+    return null;
+  }
+  if (route?.kind === 'sleep-view') {
+    // The Sleep view is its own command (PR #3235); builds without it keep the text summary below.
+    const sleepView = (context.options?.commands ?? []).find(c => c.name === SLEEP_COMMAND_NAME);
+    if (sleepView?.type === 'local-jsx') return (await sleepView.load()).call(onDone, context, '');
+  }
   const text = await memoryDriveSubcommand(String(args ?? '')).catch((error) => `Memory Drive error: ${error instanceof Error ? error.message : String(error)}`);
   if (text !== undefined) {
     onDone(text, { display: 'system' });

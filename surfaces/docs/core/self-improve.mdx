@@ -105,6 +105,55 @@ let report = gate.evaluate(&wc).await?;
 | `InvalidGeneration` | Generation ID or parent chain is invalid |
 | `EvaluationFailed` | Staged or full evaluation failed |
 
+## Harness improve loop
+
+<Note>
+**Coming in the next release.** `harness-improve` is a repo tool, not part of an installed app.
+</Note>
+
+`harness-improve` (crate `services/self-improve-gizzi`) uses this scaffolding to propose changes to Gizzi's own prompts and limits. It runs on your own model access. A person approves every change.
+
+### Harness view
+
+Only the editable files are copied into a temp dir:
+
+- `session/prompt/*.txt`
+- `tools/builtins/*.txt`
+- `session/limit.ts`
+- `session/guardrail-defaults.ts`
+
+The suite, the graders and the tests are never in the view. The proposer sees the failed dev cases, not hidden tests.
+
+### Allowlist and protected suite
+
+A patch is valid only if it passes all of these:
+
+- It touches only allowlisted files.
+- The two `.ts` files change numbers only, within bounds.
+- The guard tests pass: byte caps, vendor ban, injection wording, context breakdown and guardrails.
+
+The shared suite in `domains/agent-evals/gizzi/` is protected. See [Gizzi evals](/guides/gizzi-evals).
+
+### Staged gate, then full gate
+
+The candidate runs the protected suite live. The staged gate runs a fraction of the dev split. The full gate adds the holdout split. Staged results are cached.
+
+| Result | Score |
+|---|---|
+| A case passes | +1 |
+| A case fails and also failed in the baseline | +0.5 |
+| A case that passed in the baseline now fails | −1 |
+
+### Accept rule
+
+A candidate is accepted when the gate is valid, the report comparison is ok, and at least one more case passes than in the baseline.
+
+The tool shows the price first. `--max-usd` is a hard stop. `--max-generations` defaults to 1.
+
+### Output
+
+The output is a patch, `report.md` and a lineage record. `--open-pr` opens a draft pull request and is opt-in. The tool never merges.
+
 ## Related pages
 
 - [Gizzi Runtime](/core/gizzi-runtime)

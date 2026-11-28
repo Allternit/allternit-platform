@@ -449,3 +449,121 @@ export function checkFactoryHomeMove(deps: FactoryHomeMoveCheckDeps = {}): Docto
     message: "~/.agent-orchestrator came back after the move (an old ao-* script ran). Run `allternit-factory internal migrate-home --again`", // old-names: keep (names the folder that came back)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Updates + duplicate installs (PLAN.md D2, step 18)
+// ---------------------------------------------------------------------------
+
+export type ExtraGizzi = { path: string; realPath: string; removeCommand: string }
+
+export type ExtraGizziDeps = {
+  pathEnv?: string
+  execPath?: string
+  platform?: NodeJS.Platform
+  realpath?: (p: string) => string | undefined
+  exists?: (p: string) => boolean
+}
+
+/** The exact command that removes one `gizzi` found on PATH, from where its real file lives. */
+export function removeCommandFor(found: string, real: string): string {
+  const norm = real.replace(/\\/g, "/").toLowerCase()
+  if (norm.includes("/node_modules/@allternit/gizzi-code")) return "npm rm -g @allternit/gizzi-code"
+  if (norm.includes("/cellar/") || norm.includes("/homebrew/")) return "brew uninstall gizzi-code"
+  // Desktop's bundled copy (found via a symlink): only the link is ours to remove, never the .app.
+  return `rm ${found}`
+}
+
+/** Every other `gizzi` executable on PATH, skipping ones that resolve to the running binary. */
+export function findExtraGizzis(deps: ExtraGizziDeps = {}): ExtraGizzi[] {
+  const platform = deps.platform ?? process.platform
+  const real =
+    deps.realpath ??
+    ((p: string) => {
+      try {
+        return fs.realpathSync(p)
+      } catch {
+        return undefined
+      }
+    })
+  const exists = deps.exists ?? ((p: string) => fs.existsSync(p))
+  const self = real(deps.execPath ?? process.execPath) ?? deps.execPath ?? process.execPath
+  const names = platform === "win32" ? ["gizzi.exe", "gizzi.cmd", "gizzi.ps1"] : ["gizzi"]
+  const sep = platform === "win32" ? ";" : ":"
+  const seen = new Set<string>([self])
+  const out: ExtraGizzi[] = []
+  for (const dir of (deps.pathEnv ?? process.env.PATH ?? "").split(sep)) {
+    if (!dir) continue
+    for (const name of names) {
+      const candidate = path.join(dir, name)
+      if (!exists(candidate)) continue
+      const resolved = real(candidate) ?? candidate
+      if (seen.has(resolved)) continue
+      seen.add(resolved)
+      out.push({ path: candidate, realPath: resolved, removeCommand: removeCommandFor(candidate, resolved) })
+    }
+  }
+  return out
+}
+
+export type UpdateCheckDeps = {
+  method: string
+  channel: string
+  state: {
+    lastCheckAt?: string
+    lastCheckResult?: string
+    lastCheckDetail?: string
+    latestVersion?: string
+    minVersion?: string
+    lastUpdateAt?: string
+    lastUpdateFrom?: string
+    lastUpdateTo?: string
+  }
+  keyMissing: boolean
+  current: string
+  extras: ExtraGizzi[]
+}
+
+/** Doctor lines for install method, channel, last check, last update, latest/required version, feed key, duplicate installs. */
+export function checkUpdates(deps: UpdateCheckDeps): DoctorCheck[] {
+  const section = "Updates"
+  const s = deps.state
+  const checks: DoctorCheck[] = []
+  checks.push({ id: "update-method", section, status: "info", message: `Install method: ${deps.method}` })
+  checks.push({ id: "update-channel", section, status: "info", message: `Channel: ${deps.channel}` })
+  if (s.lastCheckAt) {
+    const ok = s.lastCheckResult === "ok"
+    checks.push({
+      id: "update-last-check",
+      section,
+      status: ok ? "pass" : "warn",
+      message: `Last check: ${s.lastCheckAt}, ${ok ? "ok" : (s.lastCheckResult ?? "unknown result") + (s.lastCheckDetail ? ` (${s.lastCheckDetail})` : "")}`,
+    })
+  } else {
+    checks.push({ id: "update-last-check", section, status: "info", message: "Last check: never (no check has run yet)" })
+  }
+  checks.push({
+    id: "update-last-update",
+    section,
+    status: "info",
+    message: s.lastUpdateAt
+      ? `Last update: ${s.lastUpdateFrom ?? "?"} -> ${s.lastUpdateTo ?? "?"}, ${s.lastUpdateAt}`
+      : "Last update: none recorded",
+  })
+  const latest = s.latestVersion ? `Latest version: ${s.latestVersion}` : "Latest version: unknown (no feed read yet)"
+  const required = s.minVersion ? `, required: ${s.minVersion}` : ""
+  checks.push({ id: "update-latest", section, status: "info", message: `${latest}${required} (running ${deps.current})` })
+  checks.push(
+    deps.keyMissing
+      ? { id: "update-feed-key", section, status: "warn", message: "Feed key: not set (updates are off until a release ships the key)" }
+      : { id: "update-feed-key", section, status: "pass", message: "Feed key: set" },
+  )
+  for (const extra of deps.extras) {
+    checks.push({
+      id: `update-extra:${extra.path}`,
+      section,
+      status: "warn",
+      message: `Another gizzi on PATH: ${extra.path} (${extra.realPath}). Remove it with: ${extra.removeCommand}`,
+    })
+  }
+  return checks
+}

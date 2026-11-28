@@ -64,7 +64,7 @@ function config(): Promise<AllternitApiConfig> {
 }
 
 /** allternit-api (Desktop's gateway, 127.0.0.1:8013 unless ALLTERNIT_API_URL says otherwise). */
-async function gateway<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function gateway<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cfg = await config()
   try {
     return await apiFetchJson<T>(cfg, path, init)
@@ -843,3 +843,14 @@ export async function unshareArtifact(id: string): Promise<void> {
   })
   if (!res.ok) throw new Error(`unpublish ${id}: ${res.status}`)
 }
+
+// ── Sleep (allternit-api /api/v1/memory/sleep/*) ──────────────────────────
+
+import type { SleepStatus } from "@/cli/work/sleep-model"
+
+export const getSleepStatus = () => gateway<SleepStatus>("/api/v1/memory/sleep/status")
+export const runSleepNow = () => gateway<{ accepted?: boolean; error?: string }>("/api/v1/memory/sleep/run", { method: "POST", body: JSON.stringify({}) })
+/** Pause and resume flip the account's Sleep switch (`PUT settings { enabled }`), as Desktop's toggle does. */
+export const setSleepEnabled = (enabled: boolean) =>
+  gateway<unknown>("/api/v1/memory/sleep/settings", { method: "PUT", body: JSON.stringify({ enabled }) })
+export const getSleepReport = (id: string) => gateway<{ cycle: unknown; report: unknown }>(`/api/v1/memory/sleep/cycles/${encodeURIComponent(id)}`)

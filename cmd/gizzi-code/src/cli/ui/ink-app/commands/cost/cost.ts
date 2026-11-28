@@ -3,7 +3,8 @@ import { currentLimits } from '../../services/claudeAiLimits'
 import type { LocalCommandCall } from '../../types/command'
 import { isClaudeAISubscriber } from '../../utils/auth'
 
-export const call: LocalCommandCall = async () => {
+/** The cost text: printed by /cost outside the terminal UI, shown in the /status Cost tab. */
+export function costSummaryText(): string {
   if (isClaudeAISubscriber()) {
     let value: string
 
@@ -18,7 +19,9 @@ export const call: LocalCommandCall = async () => {
     if (process.env.USER_TYPE === 'ant') {
       value += `\n\n[ANT-ONLY] Showing cost anyway:\n ${formatTotalCost()}`
     }
-    return { type: 'text', value }
+    return value
   }
-  return { type: 'text', value: formatTotalCost() }
+  return formatTotalCost()
 }
+
+export const call: LocalCommandCall = async () => ({ type: 'text', value: costSummaryText() })

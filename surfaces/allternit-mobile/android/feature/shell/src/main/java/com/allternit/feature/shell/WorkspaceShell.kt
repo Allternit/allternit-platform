@@ -162,6 +162,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // to the home and back. It shares the shell's OkHttp client and API.
     val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api).also { com.allternit.feature.chat.ServerSkillsRepository.attach(it) } }
     val chat = remember(account?.userId) { ChatViewModel(chatBackend, context.contentResolver).also { it.attachBrowserImages(context, account?.userId ?: "signed-out") } }
+    // An Allternit Cloud model the computer's catalog doesn't list goes straight to cloud-api (iOS routesDirect).
+    chat.computerListsModel = { id -> models.models.any { it.id == id } }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     com.allternit.feature.chat.BrowserImageHost(chat)
     var hubOpen by remember { mutableStateOf(false) }
@@ -310,6 +312,21 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // the Code home, the tools and the terminal come from :feature:code.
     val codeStore = remember { com.allternit.feature.code.CodeStore(chatBackend) }
     var codeRoute by remember { mutableStateOf<com.allternit.feature.code.CodeRoute?>(null) }
+    // A blocked Factory pane's push (data.openUrl): the terminal opens in Code; a Factory address opens
+    // "On your computer" (the threads overview) with that row (iOS CodeModeView.openLiveTarget).
+    LaunchedEffect(launch.nonce) {
+        val target = com.allternit.feature.code.OnYourComputer.pushTarget(launch.liveUrl) ?: return@LaunchedEffect
+        mode = ShellMode.Code
+        ShellModePrefs.save(context, ShellMode.Code)
+        page = ShellPage.Home
+        when (target) {
+            is com.allternit.feature.code.OnYourComputer.PushTarget.Terminal -> codeStore.openTerminal(target.id, "Terminal") { codeRoute = it }
+            is com.allternit.feature.code.OnYourComputer.PushTarget.FactorySession -> {
+                codeStore.sessions.pushTarget = target
+                codeRoute = com.allternit.feature.code.CodeRoute.Overview
+            }
+        }
+    }
     val codeHost = com.allternit.feature.code.CodeHost(
         backend = chatBackend,
         sessions = {
@@ -1086,6 +1103,8 @@ internal data class ShellLaunch(
     val computerId: String? = null,
     /** With [computerId]: the agent browser run a push named; its screen opens in ACI's Agent view. */
     val runId: String? = null,
+    /** A blocked Factory pane's `openUrl` (`/terminal/<id>`, `/factory/sessions/<address>`): Code opens its terminal or its row. */
+    val liveUrl: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

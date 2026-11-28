@@ -100,6 +100,13 @@ class ChatViewModel(
     var sessionContext = SessionContext()
 
     /**
+     * Whether the computer's model catalog lists this id (iOS ModelStore.routesDirect). The shell sets it; null
+     * (bots, office) means unknown, and an Allternit Cloud model then goes to cloud-api only when the relay
+     * finds no computer.
+     */
+    var computerListsModel: ((String) -> Boolean)? = null
+
+    /**
      * Start anywhere (step 20): the computer this thread is bound to, from `metadata.startBinding`. Engine
      * threads send every turn to that computer in that folder; terminal threads show the CLI's terminal.
      */
@@ -304,6 +311,7 @@ class ChatViewModel(
         stopStreamingInternal(cancelImage = false)
         transientError = null
         computeGate = null
+        resetPlanThread()
         messages = emptyList()
         branches = emptyList()
         editedVersions = emptyMap()
@@ -325,6 +333,9 @@ class ChatViewModel(
         messages = emptyList()
         branches = emptyList()
         editedVersions = emptyMap()
+        resetPlanThread()
+        // A stored no-computer chat (iOS loadPlanThread): its turns come from cloud-api, and it keeps taking new ones.
+        if (PlanThreadClient.isThreadId(sessionId)) { loadPlanThread(sessionId); return }
         isLoadingHistory = true
         val local = localImages?.messages(sessionId, browserImages?.request?.call).orEmpty()
         messages = local
@@ -360,12 +371,37 @@ class ChatViewModel(
         }
     }
 
+    /** Save as test case (eval loop): Idle, Saving, Saved(needs a check), or the CONTRACT section 9 failure text. */
+    var testCase by mutableStateOf<TestCaseState>(TestCaseState.Idle)
+        private set
+
+    fun resetTestCase() { testCase = TestCaseState.Idle }
+
+    fun saveTestCase(good: Boolean, reason: String?, note: String?) {
+        val id = currentSessionId ?: return
+        if (testCase is TestCaseState.Saving) return
+        testCase = TestCaseState.Saving
+        scope.launch {
+            testCase = when (val r = backend.eval.saveCase(id, good, reason, note)) {
+                is EvalOutcome.Ok -> TestCaseState.Saved(r.value.needsCheck)
+                is EvalOutcome.Err -> TestCaseState.Failed(r.error.text)
+            }
+        }
+    }
+
     /** `DELETE agent-sessions/:id`, then a fresh chat (the ⋯ menu's Delete chat). */
     fun deleteCurrentSession(onDone: () -> Unit) {
         val id = currentSessionId ?: return
         if (browserImages?.request?.session == id) browserImages?.cancel()
         localImages?.delete(id); refreshLocalImages()
         if (id.startsWith("android-local-")) { startNewSession(); onSessionsChanged(); onDone(); return }
+        if (PlanThreadClient.isThreadId(id)) {
+            scope.launch {
+                if (backend.planThreads.delete(id)) { startNewSession(); onSessionsChanged(); onDone() }
+                else transientError = "Couldn't delete this chat: Something went wrong on our side. Try again."
+            }
+            return
+        }
         scope.launch {
             when (val r = backend.deleteSession(id)) {
                 is ApiResult.Ok -> {
@@ -461,6 +497,12 @@ class ChatViewModel(
         val index = messages.indexOfFirst { it.id == messageId }
         if (index < 0) return
         val sessionId = currentSessionId
+        // A no-computer chat lives on this phone only: cut the feed back to that message and send the new text (iOS).
+        if ((sessionId == null || PlanThreadClient.isThreadId(sessionId)) && binding == null && (PersonModels.isPersonOnly(request.runtimeModelId) || PersonModels.cloudAlias(request.runtimeModelId) != null)) {
+            messages = messages.subList(0, index)
+            send(request)
+            return
+        }
         if (sessionId == null) {
             transientError = "Couldn't edit this message: the chat isn't saved yet."
             return
@@ -551,6 +593,15 @@ class ChatViewModel(
             var failed = false
             isCreatingSession = currentSessionId == null
             try {
+                // No computer needed (iOS startPersonStream): plan models always, Allternit Cloud models when the
+                // chat is not on a computer and no computer serves the model. Never throws NoComputer for them.
+                val route = SendRoutes.route(runtimeModelId, chatOnComputer = (currentSessionId != null && !PlanThreadClient.isThreadId(currentSessionId)) || binding != null, computerLists = runtimeModelId?.let { computerListsModel?.invoke(it) })
+                val direct = route == SendRoute.Person || (route == SendRoute.CheckComputer && backend.relay.resolve().let { it == RelayPick.NoComputer || (it is RelayPick.Failed && it.gate) })
+                if (direct && runtimeModelId != null) {
+                    isCreatingSession = false
+                    runPersonTurn(runtimeModelId, text, hasAttachments = staged.isNotEmpty() || !preparedRefs.isNullOrEmpty(), assistantId)
+                    return@launch
+                }
                 // Upload staged files first. A failed upload fails the send: never drop the files
                 // and send a text-only message the person didn't ask for.
                 val refs = preparedRefs?.toMutableList() ?: mutableListOf()
@@ -679,6 +730,120 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * One no-computer turn to cloud-api (iOS startPersonStream): history replayed, no session, no attachments.
+     * A refusal lands under the reply in plain words; a 402 card opens Cloud credits ([ChatScreen]).
+     * Network failures go to [startStream]'s catch like any send.
+     */
+    private suspend fun runPersonTurn(modelId: String, text: String, hasAttachments: Boolean, assistantId: String) {
+        val vendor = PersonModels.vendorName(modelId)
+        lastSent = LastSent(text, modelId, null, emptyList(), null)
+        requestStartedAt = System.currentTimeMillis()
+        firstDeltaAt = null
+        try {
+            if (hasAttachments) throw PersonChatRefusal("text_only", null, vendor)
+            if (PlanThreadClient.isStored(modelId)) savePlanTurn("user", strippedText(text), modelId)
+            // No tools here: the web search / research markers mean nothing to the vendor.
+            val history = PersonChatClient.history(messages.filter { it.id != assistantId }, strippedText(text))
+            val computer = BrowserComputerRegistry.executor
+            val brain = Companion.browserToolBrain(modelId)
+            if (computer != null && brain != null) {
+                runBrowserComputerTurn(computer, brain, modelId, history, assistantId)
+            } else {
+                backend.personChat.stream(modelId, history).collect { e ->
+                    if (e is PersonChatEvent.Delta) apply(ChatStreamEvent.TextDelta(null, null, e.text), assistantId)
+                }
+            }
+        } catch (r: PersonChatRefusal) {
+            flushPending()
+            update(assistantId) { it.copy(error = r.card()) }
+        }
+        finishStreaming(assistantId)
+        // The finished reply joins the stored chat (iOS startPersonStream); a refused or stopped turn stores nothing.
+        if (PlanThreadClient.isStored(modelId)) {
+            messages.firstOrNull { it.id == assistantId }?.takeIf { it.error == null && it.content.isNotEmpty() }
+                ?.let { savePlanTurn("assistant", it.content, modelId) }
+        }
+    }
+
+    // MARK: Plan chat store (iOS ChatViewModel, contract 9.10)
+
+    private var planThreadId: String? = null
+    /** Set by any store failure: the rest of this chat stays on this phone. */
+    private var planStoreOff = false
+    private var planSyncTail: Job? = null
+
+    private fun resetPlanThread() {
+        planThreadId = null
+        planStoreOff = false
+        planSyncTail = null
+    }
+
+    /**
+     * Saves one turn to the store in order: the first one creates the thread. Any failure drops this chat to
+     * phone-only, silently (iOS savePlanTurn).
+     */
+    private fun savePlanTurn(role: String, content: String, model: String) {
+        if (planStoreOff) return
+        val previous = planSyncTail
+        planSyncTail = scope.launch {
+            previous?.join()
+            if (planStoreOff) return@launch
+            val message = PlanThreadMessage(role, content, model)
+            val id = planThreadId
+            if (id != null) {
+                if (backend.planThreads.append(id, listOf(message)) == null) planStoreOff = true
+            } else {
+                val thread = backend.planThreads.create(model, PlanThreadClient.titleFor(content), listOf(message))
+                if (thread == null) planStoreOff = true else { planThreadId = thread.id; onSessionsChanged() }
+            }
+        }
+    }
+
+    /** Opens a stored plan chat; the thread keeps taking new turns (iOS loadPlanThread). */
+    private fun loadPlanThread(id: String) {
+        isLoadingHistory = true
+        scope.launch {
+            val detail = backend.planThreads.get(id)
+            if (currentSessionId != id) return@launch
+            isLoadingHistory = false
+            if (detail == null) { transientError = "Couldn't load the conversation: Something went wrong on our side. Try again."; return@launch }
+            messages = detail.messages.mapIndexed { i, m -> MessageRecord(id = "$id-$i", role = m.role, content = m.content) }
+            planThreadId = id
+        }
+    }
+
+    /**
+     * One send with the browser computer attached (iOS runBrowserComputerTurn, contract 7). Tool steps land in the
+     * message's tool calls, the same rows the rest of the chat draws.
+     */
+    private suspend fun runBrowserComputerTurn(computer: BrowserComputerExecutor, brain: BrowserToolBrain, model: String, history: List<JsonObject>, assistantId: String) {
+        val callbacks = BrowserToolLoopCallbacks(
+            onChunk = { apply(ChatStreamEvent.TextDelta(null, null, it), assistantId) },
+            onToolCall = { id, name, input ->
+                val title = input["command"] ?: input["path"] ?: name
+                update(assistantId) {
+                    it.upsertToolCall(ToolCallRecord(id, name, ToolState.Running, title = title, input = JsonObject(input.mapValues { (_, v) -> JsonPrimitive(v) }), startedAt = System.currentTimeMillis()))
+                }
+            },
+            onToolResult = { id, name, result ->
+                apply(ChatStreamEvent.ToolResult(id, name, JsonObject(mapOf("output" to JsonPrimitive(result)))), assistantId)
+            },
+            onToolError = { id, name, error -> apply(ChatStreamEvent.ToolError(id, name, error), assistantId) },
+        )
+        BrowserToolLoop.run(brain, history, computer, { request ->
+            var calls = emptyList<PersonToolCall>()
+            backend.personChat.stream(model, request.messages, request.tools, request.toolChoiceNone).collect { e ->
+                when (e) {
+                    is PersonChatEvent.Delta -> request.onDelta(e.text)
+                    is PersonChatEvent.ToolCalls -> calls = e.calls
+                    PersonChatEvent.Done -> {}
+                }
+            }
+            BrowserToolResponse(calls.map { BrowserToolCall(it.id, it.name, it.arguments) })
+        }, callbacks)
     }
 
     private class GateException(val reason: ComputeGateReason) : Exception()
@@ -839,7 +1004,7 @@ class ChatViewModel(
                 delay(1_500)
                 if (currentSessionId == sessionId) refreshPermissions()
             }
-        } else if (wasStreaming && sessionId != null) {
+        } else if (wasStreaming && sessionId != null && !PlanThreadClient.isThreadId(sessionId)) {
             scope.launch { backend.abort(sessionId) }
             scope.launch {
                 delay(1_500)
@@ -1098,7 +1263,7 @@ class ChatViewModel(
         streamJob = null
         permissionJob?.cancel()
         permissionJob = null
-        if (currentSessionId != null) {
+        if (currentSessionId != null && !PlanThreadClient.isThreadId(currentSessionId)) {
             scope.launch {
                 refreshPermissions()
                 if (reloadBranchesAfterStream) {
@@ -1137,6 +1302,13 @@ class ChatViewModel(
     }
 
     companion object {
+        /** Which brains get the browser computer: Allternit Cloud models run the tool loop, vendor plan brains get the plain "cannot run commands" line, anything else stays text only (null). */
+        internal fun browserToolBrain(modelId: String): BrowserToolBrain? = when {
+            PersonModels.cloudAlias(modelId) != null -> BrowserToolBrain.Tools
+            PersonModels.isPersonOnly(modelId) -> BrowserToolBrain.Plan
+            else -> null
+        }
+
         private const val WEB_SEARCH = "[web_search_enabled]"
         private const val RESEARCH = "[research_enabled]"
 
@@ -1163,4 +1335,12 @@ class ChatViewModel(
             put("research", r.research)
         }
     }
+}
+
+/** The Save as test case sheet's state. */
+sealed interface TestCaseState {
+    data object Idle : TestCaseState
+    data object Saving : TestCaseState
+    data class Saved(val needsCheck: Boolean) : TestCaseState
+    data class Failed(val text: String) : TestCaseState
 }

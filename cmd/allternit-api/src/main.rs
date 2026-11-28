@@ -1097,6 +1097,7 @@ async fn main() {
             state.clone(),
             allternit_api::placement::passthrough,
         )))
+        .merge(allternit_api::agent_eval_routes::agent_eval_router())
         .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
         .merge(allternit_api::teleport_routes::teleport_router())
@@ -1532,6 +1533,9 @@ async fn main() {
         // Runtime registry (GET /api/v1/runtimes): public; owner auth, checked
         // in the handler, adds `installed`.
         .merge(allternit_api::cli_catalog::runtimes_public_router())
+        // Picker catalog (GET /api/v1/picker-catalog): public; owner auth,
+        // checked in the handler, adds `installed` / `signedIn`.
+        .merge(allternit_api::picker_catalog::public_router())
         // Private Fabric node daemon enrollment and heartbeat.
         .merge(allternit_api::fabric_node_routes::public_router())
         // Brain git smart-HTTP: git clients carry no Clerk JWT — they use

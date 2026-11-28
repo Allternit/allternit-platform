@@ -386,6 +386,7 @@ async fn fetch_computer_for_control(
                     "managed" => ComputerKind::Managed,
                     "byo_vps" => ComputerKind::ByoVps,
                     "byoc" => ComputerKind::Byoc,
+                    "browser" => ComputerKind::Browser,
                     _ => ComputerKind::Local,
                 },
                 provider: row.get(2)?,

@@ -739,6 +739,12 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Model option values starred as favorites in the /model picker.',
         ),
+      modelRecent: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'The 5 most recently picked models, newest first; F2 in the /model picker cycles them.',
+        ),
       advisorModel: z
         .string()
         .optional()
@@ -974,6 +980,12 @@ export const SettingsSchema = lazySchema(() =>
         .optional()
         .describe(
           'Startup header mascot: auto (the real image in terminals that show images, animated pixel art elsewhere), image, blocks (pixel art), or none. GIZZI_HEADER_ART overrides it.',
+        ),
+      showWhatsNew: z
+        .boolean()
+        .optional()
+        .describe(
+          "Show up to four highlight lines in the startup header once after Gizzi Code updates to a new version. Default true. /release-notes shows them again.",
         ),
       autoMemoryEnabled: z
         .boolean()

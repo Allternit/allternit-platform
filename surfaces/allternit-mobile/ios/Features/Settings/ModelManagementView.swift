@@ -38,7 +38,7 @@ struct ModelManagementListContent: View {
     @State private var providerQuery = ""
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Models & Engines") {
             selectedModelSection
             enginesSection
             Section {

@@ -246,7 +246,7 @@ struct McpServerDetailView: View {
     }
 
     var body: some View {
-        List {
+        DockingTitleList(title: current.name) {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(current.name).font(.headline).foregroundColor(Color("TextPrimary"))

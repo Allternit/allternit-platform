@@ -79,7 +79,8 @@ const goal: Command = {
   type: 'prompt',
   name: 'goal',
   argumentHint: '<objective|status|pause|resume|clear>',
-  description: 'Run a task continuously in an autonomous goal-directed loop until complete',
+  // Owns /mission (overhaul plan D4); /mission stays listed because it shipped 11-10.
+  description: 'Run a task continuously in an autonomous goal-directed loop until complete (/mission plans it as milestones first)',
   progressMessage: 'executing goal loop',
   contentLength: 0,
   source: 'builtin',

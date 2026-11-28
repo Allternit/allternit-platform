@@ -1,9 +1,12 @@
 import type { Command } from '../../commands'
 
-export default {
-  type: 'local',
+// Merged into /sessions (SLASH-LIST MERGE): a hidden name that opens the sessions view.
+const live = {
+  type: 'local-jsx',
   name: 'live',
-  description: 'Show live session metrics (model, context, cost)',
-  supportsNonInteractive: true,
-  load: () => import('./live.js'),
+  description: 'Open the live sessions view (same as /sessions)',
+  isHidden: true,
+  immediate: true,
+  load: () => import('../sessions/sessions.js'),
 } satisfies Command
+export default live

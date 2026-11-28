@@ -7,6 +7,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
+import com.allternit.core.api.ApiResult
+import com.allternit.feature.artifacts.LibraryLayout
+import com.allternit.feature.artifacts.friendly
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +52,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
+import com.allternit.core.design.Haptics
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.rememberDockOffset
 import com.allternit.feature.artifacts.LibrarySheet
@@ -242,6 +253,13 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
     var filter by remember { mutableStateOf<CodeSessionStatus?>(null) }
     var query by remember { mutableStateOf("") }
     var acting by remember { mutableStateOf<CodeSessionRow?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // List · Grid · Deck (iOS OverviewLayoutSwitch), kept across launches; the computer sections follow it.
+    var layout by remember { mutableStateOf(LibraryLayout.load(context, "code_overview", LibraryLayout.List)) }
+    // Row whose long-press opened "Hold to end and delete"; terminals just closed (the 2 s poll catches up).
+    var armed by remember { mutableStateOf<String?>(null) }
+    var hiddenTerminals by remember { mutableStateOf(emptySet<String>()) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { host.reloadSessions() }
     val live = store.sessions
     val owner = LocalLifecycleOwner.current
@@ -261,14 +279,16 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val shown = all.filter { (filter == null && it.status != CodeSessionStatus.Archived || it.status == filter) && it.title.contains(query, ignoreCase = true) }
     // The computer sections sit with All (a status filter is about threads) and follow the search.
-    val terminals = if (filter != null) emptyList() else live.terminals.filter {
+    val terminals = if (filter != null) emptyList() else live.terminals.filter { it.sessionId !in hiddenTerminals }.filter {
         query.isEmpty() || TerminalPreview.title(it).contains(query, ignoreCase = true) || it.cwd.contains(query, ignoreCase = true)
     }
     val external = if (filter != null) emptyList() else live.rows.filter {
         query.isEmpty() || OnYourComputer.displayName(it).contains(query, ignoreCase = true) || it.cwd.contains(query, ignoreCase = true)
     }
     val computerSections = terminals.isNotEmpty() || external.isNotEmpty()
-    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack", dockScroll = rememberDockOffset(listState)) {
+    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack",
+        trailing = { com.allternit.feature.artifacts.LayoutCycleButton(LibraryLayout.entries, layout, { it.label }, { layout = it; LibraryLayout.save(context, "code_overview", it) }, tag = "codeOverviewLayoutCycle") },
+        dockScroll = rememberDockOffset(listState)) {
         Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
             if (query.isEmpty()) Text("Search threads", color = c.textTertiary, fontSize = 15.sp)
             BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(color = c.textPrimary, fontSize = 15.sp), cursorBrush = SolidColor(c.accentCode), modifier = Modifier.fillMaxWidth().testTag("codeOverviewSearch"))
@@ -280,6 +300,7 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 CodePill("${st.label} $n", testTag = "codeFilter-${st.name}", filled = filter == st) { filter = st }
             }
         }
+        deleteError?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("codeOverviewDeleteError")) }
         live.notice?.let { Text(it, color = AllternitStatic.StatusWarning, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("codeOverviewNotice")) }
         if (shown.isEmpty() && !computerSections) {
             EmptyState(
@@ -288,17 +309,23 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 art = EmptyArtKind.Envelope,
             )
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp)) {
                 if (terminals.isNotEmpty()) {
                     item(key = "terminals-label") { SectionLabel("Terminals") }
-                    // Android's threads screen is one list: the List layout's 2 preview rows.
-                    items(terminals, key = { "terminal-${it.sessionId}" }) { t ->
-                        TerminalPreviewRow(t, TerminalPreview.Layout.List) { openTerminal(t.sessionId, TerminalPreview.title(t)) }
+                    // List keeps the 2-row preview; Grid and Deck show more rows on a card.
+                    overviewCells(layout, terminals, { "terminal-${it.sessionId}" }) { t, cell ->
+                        val key = "terminal-${t.sessionId}"
+                        TerminalPreviewRow(
+                            t, if (cell == LibraryLayout.List) TerminalPreview.Layout.List else if (cell == LibraryLayout.Grid) TerminalPreview.Layout.Grid else TerminalPreview.Layout.Deck,
+                            padded = cell == LibraryLayout.List,
+                            onDelete = { armed = null; scope.launch { CodeApi.closeTerminal(host.backend, t.sessionId); hiddenTerminals = hiddenTerminals + t.sessionId } },
+                            armed = armed == key, onArm = { armed = key }, onDisarm = { armed = null },
+                        ) { openTerminal(t.sessionId, TerminalPreview.title(t)) }
                     }
                 }
                 if (external.isNotEmpty()) {
                     item(key = "computer-label") { SectionLabel("On your computer") }
-                    items(external, key = { "live-${it.sessionId}" }) { s -> OnYourComputerRow(s, live, openTerminal) }
+                    overviewCells(layout, external, { "live-${it.sessionId}" }) { s, _ -> OnYourComputerRow(s, live, openTerminal) }
                 }
                 if (computerSections) item(key = "threads-label") { SectionLabel("Threads") }
                 if (shown.isEmpty()) {
@@ -310,13 +337,131 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                         )
                     }
                 } else {
-                    items(shown, key = { it.id }) { s -> SessionRow(s, onMore = { acting = s }, onClick = { onOpen(s.id) }) }
+                    overviewCells(layout, shown, { it.id }) { s, cell ->
+                        ThreadItem(
+                            host.backend, s, card = cell != LibraryLayout.List, deck = cell == LibraryLayout.Deck,
+                            armed = armed == s.id, onArm = { armed = s.id }, onDisarm = { armed = null },
+                            onDelete = {
+                                armed = null
+                                scope.launch {
+                                    deleteError = null
+                                    val r = host.backend.deleteSession(s.id)
+                                    if (r is ApiResult.Ok) host.reloadSessions() else deleteError = r.friendly("delete the thread")
+                                }
+                            },
+                            onMore = { acting = s }, onClick = { onOpen(s.id) },
+                        )
+                    }
                 }
             }
         }
     }
     acting?.let { s ->
         ThreadActionsSheet(host, s, onDismiss = { acting = null }, onChanged = { scope.launch { host.reloadSessions() } })
+    }
+}
+
+/**
+ * One section of an overview in the chosen layout: List = full-width rows; Grid = rows of two cards;
+ * Deck = one sideways row of tall cards (iOS OverviewCards, deck cards 226 wide).
+ */
+private fun <T> androidx.compose.foundation.lazy.LazyListScope.overviewCells(
+    layout: LibraryLayout,
+    rows: List<T>,
+    key: (T) -> String,
+    cell: @Composable (T, LibraryLayout) -> Unit,
+) {
+    when (layout) {
+        LibraryLayout.List -> items(rows, key = key) { cell(it, LibraryLayout.List) }
+        LibraryLayout.Grid -> items(rows.chunked(2), key = { pair -> key(pair.first()) }) { pair ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                pair.forEach { Box(Modifier.weight(1f).overviewCard()) { cell(it, LibraryLayout.Grid) } }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        LibraryLayout.Deck -> item(key = "deck-" + (rows.firstOrNull()?.let(key) ?: "")) {
+            androidx.compose.foundation.lazy.LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(rows, key = key) { Box(Modifier.width(226.dp).overviewCard()) { cell(it, LibraryLayout.Deck) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Modifier.overviewCard(): Modifier {
+    val c = AllternitTheme.colors
+    val shape = RoundedCornerShape(16.dp)
+    return clip(shape).background(c.bgPanel).border(1.dp, c.borderSubtle, shape).padding(horizontal = 12.dp, vertical = 4.dp)
+}
+
+/** "Hold to ..." strip a long-press opens under a row or card: the 1 s hold fills it, Cancel closes it. */
+@Composable
+internal fun DeleteStrip(title: String, testTag: String, onHeld: () -> Unit, onCancel: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.allternit.core.design.HoldButton(title, testTag, modifier = Modifier.weight(1f), danger = true, onHeld = onHeld)
+        Text("Cancel", color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.testTag("$testTag-cancel").clickable(role = Role.Button, onClick = onCancel).padding(horizontal = 10.dp, vertical = 12.dp))
+    }
+}
+
+/** A Code thread as a list row or a card; tap opens, long-press arms "Hold to delete", ⋯ opens the actions sheet. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ThreadItem(
+    backend: ChatBackend,
+    s: CodeSessionRow,
+    card: Boolean,
+    deck: Boolean,
+    armed: Boolean,
+    onArm: () -> Unit,
+    onDisarm: () -> Unit,
+    onDelete: () -> Unit,
+    onMore: () -> Unit,
+    onClick: () -> Unit,
+) {
+    val c = AllternitTheme.colors
+    val view = androidx.compose.ui.platform.LocalView.current
+    val age = relativeTime(s.updatedMillis)
+    val detail = listOf(s.status.label, age).filter { it.isNotEmpty() }.joinToString(" · ")
+    // The newest message, one line (loaded when the row scrolls into view; empty threads have none).
+    var lastLine by remember(s.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(s.id, s.messages) {
+        if (s.messages > 0) {
+            val r = backend.listMessages(s.id)
+            if (r is ApiResult.Ok) lastLine = r.value.lastOrNull { it.content.isNotBlank() }?.content?.replace('\n', ' ')?.trim()
+        }
+    }
+    val dot = when (s.status) {
+        CodeSessionStatus.NeedsInput -> AllternitStatic.StatusWarning
+        CodeSessionStatus.Working -> c.accentCode
+        CodeSessionStatus.ReadyForReview -> c.accentCode
+        CodeSessionStatus.Done -> AllternitStatic.StatusSuccess
+        else -> c.textTertiary
+    }
+    Column(
+        Modifier.fillMaxWidth()
+            .then(if (deck) Modifier.heightIn(min = 200.dp) else Modifier)
+            .testTag("codeSession-${s.id}")
+            .combinedClickable(role = Role.Button, onLongClickLabel = "Delete this thread", onLongClick = { Haptics.perform(view, Haptics.Kind.Tap); onArm() }) {
+                Haptics.perform(view, Haptics.Kind.Tap)
+                if (armed) onDisarm() else onClick()
+            }
+            .semantics { customActions = listOf(CustomAccessibilityAction("Delete") { onArm(); true }) }
+            .padding(horizontal = if (card) 0.dp else 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.padding(top = 7.dp).size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(dot).testTag("codeSessionDot-${s.id}"))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(s.title, color = c.textPrimary, fontSize = 16.sp, maxLines = if (card) 3 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (!card && age.isNotEmpty()) Text(age, color = c.textTertiary, fontSize = 12.sp, maxLines = 1)
+                }
+                Text(lastLine ?: detail, color = c.textSecondary, fontSize = 13.sp, maxLines = if (card) 3 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                if (card) Text(detail, color = c.textTertiary, fontSize = 11.sp, maxLines = 1)
+            }
+            Text("⋯", color = c.textSecondary, fontSize = 22.sp, modifier = Modifier.testTag("codeSessionMore-${s.id}").clickable(onClick = onMore).padding(horizontal = 8.dp, vertical = 2.dp))
+        }
+        if (armed) DeleteStrip("Hold to delete", "codeThreadDelete-${s.id}", onHeld = onDelete, onCancel = onDisarm)
     }
 }
 

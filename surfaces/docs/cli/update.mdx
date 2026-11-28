@@ -1,0 +1,75 @@
+---
+title: Update Gizzi
+description: How Gizzi Code checks for updates, how each install method updates, and how to change the channel
+---
+
+## Overview
+
+Gizzi Code checks for a new version 2 seconds after it starts. It checks again every 6 hours. The check never blocks the prompt.
+
+Updates come from a signed release feed. Gizzi checks the Ed25519 signature on the feed and the sha256 hash and size of the download. If a check fails, Gizzi refuses the update and keeps the version you have. If the feed key is not set, Gizzi does nothing and reports "feed key not set" in `gizzi doctor`.
+
+## How each install method updates
+
+| Install method | What happens |
+|---|---|
+| Native (curl) | Gizzi downloads the release, checks it, and stages it next to the binary. It swaps the binary when you exit or at the next launch. On Windows it renames the running file aside. |
+| npm | Gizzi runs `npm i -g @allternit/gizzi-code@<version>` after you exit. |
+| Homebrew, Scoop, Chocolatey, pnpm, bun, yarn | Gizzi prints the command to run. It does not run it. |
+| Allternit Desktop copy | Desktop manages the update. Gizzi makes no network call. |
+
+If you turn auto-update off, Gizzi only reports that a version is available.
+
+A release can set a minimum version. If you run an older version, the update is required. It is applied even when auto-update is off. A release can also be paused. Then Gizzi does nothing and drops a staged update.
+
+## The footer notice
+
+The TUI shows one update notice in the footer.
+
+| State | Footer text |
+|---|---|
+| Update staged | `Gizzi vX ready — applies when you exit` |
+| Command needed | `Update available: run` the command for your install method |
+| Required update | The same text, in the warning color |
+
+In all other states the footer shows nothing. `gizzi doctor` reports them.
+
+## Update by hand
+
+```bash
+gizzi update
+```
+
+`gizzi update` is the same command as `gizzi upgrade`.
+
+| Flag | What it does |
+|---|---|
+| `--channel stable` or `--channel latest` | Picks the feed channel and saves the choice |
+| `--dry-run` | Shows what would happen. It changes nothing. |
+
+## Channels
+
+| Channel | What it has |
+|---|---|
+| `stable` | Releases without a prerelease suffix. This is the default. |
+| `latest` | Every release, including prereleases. |
+
+You can also set the channel with the `GIZZI_UPDATE_CHANNEL` environment variable. The feed for `stable` and `latest` is at `https://runtime.allternit.com/gizzi/<channel>/latest.json`.
+
+<Note>
+  Windows builds may arrive after the other systems. A Windows computer can see a new version a little later than macOS or Linux.
+</Note>
+
+## What's new
+
+After an update, Gizzi shows up to 4 highlight lines once in the startup header. Fresh installs show nothing. To turn it off, set `showWhatsNew` to `false` in your settings. To read the full notes, run `/release-notes` in the TUI.
+
+## Check the state
+
+`gizzi doctor` shows the install method, the channel, the last check, the last update, and any other `gizzi` copies on your PATH. See [gizzi doctor](/cli/doctor).
+
+## Related docs
+
+- [Installation](/cli/installation)
+- [gizzi doctor](/cli/doctor)
+- [Configuration](/cli/configuration)

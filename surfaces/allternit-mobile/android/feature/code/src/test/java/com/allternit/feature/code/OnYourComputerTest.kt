@@ -224,4 +224,73 @@ class OnYourComputerTest {
         assertEquals("bad_response", (LiveWire.adoptReply("new", null) as LiveCall.Failed).code)
         assertEquals(LiveCall.Ok(AdoptStart.Cancelled), LiveWire.adoptReply("cancel", null))
     }
+    // MARK: Factory panes (blocked, Open, steer, push)
+
+    private val blockedJson = """{"address":"dev/allternit-claude","name":"allternit-claude","harness":"claude","machine":"m_4f2a",
+        "machineName":"Dev MacBook","sessionId":"ao-pane-w3:p1","paneId":"w3:p1","cwd":"allternit","repo":"Allternit/allternit-platform","branch":"main",
+        "status":"blocked","since":"2026-11-27T09:00:00+00:00","blockedSince":"2026-11-27T09:12:30+00:00","terminalId":"term_7c1e9a40","steer":"terminal",
+        "tier":"push","unread":0,"holders":[],"carriedFlags":[],"canCopy":false,"movable":"here","external":false}"""
+    private val legacyJson = """{"address":"dev/allternit-gizzi","name":"allternit-gizzi","harness":"gizzi","machine":"m_4f2a","machineName":"Dev MacBook",
+        "sessionId":"ao-build","paneId":"w1:p1","cwd":"allternit","status":"idle","since":"2026-11-27T09:00:00+00:00","tier":"push","unread":0,
+        "holders":[],"carriedFlags":[],"canCopy":false,"movable":"here","external":false}"""
+
+    private fun decode(json: String): LiveSession = LiveWire.session(Json.parseToJsonElement(json) as JsonObject)!!
+
+    @Test
+    fun blockedPaneFixtureDecodesAndShowsAsARow() {
+        val s = decode(blockedJson)
+        assertEquals("blocked", s.status)
+        assertEquals("term_7c1e9a40", s.terminalId)
+        assertEquals("terminal", s.steer)
+        assertEquals("2026-11-27T09:12:30+00:00", s.blockedSince)
+        assertTrue(OnYourComputer.isBlocked(s))
+        assertEquals("Needs you", OnYourComputer.statusWord(s.status))
+        assertEquals(listOf(s), OnYourComputer.rowSessions(listOf(s)))
+        assertTrue(OnYourComputer.canSteer(s))
+    }
+
+    @Test
+    fun legacyPaneFixtureAddsNothing() {
+        val s = decode(legacyJson)
+        assertNull(s.terminalId)
+        assertNull(s.steer)
+        assertFalse(OnYourComputer.isBlocked(s))
+        assertFalse(OnYourComputer.canSteer(s))
+        assertEquals("an older runtime shows no new rows", emptyList<LiveSession>(), OnYourComputer.rowSessions(listOf(s)))
+        assertEquals("Idle", OnYourComputer.statusWord(s.status))
+    }
+
+    @Test
+    fun steerIsHiddenForNoneAndNeedsItsTarget() {
+        val base = decode(blockedJson)
+        assertFalse(OnYourComputer.canSteer(base.copy(steer = "none")))
+        assertFalse(OnYourComputer.canSteer(base.copy(steer = "terminal", terminalId = null)))
+        assertTrue(OnYourComputer.canSteer(base.copy(steer = "delivery")))
+        assertFalse(OnYourComputer.canSteer(base.copy(steer = "delivery", address = "")))
+        assertFalse(OnYourComputer.canSteer(base.copy(steer = null)))
+        // A blocked pane with steer none is still a row (the badge shows), without Steer.
+        assertEquals(1, OnYourComputer.rowSessions(listOf(base.copy(steer = "none", terminalId = null))).size)
+    }
+
+    @Test
+    fun blockedLabelCountsFromBlockedSince() {
+        val since = "2026-11-27T09:12:30+00:00"
+        val t0 = java.time.OffsetDateTime.parse(since).toInstant().toEpochMilli()
+        assertEquals("blocked just now", OnYourComputer.blockedLabel(since, t0 + 30_000))
+        assertEquals("blocked 3m", OnYourComputer.blockedLabel(since, t0 + 3 * 60_000 + 5_000))
+        assertEquals("blocked 5h", OnYourComputer.blockedLabel(since, t0 + 5 * 3_600_000L))
+        assertEquals("blocked 3d", OnYourComputer.blockedLabel(since, t0 + 3 * 86_400_000L))
+        assertEquals("blocked", OnYourComputer.blockedLabel(null, t0))
+        assertEquals("blocked", OnYourComputer.blockedLabel("soon", t0))
+    }
+
+    @Test
+    fun pushTargetReadsTheTerminalOrTheFactoryAddress() {
+        assertEquals(OnYourComputer.PushTarget.Terminal("term_7c1e9a40"), OnYourComputer.pushTarget("/terminal/term_7c1e9a40"))
+        assertEquals(OnYourComputer.PushTarget.FactorySession("dev/allternit-claude"), OnYourComputer.pushTarget("/factory/sessions/dev/allternit-claude"))
+        assertEquals(OnYourComputer.PushTarget.FactorySession("dev/allternit-claude"), OnYourComputer.pushTarget("/factory/sessions/dev%2Fallternit-claude?x=1"))
+        assertNull(OnYourComputer.pushTarget("/computers/c1"))
+        assertNull(OnYourComputer.pushTarget("/terminal/"))
+        assertNull(OnYourComputer.pushTarget(null))
+    }
 }

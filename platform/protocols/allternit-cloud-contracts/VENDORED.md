@@ -14,6 +14,8 @@ that this repository (and CI) can build without a second checkout.
 
 ## Updating
 
-When the canonical contracts change upstream, copy the crate contents here
-again and bump the "Upstream rev" above. Authority remains AllternitOS —
-this copy must not be edited independently.
+Authority flipped 2026-11-27: this platform repo is now the source of truth
+for the os contracts. The new contract package is `spec/Contracts/os/v1`
+(sibling package, PR in flight). This crate is edited here, and the old
+`Gizziio/AllternitOS` repo is archived pending Eoj's decision; do not copy
+changes from it. The "Upstream rev" above is historical only.

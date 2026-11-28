@@ -15,6 +15,8 @@ pub mod share_link_usage;
 pub mod admin_share_links;
 pub mod gateway_catalog;
 pub mod runtimes;
+// Picker catalog (one list for every model/runtime picker, locks computed here).
+pub mod picker_catalog;
 // Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).
 pub mod freeweights;
 pub mod approvals;

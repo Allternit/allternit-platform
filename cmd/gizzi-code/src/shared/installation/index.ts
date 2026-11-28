@@ -1,4 +1,5 @@
 import { BusEvent } from "@/shared/bus/bus-event"
+import fs from "fs"
 import path from "path"
 import { $ } from "bun"
 import z from "zod/v4"
@@ -7,6 +8,8 @@ import { Log } from "@/shared/util/log"
 import { isSelfHosted } from "@/shared/selfhost/offline"
 import { iife } from "@/shared/util/iife"
 import { Flag } from "@/runtime/context/flag/flag"
+import { gt } from "@/shared/utils/semver"
+import { ReleaseFeed } from "./feed"
 
 declare global {
   const GIZZI_VERSION: string
@@ -56,7 +59,48 @@ export namespace Installation {
     return CHANNEL === "local"
   }
 
+  /** Publish Event.UpdateAvailable on the bus. A no-op outside an Instance (the bus is per project). */
+  export async function announceUpdate(version: string) {
+    try {
+      // Relative on purpose: the production Bun.build does not apply tsconfig paths to dynamic imports.
+      const { Bus } = await import("../bus")
+      await Bus.publish(Event.UpdateAvailable, { version })
+    } catch {
+      // no Instance (plain CLI run): Updater.onStatus() still carries it
+    }
+  }
+
+  function realPath(p: string | undefined): string | undefined {
+    if (!p) return undefined
+    try {
+      return fs.realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+
+  /**
+   * True when this gizzi belongs to Allternit Desktop: env ALLTERNIT_DESKTOP_MANAGED=1,
+   * or the real binary path is inside an Allternit Desktop bundle's
+   * resources/bin (macOS `<App>.app/Contents/Resources/bin`, Windows/Linux
+   * `resources/bin`) or under Desktop's runtime tree (`runtime/versions/<v>/bin`).
+   * Desktop symlinks ~/.local/bin/gizzi to its copy, so callers pass REAL paths.
+   */
+  export function isDesktopManaged(realPaths: (string | undefined)[], env: NodeJS.ProcessEnv = process.env) {
+    if (env.ALLTERNIT_DESKTOP_MANAGED === "1") return true
+    return realPaths.some((p) => {
+      if (!p) return false
+      const norm = p.toLowerCase().replace(/\\/g, "/")
+      if (!norm.includes("allternit")) return false
+      return norm.includes("/resources/bin/") || /\/runtime\/versions\/[^/]+\/bin\//.test(norm)
+    })
+  }
+
   export async function method() {
+    // Resolve symlinks first: Desktop links ~/.local/bin/gizzi to its own copy,
+    // which must never be treated as a curl install (the updater would overwrite it).
+    const execReal = realPath(process.execPath) ?? process.execPath
+    if (isDesktopManaged([execReal, realPath(process.argv[1])])) return "desktop"
     if (process.execPath.includes(path.join(".gizzi", "bin"))) return "curl"
     if (process.execPath.includes(path.join(".local", "bin"))) return "curl"
     const exec = process.execPath.toLowerCase()
@@ -133,6 +177,8 @@ export namespace Installation {
   export async function upgrade(method: Method, target: string) {
     let cmd
     switch (method) {
+      case "desktop":
+        throw new UpgradeFailedError({ stderr: "This gizzi is managed by Allternit Desktop. Update Allternit Desktop instead." })
       case "curl":
         cmd = $`curl -fsSL https://install.gizziio.com/install | bash`.env({
           ...process.env,
@@ -202,6 +248,18 @@ export namespace Installation {
     // Self-hosted: no update checks (operators upgrade the image themselves).
     if (isSelfHosted()) throw new Error("Update checks are off in self-hosted mode (ALLTERNIT_SELF_HOSTED=1).")
     const detectedMethod = installMethod || (await method())
+
+    // Desktop owns its copy: the version to report is the one it shipped.
+    if (detectedMethod === "desktop") return VERSION
+
+    // The signed Allternit feed is the version source. Package-manager and
+    // GitHub lookups below remain only as a fallback when the feed cannot be
+    // verified (key not set, unreachable), because `gizzi upgrade` is user-run.
+    const signed = await ReleaseFeed.fetchFeed().catch(() => undefined)
+    if (signed?.ok && !signed.feed.paused) {
+      // Never report the feed's version as "latest" when it is older than what runs here.
+      return VERSION !== "local" && !gt(signed.feed.version, VERSION) ? VERSION : signed.feed.version
+    }
 
     if (detectedMethod === "brew") {
       const formula = await getBrewFormula()

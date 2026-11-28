@@ -364,6 +364,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "allternit-authority"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "allternit-bot"
 version = "0.1.0"
 dependencies = [
@@ -2207,6 +2215,18 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "walkdir",
+]
+
+[[package]]
+name = "allternit-self-improve-gizzi"
+version = "0.1.0"
+dependencies = [
+ "allternit-self-improve",
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

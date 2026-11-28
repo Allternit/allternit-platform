@@ -5,6 +5,7 @@ import {
   configureSecurity,
   displayMediaHandler,
   isTrustedAppUrl,
+  installSessionSecurityHandlers,
   openExternalAllowlisted,
 } from './security.js';
 
@@ -109,5 +110,25 @@ describe('displayMediaHandler', () => {
 
   it('gives web pages nothing', async () => {
     expect(await ask('https://evil.example.com')).toEqual({});
+  });
+});
+
+describe('installSessionSecurityHandlers CSP', () => {
+  beforeEach(configure);
+  it('lets the app frame https://box.allternit.com', () => {
+    let handler: ((d: unknown, cb: (r: { responseHeaders?: Record<string, string[]> }) => void) => void) | undefined;
+    const session = {
+      webRequest: { onHeadersReceived: (fn: typeof handler) => { handler = fn; } },
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
+      setDisplayMediaRequestHandler: vi.fn(),
+      on: vi.fn(),
+    };
+    installSessionSecurityHandlers(session as never);
+    let csp = '';
+    handler!({ url: `${APP_ORIGIN}/`, responseHeaders: {} }, (r) => { csp = r.responseHeaders?.['Content-Security-Policy']?.[0] ?? ''; });
+    const frameSrc = csp.split('; ').find((d) => d.startsWith('frame-src ')) ?? '';
+    expect(frameSrc.split(' ')).toContain('https://box.allternit.com');
   });
 });

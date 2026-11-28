@@ -386,6 +386,10 @@ export type GlobalConfig = {
   // Terminal progress bar configuration (OSC 9;4)
   terminalProgressBarEnabled: boolean
 
+  // Sessions view: bell + OSC 9 notice when a live session becomes blocked.
+  // Unset means on; false turns the notice off (the footer count stays).
+  sessionsBlockedNotice?: boolean
+
   // Terminal tab status indicator (OSC 21337). When on, emits a colored
   // dot + status text to the tab sidebar and drops the spinner prefix
   // from the title (the dot makes it redundant).
@@ -654,6 +658,7 @@ export const GLOBAL_CONFIG_KEYS = [
   'autoInstallIdeExtension',
   'fileCheckpointingEnabled',
   'terminalProgressBarEnabled',
+  'sessionsBlockedNotice',
   'showStatusInTerminalTab',
   'taskCompleteNotifEnabled',
   'inputNeededNotifEnabled',

@@ -11,10 +11,20 @@ on:
         required: true
         type: string
       dry_run:
-        description: 'Build every platform (gizzi + allternit-factory) but publish nothing'
+        description: 'Build every platform (gizzi + allternit-factory) and the signed feed, formula and manifest as artifacts; publish nothing'
         required: false
         type: boolean
         default: false
+      promote_stable:
+        description: 'Also write the stable feed (and push brew/scoop) for a prerelease version'
+        required: false
+        type: boolean
+        default: false
+      min_version:
+        description: 'Feed minVersion (installs older than this update at next launch). Empty = keep the current feed value'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -290,7 +300,8 @@ jobs:
           export PKG_DIR="${RUNNER_TEMP}/platform-pkg"
           mkdir -p "$PKG_DIR"
           cp "$BIN" "$PKG_DIR/"
-          export BIN_BASENAME=$(basename "$BIN")
+          BIN_BASENAME=$(basename "$BIN")
+          export BIN_BASENAME
           # Vendored ripgrep next to the binary (<pkg>/vendor/ripgrep/<arch>-<os>/):
           # gizzi-code does not statically link rg, so Glob/Grep need it.
           RG_LAYOUT="${NODE_CPU}-${NODE_OS}"
@@ -311,6 +322,7 @@ jobs:
             ENGINE_FILES="allternit-factory,allternit-files-mount"
           fi
           export ENGINE_FILES
+          # shellcheck disable=SC2016 # JS template literals, not shell
           node -e '
             const fs = require("fs");
             const pkg = {
@@ -356,10 +368,10 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           else
             VERSION=${GITHUB_REF_NAME#gizzi-code/v}
-            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install dependencies
@@ -429,6 +441,7 @@ jobs:
         # version up to 2.1.7.
         working-directory: cmd/gizzi-code
         run: |
+          # shellcheck disable=SC2016 # JS template literals, not shell
           node -e '
             const fs = require("fs");
             const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -473,9 +486,10 @@ jobs:
     # GitHub Release with version-named tar.gz/zip assets + checksums.txt.
     # This is what curl/install.ps1, Homebrew, Scoop, Chocolatey, and Arch
     # consume. npm publish above is a separate channel.
+    # Runs on dry_run too: the assets are packed and kept as the release-assets
+    # artifact (the release-feed job reads them), only the release itself is skipped.
     name: GitHub Release
     needs: [quality, build-platform-packages]
-    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -557,9 +571,18 @@ jobs:
           else
             echo "::warning::Windows binary missing; GitHub Release will ship unix assets only"
           fi
-          (cd release-assets && sha256sum * | tee checksums.txt)
+          (cd release-assets && sha256sum -- * | tee checksums.txt)
+
+      - name: Keep release assets for the feed job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: gizzi-code/v${{ steps.version.outputs.VERSION }}
@@ -592,43 +615,230 @@ jobs:
           files: |
             release-assets/*
 
-  homebrew-tap:
-    # Point Allternit/homebrew-tap Formula/gizzi-code.rb at this release (version + the four
-    # tarball sha256s from checksums.txt). Before 2026-11-12 this was a manual step and the
-    # formula sat at 2.6.0 through 2.7.0. Needs secret HOMEBREW_TAP_TOKEN (fine-grained PAT,
-    # Contents: read and write on Allternit/homebrew-tap); without it the job says so and skips.
-    name: Homebrew tap
+  release-feed:
+    # Signed update feed (docs/contracts/gizzi-release-feed) plus the Homebrew formula and
+    # Scoop manifest, all rendered from this release's checksums.txt. Channel `latest` on
+    # every release; `stable` too when the version has no prerelease suffix or
+    # promote_stable is set. The feed goes to R2 bucket allternit-runtime under gizzi/<channel>/,
+    # served at https://runtime.allternit.com/gizzi/<channel>/ (same bucket and aws-sigv4 PUT
+    # as scripts/mirror-desktop-release.sh). Signing key: secret GIZZI_FEED_SIGNING_KEY
+    # (Ed25519 PKCS8 PEM; public half in the Gizzi updater). dry_run: everything lands in
+    # the gizzi-release-feed workflow artifact and nothing is uploaded or pushed.
+    name: Release feed
     needs: [github-release]
-    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.plan.outputs.VERSION }}
+      stable: ${{ steps.plan.outputs.STABLE }}
+      scoop: ${{ steps.render.outputs.SCOOP }}
+    env:
+      RUNTIME_PUBLIC_URL: https://runtime.allternit.com
+      R2_BUCKET: allternit-runtime
     steps:
-      - name: Update formula
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Plan channels
+        id: plan
         env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          PROMOTE: ${{ inputs.promote_stable }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then VERSION="${{ inputs.version }}"; else VERSION="${GITHUB_REF_NAME#gizzi-code/v}"; fi
+          if [ "$EVENT" = "workflow_dispatch" ]; then VERSION="$INPUT_VERSION"; else VERSION="${GITHUB_REF_NAME#gizzi-code/v}"; fi
+          VERSION="${VERSION#v}"
+          STABLE=false
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$PROMOTE" = "true" ]; then STABLE=true; fi
+          CHANNELS="latest"
+          if [ "$STABLE" = "true" ]; then CHANNELS="latest stable"; fi
+          {
+            echo "VERSION=$VERSION"
+            echo "STABLE=$STABLE"
+            echo "CHANNELS=$CHANNELS"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $VERSION, channels: $CHANNELS"
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Render Homebrew formula and Scoop manifest
+        id: render
+        env:
+          VERSION: ${{ steps.plan.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/packaging
+          bun cmd/gizzi-code/script/make-release-feed.ts render \
+            --template cmd/gizzi-code/packaging/homebrew/gizzi-code.rb \
+            --version "$VERSION" --checksums release-assets/checksums.txt \
+            --out out/packaging/gizzi-code.rb
+          if [ -f "release-assets/gizzi-code-v${VERSION}-windows-x64.zip" ]; then
+            bun cmd/gizzi-code/script/make-release-feed.ts render \
+              --template cmd/gizzi-code/packaging/scoop/gizzi-code.json \
+              --version "$VERSION" --checksums release-assets/checksums.txt \
+              --out out/packaging/gizzi-code.json
+            echo "SCOOP=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No Windows zip in this release; the Scoop manifest is not rendered."
+            echo "SCOOP=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and sign the feed
+        env:
+          VERSION: ${{ steps.plan.outputs.VERSION }}
+          CHANNELS: ${{ steps.plan.outputs.CHANNELS }}
+          GIZZI_FEED_SIGNING_KEY: ${{ secrets.GIZZI_FEED_SIGNING_KEY }}
+          MIN_VERSION: ${{ inputs.min_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          unsigned=()
+          if [ -z "${GIZZI_FEED_SIGNING_KEY}" ]; then
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::warning::GIZZI_FEED_SIGNING_KEY is not set; the dry-run feed is unsigned."
+              unsigned=(--unsigned)
+            else
+              echo "::error::GIZZI_FEED_SIGNING_KEY is not set; refusing to publish an unsigned feed."
+              exit 1
+            fi
+          fi
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/gizzi-code/v${VERSION}"
+          for ch in $CHANNELS; do
+            extra=()
+            if [ -n "$MIN_VERSION" ]; then
+              extra+=(--min-version "$MIN_VERSION")
+            else
+              # Keep the floor the current feed sets; the script only trusts it when
+              # its signature checks out with this key.
+              mkdir -p "prev/$ch"
+              if curl -fsS --max-time 20 "$RUNTIME_PUBLIC_URL/gizzi/$ch/latest.json" -o "prev/$ch/latest.json" \
+                && curl -fsS --max-time 20 "$RUNTIME_PUBLIC_URL/gizzi/$ch/latest.json.sig" -o "prev/$ch/latest.json.sig"; then
+                extra+=(--previous "prev/$ch/latest.json")
+              else
+                echo "no current $ch feed to carry minVersion from"
+              fi
+            fi
+            bun cmd/gizzi-code/script/make-release-feed.ts \
+              --version "$VERSION" --channel "$ch" \
+              --checksums release-assets/checksums.txt --assets-dir release-assets \
+              --base-url "$BASE_URL" --changelog cmd/gizzi-code/CHANGELOG.md \
+              --out "out/feed/gizzi/$ch" "${extra[@]}" "${unsigned[@]}"
+            cat "out/feed/gizzi/$ch/latest.json"
+          done
+
+      - name: Keep feed, formula and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gizzi-release-feed
+          path: out/
+          if-no-files-found: warn
+
+      - name: Upload the feed to runtime.allternit.com
+        if: ${{ !inputs.dry_run }}
+        env:
+          CHANNELS: ${{ steps.plan.outputs.CHANNELS }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET: ${{ secrets.R2_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${R2_ENDPOINT}" ] || [ -z "${R2_ACCESS_KEY}" ] || [ -z "${R2_SECRET}" ]; then
+            echo "::error::R2_ENDPOINT, R2_ACCESS_KEY and R2_SECRET are required to publish the feed."
+            exit 1
+          fi
+          r2() { curl -fsS --retry 3 --aws-sigv4 "aws:amz:auto:s3" --user "$R2_ACCESS_KEY:$R2_SECRET" "$@"; }
+          for ch in $CHANNELS; do
+            dir="out/feed/gizzi/$ch"
+            # Feed first, then its signature: a client that reads between the two
+            # sees a mismatch and does nothing until the next check.
+            r2 -H "Content-Type: application/json" -H "Cache-Control: public, max-age=300" \
+              -T "$dir/latest.json" "$R2_ENDPOINT/$R2_BUCKET/gizzi/$ch/latest.json"
+            r2 -H "Content-Type: text/plain; charset=utf-8" -H "Cache-Control: public, max-age=300" \
+              -T "$dir/latest.json.sig" "$R2_ENDPOINT/$R2_BUCKET/gizzi/$ch/latest.json.sig"
+            r2 "$R2_ENDPOINT/$R2_BUCKET/gizzi/$ch/latest.json" -o "readback-$ch.json"
+            cmp "$dir/latest.json" "readback-$ch.json"
+            echo "published $RUNTIME_PUBLIC_URL/gizzi/$ch/latest.json"
+          done
+
+  homebrew-tap:
+    # Push the rendered formula to Allternit/homebrew-tap Formula/gizzi-code.rb (stable
+    # releases only). Needs secret HOMEBREW_TAP_TOKEN (fine-grained PAT, Contents: read
+    # and write on Allternit/homebrew-tap); without it the job says so and skips.
+    # Manual fallback: copy packaging/gizzi-code.rb from this run's gizzi-release-feed
+    # artifact to Formula/gizzi-code.rb in the tap and push.
+    name: Homebrew tap
+    needs: [release-feed]
+    if: ${{ !inputs.dry_run && needs.release-feed.outputs.stable == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download rendered formula
+        uses: actions/download-artifact@v4
+        with:
+          name: gizzi-release-feed
+          path: out
+
+      - name: Push formula
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.release-feed.outputs.version }}
+        run: |
+          set -euo pipefail
           if [ -z "${TAP_TOKEN}" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN is not set; update Allternit/homebrew-tap Formula/gizzi-code.rb to ${VERSION} by hand."
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; copy packaging/gizzi-code.rb from the gizzi-release-feed artifact to Allternit/homebrew-tap Formula/gizzi-code.rb by hand."
             exit 0
           fi
-          gh release download "gizzi-code/v${VERSION}" -R "${GITHUB_REPOSITORY}" -p checksums.txt -O checksums.txt
           git clone -q "https://x-access-token:${TAP_TOKEN}@github.com/Allternit/homebrew-tap.git" tap
-          VERSION="${VERSION}" python3 - <<'PY'
-          import os, re
-          v = os.environ["VERSION"]
-          sums = {p[1].lstrip("*"): p[0] for p in (l.split() for l in open("checksums.txt")) if len(p) == 2}
-          f = "tap/Formula/gizzi-code.rb"
-          s = re.sub(r'version "[^"]+"', f'version "{v}"', open(f).read(), count=1)
-          for tgt in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]:
-              pat = re.compile(r'(url "#\{base_url\}/gizzi-code-v#\{version\}-' + tgt + r'\.tar\.gz"\n\s*sha256 ")[0-9a-f]{64}(")')
-              s, n = pat.subn(lambda m: m.group(1) + sums[f"gizzi-code-v{v}-{tgt}.tar.gz"] + m.group(2), s)
-              assert n == 1, (tgt, n)
-          open(f, "w").write(s)
-          PY
+          cp out/packaging/gizzi-code.rb tap/Formula/gizzi-code.rb
           cd tap
           if git diff --quiet; then echo "formula already at ${VERSION}"; exit 0; fi
+          git config user.name "allternit-release"
+          git config user.email "allternit-release@users.noreply.github.com"
+          git commit -qam "gizzi-code ${VERSION}"
+          git push -q origin HEAD
+
+  scoop-bucket:
+    # Push the rendered manifest to Allternit/scoop-bucket gizzi-code.json (stable releases
+    # with a Windows zip only). Needs secret SCOOP_BUCKET_TOKEN (fine-grained PAT, Contents:
+    # read and write on Allternit/scoop-bucket); without it the job says so and skips.
+    # Manual fallback: copy packaging/gizzi-code.json from this run's gizzi-release-feed
+    # artifact to gizzi-code.json in the bucket and push.
+    name: Scoop bucket
+    needs: [release-feed]
+    if: ${{ !inputs.dry_run && needs.release-feed.outputs.stable == 'true' && needs.release-feed.outputs.scoop == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download rendered manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: gizzi-release-feed
+          path: out
+
+      - name: Push manifest
+        env:
+          BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          VERSION: ${{ needs.release-feed.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUCKET_TOKEN}" ]; then
+            echo "::warning::SCOOP_BUCKET_TOKEN is not set; copy packaging/gizzi-code.json from the gizzi-release-feed artifact to Allternit/scoop-bucket gizzi-code.json by hand."
+            exit 0
+          fi
+          git clone -q "https://x-access-token:${BUCKET_TOKEN}@github.com/Allternit/scoop-bucket.git" bucket
+          cp out/packaging/gizzi-code.json bucket/gizzi-code.json
+          cd bucket
+          if git diff --quiet; then echo "manifest already at ${VERSION}"; exit 0; fi
           git config user.name "allternit-release"
           git config user.email "allternit-release@users.noreply.github.com"
           git commit -qam "gizzi-code ${VERSION}"

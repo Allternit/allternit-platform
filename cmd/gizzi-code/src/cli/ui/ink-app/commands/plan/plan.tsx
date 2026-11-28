@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isPlanView } from './subcommand';
 import { handlePlanModeTransition } from '../../bootstrap/state';
 import type { LocalJSXCommandContext } from '../../commands';
 import { Box, Text } from '../../ink';
@@ -29,6 +30,11 @@ function PlanDisplay(t0) {
   return t5;
 }
 export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext, args: string): Promise<React.ReactNode> {
+  // `/plan view` (was /view-plan): show the saved plan, never enter plan mode.
+  if (isPlanView(args)) {
+    const { call: viewPlan } = await import('../view-plan/view-plan');
+    return viewPlan(onDone, context);
+  }
   const {
     getAppState,
     setAppState

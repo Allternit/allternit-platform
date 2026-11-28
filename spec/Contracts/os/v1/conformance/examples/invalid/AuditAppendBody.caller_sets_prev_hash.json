@@ -1,0 +1,12 @@
+{
+  "run_id": "run_01",
+  "domain": "allternit.receipt.v1",
+  "schema_id": "allternit.os.ApprovalTokenV1",
+  "schema_version": "1.0.0",
+  "payload": {
+    "kind": "approval",
+    "token_id": "tok_01"
+  },
+  "idempotency_key": null,
+  "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

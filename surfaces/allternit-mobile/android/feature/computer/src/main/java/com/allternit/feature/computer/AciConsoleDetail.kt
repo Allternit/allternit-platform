@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -61,6 +62,7 @@ import com.allternit.feature.artifacts.num
 import com.allternit.feature.artifacts.str
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -512,4 +514,161 @@ private fun PortsTab(computer: ConsoleComputer) {
             }
         }
     }
+}
+
+// ---- Browser computer (plan step 76; iOS ACIComputersPane's Browser computer row and detail, step 74) ----
+
+private val ansiPattern = Regex("\u001B\\[[0-?]*[ -/]*[@-~]|\u001B\\][^\u0007]*\u0007|\u001B[()][A-Za-z0-9]")
+
+/** Terminal bytes to plain text: escape sequences removed, CRLF folded, backspace applied. Small on purpose (no VT emulator). */
+internal fun plainTerminalText(raw: String): String {
+    val clean = ansiPattern.replace(raw, "").replace("\r\n", "\n").replace("\r", "")
+    val out = StringBuilder()
+    clean.forEach { ch -> if (ch == '\b' || ch == '\u007f') { if (out.isNotEmpty() && out.last() != '\n') out.setLength(out.length - 1) } else out.append(ch) }
+    return out.toString()
+}
+
+private fun bytesLabel(n: Long?): String = if (n == null) "Not measured" else consoleBytes(n.toDouble())
+
+/**
+ * The detail for the computer that lives in this phone's WebView: status, a terminal and Reset disk. The terminal is a
+ * simple monospaced view over the frame's `spawn` and `pty.data` (the smaller change than hosting the page's own terminal,
+ * which would need the page to draw it). Sheet shape matches [AciConsoleDetail].
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AciBrowserComputerDetail(onDone: () -> Unit) {
+    val c = AllternitTheme.colors
+    val host = rememberBrowserComputerHost()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var error by remember { mutableStateOf<String?>(null) }
+    var computerId by remember { mutableStateOf<String?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
+    var ptyId by remember { mutableStateOf<String?>(null) }
+    var output by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf("") }
+    val ready = host.status.state == "ready"
+
+    host.onPtyData = { id, bytes -> if (id == ptyId) output = (output + String(bytes, Charsets.UTF_8)).takeLast(20_000) }
+    host.onPtyExit = { id, _ -> if (id == ptyId) { ptyId = null; output += "\n[The shell ended.]" } }
+
+    LaunchedEffect(host.generation) {
+        error = null; computerId = null; ptyId = null
+        try {
+            host.hello()
+            val owner = ((com.allternit.core.auth.AllternitAuth.state.value) as? com.allternit.core.auth.AuthState.SignedIn)?.account?.userId.orEmpty()
+            val listed = host.call("computers.list").get("computers") as? JsonArray
+            val existing = (listed?.firstOrNull() as? JsonObject)?.get("id")?.let { (it as? JsonPrimitive)?.content }
+            val id = existing ?: ((host.call("computers.create", kotlinx.serialization.json.buildJsonObject {
+                put("name", JsonPrimitive("Browser computer")); put("image", JsonPrimitive("alpine")); put("owner_user_id", JsonPrimitive(owner))
+            }).get("computer") as? JsonObject)?.get("id") as? JsonPrimitive)?.content
+            computerId = id
+            if (id != null) host.call("boot", kotlinx.serialization.json.buildJsonObject {
+                put("computer_id", JsonPrimitive(id)); put("memory_mib", JsonPrimitive(256)); put("cpus", JsonPrimitive(1))
+                put("network", kotlinx.serialization.json.buildJsonObject { put("mode", JsonPrimitive("off")); put("custom_url", kotlinx.serialization.json.JsonNull) })
+            }, timeoutMs = 120_000)
+        } catch (e: CancellationException) { throw e } catch (e: BoxRpcError) {
+            error = if (e.code == "no_jspi") NO_JSPI_MESSAGE else e.message
+        }
+    }
+    // The chat's tool loop finds the computer here only while it is booted and ready.
+    DisposableEffect(host, ready, error) {
+        if (ready && error == null && host.hostState == BoxHostState.Ready) com.allternit.feature.chat.BrowserComputerRegistry.attach(host)
+        onDispose { com.allternit.feature.chat.BrowserComputerRegistry.detach(host) }
+    }
+    DisposableEffect(Unit) { onDispose { host.onPtyData = null; host.onPtyExit = null } }
+
+    ModalBottomSheet(onDismissRequest = onDone, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.bgPrimary) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).testTag("aciBrowserComputerDetail")) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Browser computer", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Box(Modifier.heightIn(min = 44.dp).clickable { onDone() }.padding(start = 12.dp).testTag("aciBrowserComputerDone"), contentAlignment = Alignment.Center) { Text("Done", color = c.textPrimary, fontSize = 15.sp) }
+            }
+            // The VM host. One dp tall: the page draws nothing the user needs.
+            if (host.hostState != BoxHostState.Unsupported) BrowserComputerWebView(host, Modifier.fillMaxWidth().height(1.dp))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when (host.hostState) {
+                    BoxHostState.Unsupported -> CCard {
+                        CTitle("Browser computer")
+                        CText(NO_JSPI_MESSAGE)
+                        AciPillButton("Update Android System WebView", "aciBrowserComputerUpdate") { host.openWebViewUpdate() }
+                    }
+                    BoxHostState.Crashed -> CCard {
+                        CTitle("Browser computer")
+                        CText(CRASHED_MESSAGE)
+                        AciPillButton("Restart", "aciBrowserComputerRestart") { host.restart() }
+                    }
+                    else -> {
+                        CCard {
+                            CTitle("Status")
+                            val s = host.status
+                            CRow("State", when (s.state) { "loading" -> if (s.loaded != null && s.total != null && s.total > 0) "Downloading ${(s.loaded * 100 / s.total)}%" else "Downloading…"; "booting" -> "Starting…"; "ready" -> "Running"; "resetting" -> "Resetting…"; "error" -> "Problem"; else -> "Stopped" })
+                            CRow("Disk used", bytesLabel(s.diskBytesUsed))
+                            CRow("Kept on this phone", when (s.persisted) { true -> "Yes"; false -> "No"; null -> "Not measured" })
+                            (error ?: host.message ?: s.error)?.let { CText(it, color = c.textPrimary) }
+                            if (error != null || host.hostState == BoxHostState.Failed) AciPillButton("Restart", "aciBrowserComputerRetry") { host.restart() }
+                        }
+                        CCard {
+                            CTitle("Terminal")
+                            if (ptyId == null) {
+                                CText(if (ready) "A shell inside the browser computer." else "The terminal opens when the computer is ready.")
+                                if (ready) AciPillButton("Open terminal", "aciBrowserComputerTerminalOpen") {
+                                    scope.launch {
+                                        output = ""
+                                        runCatching {
+                                            host.call("spawn", kotlinx.serialization.json.buildJsonObject {
+                                                put("cmd", JsonPrimitive("/bin/sh")); put("args", JsonArray(listOf(JsonPrimitive("-l"))))
+                                                put("cols", JsonPrimitive(60)); put("rows", JsonPrimitive(24)); put("env", JsonObject(emptyMap()))
+                                            })
+                                        }.onSuccess { ptyId = (it["pty_id"] as? JsonPrimitive)?.content }.onFailure { error = (it as? BoxRpcError)?.message ?: "The terminal did not start." }
+                                    }
+                                }
+                            }
+                            if (ptyId != null) {
+                                SelectionContainer {
+                                    Text(plainTerminalText(output), color = c.textPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 320.dp).clip(RoundedCornerShape(8.dp)).background(c.fillNeutral)
+                                            .verticalScroll(rememberScrollState(), reverseScrolling = true).padding(10.dp).testTag("aciBrowserComputerTerminal"))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    androidx.compose.material3.OutlinedTextField(input, { input = it }, singleLine = true, modifier = Modifier.weight(1f).testTag("aciBrowserComputerInput"),
+                                        textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = c.textPrimary))
+                                    AciPillButton("Send", "aciBrowserComputerSend") {
+                                        val id = ptyId
+                                        if (id != null) {
+                                            val data = android.util.Base64.encodeToString((input + "\n").toByteArray(), android.util.Base64.NO_WRAP)
+                                            input = ""
+                                            scope.launch { runCatching { host.call("pty.write", kotlinx.serialization.json.buildJsonObject { put("pty_id", JsonPrimitive(id)); put("data_b64", JsonPrimitive(data)) }) } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        CCard {
+                            CTitle("Reset disk")
+                            CText("Deletes everything on this computer's disk.")
+                            AciPillButton("Reset disk", "aciBrowserComputerReset") { confirmReset = computerId != null }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (confirmReset) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmReset = false },
+        title = { Text("Reset this computer's disk?") },
+        text = { Text("Everything on its disk is deleted. This can't be undone.") },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                confirmReset = false
+                val id = computerId
+                if (id != null) scope.launch {
+                    ptyId = null
+                    runCatching { host.call("reset", kotlinx.serialization.json.buildJsonObject { put("computer_id", JsonPrimitive(id)); put("confirm", JsonPrimitive(true)) }, timeoutMs = 60_000) }
+                        .onFailure { error = (it as? BoxRpcError)?.message ?: "The disk was not reset." }
+                }
+            }) { Text("Reset disk") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
+    )
 }

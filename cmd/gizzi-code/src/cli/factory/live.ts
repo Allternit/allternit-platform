@@ -141,14 +141,20 @@ const CHROME = [
  * stripped, harness chrome (prompt box, footer hints, rules) skipped.
  */
 export function lastMeaningfulLine(screen: string): string {
+  return lastMeaningfulLines(screen, 1)[0] ?? ""
+}
+
+/** The last `n` meaningful lines of a pane's screen, oldest first (same rules as `lastMeaningfulLine`). */
+export function lastMeaningfulLines(screen: string, n: number): string[] {
   const lines = screen.replace(ANSI, "").split(/\r?\n/)
-  for (let i = lines.length - 1; i >= 0; i--) {
+  const out: string[] = []
+  for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
     const raw = lines[i]!.replace(/[│┃]\s*$/, "").trim()
     if (!raw || !/[\p{L}\p{N}]/u.test(raw)) continue
     if (CHROME.some((re) => re.test(raw))) continue
-    return raw.replace(/\s{2,}/g, " ")
+    out.unshift(raw.replace(/\s{2,}/g, " "))
   }
-  return ""
+  return out
 }
 
 /**

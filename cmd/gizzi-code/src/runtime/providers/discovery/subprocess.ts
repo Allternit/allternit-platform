@@ -10,6 +10,8 @@
  *   also reads (Settings → Connections → Coding tools, install, sign-in). A CLI
  *   that answers a one-shot prompt needs only `adapter: "text"` + `headless`;
  *   one that speaks a streaming protocol gets an adapter in local-cli-driver.ts.
+ *   Then run `bun script/gen-picker-snapshot.ts`: gizzi reads the generated
+ *   catalog.snapshot.gen.json, not the source file.
  *   Tools a user adds themselves arrive through customCliFile().
  */
 
@@ -20,7 +22,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
-import catalog from "./cli-catalog.json"
+import { currentRuntimeSnapshot, loadRuntimeSnapshot } from "./runtime-registry"
 import { liveModels } from "./live-models"
 import { cliSignedIn } from "./sign-in"
 
@@ -94,12 +96,18 @@ export interface CatalogLiveModels {
   parser: "codex-json" | "tsv" | "grok" | "ollama"
 }
 
-export const CLI_CATALOG: CatalogTool[] = (catalog as { tools: CatalogTool[] }).tools
+/** The CLI rows from the built-in snapshot only (module-load constants: env keys). Pickers read `cliCatalog()`. */
+export const CLI_CATALOG: CatalogTool[] = loadRuntimeSnapshot().tools as unknown as CatalogTool[]
+
+/** The CLI rows with the live picker catalog over them once it has loaded; the snapshot otherwise. */
+export function cliCatalog(): CatalogTool[] {
+  return currentRuntimeSnapshot().tools as unknown as CatalogTool[]
+}
 
 /** A retired model id mapped to its current one (catalog `retired`), else the id unchanged. */
 export function retiredModelId(providerID: string, modelID: string): string {
   const tool =
-    CLI_CATALOG.find((t) => t.id === providerID) ?? CLI_CATALOG.find((t) => t.aliases?.includes(providerID))
+    cliCatalog().find((t) => t.id === providerID) ?? cliCatalog().find((t) => t.aliases?.includes(providerID))
   return tool?.retired?.[modelID] ?? modelID
 }
 
@@ -359,6 +367,20 @@ function toSpec(tool: CatalogTool): SubprocessSpec {
 /** Every CLI in the shared catalog (cli-catalog.json). */
 export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = CLI_CATALOG.map(toSpec)
 
+let liveSpecsFrom: CatalogTool[] | undefined
+let liveSpecs: SubprocessSpec[] = SUBPROCESS_PROVIDERS
+
+/** The specs built from `cliCatalog()`: the live overlay once loaded (memoized), `SUBPROCESS_PROVIDERS` before. */
+export function subprocessProviders(): SubprocessSpec[] {
+  const tools = cliCatalog()
+  if (tools === CLI_CATALOG) return SUBPROCESS_PROVIDERS
+  if (liveSpecsFrom !== tools) {
+    liveSpecsFrom = tools
+    liveSpecs = tools.map(toSpec)
+  }
+  return liveSpecs
+}
+
 /** Where allternit-api mirrors the user's own CLIs (src/cli_catalog.rs `mirror_path`). */
 export function customCliFile(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(path.dirname(harnessBinDir(env)), "custom-clis.json")
@@ -407,12 +429,12 @@ export function customSubprocessSpecs(file = customCliFile()): SubprocessSpec[] 
 
 /** Catalog CLIs plus the user's own. */
 export function subprocessSpecs(): SubprocessSpec[] {
-  const builtIn = new Set(SUBPROCESS_PROVIDERS.map((s) => s.id))
-  return [...SUBPROCESS_PROVIDERS, ...customSubprocessSpecs().filter((s) => !builtIn.has(s.id))]
+  const builtIn = new Set(subprocessProviders().map((s) => s.id))
+  return [...subprocessProviders(), ...customSubprocessSpecs().filter((s) => !builtIn.has(s.id))]
 }
 
 export function findSubprocessSpec(id: string): SubprocessSpec | undefined {
-  return SUBPROCESS_PROVIDERS.find((s) => s.id === id) ?? customSubprocessSpecs().find((s) => s.id === id)
+  return subprocessProviders().find((s) => s.id === id) ?? customSubprocessSpecs().find((s) => s.id === id)
 }
 
 const MODEL_ID = /^[A-Za-z0-9._:\/@+-]{1,200}$/

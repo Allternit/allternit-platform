@@ -13,8 +13,10 @@ import { ServeCommand } from "@/cli/commands/serve"
 import { PairCommand, LoginCommand } from "@/cli/commands/pair"
 import { ComputersCommand } from "@/cli/commands/computers"
 import { StartCommand } from "@/cli/commands/start"
+import { SpawnCommand } from "@/cli/commands/factory/spawn"
 import { FilesCommand } from "@/cli/commands/files"
 import { MeetingsCommand } from "@/cli/commands/meetings"
+import { SleepCommand } from "@/cli/commands/sleep"
 import { PhoneCommand } from "@/cli/commands/phone"
 import { TeleportCommand } from "@/cli/commands/teleport"
 import { DebugCommand } from "@/cli/commands/debug"
@@ -29,6 +31,7 @@ import { AcpCommand } from "@/cli/commands/acp"
 import { WebCommand } from "@/cli/commands/web"
 import { PrCommand } from "@/cli/commands/pr"
 import { SessionCommand } from "@/cli/commands/session"
+import { EvalCommand } from "@/cli/commands/eval"
 import { DbCommand } from "@/cli/commands/db"
 import { PluginCommand } from "@/cli/commands/plugin"
 import { InitCommand } from "@/cli/commands/init"
@@ -130,9 +133,11 @@ export const COMMANDS: RegisteredCommand[] = [
   PairCommand,
   ComputersCommand,
   StartCommand,
+  SpawnCommand,
   // Files drive: your computers' files (ls, put, share, mount …), contracts/files-drive.
   FilesCommand,
   MeetingsCommand,
+  SleepCommand,
   PhoneCommand,
   TeleportCommand,
   LoginCommand,
@@ -147,6 +152,7 @@ export const COMMANDS: RegisteredCommand[] = [
   GithubCommand,
   PrCommand,
   SessionCommand,
+  EvalCommand,
   DbCommand,
   PluginCommand,
   InitCommand,

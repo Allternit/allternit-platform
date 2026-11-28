@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,10 +39,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import com.allternit.core.design.DockSpec
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.core.design.LocalDockOffset
 import com.allternit.core.design.PixelWordmark
 import androidx.compose.runtime.LaunchedEffect
@@ -433,18 +436,36 @@ private val TAGLINES = listOf("AI-Powered Browsing", "Navigate with Intelligence
 
 // MARK: - Chrome shared by the ACI views (iOS ACIPhoneChrome)
 
+/**
+ * A page whose [title] is the standard docking block title (same as Projects and Artifacts): drawn once over the
+ * whole page, driven by [scroll]. The page's [AciViewHeader] only reserves the space the resting title occupies.
+ * The ACI pane starts below the screen's menu row, so the title is pinned to the screen origin ([AciDockOverlay]):
+ * it docks into the top bar at [DockSpec.BAR_CENTER] like Settings, not 72 dp lower inside the pane.
+ */
+@Composable
+internal fun AciDockPage(title: String, scroll: ScrollState, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val offset = rememberDockOffset(scroll)
+    Box(modifier) {
+        content()
+        AciDockOverlay(title, offset, counterScroll = false, titleTop = { y -> (y + DockSpec.TOP).dp }, barCenter = { DockSpec.BAR_CENTER.dp })
+    }
+}
+
 @Composable
 internal fun AciViewHeader(title: String, subtitle: String? = null, bottom: Dp = 24.dp) {
     val c = AllternitTheme.colors
     val dock = LocalDockOffset.current
-    // With a dock scroll the header draws above the page (zIndex) so the docked letters stay over the content.
-    Column(Modifier.fillMaxWidth().then(if (dock != null) Modifier.zIndex(1f) else Modifier).padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp,
-            modifier = if (dock != null) Modifier.alpha(0f).clearAndSetSemantics { } else Modifier)
-        if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
-        if (dock != null) {
-            AciDockOverlay(title, dock, counterScroll = true, titleTop = { y -> (y + 8f).dp }, barCenter = { DockSpec.BAR_CENTER.dp })
+    if (dock != null) {
+        // The title itself is drawn by AciDockPage's DockingBlockTitle; reserve its resting space here.
+        Column(Modifier.fillMaxWidth().padding(bottom = bottom).semantics { heading() }) {
+            Spacer(Modifier.height((DockSpec.TOP + DockSpec.LG + 8f).dp).fillMaxWidth().clearAndSetSemantics { contentDescription = title })
+            if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
         }
+        return
+    }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp)
+        if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
     }
 }
 

@@ -1,7 +1,6 @@
 // @ts-nocheck
 import type { ContentBlockParam } from '@allternit/gizzi-sdk/providers/allternit/resources/messages.js'
 import type { Command } from '../commands.js'
-import { isUltrareviewEnabled } from './review/ultrareviewEnabled.js'
 import { getDirectConnectServerUrl, getSessionId } from '../bootstrap/state.js'
 import { ReviewVerdict } from '../../../../runtime/review/verdict.js'
 import { matchReviewPreset } from '@/shared/util/review-presets'
@@ -31,10 +30,6 @@ ${text}
 
 Report this verdict to the user as-is, briefly. Do not start fixing anything unless the user asks; they can run /review pass to loop review → fix until PASS.
 `
-
-// Legal wants the explicit surface name plus a docs link visible before the
-// user triggers, so the description carries "gizzi-code on the web" + URL.
-const CCR_TERMS_URL = 'https://docs.allternit.com/code/cloud-environments'
 
 const LOCAL_REVIEW_PROMPT = (args: string) => `
       You are an expert code reviewer. Follow these steps:
@@ -103,16 +98,4 @@ const review: Command = {
   },
 }
 
-// /ultrareview is the ONLY entry point to the remote bughunter path —
-// /review stays purely local. local-jsx type renders the overage permission
-// dialog when free reviews are exhausted.
-const ultrareview: Command = {
-  type: 'local-jsx',
-  name: 'ultrareview',
-  description: `~10–20 min · Finds and verifies bugs in your branch. Runs in Gizzi Code on the web. See ${CCR_TERMS_URL}`,
-  isEnabled: () => isUltrareviewEnabled(),
-  load: () => import('./review/ultrareviewCommand.js'),
-}
-
 export default review
-export { ultrareview }

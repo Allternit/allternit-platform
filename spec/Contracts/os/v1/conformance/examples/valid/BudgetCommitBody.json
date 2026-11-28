@@ -1,0 +1,7 @@
+{
+  "reservation_id": "bud_01",
+  "actual_amount": "1.75",
+  "quantity": 1200,
+  "unit": "tokens",
+  "idempotency_key": "commit-bud_01"
+}

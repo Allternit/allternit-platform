@@ -86,6 +86,7 @@ internal fun ChatPage(
     var pickerRequest by remember { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     var shareOpen by remember { mutableStateOf(false) }
+    var testCaseOpen by remember { mutableStateOf(false) }
 
     // A send that never reached the computer hands its text back (iOS draftToRestore).
     LaunchedEffect(chat.draftToRestore) {
@@ -148,6 +149,10 @@ internal fun ChatPage(
                             MenuRow(icon = com.allternit.core.design.R.drawable.ph_link, title = "Share link", testTag = "chatMenushareLink") {
                                 menuOpen = false
                                 shareOpen = true
+                            }
+                            MenuRow(icon = DesignR.drawable.ph_flask, title = "Save as test case", testTag = "chatMenuSaveTestCase") {
+                                menuOpen = false
+                                testCaseOpen = true
                             }
                             MenuRow(icon = DesignR.drawable.ph_trash, title = "Delete chat", testTag = "chatMenuDelete") {
                                 menuOpen = false
@@ -226,6 +231,9 @@ internal fun ChatPage(
         )
     }
     com.allternit.feature.chat.voice.VoiceFullSlot(voiceHost, onEnd = endVoice)
+    }
+    if (testCaseOpen) {
+        com.allternit.feature.chat.SaveTestCaseSheet(chat = chat, noComputer = store.noComputer, onDismiss = { testCaseOpen = false })
     }
     if (shareOpen) {
         ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title.ifEmpty { "Allternit" }, messages = chat.messages, onDismiss = { shareOpen = false })

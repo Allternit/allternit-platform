@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 
+# AllternitOS boot image is its own standalone workspace (os/Cargo.toml).
+exclude = ["os"]
+
 members = [
     "services/orchestration/platform-orchestration-service",
     "cmd/allternit-api",
@@ -14,6 +17,7 @@ members = [
     "factory/pane",
     "factory/terminal-service",
     "cmd/allternit-factory",
+    "domains/kernel/authority",
     "domains/kernel/core/kernel-contracts",
     "domains/kernel/core/wasm-runtime",
     "platform/contracts/driver-interface",
@@ -25,6 +29,7 @@ members = [
     "services/session-manager",
     "services/vm-executor",
     "services/self-improve",
+    "services/self-improve-gizzi",
     "services/etrid",
     "mcp/core",
     "mcp/mcp-client",

@@ -45,6 +45,12 @@ class ChatBackend(
     private val stream = AgentChatStream(okHttp, api, json)
     val relay = RuntimeRelay(okHttp, config, context)
 
+    /** No-computer turns straight to cloud-api `/v1/chat/completions` (Allternit Cloud and plan models). */
+    val personChat = PersonChatClient(okHttp) { config.cloudBaseUrl }
+
+    /** cloud-api's plan chat store: no-computer chats saved after each turn and listed in history (iOS PlanThreadClient). */
+    val planThreads = PlanThreadClient(okHttp) { config.cloudBaseUrl }
+
     /** Public fetches (GitHub raw files, link-preview images): never carries the bearer. */
     internal val publicHttp: OkHttpClient by lazy {
         OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -62,7 +68,7 @@ class ChatBackend(
     internal fun mcpUrl(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().addPathSegment("mcp").apply { segments.forEachIndexed { i, s -> if (i == 1) addEncodedPathSegment(escapeMcpId(s)) else addPathSegment(s) } }.build()
 
-    private fun v1(vararg segments: String): HttpUrl =
+    internal fun v1(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().apply { segments.forEach { addPathSegment(it) } }.build()
 
     /** Authenticated sync only; image execution stays in this phone's WebView. */
@@ -71,6 +77,14 @@ class ChatBackend(
         if (id != null) parts += id
         if (action != null) parts += action
         return ApiCall.execute(okHttp, json, ApiCall.request(method, v1(*parts.toTypedArray()), body), kotlinx.serialization.json.JsonElement.serializer())
+    }
+
+    /** Gizzi test cases: `/api/v1/agent-evals/...` through the account token (the proxy picks the computer). */
+    val eval: EvalBackend by lazy {
+        EvalBackend { method, segments, query, body ->
+            val url = v1("agent-evals", *segments.toTypedArray()).newBuilder().apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+            ApiCall.execute(okHttp, json, ApiCall.request(method, url, body ?: if (method == "GET") null else "{}"), kotlinx.serialization.json.JsonElement.serializer())
+        }
     }
 
     // MARK: Sessions

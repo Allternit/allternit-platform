@@ -2,9 +2,39 @@ import type { Argv } from "yargs"
 import { UI } from "@/cli/ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "@/shared/installation"
+import { ReleaseFeed } from "@/shared/installation/feed"
+import { Updater } from "@/shared/installation/updater"
+
+export type UpdatePlan =
+  | { kind: "managed"; method: Installation.Method; line: string }
+  | { kind: "command"; method: Installation.Method; line: string; command: string }
+  | { kind: "apply"; method: Installation.Method; line: string }
+
+/**
+ * What `gizzi update` does for an install method (PLAN.md D2). Pure, so tests
+ * can name the method for every install type without touching the network.
+ */
+export function planUpdate(method: Installation.Method, version = "latest"): UpdatePlan {
+  const action = Updater.actionFor(method)
+  if (action === "managed") {
+    return { kind: "managed", method, line: "Allternit Desktop manages this copy; it updates with Desktop." }
+  }
+  if (action === "command") {
+    const command = Updater.commandFor(method, version) ?? "gizzi update"
+    return { kind: "command", method, command, line: `Method ${method}: run this to update: ${command}` }
+  }
+  return {
+    kind: "apply",
+    method,
+    line:
+      method === "npm"
+        ? "Method npm: would check the signed feed, then run npm i -g for the new version."
+        : `Method ${method}: would check the signed feed, verify the download, and swap the binary.`,
+  }
+}
 
 export const UpgradeCommand = {
-  command: "upgrade [target]",
+  command: ["upgrade [target]", "update [target]"],
   describe: "upgrade gizzi to the latest or a specific version",
   builder: (yargs: Argv) => {
     return yargs
@@ -18,14 +48,70 @@ export const UpgradeCommand = {
         type: "string",
         choices: ["curl", "npm", "pnpm", "bun", "brew", "scoop"],
       })
+      .option("channel", {
+        describe: "release channel to follow (saved)",
+        type: "string",
+        choices: [...ReleaseFeed.CHANNELS],
+      })
+      .option("dry-run", {
+        describe: "print the method and what would happen, change nothing",
+        type: "boolean",
+        default: false,
+      })
   },
-  handler: async (args: { target?: string; method?: string }) => {
+  handler: async (args: { target?: string; method?: string; channel?: string; dryRun?: boolean }) => {
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()
     prompts.intro("Upgrade")
+    if (args.channel && ReleaseFeed.isChannel(args.channel)) {
+      if (!args.dryRun) ReleaseFeed.setChannel(args.channel)
+      prompts.log.info(`Channel: ${args.channel}${args.dryRun ? " (dry run, not saved)" : " (saved)"}`)
+    }
     const detectedMethod = await Installation.method()
     const method = (args.method as Installation.Method) ?? detectedMethod
+
+    // No explicit version: follow the signed feed per install method.
+    if (!args.target && method !== "unknown") {
+      const plan = planUpdate(method)
+      prompts.log.info(`Install method: ${method}`)
+      if (plan.kind !== "apply") {
+        prompts.log.info(plan.line)
+        prompts.outro("Done")
+        return
+      }
+      if (args.dryRun) {
+        prompts.log.info(plan.line)
+        prompts.outro("Dry run: no changes made")
+        return
+      }
+      const spinner = prompts.spinner()
+      spinner.start("Checking the signed release feed...")
+      // An explicit `gizzi update` applies even when background auto-update is off.
+      const env = { ...process.env }
+      delete env.GIZZI_DISABLE_AUTOUPDATE
+      delete env.DISABLE_AUTOUPDATER
+      const status = await Updater.check({ method, env })
+      spinner.stop(status.message)
+      if (status.state === "staged") {
+        const swapped = Updater.applyStaged()
+        prompts.log[swapped ? "success" : "warn"](
+          swapped ? `Updated to ${status.latest}` : "The staged update could not be applied; it will retry on next launch.",
+        )
+      } else if (status.state === "scheduled") {
+        const started = Updater.runPendingPackage()
+        prompts.log[started ? "success" : "warn"](
+          started ? `Installing ${status.latest} with npm in the background.` : `Run: ${status.command}`,
+        )
+      }
+      prompts.outro("Done")
+      return
+    }
+    if (args.dryRun) {
+      prompts.log.info(`Method ${method}: would install ${args.target ?? "the latest version"}`)
+      prompts.outro("Dry run: no changes made")
+      return
+    }
     if (method === "unknown") {
       prompts.log.error(`gizzi is installed to ${process.execPath} and may be managed by a package manager`)
       const install = await prompts.select({

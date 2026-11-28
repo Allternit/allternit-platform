@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://allternit.com/contracts/gizzi-release-feed/schema.json",
+  "title": "Gizzi release feed",
+  "type": "object",
+  "required": [
+    "schema",
+    "channel",
+    "version",
+    "publishedAt",
+    "minVersion",
+    "paused",
+    "notes",
+    "artifacts",
+    "packages"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "channel": {
+      "enum": [
+        "stable",
+        "latest"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"
+    },
+    "publishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "minVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+      "description": "Installs older than this must update at next launch."
+    },
+    "paused": {
+      "type": "boolean",
+      "description": "When true, clients do not offer or apply this version."
+    },
+    "notes": {
+      "type": "object",
+      "required": [
+        "url",
+        "highlights"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "highlights": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "darwin-arm64",
+        "darwin-x64",
+        "linux-x64",
+        "linux-arm64"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "darwin-arm64": {
+          "$ref": "#/$defs/artifact"
+        },
+        "darwin-x64": {
+          "$ref": "#/$defs/artifact"
+        },
+        "linux-x64": {
+          "$ref": "#/$defs/artifact"
+        },
+        "linux-arm64": {
+          "$ref": "#/$defs/artifact"
+        },
+        "win32-x64": {
+          "$ref": "#/$defs/artifact"
+        }
+      },
+      "description": "win32-x64 is optional: when the Windows build fails, the feed still ships for macOS and Linux, and Windows installs keep their current version."
+    },
+    "packages": {
+      "type": "object",
+      "required": [
+        "npm",
+        "brew",
+        "scoop"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "npm": {
+          "type": "string"
+        },
+        "brew": {
+          "type": "string"
+        },
+        "scoop": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": [
+        "url",
+        "sha256",
+        "size"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

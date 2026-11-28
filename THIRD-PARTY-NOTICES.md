@@ -286,3 +286,61 @@ mail triage rules and prompt in
 `build-set.py` and results format in `evals/triage/`, are adapted from its
 `openbot/server/src/openduet/triage.ts` and `evals/triage/`. The licence text
 is `evals/triage/LICENSE-openduet`.
+
+**colibri** (JustVugg/colibri, Apache-2.0; we ship tag v2.2.0 from our fork
+Allternit/colibri, unmodified): the local-engine colibri engine pack
+(`scripts/engine-packs/build-colibri.sh`) bundles colibri's release engine
+binaries and its `c/*.py` gateway files (`openai_server.py` and its modules).
+Each pack carries colibri's `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`
+unchanged at the pack root.
+
+**python-build-standalone and CPython** (astral-sh/python-build-standalone,
+MPL-2.0 for the build scripts; CPython 3.12 under the Python Software
+Foundation License, Copyright (c) 2001 Python Software Foundation): the colibri
+engine pack bundles the `install_only_stripped` build as `python/` to run
+colibri's gateway. The CPython licence text is in the pack as `LICENSE-python`.
+
+---
+
+## unkernel JavaScript SDK
+
+**License:** MIT
+
+**Copyright:** Copyright (c) 2026 Pooya Parsa <pooya@pi0.io>
+
+**Source:** https://github.com/Allternit/unkernel (fork), commit `3b71fa5`
+(npm build `unkernel@0.2.0-261127-3b71fa5`)
+
+The SDK is bundled with the app. It starts and talks to the unkernel
+kernel (below) in the browser. The full licence text is in
+`public/licenses/unkernel-sdk-MIT.txt` in the Allternit AI app repository.
+
+---
+
+## unkernel kernel and distro images
+
+**License:** GPL-2.0-only
+
+**Bundled:** No. The app does not contain the kernel or any distro image.
+They are fetched at run time from the Allternit artifact host the first time
+a user starts a box. The SDK above is a separate program that loads them as
+data.
+
+**What they are:** the unkernel kernel (a Linux kernel built to WebAssembly)
+and the Alpine Linux image built for it. Alpine packages in the image carry
+their own licences (mostly GPL-2.0, MIT and BSD).
+
+**Written offer of source:** Allternit LLC will give anyone who has received
+the kernel or an image the complete corresponding source code, as
+GPL-2.0 section 3 requires. The source of the kernel is public at
+https://github.com/Allternit/unkernel/tree/3b71fa5 (exact commit `3b71fa5`).
+The build command (`guest/build.sh distro alpine`), the pinned package
+versions and the same offer sit beside every published artifact in
+`SOURCE.md`. The full licence text sits beside them as
+`LICENSE-GPL-2.0.txt`. For the source of any Alpine package in an image,
+or for a copy on physical media at cost, contact Allternit LLC through
+https://allternit.com. The offer is valid for at least three
+years from the date the artifact is published.
+
+Upstream's own notices are in its `THIRD-PARTY.md` at the same commit:
+https://github.com/Allternit/unkernel/blob/3b71fa5/THIRD-PARTY.md

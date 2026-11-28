@@ -185,7 +185,8 @@ Measured on an Apple M1 Pro with 32 GB:
   },
   "engines": [
     { "id": "llama.cpp", "backend": "metal", "version": "b10330", "pack_id": null, "state": "ready" },
-    { "id": "mlx", "backend": "metal", "version": null, "pack_id": null, "state": "missing" }
+    { "id": "mlx", "backend": "metal", "version": null, "pack_id": null, "state": "missing" },
+    { "id": "colibri", "backend": "cpu", "version": null, "pack_id": "colibri-macos-arm64", "state": "missing" }
   ]
 }
 ```
@@ -212,6 +213,7 @@ All sizes are bytes.
 | `unified_memory` | boolean | `true` when the budget kind is `unified`. |
 | `apple_chip` | string \| null | Full Apple silicon chip name, e.g. `M1 Pro` or `M4 Max`. `null` on other hardware. |
 | `disk_free_bytes` | integer | Free space on the volume that holds `models_dir`. |
+| `budget.disk_free_bytes` | integer | The same free space, inside `budget`, for models streamed from disk (colibri). Left out when this device has no colibri pack or the read fails. It is never `0` for "unknown". |
 | `models_dir` | string | Where the engine stores downloaded models. |
 | `budget` | object | Memory budget for models. See below. |
 | `engines` | array | Inference engines on this device. See below. |
@@ -284,7 +286,7 @@ POST /api/local-engine/engines/packs/ensure
 
 Inference engines are not in the Desktop installer. The local engine downloads them as signed engine packs: llama.cpp builds per OS and GPU (Metal, CUDA, ROCm, Vulkan, CPU) and, on Apple silicon, the MLX engine. Before any engine starts, the local engine checks the pack's Ed25519 signature and the sha256 of every file. A pack that fails the check is never run. The engine rolls back to the previous version, or removes the pack.
 
-`ensure` picks the pack from the device: Metal on Apple silicon, CUDA for NVIDIA with a working driver (else Vulkan), ROCm for AMD on Linux when ROCm is installed (else Vulkan), Vulkan for Intel, CPU first on Windows on Arm, else CPU. The body is optional: `{"engines": ["llamacpp", "mlx"], "update": false}`. `update: true` also installs a newer version of a pack that is already installed. The call returns at once with `202` when it started an install (`200` when nothing was needed). Progress is in `jobs` here and in `engine_packs` in `/status`.
+`ensure` picks the pack from the device: Metal on Apple silicon, CUDA for NVIDIA with a working driver (else Vulkan), ROCm for AMD on Linux when ROCm is installed (else Vulkan), Vulkan for Intel, CPU first on Windows on Arm, else CPU. The body is optional: `{"engines": ["llamacpp", "mlx", "colibri"], "update": false}` (the default is all three). `colibri` has one CPU pack per device: `colibri-linux-x86_64`, `colibri-linux-aarch64`, `colibri-windows-x86_64` or `colibri-macos-arm64`; Intel Macs and Windows on Arm get none, and its engine entry is `off`. `update: true` also installs a newer version of a pack that is already installed. The call returns at once with `202` when it started an install (`200` when nothing was needed). Progress is in `jobs` here and in `engine_packs` in `/status`.
 
 ```json
 {
@@ -410,6 +412,7 @@ Queues a download from a Hugging Face repository. The returned state reflects th
 | `repo_id` | string | Yes | Hugging Face repository id, e.g. `bartowski/Llama-3.2-3B-Instruct-GGUF`. |
 | `revision` | string | No | Git revision. Defaults to `main`. |
 | `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. The filter runs on the Freeweights manifest file list, so only the matching quant downloads. |
+| `engine` | string | No | Set `"colibri"` for a build from a model's stream quants (its `engine` field). The engine then installs the whole container into the models folder and checks free disk space first. Without it, a repo id that names colibri is treated the same way. Any other value turns the colibri handling off. |
 | `allow_unverified` | boolean | No | Default `false`. Set `true` to accept files that have no hash at Freeweights, the publisher or from you. The model then ends as `unverified`. |
 
 ### Example request

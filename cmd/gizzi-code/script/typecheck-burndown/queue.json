@@ -3,18 +3,18 @@
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
   "batchCount": 113,
   "stats": {
-    "totalNocheck": 583,
+    "totalNocheck": 575,
     "excludedCompilerArtifacts": 0,
     "excludedVendored": 93,
-    "totalQueueFiles": 470,
-    "totalQueueLoc": 198673,
+    "totalQueueFiles": 462,
+    "totalQueueLoc": 194463,
     "quarantined": 20,
     "quarantinedByReason": {
       "suspect-dead-shim": 18,
       "suspect-malformed": 2
     },
     "zeroImporter": 187,
-    "totalAccounted": 1493
+    "totalAccounted": 1485
   },
   "batches": [
     {
@@ -633,14 +633,10 @@
         "src/cli/ui/ink-app/utils/plugins/loadPluginCommands.ts",
         "src/cli/ui/ink-app/utils/plugins/cacheUtils.ts",
         "src/cli/ui/ink-app/utils/plugins/installedPluginsManager.ts",
-        "src/cli/ui/ink-app/commands/thinkback-play/thinkback-play.ts",
-        "src/cli/ui/ink-app/commands/thinkback-play/index.ts",
         "src/cli/ui/ink-app/tasks/RemoteAgentTask/RemoteAgentTask.tsx",
         "src/cli/ui/ink-app/tasks.ts",
         "src/cli/ui/ink-app/tasks/stopTask.ts",
         "src/cli/ui/ink-app/tools/TaskStopTool/TaskStopTool.ts",
-        "src/cli/ui/ink-app/commands/review/reviewRemote.ts",
-        "src/cli/ui/ink-app/commands/review/ultrareviewCommand.tsx",
         "src/cli/ui/ink-app/commands/review.ts",
         "src/cli/ui/ink-app/utils/plugins/pluginInstallationHelpers.ts",
         "src/cli/ui/ink-app/commands/plugin/PluginOptionsFlow.tsx",
@@ -650,7 +646,7 @@
         "src/cli/ui/ink-app/utils/plugins/loadPluginAgents.ts",
         "src/cli/ui/ink-app/tools/AgentTool/loadAgentsDir.ts"
       ],
-      "loc": 7355,
+      "loc": 6918,
       "twins": [],
       "state": "NEW"
     },
@@ -898,10 +894,8 @@
     },
     {
       "id": "b0061",
-      "files": [
-        "src/cli/ui/ink-app/commands/insights.ts"
-      ],
-      "loc": 3201,
+      "files": [],
+      "loc": 0,
       "twins": [],
       "state": "NEW"
     },
@@ -1210,11 +1204,8 @@
         "src/cli/ui/ink-app/screens/bots-pane/BotsRowList.tsx",
         "src/cli/ui/ink-app/components/GizziHint/PluginHintMenu.tsx",
         "src/cli/ui/ink-app/components/LspRecommendation/LspRecommendationMenu.tsx",
-        "src/cli/ui/ink-app/commands/multimodal/multimodal.tsx",
         "src/cli/ui/ink-app/components/screens/DiscretionScreen.tsx",
         "src/cli/ui/ink-app/components/TagTabs.tsx",
-        "src/cli/ui/ink-app/commands/ontology/ontology.tsx",
-        "src/cli/ui/ink-app/commands/cowork-project/cowork-project.tsx",
         "src/cli/ui/ink-app/components/CustomSelect/use-select-input.ts",
         "src/cli/ui/ink-app/components/screens/MainScreen.tsx",
         "src/cli/ui/ink-app/hooks/useSearchInput.ts",
@@ -1235,7 +1226,7 @@
         "src/cli/ui/ink-app/hooks/unifiedSuggestions.ts",
         "src/cli/ui/ink-app/hooks/toolPermission/handlers/interactiveHandler.ts"
       ],
-      "loc": 7398,
+      "loc": 6826,
       "twins": [],
       "state": "NEW"
     },
@@ -1784,7 +1775,7 @@
     {
       "path": "src/cli/ui/ink-app/screens/REPL.tsx",
       "reason": "suspect-dead-shim",
-      "detail": "unresolved: ../components/AntModelSwitchCallout.js, ../components/FeedbackSurvey/useFrustrationDetection.js, ../components/UndercoverAutoCallout.js, ../hooks/notifs/useAntOrgWarningNotification.js, ../proactive/useProactive.js, ../tools/WebBrowserTool/WebBrowserPanel.js"
+      "detail": "unresolved: ../components/AntModelSwitchCallout.js, ../components/FeedbackSurvey/useFrustrationDetection.js, ../components/UndercoverAutoCallout.js, ../hooks/notifs/useAntOrgWarningNotification.js, ../tools/WebBrowserTool/WebBrowserPanel.js"
     }
   ]
 }

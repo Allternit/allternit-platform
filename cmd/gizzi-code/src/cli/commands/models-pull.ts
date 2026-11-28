@@ -13,7 +13,7 @@ export function printVerification(v: ModelVerification | undefined | null) {
 }
 
 /** gizzi models pull <repo>: queue the download, stream progress, print the verification line. */
-export async function pullModel(repo: string, quant: string | undefined, allowUnverified: boolean, revision?: string): Promise<number> {
+export async function pullModel(repo: string, quant: string | undefined, allowUnverified: boolean, revision?: string, engine?: string): Promise<number> {
   // Repos that are not in the signed catalog may be community uploads on Freeweights.
   const inCatalog = (await fetchFreeweightsCatalog()).some((e) => e.id.toLowerCase() === repo.toLowerCase())
   if (!inCatalog) {
@@ -26,7 +26,7 @@ export async function pullModel(repo: string, quant: string | undefined, allowUn
       UI.println(UI.Style.TEXT_WARNING_BOLD + "Community upload: scanned for malware, not reviewed or signed by Allternit." + UI.Style.TEXT_NORMAL)
     }
   }
-  const queued = await downloadRepo(repo, quant, { allowUnverified, revision })
+  const queued = await downloadRepo(repo, quant, { allowUnverified, revision, engine })
   let verification = queued.verification
   let last = ""
   for (;;) {

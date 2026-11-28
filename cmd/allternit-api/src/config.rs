@@ -82,9 +82,9 @@ pub struct CompanyConfig {
     #[serde(rename = "factoryApiUrl", alias = "railsUrl")]
     pub rails_url: Option<String>,
 
-    /// Canonical AllternitOS lease authority. Unset means fabric lease
+    /// Lease authority (legacy; the kernel `lease` call replaces it). Unset means fabric lease
     /// issuance returns 503 until production configures it.
-    /// URL of the canonical AllternitOS lease authority. When set, the gateway
+    /// URL of the legacy lease authority. When set, the gateway
     /// proxies `/api/v1/fabric/leases` there instead of relying on a runtime-local
     /// dev issuer. Unset means lease issuance returns 503 in production.
     #[serde(rename = "allternitOSLeaseAuthorityUrl")]
@@ -550,7 +550,7 @@ impl AppConfig {
             .unwrap_or_else(|| "default".to_string())
     }
 
-    /// URL of the canonical AllternitOS lease authority.
+    /// URL of the legacy lease authority.
     pub fn allternitos_lease_authority_url(&self) -> Option<String> {
         std::env::var("ALLTERNITOS_LEASE_AUTHORITY_URL")
             .ok()

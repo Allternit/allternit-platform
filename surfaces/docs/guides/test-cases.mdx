@@ -1,0 +1,67 @@
+---
+title: 'Test cases'
+description: 'Save a chat as a test case, then re-check it any time. Cases stay on your computer.'
+---
+
+<Note>
+**Coming in the next release.** Test cases are not in the current build yet.
+</Note>
+
+## What a test case is
+
+A test case is a saved chat plus a verdict. You say whether it went well or went wrong. Gizzi keeps the prompts, the steps it took, and a copy of your project files from when the chat started.
+
+Later you can run your cases again. This tells you if a change made Gizzi worse at something you care about.
+
+## Save a chat as a test case
+
+| Where | How |
+|---|---|
+| Desktop and web | Open the session menu and choose **Save as test case**. |
+| Phone, iOS and Android | Open the ⋯ menu on the chat and choose **Save as test case**. |
+| Thumbs-down | After you rate a reply down, use the **Save as test case** link. |
+| Terminal | Type `/testcase`, or `/testcase bad too slow` to set a verdict and a note. |
+
+The save sheet asks four things:
+
+- **Went well** or **Went wrong**.
+- **What should have happened?** This note is optional.
+- For a bad case, a quick check: **Wrong answer**, **Broke a file**, **Ignored instructions**, **Too slow or costly**, or **Other**.
+- Nothing else. Saving takes a few seconds.
+
+## Needs a check
+
+When you save a case, Gizzi grades the saved chat against its own checks. If a good case does not pass, or a bad case does not fail, the case shows **Needs a check**. Open it and fix the note or the label, or delete it.
+
+## Where cases live
+
+Cases are files on your own computer. Nothing leaves your account, and nothing is sent to Allternit.
+
+Chats without a computer, such as plan chats, can't be saved. The menu shows **Needs a computer**. If your computer can't be reached, you see **Couldn't reach your computer, try again**.
+
+A suite holds up to 100 cases.
+
+## Run your cases
+
+Go to **Settings › Test cases**. You see your cases, their last result, and two buttons.
+
+| Button | What it does | Cost |
+|---|---|---|
+| **Run checks** | Replays each saved chat and grades it again. No model runs. | Free |
+| **Run live…** | Runs your prompts again in a copy of your project and grades the new result. | Uses your plan, or metered billing |
+
+Before a live run, Allternit shows the price: the number of runs, about how many tokens and minutes, and either **Uses your plan** or **About $x**. Nothing starts until you press **Run**.
+
+Live runs work in a temporary copy. Files and shell commands work there. Connectors and outside tools stay off.
+
+## What replay can and can't tell you
+
+Replay grades the chat you already saved. It does not call a model.
+
+- It can tell you the checks still work, and that a change to Gizzi did not break how a saved chat is graded.
+- It can't tell you whether a new prompt or setting makes Gizzi better. Only a live run can.
+
+## Related pages
+
+- [Gizzi evals (developer guide)](/guides/gizzi-evals)
+- [feedback_note](/tools/feedback-note)

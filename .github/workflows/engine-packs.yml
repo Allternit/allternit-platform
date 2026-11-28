@@ -117,13 +117,39 @@ jobs:
           path: out/
           retention-days: 14
 
+  colibri:
+    name: colibri ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # No compile: pinned release archive + bundled Python + colibri's .py gateway files.
+          - { os: linux, arch: x64, id_arch: x86_64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, id_arch: aarch64, runner: ubuntu-24.04-arm }
+          - { os: windows, arch: x64, id_arch: x86_64, runner: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/engine-packs
+      - name: Build
+        run: scripts/engine-packs/build-colibri.sh --os ${{ matrix.os }} --arch ${{ matrix.arch }} --out "$PWD/out" --work "${{ runner.temp }}/colibri-work"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-colibri-${{ matrix.os }}-${{ matrix.id_arch }}
+          path: out/
+          retention-days: 14
+
   macos:
     name: macos ${{ matrix.pack }}
     runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
-        pack: [llamacpp-metal, mlx-metal]
+        pack: [llamacpp-metal, mlx-metal, colibri-macos-arm64]
     env:
       HAVE_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
@@ -158,6 +184,13 @@ jobs:
           SHA=$(python3 -c "import json;print(json.load(open('$RAW/BUILD-INFO.json'))['commit'])")
           python3 scripts/engine-packs/make-manifest.py "$PACK" --engine llamacpp --backend metal --version "$LLAMACPP_TAG" \
             --os macos --arch arm64 --min-os 13.0 --source-commit "$SHA" --entrypoint bin/llama-server
+      - name: Build colibri CPU pack
+        if: matrix.pack == 'colibri-macos-arm64'
+        # No compile: pinned release archive + bundled Python + colibri's .py gateway files. CPU only;
+        # a Metal pack waits for a Mac measurement. Signed like the llama.cpp pack when the cert exists.
+        run: |
+          SIGN=""; if [ "$HAVE_CERT" = true ]; then SIGN="--sign"; fi
+          scripts/engine-packs/build-colibri.sh --os macos --arch arm64 $SIGN --out "$PWD/out/pack" --work "$RUNNER_TEMP/colibri-work"
       - name: Build MLX sidecar
         if: matrix.pack == 'mlx-metal'
         env:
@@ -172,7 +205,7 @@ jobs:
 
   feed:
     name: signed feed (artifact only)
-    needs: [linux, windows, macos]
+    needs: [linux, windows, colibri, macos]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     env:

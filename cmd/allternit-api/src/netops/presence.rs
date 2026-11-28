@@ -326,6 +326,7 @@ pub async fn beat_once(state: &AppState, sink: &dyn EventSink, cloud: &str) -> R
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     body["sessions"] = live_sessions(&runtime_id).await;
+    crate::session_blocked_push::notify_transitions(state, &owner, &body["sessions"]).await;
     body["runtimeId"] = json!(runtime_id);
     // Files drive (SPEC section 15): storage discovery, kept by the cloud while this computer sleeps.
     if let Some(storage) = crate::files_v2::heartbeat_report().await {
@@ -369,6 +370,7 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     body["sessions"] = live_sessions(&runtime_id).await;
+    crate::session_blocked_push::notify_transitions(state, &owner, &body["sessions"]).await;
     body["runtimeId"] = json!(runtime_id);
     // Files drive (SPEC section 15): storage discovery, kept by the cloud while this computer sleeps.
     if let Some(storage) = crate::files_v2::heartbeat_report().await {

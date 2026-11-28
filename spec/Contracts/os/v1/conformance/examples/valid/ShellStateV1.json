@@ -1,0 +1,36 @@
+{
+  "schema_id": "allternit.os.ShellStateV1",
+  "schema_version": "1.0.0",
+  "state_version": 7,
+  "surface": "desktop",
+  "views": [
+    {
+      "instance_id": "v1",
+      "view_id": "chat",
+      "title": "Chat",
+      "focused": true,
+      "region": "local"
+    }
+  ],
+  "focused_instance": "v1",
+  "arrangement": "single",
+  "runs": [
+    {
+      "run_id": "run_01",
+      "status": "running",
+      "title": "Fix the build"
+    }
+  ],
+  "installed_apps": [
+    {
+      "app_id": "notes",
+      "app_version": "1.2.0",
+      "view_id": "app:notes"
+    }
+  ],
+  "inbox_counts": {
+    "needs_you": 2,
+    "snoozed": 0
+  },
+  "protected_open": null
+}

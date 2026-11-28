@@ -22,9 +22,15 @@ struct DeviceBudget: Codable, Sendable, Equatable {
     var apple: Bool?
     var browser: Bool?
     var webgpu: Bool?
+    /// Free bytes on the volume that holds the models folder. Set only by a
+    /// host that can run a colibri pack (Mac arm64, Windows x64, Linux x64/arm64).
+    /// The phone never sets it, so it never gets a `stream` verdict for itself;
+    /// a budget for another device (Remote, My other devices) may carry it.
+    var diskFreeBytes: Double?
 
     enum CodingKeys: String, CodingKey {
         case kind, apple, browser, webgpu
+        case diskFreeBytes = "disk_free_bytes"
         case fastBytes = "fast_bytes"
         case spillBytes = "spill_bytes"
     }
@@ -58,8 +64,55 @@ struct Quant: Codable, Sendable, Equatable, Hashable {
     }
 }
 
+/// One entry of `stream_quants` in a device.json model entry: a colibri pack
+/// that keeps `ram_est` resident and reads the rest from disk. `engine` is a
+/// plain String on purpose (always "colibri"); it never goes through
+/// `QuantEngine`, which shipped builds decode strictly.
+struct StreamQuant: Codable, Sendable, Equatable, Hashable {
+    var name: String
+    var format: String?
+    var engine: String
+    /// Download size, must be free on disk.
+    var size: Double
+    /// Resident weights (not file size). Required: an entry without it is dropped.
+    var ramEst: Double
+    /// "chat" or "background".
+    var tier: String
+    var colibriModel: String?
+    var repo: String?
+    var metalOk: Bool?
+    var bestFor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, format, engine, size, tier, repo
+        case ramEst = "ram_est"
+        case colibriModel = "colibri_model"
+        case metalOk = "metal_ok"
+        case bestFor = "best_for"
+    }
+}
+
+/// Decodes one array element without ever throwing, so a bad element can be
+/// dropped while its siblings are kept.
+private struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// An array that drops elements that fail to decode (an unknown engine,
+    /// a missing required field) and keeps the rest. Nil when the key is
+    /// missing, null, or not an array.
+    func decodeLossyArray<T: Decodable>(_ type: T.Type, forKey key: Key) -> [T]? {
+        guard let wrapped = try? decodeIfPresent([Lossy<T>].self, forKey: key) else { return nil }
+        return wrapped.compactMap(\.value)
+    }
+}
+
 enum FitKind: String, Codable, Sendable {
-    case ok, slow, no, na, unknown
+    case ok, slow, stream, no, na, unknown
 }
 
 struct FitResult: Sendable, Equatable {
@@ -67,6 +120,15 @@ struct FitResult: Sendable, Equatable {
     var label: String
     var why: String
     var quant: Quant?
+    /// The chosen colibri pack when `k == .stream` (then `quant` is nil).
+    var stream: StreamQuant?
+
+    init(k: FitKind, label: String, why: String, quant: Quant?, stream: StreamQuant? = nil) {
+        self.k = k; self.label = label; self.why = why; self.quant = quant; self.stream = stream
+    }
+
+    /// Name of the chosen build, Quant or StreamQuant.
+    var quantName: String? { quant?.name ?? stream?.name }
 }
 
 enum Fit {
@@ -135,10 +197,51 @@ enum Fit {
 
     /// `quants == nil` means the model has no device.json entry.
     /// `ctx` is accepted and ignored in v1 (ram_est is at the default context).
-    static func fit(_ budget: DeviceBudget, _ quants: [Quant]?, ctx: Int? = nil) -> FitResult {
-        guard let quants else {
+    /// `streamQuants` is `stream_quants` from the same entry (fit.md "Stream (colibri)").
+    static func fit(_ budget: DeviceBudget, _ quants: [Quant]?, ctx: Int? = nil,
+                    streamQuants: [StreamQuant]? = nil) -> FitResult {
+        let streams = streamQuants ?? []
+        // quants == nil with stream entries is treated as an empty list;
+        // unknown only when both are nil or empty.
+        guard let quants = quants ?? (streams.isEmpty ? nil : []) else {
             return FitResult(k: .unknown, label: "Size not checked", why: "No device data for this model yet", quant: nil)
         }
+        let base = inMemoryFit(budget, quants)
+        guard base.k == .no || (base.k == .na && candidates(budget, quants).isEmpty),
+              let s = streamPick(budget, streams) else { return base }
+        return FitResult(k: .stream, label: "Streams from disk", why: streamWhy(s), quant: nil, stream: s)
+    }
+
+    private static func streamWhy(_ s: StreamQuant) -> String {
+        s.tier == "chat"
+            ? "Keeps \(gbFixed(s.ramEst)) GB in memory, reads the rest from disk"
+            : "Slow. Best for jobs you leave running"
+    }
+
+    /// The stream step: never for a browser or a budget without disk_free_bytes.
+    private static func streamPick(_ d: DeviceBudget, _ streams: [StreamQuant]) -> StreamQuant? {
+        if d.browser == true { return nil }
+        guard let disk = d.diskFreeBytes else { return nil }
+        let ok = streams.filter { s in
+            guard s.engine == "colibri", s.size <= disk else { return false }
+            switch d.kind {
+            case .discrete: return s.ramEst * 10 <= d.spillBytes * 6
+            case .unified, .cpu: return s.ramEst <= d.fastBytes
+            }
+        }
+        return preferredStream(ok)
+    }
+
+    /// Sort order of fit.md: chat tier first, then larger size, then name (byte order).
+    static func preferredStream(_ streams: [StreamQuant]) -> StreamQuant? {
+        streams.sorted { a, b in
+            if (a.tier == "chat") != (b.tier == "chat") { return a.tier == "chat" }
+            if a.size != b.size { return a.size > b.size }
+            return Array(a.name.utf8).lexicographicallyPrecedes(Array(b.name.utf8))
+        }.first
+    }
+
+    private static func inMemoryFit(_ budget: DeviceBudget, _ quants: [Quant]) -> FitResult {
         if budget.browser == true && budget.webgpu == false { return na(budget) }
         let cands = candidates(budget, quants)
         if cands.isEmpty { return na(budget) }

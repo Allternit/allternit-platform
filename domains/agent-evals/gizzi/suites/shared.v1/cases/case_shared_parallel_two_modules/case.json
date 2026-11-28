@@ -1,0 +1,58 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_parallel_two_modules",
+  "suite": "shared.v1",
+  "title": "Two independent jobs: (1) implement shipping_cost in inventory/shipping.py exact",
+  "label": "good",
+  "note": "Ported from the subagent task 'parallel-two-modules' (skill: builder).",
+  "split": "holdout",
+  "origin": {
+    "session_id": "parallel-two-modules",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Two independent jobs: (1) implement shipping_cost in inventory/shipping.py exactly as its docstring says; (2) add `tax(amount, rate)` to inventory/pricing.py that returns amount*rate rounded to 2 decimals. Add tests for both."
+    }
+  ],
+  "workspace": {
+    "kind": "archive",
+    "path": "workspace.tar.gz",
+    "bytes": 1392,
+    "snapshot": "140a9fa9513c99dd0c5ed912394d4a4cc3517b95"
+  },
+  "checks": [
+    {
+      "type": "tests",
+      "command": "python3 -m unittest discover -s tests -p \"test_hidden_*.py\"",
+      "files": {
+        "tests/test_hidden_ship.py": "import unittest\nfrom inventory.shipping import shipping_cost\nfrom inventory.pricing import tax\nclass H(unittest.TestCase):\n    def test_local(self):\n        self.assertEqual(shipping_cost(2, \"local\"), 5.0)\n        self.assertEqual(shipping_cost(2.1, \"local\"), 6.5)\n        self.assertEqual(shipping_cost(4, \"local\"), 8.0)\n    def test_national(self): self.assertEqual(shipping_cost(3.5, \"national\"), 14.0)\n    def test_bad(self):\n        with self.assertRaises(ValueError): shipping_cost(1, \"moon\")\n        with self.assertRaises(ValueError): shipping_cost(0, \"local\")\n    def test_tax(self): self.assertEqual(tax(19.99, 0.0825), 1.65)\n"
+      }
+    }
+  ],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "verifier_pass"
+    }
+  ],
+  "k": 3,
+  "pass_rule": {
+    "n_of_k": 2
+  },
+  "recorded": null,
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}

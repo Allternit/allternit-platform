@@ -38,6 +38,8 @@ internal data class PickerModel(
     val outputPer1mUsd: Double? = null,
     /** Allternit Open rows only: `open.access`, `plan` or `research` (CONTRACT-open-tier §5). */
     val openAccess: String? = null,
+    /** Server lock state from the picker catalog; null on rows from the older /v1/models path. */
+    val access: ModelAccess? = null,
 )
 
 private fun RuntimeModel.toPicker() = PickerModel(
@@ -170,6 +172,13 @@ internal class ModelStore(context: Context) {
 
     /** `{cloud}/v1/models` (iOS SetupAPI.cloudModelCatalog): standard rows, and open-lane rows kept apart in [openCloudModels]. */
     private suspend fun loadCloud() {
+        // Step 45: the server picker catalog carries the lock state; any failure (404 before the route ships) falls back.
+        val catUrl = ApiConfig().cloudBaseUrl.newBuilder().addPathSegments("api/v1/picker-catalog").build()
+        val cat = ApiCall.execute(ShellApi.okHttp, ApiJson.default, ApiCall.request("GET", catUrl, null), JsonObject.serializer())
+        if (cat is ApiResult.Ok) {
+            val parsed = parsePickerCatalogCloud(cat.value)
+            if (parsed.isNotEmpty()) { cloudModels = parsed; openCloudModels = emptyList(); return }
+        }
         val url = ApiConfig().cloudBaseUrl.newBuilder().addPathSegments("v1/models").build()
         val r = ApiCall.execute(ShellApi.okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonObject.serializer())
         if (r !is ApiResult.Ok) return

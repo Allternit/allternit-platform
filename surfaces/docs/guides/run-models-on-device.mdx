@@ -122,6 +122,21 @@ gizzi models stop <id>     # unload one
 
 See [Models and providers](/cli/models#run-a-model-on-this-computer) for the options.
 
+## Models larger than memory
+
+Some models are too big for your memory but still usable. On a computer with enough free disk, the badge reads **Streams from disk**. The model keeps part of its weights in memory and reads the rest from disk as it works. It runs with the colibri engine.
+
+There are two tiers, and the card says which one you get:
+
+- **Chat tier.** "Keeps N GB in memory, reads the rest from disk". N is the memory it holds, for example 10.0 GB.
+- **Background tier.** "Slow. Best for jobs you leave running".
+
+Disk need: the whole model file must fit in free disk on the drive that holds your models folder. The card shows it, for example "23.1 GB on disk".
+
+This is Desktop only: Mac, Windows and Linux. A Mac runs it on the CPU by default. Phones, browsers, Intel Macs and Windows Arm never stream a model themselves. They show the **Streams from disk** result for your other devices that can.
+
+No speed is promised. Streaming is slower than a model that fits in memory.
+
 ## Limits, plainly
 
 - Small on-device models are less capable than Allternit Cloud models. Use them for private, offline or quick work.

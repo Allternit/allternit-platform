@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,19 +71,52 @@ import com.allternit.core.design.InlineEmpty
 /** One build that runs on a phone (iOS Quant, GGUF builds only: the Android engine is llama.cpp). */
 data class PhoneQuant(val name: String, val sizeBytes: Long?, val file: String, val repo: String)
 
+/**
+ * One `stream_quants` entry (colibri pack that keeps `ramEst` resident and reads the rest from disk).
+ * Shown only as a note for a Mac or PC; the phone never streams or installs one (iOS StreamQuant).
+ */
+data class StreamQuant(
+    val name: String, val engine: String, val sizeBytes: Long, val ramEstBytes: Long, val tier: String, val bestFor: String?,
+)
+
+/** Everything `/device` says about a model: builds this phone can run, and packs a computer can stream. */
+data class DeviceBuilds(val phone: List<PhoneQuant>, val stream: List<StreamQuant>)
+
+/**
+ * Tolerant decode of `stream_quants` (contract section 2): a missing key, a non-array, an unknown key or
+ * an entry that lacks a required field (name, size, ram_est, tier) is skipped; its siblings are kept.
+ */
+internal fun parseStreamQuants(root: kotlinx.serialization.json.JsonElement?): List<StreamQuant> =
+    root.listUnder("stream_quants").mapNotNull { q ->
+        val name = q.str("name") ?: return@mapNotNull null
+        val size = q.num("size") ?: return@mapNotNull null
+        val ram = q.num("ram_est") ?: return@mapNotNull null
+        val tier = q.str("tier") ?: return@mapNotNull null
+        StreamQuant(name, q.str("engine").orEmpty(), size.toLong(), ram.toLong(), tier, q.str("best_for"))
+    }
+
+/** Best stream pack to mention: colibri only, chat tier first, then larger size, then name in byte order (fit.md "Sort order"). */
+internal fun preferredStream(streams: List<StreamQuant>): StreamQuant? =
+    streams.filter { it.engine == "colibri" }.sortedWith(
+        compareByDescending<StreamQuant> { it.tier == "chat" }.thenByDescending { it.sizeBytes }
+            .thenComparator { a, b -> a.name.toByteArray().let { x -> b.name.toByteArray().let { y -> java.util.Arrays.compareUnsigned(x, y) } } },
+    ).firstOrNull()
+
+private fun gbDecimal(bytes: Long): String = String.format(java.util.Locale.US, "%.1f GB", bytes / 1e9)
+
 object DeviceBuildsApi {
     private const val SITE = "https://freeweights.allternit.com"
     private val http: OkHttpClient by lazy { OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build() }
 
-    /** `GET /api/models/{org}/{repo}/device` (iOS FreeweightsClient.deviceData), llama.cpp builds only. */
-    suspend fun quants(id: String): FwLoad<List<PhoneQuant>> = withContext(Dispatchers.IO) {
+    /** `GET /api/models/{org}/{repo}/device` (iOS FreeweightsClient.deviceData), llama.cpp builds only for the phone; `stream_quants` are read for the computer note. */
+    suspend fun builds(id: String): FwLoad<DeviceBuilds> = withContext(Dispatchers.IO) {
         val path = id.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
         try {
             http.newCall(Request.Builder().url("$SITE/api/models/$path/device").header("Accept", "application/json").build()).execute().use { r ->
                 val body = r.body?.string().orEmpty()
                 if (!r.isSuccessful) return@withContext FwLoad.Down(if (r.code == 404) "No phone builds for this model" else "Freeweights answered ${r.code}")
                 val root = kotlinx.serialization.json.Json.parseToJsonElement(body)
-                FwLoad.Live(root.listUnder("quants").mapNotNull { q ->
+                val phone = root.listUnder("quants").mapNotNull { q ->
                     val engine = q.str("engine").orEmpty().lowercase()
                     val format = q.str("format").orEmpty().lowercase()
                     if (!(engine.contains("llama") || format == "gguf")) return@mapNotNull null
@@ -91,7 +125,8 @@ object DeviceBuildsApi {
                     // iOS Quant.size is in GB; a value this large is already bytes.
                     val size = q.num("size")?.let { s -> if (s > 100_000) s.toLong() else (s * 1e9).toLong() }
                     PhoneQuant(q.str("name") ?: file.substringAfterLast('/'), size, file, q.str("repo") ?: id)
-                })
+                }
+                FwLoad.Live(DeviceBuilds(phone, parseStreamQuants(root)))
             }
         } catch (e: Exception) {
             FwLoad.Down("Freeweights isn't reachable. Check your connection.")
@@ -261,18 +296,30 @@ private fun Section(title: String, content: @Composable () -> Unit) {
     }
 }
 
+/** iOS streamsFromDiskNote: the phone never streams; this tells the owner a Mac or PC can run the model. */
+@Composable
+private fun StreamsFromDiskNote(streams: List<StreamQuant>) {
+    val s = preferredStream(streams) ?: return
+    val c = AllternitTheme.colors
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp)).padding(14.dp)
+        .testTag("modelStreamsFromDisk").semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Streams from disk", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text("On your Mac or PC: ${gbDecimal(s.sizeBytes)} on disk. " + (s.bestFor ?: "Not on this phone."), color = c.textSecondary, fontSize = 13.sp)
+    }
+}
+
 /** The model page's "Run on this phone" builds with Download (iOS device builds + OnDeviceRuntime.install). */
 @Composable
 internal fun PhoneBuildsSection(m: FwRow) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     remember { PhoneModels.init(context); true }
-    var load by remember { mutableStateOf<FwLoad<List<PhoneQuant>>?>(null) }
+    var load by remember { mutableStateOf<FwLoad<DeviceBuilds>?>(null) }
     var ready by remember { mutableStateOf<Boolean?>(null) }
     var installedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var active by remember { mutableStateOf<Map<String, PhoneModels.Download>>(emptyMap()) }
     var budget by remember { mutableStateOf(0L) }
-    LaunchedEffect(m.id) { load = DeviceBuildsApi.quants(m.id) }
+    LaunchedEffect(m.id) { load = DeviceBuildsApi.builds(m.id) }
     LaunchedEffect(Unit) {
         while (true) {
             withContext(Dispatchers.IO) {
@@ -291,8 +338,12 @@ internal fun PhoneBuildsSection(m: FwRow) {
             is FwLoad.Down -> Text(l.reason, color = c.textSecondary, fontSize = 13.sp)
             is FwLoad.Live -> when {
                 ready == false -> Text("Not available on this build.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("modelPhoneUnavailable"))
-                l.value.isEmpty() -> InlineEmpty("No phone builds for this model yet.", art = EmptyArtKind.Phone)
-                else -> l.value.forEach { q ->
+                l.value.phone.isEmpty() -> {
+                    InlineEmpty("No phone builds for this model yet.", art = EmptyArtKind.Phone)
+                    StreamsFromDiskNote(l.value.stream)
+                }
+                else -> {
+                    l.value.phone.forEach { q ->
                     val key = ModelStore.keyOf(m.id, q.name)
                     val d = active[key]
                     val fits = q.sizeBytes == null || budget <= 0 || q.sizeBytes * 12 / 10 + 400_000_000L <= budget
@@ -311,6 +362,11 @@ internal fun PhoneBuildsSection(m: FwRow) {
                         }
                     }
                     if (d?.status == PhoneModels.Status.Failed) Text(statusText(d), color = AllternitStatic.StatusError, fontSize = 12.sp)
+                    }
+                    // iOS: the note shows only when the phone's own fit is not ok/slow. Android has no fit port,
+                    // so the same condition is "no phone build fits this phone's memory budget".
+                    val anyFits = l.value.phone.any { q -> q.sizeBytes == null || budget <= 0 || q.sizeBytes * 12 / 10 + 400_000_000L <= budget }
+                    if (!anyFits) StreamsFromDiskNote(l.value.stream)
                 }
             }
         }

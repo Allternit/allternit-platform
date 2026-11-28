@@ -225,6 +225,10 @@ On a cloud computer (or a Mac running `allternit-node` with Desktop quit), the s
 
 `engine` is `"pane"` or `"missing"`. The node never starts the pane engine. While none has answered, it checks again at most every 30 seconds. See `cmd/allternit-node/README.md` for the socket paths it checks.
 
+## Browser computer
+
+The browser computer (see [Browser computer](/guides/browser-computer)) does not use these endpoints. Its Terminal attaches to the pty inside the browser tab, so there is no server websocket and no session on the pane engine. It does not appear in `/terminal/list`.
+
 ## Error codes
 
 | Status | Code | Description |
@@ -241,3 +245,4 @@ Input and resize on a terminal whose shell already exited succeed and do nothing
 - [Authentication](/api/authentication)
 - [allternit-mux (folded into the Factory)](/cli/allternit-mux)
 - [VM Sessions API](/api/vm-sessions)
+- [Browser computer](/guides/browser-computer)

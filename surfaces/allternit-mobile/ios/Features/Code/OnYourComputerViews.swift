@@ -111,12 +111,24 @@ struct CodeTerminalPreviewRow: View {
 struct OnYourComputerRow: View {
     let session: LiveSession
     let store: TerminalSessionsStore
+    /// List row, or a Grid / Deck card like the other sessions.
+    var layout: OverviewLayout = .list
     /// Opens a terminal by its session id in the Code terminal.
     let onOpenTerminal: (String, String) -> Void
 
     @ReducedMotion private var reduced
     @State private var confirming = false
     @State private var copiedCommand = false
+    @State private var steering = false
+
+    private var statusColor: Color {
+        switch session.status {
+        case "blocked": return Theme.statusWarning
+        case "busy": return GizziCodeWordmark.coral
+        case "idle": return Theme.statusSuccess
+        default: return Color("TextTertiary")
+        }
+    }
 
     private var name: String { OnYourComputer.displayName(session) }
 
@@ -151,7 +163,7 @@ struct OnYourComputerRow: View {
                 }
                 Spacer(minLength: 4)
                 Circle()
-                    .fill(session.status == "busy" ? GizziCodeWordmark.coral : session.status == "idle" ? Theme.statusSuccess : Color("TextTertiary"))
+                    .fill(statusColor)
                     .frame(width: 8, height: 8)
                     .padding(.top, 6)
                     .accessibilityHidden(true)
@@ -159,6 +171,16 @@ struct OnYourComputerRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(OnYourComputer.harnessName(session.harness)), \(name), \(detail)")
 
+            if OnYourComputer.isBlocked(session) {
+                Text("Needs you · \(OnYourComputer.blockedLabel(since: session.blockedSince))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.statusWarning)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.statusWarning.opacity(0.14))
+                    .clipShape(Capsule())
+                    .accessibilityIdentifier("onYourComputer-blocked-\(session.sessionId)")
+            }
             if !flags.isEmpty {
                 FlowChips(label: "Keeps:", chips: flags)
             }
@@ -181,9 +203,24 @@ struct OnYourComputerRow: View {
             } else if !set.actions.isEmpty {
                 actionButtons(set.actions)
             }
+            if OnYourComputer.hasTerminal(session) || OnYourComputer.canSteer(session) {
+                paneButtons
+            }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, layout == .list ? 10 : 0)
+        .padding(layout == .list ? 0 : 10)
+        .frame(maxWidth: .infinity, maxHeight: layout == .deck ? .infinity : nil, alignment: .topLeading)
+        .background(layout == .list ? Color.clear : Color("BgPanel"))
+        .clipShape(RoundedRectangle(cornerRadius: layout == .list ? 0 : 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: layout == .list ? 0 : 1))
         .animation(reduced ? nil : .easeOut(duration: 0.2), value: job)
+        .sheet(isPresented: $steering) {
+            SteerSheet(session: session, name: name, store: store, onDone: { steering = false })
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .onAppear { openedByPush() }
+        .onChange(of: store.pushTarget) { _, _ in openedByPush() }
         .sheet(isPresented: $confirming) {
             MoveConfirmSheet(session: session, onCancel: { confirming = false }, onMove: {
                 confirming = false
@@ -194,6 +231,48 @@ struct OnYourComputerRow: View {
             })
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// A blocked push for this row opens its terminal (or the steer sheet when it has none).
+    private func openedByPush() {
+        guard let target = store.pushTarget, store.session(for: target)?.sessionId == session.sessionId else { return }
+        store.pushTarget = nil
+        if let id = session.terminalId, !id.isEmpty {
+            onOpenTerminal(id, name)
+        } else if OnYourComputer.canSteer(session) {
+            steering = true
+        }
+    }
+
+    private var paneButtons: some View {
+        HStack(spacing: 8) {
+            if let id = session.terminalId, !id.isEmpty {
+                Button(action: { Haptics.light(); onOpenTerminal(id, name) }) {
+                    Text("Open")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("BgPrimary"))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 36)
+                        .background(Color("TextPrimary"))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open: \(name)")
+            }
+            if OnYourComputer.canSteer(session) {
+                Button(action: { steering = true }) {
+                    Text("Steer")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 36)
+                        .background(Color("BgTertiary"))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Steer: \(name)")
+            }
         }
     }
 
@@ -402,5 +481,67 @@ struct MoveConfirmSheet: View {
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color("BgPrimary").ignoresSafeArea())
+    }
+}
+
+
+/// A short message to a pane's CLI: typed into its terminal, or delivered
+/// through the Factory inbox, by the row's `steer` route.
+struct SteerSheet: View {
+    let session: LiveSession
+    let name: String
+    let store: TerminalSessionsStore
+    let onDone: () -> Void
+
+    @State private var text = ""
+    @State private var sending = false
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Steer \(name)")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+            Text(session.steer == "terminal" ? "Sent to its terminal as typed text." : "Delivered to its inbox.")
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+            TextField("Say what it should do next", text: $text, axis: .vertical)
+                .lineLimit(1...5)
+                .focused($focused)
+                .padding(10)
+                .background(Color("BgTertiary"))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("steer-field")
+            if let error {
+                Text(error).font(.system(size: 13)).foregroundColor(Theme.statusError)
+            }
+            HStack {
+                Button("Cancel", action: onDone).frame(minHeight: 44)
+                Spacer()
+                Button(action: send) {
+                    HStack(spacing: 6) {
+                        if sending { ProgressView().controlSize(.mini) }
+                        Text("Send").font(.system(size: 15, weight: .semibold))
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                }
+                .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .onAppear { focused = true }
+    }
+
+    private func send() {
+        sending = true
+        error = nil
+        Task {
+            let failure = await store.steer(session, text: text)
+            sending = false
+            if let failure { error = failure } else { Haptics.light(); onDone() }
+        }
     }
 }

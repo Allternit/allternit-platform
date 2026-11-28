@@ -21,7 +21,19 @@ Freeweights keeps device data in `catalog/overlay/device.json`, one entry per mo
     "best_for": ["phone", "laptop"],
     "repo": "<other freeweights id, optional>"
   }],
-  "device_formats": ["gguf", "mlx"]
+  "device_formats": ["gguf", "mlx"],
+  "stream_quants": [{
+    "name": "i4-gs64",
+    "format": "colibri",
+    "engine": "colibri",
+    "size": 23100000000,
+    "ram_est": 10000000000,
+    "tier": "chat",
+    "colibri_model": "qwen36-35b",
+    "repo": "org/name on Hugging Face",
+    "metal_ok": false,
+    "best_for": "Chat and code on a Mac or PC with 16 GB or more"
+  }]
 }
 ```
 
@@ -33,6 +45,8 @@ Freeweights keeps device data in `catalog/overlay/device.json`, one entry per mo
 | `ram_est` | Optional. When absent, clients use `size x 1.2 + 0.4 GB`. |
 | `best_for` | `phone`, `laptop`, `workstation`, `browser` |
 | `repo` | Optional. MLX and ONNX builds often live in a sibling Freeweights repo. |
+
+`stream_quants` is optional and sits beside `quants`. Each entry is a colibri pack that keeps `ram_est` bytes of weights in memory and reads the rest from disk. `engine` is always `colibri`, `ram_est` is required, `tier` is `chat` or `background`, and `size` is the download that must be free on disk. Old clients ignore the key. Colibri entries never go inside `quants`, because shipped iPhone builds decode `engine` as a fixed list.
 
 A model with no entry has no device data. Clients show **Size not checked** and no Run button.
 
@@ -54,12 +68,12 @@ The index is one file so a client can badge a whole catalog page without a reque
 The rule is written once in [`spec/on-device/fit.md`](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/fit.md). It defines the function, the inputs, the pick, the verdict for each kind of device, the exact label and `why` strings, and integer arithmetic for the boundaries.
 
 ```ts
-fit(budget: DeviceBudget, quants: Quant[] | null, opts?: {ctx?: number}) -> FitResult
-FitResult = {k: 'ok' | 'slow' | 'no' | 'na' | 'unknown', label, why, quant}
-DeviceBudget = {kind: 'discrete' | 'unified' | 'cpu', fast_bytes, spill_bytes, apple?, browser?, webgpu?}
+fit(budget: DeviceBudget, quants: Quant[] | null, opts?: {ctx?: number}, stream_quants?: StreamQuant[] | null) -> FitResult
+FitResult = {k: 'ok' | 'slow' | 'stream' | 'no' | 'na' | 'unknown', label, why, quant}
+DeviceBudget = {kind: 'discrete' | 'unified' | 'cpu', fast_bytes, spill_bytes, apple?, browser?, webgpu?, disk_free_bytes?}
 ```
 
-The vectors in [`spec/on-device/fit-vectors.json`](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/fit-vectors.json) (59 cases) are the test. Three ports must pass them unchanged:
+The vectors in [`spec/on-device/fit-vectors.json`](https://github.com/Allternit/allternit-platform/blob/main/spec/on-device/fit-vectors.json) (80 cases) are the test. Three ports must pass them unchanged:
 
 | Port | Where |
 |---|---|
@@ -69,7 +83,13 @@ The vectors in [`spec/on-device/fit-vectors.json`](https://github.com/Allternit/
 
 When the rule changes, change the spec and the vectors first, then the three ports in the same release.
 
-Labels: `Fits`, `May be slow`, `Tight fit`, `Won't fit`, `No WebGPU`, `No browser build`, `No build for this device`, `Size not checked`.
+Labels: `Fits`, `May be slow`, `Tight fit`, `Streams from disk`, `Won't fit`, `No WebGPU`, `No browser build`, `No build for this device`, `Size not checked`.
+
+### Stream verdict
+
+`stream` means the model does not fit in memory but a colibri pack can keep part of it resident and read the rest from disk. It runs after the normal pick and only replaces `no`, or `na` when there were no candidates. `ok` and `slow` always win. `unknown` is returned only when both `quants` and `stream_quants` are null or empty. It needs `disk_free_bytes` on the budget, which only Mac arm64, Windows x64, Linux x64 and Linux arm64 hosts set. A browser, a phone, Windows Arm and an Intel Mac never get `stream` for themselves. They show it for another device's budget.
+
+A pack qualifies when `engine` is `colibri`, `size <= disk_free_bytes`, and `ram_est` fits: on unified and cpu budgets `ram_est <= fast_bytes`, on discrete budgets `ram_est x 10 <= spill_bytes x 6` (0.6 of system RAM, video memory is not used). The pick takes the `chat` tier before `background`, then the larger `size`, then the name in byte order. The `why` text is `Keeps N GB in memory, reads the rest from disk` for chat and `Slow. Best for jobs you leave running` for background, where N is `ram_est` in GB with one decimal. The full rule is in the fit spec.
 
 How `fast_bytes` is made, by detector:
 

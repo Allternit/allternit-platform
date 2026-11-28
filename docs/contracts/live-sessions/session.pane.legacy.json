@@ -1,0 +1,19 @@
+{
+  "address": "dev/allternit-gizzi",
+  "name": "allternit-gizzi",
+  "harness": "gizzi",
+  "machine": "m_4f2a",
+  "machineName": "Dev MacBook",
+  "sessionId": "ao-build",
+  "paneId": "w1:p1",
+  "cwd": "allternit",
+  "status": "idle",
+  "since": "2026-11-27T09:00:00+00:00",
+  "tier": "push",
+  "unread": 0,
+  "holders": [],
+  "carriedFlags": [],
+  "canCopy": false,
+  "movable": "here",
+  "external": false
+}

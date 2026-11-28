@@ -161,6 +161,24 @@ jobs:
         shell: bash
         run: bash script/check-ts-nocheck.sh
 
+  picker-snapshot:
+    name: Picker snapshot is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      # The snapshot is generated from cli-catalog.json and committed. A PR that
+      # edits the catalog must also commit `bun script/gen-picker-snapshot.ts`
+      # output; the release build refuses a stale snapshot, so catch it here.
+      - name: Check snapshot and runtime registry
+        working-directory: cmd/gizzi-code
+        run: |
+          bun script/gen-picker-snapshot.ts --check
+          bun script/check-runtime-registry.ts
+
   # Secret scanning lives in .github/workflows/secrets.yml, which already scans
   # every pull request and push (this package included). A second copy here
   # spent CI minutes on the same diff.

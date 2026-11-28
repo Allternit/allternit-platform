@@ -60,7 +60,7 @@ func computerStatusLabel(status: String, wakeable: Bool) -> String {
 /// so ⋯ fits beside New chat. Pin / Unpin and Archive act on the open chat,
 /// so they show only while a saved chat is open (web ChatsScreen).
 enum ChatMenuItem: String, CaseIterable, Sendable {
-    case runOnPhone, captureToBrain, shareLink, pin, unpin, archive
+    case runOnPhone, captureToBrain, shareLink, pin, unpin, saveTestCase, archive
 }
 
 struct ChatMenuInput: Equatable, Sendable {
@@ -82,6 +82,8 @@ func chatMenuItems(_ input: ChatMenuInput) -> [ChatMenuItem] {
     if input.hasSession, input.hasMessages { items.append(.shareLink) }
     if input.hasSession {
         items.append(input.pinned ? .unpin : .pin)
+        // Save as test case: needs a saved chat with something in it.
+        if input.hasMessages { items.append(.saveTestCase) }
         items.append(.archive)
     }
     return items

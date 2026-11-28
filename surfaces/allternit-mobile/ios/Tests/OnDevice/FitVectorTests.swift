@@ -15,20 +15,52 @@ final class FitVectorTests: XCTestCase {
         let name: String
         let budget: DeviceBudget
         let quants: [Quant]?
+        let streamQuants: [StreamQuant]?
         let expect: Expect
+
+        enum CodingKeys: String, CodingKey {
+            case name, budget, quants, expect
+            case streamQuants = "stream_quants"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            budget = try c.decode(DeviceBudget.self, forKey: .budget)
+            quants = c.decodeLossyArray(Quant.self, forKey: .quants)
+            streamQuants = c.decodeLossyArray(StreamQuant.self, forKey: .streamQuants)
+            expect = try c.decode(Expect.self, forKey: .expect)
+        }
     }
 
     func testEveryFitVector() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "fit-vectors", withExtension: "json"),
                                 "fit-vectors.json missing from the test bundle")
         let vectors = try JSONDecoder().decode([Vector].self, from: Data(contentsOf: url))
-        XCTAssertEqual(vectors.count, 65, "the canonical file has 65 vectors; update this if the spec adds more")
+        XCTAssertEqual(vectors.count, 80, "the canonical file has 80 vectors (65 + 15 stream); update this if the spec adds more")
         for v in vectors {
-            let r = Fit.fit(v.budget, v.quants)
+            let r = Fit.fit(v.budget, v.quants, streamQuants: v.streamQuants)
             XCTAssertEqual(r.k, v.expect.k, v.name)
             XCTAssertEqual(r.label, v.expect.label, v.name)
-            XCTAssertEqual(r.quant?.name, v.expect.quant, v.name)
+            XCTAssertEqual(r.quantName, v.expect.quant, v.name)
         }
+    }
+
+    /// A device.json entry with an engine this build does not know keeps its
+    /// other quants and drops only the unknown one (shipped builds threw).
+    func testUnknownEngineDropsOnlyThatQuant() throws {
+        let json = """
+        {"id": "a/b",
+         "quants": [
+           {"name": "Q4", "format": "gguf", "engine": "llama.cpp", "size": 1e9},
+           {"name": "X", "format": "x", "engine": "some-future-engine", "size": 1e9}],
+         "stream_quants": [
+           {"name": "i4", "format": "colibri", "engine": "colibri", "size": 2e9, "ram_est": 1e9, "tier": "chat"},
+           {"name": "bad", "engine": "colibri", "size": 2e9, "tier": "chat"}]}
+        """
+        let d = try JSONDecoder().decode(FreeweightsDeviceData.self, from: Data(json.utf8))
+        XCTAssertEqual(d.quants.map(\.name), ["Q4"])
+        XCTAssertEqual(d.streamQuants.map(\.name), ["i4"])
     }
 
     /// The `why` strings are not in the vectors; pin the GB formatting rules

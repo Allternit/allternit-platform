@@ -362,6 +362,24 @@ The owner's browser proxy (`POST /api/v1/runtime-devices/:id/proxy`) also sends 
 
 **What clients must do.** iOS, Android, web (+ phone layout and PWA) and the CLI show a roots switcher in the Files tab only when `wholeDisk.enabled` is true (the Files drive stays the first entry). Settings shows a switch only when `wholeDisk.available` is true; turning it on is a hold-to-confirm sheet that says plainly the agent and you can open, change and delete any file on the computer, then sends `confirm: true`. Show `message` on 403 `whole_disk_off` with a link to that switch.
 
+## Browser computers (`kind: "browser"`)
+
+A browser computer is a Linux computer that lives in one browser profile: the VM and its disk run in the tab, with no server row. The runtime API (`cmd/allternit-api`) knows the kind so every client and the database agree on the string, but it never creates one.
+
+- **Kind string.** `"browser"` (`ComputerKind::Browser` in `cmd/allternit-api/src/computer_routes.rs`). The runtime parses it next to `local`, `byo_vps`, `managed`, `byoc` and `cloud_desktop`. Client label: `Browser computer`.
+- **Create is refused.** `POST /api/v1/computers` with `kind: "browser"` returns **400** before any template lookup, and nothing is stored:
+
+  ```json
+  {
+    "error": "browser_computer_is_local",
+    "message": "A browser computer lives in your browser. Start it from the chat or the Computers screen on this device."
+  }
+  ```
+
+  Clients show `message` as is and start the computer in the browser instead. There is no other route for this kind.
+- **Where the record lives.** In IndexedDB on the box origin (`box.allternit.com`, database `allternit-box`, store `computers`), next to its disk. The app reads it over the frame's RPC (`computers.list`). It is not in `GET /api/v1/computers` or in the console list above.
+- **No migration.** The runtime database never stores a browser computer, so `computers.kind` keeps the CHECK from V99 (it does not list `browser`). The cloud-api schema has no kind CHECK.
+
 ## Migrations
 
 | Number | Content |

@@ -13,6 +13,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { withRetry, guardSocket } = require('./retry-download.cjs');
 
 const LIMA_VERSION = '2.1.2';
 const outDir = path.join(__dirname, '..', 'resources', 'lima');
@@ -62,7 +63,7 @@ function alreadyPresent(binaryPath, platform) {
 
 function download(url, dest, cb) {
   const file = fs.createWriteStream(dest);
-  https.get(url, (res) => {
+  guardSocket(https.get(url, (res) => {
     if (res.statusCode === 301 || res.statusCode === 302) {
       file.close();
       fs.unlinkSync(dest);
@@ -75,7 +76,7 @@ function download(url, dest, cb) {
     }
     res.pipe(file);
     file.on('finish', () => file.close(cb));
-  }).on('error', (err) => {
+  }), url).on('error', (err) => {
     try { fs.unlinkSync(dest); } catch { /* ignore */ }
     cb(err);
   });
@@ -127,11 +128,9 @@ function fetchOne(platform, rawArch) {
     const tarballPath = path.join(outDir, tarballName);
     fs.mkdirSync(outDir, { recursive: true });
     console.log(`Downloading ${url}...`);
-    download(url, tarballPath, (err) => {
-      if (err) {
-        reject(err);
-        return;
-      }
+    withRetry(`Lima ${tarballName}`, () => new Promise((done, fail) => {
+      download(url, tarballPath, (err) => (err ? fail(err) : done()));
+    })).then(() => {
       try {
         extractLimactl(tarballPath, binaryPath);
         fs.unlinkSync(tarballPath);
@@ -140,7 +139,7 @@ function fetchOne(platform, rawArch) {
       } catch (e) {
         reject(e);
       }
-    });
+    }, reject);
   });
 }
 

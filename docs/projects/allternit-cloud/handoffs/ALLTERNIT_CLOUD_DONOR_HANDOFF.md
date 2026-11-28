@@ -257,7 +257,7 @@ Results:
   - Cloud-owned **hardening** boundaries (`hardening`).
   - Product lane **status reporting** (`product_lanes`).
 - The existing `Scheduler` was reframed as the **Cloud Supply Optimizer** and its struct names were left unchanged.
-- All generic node/resource/placement/identity/usage semantics remain mapped **downward** to AllternitOS as the canonical authority.
+- All generic node/resource/placement/identity/usage semantics are mapped to the os contracts, which the platform repo now owns (`spec/Contracts/os/v1`).
 
 ---
 

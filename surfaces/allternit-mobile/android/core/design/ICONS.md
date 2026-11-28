@@ -18,7 +18,7 @@ node core/design/tools/gen-icons.mjs <allternit-ai>/node_modules/@phosphor-icons
 `sf.txt` is `grep -rhoE '(systemName|systemImage): *"[^"]+"' ios/Features ios/Shared`, de-duplicated.
 The generator is `core/design/tools/gen-icons.mjs`.
 
-## SF Symbol to Phosphor (189 symbols used in ios/Features)
+## SF Symbol to Phosphor (190 symbols used in ios/Features)
 
 | SF Symbol (iOS) | Phosphor | Android drawable |
 |---|---|---|
@@ -104,6 +104,7 @@ The generator is `core/design/tools/gen-icons.mjs`.
 | `figure.walk.motion` | `person-simple-walk` | `ph_person_simple_walk` |
 | `flag` | `flag` | `ph_flag` |
 | `flame` | `flame` | `ph_flame` |
+| `flask` | `flask` | `ph_flask` |
 | `floppy.disk` | `floppy-disk` | `ph_floppy_disk` |
 | `folder` | `folder` | `ph_folder` |
 | `folder.badge.plus` | `folder-plus` | `ph_folder_plus` |

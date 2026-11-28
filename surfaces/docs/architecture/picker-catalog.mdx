@@ -1,0 +1,67 @@
+---
+title: Picker catalog
+description: The one list every model and runtime picker reads, including which choices are locked and why.
+---
+
+Every picker reads the same catalog. This covers Desktop, ai.allternit.com, the phone layout, the PWA, iOS, Android and Gizzi Code. The server decides what is locked, so the rule exists in one place.
+
+The schema and fixtures live in `docs/contracts/picker-catalog/`.
+
+## Endpoint
+
+```
+GET /api/v1/picker-catalog
+```
+
+It works signed out. The response carries an ETag and `Cache-Control: max-age=21600`. cloud-api serves it. allternit-api serves the same shape and adds `installed` and `signedIn` for its own computer.
+
+## Shape
+
+```json
+{
+  "schema": 1,
+  "generatedAt": "2026-11-27T15:00:00Z",
+  "runtimes": [{ "id": "codex", "label": "Codex", "defaultModel": "gpt-6.1-sol", "models": [] }],
+  "brains": [{ "id": "allternit-cloud", "kind": "cloud", "access": { "state": "ok" } }],
+  "cloudModels": [{ "id": "allternit/gpt-6.1-sol", "access": { "state": "ok" } }],
+  "onDevice": [{ "id": "gemma-4-e2b-local", "name": "Gemma 4 E2B", "sizeBytes": 3200000000, "minRamGb": 8, "platforms": ["web", "macos", "windows", "linux"] }]
+}
+```
+
+Runtime ids and models come from `cli-catalog.json` in Gizzi Code. Bots are not in the catalog. The Bot layer reads the existing bots route.
+
+## Access
+
+Brains and Cloud models carry an `access` object.
+
+| `state` | What the client does |
+|---|---|
+| `ok` | Show the choice and allow it. |
+| `locked` | Show the choice, disabled, with `reason`. Offer `action` if there is one. |
+| `hidden` | Do not show the choice. |
+
+A locked choice always has a `reason`. Signed out, every Cloud model is locked with the reason "Sign in" and the action `sign_in`. With no credits, the reason is "No credits left" and the action is `add_credits`.
+
+## Where the locks come from
+
+cloud-api computes `access` in `routes/picker_catalog.rs`:
+
+- No valid sign-in: Cloud is locked with "Sign in".
+- Signed in: the lock follows the same credits rule as `GET /api/v1/billing/credits` (`cloud_models`). A provider the account has its own key for stays open, because the server sends those requests through the key.
+- Open models (`lane: "open"`) follow the Allternit Open gate instead, the same one chat uses: terms, then plan, then allowance, then bought credits. The reasons are "Accept the open-model terms" (`accept_terms`), "Needs a paid plan" (`upgrade`), "Open-model allowance used" (`add_credits`) and "No credits left" (`add_credits`).
+- A model `/v1/models` marks `hidden` (a retired alias) is `hidden`. The Cloud model list is the same list `/v1/models` offers, so disabled pools are left out of both.
+
+allternit-api (`picker_catalog.rs`) builds `runtimes` from its own copy of `cli-catalog.json`. It gets `brains` and `cloudModels` from cloud-api's route, forwarding the caller's `Authorization`. For the computer's owner it adds `installed` and `signedIn` from its CLI check. If no cloud URL is set, `cloudModels` is empty and the Allternit Cloud brain is locked with "Allternit Cloud is not set up on this computer". If the cloud can't be reached, the reason is "Allternit Cloud can't be reached" with the action `retry`.
+
+The ETag covers the whole body except `generatedAt`, and `If-None-Match` gets a 304. Signed-out responses are `public, max-age=21600`. Signed-in responses are `private, max-age=21600`. The owner's response on a computer is `private, no-cache`, because install state changes there.
+
+In `runtimes`, a model's `aliases` are the retired ids that now point to it. The native `allternit` runtime has no tool. Its `logo` and `defaultModel` are empty, its `models` list is empty and `signIn` is `none`.
+
+## Fixtures
+
+| File | Case |
+|---|---|
+| `signed-out.json` | All Cloud choices locked with "Sign in". |
+| `funded.json` | All Cloud choices open. |
+| `no-credits.json` | Cloud locked with a reason and an action. |
+| `hidden-model.json` | One Cloud model hidden, the rest open. |

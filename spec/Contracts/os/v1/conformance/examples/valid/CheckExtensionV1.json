@@ -1,0 +1,6 @@
+{
+  "action_class": "file_write",
+  "action_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "approval_token": null,
+  "autonomy_level": "ask_risky"
+}

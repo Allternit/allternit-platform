@@ -57,7 +57,7 @@ struct DevicePairingView: View {
     @State private var devicesError: String? = nil
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Devices") {
             approveSection
             devicesSection
         }

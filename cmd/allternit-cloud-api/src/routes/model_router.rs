@@ -57,8 +57,26 @@ pub struct ModelListResponse {
 /// Research (`research_only`) rows are listed only to a signed-in caller with
 /// the research flag (contract D11).
 pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Json<ModelListResponse>, ApiError> {
+    let mut models = offered_models(&state, &headers).await?;
+    // The linked rows bill the person's own org: no shared pool, no funding filter.
+    models.extend(anthropic_linked::models_for_caller(&state, &headers).await);
+
+    Ok(Json(ModelListResponse {
+        object: "list".to_string(),
+        data: models,
+    }))
+}
+
+/// The Allternit Cloud models offered to this caller: the router's list
+/// (Open Research rows only with the flag, D11) minus the models of a
+/// disabled shared pool. `/v1/models` and `/api/v1/picker-catalog` both read
+/// this, so the two lists never differ.
+pub(crate) async fn offered_models(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<Vec<crate::model_router::ModelInfo>, ApiError> {
     // Open Research rows only for a signed-in caller with the flag (D11).
-    let research = caller_has_open_research(&state, &headers).await;
+    let research = caller_has_open_research(state, headers).await;
     let mut models = state.model_router.list_models_for(research).await;
     // A disabled shared pool is refused by chat_completions. Do not offer its
     // models in the apps' picker either. Unseeded providers keep the existing
@@ -70,13 +88,7 @@ pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap)
     .await
     .map_err(ApiError::DatabaseError)?;
     models.retain(|model| !disabled.iter().any(|id| model.provider.as_ref() == Some(id)));
-    // The linked rows bill the person's own org: no shared pool, no funding filter.
-    models.extend(anthropic_linked::models_for_caller(&state, &headers).await);
-
-    Ok(Json(ModelListResponse {
-        object: "list".to_string(),
-        data: models,
-    }))
+    Ok(models)
 }
 
 /// Whether the caller of `GET /v1/models` has the Open Research flag. No

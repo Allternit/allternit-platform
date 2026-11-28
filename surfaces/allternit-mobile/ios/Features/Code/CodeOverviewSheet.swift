@@ -199,12 +199,12 @@ struct CodeSessionsOverview: View {
         let result = filterCodeSessionRows(sessions, filter: filter, status: status)
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let items = q.isEmpty ? result.items : result.items.filter { ($0.name ?? "").lowercased().contains(q) }
-        return VStack(spacing: 0) {
-            header(counts: result.counts)
-            if searching || !query.isEmpty {
-                ProjectsSearchField(query: $query, placeholder: "Search code")
-            }
-            List {
+        return ZStack(alignment: .top) {
+            // The block title docks into the header's centre as the list scrolls.
+            DockingTitleList(title: "Code sessions", chrome: .overlay(barCenter: 30)) {
+                if searching || !query.isEmpty {
+                    ProjectsSearchField(query: $query, placeholder: "Search code").plainCodeRow()
+                }
                 computersSection
                 if onOpenTerminal != nil {
                     terminalsSection
@@ -242,14 +242,14 @@ struct CodeSessionsOverview: View {
                             }
                         case .grid:
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                                ForEach(items) { sessionCard($0, tall: false) }
+                                ForEach(items) { sessionCell($0, tall: false) }
                             }
                             .padding(.vertical, 4)
                             .plainCodeRow()
                         case .deck:
                             ScrollView(.horizontal, showsIndicators: false) {
                                 LazyHStack(spacing: 12) {
-                                    ForEach(items) { sessionCard($0, tall: true).frame(width: OverviewDeck.width, height: 320) }
+                                    ForEach(items) { sessionCell($0, tall: true).frame(width: OverviewDeck.width, height: 366) }
                                 }
                                 .padding(.vertical, 8)
                                 .scrollTargetLayout()
@@ -263,8 +263,7 @@ struct CodeSessionsOverview: View {
                 }
                 Color.clear.frame(height: 72).plainCodeRow()
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 60) }
             .scrollDismissesKeyboard(.interactively)
             .refreshable {
                 await onRefresh()
@@ -272,6 +271,7 @@ struct CodeSessionsOverview: View {
                 if onOpenTerminal != nil { await terminalSessions.refresh() }
             }
             .animation(reduced ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: filter)
+            header(counts: result.counts)
         }
         .overlay(alignment: .bottom) {
             CodeFloatingAction(label: "New session") { go(.start) }
@@ -307,7 +307,7 @@ struct CodeSessionsOverview: View {
                 case .deck:
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 12) {
-                            ForEach(terminals) { terminalRow($0).frame(width: OverviewDeck.width, height: 220) }
+                            ForEach(terminals) { terminalRow($0).frame(width: OverviewDeck.width, height: 266) }
                         }
                         .padding(.vertical, 8)
                         .scrollTargetLayout()
@@ -325,22 +325,48 @@ struct CodeSessionsOverview: View {
         CodeTerminalPreviewRow(terminal: terminal, layout: layout) {
             onOpenTerminal?(terminal.sessionId, TerminalPreview.title(terminal))
         }
+        .holdToDelete("End and delete this terminal?", enabled: true) {
+            let id = terminal.sessionId
+            Task { await terminalSessions.closeTerminal(sessionId: id) }
+        }
     }
 
     @ViewBuilder
     private var onYourComputerSection: some View {
-        let external = terminalSessions.externalSessions
+        let external = terminalSessions.rowSessions
         if terminalSessions.adoptSupport == .yes, !external.isEmpty {
             Section {
-                ForEach(external) { session in
-                    OnYourComputerRow(session: session, store: terminalSessions) { id, title in
-                        onOpenTerminal?(id, title)
+                switch layout {
+                case .list:
+                    ForEach(external) { session in
+                        externalRow(session).plainCodeRow()
                     }
+                case .grid:
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        ForEach(external) { externalRow($0) }
+                    }
+                    .padding(.vertical, 4)
+                    .plainCodeRow()
+                case .deck:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(external) { externalRow($0).frame(width: OverviewDeck.width) }
+                        }
+                        .padding(.vertical, 8)
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
                     .plainCodeRow()
                 }
             } header: {
                 sectionLabel(onYourComputerTitle)
             }
+        }
+    }
+
+    private func externalRow(_ session: LiveSession) -> some View {
+        OnYourComputerRow(session: session, store: terminalSessions, layout: layout) { id, title in
+            onOpenTerminal?(id, title)
         }
     }
 
@@ -365,16 +391,15 @@ struct CodeSessionsOverview: View {
                 )
             }
         }
-        .overlay {
-            Text("Code sessions")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(Color("TextPrimary"))
-                .accessibilityAddTraits(.isHeader)
-                .allowsHitTesting(false)
-        }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 4)
+    }
+
+    /// A Grid / Deck card; press and hold the card to delete.
+    private func sessionCell(_ session: AgentSession, tall: Bool) -> some View {
+        sessionCard(session, tall: tall)
+            .holdToDelete("Delete this session?", enabled: onDelete != nil) { onDelete?(session) }
     }
 
     /// A card for Grid and Deck: title, ⋯ menu, the last exchange, its age.
@@ -546,24 +571,20 @@ struct CodeSessionsOverview: View {
 
     // MARK: Sessions
 
-    @ViewBuilder
     private func sessionRow(_ session: AgentSession) -> some View {
         sessionRowBody(session)
-        if status(session) == .archived, let onDelete {
-            ACIHoldButton(title: "Hold to delete", danger: true) { onDelete(session) }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .plainCodeRow()
-        }
     }
 
     private func sessionRowBody(_ session: AgentSession) -> some View {
         let s = status(session)
         let unread = shellSessions.isUnread(session) && s != .working
         return Button(action: { onOpenSession(session) }) {
-            CodeSessionStatusRow(session: session, status: s, unread: unread)
+            CodeSessionStatusRow(session: session, status: s, unread: unread,
+                                 preview: previews[session.id]?.last?.text)
         }
         .buttonStyle(.plain)
+        .holdToDelete("Delete this session?", enabled: onDelete != nil) { onDelete?(session) }
+        .task(id: session.id) { await loadPreview(session) }
         .plainCodeRow()
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if s != .archived {
@@ -575,16 +596,21 @@ struct CodeSessionsOverview: View {
     }
 }
 
-/// One Code session row: status icon, title, "Status · age", unread dot.
-/// Shared by the sessions list and the device sheet.
+/// One Code session row: status mark, title and relative time, the last
+/// message on one line, unread dot. Shared by the sessions list and the
+/// device sheet (which passes no preview, so it shows "Status" there).
 struct CodeSessionStatusRow: View {
     let session: AgentSession
     let status: CodeSessionFilterStatus
     var unread = false
+    /// The newest message's text; nil while loading or when there is none.
+    var preview: String? = nil
 
     private var title: String { session.displayTitle }
-    private var meta: String {
-        [status.label, CodeSessionDates.age(session)].filter { !$0.isEmpty }.joined(separator: " · ")
+    private var age: String { CodeSessionDates.age(session) }
+    private var line: String {
+        let text = (preview ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? status.label : text
     }
 
     var body: some View {
@@ -592,27 +618,33 @@ struct CodeSessionStatusRow: View {
             CodeSessionStatusIcon(status: status)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15, weight: unread ? .semibold : .regular))
-                    .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(1)
-                if !meta.isEmpty {
-                    Text(meta)
-                        .font(.system(size: 12))
-                        .foregroundColor(Color("TextSecondary"))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 15, weight: unread ? .semibold : .regular))
+                        .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if !age.isEmpty {
+                        Text(age)
+                            .font(.system(size: 12))
+                            .foregroundColor(Color("TextTertiary"))
+                            .lineLimit(1)
+                    }
                 }
+                Text(line)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(1)
             }
-            Spacer(minLength: 8)
             if unread {
                 Circle().fill(Color.blue).frame(width: 8, height: 8)
                     .accessibilityHidden(true)
             }
         }
-        .frame(minHeight: 52)
+        .frame(minHeight: 56)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([title, status.label, unread ? "New" : ""].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel([title, status.label, age, unread ? "New" : ""].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 }
 
@@ -672,7 +704,36 @@ struct CodeFloatingAction: View {
     }
 }
 
+/// Press and hold a row to delete it: a haptic, then one confirmation.
+private struct HoldToDelete: ViewModifier {
+    let title: String
+    let enabled: Bool
+    let onDelete: () -> Void
+    @State private var confirming = false
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in
+                    Haptics.medium()
+                    confirming = true
+                })
+                .confirmationDialog(title, isPresented: $confirming, titleVisibility: .visible) {
+                    Button("Delete", role: .destructive, action: onDelete)
+                    Button("Cancel", role: .cancel) {}
+                }
+                .accessibilityAction(named: "Delete", onDelete)
+        } else {
+            content
+        }
+    }
+}
+
 private extension View {
+    func holdToDelete(_ title: String, enabled: Bool, onDelete: @escaping () -> Void) -> some View {
+        modifier(HoldToDelete(title: title, enabled: enabled, onDelete: onDelete))
+    }
+
     /// A List row with no inset background or separator (the view draws its own).
     func plainCodeRow() -> some View {
         self.listRowBackground(Color.clear)

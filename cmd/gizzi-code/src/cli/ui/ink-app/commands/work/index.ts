@@ -27,6 +27,8 @@ export const routines = {
   type: 'local-jsx',
   name: 'routines',
   aliases: ['routine'],
+  // Hidden alias of /loops (overhaul plan D4): still opens the routines view.
+  isHidden: true,
   description: 'Your routines with next and last runs (p pauses or resumes)',
   load: () => import('./routines.js'),
 } satisfies Command
@@ -37,4 +39,31 @@ export const computers = {
   description: 'Your computers grouped, with status and meters; open one for its snapshot, services and ports (read-only)',
   isEnabled: () => consoleEnabled(),
   load: () => import('./computers.js'),
+} satisfies Command
+
+/** The Sleep tab of the work views. Reached from the work views, not listed as its own slash command (D11). */
+export const sleep = {
+  type: 'local-jsx',
+  name: 'sleep',
+  description: 'Allternit Sleep: last and next run, last report (n run now · p pause/resume)',
+  isHidden: true,
+  load: () => import('./sleep.js'),
+} satisfies Command
+
+/** Pods view (the Office floor's grouping). Hidden: reached from the team/factory entry, not a new top-level command (D11). */
+export const pods = {
+  type: 'local-jsx',
+  name: 'pods',
+  description: 'Your pods: Chief, one per active project, Team, with their bots and state',
+  isHidden: true,
+  load: () => import('./pods.js'),
+} satisfies Command
+
+/** Connections as List, Grid or Deck over the live catalog. Hidden like Sleep (D11). */
+export const connections = {
+  type: 'local-jsx',
+  name: 'connections',
+  description: 'Connections as List, Grid or Deck with a capped More (tab mode · / filter · m more)',
+  isHidden: true,
+  load: () => import('./connections.js'),
 } satisfies Command

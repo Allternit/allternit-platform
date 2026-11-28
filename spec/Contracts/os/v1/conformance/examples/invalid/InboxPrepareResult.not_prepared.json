@@ -1,0 +1,23 @@
+{
+  "id": "apr_01",
+  "kind": "approval",
+  "action_class": "deploy",
+  "action_summary": "Deploy m.allternit.com from build 512.",
+  "action_payload": {
+    "target": "pages:allternit-m",
+    "build": 512
+  },
+  "assignee": "owner",
+  "deadline": "2026-11-27T13:00:00Z",
+  "urgency": "high",
+  "run_id": "run_01",
+  "source_store": "kernel",
+  "status": "open",
+  "attention_id": "att_01",
+  "state": "approved",
+  "draft": {
+    "action_class": "deploy",
+    "action_text": "wrangler pages deploy dist --project-name allternit-m",
+    "payload_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useExitOnCtrlCDWithKeybindings } from './../../hooks/useExitOnCtrlCDWithKeybindings.ts';
 import { useShortcutDisplay } from './../../keybindings/useShortcutDisplay.ts';
-import { builtInCommandNames, type Command, type CommandResultDisplay, INTERNAL_ONLY_COMMANDS } from '../../commands';
+import { builtInCommandNames, type Command, type CommandResultDisplay } from '../../commands';
+import { isHelpVisible } from '../../utils/suggestions/commandSource';
 import { useIsInsideModal } from '../../context/modalContext';
 import { useTerminalSize } from '../../hooks/useTerminalSize';
 import { Box, Link, Text } from '../../ink';
@@ -39,17 +40,18 @@ export function HelpV2({
   const exitState = useExitOnCtrlCDWithKeybindings(close);
   const dismissShortcut = useShortcutDisplay("help:dismiss", "Help", "esc");
   const builtinNames = builtInCommandNames();
-  const builtinCommands = commands.filter(cmd => builtinNames.has(cmd.name) && !cmd.isHidden);
+  // Listed commands plus the few hidden aliases /help still names (e.g. /routines under Workspace).
+  const builtinCommands = commands.filter(cmd => builtinNames.has(cmd.name) && isHelpVisible(cmd));
   const t4 = [];
 
   const antOnlyCommands = t4;
-  const t3 = commands.filter(cmd_2 => !builtinNames.has(cmd_2.name) && !cmd_2.isHidden);
+  const t3 = commands.filter(cmd_2 => !builtinNames.has(cmd_2.name) && isHelpVisible(cmd_2));
 
   const customCommands = t3;
   const t4_2 = <Tab key="general" title="general"><General /></Tab>;
 
   const tabs = [t4_2];
-  const t5 = <Tab key="commands" title="commands"><Commands commands={builtinCommands} maxHeight={maxHeight} columns={columns} title="Browse default commands:" onCancel={close} /></Tab>;
+  const t5 = <Tab key="commands" title="commands"><Commands commands={builtinCommands} maxHeight={maxHeight} columns={columns} title="Browse default commands by job:" onCancel={close} grouped={true} /></Tab>;
 
   tabs.push(t5);
   const t6 = <Tab key="custom" title="custom-commands"><Commands commands={customCommands} maxHeight={maxHeight} columns={columns} title="Browse custom commands:" emptyMessage="No custom commands found" onCancel={close} /></Tab>;

@@ -1,5 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
+import fsSync from "fs"
+import { Installation } from "@/shared/installation"
 
 /**
  * Pure planning/detect logic for `gizzi uninstall`, kept separate from the
@@ -143,4 +145,58 @@ export async function buildUninstallPlan(args: UninstallPlanArgs): Promise<Unins
     removeGizziHome: !args.keepConfig,
     packageHint: packageUninstallCommand(method),
   }
+}
+
+export type DesktopUninstallPlan =
+  | { desktop: false }
+  | {
+      desktop: true
+      /** The ~/.local/bin/gizzi symlink to Desktop's copy, when one exists. The only thing we may remove. */
+      link?: string
+      /** Where Desktop's real copy lives. Never removed. */
+      realPath: string
+    }
+
+export type DesktopUninstallDeps = {
+  execPath?: string
+  argv1?: string
+  home?: string
+  env?: NodeJS.ProcessEnv
+  realpath?: (p: string) => string | undefined
+  isSymlink?: (p: string) => boolean
+}
+
+/**
+ * When the running gizzi resolves (through symlinks) to Allternit Desktop's
+ * bundled copy, uninstalling must never touch that copy: Desktop owns it.
+ * The only removable item is the user's ~/.local/bin/gizzi symlink.
+ */
+export function planDesktopUninstall(deps: DesktopUninstallDeps = {}): DesktopUninstallPlan {
+  const real =
+    deps.realpath ??
+    ((p: string) => {
+      try {
+        return fsSync.realpathSync(p)
+      } catch {
+        return undefined
+      }
+    })
+  const isSymlink =
+    deps.isSymlink ??
+    ((p: string) => {
+      try {
+        return fsSync.lstatSync(p).isSymbolicLink()
+      } catch {
+        return false
+      }
+    })
+  const execPath = deps.execPath ?? process.execPath
+  const execReal = real(execPath) ?? execPath
+  const argvReal = deps.argv1 ?? process.argv[1] ? real(deps.argv1 ?? process.argv[1]!) : undefined
+  if (!Installation.isDesktopManaged([execReal, argvReal], deps.env ?? process.env)) return { desktop: false }
+  const link = path.join(deps.home ?? process.env.HOME ?? "", ".local", "bin", "gizzi")
+  const linkReal = real(link)
+  const removable =
+    isSymlink(link) && !!linkReal && Installation.isDesktopManaged([linkReal], {}) && !link.toLowerCase().includes(".app/")
+  return { desktop: true, realPath: execReal, link: removable ? link : undefined }
 }

@@ -87,7 +87,7 @@ import { composeTurnSystem } from "@/runtime/session/system-header"
 import { RepoMap } from "@/codemap/repo-map"
 import * as BotInbox from "@/runtime/bots/bot-inbox"
 import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
-import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
+import { messageAgentOffered, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
 import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
@@ -2077,11 +2077,10 @@ const message = await createUserMessage(input)
       })
     }
 
-    // Bot Mode (B4/D5): message_agent exists only in canonical bot chats.
-    // Same gate-and-delete precedent as mobile gating above — non-canonical
-    // sessions (regular chats, subagents, coordinator workers) never see it.
+    // message_agent (plan D9): offered in normal sessions (messages another live
+    // session) and bot chats; subagents and coordinator workers never see it.
     if (MessageAgentTool.id in tools) {
-      const allowed = await isMessageAgentSession(input.session.id).catch((error) => {
+      const allowed = await messageAgentOffered(input.session).catch((error) => {
         log.warn("message_agent gating check failed; hiding tool", { sessionID: input.session.id, error })
         return false
       })

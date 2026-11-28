@@ -11,7 +11,7 @@ A live session is an agent running in a terminal on your computer: Claude Code, 
 gizzi agents sessions
 ```
 
-Each row shows the address, `busy` or `idle`, the delivery tier, whether it can move into Allternit (`movable`), how many live processes hold it, the repo and branch, and what the session is doing. Add `--json` for the full record.
+Each row shows the address, `busy`, `idle` or `blocked` (waiting on you), the delivery tier, whether it can move into Allternit (`movable`), how many live processes hold it, the repo and branch, and what the session is doing. Add `--json` for the full record.
 
 ```
 eoj/allternit-claude   busy    push  busy           1 holder  Allternit/allternit-platform@main  · Auth refresh rework · Running tests
@@ -83,12 +83,15 @@ The command refuses without asking when the session is already in Allternit, whe
 | Field | Meaning |
 |---|---|
 | `address` | `person/session`. `person` is your username. `session` is the folder name plus the harness (`allternit-claude`); a second session in the same folder gets `-2`. |
-| `status` | `busy`, `idle` or `offline`. Claude Code's own status comes first, then the Factory pane's, then the harness hooks. |
+| `status` | `busy`, `idle`, `blocked` or `offline`. `blocked` means the agent waits on a person (a permission prompt or a question), as the Factory pane engine detects it. Claude Code's own status comes first, then the Factory pane's, then the harness hooks. A client that does not know a word shows it as it is. |
+| `blockedSince` | When the session turned `blocked` (RFC 3339). Present only while it is blocked. |
+| `terminalId` | The Allternit terminal the session's pane is, when it is one. Open it with the terminal view and type into it with `POST /terminal/<terminalId>/input` `{content}` (the same route Start anywhere uses). |
+| `steer` | How to send it text from another device: `terminal` (type into `terminalId`), `delivery` (`POST /api/factory/send` `{to: address, text}`: the delivery ladder with its per-minute limit and message envelope) or `none` (nothing reaches it from here: a pane someone opened in the agent wall, or an offline session). |
 | `doing` | `title · task`, at most 120 characters. |
 | `tier` | How a message reaches it: `push` (into the running turn), `turn` (at its next hook) or `pull` (when it checks its inbox). |
 | `repo`, `branch` | Read from git in the session's folder. |
 | `cwd` | The folder name only. |
-| `holders` | Every live process holding this session id: `pid`, `app` (`Terminal`, `iTerm2`, `Allternit`, `Ghostty` or `other`, read from the process's parent chain; a Factory pane is `Allternit`), and when known `paneId`, `tty` and `startedAt` (the OS start time of the process). Two holders means the session is open in two places. |
+| `holders` | Every live process holding this session id: `pid`, `app` (`Terminal`, `iTerm2`, `Allternit`, `Ghostty` or `other`, read from the process's parent chain; a Factory pane is `Allternit`), and when known `paneId`, `terminalId`, `tty` and `startedAt` (the OS start time of the process). Two holders means the session is open in two places. |
 | `movable` | Whether it can move into Allternit: `now` (one holder outside Allternit, idle, and the harness can resume it by id), `busy` (mid-turn: wait for it), `open_elsewhere` (more than one live holder, so it is refused: only one process may write to a session), `no_resume` (the harness cannot resume by id, or no session id was found; it can still open a new session here), `here` (already in an Allternit pane). |
 | `carriedFlags` | The flags the outside holder was started with that a move keeps, such as `--dangerously-skip-permissions` or `--model opus`. Resume, continue, session, fork and one-shot print flags, ids and prompt text are left out. Never sent to the cloud. |
 | `moveCommand`, `copyCommand`, `newCommand` | The exact command a Move, Open a copy or New session here would run, with the carried flags, as an argv array. Each is left out when that action is not offered. Show these before the click instead of building the command in the client. Never sent to the cloud. |
@@ -136,6 +139,7 @@ Only the folder name leaves your computer, not the full path. To share full path
 
 - Engine: `GET /api/factory/sessions` returns the array of sessions. allternit-api serves the same list at `GET /api/v1/live-sessions` behind your sign-in. If the Factory engine is not running, allternit-api runs the same discovery itself (session files and the process table), so every session and its holders still show; only pane-only entries (a pane with no agent process found) need the engine. It answers `502` with a `transport` error only if that fails too.
 - The new fields (`holders`, `carriedFlags`, `canCopy`, `moveCommand`, `copyCommand`, `newCommand`, `movable`, `external`, `move`) are additive. An older runtime leaves them out; treat a missing `movable` as "this runtime cannot move sessions" and hide the move controls.
+- Steering a pane (Remote Control for other CLIs): `terminalId`, `steer` and `blockedSince` are additive too. A missing or empty `steer` means an older runtime: hide the steer controls. No separate steer route exists: `steer: "terminal"` uses the terminal input route, `steer: "delivery"` uses `POST /api/factory/send`. Terminal ids come from the pane engine (`factory.terminal.list`), so when allternit-api runs discovery itself (engine down) rows carry no `terminalId`. Fixtures: `docs/contracts/live-sessions/` (a blocked terminal pane, and an older runtime's row).
 - Heartbeat: the 60-second runtime presence heartbeat carries `sessions` (up to 100), so the cloud can show your sessions to your team. `carriedFlags` and the three `*Command` fields are removed first.
 - Adopt: `factory/engine/src/agents/adopt.rs` holds the decision, the stop-and-wait and the job registry; allternit-api (`cmd/allternit-api/src/netops/presence.rs`) passes it the terminal create, because the create path lives in allternit-api, which depends on the engine.
 - Hooks: sessions that only report through Gizzi hooks are read from `~/.allternit/live-sessions/hooks.json` and listed while their last hook is under 10 minutes old.
@@ -198,3 +202,7 @@ Errors are JSON: `{"error": "<code>", "message": "…"}`. On a running Move the 
 | 502 | `start_failed` | The terminal did not start; `message` has the command to run by hand |
 
 A runtime older than this answers `404` for the route: keep today's behavior and hide Move, Copy and New.
+
+## Blocked push
+
+When a session turns `blocked` (the agent waits on you), a paired computer sends one push through the Remote Control push worker, the same path Factory approvals use: title "`<name>` needs you", body the `doing` line, and an open link (`/terminal/<terminalId>` for a terminal pane, else `/factory/sessions/<address>`). One push per blocked stretch, none while it stays blocked, and none for sessions already blocked when the API starts. Turn it off with `ALLTERNIT_BLOCKED_PUSH=off`; it also stays off wherever approval push is off (no push worker URL, or the computer is not paired). In Gizzi, `/remote` lists the other pane sessions with their status and whether phone, web and Desktop can steer them or they are view only.

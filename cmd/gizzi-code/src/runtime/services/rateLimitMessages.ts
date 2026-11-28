@@ -276,11 +276,6 @@ function getWarningUpsellText(
       // Teams/Enterprise with overages enabled or unsupported billing type don't need upsell
       return null
     }
-
-    // Pro/Max users: prompt to upgrade
-    if (subscriptionType === 'pro' || subscriptionType === 'max') {
-      return '/upgrade to keep using Gizzi'
-    }
   }
 
   // Overage warning (approaching spending limit)

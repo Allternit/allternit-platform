@@ -56,3 +56,11 @@ Results go to `runs/<timestamp>/`: `results.jsonl` (one line per attempt), `repo
 - Change one thing at a time, then run the evals again.
 
 If a session pauses before a usage limit, `gizzi run` ends with exit code `1` and the attempt fails with a `SessionPaused` error. Pick a model on another provider with `--model`.
+
+## Shared suite
+
+<Note>
+**Coming in the next release.**
+</Note>
+
+These tasks are also part of the shared Gizzi suite. The same graders run them as replay checks and as live runs. See [Gizzi evals](/guides/gizzi-evals).

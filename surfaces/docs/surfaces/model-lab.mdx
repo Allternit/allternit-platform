@@ -85,6 +85,12 @@ Studio opens on the Catalog tab, on the Freeweights catalog. Search runs as you 
 
 Fit is measured against the device you are using. On Desktop, the Local Engine reports the memory it can use for models. In a browser, the measure is what one tab can hold with WebGPU. Each card shows one of these labels: "Fits", "Tight fit", "May be slow", "Won't fit", "No build for this device" (in a browser: "No browser build") or "Size not checked". The size on the card is the file you download for the build that fits, not the whole repo. "Size not checked" means Freeweights has no file sizes for that model yet, so it has no download button. "Recommended for this device" lists the models that fit best. The chips "Fits this device" and the engine chips (GGUF, MLX, ONNX) filter the grid.
 
+### Streams from disk
+
+Some models are larger than the memory your computer can spare. When a model has a colibri build, the card can show **Streams from disk**. colibri is an engine that reads the model from your disk while it answers, so a model bigger than your memory can still run, more slowly. The label shows only when no ordinary build fits well. A build that fits in memory ("Fits" or "Tight fit") always wins over streaming.
+
+For the label to show, the colibri build's memory estimate must fit the memory the Local Engine reports, and the whole download must fit in your free disk space. The table on the model page shows the colibri build with its size and marks it "best for this device". The download button runs a disk check first and stops with a message if there is not enough room. A browser never streams, so it keeps "No browser build". An iPhone does not report free disk space, so it never shows this label. Streaming is for Desktop and Gizzi Code. See [Run models on this device](/guides/run-models-on-device) for what to expect on speed.
+
 ### The model page
 
 Opening a card shows the model's page. Its top part is the same as the model page on freeweights.allternit.com: the From, Subject, Date, Commit and Signed lines, the card face with Facts, and the `fw get` and `fw verify` commands.
@@ -168,6 +174,7 @@ A recipe tells the Local Engine which backend to use and how to launch it. Suppo
 | `sglang` | Structured generation and fast decoding |
 | `llama_cpp` | CPU/GPU GGUF inference |
 | `mlx` | Apple Silicon inference |
+| `colibri` | Models larger than memory, streamed from disk. Desktop and Gizzi Code only. The engine can take minutes to open a large model, so the runtime shows `loading` until it answers `/health`. See [Local Engine API](/api/local-engine) |
 
 ### Freeweights Studio jobs
 

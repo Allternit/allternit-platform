@@ -1,0 +1,1077 @@
+[
+  {
+    "name": "step_order passes when steps run in order",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "n1",
+          "primitive": "lookup_order",
+          "ok": true
+        },
+        {
+          "node": "n2",
+          "primitive": "refund",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "step_order",
+      "steps": [
+        "lookup_order",
+        "refund"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "step_order passes as a subsequence with other steps between",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "a",
+          "primitive": "a",
+          "ok": true
+        },
+        {
+          "node": "n1",
+          "primitive": "lookup_order",
+          "ok": true
+        },
+        {
+          "node": "b",
+          "primitive": "b",
+          "ok": true
+        },
+        {
+          "node": "n2",
+          "primitive": "refund",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "step_order",
+      "steps": [
+        "lookup_order",
+        "refund"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "step_order fails when order is reversed",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "n2",
+          "primitive": "refund",
+          "ok": true
+        },
+        {
+          "node": "n1",
+          "primitive": "lookup_order",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "step_order",
+      "steps": [
+        "lookup_order",
+        "refund"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "step_order ignores steps that did not succeed",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "n1",
+          "primitive": "lookup_order",
+          "ok": false
+        },
+        {
+          "node": "n2",
+          "primitive": "refund",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "step_order",
+      "steps": [
+        "lookup_order",
+        "refund"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "step_order matches a node id as well as a primitive",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "fetch",
+          "primitive": "x",
+          "ok": true
+        },
+        {
+          "node": "save",
+          "primitive": "y",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "step_order",
+      "steps": [
+        "fetch",
+        "y"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "required_steps passes when all ran in any order",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "b",
+          "primitive": "b",
+          "ok": true
+        },
+        {
+          "node": "a",
+          "primitive": "a",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "required_steps",
+      "steps": [
+        "a",
+        "b"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "required_steps counts a failed step as having run",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "a",
+          "primitive": "a",
+          "ok": false
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "required_steps",
+      "steps": [
+        "a"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "required_steps fails when one never ran",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "a",
+          "primitive": "a",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "required_steps",
+      "steps": [
+        "a",
+        "b"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "forbidden_step passes when none ran",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "read",
+          "primitive": "read",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "forbidden_step",
+      "steps": [
+        "delete"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "forbidden_step fails when it ran",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "read",
+          "primitive": "read",
+          "ok": true
+        },
+        {
+          "node": "n9",
+          "primitive": "delete",
+          "ok": true
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "forbidden_step",
+      "steps": [
+        "delete"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "forbidden_step fails even when the step errored",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "delete",
+          "primitive": "delete",
+          "ok": false
+        }
+      ],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "forbidden_step",
+      "steps": [
+        "delete"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "effect_count passes within min and max",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        },
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        }
+      ],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "min": 1,
+      "max": 2
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "effect_count fails above max",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        },
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        },
+        {
+          "node": "n",
+          "tool": "edit",
+          "committed": true
+        }
+      ],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "max": 2
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "effect_count fails below min",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "min": 1
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "effect_count only counts committed effects",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        },
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": false
+        }
+      ],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "min": 1,
+      "max": 1
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "effect_count filters by tool",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        },
+        {
+          "node": "n",
+          "tool": "bash",
+          "committed": true
+        }
+      ],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "tool": "bash",
+      "max": 0
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "effect_count with tool passes when other tools only",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [
+        {
+          "node": "n",
+          "tool": "write",
+          "committed": true
+        }
+      ],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "effect_count",
+      "tool": "bash",
+      "max": 0
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "must_cite passes with enough distinct citations",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [
+        "See [src:a] and [src:b].",
+        "again [src:a]"
+      ],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "must_cite",
+      "min": 2
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "must_cite fails when repeats collapse to one",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [
+        "[src:a] [src:a] [src:a]"
+      ],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "must_cite",
+      "min": 2
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "must_cite uses a custom marker",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [
+        "claim [ref:1] claim [ref:2]"
+      ],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "must_cite",
+      "min": 2,
+      "marker": "[ref:"
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "must_cite ignores an empty citation",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [
+        "nothing [src:] here"
+      ],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "must_cite"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "verifier_pass passes when verifier passed and completed",
+    "trajectory": {
+      "status": "completed",
+      "verifier": true,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "verifier_pass"
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "verifier_pass fails when verifier failed",
+    "trajectory": {
+      "status": "completed",
+      "verifier": false,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "verifier_pass"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "verifier_pass fails when verifier never ran",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "verifier_pass"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "verifier_pass fails when run did not complete",
+    "trajectory": {
+      "status": "failed",
+      "verifier": true,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "verifier_pass"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "cost_ceiling passes under both limits",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.5,
+      "tokens": 900,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "cost_ceiling",
+      "max_usd": 1,
+      "max_tokens": 1000
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "cost_ceiling passes at exactly the limit",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "cost_ceiling",
+      "max_usd": 1,
+      "max_tokens": 1000
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "cost_ceiling fails over usd",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 1.5,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "cost_ceiling",
+      "max_usd": 1
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "cost_ceiling fails over tokens",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 5000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "cost_ceiling",
+      "max_tokens": 4000
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "latency_ceiling passes under the ceiling",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 900
+    },
+    "grader": {
+      "type": "latency_ceiling",
+      "max_ms": 1000
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "latency_ceiling fails over the ceiling",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 1001
+    },
+    "grader": {
+      "type": "latency_ceiling",
+      "max_ms": 1000
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "status passes on match",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "status",
+      "equals": "completed"
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "status fails on mismatch",
+    "trajectory": {
+      "status": "failed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "status",
+      "equals": "completed"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "stopped_at passes on match",
+    "trajectory": {
+      "status": "stopped",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": "budget",
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "stopped_at",
+      "step": "budget"
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "stopped_at fails on another stop",
+    "trajectory": {
+      "status": "stopped",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": "loop",
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "stopped_at",
+      "step": "budget"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "stopped_at fails when the run never stopped",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "stopped_at",
+      "step": "budget"
+    },
+    "expect": {
+      "pass": false
+    }
+  },
+  {
+    "name": "missing_evidence passes on exact match",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [
+        "c1",
+        "c2"
+      ],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "missing_evidence",
+      "equals": [
+        "c1",
+        "c2"
+      ]
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "missing_evidence passes on empty list",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "missing_evidence",
+      "equals": []
+    },
+    "expect": {
+      "pass": true
+    }
+  },
+  {
+    "name": "missing_evidence fails on a different list",
+    "trajectory": {
+      "status": "completed",
+      "verifier": null,
+      "steps": [],
+      "effects": [],
+      "texts": [],
+      "stopped_at": null,
+      "missing": [
+        "c1"
+      ],
+      "cost_usd": 0.1,
+      "tokens": 1000,
+      "latency_ms": 5000
+    },
+    "grader": {
+      "type": "missing_evidence",
+      "equals": [
+        "c1",
+        "c2"
+      ]
+    },
+    "expect": {
+      "pass": false
+    }
+  }
+]

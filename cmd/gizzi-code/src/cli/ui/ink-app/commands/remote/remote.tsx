@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { Pane } from '../../components/design-system/Pane'
 import { Box, Text } from '../../ink'
 import { useKeybinding } from '../../keybindings/useKeybinding'
-import { getLiveSession, liveLinks, onLiveSessionChange, type LiveLinks } from '../../services/liveSession'
+import { fetchPaneSessions, getLiveSession, liveLinks, onLiveSessionChange, paneSessionLine, type LiveLinks, type PaneSession } from '../../services/liveSession'
 import type { LocalJSXCommandCall } from '../../types/command'
+import { remoteSubcommand } from './subcommand'
 
 function useLive() {
   const [live, setLive] = useState(() => ({ ...getLiveSession() }))
@@ -55,10 +56,44 @@ function ReachabilityLine(): React.ReactNode {
   )
 }
 
+/** Other CLIs running in panes on this computer, with who can reach each one. */
+export function PaneSessionList({ rows }: { rows: PaneSession[] }): React.ReactNode {
+  if (rows.length === 0) return null
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>Other sessions on this computer</Text>
+      {rows.map(r => (
+        <Text key={r.address} color={r.status === 'blocked' ? 'warning' : undefined}>
+          {paneSessionLine(r)}
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
+function usePaneSessions(): PaneSession[] {
+  const [rows, setRows] = useState<PaneSession[]>([])
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      void fetchPaneSessions()
+        .then(next => alive && setRows(next))
+        .catch(() => alive && setRows([]))
+    load()
+    const timer = setInterval(load, 5_000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+  return rows
+}
+
 export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode {
   const live = useLive()
   const [links, setLinks] = useState<LiveLinks | null>(null)
   const [qr, setQr] = useState('')
+  const panes = usePaneSessions()
   useKeybinding('confirm:no', onDone, { context: 'Confirmation' })
 
   useEffect(() => {
@@ -75,6 +110,7 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
         <Text color="warning">This session is not live yet: the Allternit engine is not reachable at {live.engineURL}.</Text>
         <Text dimColor>Open Allternit Desktop (or run `gizzi serve`) and it connects within 15 seconds.</Text>
         <ReachabilityLine />
+        <PaneSessionList rows={panes} />
         <Text dimColor>(press esc to close)</Text>
       </Pane>
     )
@@ -113,8 +149,18 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
       )}
       <Box>
         <Text dimColor>Desktop: </Text>
-        <Text color="ide">/desktop</Text>
+        <Text color="ide">/remote desktop</Text>
         <Text dimColor> (it is already in Desktop's session list)</Text>
+      </Box>
+      <PaneSessionList rows={panes} />
+      <Box>
+        <Text dimColor>More: </Text>
+        <Text color="ide">/remote mobile</Text>
+        <Text dimColor> get the app · </Text>
+        <Text color="ide">/remote native</Text>
+        <Text dimColor> pick up another CLI's session · </Text>
+        <Text color="ide">/remote session</Text>
+        <Text dimColor> remote-mode URL</Text>
       </Box>
       <Box marginTop={1}>
         <Text dimColor>Messages, Stop and approvals from any of them reach this terminal at once. (press esc to close)</Text>
@@ -123,6 +169,17 @@ export function LiveRemote({ onDone }: { onDone: () => void }): React.ReactNode 
   )
 }
 
-export const call: LocalJSXCommandCall = async onDone => {
+export const call: LocalJSXCommandCall = async (onDone, context, args) => {
+  // `/remote session|desktop|mobile|native` (were /session, /desktop, /mobile, /native).
+  const sub = remoteSubcommand(args)
+  if (sub?.view === 'session') return (await import('../session/session')).call(onDone, context, sub.rest)
+  if (sub?.view === 'mobile') return (await import('../mobile/mobile')).call(onDone)
+  if (sub) {
+    const { call: runSub } = sub.view === 'desktop' ? await import('../desktop/desktop') : await import('../native/native')
+    const result = await runSub(sub.rest, context)
+    if (result.type === 'text') onDone(result.value, { display: 'system' })
+    else onDone(undefined, { display: 'skip' })
+    return null
+  }
   return <LiveRemote onDone={() => onDone()} />
 }

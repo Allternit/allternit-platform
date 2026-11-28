@@ -1,3 +1,9 @@
+//! LEGACY. Kept only because `fabric_resources_routes.rs` still calls it.
+//!
+//! `ALLTERNITOS_CONTROL_PLANE_URL` is unset in every deploy, so no OS control
+//! plane is running. The kernel `lease` call (os contract v1, section 2, plan
+//! step 12) replaces this client; remove it then.
+//!
 //! HTTP client for the canonical AllternitOS control-plane lease API.
 //!
 //! This module is intentionally small and self-contained: the Cloud API server

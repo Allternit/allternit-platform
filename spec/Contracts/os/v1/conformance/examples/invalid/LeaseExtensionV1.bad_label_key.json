@@ -1,0 +1,10 @@
+{
+  "node_id": "node-7",
+  "resources": {
+    "requested_vcpu": 4,
+    "requested_memory_mib": 8192
+  },
+  "labels": {
+    "Lane": "x"
+  }
+}

@@ -1,11 +1,13 @@
 import type { Command } from '../../commands'
 
+// Merged into /sessions (SLASH-LIST MERGE): a hidden name that opens the sessions view.
 const dashboard = {
   type: 'local-jsx',
   name: 'dashboard',
-  aliases: ['agents-dashboard', 'sessions'],
-  description: 'Open the agent dashboard — live roster of top-level sessions',
+  aliases: ['agents-dashboard'],
+  description: 'Open the live sessions view (same as /sessions)',
+  isHidden: true,
   immediate: true,
-  load: () => import('./dashboard.js'),
+  load: () => import('../sessions/sessions.js'),
 } satisfies Command
 export default dashboard

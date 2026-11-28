@@ -1,0 +1,58 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_debug_from_log",
+  "suite": "shared.v1",
+  "title": "The nightly job crashed. app.log has the trace. Find the cause and fix it so ite",
+  "label": "good",
+  "note": "Ported from the subagent task 'debug-from-log' (skill: debugging).",
+  "split": "dev",
+  "origin": {
+    "session_id": "debug-from-log",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "The nightly job crashed. app.log has the trace. Find the cause and fix it so items without a qty count as 0 in stock."
+    }
+  ],
+  "workspace": {
+    "kind": "archive",
+    "path": "workspace.tar.gz",
+    "bytes": 1626,
+    "snapshot": "5e16e4bfaafd41b98b3fe8bfbad24db5c56f7497"
+  },
+  "checks": [
+    {
+      "type": "tests",
+      "command": "python3 -m unittest discover -s tests -p \"test_hidden_*.py\"",
+      "files": {
+        "tests/test_hidden_low.py": "import json, tempfile, unittest\nfrom inventory.report import low_stock\nclass H(unittest.TestCase):\n    def test_missing_qty(self):\n        with tempfile.NamedTemporaryFile(\"w\", suffix=\".json\", delete=False) as f:\n            json.dump([{\"sku\": \"a\", \"qty\": 5, \"price\": 1}, {\"sku\": \"n\", \"price\": 2}], f)\n        self.assertEqual(low_stock(f.name, 3), [\"n\"])\n"
+      }
+    }
+  ],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "verifier_pass"
+    }
+  ],
+  "k": 3,
+  "pass_rule": {
+    "n_of_k": 2
+  },
+  "recorded": null,
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}

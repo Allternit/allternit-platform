@@ -44,8 +44,35 @@ Your projects with the status chip Desktop shows (**On track**, **At risk**, **B
 Your routines (Desktop's **Automation Tasks**) with when each runs next, when it last ran and its schedule, soonest first. Press `p` to pause or resume the selected routine.
 
 <Note>
-Routines that live on your cloud computer are listed by that computer's runtime. In the terminal, `/routines` lists the ones on this machine's runtime.
+Routines that live on your cloud computer are listed by that computer's runtime. In the terminal, `/routines` lists the ones on this machine's runtime. In the slash menu it is a hidden alias under `/loops`; `/help` still lists it in the Workspace group.
 </Note>
+
+## Sleep
+
+Allternit Sleep tidies your memory in the background. The Sleep tab of the work views shows whether it is on, the last run, the next run and the last report. Press `n` to run a cycle now or `p` to pause or resume it; each asks `y` to confirm first.
+
+The same actions are a command:
+
+```bash
+gizzi sleep status
+gizzi sleep now
+gizzi sleep pause
+gizzi sleep resume
+gizzi sleep report --json
+```
+
+```text
+Sleep is on
+Last run:  2h ago
+Next run:  when memory debt builds (debt 3.0)
+Report:    Merged 3 notes
+```
+
+On a runtime that is too old to have Sleep, the command says "this runtime has no Sleep yet". When you are signed out it asks you to run `gizzi login`.
+
+## /pods
+
+`/pods` lists your pods, the same grouping as the Office view: the Chief, one pod per active project (up to eight), and Team. Each row shows how many bots are in the pod, how many are working, and how many need you. The selected pod lists its bots with their state. Enter opens the Factory floor. With no bots it says there are no pods yet; signed out it tells you to run `gizzi login`. `/pods` is not listed in the slash menu; type it.
 
 ## Computers
 
@@ -80,6 +107,20 @@ gizzi run --on "Allternit cloud computer" "fix the failing test in api/"
 `--on` starts the session on that runtime through the Allternit relay, sends your message, and prints the web and phone links to follow it. The turn runs on that computer, with its files and its signed-in CLI tools. A sleeping cloud computer is woken first, which can take a minute. Add `--model <brain>` (any model id from `gizzi models`) to pick the model there.
 
 The relay needs an Allternit API key with the `compute` scope in `ALLTERNIT_API_TOKEN` (**Settings → API keys**). The device token from `gizzi pair` only identifies this machine and can't drive another one.
+
+### Start a session with a prompt, and open a window for it
+
+```bash
+gizzi spawn gizzi "fix the failing test in api/" --cwd ~/code/api
+```
+
+`gizzi spawn <tool> "<prompt>"` starts a session of that coding tool on this computer, the same way `gizzi start` does, so the phone, the web app and Desktop see it too. The tool is any runtime id from the runtime list. It prints the session id and the command that attaches to it. The prompt, and a handoff file passed with `--handoff <file>`, are saved as a task file under `~/.gizzi/spawn/` and the session is told to read it, so nothing is typed into a shell. `--dry-run` prints the request without starting anything.
+
+```bash
+gizzi spawn gizzi "review the diff on this branch" --window
+```
+
+`--window` opens a new terminal window that attaches to the new session. It picks Apple Terminal, iTerm2 or Ghostty on a Mac, Windows Terminal on Windows, and `$TERMINAL` or the first terminal it finds on Linux; `--terminal <name>` overrides. Closing the window only detaches: the session keeps running, and the attach command it printed opens it again.
 
 ## Phone tasks
 

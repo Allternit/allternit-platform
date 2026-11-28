@@ -1,6 +1,7 @@
 //! Process manager for local model runtimes.
 
 use crate::engine_packs::{EnginePacks, ResolvedPack};
+use crate::runtime::backends::colibri::{self, ColibriConfig};
 use crate::runtime::backends::llamacpp::{self, LlamaCppConfig};
 use crate::runtime::backends::mlx::{self, MlxConfig};
 use crate::runtime::log;
@@ -23,6 +24,8 @@ use uuid::Uuid;
 pub const DEFAULT_IDLE_UNLOAD: Duration = Duration::from_secs(5 * 60);
 /// How long a backend may take to load its model before launch fails.
 const HEALTH_DEADLINE: Duration = Duration::from_secs(180);
+/// colibri opens large models; the contract asks for at least 300 s.
+const COLIBRI_HEALTH_DEADLINE: Duration = Duration::from_secs(300);
 
 /// Errors returned by the runtime manager.
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +110,27 @@ pub enum RuntimeRecipe {
         #[serde(default = "default_n_ctx")]
         n_ctx: u32,
     },
+    /// colibri backend: the pack's bundled Python runs `openai_server.py`.
+    Colibri {
+        /// Absolute model directory, passed as `--model`.
+        model_dir: PathBuf,
+        /// The `coli setup` id (informational).
+        #[serde(default)]
+        colibri_model: Option<String>,
+        /// Always `127.0.0.1`; any other value is refused.
+        #[serde(default = "default_colibri_host")]
+        host: String,
+        /// `0` = the manager assigns a port.
+        #[serde(default)]
+        port: u16,
+        /// Sets `COLI_METAL=1` when true.
+        #[serde(default)]
+        metal: bool,
+    },
+}
+
+fn default_colibri_host() -> String {
+    colibri::HOST.to_string()
 }
 
 fn default_n_ctx() -> u32 {
@@ -254,7 +278,7 @@ impl RuntimeRecipe {
         match self {
             RuntimeRecipe::LlamaCpp { n_ctx, .. } | RuntimeRecipe::Mlx { n_ctx, .. } => Some(u64::from(*n_ctx)),
             RuntimeRecipe::Sglang { context_length, .. } => Some(u64::from(*context_length)),
-            RuntimeRecipe::Vllm { .. } => None,
+            RuntimeRecipe::Vllm { .. } | RuntimeRecipe::Colibri { .. } => None,
         }
     }
 }
@@ -267,6 +291,7 @@ impl RuntimeRecipe {
             RuntimeRecipe::Vllm { .. } => "vllm",
             RuntimeRecipe::Sglang { .. } => "sglang",
             RuntimeRecipe::Mlx { .. } => "mlx",
+            RuntimeRecipe::Colibri { .. } => "colibri",
         }
     }
 }
@@ -353,6 +378,29 @@ impl ProcessManager {
         })
     }
 
+    /// Resolve an engine that only runs from its installed pack (no PATH
+    /// fallback). A missing pack gives the usual "not installed" error.
+    async fn resolve_pack_only(&self, engine: &str) -> Result<Program, RuntimeManagerError> {
+        let not_installed = || {
+            RuntimeManagerError::BinaryNotFound(format!(
+                "{engine}: install the {engine} engine pack (POST /engines/packs/ensure)"
+            ))
+        };
+        let Some(packs) = self.packs.clone() else {
+            return Err(not_installed());
+        };
+        let engine_name = engine.to_string();
+        match tokio::task::spawn_blocking(move || packs.resolve(&engine_name)).await {
+            Ok(Ok(Some(pack))) => Ok(Program { path: pack.entrypoint.clone(), pack: Some(pack) }),
+            Ok(Ok(None)) => Err(not_installed()),
+            Ok(Err(e)) => {
+                crate::routes::hardware::invalidate().await;
+                Err(RuntimeManagerError::PackVerification(e.to_string()))
+            }
+            Err(e) => Err(RuntimeManagerError::PackVerification(e.to_string())),
+        }
+    }
+
     /// Directory where runtime logs are stored.
     fn logs_dir(&self) -> PathBuf {
         self.data_dir.join("logs").join("runtimes")
@@ -375,7 +423,10 @@ impl ProcessManager {
         recipe: RuntimeRecipe,
     ) -> Result<RuntimeInfo, RuntimeManagerError> {
         let id = Uuid::new_v4().to_string();
-        let port = Self::allocate_port().await?;
+        let port = match &recipe {
+            RuntimeRecipe::Colibri { port, .. } if *port != 0 => *port,
+            _ => Self::allocate_port().await?,
+        };
 
         let logs_dir = self.logs_dir();
         tokio::fs::create_dir_all(&logs_dir).await?;
@@ -414,6 +465,27 @@ impl ProcessManager {
                 });
                 (program, argv)
             }
+            RuntimeRecipe::Colibri { model_dir, host, .. } => {
+                if host != colibri::HOST {
+                    return Err(RuntimeManagerError::UnsupportedBackend(format!(
+                        "colibri host {host} (only {} is allowed)",
+                        colibri::HOST
+                    )));
+                }
+                // The pack's bundled Python is the entrypoint. No PATH
+                // fallback: without the pack there is no openai_server.py.
+                let program = self.resolve_pack_only(colibri::ENGINE).await?;
+                let script = colibri::script_path(
+                    &program.pack.as_ref().expect("pack set by resolve_pack_only").dir,
+                );
+                let argv = colibri::build_argv(ColibriConfig {
+                    program: &program.path,
+                    script: &script,
+                    model_dir,
+                    port,
+                });
+                (program, argv)
+            }
             other => {
                 return Err(RuntimeManagerError::UnsupportedBackend(
                     other.backend_label().to_string(),
@@ -438,6 +510,11 @@ impl ProcessManager {
             // SwiftPM resource bundles (mlx-swift_Cmlx.bundle) and shared
             // libraries sit beside the entrypoint.
             cmd.current_dir(pack.entrypoint.parent().unwrap_or(pack.dir.as_path()));
+        }
+        if let RuntimeRecipe::Colibri { metal, .. } = &recipe {
+            for (k, v) in colibri::extra_env(*metal) {
+                cmd.env(k, v);
+            }
         }
         cmd.args(&argv[1..])
             .stdout(Stdio::piped())
@@ -513,8 +590,9 @@ impl ProcessManager {
 
         // Poll health in a background task so `launch` can return quickly.
         let manager = self.clone();
+        let health_backend = info.recipe.clone();
         tokio::spawn(async move {
-            match manager.wait_for_health(&id, port).await {
+            match manager.wait_for_health(&id, port, health_backend).await {
                 Ok(healthy) => {
                     let mut runtimes = manager.runtimes.write().await;
                     if let Some(handle) = runtimes.get_mut(&id) {
@@ -547,14 +625,16 @@ impl ProcessManager {
     }
 
     /// Poll the backend health endpoint until it succeeds or the timeout elapses.
-    async fn wait_for_health(&self, id: &str, port: u16) -> Result<bool, RuntimeManagerError> {
-        let url = llamacpp::health_url(port);
+    async fn wait_for_health(&self, id: &str, port: u16, backend: String) -> Result<bool, RuntimeManagerError> {
+        let (url, deadline) = match backend.as_str() {
+            "colibri" => (colibri::health_url(port), COLIBRI_HEALTH_DEADLINE),
+            _ => (llamacpp::health_url(port), HEALTH_DEADLINE),
+        };
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
             .map_err(|e| RuntimeManagerError::SpawnFailed(e.to_string()))?;
 
-        let deadline = HEALTH_DEADLINE;
         let interval = Duration::from_secs(1);
         let mut elapsed = Duration::ZERO;
 

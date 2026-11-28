@@ -303,7 +303,8 @@ function buildContentSecurityPolicy(): string {
     // the vendor: storage.googleapis.com and api.us.elevenlabs.io (2026-11-13).
     'media-src': ["'self'", 'blob:', 'data:', 'https://storage.googleapis.com', 'https://*.elevenlabs.io'],
     'worker-src': ["'self'", 'blob:'],
-    'frame-src': ["'self'", 'https:', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:', ...STRIPE_FRAME_SRC],
+    // box.allternit.com: the browser computer (colibri/unkernel) iframe.
+    'frame-src': ["'self'", 'https:', 'https://box.allternit.com', 'http://127.0.0.1:*', 'http://localhost:*', 'allternit-preview:', ...STRIPE_FRAME_SRC],
     'object-src': ["'none'"],
     'base-uri': ["'self'"],
   };

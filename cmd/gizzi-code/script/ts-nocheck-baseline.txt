@@ -1,7 +1,7 @@
 # Baseline for script/check-ts-nocheck.sh
 # Count of files under src containing @ts-nocheck.
 # Regenerate: bash script/check-ts-nocheck.sh --update
-count=586
+count=578
 --- files ---
 cli/hooks/useChromeExtensionNotification.tsx
 cli/ui/ink-app/app.tsx
@@ -29,17 +29,13 @@ cli/ui/ink-app/commands/commit-push-pr.ts
 cli/ui/ink-app/commands/commit.ts
 cli/ui/ink-app/commands/commit/commit.tsx
 cli/ui/ink-app/commands/compact/compact.ts
-cli/ui/ink-app/commands/cowork-project/cowork-project.tsx
 cli/ui/ink-app/commands/feedback/feedback.tsx
 cli/ui/ink-app/commands/feedback/index.ts
 cli/ui/ink-app/commands/hooks/hooks.tsx
 cli/ui/ink-app/commands/hooks/index.ts
-cli/ui/ink-app/commands/insights.ts
 cli/ui/ink-app/commands/install-github-app/OAuthFlowStep.tsx
 cli/ui/ink-app/commands/install-github-app/index.ts
 cli/ui/ink-app/commands/install-github-app/install-github-app.tsx
-cli/ui/ink-app/commands/multimodal/multimodal.tsx
-cli/ui/ink-app/commands/ontology/ontology.tsx
 cli/ui/ink-app/commands/permissions/index.ts
 cli/ui/ink-app/commands/permissions/permissions.tsx
 cli/ui/ink-app/commands/plugin/AddMarketplace.tsx
@@ -51,14 +47,9 @@ cli/ui/ink-app/commands/queue/queue.ts
 cli/ui/ink-app/commands/reload-plugins/index.ts
 cli/ui/ink-app/commands/reload-plugins/reload-plugins.ts
 cli/ui/ink-app/commands/review.ts
-cli/ui/ink-app/commands/review/reviewRemote.ts
-cli/ui/ink-app/commands/review/ultrareviewCommand.tsx
 cli/ui/ink-app/commands/security-review.ts
 cli/ui/ink-app/commands/swarm/swarm.tsx
-cli/ui/ink-app/commands/thinkback-play/index.ts
-cli/ui/ink-app/commands/thinkback-play/thinkback-play.ts
 cli/ui/ink-app/commands/ultraplan.tsx
-cli/ui/ink-app/components/AutoUpdater.tsx
 cli/ui/ink-app/components/CustomSelect/use-multi-select-state.ts
 cli/ui/ink-app/components/CustomSelect/use-select-input.ts
 cli/ui/ink-app/components/Feedback.tsx
@@ -69,7 +60,6 @@ cli/ui/ink-app/components/GizziHint/PluginHintMenu.tsx
 cli/ui/ink-app/components/LspRecommendation/LspRecommendationMenu.tsx
 cli/ui/ink-app/components/MarkdownTable.tsx
 cli/ui/ink-app/components/MemoryUsageIndicator.tsx
-cli/ui/ink-app/components/NativeAutoUpdater.tsx
 cli/ui/ink-app/components/OffscreenFreeze.tsx
 cli/ui/ink-app/components/PromptInput/IssueFlagBanner.tsx
 cli/ui/ink-app/components/PromptInput/PromptInput.tsx
@@ -440,7 +430,6 @@ cli/ui/ink-app/utils/mcp/elicitationValidation.ts
 cli/ui/ink-app/utils/mcpValidation.ts
 cli/ui/ink-app/utils/messages/mappers.ts
 cli/ui/ink-app/utils/messages/systemInit.ts
-cli/ui/ink-app/utils/nativeInstaller/download.ts
 cli/ui/ink-app/utils/nativeInstaller/index.ts
 cli/ui/ink-app/utils/nativeInstaller/installer.ts
 cli/ui/ink-app/utils/nativeInstaller/pidLock.ts

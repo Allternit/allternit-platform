@@ -1,0 +1,20 @@
+{
+  "name": "@allternit/box-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260520.1",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4",
+    "wrangler": "~4.98.0"
+  }
+}

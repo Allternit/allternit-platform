@@ -5,6 +5,7 @@ import cd from '../../src/cli/ui/ink-app/commands/cd/index.ts'
 import config from '../../src/cli/ui/ink-app/commands/config/index.ts'
 import dash from '../../src/cli/ui/ink-app/commands/dash/index.ts'
 import dashboard from '../../src/cli/ui/ink-app/commands/dashboard/index.ts'
+import sessions from '../../src/cli/ui/ink-app/commands/sessions/index.ts'
 import help from '../../src/cli/ui/ink-app/commands/help/index.ts'
 import model from '../../src/cli/ui/ink-app/commands/model/index.ts'
 import multiline from '../../src/cli/ui/ink-app/commands/multiline/index.ts'
@@ -97,11 +98,11 @@ describe('Grok-style slash menu presentation', () => {
     expect(getCommandArgumentHint(promptCmd)).toBe('<message>')
   })
 
-  test('empty slash menu sorts Session commands before Configuration', () => {
+  test('empty slash menu sorts Session commands before Settings', () => {
     const configCmd = localCommand('theme')
     const sessionCmd = localCommand('compact')
     expect(getCommandCategory(sessionCmd)).toBe('Session')
-    expect(getCommandCategory(configCmd)).toBe('Configuration')
+    expect(getCommandCategory(configCmd)).toBe('Settings')
     expect(compareCommandsForSlashMenu(sessionCmd, configCmd)).toBeLessThan(0)
   })
 })
@@ -109,16 +110,20 @@ describe('Grok-style slash menu presentation', () => {
 describe('Grok muscle-memory aliases', () => {
   test('session and mode aliases match Grok names', () => {
     expect(rewind.aliases).toContain('undo')
-    // The full-screen agent dashboard owns 'dashboard'/'sessions'; the
-    // session-stats screen keeps only its own name (/dash) — regression
+    // /sessions is its own command now; /dash and /dashboard are hidden
+    // names that open it. No other command may claim 'sessions' — regression
     // guard for the alias collision that hijacked /dashboard resolution.
+    expect(sessions.name).toBe('sessions')
     expect(dash.name).toBe('dash')
     expect(dashboard.name).toBe('dashboard')
-    expect(dashboard.aliases).toContain('sessions')
+    expect(dashboard.aliases ?? []).not.toContain('sessions')
     expect(dashboard.aliases).toContain('agents-dashboard')
+    expect((dash as Command).isHidden).toBe(true)
+    expect((dashboard as Command).isHidden).toBe(true)
     expect((dash as Command).aliases ?? []).not.toContain('dashboard')
     expect((dash as Command).aliases ?? []).not.toContain('sessions')
-    expect(status.aliases).toContain('session-info')
+    // session-info is now its own hidden alias command (opens the Status tab).
+    expect(status.aliases).not.toContain('session-info')
     expect(status.aliases).toContain('info')
     expect(model.aliases).toContain('m')
     expect(theme.aliases).toContain('t')

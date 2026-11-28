@@ -1,0 +1,14 @@
+[package]
+name = "allternit-authority-stub"
+description = "STUB authority service for the AllternitOS boot image. Replaced by the allternit-authority crate (plan step 4)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "authority"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"

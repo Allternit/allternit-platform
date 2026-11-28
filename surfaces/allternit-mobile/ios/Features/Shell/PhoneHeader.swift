@@ -247,7 +247,7 @@ struct PhoneOverviewButton: View {
 }
 
 /// PhoneHeader's bar height without its generic parameters, for callers
-/// that place a docking title under it (ACIDockReader).
+/// that need to size around it.
 enum PhoneHeaderMetrics {
     static let barHeight: CGFloat = 52
 }

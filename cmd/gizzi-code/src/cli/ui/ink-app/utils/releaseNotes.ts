@@ -26,9 +26,9 @@ const MAX_RELEASE_NOTES_SHOWN = 5
  * 3. Next time the user starts Claude, the cached changelog is available immediately
  */
 export const CHANGELOG_URL =
-  'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md'
+  'https://github.com/Allternit/allternit-platform/blob/main/CHANGELOG.md'
 const RAW_CHANGELOG_URL =
-  'https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md'
+  'https://raw.githubusercontent.com/Allternit/allternit-platform/refs/heads/main/cmd/gizzi-code/CHANGELOG.md'
 
 /**
  * Get the path for the cached changelog file.
@@ -359,4 +359,73 @@ export function checkForReleaseNotesSync(
     hasReleaseNotes: releaseNotes.length > 0,
     releaseNotes,
   }
+}
+
+const MAX_WHATS_NEW_LINES = 4
+
+/** One changelog bullet as a plain header line: markdown marks stripped. */
+function plainLine(note: string): string {
+  return note.replace(/\*\*/g, '').replace(/`/g, '').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The "What's new" highlight lines (at most 4) for a version change, or []
+ * when nothing should show: turned off, a fresh install (no last seen
+ * version), the same version, or no matching changelog section.
+ */
+export function whatsNewHighlights(
+  changelog: string,
+  currentVersion: string,
+  lastSeenVersion: string | null | undefined,
+  enabled: boolean = true,
+): string[] {
+  if (!enabled || !lastSeenVersion || lastSeenVersion === currentVersion) return []
+  return getRecentReleaseNotes(currentVersion, lastSeenVersion, changelog)
+    .map(plainLine)
+    .filter(Boolean)
+    .slice(0, MAX_WHATS_NEW_LINES)
+}
+
+/** The CHANGELOG.md shipped next to the build, if there is one. */
+async function readBundledChangelog(): Promise<string> {
+  const dirs = [
+    process.argv[1] ? dirname(process.argv[1]) : '',
+    dirname(process.execPath),
+  ].filter(Boolean)
+  for (const dir of dirs) {
+    for (const rel of ['CHANGELOG.md', '../CHANGELOG.md', '../../CHANGELOG.md']) {
+      try {
+        const content = await readFile(join(dir, rel), 'utf-8')
+        if (parseChangelogHasVersions(content)) return content
+      } catch {
+        // try the next place
+      }
+    }
+  }
+  return ''
+}
+
+function parseChangelogHasVersions(content: string): boolean {
+  return Object.keys(parseChangelog(content)).length > 0
+}
+
+/**
+ * Load the changelog for the header block without blocking startup: the
+ * bundled file first, then the cached copy, then one fetch with a short
+ * timeout.
+ */
+export async function loadChangelogForWhatsNew(timeoutMs = 1500): Promise<string> {
+  const bundled = await readBundledChangelog()
+  if (bundled) return bundled
+  const cached = await getStoredChangelog()
+  if (cached) return cached
+  try {
+    await Promise.race([
+      fetchAndStoreChangelog(),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+    ])
+  } catch {
+    // offline or slow: show nothing
+  }
+  return getStoredChangelog()
 }

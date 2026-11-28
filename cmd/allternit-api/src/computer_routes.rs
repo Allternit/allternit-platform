@@ -41,6 +41,9 @@ pub enum ComputerKind {
     Managed,
     Byoc,
     CloudDesktop,
+    /// Lives in one browser profile (VM and disk in the browser). Never has a
+    /// server row: create returns 400 `browser_computer_is_local`.
+    Browser,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,7 +219,21 @@ fn kind_to_str(k: &ComputerKind) -> &'static str {
         ComputerKind::Managed => "managed",
         ComputerKind::Byoc => "byoc",
         ComputerKind::CloudDesktop => "cloud_desktop",
+        ComputerKind::Browser => "browser",
     }
+}
+
+/// `POST /computers` with `kind: "browser"`. A browser computer is started in
+/// the browser itself, so the server refuses to create a row for it.
+fn browser_computer_is_local() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": "browser_computer_is_local",
+            "message": "A browser computer lives in your browser. Start it from the chat or the Computers screen on this device.",
+        })),
+    )
+        .into_response()
 }
 
 pub(crate) fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
@@ -511,6 +528,11 @@ pub(crate) async fn create_computer(
     Extension(user): Extension<AuthUser>,
     Json(mut req): Json<CreateComputerRequest>,
 ) -> impl IntoResponse {
+    // Refuse before template resolution so a browser request never gets a
+    // template error instead of the 400 the clients look for.
+    if req.kind == ComputerKind::Browser {
+        return browser_computer_is_local();
+    }
     // Exactly one of template_id / template_ref. Refs resolve to ids up front
     // so downstream paths only ever see template_id.
     match (req.template_id.is_some(), req.template_ref.is_some()) {
@@ -546,6 +568,7 @@ pub(crate) async fn create_computer(
             StatusCode::NOT_IMPLEMENTED,
             "byo_vps/byoc provisioning is deferred to a follow-up provider integration phase",
         ),
+        ComputerKind::Browser => browser_computer_is_local(),
         ComputerKind::CloudDesktop | ComputerKind::Local => {
             let owner = match resolve_owner(&user, &req) {
                 Ok(v) => v,
@@ -2891,6 +2914,7 @@ mod tests {
         assert_eq!(kind_to_str(&ComputerKind::Managed), "managed");
         assert_eq!(kind_to_str(&ComputerKind::Byoc), "byoc");
         assert_eq!(kind_to_str(&ComputerKind::CloudDesktop), "cloud_desktop");
+        assert_eq!(kind_to_str(&ComputerKind::Browser), "browser");
     }
 
     #[test]
@@ -3111,6 +3135,7 @@ pub(crate) fn computer_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Com
             "managed" => ComputerKind::Managed,
             "byo_vps" => ComputerKind::ByoVps,
             "byoc" => ComputerKind::Byoc,
+            "browser" => ComputerKind::Browser,
             _ => ComputerKind::Local,
         },
         provider: row.get(2)?,

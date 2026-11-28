@@ -64,6 +64,9 @@ enum DeepLink: Equatable, Sendable {
     /// Meetings (`/meetings`), or one meeting's live page / recap
     /// (`/meetings/<id>`: the MCP `page_url`, notification taps, the Live Activity).
     case meetings(String?)
+    /// A blocked Factory pane (`/terminal/<terminalId>`, `/factory/sessions/<address>`,
+    /// a blocked push's `data.openUrl`): its row in Code, "On your computer".
+    case liveSession(OnYourComputer.PushTarget)
     /// The in-app bar with an app, a tool and values filled in
     /// (`allternit://bar?app=<kind>:<ref>&tool=<name>&bot=<id>&v.<key>=<value>`), sent
     /// by "Do with Allternit" when Siri can't ask for every value.
@@ -191,6 +194,8 @@ enum DeepLink: Equatable, Sendable {
             return .routine(segments[1])
         case "handoff":
             return .handoff
+        case "terminal", "factory":
+            return OnYourComputer.pushTarget(openUrl: components.path).map(DeepLink.liveSession)
         case "bar":
             return .bar(BarLinkRequest(query: query))
         case "meetings":
@@ -266,6 +271,14 @@ final class DeepLinkRouter: ObservableObject {
     func openPush(urlPath: String?, event: String?, sessionId: String?) {
         guard let link = DeepLink.forPush(urlPath: urlPath, event: event, sessionId: sessionId) else { return }
         enqueue(link)
+    }
+
+    /// A blocked push's target, waiting for the Code screen to take it.
+    var pendingLiveTarget: OnYourComputer.PushTarget?
+
+    func takeLiveTarget() -> OnYourComputer.PushTarget? {
+        defer { pendingLiveTarget = nil }
+        return pendingLiveTarget
     }
 
     func enqueue(_ link: DeepLink) {

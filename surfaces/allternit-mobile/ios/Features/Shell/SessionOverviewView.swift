@@ -144,6 +144,12 @@ struct SessionOverviewView: View {
                     .tracking(0.72)
                     .foregroundColor(Color("TextTertiary"))
                 Spacer()
+                // List · Grid · Deck, in view on every mode (select mode is always the list).
+                if !select.selecting {
+                    OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                        .frame(width: 32, height: 32)
+                        .accessibilityIdentifier("overviewLayoutInline")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)

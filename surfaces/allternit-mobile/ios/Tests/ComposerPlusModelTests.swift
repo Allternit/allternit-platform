@@ -70,9 +70,16 @@ final class ComposerPlusModelTests: XCTestCase {
 
     func testSavedChatAddsShareSaveAndArchive() {
         let items = chatMenuItems(ChatMenuInput(hasSession: true, hasMessages: true, pinned: false, hasBrain: true))
-        XCTAssertEqual(items, [.runOnPhone, .captureToBrain, .shareLink, .pin, .archive])
+        XCTAssertEqual(items, [.runOnPhone, .captureToBrain, .shareLink, .pin, .saveTestCase, .archive])
         let pinned = chatMenuItems(ChatMenuInput(hasSession: true, hasMessages: true, pinned: true, hasBrain: false))
-        XCTAssertEqual(pinned, [.runOnPhone, .shareLink, .unpin, .archive])
+        XCTAssertEqual(pinned, [.runOnPhone, .shareLink, .unpin, .saveTestCase, .archive])
+    }
+
+    func testSaveTestCaseNeedsASavedChatWithMessages() {
+        XCTAssertFalse(chatMenuItems(ChatMenuInput(hasSession: false, hasMessages: true)).contains(.saveTestCase))
+        XCTAssertFalse(chatMenuItems(ChatMenuInput(hasSession: true, hasMessages: false)).contains(.saveTestCase))
+        let items = chatMenuItems(ChatMenuInput(hasSession: true, hasMessages: true))
+        XCTAssertEqual(items.firstIndex(of: .saveTestCase), items.firstIndex(of: .archive).map { $0 - 1 })
     }
 
     func testArtifactSessionHasNoPhoneRun() {

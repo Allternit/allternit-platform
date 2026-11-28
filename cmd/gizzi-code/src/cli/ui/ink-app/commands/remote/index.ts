@@ -6,6 +6,7 @@ const remote = {
   name: 'remote',
   aliases: ['remote-control', 'continue-on', 'phone'],
   description: 'Continue this session live on your phone, the web app or Desktop (QR code + links)',
+  argumentHint: '[desktop|mobile|native|session]',
   isEnabled: liveSessionEnabled,
   load: () => import('./remote.js'),
 } satisfies Command

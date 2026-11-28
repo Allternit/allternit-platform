@@ -156,6 +156,74 @@ enum PersonChatClient {
         }
     }
 
+    /// The `tool_calls` fragments in one chunk: `(index, id, name, arguments)`.
+    static func parseToolCallDeltas(_ payload: String) -> [(index: Int, id: String?, name: String?, arguments: String?)] {
+        guard let data = payload.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let delta = ((object["choices"] as? [[String: Any]])?.first)?["delta"] as? [String: Any],
+              let calls = delta["tool_calls"] as? [[String: Any]] else { return [] }
+        return calls.enumerated().map { offset, call in
+            let function = call["function"] as? [String: Any]
+            return (call["index"] as? Int ?? offset, call["id"] as? String,
+                    function?["name"] as? String, function?["arguments"] as? String)
+        }
+    }
+
+    /// One Allternit Cloud turn that may call tools (contract 7): the browser
+    /// computer's tool loop. Cloud models only; the server refuses tools for
+    /// plan turns. Returns the tool calls the model made, in order.
+    /// Main actor: `loop.onDelta` updates the chat view model.
+    @MainActor
+    static func streamCloudTools(model: String, request loop: BrowserToolRequest) async throws -> BrowserToolResponse {
+        let vendor = PersonModels.vendorName(for: model)
+        guard let token = try await AuthManager.shared.getToken(), !token.isEmpty else {
+            throw PersonChatRefusal(code: "signed_out_allternit", message: nil, vendor: vendor)
+        }
+        var body: [String: Any] = ["model": wireModel(model), "stream": true, "messages": loop.messages.map(\.json)]
+        if let tools = loop.tools {
+            body["tools"] = tools
+            if loop.toolChoiceNone { body["tool_choice"] = "none" }
+        }
+        var request = URLRequest(url: AppConfig.cloudAPIBaseURL.appendingPathComponent("v1/chat/completions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("person", forHTTPHeaderField: "X-Allternit-Turn")
+        request.timeoutInterval = 600
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200...299).contains(http.statusCode) else {
+            throw refusal(status: http.statusCode, body: try await collect(bytes), vendor: vendor)
+        }
+        var acc: [Int: (id: String, name: String, arguments: String)] = [:]
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if payload == "[DONE]" { break }
+            switch parseCloudChunk(payload) {
+            case .delta(let text): loop.onDelta(text)
+            case .error(let code, let message): throw PersonChatRefusal(code: code, message: message, vendor: vendor)
+            case .none: break
+            }
+            for f in parseToolCallDeltas(payload) {
+                var cur = acc[f.index] ?? (id: "", name: "", arguments: "")
+                if let id = f.id, !id.isEmpty { cur.id = id }
+                if let name = f.name { cur.name += name }
+                if let args = f.arguments { cur.arguments += args }
+                acc[f.index] = cur
+            }
+        }
+        let calls = acc.keys.sorted().compactMap { i -> BrowserToolCall? in
+            guard let c = acc[i], !c.name.isEmpty else { return nil }
+            return BrowserToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: c.arguments)
+        }
+        return BrowserToolResponse(toolCalls: calls)
+    }
+
     private static func streamCloud(model: String, messages: [PersonChatMessage],
                                     _ continuation: AsyncThrowingStream<PersonChatEvent, Error>.Continuation) async throws {
         let vendor = PersonModels.vendorName(for: model)

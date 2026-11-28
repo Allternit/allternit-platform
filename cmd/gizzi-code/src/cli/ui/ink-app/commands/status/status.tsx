@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { LocalJSXCommandContext } from '../../commands';
-import { Settings } from '../../components/Settings/Settings';
+import { StatusPanel } from './StatusPanel';
+import { statusTabFromArgs } from './tabs';
 import type { LocalJSXCommandOnDone } from '../../types/command';
 import type { Message } from '../../types/message.js';
 import {
@@ -157,5 +158,5 @@ export async function call(
     onDone(renderInlineStatus(context, formatServicesLine(await getServicesLine())), { display: 'system' });
     return null;
   }
-  return <Settings onClose={onDone} context={context} defaultTab="Status" />;
+  return <StatusPanel onClose={onDone} context={context} defaultTab={statusTabFromArgs(trimmed)} />;
 }

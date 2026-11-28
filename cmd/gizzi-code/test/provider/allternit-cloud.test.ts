@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import {
   cloudInferenceToken,
   discoverAllternitCloud,
@@ -7,10 +7,19 @@ import {
   refreshAllternitPlan,
 } from "../../src/runtime/providers/discovery/allternit-cloud"
 
+import { resetPickerCatalog } from "../../src/runtime/providers/discovery/picker-catalog"
+
 const originalFetch = globalThis.fetch
+
+// The route answers 404 here (older server): discovery falls back to /v1/models.
+beforeEach(() => {
+  resetPickerCatalog()
+  process.env.GIZZI_MODELS_REFRESH = "1"
+})
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  delete process.env.GIZZI_MODELS_REFRESH
   delete process.env.ALLTERNIT_API_KEY
   delete process.env.ALLTERNIT_API_TOKEN
 })
