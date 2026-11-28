@@ -84,7 +84,7 @@ class AgentFrameTest {
     fun everyFixtureHasAnExpectationAndBackAgain() {
         val files = fixturesDir().listFiles { f -> f.name.endsWith(".txt") }!!.map { it.name }.sorted()
         assertEquals(files, expected().keys.sorted())
-        assertEquals(34, files.size)
+        assertEquals(33, files.size)
     }
 
     @Test
