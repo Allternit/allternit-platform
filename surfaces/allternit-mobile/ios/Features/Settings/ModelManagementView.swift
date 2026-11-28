@@ -38,9 +38,9 @@ struct ModelManagementListContent: View {
     @State private var providerQuery = ""
 
     var body: some View {
-        List {
-            selectedModelSection
         DockingTitleList(title: "Models & Engines") {
+            selectedModelSection
+            enginesSection
             Section {
                 FreeweightsSection(store: freeweights)
                     .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14))
