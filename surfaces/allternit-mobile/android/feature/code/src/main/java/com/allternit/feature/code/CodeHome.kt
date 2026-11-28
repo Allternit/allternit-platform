@@ -339,7 +339,7 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 } else {
                     overviewCells(layout, shown, { it.id }) { s, cell ->
                         ThreadItem(
-                            s, card = cell != LibraryLayout.List, deck = cell == LibraryLayout.Deck,
+                            host.backend, s, card = cell != LibraryLayout.List, deck = cell == LibraryLayout.Deck,
                             armed = armed == s.id, onArm = { armed = s.id }, onDisarm = { armed = null },
                             onDelete = {
                                 armed = null
@@ -407,6 +407,7 @@ internal fun DeleteStrip(title: String, testTag: String, onHeld: () -> Unit, onC
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ThreadItem(
+    backend: ChatBackend,
     s: CodeSessionRow,
     card: Boolean,
     deck: Boolean,
@@ -419,7 +420,23 @@ private fun ThreadItem(
 ) {
     val c = AllternitTheme.colors
     val view = androidx.compose.ui.platform.LocalView.current
-    val detail = listOf(s.status.label, relativeTime(s.updatedMillis)).filter { it.isNotEmpty() }.joinToString(" · ")
+    val age = relativeTime(s.updatedMillis)
+    val detail = listOf(s.status.label, age).filter { it.isNotEmpty() }.joinToString(" · ")
+    // The newest message, one line (loaded when the row scrolls into view; empty threads have none).
+    var lastLine by remember(s.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(s.id, s.messages) {
+        if (s.messages > 0) {
+            val r = backend.listMessages(s.id)
+            if (r is ApiResult.Ok) lastLine = r.value.lastOrNull { it.content.isNotBlank() }?.content?.replace('\n', ' ')?.trim()
+        }
+    }
+    val dot = when (s.status) {
+        CodeSessionStatus.NeedsInput -> AllternitStatic.StatusWarning
+        CodeSessionStatus.Working -> c.accentCode
+        CodeSessionStatus.ReadyForReview -> c.accentCode
+        CodeSessionStatus.Done -> AllternitStatic.StatusSuccess
+        else -> c.textTertiary
+    }
     Column(
         Modifier.fillMaxWidth()
             .then(if (deck) Modifier.heightIn(min = 200.dp) else Modifier)
@@ -433,13 +450,17 @@ private fun ThreadItem(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.padding(top = 7.dp).size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(dot).testTag("codeSessionDot-${s.id}"))
             Column(Modifier.weight(1f)) {
-                Text(s.title, color = c.textPrimary, fontSize = 16.sp, maxLines = if (card) 3 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text(detail, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(s.title, color = c.textPrimary, fontSize = 16.sp, maxLines = if (card) 3 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (!card && age.isNotEmpty()) Text(age, color = c.textTertiary, fontSize = 12.sp, maxLines = 1)
+                }
+                Text(lastLine ?: detail, color = c.textSecondary, fontSize = 13.sp, maxLines = if (card) 3 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                if (card) Text(detail, color = c.textTertiary, fontSize = 11.sp, maxLines = 1)
             }
             Text("⋯", color = c.textSecondary, fontSize = 22.sp, modifier = Modifier.testTag("codeSessionMore-${s.id}").clickable(onClick = onMore).padding(horizontal = 8.dp, vertical = 2.dp))
         }
-        if (card && s.messages > 0) Text("${s.messages} message${if (s.messages == 1) "" else "s"}", color = c.textTertiary, fontSize = 11.sp)
         if (armed) DeleteStrip("Hold to delete", "codeThreadDelete-${s.id}", onHeld = onDelete, onCancel = onDisarm)
     }
 }
