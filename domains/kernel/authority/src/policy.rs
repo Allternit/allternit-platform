@@ -68,14 +68,9 @@ pub const fn class_rule_in(class: ActionClass, autonomy: AutonomyLevel, cond: Co
                 Rule::Ask
             }
         }
-        (AppInstall, AskRisky) => Rule::Ask,
-        (AppInstall, Full) => {
-            if cond.catalog_by_digest {
-                Rule::Allow
-            } else {
-                Rule::Ask
-            }
-        }
+        // G0 (Eoj 11-27): app_install asks at every level until the app sandbox exists
+        // (Apps + MCP 2026). `catalog_by_digest` is kept for when that rule is lifted.
+        (AppInstall, AskRisky | Full) => Rule::Ask,
         // Unreachable: the human-only classes returned above. Fail toward the strict side.
         (Money | ClientMessage | Deploy | SecretNewHost | Irreversible, _) => Rule::HumanOnly,
     }
@@ -170,7 +165,7 @@ mod tests {
             assert_eq!(class_rule(Network, l), Rule::Ask);
         }
         assert_eq!(class_rule_in(AppInstall, AskRisky, cat), Rule::Ask);
-        assert_eq!(class_rule_in(AppInstall, Full, cat), Rule::Allow);
+        assert_eq!(class_rule_in(AppInstall, Full, cat), Rule::Ask);
         assert_eq!(class_rule(AppInstall, Full), Rule::Ask);
     }
 }
