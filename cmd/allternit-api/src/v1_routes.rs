@@ -536,7 +536,7 @@ async fn fetch_live_model_catalog(state: &AppState) -> Option<Vec<serde_json::Va
 /// Providers that run on the user's own machine. Matched on the gizzi
 /// provider id: these exact ids, or any id starting with `local`.
 fn is_local_provider(provider_id: &str) -> bool {
-    matches!(provider_id, "sidecar" | "ollama" | "lmstudio" | "bonsai" | "omlx")
+    matches!(provider_id, "sidecar" | "ollama" | "lmstudio" | "omlx")
         || provider_id.starts_with("local")
 }
 
@@ -4485,10 +4485,10 @@ mod tests {
 
     #[test]
     fn local_provider_rule() {
-        for id in ["sidecar", "ollama", "lmstudio", "bonsai", "omlx", "local-mlx", "localai"] {
+        for id in ["sidecar", "ollama", "lmstudio", "omlx", "local-mlx", "localai"] {
             assert!(super::is_local_provider(id), "{id}");
         }
-        for id in ["allternit", "claude-cli", "openai", "codex-cli"] {
+        for id in ["allternit", "claude-cli", "openai", "codex-cli", "bonsai"] {
             assert!(!super::is_local_provider(id), "{id}");
         }
     }

@@ -42,6 +42,21 @@ Brains and Cloud models carry an `access` object.
 
 A locked choice always has a `reason`. Signed out, every Cloud model is locked with the reason "Sign in" and the action `sign_in`. With no credits, the reason is "No credits left" and the action is `add_credits`.
 
+## Where the locks come from
+
+cloud-api computes `access` in `routes/picker_catalog.rs`:
+
+- No valid sign-in: Cloud is locked with "Sign in".
+- Signed in: the lock follows the same credits rule as `GET /api/v1/billing/credits` (`cloud_models`). A provider the account has its own key for stays open, because the server sends those requests through the key.
+- Open models (`lane: "open"`) follow the Allternit Open gate instead, the same one chat uses: terms, then plan, then allowance, then bought credits. The reasons are "Accept the open-model terms" (`accept_terms`), "Needs a paid plan" (`upgrade`), "Open-model allowance used" (`add_credits`) and "No credits left" (`add_credits`).
+- A model `/v1/models` marks `hidden` (a retired alias) is `hidden`. The Cloud model list is the same list `/v1/models` offers, so disabled pools are left out of both.
+
+allternit-api (`picker_catalog.rs`) builds `runtimes` from its own copy of `cli-catalog.json`. It gets `brains` and `cloudModels` from cloud-api's route, forwarding the caller's `Authorization`. For the computer's owner it adds `installed` and `signedIn` from its CLI check. If no cloud URL is set, `cloudModels` is empty and the Allternit Cloud brain is locked with "Allternit Cloud is not set up on this computer". If the cloud can't be reached, the reason is "Allternit Cloud can't be reached" with the action `retry`.
+
+The ETag covers the whole body except `generatedAt`, and `If-None-Match` gets a 304. Signed-out responses are `public, max-age=21600`. Signed-in responses are `private, max-age=21600`. The owner's response on a computer is `private, no-cache`, because install state changes there.
+
+In `runtimes`, a model's `aliases` are the retired ids that now point to it. The native `allternit` runtime has no tool. Its `logo` and `defaultModel` are empty, its `models` list is empty and `signIn` is `none`.
+
 ## Fixtures
 
 | File | Case |

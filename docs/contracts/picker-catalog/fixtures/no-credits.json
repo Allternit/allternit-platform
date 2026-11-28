@@ -53,7 +53,7 @@
     {
       "id": "kimi",
       "label": "Kimi Code",
-      "vendor": "Moonshot",
+      "vendor": "Moonshot AI",
       "logo": "/assets/runtime-logos/kimi-cli.svg",
       "signIn": "subscription",
       "defaultModel": "kimi-for-coding",
