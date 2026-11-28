@@ -105,6 +105,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             refreshing = false
         }
     }, modifier = Modifier.fillMaxSize()) {
+        AciDockPage("Computers", scroll, Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp).testTag("aciComputers")) {
             // Only the header gets the dock scroll: the console sheets and dialogs below must not dock their own bars.
             ProvideDockScroll(scroll) { AciViewHeader("Computers") }
@@ -164,6 +165,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             AciCloudBackupsSection(host.signedIn)
             Spacer(Modifier.height(24.dp))
             AciWorkflowsSection(host, workflowRuntime)
+        }
         }
     }
     if (pairOpen) AciPairComputerSheet { pairOpen = false }

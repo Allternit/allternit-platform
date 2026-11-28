@@ -124,6 +124,7 @@ internal fun AciExtensionsView() {
     val scroll = rememberScrollState()
     // The header lives in the scroll so its title docks as the page scrolls (see the clipping note in the PR).
     ProvideDockScroll(scroll) {
+    AciDockPage("ACI Extensions", scroll, Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().testTag("aciExtensions")) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 56.dp)) {
             AciViewHeader("ACI Extensions", bottom = 16.dp)
@@ -170,6 +171,7 @@ internal fun AciExtensionsView() {
             }
             }
         }
+    }
     }
     }
     if (uploadOpen) AciUploadExtensionSheet({ uploadOpen = false }) { name, desc, url -> store.addCustom(name, desc, url); toast = "Added and enabled $name"; uploadOpen = false }
