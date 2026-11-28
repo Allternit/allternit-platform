@@ -121,6 +121,7 @@ test/commands/completions.test.ts
 test/commands/onboarding.test.ts
 test/commands/doctor.test.ts
 test/commands/uninstall-plan.test.ts
+test/commands/updater.test.ts
 test/automation/cron-supervision.test.ts
 test/shared/gizziEnv.test.ts
 test/telemetry/gizziUsageTelemetry.test.ts
