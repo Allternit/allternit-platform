@@ -245,6 +245,7 @@ internal fun AciMcpAppsView(host: AciHost) {
     val scroll = rememberScrollState()
     // The header lives in the scroll so its title docks as the page scrolls (see the clipping note in the PR).
     ProvideDockScroll(scroll) {
+    AciDockPage("MCP Apps", scroll, Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().testTag("aciMcpApps")) {
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
             AciViewHeader("MCP Apps", "Connect apps and services the agent can use.", bottom = 16.dp)
@@ -324,6 +325,7 @@ internal fun AciMcpAppsView(host: AciHost) {
             }
             }
         }
+    }
     }
     }
     if (addOpen) AciAddByUrlSheet(onDismiss = { addOpen = false }) { url -> model.signIn = model.addByUrl(url); addOpen = false }
