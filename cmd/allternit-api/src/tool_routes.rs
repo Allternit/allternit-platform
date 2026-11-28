@@ -242,7 +242,9 @@ async fn execute_tool(
 
     let cache_enabled = body.cache.unwrap_or(false);
 
-    let org_id = user.organization_id.as_deref().or(user.tenant_id.as_deref());
+    // Organization-or-tenant id: the server-tool org and the kernel chain scope (one rule,
+    // `authority::kernel_scope`).
+    let org_id = crate::authority::org_or_tenant(&user);
     let result = match execute_tool_internal(&state, &body, &user.user_id, org_id).await {
         Ok(result) => {
             let cache_control = tool_result_cache_control(&result, cache_enabled);
@@ -340,6 +342,8 @@ pub(crate) async fn execute_tool_internal(
 
     // Authority kernel context (plan step 9). Every caller reaches this function, HTTP or not
     // (MCP `tools/call`, the routine scheduler), so the gate lives here and not in the route.
+    // `tenant_id` is the caller's organization-or-tenant id (`authority::org_or_tenant`), so the
+    // chain scope matches `authority::kernel_scope` and the receipts route.
     let kernel_ctx = crate::authority::check::CheckCtx::new(state.db.clone(), user_id, tenant_id)
         .with_run_id(request.run_id.clone())
         .with_token(request.approval_token.clone());

@@ -179,7 +179,7 @@ async fn request(
         Err(r) => return r,
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
-    with_kernel(&state, user.tenant_id.clone(), move |k| k.request(&caller, body)).await
+    with_kernel(&state, Some(super::kernel_scope(&user)), move |k| k.request(&caller, body)).await
 }
 
 /// `approval.resolve`: HUMAN ONLY. A machine caller reaches the kernel as `run`/`service` and is
@@ -198,9 +198,9 @@ async fn resolve(
     let (caller, proof) = caller_and_proof(&state, &headers, &user, credential.is_some()).await;
     if caller.kind == CallerKind::Human && presence_missing(proof, &body, &headers, chrono::Utc::now().timestamp()) {
         tracing::info!("kernel approvals: Desktop approve without a user-presence proof, refused");
-        return with_kernel(&state, user.tenant_id.clone(), move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
+        return with_kernel(&state, Some(super::kernel_scope(&user)), move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
     }
-    with_kernel(&state, user.tenant_id.clone(), move |k| k.resolve(&caller, body)).await
+    with_kernel(&state, Some(super::kernel_scope(&user)), move |k| k.resolve(&caller, body)).await
 }
 
 /// `approval.redeem`: spend a token before the action runs.
@@ -216,7 +216,7 @@ async fn redeem(
         Err(r) => return r,
     };
     let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
-    with_kernel(&state, user.tenant_id.clone(), move |k| k.redeem(&caller, body)).await
+    with_kernel(&state, Some(super::kernel_scope(&user)), move |k| k.redeem(&caller, body)).await
 }
 
 /// The caller's own chain. Reads need a person's session, the same check as resolve: a run,
@@ -234,8 +234,13 @@ async fn own_scope(
             "only a person's session can read the receipt log",
         )));
     }
-    let tenant = user.tenant_id.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| audit::DEFAULT_TENANT.to_string());
-    Ok(Scope { principal: caller.principal, tenant })
+    Ok(receipt_scope(caller.principal, user))
+}
+
+/// The chain a person's receipt routes read: their account and [`super::kernel_scope`], the same
+/// scope `check` writes to.
+pub(crate) fn receipt_scope(principal: String, user: &AuthUser) -> Scope {
+    Scope { principal, tenant: super::kernel_scope(user) }
 }
 
 #[derive(serde::Deserialize)]

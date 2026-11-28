@@ -652,9 +652,22 @@ fn run_tool(db: &crate::db::DbHandle, user_id: &str, name: &str, args: &Value) -
 
 /// Runs an agents tool; `None` when `name` is not one of them. The result is a
 /// complete MCP `tools/call` result (errors are `isError`, never JSON-RPC errors).
-pub async fn call_tool(state: &Arc<AppState>, user_id: &str, name: &str, args: Value) -> Option<Value> {
+/// Every call passes the authority kernel's `check` first (class `read`, plan step 9).
+pub async fn call_tool(
+    state: &Arc<AppState>,
+    kernel_ctx: &crate::authority::check::CheckCtx,
+    user_id: &str,
+    name: &str,
+    args: Value,
+) -> Option<Value> {
     if !is_agents_tool(name) {
         return None;
+    }
+    {
+        use crate::authority::check::{check, Action, Source};
+        if let Err(refusal) = check(kernel_ctx, &Action::new(Source::AgentInterface, name, &args)).await.into_tool_result() {
+            return Some(json!({"content": [{"type": "text", "text": refusal}], "isError": true}));
+        }
     }
     let db = state.db.clone();
     let (uid, tool) = (user_id.to_string(), name.to_string());

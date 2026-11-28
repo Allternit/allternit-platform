@@ -94,7 +94,7 @@ impl SqlAuthority {
         Self { db, signer, now: None, tenant: super::audit::DEFAULT_TENANT.to_string() }
     }
 
-    /// Chain scope: the caller's tenant (`AuthUser::tenant_id`); `default` when there is none.
+    /// Chain scope: pass [`super::kernel_scope`] (organization, else tenant); `default` when none.
     pub fn with_tenant(mut self, tenant: Option<String>) -> Self {
         self.tenant = tenant.filter(|t| !t.is_empty()).unwrap_or_else(|| super::audit::DEFAULT_TENANT.to_string());
         self
