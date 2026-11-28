@@ -56,7 +56,9 @@ describe("toTrajectory", () => {
 
   test("adapter output is gradeable", () => {
     const t = toTrajectory(fixture)
-    expect(grade(t, { type: "effect_count", max: 1 }).pass).toBe(false)
+    // One committed effect (edit; the failed bash is not committed), as in the shared grader vectors.
+    expect(grade(t, { type: "effect_count", max: 0 }).pass).toBe(false)
+    expect(grade(t, { type: "effect_count", max: 1 }).pass).toBe(true)
     expect(grade(t, { type: "effect_count", max: 2 }).pass).toBe(true)
     expect(grade(t, { type: "forbidden_step", steps: ["bash"] }).pass).toBe(false)
     expect(grade(toTrajectory([...fixture, { sequence: 99, sessionID: "ses_1", kind: "guardrail.tripped", time: 1_004_000, data: { kind: "ping_pong" } }]), { type: "stopped_at", step: "ping_pong" }).pass).toBe(true)

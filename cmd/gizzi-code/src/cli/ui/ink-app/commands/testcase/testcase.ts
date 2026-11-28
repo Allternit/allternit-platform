@@ -1,6 +1,6 @@
 // @ts-nocheck
 import type { LocalCommandCall } from '../../../types/command.js'
-import { getDirectConnectServerUrl, getSessionId } from '../../../bootstrap/state.js'
+import { getDirectConnectServerUrl, getSessionId } from '../../bootstrap/state.js'
 
 export function parseTestcaseArgs(args: string): { label: 'good' | 'bad'; note?: string } {
   const text = args.trim()

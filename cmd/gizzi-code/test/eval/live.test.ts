@@ -121,14 +121,16 @@ test("n_of_k over real attempts: stub passes only on odd attempts", async () => 
   const wrapper = path.join(root, "wrap.js")
   await fs.writeFile(
     wrapper,
-    `const fs=require("fs");const f=${JSON.stringify(counter)};const n=Number(fs.readFileSync(f,"utf8"))+1;fs.writeFileSync(f,String(n));
-const a=process.argv.slice(2);if(a[0]!=="export"&&n===2)a[a.length-1]="write:nope";
+    `const fs=require("fs");const f=${JSON.stringify(counter)};const a=process.argv.slice(2);
+// Count run calls only: each attempt also calls "export" after its run.
+if(a[0]!=="export"){const n=Number(fs.readFileSync(f,"utf8"))+1;fs.writeFileSync(f,String(n));if(n===2)a[a.length-1]="write:nope";}
 process.argv=[process.argv[0],${JSON.stringify(stub)},...a];require(${JSON.stringify(stub)})`,
   )
   const r = await runLive({ case: c, caseDir: root, k: 3, gizziArgv: [process.execPath, wrapper], trajectoryFor: traj, outDir: path.join(root, "out2") })
   void n
   expect(r.attempts.map((a) => a.pass)).toEqual([true, false, true])
   expect(r.pass).toBe(true)
+  await fs.writeFile(counter, "0")
   const strict = await runLive({ case: { ...c, pass_rule: "all_of_k" }, caseDir: root, k: 3, gizziArgv: [process.execPath, wrapper], trajectoryFor: traj, outDir: path.join(root, "out3") })
   expect(strict.pass).toBe(false)
 })
