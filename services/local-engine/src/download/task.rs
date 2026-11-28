@@ -8,7 +8,9 @@
 
 use crate::cache::model::{CachedModel, FileVerification};
 use crate::cache::store::ModelStore;
-use crate::download::huggingface::{self, is_weight_file, select_files};
+use crate::download::huggingface::{
+    self, is_colibri_download, is_weight_file, select_colibri_files, select_files,
+};
 use allternit_model_source::{
     Client, FetchOptions, Resolution, Verification, VerificationState,
 };
@@ -31,6 +33,7 @@ pub fn spawn_download_task(
     repo_id: String,
     revision: String,
     quantization: Option<String>,
+    engine: Option<String>,
     allow_unverified: bool,
     models_dir: PathBuf,
 ) {
@@ -41,6 +44,7 @@ pub fn spawn_download_task(
             &repo_id,
             &revision,
             quantization.as_deref(),
+            engine.as_deref(),
             allow_unverified,
             &models_dir,
         )
@@ -60,6 +64,68 @@ enum DownloadError {
     Source(#[from] allternit_model_source::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    DiskShort(String),
+}
+
+/// Colibri models stream from disk, so the whole pack must fit on the volume
+/// that holds the models folder. CONTRACT-colibri-unkernel section 1 states the
+/// rule as `size <= disk_free_bytes` and names no margin, so the margin is 0.
+pub const COLIBRI_DISK_MARGIN_BYTES: u64 = 0;
+
+fn gb(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / 1e9)
+}
+
+/// Refuse with a plain message when `free` (bytes free on the models volume)
+/// is below `needed` plus the contract margin. `free = None` (read failed)
+/// does not block: the OS still fails the write if the disk really is full.
+fn ensure_disk_space(needed: u64, free: Option<u64>) -> Result<(), DownloadError> {
+    match free {
+        Some(free) if free < needed.saturating_add(COLIBRI_DISK_MARGIN_BYTES) => {
+            Err(DownloadError::DiskShort(format!(
+                "Not enough disk space. This model needs {} free and {} is available. Free some space and try again.",
+                gb(needed),
+                gb(free)
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Free bytes on the volume holding `path` (nearest existing ancestor).
+fn free_bytes_on_volume(path: &Path) -> Option<u64> {
+    let mut probe = path;
+    while !probe.exists() {
+        probe = probe.parent()?;
+    }
+    let target = probe.canonicalize().ok()?;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks
+        .iter()
+        .filter(|d| target.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .map(|d| d.available_space())
+}
+
+/// Bytes still to fetch: expected sizes minus what a finished or `.part`
+/// file already holds, so a resume is not refused for space it already used.
+async fn remaining_bytes(
+    models_dir: &Path,
+    repo_id: &str,
+    files: &[(String, allternit_model_source::ExpectedFile)],
+) -> Result<u64, DownloadError> {
+    let mut need = 0u64;
+    for (path, expected) in files {
+        let Some(size) = expected.size else { continue };
+        let dest = huggingface::safe_model_file(models_dir, repo_id, path)?;
+        let have = match fs::metadata(&dest).await {
+            Ok(m) => m.len(),
+            Err(_) => fs::metadata(part_path(&dest)).await.map(|m| m.len()).unwrap_or(0),
+        };
+        need += size.saturating_sub(have.min(size));
+    }
+    Ok(need)
 }
 
 /// Strength order for the model-level state: the weakest file decides.
@@ -97,6 +163,7 @@ async fn run_download(
     repo_id: &str,
     revision: &str,
     quantization: Option<&str>,
+    engine: Option<&str>,
     allow_unverified: bool,
     models_dir: &Path,
 ) -> Result<(), DownloadError> {
@@ -108,8 +175,19 @@ async fn run_download(
     if let Some(reason) = &res.fallback_reason {
         info!(%repo_id, %reason, "Freeweights not used; checking against the publisher's hashes");
     }
-    let files = select_files(&res.files, quantization)?;
+    // Colibri packs are whole container directories installed into the
+    // models folder (not the HF cache), resumed like any other download.
+    let colibri = is_colibri_download(engine, repo_id);
+    let files = if colibri {
+        select_colibri_files(&res.files)?
+    } else {
+        select_files(&res.files, quantization)?
+    };
     let total_bytes: u64 = files.iter().filter_map(|(_, e)| e.size).sum();
+    if colibri {
+        let need = remaining_bytes(models_dir, repo_id, &files).await?;
+        ensure_disk_space(need, free_bytes_on_volume(models_dir))?;
+    }
     store.update_progress(model_id, 0, total_bytes).await;
 
     // No pins. Unless the caller set `allow_unverified`, a file with no hash
@@ -451,6 +529,18 @@ async fn hash_file(path: PathBuf) -> std::io::Result<(u64, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colibri_download_refuses_when_disk_is_short() {
+        let err = ensure_disk_space(23_100_000_000, Some(10_000_000_000)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Not enough disk space. This model needs 23.1 GB free and 10.0 GB is available. Free some space and try again."
+        );
+        assert!(ensure_disk_space(23_100_000_000, Some(23_100_000_000)).is_ok());
+        assert!(ensure_disk_space(23_100_000_000, Some(23_099_999_999)).is_err());
+        assert!(ensure_disk_space(23_100_000_000, None).is_ok());
+    }
     use allternit_model_source::{ExpectedFile, Source, SourceKind};
     use std::collections::BTreeMap;
 

@@ -412,6 +412,7 @@ Queues a download from a Hugging Face repository. The returned state reflects th
 | `repo_id` | string | Yes | Hugging Face repository id, e.g. `bartowski/Llama-3.2-3B-Instruct-GGUF`. |
 | `revision` | string | No | Git revision. Defaults to `main`. |
 | `quantization` | string | No | Quantization tag, e.g. `Q4_K_M`. The filter runs on the Freeweights manifest file list, so only the matching quant downloads. |
+| `engine` | string | No | Set `"colibri"` for a build from a model's stream quants (its `engine` field). The engine then installs the whole container into the models folder and checks free disk space first. Without it, a repo id that names colibri is treated the same way. Any other value turns the colibri handling off. |
 | `allow_unverified` | boolean | No | Default `false`. Set `true` to accept files that have no hash at Freeweights, the publisher or from you. The model then ends as `unverified`. |
 
 ### Example request

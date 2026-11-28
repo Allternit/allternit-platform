@@ -187,6 +187,44 @@ pub fn select_files(
     Ok(picked)
 }
 
+/// `true` for a colibri native int4 container repo (its id names colibri,
+/// such as `Kreuzzelg/qwen36-35b-a3b-colibri-i4-gs64`).
+pub fn is_colibri_repo(repo_id: &str) -> bool {
+    repo_id.to_lowercase().contains("colibri")
+}
+
+/// Whether a download is a colibri container. The caller's `engine` field
+/// (set from the stream quant) decides: `"colibri"` is yes and any other
+/// value is no. Only when `engine` is absent does the repo id name decide.
+pub fn is_colibri_download(engine: Option<&str>, repo_id: &str) -> bool {
+    match engine {
+        Some(e) => e.trim().eq_ignore_ascii_case("colibri"),
+        None => is_colibri_repo(repo_id),
+    }
+}
+
+/// Files of a colibri container: the whole directory, including the small
+/// `.json` metadata that `should_download` would drop. Only docs and git
+/// housekeeping are skipped. The quantization filter does not apply.
+pub fn select_colibri_files(
+    files: &BTreeMap<String, ExpectedFile>,
+) -> Result<Vec<(String, ExpectedFile)>, HuggingFaceError> {
+    let picked: Vec<(String, ExpectedFile)> = files
+        .iter()
+        .filter(|(path, _)| {
+            let lower = path.to_lowercase();
+            !(lower.ends_with(".gitattributes") || lower.ends_with(".md"))
+        })
+        .map(|(p, e)| (p.clone(), e.clone()))
+        .collect();
+    if picked.is_empty() {
+        return Err(HuggingFaceError::NoMatchingFiles(
+            "the repo has no downloadable model files".into(),
+        ));
+    }
+    Ok(picked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +234,17 @@ mod tests {
             .iter()
             .map(|p| (p.to_string(), ExpectedFile::default()))
             .collect()
+    }
+
+    #[test]
+    fn colibri_download_engine_field_wins_and_name_is_fallback() {
+        // Explicit engine, repo id does not name colibri.
+        assert!(is_colibri_download(Some("colibri"), "Org/qwen36-35b-i4-gs64"));
+        // Explicit engine wins over a misleading name.
+        assert!(!is_colibri_download(Some("llama.cpp"), "Org/colibri-looking-GGUF"));
+        // No engine: fall back to the name check.
+        assert!(is_colibri_download(None, "Kreuzzelg/qwen36-35b-a3b-colibri-i4-gs64"));
+        assert!(!is_colibri_download(None, "org/model-GGUF"));
     }
 
     #[test]
