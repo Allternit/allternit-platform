@@ -162,6 +162,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // to the home and back. It shares the shell's OkHttp client and API.
     val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api).also { com.allternit.feature.chat.ServerSkillsRepository.attach(it) } }
     val chat = remember(account?.userId) { ChatViewModel(chatBackend, context.contentResolver).also { it.attachBrowserImages(context, account?.userId ?: "signed-out") } }
+    // An Allternit Cloud model the computer's catalog doesn't list goes straight to cloud-api (iOS routesDirect).
+    chat.computerListsModel = { id -> models.models.any { it.id == id } }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     com.allternit.feature.chat.BrowserImageHost(chat)
     var hubOpen by remember { mutableStateOf(false) }

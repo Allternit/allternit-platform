@@ -2,6 +2,9 @@ package com.allternit.feature.computer
 
 import android.annotation.SuppressLint
 import android.content.Context
+import com.allternit.feature.chat.BoxExecParams
+import com.allternit.feature.chat.BoxExecResult
+import com.allternit.feature.chat.BrowserComputerExecutor
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
@@ -78,7 +81,7 @@ internal class BoxNativeBridge(private val onMessage: (String) -> Unit) {
 }
 
 /** Holds one WebView and speaks the section 6 protocol over it. Create with [rememberBrowserComputerHost]. */
-internal class BrowserComputerHost(private val context: Context) {
+internal class BrowserComputerHost(private val context: Context) : BrowserComputerExecutor {
     var hostState by mutableStateOf(BoxHostState.Probing); private set
     var status by mutableStateOf(BoxStatus()); private set
     /** A failure the UI should show in plain words (a failed page load). */
@@ -230,17 +233,28 @@ internal class BrowserComputerHost(private val context: Context) {
         throw BoxRpcError("not_ready", message ?: "The browser computer did not start.")
     }
 
-    suspend fun exec(cmd: String, args: List<String>, timeoutMs: Long = 60_000): JsonObject = call(
+    /** Contract 6.2 `exec`: `{cmd, args, cwd, stdin, timeout_ms}`. [stdin] is base64 text, or null for none. */
+    suspend fun exec(cmd: String, args: List<String>, timeoutMs: Long = 60_000, cwd: String? = "/root", stdin: String? = null): JsonObject = call(
         "exec",
         buildJsonObject {
             put("cmd", cmd)
             put("args", kotlinx.serialization.json.JsonArray(args.map { JsonPrimitive(it) }))
-            put("cwd", "/root")
-            put("stdin", JsonNull)
+            put("cwd", cwd?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("stdin", stdin?.let { JsonPrimitive(it) } ?: JsonNull)
             put("timeout_ms", timeoutMs)
         },
         timeoutMs = timeoutMs + 5_000,
     )
+
+    override suspend fun exec(params: BoxExecParams): BoxExecResult {
+        val r = exec(params.cmd, params.args, params.timeoutMs, params.cwd, params.stdin)
+        return BoxExecResult(
+            stdout = r.str("stdout").orEmpty(),
+            stderr = r.str("stderr").orEmpty(),
+            exitCode = r["exit_code"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: -1,
+            timedOut = r["timed_out"]?.jsonPrimitive?.booleanOrNull == true,
+        )
+    }
 }
 
 @Composable

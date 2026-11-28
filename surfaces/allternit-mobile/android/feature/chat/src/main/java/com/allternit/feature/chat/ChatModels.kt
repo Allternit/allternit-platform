@@ -138,7 +138,7 @@ fun parsePlanDraft(q: JsonObject): PlanDraft? {
  * The inline error card's data (iOS ChatError, ChatErrorCardView): built from a finish frame
  * with status "error", a stream error, or a transport failure.
  */
-data class ChatError(val name: String?, val message: String?, val raw: String, val typed: ChatErrorInfo? = null) {
+data class ChatError(val name: String?, val message: String?, val raw: String, val typed: ChatErrorInfo? = null, val heading: String? = null) {
     val isModelError: Boolean get() = name == NO_BRAIN || name == "ProviderModelNotFoundError"
 
     /**
@@ -165,8 +165,9 @@ data class ChatError(val name: String?, val message: String?, val raw: String, v
             }
         }
 
+    /** [heading] names who refused (a no-computer turn: "Allternit Cloud didn't answer"). */
     val title: String
-        get() = when (name) {
+        get() = heading ?: when (name) {
             NO_BRAIN -> "Pick a brain first."
             "ProviderModelNotFoundError" -> "Model not available"
             else -> "Something went wrong"

@@ -571,6 +571,11 @@ internal fun AciBrowserComputerDetail(onDone: () -> Unit) {
             error = if (e.code == "no_jspi") NO_JSPI_MESSAGE else e.message
         }
     }
+    // The chat's tool loop finds the computer here only while it is booted and ready.
+    DisposableEffect(host, ready, error) {
+        if (ready && error == null && host.hostState == BoxHostState.Ready) com.allternit.feature.chat.BrowserComputerRegistry.attach(host)
+        onDispose { com.allternit.feature.chat.BrowserComputerRegistry.detach(host) }
+    }
     DisposableEffect(Unit) { onDispose { host.onPtyData = null; host.onPtyExit = null } }
 
     ModalBottomSheet(onDismissRequest = onDone, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.bgPrimary) {
