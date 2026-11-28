@@ -176,7 +176,9 @@ final class BrowserComputerModel: NSObject, ObservableObject {
 
     private func resolve(_ id: String, _ result: Result<[String: Any], Error>) {
         guard let c = pending.removeValue(forKey: id) else { return }
-        c.resume(with: result)
+        // The reply dictionary is built per call and handed over once; nothing else keeps it.
+        nonisolated(unsafe) let reply = result
+        c.resume(with: reply)
     }
 
     /// `hello` every 250 ms until answered or 10 s pass (section 6.3).
