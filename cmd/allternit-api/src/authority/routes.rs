@@ -48,6 +48,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/v1/kernel/receipts/verify", get(verify_receipts))
         .route("/api/v1/kernel/leases", get(super::leases::list_handler))
         .route("/api/v1/kernel/secrets/use", post(super::secrets::use_handler))
+        .route("/api/v1/kernel/standing-grants", axum::routing::put(super::standing::sync_handler))
         .route("/api/v1/kernel/budget/reserve", post(super::budget::reserve_handler))
         .route("/api/v1/kernel/budget/commit", post(super::budget::commit_handler))
         .route("/api/v1/kernel/budget/release", post(super::budget::release_handler))

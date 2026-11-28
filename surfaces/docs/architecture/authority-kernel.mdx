@@ -190,3 +190,8 @@ The interface is written once and reused unchanged:
 - [Kernel](/architecture/kernel)
 - [Policy and safety](/architecture/policy)
 - [Receipts](/architecture/receipts)
+
+## Standing tool policies and routine receipts
+
+- **Standing Allow.** A person's per-tool Allow in Customize is a standing human decision. The policy lives in the client only, so the client syncs it with `PUT /api/v1/kernel/standing-grants` (`{ "tools": [{ "tool", "policy" }] }`; `allow` records, `ask` and `block` remove). It needs a person's session proof; machine credentials get `person_required`. `check` reads the grants for an `ask` rule only and records `approved_by: standing_grant`. Money, client_message, deploy, secret_new_host and irreversible actions never read it and always need a fresh token.
+- **Routine receipts.** A scheduled routine resolves its owner's org (else tenant) before it runs a tool, so its receipts land on the owner's chain and not on `default`.

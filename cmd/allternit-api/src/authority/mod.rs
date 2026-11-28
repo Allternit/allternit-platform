@@ -31,6 +31,7 @@ pub mod presence;
 pub mod redact;
 pub mod routes;
 pub mod secrets;
+pub mod standing;
 pub mod tokens;
 
 /// `ReceiptChainV1.domain`: one fixed ABI value; the kernel kind rides in `payload.kind` (CONTRACT.md 11.2).
