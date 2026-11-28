@@ -13,11 +13,13 @@ on:
   pull_request:
     paths:
       - 'os/**'
+      - 'domains/kernel/authority/**'
       - '.github/workflows/os-image.yml'
   push:
     branches: [main]
     paths:
       - 'os/**'
+      - 'domains/kernel/authority/**'
       - '.github/workflows/os-image.yml'
   workflow_dispatch:
 
