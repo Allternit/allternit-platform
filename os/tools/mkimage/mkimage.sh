@@ -1,7 +1,7 @@
 #!/bin/sh
 # AllternitOS image builder (plan step 27). POSIX sh plus common tools.
 #
-#   mkimage.sh [--out DIR] [--kernel-src DIR] [--skip-kernel]
+#   mkimage.sh [--out DIR] [--kernel-src DIR] [--skip-kernel] [--llama F --model F]
 #
 # Steps: static musl build of os/ -> initramfs file list -> kernel (tinyconfig +
 # image/kernel/x86_64-vm.config, initramfs embedded) -> UKI with ukify when present
@@ -13,6 +13,8 @@
 #
 #   --out DIR       output directory
 #   --kernel-src D  use an existing, already-extracted kernel source tree (skips download)
+#   --llama FILE    static llama-server (os/model/build-llama.sh). With --model it is put in the image.
+#   --model FILE    the GGUF named in os/model/MODEL (sha256 checked); goes on the state partition.
 #   --skip-kernel   do not run make; reuse OUT/bzImage from an earlier run. Valid only
 #                   when the initramfs contents are unchanged (the initramfs is embedded).
 set -eu
@@ -22,6 +24,8 @@ OS_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 OUT="$OS_DIR/target/image"
 KSRC=""
 SKIP_KERNEL=0
+LLAMA=""
+MODEL=""
 TARGET=x86_64-unknown-linux-musl
 CMDLINE="console=ttyS0,115200 rdinit=/sbin/init panic=-1 loglevel=4"
 
@@ -32,8 +36,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out) [ $# -ge 2 ] || die "--out needs a value"; OUT=$2; shift 2 ;;
     --kernel-src) [ $# -ge 2 ] || die "--kernel-src needs a value"; KSRC=$2; shift 2 ;;
+    --llama) [ $# -ge 2 ] || die "--llama needs a value"; LLAMA=$2; shift 2 ;;
+    --model) [ $# -ge 2 ] || die "--model needs a value"; MODEL=$2; shift 2 ;;
     --skip-kernel) SKIP_KERNEL=1; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -56,6 +62,22 @@ say "building os/ for $TARGET (release)"
 cargo build --manifest-path "$OS_DIR/Cargo.toml" --target "$TARGET" --release
 [ -x "$BIN/init" ] || die "missing $BIN/init"
 [ -x "$BIN/authority" ] || die "missing $BIN/authority"
+[ -x "$BIN/shell" ] || die "missing $BIN/shell"
+if [ -n "$LLAMA" ]; then
+  [ -x "$LLAMA" ] || die "no llama-server at $LLAMA"
+  if command -v file >/dev/null 2>&1; then
+    file "$LLAMA" | grep -qi 'statically linked' || die "llama-server is not static: $(file "$LLAMA")"
+  fi
+fi
+if [ -n "$MODEL" ]; then
+  [ -n "$LLAMA" ] || die "--model needs --llama"
+  [ -f "$MODEL" ] || die "no model file at $MODEL"
+  # shellcheck disable=SC1091
+  . "$OS_DIR/model/MODEL"
+  if command -v sha256sum >/dev/null 2>&1; then MSUM=$(sha256sum "$MODEL" | cut -d' ' -f1)
+  else MSUM=$(shasum -a 256 "$MODEL" | cut -d' ' -f1); fi
+  [ "$MSUM" = "$MODEL_SHA256" ] || die "model sha256 mismatch: got $MSUM want $MODEL_SHA256"
+fi
 if command -v file >/dev/null 2>&1; then
   file "$BIN/init" | grep -qi 'static' || die "init is not statically linked: $(file "$BIN/init")"
 fi
@@ -69,10 +91,16 @@ cp "$BIN/authority" "$ROOT/usr/lib/allternit/authority"
 awk '/DEFAULT_CONFIG: &str = r#"/{f=1;next} f&&/^"#;/{exit} f' "$OS_DIR/init/src/config.rs" \
   | sed 's#/usr/bin/authority#/usr/lib/allternit/authority#' > "$ROOT/etc/allternit/init.toml"
 grep -q '/usr/lib/allternit/authority' "$ROOT/etc/allternit/init.toml" || die "could not derive init.toml"
-chmod 755 "$ROOT/sbin/init" "$ROOT/usr/lib/allternit/authority"
+cp "$BIN/shell" "$ROOT/usr/lib/allternit/shell"
+[ -z "$LLAMA" ] || cp "$LLAMA" "$ROOT/usr/lib/allternit/llama-server"
+chmod 755 "$ROOT/sbin/init" "$ROOT/usr/lib/allternit/authority" "$ROOT/usr/lib/allternit/shell"
 
 # File list for the kernel's gen_init_cpio: no root needed for device nodes.
 cat > "$LIST" <<LIST_EOF
+if [ -n "$LLAMA" ]; then
+  chmod 755 "$ROOT/usr/lib/allternit/llama-server"
+  echo "file /usr/lib/allternit/llama-server $ROOT/usr/lib/allternit/llama-server 755 0 0" >> "$LIST"
+fi
 dir /dev 755 0 0
 nod /dev/console 600 0 0 c 5 1
 nod /dev/null 666 0 0 c 1 3
@@ -88,6 +116,7 @@ dir /usr/bin 755 0 0
 dir /usr/lib 755 0 0
 dir /usr/lib/allternit 755 0 0
 file /usr/lib/allternit/authority $ROOT/usr/lib/allternit/authority 755 0 0
+file /usr/lib/allternit/shell $ROOT/usr/lib/allternit/shell 755 0 0
 dir /etc 755 0 0
 dir /etc/allternit 755 0 0
 file /etc/allternit/init.toml $ROOT/etc/allternit/init.toml 644 0 0
@@ -146,7 +175,12 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   say "making UKI with ukify"
   ukify build --linux "$OUT/bzImage" --cmdline "$CMDLINE" --output "$OUT/allternit-os.efi"
 
+  # The GGUF lives on the state partition (plan step 29), so the disk grows with the model.
   ESP_MB=64; SYS_MB=16; STATE_MB=64
+  if [ -n "$MODEL" ]; then
+    MODEL_MB=$(( ($(wc -c < "$MODEL") / 1048576) + 1 ))
+    STATE_MB=$((MODEL_MB + 128))
+  fi
   DISK="$OUT/allternit-os.img"
   TOTAL=$((1 + ESP_MB + SYS_MB + STATE_MB + 1))
   truncate -s "${TOTAL}M" "$DISK"
@@ -164,7 +198,17 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   dd if="$ESP_IMG" of="$DISK" bs=1M seek=1 conv=notrunc 2>/dev/null
   if command -v mke2fs >/dev/null 2>&1; then
     truncate -s "${STATE_MB}M" "$STATE_IMG"
-    mke2fs -q -t ext4 -L state "$STATE_IMG"
+    if [ -n "$MODEL" ]; then
+      # mke2fs -d fills the image without root. Files are owned by uid 901 (model service).
+      SEED="$OUT/state-seed"
+      rm -rf "$SEED"; mkdir -p "$SEED/model"
+      cp "$MODEL" "$SEED/model/model.gguf"
+      chmod 644 "$SEED/model/model.gguf"
+      mke2fs -q -t ext4 -L state -E root_owner=0:0 -d "$SEED" "$STATE_IMG"
+      rm -rf "$SEED"
+    else
+      mke2fs -q -t ext4 -L state "$STATE_IMG"
+    fi
     dd if="$STATE_IMG" of="$DISK" bs=1M seek=$((1 + ESP_MB + SYS_MB)) conv=notrunc 2>/dev/null
   else
     say "mke2fs not found: state partition left unformatted (init skips the state mount)"

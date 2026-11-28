@@ -102,6 +102,26 @@ fn mount_state(cfg: &Config) -> bool {
     }
 }
 
+/// Bring `lo` up in the root netns so 127.0.0.1 works (the model listens there until the
+/// ADR-0006 private-netns + socket proxy lands).
+fn loopback_up() {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if fd < 0 {
+            return;
+        }
+        let mut ifr: libc::ifreq = std::mem::zeroed();
+        for (i, b) in b"lo\0".iter().enumerate() {
+            ifr.ifr_name[i] = *b as libc::c_char;
+        }
+        ifr.ifr_ifru.ifru_flags = (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+        if libc::ioctl(fd, libc::SIOCSIFFLAGS as _, &ifr) != 0 {
+            log(&format!("lo up failed: {}", std::io::Error::last_os_error()));
+        }
+        libc::close(fd);
+    }
+}
+
 fn prepare_run_dirs(cfg: &Config) {
     // Socket directories: owned by the service that binds in them.
     let _ = std::fs::create_dir_all("/run/allternit/model");
@@ -243,6 +263,7 @@ pub fn run() {
     set_hostname(&cfg.hostname);
     let state_mounted = mount_state(&cfg);
     prepare_run_dirs(&cfg);
+    loopback_up();
 
     unsafe {
         libc::signal(libc::SIGTERM, on_signal as usize);

@@ -9,6 +9,11 @@ standalone Cargo workspace (PLAN.md decision 10); the platform root
 - `init/` (crate `allternit-init`, binary `init`): PID 1. Linux only.
   `src/config.rs` holds the pure logic (config parser, service ordering,
   restart policy) and its unit tests; `src/linux.rs` holds the syscalls.
+- `shell/` (binary `shell`): the boot shell loop. Waits for the model, sends one prompt with a
+  `shell` tool, sends the tool call to the authority as a framed `check`, prints
+  `shell-tool-call ok action=<a> decision=<d>` and `model tok/s=<n>`, exits 0.
+- `model/`: `build-llama.sh` (static llama-server at the tag in `LLAMA`), `MODEL` (the baked
+  GGUF: URL, size, sha256).
 - `authority-stub/` (binary `authority`): a **stub**. It answers a JSON `check`
   on `/run/allternit/authority.sock` with a fixed rule. Plan step 4's
   `allternit-authority` crate replaces it.
@@ -76,3 +81,17 @@ sessions). Unit tests: `cargo test --manifest-path os/Cargo.toml`. The real
 musl build, kernel, initramfs and QEMU boot are step 27 (see "Build the image"). Binaries
 `model` and `shell` are supplied by later steps (29 and the gizzi rootfs
 decision in `FINDINGS-stage2.md`); until then init logs the failed start.
+
+## Local model (step 29)
+
+Decision: **llama.cpp** for the small baked model, built static and CPU-only; colibri stays
+for the big MoE models later. Why: a small dense GGUF is llama.cpp's sweet spot, and colibri
+targets MoE models larger than RAM.
+
+- `model` service: `/usr/lib/allternit/llama-server -m /state/model/model.gguf`, uid 901, on
+  `127.0.0.1:8080`. First version runs in the root network namespace (init brings `lo` up).
+  TODO(ADR-0006): private netns plus a socket proxy.
+- The GGUF sits on the state partition (`mke2fs -d`), so the initramfs stays small.
+- Gate G2c: CI boots with `-m 2G` and needs `shell-tool-call ok` in the serial log; tok/s is
+  in the job summary. Build the pieces by hand with `model/build-llama.sh` then
+  `mkimage.sh --llama os/target/llama/llama-server --model <gguf>`.

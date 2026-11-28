@@ -17,24 +17,25 @@ uid = 900
 gid = 900
 restart = "always"
 
-# Model runs unprivileged in a private network namespace: unix socket only (ADR-0006).
+# Model: static llama-server on the baked GGUF (step 29). First version runs in the root
+# network namespace on 127.0.0.1 only; the private netns + socket proxy is the ADR-0006
+# follow-up (TODO). Shell waits on /health before it prompts.
 [[service]]
 name = "model"
-path = "/usr/bin/model"
-args = ["--socket", "/run/allternit/model/model.sock"]
+path = "/usr/lib/allternit/llama-server"
+args = ["-m", "/state/model/model.gguf", "--host", "127.0.0.1", "--port", "8080", "--jinja", "-c", "2048", "-t", "2", "--no-webui", "--no-warmup"]
 uid = 901
 gid = 901
 restart = "on-failure"
-netns = true
 after = ["authority"]
 
 [[service]]
 name = "shell"
-path = "/usr/bin/shell"
+path = "/usr/lib/allternit/shell"
 args = []
 uid = 902
 gid = 902
-env = ["HOME=/state/shell", "TERM=xterm-256color", "ALLTERNIT_AUTHORITY_SOCK=/run/allternit/authority.sock", "ALLTERNIT_MODEL_SOCK=/run/allternit/model/model.sock"]
+env = ["HOME=/state/shell", "TERM=xterm-256color", "ALLTERNIT_AUTHORITY_SOCK=/run/allternit/authority.sock", "ALLTERNIT_MODEL_URL=http://127.0.0.1:8080"]
 restart = "never"
 after = ["authority", "model"]
 poweroff_on_clean_exit = true
@@ -362,7 +363,8 @@ mod tests {
         let by = |n: &str| c.services.iter().find(|s| s.name == n).unwrap();
         assert_eq!((by("authority").uid, by("authority").gid), (900, 900));
         assert_eq!(by("model").uid, 901);
-        assert!(by("model").netns);
+        // TODO(ADR-0006): flip back to assert!(netns) once the socket proxy lands.
+        assert!(!by("model").netns);
         assert!(!by("authority").netns && !by("shell").netns);
         assert_eq!(by("shell").uid, 902);
         assert!(by("shell").poweroff_on_clean_exit);
