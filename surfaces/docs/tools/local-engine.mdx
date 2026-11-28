@@ -53,7 +53,7 @@ cargo run -p allternit-local-engine --release
 ### Requirements
 
 - Rust toolchain (workspace edition 2021)
-- For the `llama.cpp` backend, `llama-server` must be on `PATH`
+- Engines come as engine packs: llama.cpp, MLX (Apple Silicon Macs only) and colibri. You do not put anything on `PATH`. The engine downloads the pack for your computer the first time a model needs it, checks it, and keeps it under its data directory. A computer with no pack gets a plain message saying so.
 - Sufficient disk space under the OS data directory for cached models
 
 The service creates two directories on startup:

@@ -176,6 +176,8 @@ New with this release.
 
 If the build is for MLX and the MLX engine pack cannot be installed, `run` says why and uses the GGUF (llama.cpp) build instead, if one fits.
 
+When a model is too big for memory but fits on disk, `gizzi models fit` shows **Streams from disk** and the disk it needs. `gizzi models run` then picks the colibri engine and the stream build. Colibri runs on Mac, Windows and Linux computers only. See [Models larger than memory](/guides/run-models-on-device#models-larger-than-memory).
+
 `ps` shows memory, speed, context used and the idle timer for each running model, and `--json` prints the raw list.
 
 The models appear under the Local section of `/model` while they run. Speed depends on your hardware and is not guaranteed.
