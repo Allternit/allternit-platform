@@ -195,13 +195,20 @@ struct CodeSessionsOverview: View {
 
     private var filtersActive: Bool { filter != .all }
 
+    /// The window's top safe-area inset. This screen is a full-screen cover, so the docking
+    /// title's frame starts at the status bar and the header row (8 pt padding + a 44 pt button)
+    /// is centred at safeTop + 30. A fixed 30 put the resting title under the back button.
+    private var windowSafeTop: CGFloat {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.safeAreaInsets.top ?? 0
+    }
+
     private var sessionsScreen: some View {
         let result = filterCodeSessionRows(sessions, filter: filter, status: status)
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let items = q.isEmpty ? result.items : result.items.filter { ($0.name ?? "").lowercased().contains(q) }
         return ZStack(alignment: .top) {
             // The block title docks into the header's centre as the list scrolls.
-            DockingTitleList(title: "Code sessions", chrome: .overlay(barCenter: 30)) {
+            DockingTitleList(title: "Code sessions", chrome: .overlay(barCenter: windowSafeTop + 30)) {
                 if searching || !query.isEmpty {
                     ProjectsSearchField(query: $query, placeholder: "Search code").plainCodeRow()
                 }
@@ -212,24 +219,9 @@ struct CodeSessionsOverview: View {
                 }
                 Section {
                     if items.isEmpty {
+                        // One "New session" button: the floating one at the bottom (same as Projects).
                         VStack(spacing: 12) {
                             FriendlyStateView(title: q.isEmpty ? filter.emptyText : "No code sessions match.", art: .search, size: .panel)
-                            if q.isEmpty {
-                                Button {
-                                    Haptics.light()
-                                    go(.start)
-                                } label: {
-                                    Text("New session")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(Color("TextPrimary"))
-                                        .padding(.horizontal, 18)
-                                        .frame(height: 40)
-                                        .background(Color("BgPanel"))
-                                        .clipShape(Capsule())
-                                        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-                                }
-                                .buttonStyle(.plain)
-                            }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
