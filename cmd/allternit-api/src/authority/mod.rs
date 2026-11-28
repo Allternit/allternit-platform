@@ -7,6 +7,8 @@
 //! | Module | What |
 //! |---|---|
 //! | [`tokens`] | `ApprovalTokenV1`: Ed25519 mint/verify, TTL 300 s default, 900 s cap, the kernel key |
+//! | [`keystore`] | Where the seed lives: OS keystore via Desktop (stdin hand-off), 0600 file headless (CONTRACT.md 12.3) |
+//! | [`presence`] | Desktop approve needs Electron main's user-presence proof (Touch ID / Windows Hello) |
 //! | [`approvals`] | [`approvals::SqlAuthority`]: request, resolve, redeem; receipts written before acting |
 //! | [`routes`] | `POST /api/v1/kernel/approvals/{request,resolve,redeem}`; resolve needs a person's session |
 //!
@@ -14,6 +16,8 @@
 //! approval stores onto this one (11), budgets and leases (12), full chain verification (8).
 
 pub mod approvals;
+pub mod keystore;
+pub mod presence;
 pub mod routes;
 pub mod tokens;
 

@@ -13,6 +13,10 @@
 //!
 //! Only then is the transport caller `human`. The caller kind is set here, never read from the
 //! body, and [`super::approvals::SqlAuthority::resolve`] refuses every other kind with a receipt.
+//!
+//! 3. CONTRACT.md 12.3: when the person proof was Desktop's window proof, an approve also needs
+//!    Electron main's user-presence proof for that request ([`super::presence`]), or it is
+//!    refused with `forbidden_caller` and a receipt. Deny needs none.
 
 use std::sync::Arc;
 
@@ -25,10 +29,11 @@ use axum::{Extension, Json, Router};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use super::approvals::{ResolveBody, SqlAuthority};
-use super::tokens;
+use super::approvals::{Decision, ResolveBody, SqlAuthority};
+use super::{presence, tokens};
 use crate::auth::{AuthUser, INTERNAL_SERVICE_USER_ID};
 use crate::enterprise_auth::CredentialContext;
+use crate::subscription_routes::PersonProof;
 use crate::AppState;
 
 /// Paths live under `/api/v1/kernel/approvals/`, next to the kernel UI routes
@@ -81,18 +86,42 @@ pub(crate) fn machine_marker(headers: &HeaderMap, api_credential: bool, user_id:
 
 /// The transport caller for this request. `principal` is always the authenticated account.
 async fn caller_for(state: &AppState, headers: &HeaderMap, user: &AuthUser, api_credential: bool) -> Caller {
+    caller_and_proof(state, headers, user, api_credential).await.0
+}
+
+/// [`caller_for`], plus which person proof passed (`None` for a machine caller).
+async fn caller_and_proof(
+    state: &AppState,
+    headers: &HeaderMap,
+    user: &AuthUser,
+    api_credential: bool,
+) -> (Caller, Option<PersonProof>) {
     let principal = user.user_id.clone();
     if let Some((kind, reason)) = machine_marker(headers, api_credential, &user.user_id) {
         tracing::debug!(reason, "kernel approvals: machine caller");
-        return Caller { kind, principal };
+        return (Caller { kind, principal }, None);
     }
-    match crate::subscription_routes::person_acted(state, headers, &user.user_id).await {
-        Ok(()) => Caller { kind: CallerKind::Human, principal },
+    match crate::subscription_routes::person_proof(state, headers, &user.user_id).await {
+        Ok(proof) => (Caller { kind: CallerKind::Human, principal }, Some(proof)),
         Err(reason) => {
             tracing::debug!(reason, "kernel approvals: no person's session");
-            Caller { kind: CallerKind::Run, principal }
+            (Caller { kind: CallerKind::Run, principal }, None)
         }
     }
+}
+
+/// CONTRACT.md 12.3: an approve made through the Desktop window needs Electron main's
+/// user-presence proof for this exact request. Deny, Clerk-session (web, phone) and local-dev
+/// approvals are not gated here.
+pub(crate) fn presence_missing(proof: Option<PersonProof>, body: &ResolveBody, headers: &HeaderMap, now: i64) -> bool {
+    if proof != Some(PersonProof::Desktop) || body.decision != Decision::Approve {
+        return false;
+    }
+    let Some(secret) = crate::subscription_routes::desktop_proof_secret() else {
+        return true;
+    };
+    let given = headers.get(presence::PRESENCE_PROOF_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
+    !presence::verify(secret, given, &body.request_id, now)
 }
 
 fn status_for(code: ErrorCode) -> StatusCode {
@@ -163,7 +192,11 @@ async fn resolve(
         Ok(b) => b,
         Err(r) => return r,
     };
-    let caller = caller_for(&state, &headers, &user, credential.is_some()).await;
+    let (caller, proof) = caller_and_proof(&state, &headers, &user, credential.is_some()).await;
+    if caller.kind == CallerKind::Human && presence_missing(proof, &body, &headers, chrono::Utc::now().timestamp()) {
+        tracing::info!("kernel approvals: Desktop approve without a user-presence proof, refused");
+        return with_kernel(&state, move |k| Err::<Value, _>(k.refuse_without_presence(&caller, &body))).await;
+    }
     with_kernel(&state, move |k| k.resolve(&caller, body)).await
 }
 
@@ -194,6 +227,20 @@ mod tests {
             h.insert(*k, HeaderValue::from_static(v));
         }
         h
+    }
+
+    #[test]
+    fn desktop_approve_without_presence_proof_is_refused_deny_and_sessions_are_not_gated() {
+        let approve = ResolveBody { request_id: "apr_1".into(), decision: Decision::Approve, note: None };
+        let deny = ResolveBody { request_id: "apr_1".into(), decision: Decision::Deny, note: None };
+        let none = HeaderMap::new();
+        let forged = headers(&[(presence::PRESENCE_PROOF_HEADER, "v1.9999999999.00")]);
+        let now = 1_800_000_000;
+        assert!(presence_missing(Some(PersonProof::Desktop), &approve, &none, now));
+        assert!(presence_missing(Some(PersonProof::Desktop), &approve, &forged, now));
+        assert!(!presence_missing(Some(PersonProof::Desktop), &deny, &none, now));
+        assert!(!presence_missing(Some(PersonProof::Session), &approve, &none, now));
+        assert!(!presence_missing(Some(PersonProof::DevBypass), &approve, &none, now));
     }
 
     #[test]

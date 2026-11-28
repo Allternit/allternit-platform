@@ -25,6 +25,9 @@ import log from 'electron-log';
 import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
+import { KERNEL_KEY_STDIN_ENV, kernelSeedLine, legacyKernelKeyPath, loadOrCreateKernelSeed } from './kernel-key.js';
+import { mintPresenceProof, PRESENCE_TTL_SECS } from './presence.js';
+import { keychainSettled, readSecret, writeSecret } from './secure-store.js';
 import { allternitDriverPython } from './computer-use-driver-manager.js';
 import { spawnSidecar } from './process-lifeline.js';
 import { systemOne } from './system-one-manager.js';
@@ -305,6 +308,12 @@ export class BackendManager {
    * it. Electron main attaches it only to a person's own acts in the window.
    */
   private humanProofSecret: string | null = null;
+  /**
+   * CONTRACT.md 12.3: the authority kernel's Ed25519 seed, read from the OS
+   * keystore (kernel-key.ts) and written to allternit-api's stdin after the
+   * human-proof line. Held in main's memory only; never in env or on disk.
+   */
+  private kernelSeedHex: string | null = null;
   private lastConfig: BackendLaunchConfig | null = null;
   /**
    * Crash-respawn state. Respawns use capped exponential backoff with jitter
@@ -411,6 +420,7 @@ export class BackendManager {
     });
     fs.mkdirSync(dataDir, { recursive: true });
     log.info(`[BackendManager] ALLTERNIT_DATA_DIR=${dataDir}`);
+    await this.loadKernelSeed(dataDir);
 
     const vmDir = path.join(process.resourcesPath ?? '', 'vm');
 
@@ -435,6 +445,10 @@ export class BackendManager {
       ALLTERNIT_DESKTOP_ACCESS_TOKEN: this.ensureDesktopAccessToken(),
       // The human-proof secret itself goes on stdin (below), not here.
       ALLTERNIT_HUMAN_PROOF_STDIN: '1',
+      // The kernel signing seed follows on the next stdin line (CONTRACT.md
+      // 12.3). Always set on Desktop, so allternit-api never falls back to a
+      // key file; with no seed it keeps kernel approvals unavailable.
+      [KERNEL_KEY_STDIN_ENV]: '1',
       // HMAC secret for short-lived desktop VNC WebSocket tokens (bot-desktop
       // Observe/Take Over). Without it the api returns unsigned ws_urls the
       // /ws/* auth rejects, and the computer pane renders nothing. An explicit
@@ -485,7 +499,7 @@ export class BackendManager {
       windowsHide: true,
     });
     spawned.stdin?.on('error', () => {});
-    spawned.stdin?.end(`${this.humanProofSecret}\n`);
+    spawned.stdin?.end(`${this.humanProofSecret}\n${kernelSeedLine(this.kernelSeedHex)}`);
     this.kernelProc = spawned;
     this.intentionalStop = false;
     this.spawnTimestamp = Date.now();
@@ -597,6 +611,30 @@ export class BackendManager {
    */
   getHumanProof(): string | null {
     return this.humanProofSecret ? `desktop:${this.humanProofSecret}` : null;
+  }
+
+  /**
+   * CONTRACT.md 12.3: the `X-Allternit-Presence-Proof` value for approving
+   * kernel request `requestId`, minted only after the OS presence check passed
+   * (presence.ts). Null before the API runs.
+   */
+  getPresenceProof(requestId: string): string | null {
+    if (!this.humanProofSecret) return null;
+    return mintPresenceProof(this.humanProofSecret, requestId, Math.floor(Date.now() / 1000) + PRESENCE_TTL_SECS);
+  }
+
+  /** Read (or import, or create) the kernel seed in the OS keystore. Never logs the seed. */
+  private async loadKernelSeed(dataDir: string): Promise<void> {
+    if (this.kernelSeedHex) return;
+    try {
+      if (app.isPackaged) await keychainSettled();
+      const result = loadOrCreateKernelSeed({ read: readSecret, write: writeSecret }, legacyKernelKeyPath(dataDir));
+      this.kernelSeedHex = result.seedHex;
+      log.info(`[BackendManager] Kernel signing key: ${result.source === 'file-fallback' ? 'old key file (OS keystore unavailable; import retried next launch)' : `OS keystore (${result.source})`}`);
+    } catch (error) {
+      // Fail closed: allternit-api gets no seed and refuses kernel approvals.
+      log.warn('[BackendManager] Kernel signing key unavailable from the OS keystore; AllternitOS approvals are off until it unlocks:', error instanceof Error ? error.message : String(error));
+    }
   }
 
   /** Authenticated headers for managed-runtime local API calls from main. */

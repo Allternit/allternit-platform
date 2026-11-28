@@ -41,6 +41,21 @@ The person picks one of three autonomy levels in onboarding: "Ask me first", "As
 
 A request carries the exact action payload and a deadline. A human session resolves it and the kernel issues a single-use approval token. The kernel rejects any resolve from a run token, bot token, agent credential, MCP client token or model request, and writes a receipt for the rejection. A human cannot approve a request made by a run they control.
 
+On Allternit Desktop, approving also needs a user-presence check. Before the approve reaches the kernel, the Desktop app asks for Touch ID on macOS or Windows Hello on Windows. It then attaches a short-lived proof bound to that one request. The kernel refuses a Desktop approve without that proof and writes a receipt. On a computer with neither Touch ID nor Windows Hello (Linux, or a Mac or PC without them), approve from the web or phone app, which use your signed-in session. Deny needs no presence check.
+
+## The signing key
+
+The kernel signs approval tokens and receipts with one Ed25519 key. Where it lives depends on the host:
+
+| Host | Where the key lives |
+|---|---|
+| Desktop on macOS | macOS Keychain |
+| Desktop on Windows | Windows credential protection (DPAPI) |
+| Desktop on Linux | Secret Service (GNOME Keyring or KWallet) |
+| Cloud computers and servers (headless) | A file only the API's user can read (`0600`): `ALLTERNIT_KERNEL_SIGNING_KEY`, or `<data dir>/kernel/authority-ed25519.key` |
+
+On Desktop the app's main process keeps the key in the OS keystore and passes it to the local API when the API starts. The key never goes in a file or an environment variable there. When you update from a build that kept the key in a file, Desktop moves the key into the keystore and then deletes the file. If the keystore is locked or turned down, approvals stay off until it unlocks. Desktop does not fall back to a new file.
+
 ## The receipt chain
 
 One append-only hash chain, `kernel_receipts`. Each row holds the previous hash, its own hash and an Ed25519 signature. The kernel writes the receipt before it returns the answer that lets an action run; if the write fails, the answer is deny. Edited rows fail chain verification, and the kernel refuses to extend a broken chain. See [Receipts](/architecture/receipts).

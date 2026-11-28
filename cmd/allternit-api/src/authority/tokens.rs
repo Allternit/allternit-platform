@@ -4,9 +4,11 @@
 //! `signature` is over the canonical (RFC 8785) JSON of every other field except `token`;
 //! `token` is `base64url(canonical JSON of those fields plus signature)` and is what travels.
 //! Signing and canonical JSON reuse the factory engine's receipt signer and JCS, so there is one
-//! Ed25519 key format (hex seed in a 0600 file) and one canonicaliser in allternit-api.
+//! Ed25519 key format (32-byte seed) and one canonicaliser in allternit-api. Where the seed lives
+//! per host (OS keystore through Desktop, or a 0600 file on headless servers) is
+//! [`super::keystore`].
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use allternit_authority::{ActionClass, ApprovalTokenV1, AuthorityError, ErrorCode};
@@ -23,9 +25,7 @@ pub const SCHEMA_VERSION: &str = "1.0.0";
 pub const DEFAULT_TTL_SECS: u64 = 300;
 /// CONTRACT.md 12.1: hard cap, whatever the request asks for.
 pub const MAX_TTL_SECS: u64 = 900;
-/// Optional path override for the kernel signing key file.
-pub const SIGNING_KEY_ENV: &str = "ALLTERNIT_KERNEL_SIGNING_KEY";
-const KEY_FILE: &str = "kernel/authority-ed25519.key";
+pub use super::keystore::{key_path, SIGNING_KEY_ENV};
 
 /// The signed fields, in the order CONTRACT.md 3.2 lists them (canonical JSON sorts them anyway).
 const SIGNED_FIELDS: [&str; 12] = [
@@ -146,7 +146,7 @@ pub fn verify(signer: &ReceiptSigner, token: &str) -> Result<TokenClaims, &'stat
     if s("schema_id").as_deref() != Some(TOKEN_SCHEMA_ID) || fields.get("single_use") != Some(&Value::Bool(true)) {
         return Err("not a single-use ApprovalTokenV1");
     }
-    // One kernel key today; rotation (several known keys by key_id) comes with the keychain move.
+    // One kernel key today; rotation (several known keys by key_id) is a later step.
     if s("key_id").as_deref() != Some(signer.kid()) {
         return Err("unknown key_id");
     }
@@ -172,31 +172,32 @@ pub fn verify(signer: &ReceiptSigner, token: &str) -> Result<TokenClaims, &'stat
     })
 }
 
-/// Where the kernel key lives: `$ALLTERNIT_KERNEL_SIGNING_KEY`, else `<data dir>/kernel/authority-ed25519.key`.
-pub fn key_path(data_dir: &Path) -> PathBuf {
-    std::env::var_os(SIGNING_KEY_ENV)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join(KEY_FILE))
-}
-
 static SIGNER: OnceLock<Arc<ReceiptSigner>> = OnceLock::new();
 
 /// The kernel's Ed25519 signer, loaded once per process. The key is held by the kernel only.
 ///
-/// Uses the existing allternit-api key mechanism (`ReceiptSigner`: hex seed in a 0600 file,
-/// generated on first use). A failure is `kernel_unavailable` (fail closed), never cached.
-///
-/// TODO(CONTRACT.md section 12.3, G0 answer 3): on Desktop the kernel and the model's shell run
-/// as the same OS user, so a same-user process can read this file. The key moves into the macOS
-/// keychain (platform keystore on Windows/Linux) with a user-presence check. allternit-api never
-/// talks to the keychain itself today (see `token_crypto.rs`: Desktop hands keys in from Electron
-/// safeStorage), so that move lands with the Desktop main-process change.
+/// CONTRACT.md section 12.3 (G0 answer 3): on Desktop the seed lives in the OS keystore (macOS
+/// Keychain, Windows DPAPI, Linux Secret Service), owned by Electron main and handed over on stdin;
+/// a same-user process can no longer read it from a file. Headless servers keep the 0600 file.
+/// See [`super::keystore`]. Desktop approvals also need a user-presence check
+/// ([`super::presence`]). A failure is `kernel_unavailable` (fail closed), never cached.
 pub fn kernel_signer(data_dir: &Path) -> Result<Arc<ReceiptSigner>, AuthorityError> {
     if let Some(s) = SIGNER.get() {
         return Ok(s.clone());
     }
-    let signer = ReceiptSigner::load_or_create(&key_path(data_dir), true)
+    let store = super::keystore::KeyStore::select(data_dir);
+    let signer = store
+        .load(data_dir)
         .map_err(|e| AuthorityError::new(ErrorCode::KernelUnavailable, format!("kernel signing key: {e}"), None))?;
-    Ok(SIGNER.get_or_init(|| Arc::new(signer)).clone())
+    let mut first = false;
+    let signer = SIGNER
+        .get_or_init(|| {
+            first = true;
+            Arc::new(signer)
+        })
+        .clone();
+    if first {
+        tracing::info!(store = %store.describe(), key_id = signer.kid(), "kernel signing key loaded");
+    }
+    Ok(signer)
 }

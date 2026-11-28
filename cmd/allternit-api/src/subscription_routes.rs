@@ -762,7 +762,23 @@ pub fn read_desktop_human_proof_from_stdin() {
                 warn!("desktop human proof missing on stdin");
             }
         }
+        // Second line: the kernel's signing seed from Desktop's OS keystore
+        // (CONTRACT.md 12.3, `authority::keystore`). Never logged.
+        if crate::authority::keystore::desktop_handoff() {
+            let mut seed = String::new();
+            let _ = std::io::stdin().read_line(&mut seed);
+            crate::authority::keystore::accept_seed_line(&seed);
+            // Overwrite the buffer before it is dropped.
+            seed.clear();
+            seed.shrink_to_fit();
+        }
     });
+}
+
+/// Desktop's per-launch secret, when Desktop launched this process. Also the
+/// HMAC key for Desktop's user-presence proofs (`authority::presence`).
+pub(crate) fn desktop_proof_secret() -> Option<&'static str> {
+    DESKTOP_HUMAN_PROOF.get().map(String::as_str)
 }
 
 /// In Desktop the person's Clerk session may be absent (paired by device
@@ -783,8 +799,26 @@ fn desktop_proof_matches(token: &str) -> bool {
 /// is refused with a short reason for the log. Only an explicit local-dev
 /// bypass (`ALLTERNIT_LOCAL_DEV_BYPASS`, no Clerk) skips the check.
 pub(crate) async fn person_acted(state: &AppState, headers: &HeaderMap, user_id: &str) -> Result<(), &'static str> {
+    person_proof(state, headers, user_id).await.map(|_| ())
+}
+
+/// Which proof showed a person acted (see [`person_acted`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PersonProof {
+    /// Desktop's per-launch window proof. Says the request came through the
+    /// app window, not that a person was present: kernel approvals add a
+    /// user-presence check on top (`authority::presence`).
+    Desktop,
+    /// A Clerk session token for this user (web, phone, relayed).
+    Session,
+    /// `ALLTERNIT_LOCAL_DEV_BYPASS` (no Clerk, local development only).
+    DevBypass,
+}
+
+/// [`person_acted`], also saying which proof passed.
+pub(crate) async fn person_proof(state: &AppState, headers: &HeaderMap, user_id: &str) -> Result<PersonProof, &'static str> {
     if state.config.local_dev_bypass() {
-        return Ok(());
+        return Ok(PersonProof::DevBypass);
     }
     let header_value = |name| {
         headers
@@ -795,13 +829,13 @@ pub(crate) async fn person_acted(state: &AppState, headers: &HeaderMap, user_id:
             .filter(|v| !v.is_empty())
     };
     if header_value(HUMAN_PROOF_HEADER).is_some_and(desktop_proof_matches) {
-        return Ok(());
+        return Ok(PersonProof::Desktop);
     }
     let Some(token) = header_value(HUMAN_PROOF_HEADER).or_else(|| header_value(header::AUTHORIZATION.as_str())) else {
         return Err("no person proof");
     };
     match crate::auth::verify_token(&state.jwks, token, &state.auth_config).await {
-        Ok(person) if person.user_id == user_id => Ok(()),
+        Ok(person) if person.user_id == user_id => Ok(PersonProof::Session),
         Ok(_) => Err("person proof for another user"),
         Err(_) => Err("not a person's session token"),
     }
