@@ -1,0 +1,100 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_review_diff",
+  "suite": "shared.v1",
+  "title": "Review change.diff for bugs. Write your findings to REVIEW.md, most severe first",
+  "label": "good",
+  "note": "Ported from the subagent task 'review-diff' (skill: code-reviewer).",
+  "split": "holdout",
+  "origin": {
+    "session_id": "review-diff",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Review change.diff for bugs. Write your findings to REVIEW.md, most severe first, each with the function name and what breaks. Don't apply the diff."
+    }
+  ],
+  "workspace": {
+    "kind": "archive",
+    "path": "workspace.tar.gz",
+    "bytes": 1488,
+    "snapshot": "417ed0ed715b7fb74f760a15858256645d5ac9ac"
+  },
+  "checks": [
+    {
+      "type": "contains",
+      "path": "REVIEW.md",
+      "text": "average_qty",
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "REVIEW.md",
+      "text": "",
+      "any": [
+        "empty",
+        "zero",
+        "ZeroDivisionError"
+      ],
+      "ignore_case": true
+    },
+    {
+      "type": "contains",
+      "path": "REVIEW.md",
+      "text": "",
+      "any": [
+        "total_quantity",
+        "off-by-one",
+        "off by one",
+        "last item"
+      ],
+      "ignore_case": true
+    },
+    {
+      "type": "unchanged",
+      "path": "inventory/store.py"
+    },
+    {
+      "type": "unchanged",
+      "path": "inventory/pricing.py"
+    },
+    {
+      "type": "unchanged",
+      "path": "inventory/report.py"
+    },
+    {
+      "type": "unchanged",
+      "path": "inventory/cli.py"
+    },
+    {
+      "type": "unchanged",
+      "path": "inventory/shipping.py"
+    }
+  ],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "verifier_pass"
+    }
+  ],
+  "k": 3,
+  "pass_rule": {
+    "n_of_k": 2
+  },
+  "recorded": null,
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "schema": "allternit.gizzi_eval_case.v1",
+  "id": "case_shared_session_bad",
+  "suite": "shared.v1",
+  "title": "Fix the total_quantity off-by-one in store.py",
+  "label": "bad",
+  "note": "Synthetic. The edit tool failed, so the run ended failed. Both graders fail.",
+  "split": "dev",
+  "origin": {
+    "session_id": "ses_shared_bad",
+    "through_message_id": null,
+    "saved_at": 0,
+    "gizzi_version": "shared.v1",
+    "surface": "cli"
+  },
+  "turns": [
+    {
+      "role": "user",
+      "text": "Fix the total_quantity off-by-one in store.py"
+    }
+  ],
+  "workspace": {
+    "kind": "none",
+    "reason": "no_project"
+  },
+  "checks": [],
+  "effects": "block",
+  "graders": [
+    {
+      "type": "status",
+      "equals": "completed"
+    },
+    {
+      "type": "forbidden_step",
+      "steps": [
+        "edit"
+      ]
+    }
+  ],
+  "k": 1,
+  "pass_rule": "all_of_k",
+  "recorded": {
+    "trajectory": {
+      "status": "failed",
+      "verifier": null,
+      "steps": [
+        {
+          "node": "main",
+          "primitive": "read",
+          "ok": true
+        },
+        {
+          "node": "main",
+          "primitive": "edit",
+          "ok": false
+        }
+      ],
+      "effects": [
+        {
+          "node": "main",
+          "tool": "edit",
+          "committed": false
+        }
+      ],
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "latency_ms": 2200
+    },
+    "grades": [
+      {
+        "type": "status",
+        "pass": false,
+        "detail": "status failed, wanted completed"
+      },
+      {
+        "type": "forbidden_step",
+        "pass": false,
+        "detail": "forbidden step edit was used"
+      }
+    ],
+    "passed": false
+  },
+  "needs_check": false,
+  "redaction": {
+    "secrets": 0,
+    "paths": 0,
+    "entries_dropped": 0
+  },
+  "quick_check": [
+    "broke_file"
+  ]
+}
