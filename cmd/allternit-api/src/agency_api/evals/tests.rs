@@ -312,3 +312,51 @@ async fn eval_suites_run_through_recorded_only_replay_and_promote_runs() {
     // Nothing happened for real.
     assert_eq!((journal_rows(&t, &research), receipts(&t, &research)), (j0, c0), "evals are recorded_only");
 }
+
+/// Build a Trajectory from a shared-vector JSON object, field by field. A
+/// missing or mistyped field is an error, so a vector cannot silently grade
+/// an empty trajectory.
+fn trajectory_from_json(v: &Value) -> Result<Trajectory, String> {
+    let s = |x: &Value, k: &str| x[k].as_str().map(String::from).ok_or_else(|| format!("`{k}` must be a string"));
+    let b = |x: &Value, k: &str| x[k].as_bool().ok_or_else(|| format!("`{k}` must be a bool"));
+    let list = |k: &str| v[k].as_array().ok_or_else(|| format!("`{k}` must be a list"));
+    let strs = |k: &str| list(k)?.iter().map(|x| x.as_str().map(String::from).ok_or_else(|| format!("`{k}` entries must be strings"))).collect::<Result<Vec<_>, _>>();
+    Ok(Trajectory {
+        status: s(v, "status")?,
+        verifier: match &v["verifier"] {
+            Value::Null => None,
+            x => Some(x.as_bool().ok_or("`verifier` must be bool or null")?),
+        },
+        steps: list("steps")?.iter().map(|x| Ok(Step { node: s(x, "node")?, primitive: s(x, "primitive")?, ok: b(x, "ok")? })).collect::<Result<_, String>>()?,
+        effects: list("effects")?.iter().map(|x| Ok(Effect { node: s(x, "node")?, tool: s(x, "tool")?, committed: b(x, "committed")? })).collect::<Result<_, String>>()?,
+        texts: strs("texts")?,
+        stopped_at: match &v["stopped_at"] {
+            Value::Null => None,
+            x => Some(x.as_str().ok_or("`stopped_at` must be a string or null")?.to_string()),
+        },
+        missing: strs("missing")?,
+        cost_usd: v["cost_usd"].as_f64().ok_or("`cost_usd` must be a number")?,
+        tokens: v["tokens"].as_u64().ok_or("`tokens` must be a whole number")?,
+        latency_ms: v["latency_ms"].as_f64().ok_or("`latency_ms` must be a number")?,
+    })
+}
+
+/// The grader vectors shared with the TypeScript graders (contracts/eval,
+/// eval loop 1.1): both languages must agree on every pass/fail.
+#[test]
+fn grader_vectors_match_ts() {
+    // CARGO_MANIFEST_DIR is <repo>/cmd/allternit-api.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contracts/eval/grader-vectors.v1.json");
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let vectors: Value = serde_json::from_str(&raw).expect("grader vectors are valid JSON");
+    let vectors = vectors.as_array().expect("vectors are a list");
+    assert!(!vectors.is_empty(), "no grader vectors loaded");
+    for vec in vectors {
+        let name = vec["name"].as_str().expect("vector needs a name");
+        let want = vec["expect"]["pass"].as_bool().unwrap_or_else(|| panic!("vector `{name}`: expect.pass must be a bool"));
+        let t = trajectory_from_json(&vec["trajectory"]).unwrap_or_else(|e| panic!("vector `{name}`: {e}"));
+        let grader = parse(&vec["grader"]).unwrap_or_else(|e| panic!("vector `{name}`: grader rejected: {e}"));
+        let got = grader.grade(&t);
+        assert_eq!(got.pass, want, "vector `{name}`: Rust grader said {} ({}), vectors expect {want}", got.pass, got.detail);
+    }
+}
