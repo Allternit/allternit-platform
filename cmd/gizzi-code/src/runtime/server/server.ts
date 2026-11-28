@@ -28,6 +28,7 @@ import { Command } from "@/runtime/loop/command"
 import { Global } from "@/runtime/context/global"
 import { ProjectRoutes } from "@/runtime/server/routes/project"
 import { SessionRoutes } from "@/runtime/server/routes/session"
+import { EvalRoutes } from "@/runtime/server/routes/eval"
 import { NativeSessionRoutes } from "@/runtime/server/routes/native-session"
 import { AutomationsRoutes } from "@/runtime/server/routes/automations"
 import { PtyRoutes } from "@/runtime/server/routes/pty"
@@ -408,6 +409,7 @@ export namespace Server {
         .route("/config", ConfigRoutes())
         .route("/experimental", ExperimentalRoutes())
         .route("/session", SessionRoutes())
+        .route("/eval", EvalRoutes())
         .route("/native-session", NativeSessionRoutes())
         .route("/automations", AutomationsRoutes())
         .route("/peers", PeerRoutes())
@@ -514,6 +516,7 @@ export namespace Server {
             .route("/", FileEditorsRoutes())
             .route("/", ProjectPanelsRoutes())
             .route("/session", SessionRoutes())
+            .route("/eval", EvalRoutes())
             .route("/native-session", NativeSessionRoutes())
             .route("/automations", AutomationsRoutes())
             .route("/peers", PeerRoutes())
