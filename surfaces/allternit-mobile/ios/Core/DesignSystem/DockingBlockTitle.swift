@@ -479,15 +479,19 @@ private struct DockScrollMetrics: Equatable {
 /// or `DockScrollRangeProbe` (List) instead.
 private struct DockScrollReader: ViewModifier {
     @Binding var offset: CGFloat
-    /// How far the page scrolls (content plus insets past the container).
+    /// How far the page scrolls (content plus insets past the visible height).
     var onRange: (CGFloat) -> Void
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.onScrollGeometryChange(for: DockScrollMetrics.self) { g in
+                // The visible rect spans the whole scroll view, inset areas
+                // included. containerSize does not always: on iOS 26 it leaves
+                // out the bar insets (724 pt container, 874 pt visible on ACI
+                // Computers), which made a 150 pt page read as 300 pt.
                 DockScrollMetrics(
                     offset: g.contentOffset.y + g.contentInsets.top,
                     range: g.contentSize.height + g.contentInsets.top + g.contentInsets.bottom
-                        - g.containerSize.height)
+                        - g.visibleRect.height)
             } action: { _, new in
                 offset = max(0, new.offset)
                 onRange(new.range)
