@@ -16,6 +16,8 @@ struct ACIComputersPane: View {
     @State private var toast: ACIToast.Message? = nil
     /// Account flag `computers_console`: off = today's screen, unchanged.
     @State private var consoleOn = false
+    @State private var isBrowserComputerOpen = false
+    @ObservedObject private var auth = AuthManager.shared
 
     private var loading: Bool { relay.availability == .unknown }
 
@@ -36,6 +38,7 @@ struct ACIComputersPane: View {
                     .padding(.bottom, 12)
                     ACIWideButton(systemName: "display", title: "View a computer's screen") { isScreenPickerOpen = true }
                     if consoleOn { ACIConsoleSection() }
+                    if auth.isSignedIn { browserComputerRow }
                     machines
                     ACILinkedPhonesSection()
                         .padding(.top, 24)
@@ -57,9 +60,35 @@ struct ACIComputersPane: View {
         .fullScreenCover(item: $openComputer) { computer in
             ACIComputerDesktopCover(computer: computer, backTitle: "Computers")
         }
+        .fullScreenCover(isPresented: $isBrowserComputerOpen) { ACIBrowserComputerCover() }
         .fullScreenCover(item: $detailComputer) { device in
             ACIComputerDetailCover(computerId: device.id, name: device.displayName)
         }
+    }
+
+    /// The computer that runs inside this app's web view (iOS 27 or later).
+    private var browserComputerRow: some View {
+        Button {
+            Haptics.light()
+            isBrowserComputerOpen = true
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Browser computer")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                Text("Runs inside this app")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 10)
+        .accessibilityLabel("Open Browser computer")
     }
 
     // MARK: Computers list (MachinesPanel `list`)
