@@ -322,6 +322,11 @@ pub struct Budget {
     pub kind: BudgetKind,
     pub fast_bytes: u64,
     pub spill_bytes: u64,
+    /// Free bytes on the models folder's volume, for streamed (colibri)
+    /// models. Left out when this host has no colibri pack or the read
+    /// fails; never 0 as a stand-in for unknown (colibri contract, section 4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_free_bytes: Option<u64>,
 }
 
 /// llama.cpp / MLX compute backend.
@@ -352,7 +357,7 @@ pub enum EngineState {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EngineInfo {
-    /// `llama.cpp` or `mlx`.
+    /// `llama.cpp`, `mlx` or `colibri`.
     pub id: &'static str,
     pub backend: EngineBackend,
     pub version: Option<String>,
@@ -401,15 +406,15 @@ pub fn derive_budget(gpus: &[HardwareGpu], ram_total_bytes: u64, apple_silicon: 
         .filter(|v| *v > 0)
         .max();
     if let Some(vram) = largest_vram {
-        return Budget { kind: BudgetKind::Discrete, fast_bytes: vram, spill_bytes: ram_total_bytes };
+        return Budget { kind: BudgetKind::Discrete, fast_bytes: vram, spill_bytes: ram_total_bytes, disk_free_bytes: None };
     }
     if apple_silicon {
-        return Budget { kind: BudgetKind::Unified, fast_bytes: scale(ram_total_bytes, 65), spill_bytes: 0 };
+        return Budget { kind: BudgetKind::Unified, fast_bytes: scale(ram_total_bytes, 65), spill_bytes: 0, disk_free_bytes: None };
     }
     if gpus.iter().any(|g| !g.discrete) {
-        return Budget { kind: BudgetKind::Unified, fast_bytes: scale(ram_total_bytes, 60), spill_bytes: 0 };
+        return Budget { kind: BudgetKind::Unified, fast_bytes: scale(ram_total_bytes, 60), spill_bytes: 0, disk_free_bytes: None };
     }
-    Budget { kind: BudgetKind::Cpu, fast_bytes: scale(ram_total_bytes, 60), spill_bytes: 0 }
+    Budget { kind: BudgetKind::Cpu, fast_bytes: scale(ram_total_bytes, 60), spill_bytes: 0, disk_free_bytes: None }
 }
 
 /// The llama.cpp backend this machine should run: what a pack should
@@ -557,6 +562,12 @@ fn detect_mlx(apple_silicon: bool, packs: &[crate::engine_packs::InstalledPack])
 }
 
 fn disk_free_bytes(path: &Path) -> u64 {
+    disk_free_opt(path).unwrap_or(0)
+}
+
+/// Free bytes on the volume holding `path`; None when no mounted disk matches.
+/// Uses sysinfo's `Disks`, which the report already used for `disk_free_bytes`.
+fn disk_free_opt(path: &Path) -> Option<u64> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     disks
@@ -564,7 +575,6 @@ fn disk_free_bytes(path: &Path) -> u64 {
         .filter(|d| target.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len())
         .map(|d| d.available_space())
-        .unwrap_or(0)
 }
 
 /// Available RAM from sysinfo's counters.
@@ -593,6 +603,19 @@ fn memory() -> (u64, u64) {
     (total, available)
 }
 
+/// colibri: `off` where no pack is built for this host; `ready` when its pack
+/// is installed; `missing` when it is built but not installed (`pack_id` then
+/// names the pack to install). Always the CPU build in v1.
+fn detect_colibri(input: &crate::engine_packs::pick::PickInput, packs: &[crate::engine_packs::InstalledPack]) -> EngineInfo {
+    let Some(choice) = crate::engine_packs::pick::colibri_choices(input).into_iter().next() else {
+        return EngineInfo { id: "colibri", backend: EngineBackend::Cpu, version: None, pack_id: None, state: EngineState::Off };
+    };
+    if let Some(pack) = packs.iter().find(|p| p.engine == "colibri") {
+        return pack_engine("colibri", pack, EngineBackend::Cpu);
+    }
+    EngineInfo { id: "colibri", backend: EngineBackend::Cpu, version: None, pack_id: Some(choice.pack_id), state: EngineState::Missing }
+}
+
 /// Full probe: GPUs, engines, budget. Blocking (runs commands with
 /// timeouts); call it from `spawn_blocking`. Never fails.
 pub fn probe_report(
@@ -605,8 +628,12 @@ pub fn probe_report(
     let apple_gpu = gpus.iter().find(|g| g.source == gpu_probe::GpuSource::AppleUnified);
     let apple_silicon = apple_gpu.is_some();
     let apple_chip = apple_gpu.map(|g| g.name.trim_start_matches("Apple ").trim().to_string());
-    let budget = derive_budget(&gpus, ram_total, apple_silicon);
-    let engines = vec![detect_llamacpp(&gpus, apple_silicon, packs), detect_mlx(apple_silicon, packs)];
+    let mut budget = derive_budget(&gpus, ram_total, apple_silicon);
+    let colibri = detect_colibri(&crate::engine_packs::pick::PickInput::detect(&gpus, apple_silicon), packs);
+    if colibri.state != EngineState::Off {
+        budget.disk_free_bytes = disk_free_opt(models_dir);
+    }
+    let engines = vec![detect_llamacpp(&gpus, apple_silicon, packs), detect_mlx(apple_silicon, packs), colibri];
     HardwareReport {
         hardware_id: profile.hardware_id.clone(),
         os: std::env::consts::OS.to_string(),
@@ -629,7 +656,13 @@ pub fn probe_report(
 /// Refresh only the fields that move: free RAM, free VRAM, free disk.
 pub fn refresh_live(report: &mut HardwareReport, models_dir: &Path) {
     let (_, ram_available) = memory();
-    apply_live(report, ram_available, disk_free_bytes(models_dir));
+    let free = disk_free_opt(models_dir);
+    apply_live(report, ram_available, free.unwrap_or(0));
+    // The budget field only exists on hosts with a colibri pack, and is
+    // dropped (never 0) if the read fails.
+    if report.budget.disk_free_bytes.is_some() {
+        report.budget.disk_free_bytes = free;
+    }
     gpu_probe::refresh_vram_free(&mut report.gpus, ram_available);
 }
 
@@ -657,16 +690,16 @@ mod tests {
         let ram = 32 * GB;
         // Largest discrete VRAM wins; RAM is the spill pool; iGPU ignored.
         let b = derive_budget(&[gpu(GpuVendor::Intel, None, false), gpu(GpuVendor::Nvidia, Some(8 * GB), true), gpu(GpuVendor::Nvidia, Some(12 * GB), true)], ram, false);
-        assert_eq!(b, Budget { kind: BudgetKind::Discrete, fast_bytes: 12 * GB, spill_bytes: ram });
+        assert_eq!(b, Budget { kind: BudgetKind::Discrete, fast_bytes: 12 * GB, spill_bytes: ram, disk_free_bytes: None });
         // Apple silicon: 0.65 x RAM (48 GB Mac -> 31.2 GB).
         let b = derive_budget(&[gpu(GpuVendor::Apple, Some(48 * GB), false)], 48 * GB, true);
-        assert_eq!(b, Budget { kind: BudgetKind::Unified, fast_bytes: 31_200_000_000, spill_bytes: 0 });
+        assert_eq!(b, Budget { kind: BudgetKind::Unified, fast_bytes: 31_200_000_000, spill_bytes: 0, disk_free_bytes: None });
         // Other unified (Snapdragon / iGPU only): 0.60 x RAM.
         let b = derive_budget(&[gpu(GpuVendor::Qualcomm, None, false)], ram, false);
-        assert_eq!(b, Budget { kind: BudgetKind::Unified, fast_bytes: 19_200_000_000, spill_bytes: 0 });
+        assert_eq!(b, Budget { kind: BudgetKind::Unified, fast_bytes: 19_200_000_000, spill_bytes: 0, disk_free_bytes: None });
         // No GPU: cpu, 0.6 x RAM.
         let b = derive_budget(&[], 16 * GB, false);
-        assert_eq!(b, Budget { kind: BudgetKind::Cpu, fast_bytes: 9_600_000_000, spill_bytes: 0 });
+        assert_eq!(b, Budget { kind: BudgetKind::Cpu, fast_bytes: 9_600_000_000, spill_bytes: 0, disk_free_bytes: None });
         // A discrete GPU with unknown VRAM can't set a budget: falls through.
         let b = derive_budget(&[gpu(GpuVendor::Amd, None, true)], 16 * GB, false);
         assert_eq!(b.kind, BudgetKind::Cpu);
@@ -748,6 +781,33 @@ mod tests {
         assert_eq!(report.gpus[0].vram_free_bytes, Some(available), "unified GPU tracks free RAM");
         assert_eq!(report.gpus[1].vram_free_bytes, None, "static GPUs are left alone");
         assert_eq!(report.disk_free_bytes, 7);
+    }
+
+    #[test]
+    fn budget_disk_free_is_left_out_unless_a_colibri_pack_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut report = apple_report(dir.path());
+        refresh_live(&mut report, dir.path());
+        assert_eq!(report.budget.disk_free_bytes, None);
+        assert!(!serde_json::to_string(&report.budget).unwrap().contains("disk_free_bytes"));
+        report.budget.disk_free_bytes = Some(1);
+        refresh_live(&mut report, dir.path());
+        assert!(report.budget.disk_free_bytes.unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn colibri_engine_state_follows_the_pack() {
+        use crate::engine_packs::pick::PickInput;
+        let input = |os: &str, arch: &str| PickInput {
+            os: os.into(), arch: arch.into(), gpus: vec![], apple_silicon: false,
+            nvidia_driver: false, rocm_runtime: false, vulkan_loader: false,
+        };
+        let off = detect_colibri(&input("macos", "x86_64"), &[]);
+        assert_eq!((off.state, off.pack_id), (EngineState::Off, None));
+        let missing = detect_colibri(&input("linux", "x86_64"), &[]);
+        assert_eq!(missing.state, EngineState::Missing);
+        assert_eq!(missing.pack_id.as_deref(), Some("colibri-linux-x86_64"));
+        assert_eq!(missing.id, "colibri");
     }
 
     #[test]

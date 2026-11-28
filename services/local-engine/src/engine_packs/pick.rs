@@ -36,7 +36,7 @@ pub struct PickInput {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PackChoice {
     pub pack_id: String,
-    /// `llamacpp` or `mlx` (the `engine` field of pack.json).
+    /// `llamacpp`, `mlx` or `colibri` (the `engine` field of pack.json).
     pub engine: &'static str,
     pub backend: EngineBackend,
 }
@@ -104,6 +104,16 @@ const BUILT: &[(&str, &str, &str, &str)] = &[
     ("llamacpp", "cpu", "linux", "arm64"),
 ];
 
+/// colibri packs (contract section 3.4): CPU builds from the v2.2.0 release.
+/// Ids follow the contract, not the `engine-backend-os-arch` shape above.
+/// There is no macOS x64 or Windows Arm archive, and no Metal pack in v1.
+const COLIBRI_BUILT: &[(&str, &str, &str)] = &[
+    ("linux", "x64", "colibri-linux-x86_64"),
+    ("linux", "arm64", "colibri-linux-aarch64"),
+    ("windows", "x64", "colibri-windows-x86_64"),
+    ("macos", "arm64", "colibri-macos-arm64"),
+];
+
 fn built(engine: &str, backend: EngineBackend, os: &str, arch: &str) -> bool {
     let (Some(os), Some(arch)) = (os_word(os), arch_word(arch)) else { return false };
     BUILT.iter().any(|(e, b, o, a)| *e == engine && *b == backend_word(backend) && *o == os && *a == arch)
@@ -142,6 +152,18 @@ pub fn llamacpp_choices(input: &PickInput) -> Vec<PackChoice> {
         .filter_map(|b| {
             Some(PackChoice { pack_id: pack_id("llamacpp", b, &input.os, &input.arch)?, engine: "llamacpp", backend: b })
         })
+        .collect()
+}
+
+/// The colibri CPU pack for this machine, or empty when none is built for this
+/// OS/arch (Intel Macs, Windows on Arm). The CPU pack is the only one in v1,
+/// so the list has at most one entry.
+pub fn colibri_choices(input: &PickInput) -> Vec<PackChoice> {
+    let (Some(os), Some(arch)) = (os_word(&input.os), arch_word(&input.arch)) else { return Vec::new() };
+    COLIBRI_BUILT
+        .iter()
+        .filter(|(o, a, _)| *o == os && *a == arch)
+        .map(|(_, _, id)| PackChoice { pack_id: (*id).to_string(), engine: "colibri", backend: EngineBackend::Cpu })
         .collect()
 }
 
@@ -277,5 +299,30 @@ mod tests {
         assert_eq!(mlx_choice(&i).unwrap().pack_id, "mlx-metal-macos-arm64");
         // MLX never applies off Apple silicon.
         assert!(mlx_choice(&input("linux", "x86_64", vec![])).is_none());
+    }
+
+    #[test]
+    fn colibri_has_one_cpu_pack_per_built_platform() {
+        let id = |os: &str, arch: &str| colibri_choices(&input(os, arch, vec![])).into_iter().map(|c| c.pack_id).collect::<Vec<_>>();
+        assert_eq!(id("linux", "x86_64"), vec!["colibri-linux-x86_64"]);
+        assert_eq!(id("linux", "aarch64"), vec!["colibri-linux-aarch64"]);
+        assert_eq!(id("windows", "x86_64"), vec!["colibri-windows-x86_64"]);
+        let mut mac = input("macos", "aarch64", vec![gpu(GpuVendor::Apple, false)]);
+        mac.apple_silicon = true;
+        let c = colibri_choices(&mac);
+        assert_eq!(c.len(), 1);
+        assert_eq!((c[0].pack_id.as_str(), c[0].engine, c[0].backend), ("colibri-macos-arm64", "colibri", Cpu));
+    }
+
+    #[test]
+    fn colibri_gets_nothing_where_no_archive_exists() {
+        // No macOS x64 and no Windows Arm archive in the v2.2.0 release.
+        assert!(colibri_choices(&input("macos", "x86_64", vec![])).is_empty());
+        assert!(colibri_choices(&input("windows", "aarch64", vec![])).is_empty());
+        assert!(colibri_choices(&input("freebsd", "x86_64", vec![])).is_empty());
+        // A GPU never changes the pick: v1 packs are CPU only.
+        let mut n = input("windows", "x86_64", vec![gpu(GpuVendor::Nvidia, true)]);
+        n.nvidia_driver = true;
+        assert_eq!(colibri_choices(&n).len(), 1);
     }
 }
