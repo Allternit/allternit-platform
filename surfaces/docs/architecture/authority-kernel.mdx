@@ -75,6 +75,37 @@ A request carries the exact action payload and a deadline. A human session resol
 
 On Allternit Desktop, approving also needs a user-presence check. Before the approve reaches the kernel, the Desktop app asks for Touch ID on macOS or Windows Hello on Windows. It then attaches a short-lived proof bound to that one request. The kernel refuses a Desktop approve without that proof and writes a receipt. On a computer with neither Touch ID nor Windows Hello (Linux, or a Mac or PC without them), approve from the web or phone app, which use your signed-in session. Deny needs no presence check.
 
+## The older approval stores
+
+Allternit had approval stores before the kernel. Their tables, routes and responses stay, so existing apps keep working. Each one now writes through the kernel's `approval_requests` table:
+
+- **Create.** When an older store creates a pending approval, it also opens a kernel request. The request has the same action, owner and deadline. The older row keeps the kernel request id. On the kernel row, `source_store` and `source_ref` point back at the older row.
+- **Approve or deny on an older route.** The route first checks that a person is acting. Then the kernel resolves the request and writes one receipt. Then the older row changes.
+- **Approve or deny in the kernel.** `POST /api/v1/kernel/approvals/resolve` closes the older row too. This write-back does not call the kernel again, so a decision cannot loop.
+- **Use.** Where an older store spends an approval, the kernel token is spent too.
+
+Whichever surface you approve from, one approval has one `approval_requests` row and one approve or deny receipt. A row the older store closes by itself gets a `withdraw` receipt. This happens when the Factory ledger was answered in Gizzi or the CLI, or the row expired.
+
+| Store | `source_store` | Created by | Older resolve routes | Spent by |
+|---|---|---|---|---|
+| Factory approvals (`factory_approvals`) | `factory` | The Factory ledger sync, when a node waits on a person | `POST /api/factory/approvals/:id/resolve`, `/push-action`, the unified inbox, owner channel replies | The Gate event that lets the node go on |
+| Tool policy asks (`/beta/approvals`) | `permission_policy` | `/tools/execute` when the permission policy asks; beta session tool asks | `POST /api/beta/approvals/:id/approve` and `/deny` | none |
+| Browser and computer handoffs (ACI grants) | `aci` | `aci.run` sensitive actions, computer confirmations | `POST /api/aci/handoff/:id/approve` and `/deny` | The `aci.run` retry that presents the grant |
+| Gateway, cowork and task grants | `gateway`, `cowork`, `task_grant` | Not wired yet | Not wired yet | Not wired yet |
+| Cloud `/v1/approvals` and sign requests | `cloud_platform`, `sign_request` | Not wired yet (cloud-api) | Not wired yet | Not wired yet |
+
+**Who may resolve on an older route.** A credential that is never a person is always refused with `403 forbidden_caller`. That means an agent or run credential, an API key, an MCP client, the internal service token, or an access or worker token. `/beta/approvals` used to accept any authenticated caller for any approval id. It now also needs the approval's owner, and anyone else gets `404`. A Factory reply from the owner's verified channel identity with its one-time code counts as the person. High-risk Factory approvals stay app and push only.
+
+The same `ALLTERNIT_KERNEL_CHECK` mode applies:
+
+| Mode | Older route without a person proof | Kernel failure on an older route |
+|---|---|---|
+| `off` | Allowed; the kernel is skipped | n/a |
+| `shadow` (default) | Allowed, and the kernel request is withdrawn with the reason | Logged; the older route finishes |
+| `enforce` | Refused | Refused |
+
+A person proof is a signed-in session token for that account, or the Desktop window's proof header. A resolve the kernel refuses as a conflict, for example one already resolved the other way, is refused in every mode except `off`.
+
 ## The signing key
 
 The kernel signs approval tokens and receipts with one Ed25519 key. Where it lives depends on the host:

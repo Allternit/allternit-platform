@@ -423,7 +423,9 @@ pub async fn handle_answer(state: &Arc<AppState>, ans: Answer<'_>) -> Option<Str
     }
     drop(conn);
     let prov = Provenance { surface: ans.channel.to_string(), account_id: Some(acct.id.clone()), message_id: Some(ans.message_id.to_string()), sender: Some(sender.to_string()) };
-    Some(match fa::resolve(state, &a.id, reply.approve, &acct.owner, prov, None).await {
+    // The owner's own verified channel identity sent the one-time code: that is the person's act
+    // (CONTRACT.md 6.1 row 1; high-risk approvals were refused above, they stay app/push only).
+    Some(match fa::resolve(state, &a.id, reply.approve, &acct.owner, &crate::authority::adapters::Gate::Person, prov, None).await {
         Ok(done) => format!("{}: \"{}\".", if done.state == "approved" { "Approved" } else { "Rejected" }, done.title),
         Err(ResolveError::AlreadyResolved(cur)) => format!("Already answered: {}.", resolution_line(&cur, "you")),
         Err(e) => {

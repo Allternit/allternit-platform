@@ -104,3 +104,12 @@ BEFORE DELETE ON kernel_receipts
 BEGIN
     SELECT RAISE(ABORT, 'kernel_receipts is append-only');
 END;
+
+-- Plan step 11a: the old approval stores write through approval_requests. Additive only.
+-- A kernel row points back at its old row with (source_store, source_ref).
+CREATE INDEX IF NOT EXISTS idx_approval_requests_source
+    ON approval_requests (source_store, source_ref);
+
+-- factory_approvals (V238) keeps the kernel request id; NULL for rows made before step 11a
+-- (they get one lazily on their first resolve).
+ALTER TABLE factory_approvals ADD COLUMN kernel_request_id TEXT;

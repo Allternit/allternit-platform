@@ -12,11 +12,13 @@
 //! | [`audit`] | The receipt log: per (principal, tenant) hash chain, Ed25519 signed, `append` + `verify_chain`; the tenant is always [`kernel_scope`] |
 //! | [`approvals`] | [`approvals::SqlAuthority`]: request, resolve, redeem; receipts written before acting |
 //! | [`check`] | `check` at every tool-execution path: classify, apply autonomy, redeem a token for ask/human-only classes, receipt first; `ALLTERNIT_KERNEL_CHECK=off\|shadow\|enforce` |
+//! | [`adapters`] | Plan step 11a: the old stores (`factory_approvals`, `ApprovalStore` + ACI grants) create, resolve and redeem through this one |
 //! | [`routes`] | `POST /api/v1/kernel/approvals/{request,resolve,redeem}`; `GET /api/v1/kernel/receipts[/verify]`; resolve and verify need a person's session |
 //!
-//! Not here yet: `secret.use` (10), moving the nine old
-//! approval stores onto this one (11), budgets and leases (12).
+//! Not here yet: `secret.use` (10), gateway, cowork and task-grant adapters (11a, second run),
+//! cloud-api `platform_approvals` (11b), budgets and leases (12).
 
+pub mod adapters;
 pub mod approvals;
 pub mod audit;
 pub mod check;

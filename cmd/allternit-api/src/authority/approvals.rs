@@ -420,6 +420,49 @@ impl SqlAuthority {
         }
     }
 
+    /// Close an open request because its source store closed it on its own (plan step 11): the
+    /// Factory ledger answered it elsewhere, the old row expired, or a caller the kernel does not
+    /// count as a person resolved it through an old route in shadow mode. Host code only; no
+    /// route calls this. Writes a `withdraw` receipt on the request's chain, then sets
+    /// `withdrawn`, in one transaction. `Ok(false)` when there is no such open request.
+    pub fn withdraw(&self, request_id: &str, reason: &str) -> Result<bool, AuthorityError> {
+        let now = self.now();
+        let conn = self.connect()?;
+        let Some(stored) = self.load(&conn, request_id)? else {
+            return Ok(false);
+        };
+        drop(conn);
+        if stored.request.status != Some(ApprovalStatus::Open) {
+            return Ok(false);
+        }
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_err)?;
+        append_in_tx(
+            &tx,
+            &self.signer,
+            self.input(
+                &stored.request.run_id,
+                &stored.owner_user_id,
+                "withdraw",
+                json!({ "event": "withdraw", "request_id": request_id, "reason": reason, "caller_kind": "service" }),
+            ),
+            now,
+        )?;
+        let n = tx
+            .execute(
+                "UPDATE approval_requests SET status = 'withdrawn', resolved_at = ?2, resolve_note = ?3
+                 WHERE request_id = ?1 AND status = 'open'",
+                params![request_id, tokens::ts(now), reason],
+            )
+            .map_err(db_err)?;
+        if n != 1 {
+            drop(tx);
+            return Ok(false);
+        }
+        tx.commit().map_err(db_err)?;
+        Ok(true)
+    }
+
     /// `approval.redeem`: verify, then spend the token and write the redemption receipt in one
     /// transaction, before the action runs. The `approval_token_spends` primary key makes a
     /// second spend impossible even if two redeems race.

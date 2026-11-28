@@ -663,6 +663,7 @@ pub mod test_helpers {
         let fabric_price_cache = crate::fabric::PriceCache::new(db.clone());
         let fabric_scheduler = crate::fabric::Scheduler::new(crate::fabric::CostEngine::default_engine())
             .with_price_cache(fabric_price_cache.clone());
+        let approval_store = Arc::new(permission_policy::ApprovalStore::linked(db.clone()));
         Arc::new(AppState {
             config,
             db,
@@ -690,7 +691,7 @@ pub mod test_helpers {
             design_skill_cache: DesignSkillCache::new(),
             terminal_sessions: TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
-            approval_store: Arc::new(permission_policy::ApprovalStore::new()),
+            approval_store,
             passkey_state: None,
             resource_class_catalog,
             fabric_node_provider,

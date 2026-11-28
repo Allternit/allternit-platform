@@ -223,7 +223,7 @@ async fn execute_tool(
             );
         }
         PermissionAction::Ask => {
-            let approval_id = state.approval_store.create(&user.user_id, &body.tool, &body.args);
+            let approval_id = state.approval_store.create_in(&user.user_id, crate::authority::org_or_tenant(&user), &body.tool, &body.args);
             info!("Policy asked for approval '{}' for tool '{}'", approval_id, body.tool);
             return (
                 StatusCode::ACCEPTED,
@@ -276,10 +276,46 @@ async fn execute_tool(
     (StatusCode::OK, Json(result))
 }
 
+/// The person check and kernel write-through shared by approve and deny (plan step 11a).
+///
+/// Before step 11a these two routes took no `AuthUser` at all: any caller that passed the
+/// router's auth (an agent token, an API key) could approve any approval id. Now: only the
+/// record's owner (others read "not found"), only a person's session (agent, run, API-key,
+/// MCP and service credentials are refused), and the authority kernel resolves the linked
+/// `approval_requests` row first (one receipt).
+async fn decide_tool_execution(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    credential: Option<&crate::enterprise_auth::CredentialContext>,
+    headers: &HeaderMap,
+    id: &str,
+    approve: bool,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let not_found = || (StatusCode::NOT_FOUND, Json(json!({ "error": "Approval request not found" })));
+    match state.approval_store.get(id) {
+        Some(req) if req.user_id == user.user_id => {}
+        _ => return Err(not_found()),
+    }
+    let gate = crate::authority::adapters::gate(state, headers, user, credential.is_some()).await;
+    if let crate::authority::adapters::Gate::Refuse(why) = &gate {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": why, "code": "forbidden_caller" }))));
+    }
+    crate::authority::adapters::tool_approvals::resolve(state, &gate, id, approve, &user.user_id).await.map_err(|e| {
+        let status = if e.code == allternit_authority::ErrorCode::NotFound { StatusCode::NOT_FOUND } else if e.code == allternit_authority::ErrorCode::Conflict { StatusCode::CONFLICT } else { StatusCode::FORBIDDEN };
+        (status, Json(json!({ "error": e.message, "code": e.code, "receipt_id": e.receipt_id })))
+    })
+}
+
 async fn approve_tool_execution(
     State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(refused) = decide_tool_execution(&state, &user, credential.as_ref().map(|c| &c.0), &headers, &id, true).await {
+        return refused;
+    }
     if state.approval_store.approve(&id) {
         (
             StatusCode::OK,
@@ -295,8 +331,14 @@ async fn approve_tool_execution(
 
 async fn deny_tool_execution(
     State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(refused) = decide_tool_execution(&state, &user, credential.as_ref().map(|c| &c.0), &headers, &id, false).await {
+        return refused;
+    }
     if state.approval_store.deny(&id) {
         (
             StatusCode::OK,
@@ -2078,9 +2120,53 @@ mod tests {
         let approval_id = json["approval_id"].as_str().unwrap();
         assert_eq!(json["status"], "approval_required");
 
-        // Approve the request and verify the store reflects it.
-        let approve_response = approve_tool_execution(State(state.clone()), Path(approval_id.to_string())).await;
+        // Approve the request (a person's session) and verify the store reflects it.
+        let approve_response =
+            approve_tool_execution(State(state.clone()), Extension(test_user("user-1")), None, person_headers(), Path(approval_id.to_string())).await;
         assert_eq!(approve_response.into_response().status(), StatusCode::OK);
+
+        // Plan step 11a: one kernel row for this approval, approved, and one approve receipt.
+        let count = |sql: &str| -> i64 { state.db.connect().unwrap().query_row(sql, [approval_id], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM approval_requests WHERE source_ref = ?1"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM approval_requests WHERE source_ref = ?1 AND source_store = 'permission_policy' AND status = 'approved'"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') = (SELECT request_id FROM approval_requests WHERE source_ref = ?1)"),
+            1
+        );
+        assert!(state.approval_store.get(approval_id).unwrap().kernel_token.is_some(), "the kernel token is kept for the redeem");
+    }
+
+    fn test_user(id: &str) -> AuthUser {
+        AuthUser { user_id: id.into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }
+    }
+
+    fn person_headers() -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-allternit-human-proof", crate::subscription_routes::test_desktop_proof().parse().unwrap());
+        h
+    }
+
+    /// Plan step 11a: `/beta/approvals/:id/approve` took no caller at all before. An agent
+    /// credential (even for the owner's account) and another account are refused now, and the
+    /// approval and its kernel row stay open.
+    #[tokio::test]
+    async fn beta_approve_refuses_agents_and_other_accounts() {
+        let state = state_with_policy(PermissionPolicy { name: "empty".to_string(), rules: vec![] }, "empty").await;
+        let id = state.approval_store.create("user-1", "file.write", &json!({ "path": "/etc/hosts", "content": "x" }));
+        let mut agent = HeaderMap::new();
+        agent.insert("x-allternit-agent-id", "agent_1".parse().unwrap());
+        let res = approve_tool_execution(State(state.clone()), Extension(test_user("user-1")), None, agent, Path(id.clone())).await;
+        assert_eq!(res.into_response().status(), StatusCode::FORBIDDEN);
+        let res = approve_tool_execution(State(state.clone()), Extension(test_user("user-2")), None, person_headers(), Path(id.clone())).await;
+        assert_eq!(res.into_response().status(), StatusCode::NOT_FOUND);
+        assert_eq!(state.approval_store.get(&id).unwrap().status, crate::permission_policy::ApprovalStatus::Pending);
+        let open: i64 = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM approval_requests WHERE source_ref = ?1 AND status = 'open'", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(open, 1);
     }
 
     #[tokio::test]
@@ -2093,9 +2179,10 @@ mod tests {
             "empty",
         )
         .await;
-        let response = approve_tool_execution(State(state.clone()), Path("nope".to_string())).await;
+        let response =
+            approve_tool_execution(State(state.clone()), Extension(test_user("user-1")), None, person_headers(), Path("nope".to_string())).await;
         assert_eq!(response.into_response().status(), StatusCode::NOT_FOUND);
-        let response = deny_tool_execution(State(state), Path("nope".to_string())).await;
+        let response = deny_tool_execution(State(state), Extension(test_user("user-1")), None, person_headers(), Path("nope".to_string())).await;
         assert_eq!(response.into_response().status(), StatusCode::NOT_FOUND);
     }
 }
