@@ -5,7 +5,7 @@
 //! the Cloud donor repo can consume canonical types without pulling in the full
 //! node-agent / runtime / harness dependency tree.
 //!
-//! Authority remains AllternitOS. Cloud should import these types and stop defining
+//! The platform repo owns these contracts (`spec/Contracts/os/v1`). Cloud should import these types and stop defining
 //! parallel view structs in `os_mapping.rs`.
 
 use chrono::{DateTime, Utc};
