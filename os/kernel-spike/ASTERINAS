@@ -1,0 +1,7 @@
+# Pin for the Stage 3 kernel spike (plan step 34). Sourced by run-asterinas.sh and CI.
+ASTERINAS_REPO=https://github.com/asterinas/asterinas
+ASTERINAS_TAG=v0.19.0
+# The dev image is named by the DOCKER_IMAGE_VERSION file at the root of the tag:
+#   asterinas/asterinas:$(cat DOCKER_IMAGE_VERSION)
+# CI reads it from the clone, so the image always matches the tag.
+ASTERINAS_IMAGE_REPO=asterinas/asterinas
