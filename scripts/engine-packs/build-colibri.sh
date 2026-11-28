@@ -3,7 +3,7 @@
 # Contract: handoffs CONTRACT-colibri-unkernel.md section 3 (option A: bundled Python gateway).
 #
 # Usage: build-colibri.sh --os linux|windows --arch x64|arm64 [--out DIR] [--work DIR]
-# Output: <out>/colibri-cpu-<os>-<arch>/ with
+# Output: <out>/colibri-<os>-<x86_64|aarch64>/ with
 #   python/                        python-build-standalone (install_only_stripped), pinned below
 #   colibri/c/openai_server.py     colibri's gateway .py files at the pin (+ c/tools), from the fork checkout
 #   colibri/c/<engine binaries>    from the pinned upstream release archive, verified against SHA256SUMS.txt
@@ -36,13 +36,13 @@ while [ $# -gt 0 ]; do case "$1" in
 [ -n "$OS" ] && [ -n "$ARCH" ] || { echo "need --os --arch" >&2; exit 2; }
 
 case "$OS-$ARCH" in
-  linux-x64)    ASSET="colibri-$COLIBRI_TAG-linux-x86_64.tar.gz";  PBS_TRIPLE="x86_64-unknown-linux-gnu";  PBS_SHA="$PBS_SHA_LINUX_X64";;
-  linux-arm64)  ASSET="colibri-$COLIBRI_TAG-linux-aarch64.tar.gz"; PBS_TRIPLE="aarch64-unknown-linux-gnu"; PBS_SHA="$PBS_SHA_LINUX_ARM64";;
-  windows-x64)  ASSET="colibri-$COLIBRI_TAG-windows-x86_64.zip";   PBS_TRIPLE="x86_64-pc-windows-msvc";    PBS_SHA="$PBS_SHA_WINDOWS_X64";;
+  linux-x64)    ID_ARCH=x86_64;  ASSET="colibri-$COLIBRI_TAG-linux-x86_64.tar.gz";  PBS_TRIPLE="x86_64-unknown-linux-gnu";  PBS_SHA="$PBS_SHA_LINUX_X64";;
+  linux-arm64)  ID_ARCH=aarch64; ASSET="colibri-$COLIBRI_TAG-linux-aarch64.tar.gz"; PBS_TRIPLE="aarch64-unknown-linux-gnu"; PBS_SHA="$PBS_SHA_LINUX_ARM64";;
+  windows-x64)  ID_ARCH=x86_64;  ASSET="colibri-$COLIBRI_TAG-windows-x86_64.zip";   PBS_TRIPLE="x86_64-pc-windows-msvc";    PBS_SHA="$PBS_SHA_WINDOWS_X64";;
   *) echo "no colibri archive for $OS-$ARCH" >&2; exit 2;;
 esac
 PBS_ASSET="cpython-$PBS_PYTHON+$PBS_RELEASE-$PBS_TRIPLE-install_only_stripped.tar.gz"
-PACK_ID="colibri-cpu-$OS-$ARCH"
+PACK_ID="colibri-$OS-$ID_ARCH"   # CONTRACT 3.4 pack names (no backend part)
 PACK="$OUT/$PACK_ID"; W="$WORK/$PACK_ID"
 if [ "$OS" = windows ]; then PYBIN="python/python.exe"; else PYBIN="python/bin/python3"; fi
 PY="$(command -v python3 || command -v python)"
@@ -94,4 +94,11 @@ cp "$PYLIC" "$PACK/LICENSE-python"
 
 "$PY" "$HERE/make-manifest.py" "$PACK" --engine colibri --backend cpu --version "$COLIBRI_TAG" \
   --os "$OS" --arch "$ARCH" --min-os "" --source-commit "$COLIBRI_COMMIT" --entrypoint "$PYBIN"
+# make-manifest.py names packs engine-backend-os-arch; the contract id has no backend part.
+"$PY" - "$PACK/pack.json" "$PACK_ID" <<'PYEOF'
+import json, sys
+p, pid = sys.argv[1], sys.argv[2]
+m = json.load(open(p)); m["pack_id"] = pid
+json.dump(m, open(p, "w"), indent=2); open(p, "a").write("\n")
+PYEOF
 du -sh "$PACK" 2>/dev/null || true

@@ -125,9 +125,9 @@ jobs:
       matrix:
         include:
           # No compile: pinned release archive + bundled Python + colibri's .py gateway files.
-          - { os: linux, arch: x64, runner: ubuntu-24.04 }
-          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
-          - { os: windows, arch: x64, runner: windows-2022 }
+          - { os: linux, arch: x64, id_arch: x86_64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, id_arch: aarch64, runner: ubuntu-24.04-arm }
+          - { os: windows, arch: x64, id_arch: x86_64, runner: windows-2022 }
     defaults:
       run:
         shell: bash
@@ -139,7 +139,7 @@ jobs:
         run: scripts/engine-packs/build-colibri.sh --os ${{ matrix.os }} --arch ${{ matrix.arch }} --out "$PWD/out" --work "${{ runner.temp }}/colibri-work"
       - uses: actions/upload-artifact@v4
         with:
-          name: pack-colibri-${{ matrix.os }}-${{ matrix.arch }}
+          name: pack-colibri-${{ matrix.os }}-${{ matrix.id_arch }}
           path: out/
           retention-days: 14
 
