@@ -391,7 +391,9 @@ export class WispSession {
   private async openStream(stream: Stream, port: number): Promise<void> {
     try {
       const addresses = await this.relay.deps.resolve(stream.host);
-      if (stream.closed) return; // client or cap closed it during the lookup
+      // A cap or error closed it during the lookup. A client CLOSE (closed, not
+      // aborted) still connects so the writes it already queued are flushed.
+      if (stream.aborted) return;
       if (addresses.length === 0) {
         this.closeStream(stream.id, CloseReason.UNREACHABLE);
         return;
@@ -414,7 +416,7 @@ export class WispSession {
       }
       stream.writer = socket.writable.getWriter();
       await socket.opened;
-      void this.pump(stream, socket);
+      if (!stream.closed) void this.pump(stream, socket);
     } catch {
       this.closeStream(stream.id, CloseReason.UNREACHABLE);
     }
