@@ -124,15 +124,16 @@ describe("pet sprites", () => {
   test("blink and wink close eyes; glance moves them", () => {
     const bot = { id: "x", name: "X", description: "", avatar: { kind: "geometric" as const, shape: "circle" as const, primary: "#4FA3A5", secondary: "#27494A", eyes: "round" as const } }
     const eye = eyeColorOn("#27494A")
-    // Count half-block pixels drawn in the eye color.
+    // Count pixels drawn in the eye color. Each cell char is two stacked pixels:
+    // a space shows bg twice, a half block shows fg on one half and bg on the other.
     const eyeCells = (p: "idle" | "blink" | "wink" | "glance") => {
       let n = 0
       for (const row of petBotRows(bot, p)) {
         for (const [text, fg, bg] of row as unknown as Array<[string, string?, string?]>) {
           for (const ch of text) {
-            if (ch === "█") n += fg === eye ? 2 : 0
-            else if (ch === "▀") n += (fg === eye ? 1 : 0) + (bg === eye ? 1 : 0)
-            else if (ch === "▄") n += fg === eye ? 1 : 0
+            const [top, bottom] =
+              ch === "█" ? [fg, fg] : ch === "▀" ? [fg, bg] : ch === "▄" ? [bg, fg] : [bg, bg]
+            n += (top === eye ? 1 : 0) + (bottom === eye ? 1 : 0)
           }
         }
       }
