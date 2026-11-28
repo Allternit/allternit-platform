@@ -47,7 +47,11 @@ KB="$OUT/kbuild"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
 # --- 1. static userland -----------------------------------------------------
-BIN="$OS_DIR/target/$TARGET/release"
+# The repo's .cargo/config.toml sets target-dir, so ask cargo where output goes.
+TARGET_DIR=$(cargo metadata --manifest-path "$OS_DIR/Cargo.toml" --no-deps --format-version 1 \
+  | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+[ -n "$TARGET_DIR" ] || TARGET_DIR="$OS_DIR/target"
+BIN="$TARGET_DIR/$TARGET/release"
 say "building os/ for $TARGET (release)"
 cargo build --manifest-path "$OS_DIR/Cargo.toml" --target "$TARGET" --release
 [ -x "$BIN/init" ] || die "missing $BIN/init"
