@@ -1097,13 +1097,29 @@ impl RoutineDriver for GizziDriver {
             timeout: Some(60),
             ..Default::default()
         };
-        let result = crate::tool_routes::execute_tool_internal(&self.state, &request, user_id, None).await?;
+        // The owner's org (else tenant), the same rule the HTTP tool route uses, so the receipt
+        // lands on the owner's own chain and not on `default`.
+        let scope = user_kernel_scope(&self.state.db, user_id);
+        let result = crate::tool_routes::execute_tool_internal(&self.state, &request, user_id, scope.as_deref()).await?;
         if result.get("exit_code").and_then(Value::as_i64).unwrap_or(0) != 0 {
             let stderr = result.get("stderr").and_then(Value::as_str).unwrap_or("");
             return Err(format!("monitor command failed: {}", truncate(stderr, 512)));
         }
         Ok(result.get("stdout").and_then(Value::as_str).unwrap_or("").to_string())
     }
+}
+
+/// A routine carries only a `user_id`. Resolve what an authenticated request would carry:
+/// the user's organization (`users.organization_id`, else their membership), else `users.tenant_id`.
+/// `None` (the `default` chain) only when the user has neither.
+fn user_kernel_scope(db: &crate::db::DbHandle, user_id: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    let one = |sql: &str| -> Option<String> {
+        conn.query_row(sql, rusqlite::params![user_id], |r| r.get::<_, Option<String>>(0)).ok().flatten().filter(|v| !v.is_empty())
+    };
+    one("SELECT organization_id FROM users WHERE id = ?1")
+        .or_else(|| one("SELECT organization_id FROM organization_members WHERE user_id = ?1 ORDER BY joined_at LIMIT 1"))
+        .or_else(|| one("SELECT tenant_id FROM users WHERE id = ?1"))
 }
 
 /// The run output for a replayed phone skill: one line per step.

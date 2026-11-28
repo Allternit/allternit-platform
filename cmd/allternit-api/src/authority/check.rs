@@ -440,6 +440,13 @@ pub fn check_blocking(ctx: &CheckCtx, action: &Action, mode: Mode, signer: Arc<R
         return allow("allow", receipt);
     }
 
+    // A person's standing per-tool Allow (Customize policy, synced to `kernel_standing_grants`)
+    // answers an `ask` rule. `HumanOnly` classes never read it: they always need a fresh token.
+    if rule == Rule::Ask && ctx.approval_token.is_none() && super::standing::is_granted(&ctx.db, &ctx.user_id, &action.tool) {
+        receipt["approved_by"] = json!("standing_grant");
+        return allow("allow", receipt);
+    }
+
     // ask or human-only: a token for this exact payload, redeemed now, or nothing runs.
     if let Some(token) = ctx.approval_token.clone() {
         return match kernel.redeem(&caller, ApprovalRedeemBody { token, action_hash: hash.clone() }) {
@@ -600,6 +607,22 @@ mod tests {
         let rm = Action::new(Source::Native, "file.remove", &json!({ "path": "/tmp/x" }));
         let d = check_blocking(&ctx(&db), &rm, Mode::Enforce, signer(), t0());
         assert!(matches!(d, Decision::NeedsToken { action_class: ActionClass::Irreversible, .. }));
+    }
+
+    #[test]
+    fn a_standing_allow_answers_ask_but_never_a_human_only_class() {
+        let db = DbHandle::new_memory().unwrap();
+        let conn = db.connect().unwrap();
+        crate::authority::standing::set(&conn, USER, "file.write", true).unwrap();
+        crate::authority::standing::set(&conn, USER, "stripe.refund", true).unwrap();
+        let c = ctx(&db);
+        let d = check_blocking(&c, &write_action(), Mode::Enforce, signer(), t0());
+        assert!(d.allowed(), "{d:?}");
+        assert_eq!(last_decision(&db), "allow");
+        // A human-only class still needs a token, grant or not.
+        let money = CheckCtx::new(db.clone(), USER, None).with_run_id(Some("run_1".into())).service(ActionClass::Money, "test");
+        let a = Action::new(Source::Native, "stripe.refund", &json!({}));
+        assert!(!check_blocking(&money, &a, Mode::Enforce, signer(), t0()).allowed());
     }
 
     #[test]
