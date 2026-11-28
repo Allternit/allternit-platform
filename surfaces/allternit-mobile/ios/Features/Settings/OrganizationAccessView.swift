@@ -14,7 +14,7 @@ struct OrganizationAccessView: View {
     private let client = OrganizationClient.shared
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Organization & Access") {
             profileSection
             organizationSection
         }

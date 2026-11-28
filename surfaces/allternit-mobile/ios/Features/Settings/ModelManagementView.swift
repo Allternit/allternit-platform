@@ -40,7 +40,7 @@ struct ModelManagementListContent: View {
     var body: some View {
         List {
             selectedModelSection
-            enginesSection
+        DockingTitleList(title: "Models & Engines") {
             Section {
                 FreeweightsSection(store: freeweights)
                     .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14))
