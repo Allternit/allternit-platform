@@ -18,7 +18,7 @@ blocker for this PR.
 
 CI: `.github/workflows/os-kernel-spike.yml` (workflow_dispatch, or a PR touching
 `os/kernel-spike/**`). It builds the userland, llama-server and GGUF with the same cache keys as
-`os-image.yml`, clones Asterinas at the tag in `ASTERINAS` (v0.19.0), and boots in the
+`os-image.yml`, clones Asterinas at the tag in `ASTERINAS` (v0.18.0; the step 33 findings read v0.19.0, whose Docker dev image is not published), and boots in the
 `asterinas/asterinas:<DOCKER_IMAGE_VERSION>` dev image (the version file at the root of that tag).
 The serial log is the `os-kernel-spike-serial-log` artifact.
 
@@ -27,7 +27,7 @@ By hand (OSDK needs Ubuntu x86_64, so use the Asterinas Docker image), after bui
 `os/target/model/model.gguf`:
 
     fakeroot sh os/kernel-spike/run-asterinas.sh initramfs
-    git clone --depth 1 --branch v0.19.0 https://github.com/asterinas/asterinas os/target/asterinas
+    git clone --depth 1 --branch v0.18.0 https://github.com/asterinas/asterinas os/target/asterinas
     # inside the dev image:
     sh os/kernel-spike/run-asterinas.sh boot
     sh os/kernel-spike/run-asterinas.sh judge

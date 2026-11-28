@@ -86,7 +86,7 @@ do_initramfs() {
 
 do_boot() {
   [ -f "$OUT/initramfs.cpio.gz" ] || die "no $OUT/initramfs.cpio.gz (run: initramfs)"
-  [ -d "$AST/kernel" ] || die "no Asterinas checkout at $AST (git clone --branch v0.19.0)"
+  [ -d "$AST/kernel" ] || die "no Asterinas checkout at $AST (git clone --branch v0.18.0)"
   command -v cargo-osdk >/dev/null 2>&1 || cargo osdk --help >/dev/null 2>&1 \
     || die "cargo-osdk not found: run inside the Asterinas Docker dev image"
   LIMIT=${BOOT_LIMIT:-1500}
