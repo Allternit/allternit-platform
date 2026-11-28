@@ -2,14 +2,14 @@
 // cargo-typify could not run in the coding session (train guard blocks cargo).
 // The build train regenerates this file with scripts/regenerate.sh. Until then, edit it
 // only together with the schemas.
-use allternit_kernel_abi::{ExtensionMap, StateVersion, TaskIrv1};
+use allternit_kernel_abi::{ExtensionMap, LeaseV1, PolicyCheckV1, PolicyDecisionV1, StateVersion, TaskIrv1};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub type Id = String;
 pub type Timestamp = String;
-/// 64 lowercase hex characters (no `sha256:` prefix).
-pub type Sha256Hex = String;
+/// ABI ContentHash: `sha256:<64 lowercase hex>` (CONTRACT.md 11.3).
+pub type ContentHash = String;
 pub type DecimalString = String;
 pub type JsonObject = Map<String, Value>;
 
@@ -247,11 +247,32 @@ pub struct KernelResponseErr {
 
 // ---------------------------------------------------------------- check + lease
 
+/// Key under which os/v1 fields ride in ABI `extensions` (CONTRACT.md 11.1).
+pub const OS_EXTENSION_KEY: &str = "x-os-v1";
+
+/// check body: the unchanged ABI PolicyCheckV1; `extensions["x-os-v1"]` holds a CheckExtensionV1.
+pub type PolicyCheckOsV1 = PolicyCheckV1;
+/// check response: the unchanged ABI PolicyDecisionV1; optional `extensions["x-os-v1"]` CheckExtensionV1.
+pub type PolicyDecisionOsV1 = PolicyDecisionV1;
+/// lease response: the unchanged ABI LeaseV1; optional `extensions["x-os-v1"]` LeaseExtensionV1.
+pub type LeaseOsV1 = LeaseV1;
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptKind {
+    Check,
+    Approval,
+    SecretUse,
+    Budget,
+    Deploy,
+    Lease,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CheckExtensionV1 {
     pub action_class: ActionClass,
-    pub action_hash: Sha256Hex,
+    pub action_hash: ContentHash,
     pub approval_token: Option<String>,
     pub autonomy_level: AutonomyLevel,
 }
@@ -325,7 +346,7 @@ pub struct SecretUseV1 {
     pub target_host: Option<Option<String>>,
     #[serde(default, deserialize_with = "nullable::de", skip_serializing_if = "Option::is_none")]
     pub target_process: Option<Option<String>>,
-    pub action_hash: Sha256Hex,
+    pub action_hash: ContentHash,
     pub check_id: Id,
     #[serde(default, deserialize_with = "nullable::de", skip_serializing_if = "Option::is_none")]
     pub approval_token: Option<Option<String>>,
@@ -370,7 +391,7 @@ pub struct ApprovalRequestV1 {
     pub action_summary: String,
     pub action_payload: JsonObject,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action_hash: Option<Sha256Hex>,
+    pub action_hash: Option<ContentHash>,
     pub deadline: Timestamp,
     /// Always "reject".
     pub on_expiry: String,
@@ -404,7 +425,7 @@ pub struct ApprovalResolveBody {
 #[serde(deny_unknown_fields)]
 pub struct ApprovalRedeemBody {
     pub token: String,
-    pub action_hash: Sha256Hex,
+    pub action_hash: ContentHash,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -423,7 +444,7 @@ pub struct ApprovalTokenV1 {
     pub token_id: Id,
     pub request_id: Id,
     pub action_class: ActionClass,
-    pub action_hash: Sha256Hex,
+    pub action_hash: ContentHash,
     pub principal: Id,
     pub approved_by: Id,
     pub issued_at: Timestamp,
@@ -449,6 +470,7 @@ pub struct AuditAppendBody {
     pub domain: String,
     pub schema_id: String,
     pub schema_version: String,
+    /// Open object; `kind` (ReceiptKind) is required by the schema (CONTRACT.md 11.2).
     pub payload: JsonObject,
     pub idempotency_key: Option<String>,
 }
@@ -519,10 +541,10 @@ pub struct DeployAdmissionV1 {
     pub admission_id: Option<Id>,
     pub principal: Id,
     pub target: String,
-    pub artifact_digest: Sha256Hex,
+    pub artifact_digest: ContentHash,
     pub command_preview: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action_hash: Option<Sha256Hex>,
+    pub action_hash: Option<ContentHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<DeployStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -600,6 +622,35 @@ pub enum InboxToolInputV1 {
 }
 
 pub type InboxListResult = Vec<InboxItemV1>;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedDraft {
+    pub action_class: ActionClass,
+    pub action_text: String,
+    pub payload_hash: ContentHash,
+}
+
+/// CONTRACT.md 11.5: an inbox row with state "prepared" and its draft. Still needs a human approve.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct InboxPrepareResult {
+    pub id: Id,
+    pub kind: InboxItemKind,
+    pub action_class: ActionClass,
+    pub action_summary: String,
+    pub action_payload: JsonObject,
+    pub assignee: String,
+    pub deadline: Timestamp,
+    pub urgency: Urgency,
+    pub run_id: Id,
+    pub source_store: SourceStore,
+    pub status: ApprovalStatus,
+    pub attention_id: Id,
+    /// Always "prepared".
+    pub state: String,
+    pub draft: PreparedDraft,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -697,11 +748,22 @@ pub struct ShellViewInstance {
     pub region: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellRunStatus {
+    Queued,
+    Running,
+    Waiting,
+    Done,
+    Failed,
+    Stopped,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ShellRun {
     pub run_id: Id,
-    pub status: String,
+    pub status: ShellRunStatus,
     pub title: String,
 }
 
@@ -781,7 +843,7 @@ pub struct AppSource {
     pub source: AppSourceKind,
     #[serde(rename = "ref")]
     pub ref_: String,
-    pub digest: Sha256Hex,
+    pub digest: ContentHash,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -817,8 +879,6 @@ pub struct ShellCommandV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_of: Option<ForkOf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_app_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_id: Option<Id>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<ExtensionMap>,
@@ -837,6 +897,9 @@ pub struct ShellToolOk {
     pub ok: bool,
     pub command_id: Id,
     pub state_version: u64,
+    /// Set on a fork_app result (CONTRACT.md 11.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_app_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

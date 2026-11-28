@@ -9,7 +9,7 @@
       "view_id": "chat",
       "title": "Chat",
       "focused": true,
-      "region": "main"
+      "region": "local"
     }
   ],
   "focused_instance": "v1",

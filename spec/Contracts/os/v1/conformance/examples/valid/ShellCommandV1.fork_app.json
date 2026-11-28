@@ -1,0 +1,10 @@
+{
+  "schema_id": "allternit.os.ShellCommandV1",
+  "schema_version": "1.0.0",
+  "command_id": "cmd_02",
+  "action": "fork_app",
+  "fork_of": {
+    "app_id": "notes",
+    "app_version": "1.2.0"
+  }
+}

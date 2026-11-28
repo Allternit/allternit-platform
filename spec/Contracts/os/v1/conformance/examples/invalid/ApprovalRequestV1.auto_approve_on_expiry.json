@@ -13,7 +13,7 @@
     "target": "pages:allternit-m",
     "build": 512
   },
-  "action_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "action_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "deadline": "2026-11-27T13:00:00Z",
   "on_expiry": "approve",
   "attention_id": "att_01",

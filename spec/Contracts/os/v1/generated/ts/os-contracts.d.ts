@@ -9,6 +9,7 @@ export type ShellToolResultV1 =
       ok: true;
       command_id: Id;
       state_version: number;
+      new_app_id?: string;
     }
   | {
       ok: false;
@@ -59,9 +60,9 @@ export type ResourceRef = string;
 export type TrustClass = "PUBLIC" | "INTERNAL" | "RESTRICTED" | "SECRET" | "UNTRUSTED";
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
- * via the `definition` "Sha256Hex".
+ * via the `definition` "ContentHash".
  */
-export type Sha256Hex = string;
+export type ContentHash = string;
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "Surface".
@@ -135,14 +136,61 @@ export type DecimalString = string;
 export type SemVer = string;
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "ReceiptKind".
+ */
+export type ReceiptKind = "check" | "approval" | "secret_use" | "budget" | "deploy" | "lease";
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "StateVersion".
  */
 export type StateVersion = number;
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "LeaseOsV1".
+ */
+export type LeaseOsV1 = LeaseV1 & {
+  extensions?: {
+    "x-os-v1"?: LeaseExtensionV1;
+  };
+};
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "PolicyDecisionOsV1".
+ */
+export type PolicyDecisionOsV1 = PolicyDecisionV1 & {
+  extensions?: {
+    "x-os-v1"?: CheckExtensionV1;
+  };
+};
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "AbiVersion".
+ */
+export type AbiVersion = string;
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "AutonomyLevel".
  */
 export type AutonomyLevel = "ask_first" | "ask_risky" | "full";
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "PolicyCheckOsV1".
+ */
+export type PolicyCheckOsV1 = PolicyCheckV1 & {
+  extensions: {
+    "x-os-v1": CheckExtensionV1;
+  };
+};
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "PrimitiveId".
+ */
+export type PrimitiveId = string;
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "SensitivityClass".
+ */
+export type SensitivityClass = "PUBLIC" | "INTERNAL" | "RESTRICTED" | "SECRET";
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "KernelResponseV1".
@@ -211,7 +259,7 @@ export interface ShellCommandV1 {
     layout: "single" | "split" | "grid" | "free";
     slots: {
       instance_id: string;
-      region: string;
+      region: string | "local";
     }[];
   };
   task?:
@@ -225,13 +273,12 @@ export interface ShellCommandV1 {
     app_id: string;
     source: "catalog" | "url";
     ref: string;
-    digest: Sha256Hex;
+    digest: ContentHash;
   };
   fork_of?: {
     app_id: string;
     app_version: string;
   };
-  new_app_id?: string;
   check_id?: Id;
   extensions?: ExtensionMap;
 }
@@ -319,13 +366,13 @@ export interface ShellStateV1 {
     instance_id: string;
     view_id: string;
     focused: boolean;
-    region: string;
+    region: string | "local";
   }[];
   focused_instance: string | null;
   arrangement: "single" | "split" | "grid" | "free";
   runs: {
     run_id: Id;
-    status: string;
+    status: "queued" | "running" | "waiting" | "done" | "failed" | "stopped";
   }[];
   installed_apps: {
     app_id: string;
@@ -397,6 +444,39 @@ export interface InboxItemV1 {
 }
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "InboxPrepareResult".
+ */
+export interface InboxPrepareResult {
+  id: Id;
+  kind: "approval" | "informational";
+  action_class: ActionClass;
+  action_summary: string;
+  action_payload: {};
+  assignee: Id | "owner";
+  deadline: Timestamp;
+  urgency: "low" | "normal" | "high" | "critical";
+  run_id: Id;
+  source_store:
+    | "kernel"
+    | "factory"
+    | "aci"
+    | "permission_policy"
+    | "gateway"
+    | "cowork"
+    | "cloud_platform"
+    | "task_grant"
+    | "sign_request";
+  status: "open" | "approved" | "denied" | "expired" | "withdrawn";
+  attention_id: Id;
+  state: "prepared";
+  draft: {
+    action_class: ActionClass;
+    action_text: string;
+    payload_hash: ContentHash;
+  };
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "DeployAdmitBody".
  */
 export interface DeployAdmitBody {
@@ -405,9 +485,9 @@ export interface DeployAdmitBody {
   admission_id?: Id;
   principal: Id;
   target: string;
-  artifact_digest: Sha256Hex;
+  artifact_digest: ContentHash;
   command_preview: string;
-  action_hash?: Sha256Hex;
+  action_hash?: ContentHash;
   status?: "pending_approval" | "admitted" | "denied" | "expired";
   approval_token_id?: Id;
   receipt_id?: Id;
@@ -423,9 +503,9 @@ export interface DeployAdmissionV1 {
   admission_id: Id;
   principal: Id;
   target: string;
-  artifact_digest: Sha256Hex;
+  artifact_digest: ContentHash;
   command_preview: string;
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
   status: "pending_approval" | "admitted" | "denied" | "expired";
   approval_token_id?: Id;
   receipt_id: Id;
@@ -512,7 +592,9 @@ export interface AuditAppendBody {
   domain: "allternit.receipt.v1";
   schema_id: string;
   schema_version: SemVer;
-  payload: {};
+  payload: {} & {
+    kind: ReceiptKind;
+  };
   idempotency_key: string | null;
 }
 /**
@@ -525,7 +607,7 @@ export interface ApprovalTokenV1 {
   token_id: Id;
   request_id: Id;
   action_class: ActionClass;
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
   principal: Id;
   approved_by: Id;
   issued_at: Timestamp;
@@ -552,7 +634,7 @@ export interface ApprovalRedeemResult {
  */
 export interface ApprovalRedeemBody {
   token: string;
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
 }
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
@@ -588,7 +670,7 @@ export interface ApprovalRequestBody {
   action_class: ActionClass;
   action_summary: string;
   action_payload: {};
-  action_hash?: Sha256Hex;
+  action_hash?: ContentHash;
   deadline: Timestamp;
   on_expiry: "reject";
   attention_id?: Id;
@@ -625,7 +707,7 @@ export interface ApprovalRequestV1 {
   action_class: ActionClass;
   action_summary: string;
   action_payload: {};
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
   deadline: Timestamp;
   on_expiry: "reject";
   attention_id: Id;
@@ -659,7 +741,7 @@ export interface SecretUseV1 {
   purpose: "http_header" | "env_for_process" | "connector_call" | "sign";
   target_host?: string | null;
   target_process?: string | null;
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
   check_id: Id;
   approval_token?: string | null;
   new_host?: boolean;
@@ -729,13 +811,162 @@ export interface LeaseExtensionV1 {
 }
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "LeaseV1".
+ */
+export interface LeaseV1 {
+  schema_id: "allternit.kernel.LeaseV1";
+  schema_version: string;
+  lease_id: Id;
+  holder: Id;
+  host: string;
+  process_or_session: string;
+  /**
+   * @minItems 1
+   */
+  scope: [ResourceRef, ...ResourceRef[]];
+  acquired_at: Timestamp;
+  heartbeat_at: Timestamp;
+  heartbeat_interval_ms: number;
+  expires_after_ms: number;
+  reclaim_policy: "REQUEUE" | "RESUME_FROM_CHECKPOINT" | "FAIL_NODE" | "NEEDS_HUMAN";
+  state_version: StateVersion;
+  defaults_version?: string | null;
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "PolicyDecisionV1".
+ */
+export interface PolicyDecisionV1 {
+  envelope: AbiEnvelopeV1 & {
+    schema_id?: "allternit.kernel.PolicyDecisionV1";
+  };
+  check_id: Id;
+  decision: "ALLOW" | "ALLOW_WITH_LIMITS" | "ASK" | "DENY";
+  grants: CapabilityGrant[];
+  limits: {}[];
+  reason_codes: string[];
+  expires_at?: Timestamp | null;
+  receipt_id: Id;
+  hard_policy: boolean;
+  precedence: "HARD_DENY" | "HARD_ALLOW" | "SOFT" | "COGNITIVE" | "FAIL_CLOSED";
+  attention_id?: Id | null;
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "AbiEnvelopeV1".
+ */
+export interface AbiEnvelopeV1 {
+  abi_version: AbiVersion;
+  schema_id: string;
+  schema_version: SemVer;
+  run_id: Id;
+  session_id: Id;
+  task_id: Id;
+  graph_id?: Id | null;
+  node_id?: Id | null;
+  state_version: StateVersion;
+  work_state_version?: StateVersion | null;
+  created_at: Timestamp;
+  producer: ComponentIdentity;
+  trace_id: Id;
+  parent_trace_id?: Id | null;
+  /**
+   * @minItems 1
+   */
+  provenance: [Provenance, ...Provenance[]];
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "ComponentIdentity".
+ */
+export interface ComponentIdentity {
+  component_id: Id;
+  component_version: string;
+  kind:
+    | "RUNTIME"
+    | "PRIMITIVE"
+    | "DECISION_BACKEND"
+    | "MODEL_COMPONENT"
+    | "TOOL"
+    | "VERIFIER"
+    | "POLICY_ENGINE"
+    | "HUMAN"
+    | "ADAPTER";
+  logical_class?: string;
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "Provenance".
+ */
+export interface Provenance {
+  source_type: "USER" | "FILE" | "TOOL" | "MODEL" | "POLICY" | "SYSTEM" | "CACHE" | "RETRIEVAL";
+  source_id: string;
+  trust_class: TrustClass;
+  content_hash?: ContentHash | null;
+  observed_at?: Timestamp | null;
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "CapabilityGrant".
+ */
+export interface CapabilityGrant {
+  grant_id: Id;
+  capability: string;
+  resources: ResourceRef[];
+  limits?: {};
+  expires_at: Timestamp;
+  task_id?: Id | null;
+  extensions?: ExtensionMap;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
  * via the `definition` "CheckExtensionV1".
  */
 export interface CheckExtensionV1 {
   action_class: ActionClass;
-  action_hash: Sha256Hex;
+  action_hash: ContentHash;
   approval_token: string | null;
   autonomy_level: AutonomyLevel;
+}
+/**
+ * This interface was referenced by `AllternitOsContracts`'s JSON-Schema
+ * via the `definition` "PolicyCheckV1".
+ */
+export interface PolicyCheckV1 {
+  envelope: AbiEnvelopeV1 & {
+    schema_id?: "allternit.kernel.PolicyCheckV1";
+  };
+  check_id: Id;
+  principal: Id;
+  task_id: Id;
+  proposed_action: {
+    action_class: "READ" | "WRITE" | "EXECUTE" | "NETWORK" | "FINANCIAL" | "PUBLISH" | "PERMISSION_CHANGE" | "SPAWN";
+    primitive_id: PrimitiveId;
+    tool_id?: Id | null;
+  };
+  resources: ResourceRef[];
+  data_classes: SensitivityClass[];
+  external_effects: (
+    | "NONE"
+    | "READ"
+    | "WORKSPACE_WRITE"
+    | "EXECUTE"
+    | "NETWORK"
+    | "EXTERNAL_WRITE"
+    | "FINANCIAL"
+    | "PUBLISH"
+    | "PERMISSION_CHANGE"
+  )[];
+  spend?: ResourceBudget | null;
+  irreversible_class: "REVERSIBLE" | "COMPENSATABLE" | "IRREVERSIBLE";
+  human_approval_state: "NOT_REQUIRED" | "REQUIRED_PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
+  cognitive_risk?: number | null;
+  extensions?: ExtensionMap;
 }
 /**
  * This interface was referenced by `AllternitOsContracts`'s JSON-Schema

@@ -1,8 +1,8 @@
 # AllternitOS Contracts Package os/v1 1.0.0 (DRAFT, gate G0)
 
 The wire contracts for the AllternitOS authority kernel, the model shell and the inbox:
-three JSON Schema (draft 2020-12) files defining **31 contracts** (8 types and 23 call
-bodies, results and tool shapes), built from `CONTRACT.md` (AllternitOS Stage 0, step 2,
+three JSON Schema (draft 2020-12) files defining **35 contracts** (8 types and 27 call
+bodies, results, tool shapes and ABI attachments), built from `CONTRACT.md` (AllternitOS Stage 0, step 2,
 in `handoffs/allternit-os-2026-11-27/`). Status is **DRAFT** until Eoj approves that
 contract (gate G0). After G0 the MANIFEST status becomes `FROZEN` and the freeze rules
 below apply.
@@ -18,7 +18,7 @@ disagree the ABI wins (CONTRACT.md 2.9). The conformance suite checks the ABI MA
 hashes, so a change that touches a frozen file fails here too.
 
 ```
-MANIFEST.json              package metadata, version axes, contract list (file, def, kind, source), open conflicts, sha256 per file
+MANIFEST.json              package metadata, version axes, contract list (file, def, kind, source), resolutions, sha256 per file
 schemas/authority.schema.json  kernel envelope, the six calls plus admit (bodies and results), ApprovalRequestV1,
                                ApprovalTokenV1, SecretUseV1, BudgetReservationV1, DeployAdmissionV1, action classes, autonomy levels
 schemas/inbox.schema.json      InboxItemV1, the inbox tool input (list, summarise, snooze, prepare; no approve) and results
@@ -75,27 +75,32 @@ Freeze rules (after G0), same as the ABI:
   `secret_ref`, "a human cannot approve its own run's request", and "protected views are
   built in only".
 
-## Open conflicts for G0
+## Resolved conflicts (CONTRACT.md section 11)
 
-The schemas follow the frozen ABI where CONTRACT.md and the ABI disagree, and the
-conformance suite pins each fact so nobody wires around it by accident.
+Building the schemas turned up five places where CONTRACT.md and the frozen ABI disagreed
+or the contract gave no type. CONTRACT.md section 11 settles each one, and the schemas
+follow it:
 
-1. **`extensions["os.v1"]`** (CONTRACT.md 2.1, 2.2, 2.9). The ABI `ExtensionMap` only
-   accepts keys that match `^x-[a-z0-9_.-]+$`, so a `PolicyCheckV1` or `LeaseV1` carrying
-   `extensions["os.v1"]` fails ABI validation. `CheckExtensionV1` and `LeaseExtensionV1`
-   define the fields. They are not wired into the ABI types until G0 picks a fix: an
-   `x-os.v1` key, or an ABI 1.1 minor bump.
-2. **Receipt domain** (CONTRACT.md 2.5, 5). The ABI fixes `ReceiptChainV1.domain` to the
-   const `allternit.receipt.v1` and `schema_id` to `^allternit\.kernel\.`. The per-kind
-   domains (`check`, `approval`, ...) in the `kernel_receipts` table and any `allternit.os.*`
-   receipt cannot travel in a `ReceiptChainV1`. `AuditAppendBody.domain` follows the ABI.
-3. **Hash encoding.** CONTRACT.md uses bare 64-hex (`Sha256Hex`) for `action_hash` and
-   digests. The ABI's Q4 rule is `sha256:<hex>`. The schemas use the contract's bare hex.
-4. **`new_app_id`** (3.8, "Plus `new_app_id`"). The contract does not say where this field
-   goes. It is a top-level `ShellCommandV1` field, required for `fork_app`.
-5. **Unspecified types.** The contract gives no type for `region`, `runs[].status` or the
-   `prepare` result. `region` and `status` are strings, and the `prepare` result has no
-   schema.
+1. **Extensions key: resolved.** os fields ride in `extensions["x-os-v1"]`, which the ABI
+   `ExtensionMap` accepts. `PolicyCheckOsV1` is the check body (the ABI `PolicyCheckV1`
+   with a `CheckExtensionV1` required under `x-os-v1`). `PolicyDecisionOsV1` and
+   `LeaseOsV1` allow the optional `CheckExtensionV1` / `LeaseExtensionV1`. The ABI types are
+   unchanged. Section 11.1 names no fields that belong only to the decision, so the
+   decision echoes the check's fields. The old `"os.v1"` key is still refused (tested).
+2. **Receipt domain: resolved.** `AuditAppendBody.domain` stays the one ABI value. The
+   receipt kind (`check`, `approval`, `secret_use`, `budget`, `deploy`, `lease`) is the
+   required `payload.kind`.
+3. **Hashes: resolved.** Every hash is the ABI `ContentHash` (`sha256:<64 lowercase hex>`).
+   The "payload_hash" of ApprovalTokenV1 in 11.3 is its `action_hash` field. The field
+   name from 3.2 is kept.
+4. **`new_app_id`: resolved.** It is a field of the `fork_app` `ShellToolResultV1`. A
+   `fork_app` command that sends it is refused.
+5. **Missing types: resolved.** `region` (in view instances and arrangement slots) matches
+   `^[a-z]{2}-[a-z]+-[0-9]$` or is `"local"`. `runs[].status` is
+   `queued | running | waiting | done | failed | stopped`. `InboxPrepareResult` is an inbox
+   row with `state: "prepared"` and `draft {action_class, action_text, payload_hash}`.
+   `action_text` is the field name chosen for "exact action text". A prepared item still
+   needs a human approve.
 
 ## Tests
 
@@ -111,7 +116,8 @@ MANIFEST `files` hashes match; objects are closed and types carry `extensions`; 
 contract has a valid example that passes and >=1 invalid example that fails; unknown enum
 values fail closed. Contract rules: the five human-only classes; the inbox tool has no
 approve, deny or resolve; resolve is refused from `run` and `service` callers; a token
-without its payload hash, signature, key id or expiry is refused; open conflict 1.
+without its payload hash, signature, key id or expiry is refused; os fields attach via
+`x-os-v1` and `os.v1` is refused; every hash is the ABI `ContentHash`.
 
 Rust: every valid example round-trips through the serde types, and the inbox tool type
 rejects `approve`.

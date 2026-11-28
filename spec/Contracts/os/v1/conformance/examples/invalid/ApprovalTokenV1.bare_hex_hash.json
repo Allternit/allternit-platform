@@ -4,7 +4,7 @@
   "token_id": "tok_01",
   "request_id": "apr_01",
   "action_class": "deploy",
-  "action_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "action_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "principal": "agent:gizzi",
   "approved_by": "user:owner",
   "issued_at": "2026-11-27T12:00:00Z",

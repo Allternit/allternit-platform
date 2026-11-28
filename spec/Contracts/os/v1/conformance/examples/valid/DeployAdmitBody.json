@@ -3,6 +3,6 @@
   "schema_version": "1.0.0",
   "principal": "agent:train",
   "target": "train:main",
-  "artifact_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "command_preview": "train ship --confirm"
 }

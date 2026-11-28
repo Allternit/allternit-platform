@@ -61,6 +61,7 @@ def test_manifest_shape():
     assert MANIFEST["package"] == "allternit-os-contracts"
     assert MANIFEST["package_version"] == "1.0.0"
     assert MANIFEST["status"] in ("DRAFT", "FROZEN")
+    assert "open_conflicts" not in MANIFEST
     assert sorted(SCHEMAS) == ["authority.schema.json", "inbox.schema.json", "shell.schema.json"]
     assert len(set(CONTRACTS)) == len(CONTRACTS)
     for f, d in CONTRACTS:
@@ -236,11 +237,20 @@ def test_protected_and_app_views():
     assert is_valid("shell.schema.json", "ViewDescriptorV1", builtin)
 
 
-def test_open_conflict_os_v1_extension_key():
-    """OPEN CONFLICT for G0 (README "Open conflicts" 1): CONTRACT.md 2.1/2.2/2.9 put os fields in
-    extensions["os.v1"], but the frozen ABI ExtensionMap only accepts ^x- keys. This test pins
-    today's fact so nobody wires it by accident; update it when G0 decides."""
+def test_os_fields_attach_via_x_os_v1():
+    """CONTRACT.md 11.1: os fields ride in extensions["x-os-v1"] on the unchanged ABI types;
+    the old "os.v1" key is still refused by the frozen ABI."""
     abi = load(f"{ABI_ROOT}/conformance/examples/valid/PolicyCheckV1.json")
+    ext = load(f"{VALID}/CheckExtensionV1.json")
+    abi["extensions"] = {"x-os-v1": ext}
     assert is_valid("policy.schema.json", "PolicyCheckV1", abi, ABI_BASE)
-    abi["extensions"] = {"os.v1": load(f"{VALID}/CheckExtensionV1.json")}
+    assert is_valid("authority.schema.json", "PolicyCheckOsV1", abi)
+    abi["extensions"] = {"os.v1": ext}
     assert not is_valid("policy.schema.json", "PolicyCheckV1", abi, ABI_BASE)
+
+
+def test_hashes_use_abi_content_hash():
+    """CONTRACT.md 11.3: no bare-hex hash type of our own."""
+    refs = [r for s in SCHEMAS.values() for r in _refs(s)]
+    assert any(r == ABI_BASE + "common.schema.json#/$defs/ContentHash" for r in refs)
+    assert not any("Sha256Hex" in json.dumps(s) for s in SCHEMAS.values())

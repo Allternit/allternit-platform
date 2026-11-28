@@ -24,103 +24,7 @@
     "type": "a CONTRACT.md section 3 type: schema_id + schema_version + extensions",
     "message": "a call body, result or tool shape exactly as CONTRACT.md sections 2 and 7 give it (no schema_id, no extensions); the three '... minus server fields' bodies keep their type's schema_id, schema_version and extensions"
   },
-  "open_conflicts": [
-    "extensions[\"os.v1\"] (CONTRACT.md 2.1, 2.2, 2.9): the frozen ABI ExtensionMap accepts only ^x-[a-z0-9_.-]+$ keys. CheckExtensionV1 and LeaseExtensionV1 define the fields but are not wired into PolicyCheckV1/LeaseV1.",
-    "ReceiptChainV1.domain (CONTRACT.md 2.5, 5): the ABI fixes domain to the const allternit.receipt.v1 and schema_id to ^allternit\\.kernel\\.; per-kind domains (check, approval, ...) and allternit.os.* receipts cannot ride in ReceiptChainV1. AuditAppendBody.domain follows the ABI.",
-    "Hash encoding: CONTRACT.md uses bare 64-hex (Sha256Hex); the ABI Q4 rule is sha256:<hex> (ContentHash). Kept as the contract states."
-  ],
   "contracts": [
-    {
-      "file": "authority.schema.json",
-      "def": "KernelRequestV1",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.0"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "KernelResponseV1",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.0"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "CheckExtensionV1",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.1"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "LeaseExtensionV1",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.9"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "LeaseAcquireBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.2"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "LeaseHeartbeatBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.2"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "LeaseReleaseBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.2"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "LeaseReleaseResult",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.2"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "SecretUseV1",
-      "kind": "type",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.3 + 3.3"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "SecretUseResult",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.3"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "ApprovalRequestV1",
-      "kind": "type",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 3.1"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "ApprovalRequestBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.4"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "ApprovalResolveBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.4 + 4.3"
-    },
     {
       "file": "authority.schema.json",
       "def": "ApprovalRedeemBody",
@@ -137,6 +41,27 @@
     },
     {
       "file": "authority.schema.json",
+      "def": "ApprovalRequestBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.4"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "ApprovalRequestV1",
+      "kind": "type",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 3.1"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "ApprovalResolveBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.4 + 4.3"
+    },
+    {
+      "file": "authority.schema.json",
       "def": "ApprovalTokenV1",
       "kind": "type",
       "schema_version": "1.0.0",
@@ -147,21 +72,7 @@
       "def": "AuditAppendBody",
       "kind": "message",
       "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.5"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "BudgetReservationV1",
-      "kind": "type",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 3.4 + 2.9"
-    },
-    {
-      "file": "authority.schema.json",
-      "def": "BudgetReserveBody",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 2.6"
+      "source": "CONTRACT.md 2.5 + 11.2"
     },
     {
       "file": "authority.schema.json",
@@ -179,6 +90,27 @@
     },
     {
       "file": "authority.schema.json",
+      "def": "BudgetReservationV1",
+      "kind": "type",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 3.4 + 2.9"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "BudgetReserveBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.6"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "CheckExtensionV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.1"
+    },
+    {
+      "file": "authority.schema.json",
       "def": "DeployAdmissionV1",
       "kind": "type",
       "schema_version": "1.0.0",
@@ -192,15 +124,92 @@
       "source": "CONTRACT.md 2.7"
     },
     {
-      "file": "inbox.schema.json",
-      "def": "InboxItemV1",
+      "file": "authority.schema.json",
+      "def": "KernelRequestV1",
       "kind": "message",
       "schema_version": "1.0.0",
-      "source": "CONTRACT.md 7.2"
+      "source": "CONTRACT.md 2.0"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "KernelResponseV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.0"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseAcquireBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.2"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseExtensionV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.9"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseHeartbeatBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.2"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseOsV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.2 + 2.9 + 11.1"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseReleaseBody",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.2"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "LeaseReleaseResult",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.2"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "PolicyCheckOsV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.1 + 11.1"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "PolicyDecisionOsV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.1 + 11.1"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "SecretUseResult",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.3"
+    },
+    {
+      "file": "authority.schema.json",
+      "def": "SecretUseV1",
+      "kind": "type",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 2.3 + 3.3"
     },
     {
       "file": "inbox.schema.json",
-      "def": "InboxToolInputV1",
+      "def": "InboxItemV1",
       "kind": "message",
       "schema_version": "1.0.0",
       "source": "CONTRACT.md 7.2"
@@ -214,10 +223,45 @@
     },
     {
       "file": "inbox.schema.json",
+      "def": "InboxPrepareResult",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 7.2 + 11.5"
+    },
+    {
+      "file": "inbox.schema.json",
       "def": "InboxSnoozeResult",
       "kind": "message",
       "schema_version": "1.0.0",
       "source": "CONTRACT.md 7.2"
+    },
+    {
+      "file": "inbox.schema.json",
+      "def": "InboxToolInputV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 7.2"
+    },
+    {
+      "file": "shell.schema.json",
+      "def": "ShellCommandV1",
+      "kind": "type",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 3.8 + 11.4"
+    },
+    {
+      "file": "shell.schema.json",
+      "def": "ShellStateV1",
+      "kind": "type",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 3.7 + 11.5"
+    },
+    {
+      "file": "shell.schema.json",
+      "def": "ShellToolResultV1",
+      "kind": "message",
+      "schema_version": "1.0.0",
+      "source": "CONTRACT.md 7.1 + 11.4"
     },
     {
       "file": "shell.schema.json",
@@ -225,36 +269,22 @@
       "kind": "type",
       "schema_version": "1.0.0",
       "source": "CONTRACT.md 3.6"
-    },
-    {
-      "file": "shell.schema.json",
-      "def": "ShellStateV1",
-      "kind": "type",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 3.7"
-    },
-    {
-      "file": "shell.schema.json",
-      "def": "ShellCommandV1",
-      "kind": "type",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 3.8"
-    },
-    {
-      "file": "shell.schema.json",
-      "def": "ShellToolResultV1",
-      "kind": "message",
-      "schema_version": "1.0.0",
-      "source": "CONTRACT.md 7.1"
     }
   ],
   "files": {
     "generated/rust/Cargo.toml": "sha256:e88a149a9ab49dc7d3d37e6802d160c5911a074bb3cb9c051a4f82f9ca409c16",
-    "generated/rust/src/generated.rs": "sha256:67847f3e1ec57cf7db002671b2c0c63cb26ec6cebe7699ff43d6a26cdf9de1c3",
+    "generated/rust/src/generated.rs": "sha256:be5ba015bf63f958bed12cb0254d9ff0fb7b4b22326bd25153805fff950da1c0",
     "generated/rust/src/lib.rs": "sha256:8930074a5da91d28c2cc68a0d4a8803534f9fb26bee864bcdacc7dfd0e330750",
-    "generated/ts/os-contracts.d.ts": "sha256:30dbb4198c9a9e8942fad5f7a25766cf0a8b61844576e6677bc29d2de4394348",
-    "schemas/authority.schema.json": "sha256:37c11743e0e2c78e130f0394ba4199f9abdb17f5d9fade7b5b063d3672ca887e",
-    "schemas/inbox.schema.json": "sha256:688fdd1f0edc659930aed36f53f44134e210e3b4001a06338fa6da03a64312da",
-    "schemas/shell.schema.json": "sha256:c4cace13d7003066bf1e1bf2ac161a897a5b681849285477aaeac0c9fe88df3d"
-  }
+    "generated/ts/os-contracts.d.ts": "sha256:a260829f42714136c3d8889ccd04a1b314e50c5e4deda6d1a0ba9a0fb53bcb3b",
+    "schemas/authority.schema.json": "sha256:054c4df8e55b357e39a3d564bd4deddab660b7718677a8e0b30678083c7bab81",
+    "schemas/inbox.schema.json": "sha256:5751a69d86ff88ffaec6105c04b49d9f60af5e1a354332fabca315d4084586c1",
+    "schemas/shell.schema.json": "sha256:6094f1afd393261129a6beaa47d9d01e9ea6c5ef5124b0c5b9269ee4466d9504"
+  },
+  "resolutions": [
+    "CONTRACT.md 11.1: os fields attach as extensions[\"x-os-v1\"] (ABI ExtensionMap accepts x-* keys): PolicyCheckOsV1 (required), PolicyDecisionOsV1 and LeaseOsV1 (optional). The ABI types are unchanged.",
+    "CONTRACT.md 11.2: AuditAppendBody.domain stays the one ABI value; the receipt kind is payload.kind (ReceiptKind).",
+    "CONTRACT.md 11.3: every hash is the ABI ContentHash (sha256:<64 lowercase hex>).",
+    "CONTRACT.md 11.4: new_app_id is a field of the fork_app ShellToolResultV1, never of the request.",
+    "CONTRACT.md 11.5: region pattern (or \"local\"), runs[].status enum, InboxPrepareResult."
+  ]
 }

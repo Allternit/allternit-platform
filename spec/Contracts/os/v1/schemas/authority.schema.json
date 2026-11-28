@@ -4,11 +4,6 @@
   "title": "AllternitOS contracts 1.0.0 - authority kernel",
   "$comment": "DRAFT for gate G0 (CONTRACT.md, AllternitOS Stage 0). Sibling of the frozen Kernel ABI 1.0.0; ABI types are referenced by $ref, never redefined.",
   "$defs": {
-    "Sha256Hex": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "$comment": "CONTRACT.md 3: 64 lowercase hex characters (no sha256: prefix, unlike ABI ContentHash)."
-    },
     "DecimalString": {
       "type": "string",
       "pattern": "^\\d+(\\.\\d+)?$",
@@ -65,6 +60,17 @@
         "budget.release",
         "deploy.admit"
       ]
+    },
+    "ReceiptKind": {
+      "enum": [
+        "check",
+        "approval",
+        "secret_use",
+        "budget",
+        "deploy",
+        "lease"
+      ],
+      "$comment": "CONTRACT.md 11.2."
     },
     "ErrorCode": {
       "enum": [
@@ -151,7 +157,7 @@
           "then": {
             "properties": {
               "body": {
-                "$ref": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json#/$defs/PolicyCheckV1"
+                "$ref": "#/$defs/PolicyCheckOsV1"
               }
             }
           }
@@ -550,7 +556,7 @@
           "$ref": "authority.schema.json#/$defs/ActionClass"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "approval_token": {
           "anyOf": [
@@ -568,7 +574,73 @@
       },
       "additionalProperties": false,
       "title": "CheckExtensionV1",
-      "$comment": "CONTRACT.md 2.1 fields for PolicyCheckV1.extensions[\"os.v1\"]. OPEN CONFLICT: the frozen ABI ExtensionMap only accepts keys matching ^x-[a-z0-9_.-]+$, so the key \"os.v1\" fails PolicyCheckV1 validation. Not wired until G0 decides."
+      "$comment": "CONTRACT.md 2.1 + 11.1: carried in PolicyCheckV1.extensions[\"x-os-v1\"] (and echoed in PolicyDecisionV1.extensions[\"x-os-v1\"])."
+    },
+    "PolicyCheckOsV1": {
+      "title": "PolicyCheckOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json#/$defs/PolicyCheckV1"
+        },
+        {
+          "required": [
+            "extensions"
+          ],
+          "properties": {
+            "extensions": {
+              "required": [
+                "x-os-v1"
+              ],
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/CheckExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "check body: ABI PolicyCheckV1 unchanged, with the os fields required under extensions[\"x-os-v1\"] (CONTRACT.md 11.1)."
+    },
+    "PolicyDecisionOsV1": {
+      "title": "PolicyDecisionOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/policy.schema.json#/$defs/PolicyDecisionV1"
+        },
+        {
+          "properties": {
+            "extensions": {
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/CheckExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "check response: ABI PolicyDecisionV1 unchanged; extensions[\"x-os-v1\"], when present, echoes the CheckExtensionV1 of the check it answers (CONTRACT.md 11.1 names no other decision fields)."
+    },
+    "LeaseOsV1": {
+      "title": "LeaseOsV1",
+      "allOf": [
+        {
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/work.schema.json#/$defs/LeaseV1"
+        },
+        {
+          "properties": {
+            "extensions": {
+              "properties": {
+                "x-os-v1": {
+                  "$ref": "#/$defs/LeaseExtensionV1"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "lease responses: ABI LeaseV1 unchanged; mined fields optional under extensions[\"x-os-v1\"] (CONTRACT.md 2.9 + 11.1)."
     },
     "LeaseExtensionV1": {
       "type": "object",
@@ -602,7 +674,7 @@
       },
       "additionalProperties": false,
       "title": "LeaseExtensionV1",
-      "$comment": "CONTRACT.md 2.9 mined fields for LeaseV1.extensions[\"os.v1\"]. Same OPEN CONFLICT as CheckExtensionV1."
+      "$comment": "CONTRACT.md 2.9 + 11.1 mined fields for LeaseV1.extensions[\"x-os-v1\"]."
     },
     "Labels": {
       "type": "object",
@@ -764,7 +836,7 @@
           ]
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "check_id": {
           "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
@@ -967,7 +1039,7 @@
           "type": "object"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "deadline": {
           "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
@@ -1083,7 +1155,7 @@
           "type": "object"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "deadline": {
           "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Timestamp"
@@ -1171,7 +1243,7 @@
           "type": "string"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         }
       },
       "additionalProperties": false,
@@ -1234,7 +1306,7 @@
           "$ref": "authority.schema.json#/$defs/ActionClass"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "principal": {
           "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/Id"
@@ -1297,7 +1369,22 @@
           "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/SemVer"
         },
         "payload": {
-          "type": "object"
+          "allOf": [
+            {
+              "type": "object"
+            },
+            {
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "$ref": "#/$defs/ReceiptKind"
+                }
+              }
+            }
+          ],
+          "$comment": "Open object; kind is required (CONTRACT.md 11.2)."
         },
         "idempotency_key": {
           "anyOf": [
@@ -1312,7 +1399,7 @@
       },
       "additionalProperties": false,
       "title": "AuditAppendBody",
-      "$comment": "domain is ReceiptChainV1.domain (ABI const allternit.receipt.v1). OPEN CONFLICT: CONTRACT.md 5 uses per-kind domains (check, approval, redeem, ...) that the frozen ABI cannot carry. Response body is ReceiptChainV1."
+      "$comment": "domain is ReceiptChainV1.domain (the one ABI value); the receipt kind goes in payload.kind (CONTRACT.md 11.2). Response body is ReceiptChainV1."
     },
     "BudgetReservationV1": {
       "type": "object",
@@ -1588,13 +1675,13 @@
           "type": "string"
         },
         "artifact_digest": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "command_preview": {
           "type": "string"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "status": {
           "enum": [
@@ -1665,13 +1752,13 @@
           "type": "string"
         },
         "artifact_digest": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "command_preview": {
           "type": "string"
         },
         "action_hash": {
-          "$ref": "authority.schema.json#/$defs/Sha256Hex"
+          "$ref": "https://schemas.allternit.com/kernel/1.0.0/common.schema.json#/$defs/ContentHash"
         },
         "status": {
           "enum": [
