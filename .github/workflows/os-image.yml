@@ -14,7 +14,16 @@ name: os-image
 # and "slot: fallback from=a to=b" and come up on b, never "verity: ok slot=a". A bad update
 # (corrupted image written to system-b by allternit-update, b active + unconfirmed) must
 # print "slot: fallback from=b to=a" then READY on a, and confirm a.
-# Reads no secrets, deploys nothing.
+# Step 31 (provenance + Secure Boot, TEST keys): every run generates fresh TEST keys (Ed25519
+# update-signing key + Secure Boot PK/KEK/db) inside the job; private keys stay in the runner's
+# os/target/image/keys and are never uploaded or committed. The UKI is sbsign-signed and booted
+# under enforcing OVMF with the test keys enrolled: the log must start with
+# "secureboot: enabled" and show "manifest: ok slot=a" and "state: luks digest ok". An unsigned
+# UKI must be refused by firmware ("Access Denied"); allternit-update must refuse unsigned or
+# mismatched updates; slot A is built twice and the sha256 compared. SBOM, signed manifests and
+# the public keys/certs are uploaded as the os-provenance artifact; the Verify step checks the
+# signatures with openssl.
+# Reads no repo or org secrets, deploys nothing.
 
 on:
   pull_request:
@@ -51,7 +60,10 @@ jobs:
             musl-tools qemu-system-x86 ovmf \
             build-essential cmake git bc bison flex libelf-dev libssl-dev xz-utils cpio curl file \
             systemd-ukify systemd-boot-efi python3-pefile gdisk dosfstools mtools e2fsprogs \
-            cryptsetup-bin
+            cryptsetup-bin sbsigntool jq openssl uuid-runtime pipx
+          # virt-fw-vars enrolls the test keys into a copy of the OVMF vars.
+          pipx install virt-firmware
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Rust toolchain with the musl target
         run: |
@@ -103,6 +115,25 @@ jobs:
           sh os/tools/mkimage/mkimage.sh \
             --llama os/target/llama/llama-server --model os/target/model/model.gguf
 
+      - name: Verify provenance (signatures, reproducibility, SBOM)
+        run: |
+          P=os/target/image/provenance
+          for n in a b; do
+            sh os/provenance/provenance.sh verify $P/update-pub.pem $P/manifest-$n.json $P/manifest-$n.sig
+            jq -e '.slot == "'$n'" and .schema == 1' $P/manifest-$n.json
+          done
+          # the manifests name the SBOM and UKI that were really produced
+          SBOM=$(sha256sum $P/sbom.spdx.json | cut -d' ' -f1)
+          UKI=$(sha256sum os/target/image/allternit-os.efi | cut -d' ' -f1)
+          jq -e --arg s "$SBOM" --arg u "$UKI" '.sbom_sha256 == $s and .uki_sha256 == $u' $P/manifest-a.json
+          jq -e '.packages | length > 10' $P/sbom.spdx.json
+          jq -e '.packages[] | select(.name == "llama.cpp" and .versionInfo == "b12823")' $P/sbom.spdx.json
+          cat $P/reproducibility.txt
+          grep -q '^reproducible=yes' $P/reproducibility.txt
+          # no private key may sit in the upload folder
+          if ls $P | grep -E '\.key$' | grep -v '^update-pub\.key$'; then echo 'private key in provenance folder'; exit 1; fi
+          if grep -l 'PRIVATE KEY' $P/* 2>/dev/null; then echo 'private key material in provenance folder'; exit 1; fi
+
       - name: Check for /dev/kvm
         run: |
           if [ -e /dev/kvm ]; then
@@ -121,6 +152,12 @@ jobs:
       - name: Bad update to system-b falls back to system-a (step 30b)
         run: sh os/tools/mkimage/qemu-boot.sh --bad-update
 
+      - name: allternit-update refuses unsigned or mismatched updates (step 31)
+        run: sh os/tools/mkimage/qemu-boot.sh --refused-update
+
+      - name: Unsigned UKI must not boot under enforcing Secure Boot (step 31)
+        run: sh os/tools/mkimage/qemu-boot.sh --unsigned-uki
+
       - name: Upload serial log
         if: always()
         uses: actions/upload-artifact@v4
@@ -130,6 +167,7 @@ jobs:
             os/target/image/serial.log
             os/target/image/serial-bad-a.log
             os/target/image/serial-bad-update.log
+            os/target/image/serial-unsigned-uki.log
           if-no-files-found: warn
 
       - name: Upload image
@@ -142,4 +180,13 @@ jobs:
             os/target/image/allternit-os.efi
             os/target/image/allternit-os.img
             os/target/image/boot.env
+          if-no-files-found: warn
+
+      # Public files only: SBOM, signed manifests + signatures, public certs, update-pub.key/.pem.
+      - name: Upload provenance (SBOM, signed manifests, public keys)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-provenance
+          path: os/target/image/provenance/
           if-no-files-found: warn

@@ -31,9 +31,11 @@ standalone Cargo workspace (PLAN.md decision 10); the platform root
    (the default slot), read the TEST ONLY state key from the initramfs, mount the ESP
    (`/dev/vda1`, vfat) at `/run/esp`, read the A/B boot state `/run/esp/allternit/bootstate`
    (see "A/B slots and updates") and pick the slot; print
+   `secureboot: enabled|disabled|unknown` (first line, from the EFI variable) and
    `slot: booting slot=<x> confirmed=<0|1> tries-left=<n>`. Open that slot (`a` =
    `/dev/vda2`, `b` = `/dev/vda3`) as a read-only dm-verity device with its own root hash
-   from `allternit.verity.<slot>=<root>:<salt>:<data blocks>`, read it all once, and print
+   from that slot's signed manifest on the ESP (step 31: `manifest: ok slot=<x>` after the
+   Ed25519 check; verity root, salt, data blocks), read it all once, and print
    `verity: ok slot=<x>`. Then mount it read-only, move `/proc /sys /dev /run` (with the ESP
    under it) into it, switch root, and mount a tmpfs on `/tmp`. A slot that fails prints
    `verity: FAIL slot=<x> (<reason>)` and `slot: fallback from=<x> to=<y> reason=verity`, and
@@ -87,16 +89,21 @@ Update flow, `update/` (binary `allternit-update`, in the slot at
 `/usr/lib/allternit/allternit-update`):
 
 ```sh
-allternit-update --image system-b.img [--tries 3] [--uki new.efi]
+allternit-update --image system-b.img --manifest manifest-b.json --sig manifest-b.sig [--tries 3] [--uki new.efi]
 ```
 
 1. Reads the boot state; refuses unless the running slot is confirmed (the other slot is
    the fallback until then).
-2. Writes the image to the inactive slot device (refuses an image larger than the slot).
-3. With `--uki`, replaces the UKI on the ESP. The new slot's root hash is on the UKI
-   command line, never in the boot state, so an update that changes the slot image ships a
-   UKI that carries it. TODO(31): one signed UKI per slot so a bad UKI can fall back too.
-4. Writes the boot state: new slot active, unconfirmed, N tries. The next boot tries it.
+2. Step 31: verifies the signed manifest (Ed25519, public key `/etc/allternit/update-pub.key`
+   in the slot image; `--pubkey` overrides for CI), that it is for the target slot, and that
+   the image's sha256 and size (and the UKI's sha256 with `--uki`) match it. Unsigned,
+   changed, wrongly signed or mismatched updates are refused with the reason before anything
+   is written.
+3. Writes the image to the inactive slot device (refuses an image larger than the slot).
+4. With `--uki`, replaces the UKI on the ESP (kernel updates only: the slot's dm-verity root
+   lives in its manifest, so a new slot image needs no new UKI).
+5. Installs `manifest-<slot>.json` + `.sig` next to the boot state on the ESP.
+6. Writes the boot state: new slot active, unconfirmed, N tries. The next boot tries it.
 
 `--device PATH --offset BYTES --slot-bytes N --state FILE` let CI write a slot inside a raw
 disk image with the same code (`qemu-boot.sh --bad-update`).
@@ -108,9 +115,61 @@ key (`os/target/image/TEST-ONLY-state.key`, kept across runs so `--skip-kernel` 
 matches), uses it as the LUKS2 volume key and keyslot 0 passphrase, and bakes it into the
 initramfs at `/etc/allternit/TEST-ONLY-state.key`. The initramfs is inside the UKI on the
 unencrypted ESP, so anyone with the disk image can open the state partition. Never ship an
-image built this way to a user. TODO(31): bind the key to the TPM / Secure Boot state and
-remove the baked key; also check the key against the LUKS2 digest (today a wrong key is
-caught by the missing ext4 superblock behind dm-crypt).
+image built this way to a user. Step 31: PID 1 checks the key against the LUKS2 digest
+(PBKDF2-HMAC-SHA256 from the header JSON, `luks.rs`) before dm-crypt is set up and prints
+`state: luks digest ok`; the ext4 superblock check stays as a second guard. TODO(hardware):
+seal the key to the TPM (PCR 7 policy) on real hardware and remove the baked key; CI has no
+TPM, so this is documented, not built.
+
+## Provenance, Secure Boot, reproducibility (step 31)
+
+Tooling: `os/provenance/provenance.sh` (`keygen`, `sbom`, `manifest`, `verify`, `retarget`,
+`enroll`). Needs openssl 3, jq, sbsign, virt-fw-vars (CI installs them).
+
+- **Keys are TEST keys, made fresh per build, and never committed.** `keygen` writes an
+  Ed25519 update-signing key (`update-sign.pem`) and Secure Boot PK/KEK/db keys + RSA certs
+  into `os/target/image/keys/` (ignored by git, never uploaded). Only `keys/public/` (certs,
+  `update-pub.pem`, raw `update-pub.key`) is copied to `os/target/image/provenance/`. The old
+  AllternitOS repo leaked Secure Boot `*.key` files and an `update-seckey.pem` into history;
+  `os/provenance/.gitignore` and the CI Verify step (no private key in the upload folder)
+  keep that from repeating. A real release key is a later decision (GitHub Actions secret or
+  an offline signer): swap `update-sign.pem` and the public half at image build.
+- **Signed manifest per slot**: `manifest-a.json` / `manifest-b.json` + `.sig`: schema,
+  version, slot, image sha256 + size, dm-verity root + salt + data blocks, UKI sha256, SBOM
+  sha256. Compact JSON with sorted keys, raw 64-byte Ed25519 signature over those exact
+  bytes. They sit on the ESP in `allternit/`; PID 1 verifies the booting slot's manifest with
+  the public key baked into the initramfs and takes the verity parameters from it
+  (`manifest: ok slot=a version=...`); a bad manifest fails the slot and falls back like a
+  verity failure. This replaces the verity params on the UKI command line: there is one UKI,
+  it never changes for a slot update, and each slot is vouched for on its own.
+  TODO: anti-rollback (monotonic version counter in a UEFI variable / TPM).
+- **SBOM**: `provenance/sbom.spdx.json` (SPDX 2.3): kernel version, tarball sha256, kernel
+  config hashes; llama.cpp tag b12823 + commit + built binary sha256; the GGUF sha256; each
+  Rust binary's sha256 with the crates it links, resolved by `cargo tree` from `Cargo.lock`
+  (now committed) with crates.io checksums.
+- **Secure Boot**: the UKI is signed with `sbsign` (db key). `qemu-boot.sh` enrolls the TEST
+  PK/KEK/db into a copy of the OVMF vars with `virt-fw-vars`, boots the Secure Boot OVMF
+  (`OVMF_CODE_4M.secboot.fd`, SMM on, secure pflash), and PID 1 prints `secureboot: enabled`
+  from the EFI `SecureBoot` variable (efivarfs; kernel `CONFIG_EFIVAR_FS=y`). Negative case:
+  `qemu-boot.sh --unsigned-uki` puts the unsigned UKI on the ESP; firmware must print
+  `Access Denied` and PID 1 must never start. Not covered: a real TPM, measured boot,
+  shim/MOK, key rotation.
+- **Update refusals**: `qemu-boot.sh --refused-update` runs the real updater with an image
+  that does not match its manifest, a manifest changed after signing, a manifest signed by
+  another key, and no manifest at all; each must be refused with the reason and leave the
+  boot state alone. `--bad-update` now installs a VALIDLY signed update whose verity root is
+  wrong, so the fallback path is still tested.
+- **Reproducibility**: `SOURCE_DATE_EPOCH` = the git commit time; ext4 UUID, directory hash
+  seed, verity salt, GPT GUIDs and the FAT volume id derive from the commit; mke2fs uses
+  `E2FSPROGS_FAKE_TIME`; tree mtimes are set to `SOURCE_DATE_EPOCH`; Rust paths are remapped;
+  the initramfs file list has a fixed order. mkimage builds slot A twice from the same tree
+  and fails if the sha256 differs (`--skip-repro-check` to skip; result in
+  `provenance/reproducibility.txt`). Scope: two builds of the same commit with the same key
+  make identical slot images. Not reproducible, by design or not yet: the TEST keys differ per
+  run (the public key is inside the slot, so slots differ across runs unless the key dir is
+  kept), the LUKS2 state (random header salts), and the kernel (embeds the initramfs and the
+  key; kernel build determinism is not asserted). `mke2fs -d` copies directory entries in
+  readdir order; if CI shows that flaking, the fix is building the tree through a sorted tar.
 
 ## Accounts
 
@@ -147,10 +206,10 @@ sh os/tools/mkimage/qemu-boot.sh          # boots it, judges the serial log
 - With `ukify` present: one UKI (`allternit-os.efi`) on the ESP of a GPT raw disk
   `allternit-os.img`, booted through OVMF. Partitions: see "Disk layout". A system slot is the userland (`/usr/lib/allternit/*`,
   `/etc/allternit/init.toml`) as a read-only ext4 image without a journal, followed directly
-  by its dm-verity hash tree (`veritysetup format --no-superblock`, sha256, 4 KiB blocks, random
-  salt per slot). Each slot's root hash, salt and data block count go on the UKI command
-  line (`allternit.slot=a allternit.verity.a=... allternit.verity.b=...`); a signed manifest
-  is step 31. The UKI path stops if `veritysetup`, `cryptsetup` or `mke2fs` is missing, or
+  by its dm-verity hash tree (`veritysetup format --no-superblock`, sha256, 4 KiB blocks, salt
+  derived from the commit per slot). Each slot's root hash, salt and data block count were on the UKI command
+  line in step 30; since step 31 they live in per-slot signed manifests on the ESP and the UKI
+  (Secure Boot signed with the TEST db key) only carries `allternit.slot=a`. The UKI path also needs `sbsign`, `jq` and `openssl`. The UKI path stops if `veritysetup`, `cryptsetup` or `mke2fs` is missing, or
   if it has neither root nor passwordless sudo (`cryptsetup open` fills the LUKS2 state
   through dm-crypt), so it never writes an unverified slot or an unencrypted state. The initramfs still carries the userland for the direct-boot fallback. Without it mkimage says so and `qemu-boot.sh` boots the bzImage
   directly (`boot.env` records which mode).

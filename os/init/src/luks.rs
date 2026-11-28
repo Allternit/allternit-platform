@@ -6,10 +6,12 @@
 //! table with the volume key. The key source for now is a TEST ONLY volume key file baked into
 //! the initramfs by mkimage.sh (`/etc/allternit/TEST-ONLY-state.key`).
 //! TODO(31): bind the key to the TPM / Secure Boot state and drop the baked key file.
-//! TODO(31): check the key against the LUKS2 digest (PBKDF2). For now a wrong key is caught
-//! by reading the ext4 superblock through the new device before anything mounts it.
+//! Step 31: the volume key is checked against the LUKS2 digest (PBKDF2-HMAC-SHA256 over the
+//! key, as cryptsetup stores it in the header JSON) before dm-crypt is set up; the ext4
+//! superblock read behind the new device stays as a second check.
 
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 
 pub const MAGIC: &[u8; 6] = b"LUKS\xba\xbe";
 /// The binary header is 4096 bytes; the JSON area follows it.
@@ -59,15 +61,19 @@ fn num(v: &Value, what: &str) -> Result<u64, String> {
     }
 }
 
-/// Data segment 0 of a LUKS2 header (`hdr` = the whole header, `header_size` bytes).
-pub fn parse(hdr: &[u8]) -> Result<Segment, String> {
+fn header_json(hdr: &[u8]) -> Result<Value, String> {
     let size = header_size(hdr)? as usize;
     if hdr.len() < size {
         return Err(format!("header is {size} bytes, have {}", hdr.len()));
     }
     let area = &hdr[BIN_HEADER..size];
     let end = area.iter().position(|&b| b == 0).unwrap_or(area.len());
-    let json: Value = serde_json::from_slice(&area[..end]).map_err(|e| format!("LUKS2 JSON: {e}"))?;
+    serde_json::from_slice(&area[..end]).map_err(|e| format!("LUKS2 JSON: {e}"))
+}
+
+/// Data segment 0 of a LUKS2 header (`hdr` = the whole header, `header_size` bytes).
+pub fn parse(hdr: &[u8]) -> Result<Segment, String> {
+    let json = header_json(hdr)?;
     let seg = json.pointer("/segments/0").ok_or("no data segment 0")?;
     if seg["type"].as_str() != Some("crypt") {
         return Err("segment 0 is not a crypt segment".into());
@@ -123,6 +129,121 @@ impl Segment {
             p.push_str(&format!(" 1 sector_size:{}", self.sector_size));
         }
         Ok((bytes / 512, p))
+    }
+}
+
+/// The PBKDF2 digest that vouches for the volume key of data segment 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyDigest {
+    pub iterations: u32,
+    pub salt: Vec<u8>,
+    pub digest: Vec<u8>,
+}
+
+/// Standard base64 (with padding), which is how LUKS2 stores salts and digests.
+pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            _ => return Err("bad base64 in the LUKS2 header".into()),
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
+/// The digest entry for segment 0 (type pbkdf2, hash sha256).
+pub fn key_digest(hdr: &[u8]) -> Result<KeyDigest, String> {
+    let json = header_json(hdr)?;
+    let digests = json["digests"].as_object().ok_or("no digests in the LUKS2 header")?;
+    let d = digests
+        .values()
+        .find(|d| {
+            d["type"].as_str() == Some("pbkdf2")
+                && d["segments"].as_array().map_or(false, |s| s.iter().any(|x| x.as_str() == Some("0")))
+        })
+        .ok_or("no pbkdf2 digest for data segment 0")?;
+    if d["hash"].as_str() != Some("sha256") {
+        return Err("LUKS2 digest hash is not sha256".into());
+    }
+    let iterations = d["iterations"].as_u64().filter(|&n| n > 0 && n <= u32::MAX as u64).ok_or("bad digest iterations")? as u32;
+    let salt = b64_decode(d["salt"].as_str().ok_or("digest has no salt")?)?;
+    let digest = b64_decode(d["digest"].as_str().ok_or("digest has no digest")?)?;
+    if digest.is_empty() || digest.len() > 32 || salt.is_empty() {
+        return Err("bad LUKS2 digest".into());
+    }
+    Ok(KeyDigest { iterations, salt, digest })
+}
+
+fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= k[i];
+        opad[i] ^= k[i];
+    }
+    let mut h = Sha256::new();
+    h.update(ipad);
+    for p in parts {
+        h.update(p);
+    }
+    let inner = h.finalize();
+    let mut h = Sha256::new();
+    h.update(opad);
+    h.update(inner);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&h.finalize());
+    out
+}
+
+/// PBKDF2-HMAC-SHA256.
+pub fn pbkdf2_sha256(password: &[u8], salt: &[u8], iterations: u32, len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len + 32);
+    let mut block = 1u32;
+    while out.len() < len {
+        let mut u = hmac_sha256(password, &[salt, &block.to_be_bytes()]);
+        let mut t = u;
+        for _ in 1..iterations {
+            u = hmac_sha256(password, &[&u]);
+            for (a, b) in t.iter_mut().zip(u.iter()) {
+                *a ^= b;
+            }
+        }
+        out.extend_from_slice(&t);
+        block += 1;
+    }
+    out.truncate(len);
+    out
+}
+
+/// Check `key` against the LUKS2 digest in the header: a wrong key fails here, before any
+/// device-mapper table exists.
+pub fn verify_key(hdr: &[u8], key: &[u8]) -> Result<(), String> {
+    let d = key_digest(hdr)?;
+    let got = pbkdf2_sha256(key, &d.salt, d.iterations, d.digest.len());
+    let diff = got.iter().zip(d.digest.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b));
+    if diff == 0 {
+        Ok(())
+    } else {
+        Err("key does not match the LUKS2 digest (wrong key?)".into())
     }
 }
 
@@ -188,6 +309,31 @@ mod tests {
         assert!(parse(&header("{not json")).is_err());
         assert!(parse(&header(&JSON.replace("\"crypt\"", "\"linear\""))).is_err());
         assert!(parse(&header(&JSON.replace("\"key_size\":64", "\"x\":1"))).is_err());
+    }
+
+    // Made with python hashlib.pbkdf2_hmac('sha256', b"\xab" * 64, b"saltsalt" * 4, 1000, 32).
+    const DIGEST_JSON: &str = r#"{"keyslots":{"0":{"type":"luks2","key_size":64}},
+        "segments":{"0":{"type":"crypt","offset":"16777216","size":"dynamic","iv_tweak":"0",
+        "encryption":"aes-xts-plain64","sector_size":512}},
+        "digests":{"0":{"type":"pbkdf2","keyslots":["0"],"segments":["0"],"hash":"sha256",
+        "iterations":1000,"salt":"c2FsdHNhbHRzYWx0c2FsdHNhbHRzYWx0c2FsdHNhbHQ=",
+        "digest":"0MZkAr02zp2LA/WFQ5u1m+Nydos09ZFXHUIk/s746ro="}},"config":{}}"#;
+
+    #[test]
+    fn pbkdf2_matches_the_reference_vector() {
+        let got = pbkdf2_sha256(&[0xab; 64], b"saltsaltsaltsaltsaltsaltsaltsalt", 1000, 32);
+        let hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "d0c66402bd36ce9d8b03f585439bb59be372768b34f591571d4224fecef8eaba");
+    }
+
+    #[test]
+    fn checks_the_key_against_the_digest() {
+        let h = header(DIGEST_JSON);
+        assert!(verify_key(&h, &[0xab; 64]).is_ok());
+        assert!(verify_key(&h, &[0xac; 64]).is_err());
+        assert!(verify_key(&header(JSON), &[0xab; 64]).is_err(), "no digest = no open");
+        assert_eq!(b64_decode("aGk=").unwrap(), b"hi");
+        assert!(b64_decode("a*b").is_err());
     }
 
     #[test]

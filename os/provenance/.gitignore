@@ -1,0 +1,7 @@
+# Never commit key material. mkimage/keygen put private keys under os/target/ (already ignored);
+# this is a second net for a copy dropped in this folder.
+*.key
+*.pem
+*.p12
+*.sig
+manifest-*.json

@@ -13,3 +13,5 @@ path = "src/main.rs"
 [dependencies]
 # Slot names, devices and the boot-state record are shared with PID 1.
 allternit-init = { path = "../init" }
+# SHA-256 of the image, checked against the signed manifest before anything is written.
+sha2 = "0.10"

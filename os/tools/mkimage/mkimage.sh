@@ -11,6 +11,19 @@
 #   p1 esp (UKI + A/B boot state /allternit/bootstate) | p2 system-a | p3 system-b
 #   | p4 state (LUKS2, TEST ONLY key baked into the initramfs; step 30b)
 #
+# Step 31 (provenance, Secure Boot, reproducibility):
+#   - TEST keys are generated fresh in OUT/keys by os/provenance/provenance.sh keygen (Ed25519
+#     update-signing key + Secure Boot PK/KEK/db). Private halves never leave OUT/keys and are
+#     never committed or uploaded; OUT/provenance/ holds only public files.
+#   - the UKI is signed with sbsign (db key); there is ONE UKI. The slots' dm-verity roots live
+#     in per-slot signed manifests (OUT/provenance/manifest-{a,b}.json + .sig, installed on the
+#     ESP in allternit/), verified by PID 1 and by allternit-update with the public key baked
+#     into the initramfs and the slot.
+#   - SOURCE_DATE_EPOCH comes from the git commit; fs UUIDs, hash seeds, verity salts and GPT
+#     GUIDs derive from the commit, so the same commit + same key builds identical slot
+#     images. The slot is built twice and compared (--skip-repro-check turns that off).
+#   - the SBOM (SPDX 2.3 JSON) is OUT/provenance/sbom.spdx.json.
+#
 # Outputs in --out (default os/target/image):
 #   bzImage  allternit-os.efi (UKI, if ukify)  allternit-os.img (GPT disk, if UKI)  boot.env
 #   boot.env says MODE=uki or MODE=direct; qemu-boot.sh reads it. The UKI path needs
@@ -22,6 +35,7 @@
 #   --kernel-src D  use an existing, already-extracted kernel source tree (skips download)
 #   --llama FILE    static llama-server (os/model/build-llama.sh). With --model it is put in the image.
 #   --model FILE    the GGUF named in os/model/MODEL (sha256 checked); goes on the state partition.
+#   --skip-repro-check  do not build slot A twice to compare sha256
 #   --skip-kernel   do not run make; reuse OUT/bzImage from an earlier run. Valid only
 #                   when the initramfs contents are unchanged (the initramfs is embedded).
 set -eu
@@ -31,6 +45,7 @@ OS_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 OUT="$OS_DIR/target/image"
 KSRC=""
 SKIP_KERNEL=0
+REPRO_CHECK=1
 LLAMA=""
 MODEL=""
 TARGET=x86_64-unknown-linux-musl
@@ -46,7 +61,8 @@ while [ $# -gt 0 ]; do
     --llama) [ $# -ge 2 ] || die "--llama needs a value"; LLAMA=$2; shift 2 ;;
     --model) [ $# -ge 2 ] || die "--model needs a value"; MODEL=$2; shift 2 ;;
     --skip-kernel) SKIP_KERNEL=1; shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    --skip-repro-check) REPRO_CHECK=0; shift ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
 done
@@ -58,6 +74,26 @@ ROOT="$OUT/initramfs-root"
 LIST="$OUT/initramfs.list"
 KB="$OUT/kbuild"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+
+# --- 0. reproducibility inputs (step 31) -------------------------------------
+COMMIT=$(git -C "$OS_DIR" rev-parse HEAD 2>/dev/null || echo unknown)
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+  SOURCE_DATE_EPOCH=$(git -C "$OS_DIR" log -1 --format=%ct 2>/dev/null || echo 0)
+fi
+export SOURCE_DATE_EPOCH
+# mke2fs timestamps, kernel build banner, rustc paths: no wall clock, no build path, no host.
+export E2FSPROGS_FAKE_TIME="$SOURCE_DATE_EPOCH"
+export KBUILD_BUILD_TIMESTAMP
+KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH" 2>/dev/null || date -u -r "$SOURCE_DATE_EPOCH")
+export KBUILD_BUILD_USER=allternit KBUILD_BUILD_HOST=allternit-build
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$OS_DIR=/build/os --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+# derive NAME HEXLEN: a stable hex id from the commit (UUIDs, hash seeds, verity salts).
+derive() { printf 'allternit-os:%s:%s' "$COMMIT" "$1" | sha256sum | cut -c1-"$2"; }
+uuid_for() { h=$(derive "$1" 32); echo "$(echo "$h" | cut -c1-8)-$(echo "$h" | cut -c9-12)-$(echo "$h" | cut -c13-16)-$(echo "$h" | cut -c17-20)-$(echo "$h" | cut -c21-32)"; }
+say "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH commit=$COMMIT"
+PROV_SH="$OS_DIR/provenance/provenance.sh"
+KEYS="$OUT/keys"
+PROV_OUT="$OUT/provenance"
 
 # --- 1. static userland -----------------------------------------------------
 # The repo's .cargo/config.toml sets target-dir, so ask cargo where output goes.
@@ -102,8 +138,9 @@ grep -q '/usr/lib/allternit/authority' "$ROOT/etc/allternit/init.toml" || die "c
 cp "$BIN/shell" "$ROOT/usr/lib/allternit/shell"
 cp "$BIN/allternit-update" "$ROOT/usr/lib/allternit/allternit-update"
 # TEST ONLY: LUKS2 volume key of the state partition, baked into the initramfs so PID 1 can
-# open the state with dm-crypt. Anyone with the image has it. TODO(31): TPM / Secure Boot
-# key binding, then this file goes away. Kept across runs so --skip-kernel (which reuses
+# open the state with dm-crypt. Anyone with the image has it. TODO(hardware): a TPM-sealed
+# key (PCR 7 policy) on real hardware, then this file goes away. Step 31 checks the key
+# against the LUKS2 digest in PID 1. Kept across runs so --skip-kernel (which reuses
 # the bzImage with its embedded initramfs) still matches the state partition.
 STATE_KEY="$OUT/TEST-ONLY-state.key"
 if [ ! -s "$STATE_KEY" ] || [ "$(wc -c < "$STATE_KEY")" -ne 64 ]; then
@@ -111,11 +148,24 @@ if [ ! -s "$STATE_KEY" ] || [ "$(wc -c < "$STATE_KEY")" -ne 64 ]; then
 fi
 cp "$STATE_KEY" "$ROOT/etc/allternit/TEST-ONLY-state.key"
 chmod 400 "$ROOT/etc/allternit/TEST-ONLY-state.key"
+# Step 31: TEST signing keys (fresh per OUT, kept across runs so --skip-kernel still matches
+# the bzImage's embedded initramfs). The public half goes into the initramfs (PID 1 checks the
+# slot manifests with it; Secure Boot signs it into the UKI) and into the slot image.
+if command -v openssl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  [ -s "$KEYS/update-sign.pem" ] && [ -s "$KEYS/db.key" ] || sh "$PROV_SH" keygen "$KEYS"
+  cp "$KEYS/public/update-pub.key" "$ROOT/etc/allternit/update-pub.key"
+  chmod 444 "$ROOT/etc/allternit/update-pub.key"
+else
+  say "openssl or jq missing: no update public key in the image (the UKI path will stop)"
+fi
 [ -z "$LLAMA" ] || cp "$LLAMA" "$ROOT/usr/lib/allternit/llama-server"
 chmod 755 "$ROOT/sbin/init" "$ROOT/usr/lib/allternit/authority" "$ROOT/usr/lib/allternit/shell" \
   "$ROOT/usr/lib/allternit/allternit-update"
 
-# File list for the kernel's gen_init_cpio: no root needed for device nodes.
+# Stable mtimes: gen_init_cpio copies them into the archive.
+find "$ROOT" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} + 2>/dev/null || true
+
+# File list for the kernel's gen_init_cpio (fixed order, so the cpio is reproducible): no root needed for device nodes.
 cat > "$LIST" <<LIST_EOF
 dir /dev 755 0 0
 nod /dev/console 600 0 0 c 5 1
@@ -140,6 +190,8 @@ dir /etc/allternit 755 0 0
 file /etc/allternit/init.toml $ROOT/etc/allternit/init.toml 644 0 0
 file /etc/allternit/TEST-ONLY-state.key $ROOT/etc/allternit/TEST-ONLY-state.key 400 0 0
 LIST_EOF
+[ ! -f "$ROOT/etc/allternit/update-pub.key" ] || \
+  echo "file /etc/allternit/update-pub.key $ROOT/etc/allternit/update-pub.key 444 0 0" >> "$LIST"
 # llama-server goes in only when the image carries a model (step 29).
 if [ -n "$LLAMA" ]; then
   chmod 755 "$ROOT/usr/lib/allternit/llama-server"
@@ -183,7 +235,7 @@ else
   make -C "$KSRC" O="$KB" ARCH=x86_64 olddefconfig >/dev/null
   # merge_config does not fail on options that lose a dependency: check the ones we need.
   for opt in VIRTIO_PCI VIRTIO_BLK VIRTIO_NET VIRTIO_CONSOLE SERIAL_8250_CONSOLE DEVTMPFS \
-             TMPFS EXT4_FS NET_NS USER_NS UNIX EFI_STUB BLK_DEV_INITRD ACPI BINFMT_ELF \
+             TMPFS EXT4_FS NET_NS USER_NS UNIX EFI_STUB EFIVAR_FS BLK_DEV_INITRD ACPI BINFMT_ELF \
              MD BLK_DEV_DM DM_VERITY CRYPTO_SHA256 DM_CRYPT CRYPTO_AES CRYPTO_XTS \
              FAT_FS VFAT_FS NLS_CODEPAGE_437 NLS_ISO8859_1; do
     grep -q "^CONFIG_$opt=y" "$KB/.config" || die "CONFIG_$opt is not =y after merge (missing dependency?)"
@@ -207,6 +259,9 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   command -v mke2fs >/dev/null 2>&1 || die "mke2fs not found (e2fsprogs): needed for the system and state partitions"
   command -v veritysetup >/dev/null 2>&1 || die "veritysetup not found (cryptsetup-bin): the system slots must carry dm-verity"
   command -v cryptsetup >/dev/null 2>&1 || die "cryptsetup not found (cryptsetup-bin): the state partition is LUKS2"
+  command -v sbsign >/dev/null 2>&1 || die "sbsign not found (sbsigntool): the UKI is signed for Secure Boot (step 31)"
+  command -v jq >/dev/null 2>&1 || die "jq not found: the SBOM and manifests need it (step 31)"
+  [ -s "$KEYS/update-sign.pem" ] && [ -s "$KEYS/public/update-pub.key" ] || die "no TEST signing keys in $KEYS (openssl missing?)"
   SUDO=""
   if [ "$(id -u)" -ne 0 ]; then
     sudo -n true 2>/dev/null || die "the LUKS2 state needs root or passwordless sudo (cryptsetup open)"
@@ -221,6 +276,10 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
            "$SEED/usr/bin" "$SEED/usr/lib/allternit" "$SEED/etc/allternit"
   cp -p "$ROOT/usr/lib/allternit/"* "$SEED/usr/lib/allternit/"
   cp -p "$ROOT/etc/allternit/init.toml" "$SEED/etc/allternit/init.toml"
+  cp "$KEYS/public/update-pub.key" "$SEED/etc/allternit/update-pub.key"
+  chmod 444 "$SEED/etc/allternit/update-pub.key"
+  # Same mtimes everywhere (mke2fs -d copies them), so the image does not depend on the clock.
+  find "$SEED" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} + 2>/dev/null || true
   chmod 755 "$SEED" "$SEED/usr" "$SEED/usr/bin" "$SEED/usr/lib" "$SEED/usr/lib/allternit" "$SEED/etc" "$SEED/etc/allternit"
   chmod 1777 "$SEED/tmp"
   SEED_MB=$(du -sm "$SEED" | cut -f1)
@@ -235,12 +294,15 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
     truncate -s "${DATA_MB}M" "$data"
     # No journal: the slot is never written. Contents keep the build user's uid; files are
     # 755/644 and the device is read-only, so the services (uid 900-902) can run them.
-    mke2fs -q -t ext4 -b 4096 -O ^has_journal -L "system-$n" -E root_owner=0:0 -d "$SEED" "$data"
+    # Fixed UUID + directory hash seed derived from the commit, E2FSPROGS_FAKE_TIME for the
+    # superblock times: the same tree gives the same bytes.
+    mke2fs -q -t ext4 -b 4096 -O ^has_journal -L "system-$n" -U "$(uuid_for "slot-$n-uuid")" \
+      -E "root_owner=0:0,hash_seed=$(uuid_for "slot-$n-hashseed")" -d "$SEED" "$data"
     blocks=$(( $(wc -c < "$data") / 4096 ))
     # Hash tree: about blocks/127 blocks; give the file room so veritysetup never has to
     # grow it. Slack past the tree is ignored (the kernel table names the exact layout).
     truncate -s $(( (blocks / 127 + 16) * 4096 )) "$hash"
-    salt=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+    salt=$(derive "slot-$n-verity-salt" 64)
     say "dm-verity: slot $n, formatting the hash tree ($blocks data blocks)"
     veritysetup format --no-superblock --hash=sha256 --data-block-size=4096 --hash-block-size=4096 \
       --data-blocks="$blocks" --salt="$salt" "$data" "$hash" > "$OUT/verity-$n.txt"
@@ -252,21 +314,51 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
     hash_mb=$(( ($(wc -c < "$hash") + 1048575) / 1048576 ))
     cat "$data" "$hash" > "$img"
     rm -f "$data" "$hash" "$OUT/verity-$n.txt"
-    eval "VERITY_$n=\$root:\$salt:\$blocks; ROOT_$n=\$root; SLOT_MB_$n=\$((DATA_MB + hash_mb))"
+    isha=$(sha256sum "$img" | cut -d' ' -f1); ibytes=$(wc -c < "$img" | tr -d ' ')
+    eval "VERITY_$n=\$root:\$salt:\$blocks; ROOT_$n=\$root; SLOT_MB_$n=\$((DATA_MB + hash_mb)); SHA_$n=\$isha; BYTES_$n=\$ibytes"
     say "dm-verity: slot $n root hash $root"
   }
   build_slot a
   build_slot b
+  mkdir -p "$PROV_OUT"
+  if [ "$REPRO_CHECK" -eq 1 ]; then
+    # Reproducibility check: build slot A a second time from the same tree and compare.
+    FIRST_SHA=$SHA_a
+    build_slot a
+    if [ "$SHA_a" = "$FIRST_SHA" ]; then
+      say "reproducible: slot a built twice, identical sha256 $SHA_a"
+      printf 'reproducible=yes\nslot_a_sha256=%s\nsource_date_epoch=%s\ncommit=%s\n' "$SHA_a" "$SOURCE_DATE_EPOCH" "$COMMIT" > "$PROV_OUT/reproducibility.txt"
+    else
+      printf 'reproducible=NO\nfirst=%s\nsecond=%s\n' "$FIRST_SHA" "$SHA_a" > "$PROV_OUT/reproducibility.txt"
+      die "slot a is NOT reproducible: $FIRST_SHA vs $SHA_a (see $PROV_OUT/reproducibility.txt)"
+    fi
+  fi
   rm -rf "$SEED"
   [ "$ROOT_a" != "$ROOT_b" ] || die "slots a and b got the same root hash (salt not applied?)"
   SLOT_MB=$SLOT_MB_a
   [ "$SLOT_MB_b" -le "$SLOT_MB" ] || SLOT_MB=$SLOT_MB_b
 
-  # 4c. UKI: both slots' verity params on the command line inside the UKI (a signed manifest
-  # is step 31). allternit.slot=a is only the default when the ESP has no boot state.
-  UKI_CMDLINE="$CMDLINE allternit.slot=a allternit.verity.a=$VERITY_a allternit.verity.b=$VERITY_b"
+  # 4c. ONE UKI, Secure Boot signed. The slots' verity parameters are in the per-slot signed
+  # manifests (below), not on the command line, so a new slot image needs no new UKI.
+  # allternit.slot=a is only the default when the ESP has no boot state.
+  UKI_CMDLINE="$CMDLINE allternit.slot=a"
   say "making UKI with ukify"
-  ukify build --linux "$OUT/bzImage" --cmdline "$UKI_CMDLINE" --output "$OUT/allternit-os.efi"
+  ukify build --linux "$OUT/bzImage" --cmdline "$UKI_CMDLINE" --output "$OUT/allternit-os-unsigned.efi"
+  # TEST db key: OVMF enrolled with the matching cert (qemu-boot.sh) accepts only this file.
+  sbsign --key "$KEYS/db.key" --cert "$KEYS/public/db.crt" --output "$OUT/allternit-os.efi" "$OUT/allternit-os-unsigned.efi" \
+    || die "sbsign failed"
+
+  # 4c2. provenance: SBOM + one signed manifest per slot (image sha256, verity root, UKI and
+  # SBOM sha256, version). Public files only go in OUT/provenance (that folder is uploaded).
+  VERSION_ID="os-$(printf '%s' "$COMMIT" | cut -c1-12)"
+  sh "$PROV_SH" sbom "$PROV_OUT/sbom.spdx.json" --os-dir "$OS_DIR" --bin-dir "$BIN" \
+    ${KB:+--kconfig "$KB/.config"} ${LLAMA:+--llama "$LLAMA"} ${MODEL:+--model "$MODEL"}
+  sh "$PROV_SH" manifest "$PROV_OUT" "$KEYS/update-sign.pem" "$VERSION_ID" "$OUT/allternit-os.efi" \
+    "$PROV_OUT/sbom.spdx.json" "$VERITY_a" "$SHA_a" "$BYTES_a" "$VERITY_b" "$SHA_b" "$BYTES_b"
+  cp "$KEYS/public/"* "$PROV_OUT/"
+  for n in a b; do
+    sh "$PROV_SH" verify "$KEYS/public/update-pub.pem" "$PROV_OUT/manifest-$n.json" "$PROV_OUT/manifest-$n.sig"
+  done
 
   # 4d. GPT disk. The GGUF lives on the state partition (plan step 29), so the disk grows with
   # the model. The state partition is LUKS2: a 16 MiB header, then the encrypted ext4.
@@ -285,6 +377,9 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   truncate -s "${TOTAL}M" "$DISK"
   # p1 ESP (1 MiB..) = vda1, p2 system-a = vda2, p3 system-b = vda3, p4 state = vda4 (init default)
   sgdisk -o "$DISK" >/dev/null
+  # GUIDs derived from the commit (a random GPT would differ on every build).
+  sgdisk -U "$(uuid_for gpt-disk)" -u "1:$(uuid_for gpt-esp)" -u "2:$(uuid_for gpt-system-a)" \
+         -u "3:$(uuid_for gpt-system-b)" -u "4:$(uuid_for gpt-state)" "$DISK" >/dev/null 2>&1 || true
   sgdisk -n "1:2048:+${ESP_MB}M" -t 1:ef00 -c 1:esp \
          -n "2:0:+${SLOT_MB}M" -t 2:8300 -c 2:system-a \
          -n "3:0:+${SLOT_MB}M" -t 3:8300 -c 3:system-b \
@@ -295,12 +390,16 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   ESP_IMG="$OUT/esp.img"; STATE_IMG="$OUT/state.img"; PLAIN_IMG="$OUT/state-plain.img"
   rm -f "$ESP_IMG" "$STATE_IMG" "$PLAIN_IMG"
   truncate -s "${ESP_MB}M" "$ESP_IMG"
-  mkfs.vfat -F 32 -n ESP "$ESP_IMG" >/dev/null
+  mkfs.vfat -F 32 -n ESP -i "$(derive esp-volume-id 8)" "$ESP_IMG" >/dev/null
   mmd -i "$ESP_IMG" ::/EFI ::/EFI/BOOT ::/allternit
   mcopy -i "$ESP_IMG" "$OUT/allternit-os.efi" ::/EFI/BOOT/BOOTX64.EFI
   printf '# AllternitOS A/B boot state (plan step 30b). Written by PID 1 and allternit-update.\nactive=a\ntries=3\nconfirmed=0\n' \
     > "$OUT/bootstate"
   mcopy -i "$ESP_IMG" "$OUT/bootstate" ::/allternit/bootstate
+  for n in a b; do
+    mcopy -i "$ESP_IMG" "$PROV_OUT/manifest-$n.json" "::/allternit/manifest-$n.json"
+    mcopy -i "$ESP_IMG" "$PROV_OUT/manifest-$n.sig" "::/allternit/manifest-$n.sig"
+  done
   rm -f "$OUT/bootstate"
   dd if="$ESP_IMG" of="$DISK" bs=1M seek="$ESP_OFF_MB" conv=notrunc 2>/dev/null
   dd if="$OUT/system-a.img" of="$DISK" bs=1M seek="$SYS_A_OFF_MB" conv=notrunc 2>/dev/null
@@ -340,9 +439,9 @@ if command -v ukify >/dev/null 2>&1 && command -v sgdisk >/dev/null 2>&1 \
   rm -f "$PLAIN_IMG"
   dd if="$STATE_IMG" of="$DISK" bs=1M seek="$STATE_OFF_MB" conv=notrunc 2>/dev/null
   rm -f "$ESP_IMG" "$STATE_IMG"
-  printf 'MODE=uki\nDISK=%s\nSLOT_MB=%s\nESP_OFF_MB=%s\nSYS_A_OFF_MB=%s\nSYS_B_OFF_MB=%s\nSTATE_OFF_MB=%s\nROOT_HASH=%s\nROOT_HASH_B=%s\nUPDATE_BIN=%s\n' \
+  printf 'MODE=uki\nDISK=%s\nSLOT_MB=%s\nESP_OFF_MB=%s\nSYS_A_OFF_MB=%s\nSYS_B_OFF_MB=%s\nSTATE_OFF_MB=%s\nROOT_HASH=%s\nROOT_HASH_B=%s\nUPDATE_BIN=%s\nSECUREBOOT=1\nKEYS_DIR=%s\nPROV_DIR=%s\nPROV_SH=%s\nUKI_UNSIGNED=%s\n' \
     "$OUT/allternit-os.img" "$SLOT_MB" "$ESP_OFF_MB" "$SYS_A_OFF_MB" "$SYS_B_OFF_MB" "$STATE_OFF_MB" \
-    "$ROOT_a" "$ROOT_b" "$BIN/allternit-update" > "$OUT/boot.env"
+    "$ROOT_a" "$ROOT_b" "$BIN/allternit-update" "$KEYS" "$PROV_OUT" "$PROV_SH" "$OUT/allternit-os-unsigned.efi" > "$OUT/boot.env"
   say "UKI path: wrote $OUT/allternit-os.img"
 else
   say "ukify/sgdisk/mkfs.vfat/mcopy not all available: FALLBACK, no UKI and no disk image."

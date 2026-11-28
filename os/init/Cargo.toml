@@ -18,3 +18,7 @@ path = "src/main.rs"
 libc = "0.2"
 # LUKS2 header JSON (step 30b); already in the workspace through the shell.
 serde_json = "1"
+# Signed per-slot manifest (step 31): Ed25519 verify, pure Rust. SHA-256 for the LUKS2
+# digest check (PBKDF2-HMAC-SHA256, step 31).
+ed25519-compact = "2"
+sha2 = "0.10"
