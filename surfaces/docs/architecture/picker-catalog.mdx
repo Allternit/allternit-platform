@@ -1,0 +1,52 @@
+---
+title: Picker catalog
+description: The one list every model and runtime picker reads, including which choices are locked and why.
+---
+
+Every picker reads the same catalog. This covers Desktop, ai.allternit.com, the phone layout, the PWA, iOS, Android and Gizzi Code. The server decides what is locked, so the rule exists in one place.
+
+The schema and fixtures live in `docs/contracts/picker-catalog/`.
+
+## Endpoint
+
+```
+GET /api/v1/picker-catalog
+```
+
+It works signed out. The response carries an ETag and `Cache-Control: max-age=21600`. cloud-api serves it. allternit-api serves the same shape and adds `installed` and `signedIn` for its own computer.
+
+## Shape
+
+```json
+{
+  "schema": 1,
+  "generatedAt": "2026-11-27T15:00:00Z",
+  "runtimes": [{ "id": "codex", "label": "Codex", "defaultModel": "gpt-6.1-sol", "models": [] }],
+  "brains": [{ "id": "allternit-cloud", "kind": "cloud", "access": { "state": "ok" } }],
+  "cloudModels": [{ "id": "allternit/gpt-6.1-sol", "access": { "state": "ok" } }],
+  "onDevice": [{ "id": "gemma-4-e2b-local", "name": "Gemma 4 E2B", "sizeBytes": 3200000000, "minRamGb": 8, "platforms": ["web", "macos", "windows", "linux"] }]
+}
+```
+
+Runtime ids and models come from `cli-catalog.json` in Gizzi Code. Bots are not in the catalog. The Bot layer reads the existing bots route.
+
+## Access
+
+Brains and Cloud models carry an `access` object.
+
+| `state` | What the client does |
+|---|---|
+| `ok` | Show the choice and allow it. |
+| `locked` | Show the choice, disabled, with `reason`. Offer `action` if there is one. |
+| `hidden` | Do not show the choice. |
+
+A locked choice always has a `reason`. Signed out, every Cloud model is locked with the reason "Sign in" and the action `sign_in`. With no credits, the reason is "No credits left" and the action is `add_credits`.
+
+## Fixtures
+
+| File | Case |
+|---|---|
+| `signed-out.json` | All Cloud choices locked with "Sign in". |
+| `funded.json` | All Cloud choices open. |
+| `no-credits.json` | Cloud locked with a reason and an action. |
+| `hidden-model.json` | One Cloud model hidden, the rest open. |

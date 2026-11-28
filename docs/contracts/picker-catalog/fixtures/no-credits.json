@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-27T15:00:00Z",
+  "runtimes": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "vendor": "Anthropic",
+      "logo": "/assets/logos-apps/claude.svg",
+      "signIn": "subscription",
+      "defaultModel": "claude-sonnet-5-5",
+      "models": [
+        {
+          "id": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5",
+          "aliases": [],
+          "context": 200000,
+          "output": 64000
+        },
+        {
+          "id": "claude-opus-5-5",
+          "name": "Claude Opus 5.5",
+          "aliases": [],
+          "context": 200000,
+          "output": 64000
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "vendor": "OpenAI",
+      "logo": "/assets/logos-apps/codex.svg",
+      "signIn": "subscription",
+      "defaultModel": "gpt-6.1-sol",
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "aliases": [],
+          "context": 500000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6 Astra",
+          "aliases": [],
+          "context": 272000,
+          "output": 32768
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi Code",
+      "vendor": "Moonshot",
+      "logo": "/assets/runtime-logos/kimi-cli.svg",
+      "signIn": "subscription",
+      "defaultModel": "kimi-for-coding",
+      "models": [
+        {
+          "id": "kimi-for-coding",
+          "name": "Kimi K2.7 Code",
+          "aliases": [],
+          "context": 262144,
+          "output": 16384
+        },
+        {
+          "id": "kimi-k3",
+          "name": "Kimi K3",
+          "aliases": [],
+          "context": 262144,
+          "output": 16384
+        }
+      ]
+    }
+  ],
+  "brains": [
+    {
+      "id": "subscription",
+      "label": "My subscription",
+      "kind": "subscription",
+      "access": {
+        "state": "ok"
+      }
+    },
+    {
+      "id": "api_key",
+      "label": "My API key",
+      "kind": "api_key",
+      "access": {
+        "state": "ok"
+      }
+    },
+    {
+      "id": "allternit-cloud",
+      "label": "Allternit Cloud",
+      "kind": "cloud",
+      "access": {
+        "state": "locked",
+        "reason": "No credits left",
+        "action": "add_credits"
+      }
+    },
+    {
+      "id": "on-device",
+      "label": "On this device",
+      "kind": "on_device",
+      "access": {
+        "state": "ok"
+      }
+    }
+  ],
+  "cloudModels": [
+    {
+      "id": "allternit/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "provider": "anthropic",
+      "access": {
+        "state": "locked",
+        "reason": "No credits left",
+        "action": "add_credits"
+      }
+    },
+    {
+      "id": "allternit/gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "provider": "openai",
+      "access": {
+        "state": "locked",
+        "reason": "No credits left",
+        "action": "add_credits"
+      }
+    },
+    {
+      "id": "allternit/deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "provider": "deepseek",
+      "access": {
+        "state": "locked",
+        "reason": "No credits left",
+        "action": "add_credits"
+      }
+    },
+    {
+      "id": "allternit/glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "provider": "zhipu",
+      "access": {
+        "state": "locked",
+        "reason": "No credits left",
+        "action": "add_credits"
+      }
+    }
+  ],
+  "onDevice": [
+    {
+      "id": "gemma-4-e2b-local",
+      "name": "Gemma 4 E2B",
+      "sizeBytes": 3200000000,
+      "minRamGb": 8,
+      "platforms": [
+        "web",
+        "macos",
+        "windows",
+        "linux"
+      ]
+    },
+    {
+      "id": "local-brain-llama-3.2-3b",
+      "name": "Local Brain",
+      "sizeBytes": 2000000000,
+      "minRamGb": 4,
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ]
+    }
+  ]
+}
