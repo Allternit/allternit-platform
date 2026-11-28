@@ -2,3 +2,4 @@
 //! restart policy). No syscalls here, so the tests run on any host.
 
 pub mod config;
+pub mod verity;

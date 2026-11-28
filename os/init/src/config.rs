@@ -5,7 +5,7 @@ use std::collections::HashMap;
 /// Compiled-in default, used when /etc/allternit/init.toml is absent.
 pub const DEFAULT_CONFIG: &str = r#"
 hostname = "allternit-os"
-state_device = "/dev/vda3"
+state_device = "/dev/vda4"
 state_mount = "/state"
 state_fstype = "ext4"
 
