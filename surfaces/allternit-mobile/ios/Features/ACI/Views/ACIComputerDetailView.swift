@@ -272,3 +272,168 @@ struct FilesLaunchHost: ViewModifier {
         }
     }
 }
+
+// MARK: - Browser computer
+
+/// The Browser computer's detail: status, a plain terminal, and Reset disk.
+/// The VM runs in a web view inside the app (see BrowserComputerWebView.swift),
+/// so it needs iOS 27 or later; a capability probe decides before any boot.
+/// Terminal: a monospaced text view fed by the pty stream plus an input field
+/// (smaller than embedding the box page's own terminal, which the contract
+/// does not define).
+struct ACIBrowserComputerCover: View {
+    @StateObject private var model = BrowserComputerModel()
+    @Environment(\.dismiss) private var dismiss
+    @State private var input = ""
+    @State private var confirmReset = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    content
+                }
+                .listRowBackground(Color("FillNeutral"))
+                if showsTerminal {
+                    Section("Terminal") { terminal }
+                        .listRowBackground(Color("FillNeutral"))
+                }
+                if showsReset {
+                    Section {
+                        Button(role: .destructive) { confirmReset = true } label: {
+                            Text(model.isResetting ? "Resetting…" : "Reset disk")
+                        }
+                        .disabled(model.isResetting)
+                    } footer: {
+                        Text("Deletes everything on this computer's disk.")
+                    }
+                    .listRowBackground(Color("FillNeutral"))
+                }
+            }
+            .filesListStyle()
+            .navigationTitle("Browser computer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { model.stop(); dismiss() } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left").font(.system(size: 15, weight: .bold))
+                            Text("Computers")
+                        }
+                    }
+                    .accessibilityLabel("Back to Computers")
+                }
+            }
+            .background(
+                BrowserComputerWebView(model: model)
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            )
+            .confirmationDialog("Reset this computer's disk?", isPresented: $confirmReset, titleVisibility: .visible) {
+                Button("Reset disk", role: .destructive) { Task { await model.resetDisk() } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Everything on its disk is deleted. This can't be undone.")
+            }
+        }
+        .tint(Color("TextPrimary"))
+        .task { await model.probe() }
+    }
+
+    private var showsTerminal: Bool { model.phase == .running && model.status.state == "ready" }
+    private var showsReset: Bool {
+        switch model.phase {
+        case .idle, .running, .stopped, .failed: return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.phase {
+        case .probing:
+            LabeledContent("State", value: "Checking this iPhone…")
+        case .unsupported:
+            Text(BrowserComputerModel.unsupportedLine)
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextSecondary"))
+        case .idle:
+            LabeledContent("State", value: "Stopped")
+            startButton("Start")
+        case .starting:
+            LabeledContent("State", value: "Starting…")
+        case .stopped:
+            Text(BrowserComputerModel.memoryLine)
+                .font(.system(size: 15))
+                .foregroundColor(Color("TextPrimary"))
+            startButton("Start again")
+        case .failed(let message):
+            Text(message)
+                .font(.system(size: 15))
+                .foregroundColor(Theme.statusError)
+            startButton("Try again")
+        case .running:
+            LabeledContent("State", value: Self.stateText(model.status))
+            if let used = model.status.diskBytesUsed {
+                LabeledContent("Disk used", value: ByteCountFormatter.string(fromByteCount: Int64(used), countStyle: .file))
+            }
+            if let message = model.status.errorMessage {
+                Text(message).font(.system(size: 13)).foregroundColor(Theme.statusError)
+            }
+            Button("Stop") { model.stop() }
+        }
+    }
+
+    private func startButton(_ title: String) -> some View {
+        Button(title) { Task { await model.start() } }
+            .disabled(model.isResetting)
+    }
+
+    private var terminal: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(model.output.isEmpty ? " " : model.output)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    Color.clear.frame(height: 1).id("end")
+                }
+                .frame(height: 220)
+                .onChange(of: model.output) { _, _ in proxy.scrollTo("end") }
+            }
+            HStack {
+                TextField("Type a command", text: $input)
+                    .font(.system(size: 14, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.send)
+                    .onSubmit(sendLine)
+                Button("Send", action: sendLine)
+                    .disabled(input.isEmpty)
+            }
+        }
+    }
+
+    private func sendLine() {
+        let line = input
+        input = ""
+        Task { await model.send(line) }
+    }
+
+    private static func stateText(_ s: BrowserComputerModel.Status) -> String {
+        switch s.state {
+        case "loading":
+            if let p = s.progress, p.total > 0 { return "Downloading \(p.loaded * 100 / p.total)%" }
+            return "Downloading…"
+        case "booting": return "Starting…"
+        case "ready": return "Running"
+        case "resetting": return "Resetting…"
+        case "error": return "Problem"
+        default: return "Stopped"
+        }
+    }
+}
