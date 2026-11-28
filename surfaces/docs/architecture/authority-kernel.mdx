@@ -77,6 +77,10 @@ Both routes need a person's session (the same check as resolve) and read only yo
 
 An edited row fails with the first bad row named: `payload_hash_mismatch`, `hash_mismatch`, `broken_link` or `bad_signature`. A row signed by a different key than the one in use is not tampering: if its signature verifies against the public key stored on that row, it counts under `signed_by_previous_key` and the chain still passes. A signature that does not verify against its own stored key fails. Deleting or updating a row is refused by database triggers.
 
+## Approvals in the inbox
+
+A pending approval request shows in the one inbox (`GET /api/v1/inbox?scope=needs_you`) as a `kernel_approval` row with a `kernel` object: `requestId`, `runId`, `assignee`, `actionClass`, `actionSummary`, `actionHash`, `deadline`, `humanOnly`. The row id is `kernel:<request_id>`. Only open, unexpired requests assigned to you (or to "owner") appear; a request past its deadline drops out and gets an `expired` receipt. You decide it only through `POST /api/v1/kernel/approvals/resolve`, which needs a person's session and, from Desktop, a presence check. The inbox approve and dismiss verbs on a kernel row answer 409 `USE_KERNEL_ROUTE` and change nothing; snooze hides the row until a time, and the deadline still applies. `GET /api/v1/kernel/approvals?state=pending` returns the same list directly (person's session only).
+
 ## The four depths
 
 The interface is written once and reused unchanged:

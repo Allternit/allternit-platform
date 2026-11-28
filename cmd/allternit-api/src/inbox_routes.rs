@@ -65,6 +65,8 @@ async fn list_inbox(
             )
         }
     };
+    // Kernel approvals past their deadline get their `expired` receipt before the feed is read.
+    crate::authority::routes::sweep_expired(&state, &user).await;
     let conn = match state.db.connect() {
         Ok(c) => c,
         Err(e) => {

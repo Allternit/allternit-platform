@@ -20,6 +20,7 @@
 //! | `factory_approval` | `factory_approvals` pending (a Factory node waiting on you) | approve / reject |
 //! | `gizzi_permission` | `cowork_approvals` from a coding session's permission ask (`source = gizzi-permission`) | approve / deny |
 //! | `attention`   | `attention_items` unresolved (failed or missed routine, no bot, lost run record …) | retry / dismiss |
+//! | `kernel_approval` | `approval_requests` open + unexpired, assigned to the caller (AllternitOS kernel) | snooze only; decide via `POST /kernel/approvals/resolve` |
 //! | `memory_import` | active `memory_facts` not yet in the Memory Drive (no import yet) | open Settings → Memory |
 //!
 //! `inbox_state` (V232) only remembers dismissals and snoozes. Routes live in
@@ -32,6 +33,11 @@
 //! when known, `trust`. Items on a bot thread carry `sessionId`. An approve
 //! that sends a `contentHash` that no longer matches answers 409
 //! `{"error":"changed"}` and approves nothing.
+//!
+//! A `kernel_approval` row (id `kernel:<request_id>`) carries `kernel {requestId, runId, assignee,
+//! actionClass, actionSummary, actionHash, deadline, humanOnly}` (CONTRACT 6.4). Approve and
+//! dismiss on it answer 409 `USE_KERNEL_ROUTE`: only `/api/v1/kernel/approvals/resolve`
+//! decides it (human session + presence). Snooze hides it; its deadline still applies.
 
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
@@ -185,6 +191,24 @@ fn with_provenance(it: &mut Value, detail: &Value) {
 pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlite::Result<Vec<Value>> {
     let now = Utc::now();
     let mut out: Vec<Value> = Vec::new();
+
+    // Kernel approval requests (AllternitOS): pending and unexpired only. Expired ones drop out
+    // here and get their `expired` receipt from `authority::routes::sweep_expired`.
+    for k in crate::authority::approvals::pending_requests(conn, user_id, now)? {
+        let summary = k["actionSummary"].as_str().unwrap_or("").to_string();
+        let mut it = item(
+            format!("kernel:{}", k["requestId"].as_str().unwrap_or("")), "kernel_approval", "kernel", "", "", None, None,
+            summary.clone(), k["createdAt"].as_str().unwrap_or(""), ("open", "Review"), false,
+        );
+        it["title"] = json!(summary);
+        it["actions"] = json!(["snooze"]);
+        it["attentionId"] = k["attentionId"].clone();
+        it["kernel"] = json!({
+            "requestId": k["requestId"], "runId": k["runId"], "assignee": k["assignee"], "actionClass": k["actionClass"],
+            "actionSummary": k["actionSummary"], "actionHash": k["actionHash"], "deadline": k["deadline"], "humanOnly": k["humanOnly"],
+        });
+        out.push(it);
+    }
 
     // Held outbound email.
     let mut st = conn.prepare(
@@ -577,6 +601,21 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
     Ok(out)
 }
 
+const KERNEL_ID_PREFIX: &str = "kernel:";
+
+/// A kernel row is decided only by `POST /api/v1/kernel/approvals/resolve` (human session,
+/// presence, action hash). The legacy verbs never touch it.
+fn use_kernel_route(id: &str) -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({
+            "error": "This is a kernel approval. Decide it with POST /api/v1/kernel/approvals/resolve; the inbox approve and dismiss verbs cannot resolve it.",
+            "code": "USE_KERNEL_ROUTE", "id": id, "route": "/api/v1/kernel/approvals/resolve",
+        })),
+    )
+        .into_response()
+}
+
 fn err(status: StatusCode, code: &str, msg: &str) -> Response {
     (status, Json(json!({ "error": msg, "code": code }))).into_response()
 }
@@ -629,6 +668,9 @@ fn body(b: Option<Json<ActBody>>) -> ActBody {
 }
 
 async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, headers: axum::http::HeaderMap, b: Option<Json<ActBody>>) -> Response {
+    if id.starts_with(KERNEL_ID_PREFIX) {
+        return use_kernel_route(&id);
+    }
     let b = body(b);
     let approve = match b.decision.as_deref() {
         None | Some("approve") => true,
@@ -782,6 +824,9 @@ async fn send_held(state: &Arc<AppState>, owner: &str, approval_id: &str) -> Val
 }
 
 async fn dismiss(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
+    if id.starts_with(KERNEL_ID_PREFIX) {
+        return use_kernel_route(&id);
+    }
     let it = match find(&state, &user.user_id, &id) {
         Ok(i) => i,
         Err(r) => return r,
@@ -1233,5 +1278,75 @@ mod tests {
         let (dismissed, decision): (i64, Option<String>) = c.query_row("SELECT dismissed, decision FROM cowork_approvals WHERE id = 'per_9'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((dismissed, decision.as_deref()), (1, Some("rejected")));
         assert!(collect(&c, "user-a", 30).unwrap().iter().all(|i| i["id"] != "permission:per_9"));
+    }
+
+    fn kernel_req(c: &Connection, id: &str, owner: &str, class: &str, assignee: &str, deadline_in_min: i64) {
+        let dl = (Utc::now() + Duration::minutes(deadline_in_min)).to_rfc3339();
+        c.execute(
+            "INSERT INTO approval_requests (request_id, owner_user_id, caller_kind, source_store, run_id, principal, assignee, action_class,
+                 action_summary, action_payload, action_hash, deadline, on_expiry, attention_id, check_id, status, token_ttl_secs, created_at)
+             VALUES (?1, ?2, 'run', 'kernel', 'run_1', 'agent_1', ?3, ?4, 'Send invoice in_1 for $40.00', '{}', 'sha256:abc', ?5, 'reject', ?6, 'chk_1', 'open', 300, ?7)",
+            params![id, owner, assignee, class, dl, format!("att_{id}"), ago(1)],
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn kernel_request_is_in_the_feed_with_its_kernel_object() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        kernel_req(&c, "apr_1", "user-a", "money", "owner", 30);
+        kernel_req(&c, "apr_2", "user-a", "file_write", "user-a", 30);
+        kernel_req(&c, "apr_other", "user-b", "money", "owner", 30);
+        kernel_req(&c, "apr_elsewhere", "user-a", "money", "someone-else", 30);
+        let items = collect(&c, "user-a", 30).unwrap();
+        let rows: Vec<&Value> = items.iter().filter(|i| i["kind"] == "kernel_approval").collect();
+        assert_eq!(rows.len(), 2, "own pending requests only: {items:?}");
+        let m = rows.iter().find(|i| i["id"] == "kernel:apr_1").unwrap();
+        assert_eq!(m["title"], "Send invoice in_1 for $40.00");
+        assert_eq!(m["attentionId"], "att_apr_1");
+        assert_eq!(m["actions"], json!(["snooze"]));
+        let k = &m["kernel"];
+        assert_eq!((k["requestId"].as_str(), k["runId"].as_str(), k["assignee"].as_str(), k["actionClass"].as_str()), (Some("apr_1"), Some("run_1"), Some("owner"), Some("money")));
+        assert_eq!((k["actionSummary"].as_str(), k["actionHash"].as_str(), k["humanOnly"].as_bool()), (Some("Send invoice in_1 for $40.00"), Some("sha256:abc"), Some(true)));
+        assert!(k["deadline"].as_str().is_some());
+        let f = rows.iter().find(|i| i["id"] == "kernel:apr_2").unwrap();
+        assert_eq!(f["kernel"]["humanOnly"], false);
+    }
+
+    #[tokio::test]
+    async fn approve_and_dismiss_on_a_kernel_row_answer_409_and_resolve_nothing() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        kernel_req(&c, "apr_1", "user-a", "money", "owner", 30);
+        let app = Router::new().merge(needs_router()).with_state(st.clone());
+        for verb in ["approve", "dismiss"] {
+            let (s, v) = call(&app, "user-a", &format!("/inbox/kernel:apr_1/{verb}"), json!({})).await;
+            assert_eq!(s, StatusCode::CONFLICT, "{verb}: {v}");
+            assert_eq!(v["code"], "USE_KERNEL_ROUTE");
+            assert_eq!(v["route"], "/api/v1/kernel/approvals/resolve");
+        }
+        let (s, _) = call(&app, "user-a", "/inbox/kernel:apr_1/approve", json!({ "decision": "deny" })).await;
+        assert_eq!(s, StatusCode::CONFLICT);
+        let status: String = c.query_row("SELECT status FROM approval_requests WHERE request_id = 'apr_1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(status, "open");
+        assert!(collect(&c, "user-a", 30).unwrap().iter().any(|i| i["id"] == "kernel:apr_1"), "still in the feed");
+        // Snooze is allowed and hides it.
+        let (s, _) = call(&app, "user-a", "/inbox/kernel:apr_1/snooze", json!({ "minutes": 10 })).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(collect(&c, "user-a", 30).unwrap().iter().all(|i| i["id"] != "kernel:apr_1"));
+    }
+
+    #[tokio::test]
+    async fn expired_kernel_request_is_not_in_the_feed() {
+        let st = setup().await;
+        let c = st.db.connect().unwrap();
+        kernel_req(&c, "apr_old", "user-a", "money", "owner", -5);
+        kernel_req(&c, "apr_new", "user-a", "money", "owner", 30);
+        let ids: Vec<String> = collect(&c, "user-a", 30).unwrap().iter().filter(|i| i["kind"] == "kernel_approval").map(|i| i["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, ["kernel:apr_new"]);
+        // The direct list agrees with the feed.
+        let list = crate::authority::approvals::pending_requests(&c, "user-a", Utc::now()).unwrap();
+        assert_eq!(list.len(), 1);
     }
 }
