@@ -92,4 +92,17 @@ paths = [
   # memory-drive ledger test: the string API_TOKEN=abcdef123456 is a fixture
   # feeding the assigns_secret() canary, not a credential
   '''^cmd/allternit-api/src/ledger\.rs$''',
+
+  # Triage 2026-11-28 (generic-api-key false positive): OS contract conformance
+  # fixtures. The "token" field is base64 of {"token_id":"tok_01"} and the
+  # signature is made up; nothing here is a credential or verifies against a key.
+  '''^spec/Contracts/os/v1/conformance/examples/(valid|invalid)/''',
+]
+
+# Value allowlist (matched against the secret itself, not the path).
+# Triage 2026-11-28: the public Launchpad PPA signing-key fingerprint pinned in
+# scripts/build-linux-sidecars.sh (PPA_KEY_FPR). Fingerprints are public by
+# design; the script checks the downloaded key against this value.
+regexes = [
+  '''^C8EC952E2A0E1FBDC5090F6A2C277A0A352154E5$''',
 ]

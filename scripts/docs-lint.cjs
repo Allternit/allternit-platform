@@ -267,6 +267,10 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('guides/guard.mdx')) continue;
       // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).
       if (mdxPath.endsWith('cli/connect.mdx')) continue;
+      // Picker catalog and Start anywhere name runtime ids (codex, claude) as the real values of runtime/agent fields and flags;
+      // session start does the same in its terminal payload. The catalog guide lists the CLI catalog and the Git/Import sources by name;
+      // usage and billing names the ChatGPT/Claude sign-ins listed under the bars; open-lane upstreams names the OpenAI-compatible API it serves.
+      if (['architecture/picker-catalog.mdx', 'architecture/session-start.mdx', 'guides/catalog.mdx', 'guides/start-anywhere.mdx', 'guides/usage-and-billing.mdx', 'operations/open-lane-upstreams.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       fail(
         `competitor mention in ${path.relative(ROOT, mdxPath)}:${i + 1}: ${line.trim()}`
       );
