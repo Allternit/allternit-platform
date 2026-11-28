@@ -297,6 +297,12 @@ pub fn send_approved(db: &DbHandle, owner: &str, approval_id: &str, send: &dyn F
     }
     tx.execute("UPDATE gateway_approvals SET consumed = 1 WHERE id = ?1 AND consumed = 0", params![approval_id])?;
     tx.commit()?;
+    // Plan step 11a: spend the kernel approval token before the send (after the claim, outside
+    // the claim's write transaction). Enforce refuses a hold with no live token; shadow logs.
+    if let Err(why) = crate::authority::adapters::gateway::consume(db, approval_id) {
+        audit(&conn, owner, "send_refused", Some(approval_id), None, json!({ "error": why }));
+        return Ok(Some(json!({ "state": "error", "error": why })));
+    }
     let d: Value = serde_json::from_str(&detail).unwrap_or(Value::Null);
     let (to, text) = (d["to"].as_str().unwrap_or(""), d["text"].as_str().unwrap_or(""));
     let out = match valid_recipient(to) {
@@ -708,9 +714,9 @@ mod tests {
         let (_, v) = call(&app, "POST", "/messages-mac/send", Some(json!({ "to": "ann@example.com", "text": "Hello" }))).await;
         let aid2 = v["inboxId"].as_str().unwrap().trim_start_matches("approval:").to_string();
         let tx = crate::gateway_runner::transport(&st);
-        let r = crate::gateway_runner::respond_approval(&st.db, tx.as_ref(), "user-a", &aid2, "approve", ("user", "user-a")).await.unwrap();
+        let r = crate::gateway_runner::respond_approval(&st.db, tx.as_ref(), "user-a", &aid2, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.unwrap();
         assert_eq!(r["send"]["state"], "error", "tests never run osascript: {r}");
-        assert!(crate::gateway_runner::respond_approval(&st.db, tx.as_ref(), "user-a", &aid2, "approve", ("user", "user-a")).await.is_err());
+        assert!(crate::gateway_runner::respond_approval(&st.db, tx.as_ref(), "user-a", &aid2, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.is_err());
         let consumed: i64 = st.db.connect().unwrap().query_row("SELECT consumed FROM gateway_approvals WHERE id = ?1", params![aid2], |r| r.get(0)).unwrap();
         assert_eq!(consumed, 1);
     }

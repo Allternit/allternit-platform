@@ -2538,6 +2538,8 @@ async fn list_permissions(
                             params![id, uid, content],
                         )?;
                         if n == 1 {
+                            // Plan step 11a: the ask is also a kernel approval request.
+                            crate::authority::adapters::cowork::link_row(&db, &id);
                             fresh.push((id, content));
                         }
                     }

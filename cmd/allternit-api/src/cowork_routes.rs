@@ -2558,6 +2558,9 @@ pub(crate) async fn autopilot_approve_once(db: &crate::db::DbHandle, user_id: &s
         if claim_open_approval(&conn, &aid, &ApprovalOutcome::Approved, &uid)? == 0 {
             return Ok(None);
         }
+        // Plan step 11a: the autopilot is not a person, so the kernel row is withdrawn (with
+        // the source on its receipt), never approved. A reopened card gets a fresh kernel row.
+        crate::authority::adapters::cowork::unlink(&db2, &aid, "approved once by the Floor autopilot under the owner's rules (not a person)");
         Ok(Some((request_id, body)))
     })
     .await
@@ -2650,6 +2653,9 @@ enum DecideOutcome {
     PersonRequired(&'static str),
     /// A routed (team rule) ask that this caller may not approve.
     ApproverRequired(&'static str),
+    /// The authority kernel refused the decision (plan step 11a): `(code, fact)`. The row was
+    /// reopened.
+    Kernel(String, String),
     /// Decided; relay `(gizzi request id, reply body)` when it answers a
     /// live runtime ask for the first time, and whether approving it runs a
     /// prepared subscription task.
@@ -2734,6 +2740,7 @@ fn routed_decider(
 async fn decide_approval(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     headers: HeaderMap,
     body: Result<Json<ApprovalDecisionBody>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
@@ -2805,6 +2812,13 @@ async fn decide_approval(
     // A one-task grant reaches past this one ask, so only a person may give it:
     // without a person's session proof "Allow for this task" counts as once.
     let want_task = want_task && not_person.is_none();
+    // Plan step 11a: only a person approves or rejects. Agent, run, API-key, MCP and service
+    // credentials are refused (403); a dismiss (local-only, answers nothing) is still allowed.
+    let gate = crate::authority::adapters::gate(&state, &headers, &auth_user, credential.is_some()).await;
+    if let (crate::authority::adapters::Gate::Refuse(why), false) = (&gate, matches!(outcome, ApprovalOutcome::Dismissed)) {
+        warn!(approval_id = %id_for_response, "refused an approval decision from a machine credential");
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden_caller", "detail": why}))).into_response();
+    }
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -2875,6 +2889,29 @@ async fn decide_approval(
         // mints a human action or runs a prepared task.
         if claim_open_approval(&conn, &approval_id, &outcome, &user_id)? == 0 {
             return Ok(DecideOutcome::Decided { relay: None, prepared: false });
+        }
+        // The authority kernel (plan step 11a): a person's approve/reject resolves the linked
+        // `approval_requests` row (one receipt) before anything is relayed, minted or run; a
+        // dismiss withdraws it. A kernel refusal reopens the row.
+        if matches!(outcome, ApprovalOutcome::Dismissed) {
+            crate::authority::adapters::cowork::unlink(&db, &approval_id, "dismissed in the app without an answer");
+        } else {
+            let kernel_owner = crate::authority::adapters::cowork::kernel_owner(&conn, &approval_id).unwrap_or_else(|| user_id.clone());
+            let linked = crate::authority::adapters::cowork::request_id(&db, &approval_id);
+            let (mk_db, mk_id) = (db.clone(), approval_id.clone());
+            let decided = crate::authority::adapters::resolve(
+                &db,
+                &gate,
+                linked,
+                &kernel_owner,
+                matches!(outcome, ApprovalOutcome::Approved),
+                Some(format!("decided by {decider}")),
+                move || crate::authority::adapters::cowork::link_existing(&mk_db, &mk_id),
+            );
+            if let Err(e) = decided {
+                reopen_approval(&conn, &approval_id, &user_id);
+                return Ok(DecideOutcome::Kernel(crate::authority::adapters::code_str(&e), e.message));
+            }
         }
         if routed {
             // Who decided a routed ask, for the record (the gate trusts the route above).
@@ -2947,6 +2984,11 @@ async fn decide_approval(
                 Json(json!({"error": "approver_required", "detail": detail})),
             )
                 .into_response()
+        }
+        Ok(Ok(DecideOutcome::Kernel(code, fact))) => {
+            warn!(approval_id = %id_for_response, code = %code, "the authority kernel refused an approval decision");
+            let status = if code == "forbidden_caller" { StatusCode::FORBIDDEN } else { StatusCode::CONFLICT };
+            (status, Json(json!({"error": code, "detail": fact}))).into_response()
         }
         Ok(Ok(DecideOutcome::TaskRequired)) => (
             StatusCode::CONFLICT,
@@ -3086,6 +3128,7 @@ async fn decide_approval(
 pub(crate) async fn decide_from_inbox(
     state: &Arc<AppState>,
     user: &AuthUser,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
     headers: &HeaderMap,
     approval_id: &str,
     approve: bool,
@@ -3105,7 +3148,7 @@ pub(crate) async fn decide_from_inbox(
         answer: None,
         scope: None,
     };
-    let resp = decide_approval(State(state.clone()), Extension(user.clone()), headers, Ok(Json(body))).await.into_response();
+    let resp = decide_approval(State(state.clone()), Extension(user.clone()), credential, headers, Ok(Json(body))).await.into_response();
     let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap_or_default();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
@@ -3114,6 +3157,80 @@ pub(crate) async fn decide_from_inbox(
     } else {
         Err((status, Json(v)).into_response())
     }
+}
+
+/// The kernel inbox resolved a card (`authority::adapters::cowork::write_back`): decide it like
+/// the card's approve/reject (claim, relay `once` / `reject` to gizzi, the routed-ask hook).
+/// Never calls the kernel, so a kernel decision cannot loop back. `actor` is the person who
+/// resolved it in the kernel (the card's kernel owner: the approver of a routed ask).
+///
+/// Cards that need more than a yes or no stay open for the card to finish (the kernel already
+/// holds the decision, so the card's later answer adds no second receipt): a provider question
+/// that needs an answer, a card from a runtime older than D16 task binding, and an approved
+/// prepared subscription task (it runs from the signed-in app).
+pub(crate) async fn decide_from_kernel(state: &Arc<AppState>, approval_id: &str, approve: bool, actor: &str) -> Result<(), String> {
+    let (db, aid, decider) = (state.db.clone(), approval_id.to_string(), actor.to_string());
+    let claimed = tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<Option<(String, serde_json::Value)>>> {
+        let conn = db.connect()?;
+        let outcome = if approve { ApprovalOutcome::Approved } else { ApprovalOutcome::Rejected };
+        let (user_id, routed) = match routed_decider(&conn, &aid, &decider, &outcome, false)? {
+            RoutedDecider::NotRouted => (decider.clone(), false),
+            RoutedDecider::As(requester) => (requester, true),
+            RoutedDecider::Refused(_) | RoutedDecider::NotFound => return Ok(None),
+        };
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT content, dismissed FROM cowork_approvals WHERE id = ?1 AND (user_id = ?2 OR user_id IS NULL)",
+                params![aid, user_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((content, dismissed)) = row else { return Ok(None) };
+        if dismissed != 0 {
+            return Ok(None);
+        }
+        if approve && subscription_approval(&content) == SubscriptionApproval::Prepared {
+            return Ok(None);
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap_or(serde_json::Value::Null);
+        let relay = match extract_gizzi_request_id(&content) {
+            Some(request_id) => {
+                match crate::subscription_routes::permission_reply_body(&db, &user_id, &parsed, if approve { "once" } else { "reject" }, None) {
+                    Ok(body) => Some((request_id, body)),
+                    Err(_) => return Ok(None),
+                }
+            }
+            None => None,
+        };
+        if claim_open_approval(&conn, &aid, &outcome, &user_id)? == 0 {
+            return Ok(None);
+        }
+        if routed {
+            let _ = conn.execute(
+                "UPDATE cowork_approvals SET content = json_set(content, '$.decidedBy', ?2) WHERE id = ?1",
+                params![aid, decider],
+            );
+        }
+        Ok(Some(relay))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    let Some(relay) = claimed else { return Ok(()) };
+    crate::bar_routes::on_routed_decision(state, approval_id);
+    if let Some((request_id, body)) = relay {
+        let sent = gizzi_client(&HeaderMap::new())
+            .post(format!("{}/permission/{}/reply", gizzi_base(), request_id))
+            .json(&body)
+            .send()
+            .await;
+        match sent {
+            Ok(resp) if resp.status().is_success() => {}
+            Ok(resp) => return Err(format!("agent runtime rejected the permission reply ({})", resp.status())),
+            Err(e) => return Err(format!("the agent runtime could not be reached: {e}")),
+        }
+    }
+    Ok(())
 }
 
 

@@ -547,6 +547,8 @@ fn set_state(db: &DbHandle, row: &HoldRow, to: &str) {
     if n == 0 {
         return;
     }
+    // Closed by the guard, not by a person: withdraw the kernel row (a no-op once it is approved).
+    crate::authority::adapters::gateway::unlink(db, &row.id, &format!("phone hold {to}"));
     let _ = conn.execute("UPDATE cowork_approvals SET dismissed = 1 WHERE id = ?1", params![row.id]);
     let _ = crate::gateway_runner::led(
         db,
@@ -651,6 +653,11 @@ pub fn check(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<
                             .execute("UPDATE gateway_approvals SET consumed = 1 WHERE id = ?1 AND state = 'approved' AND consumed = 0", params![hid])
                             .map_err(|e| e.to_string())?;
                         if n == 1 {
+                            // Plan step 11a: spend the kernel approval token before the action runs.
+                            if let Err(why) = crate::authority::adapters::gateway::consume(db, &hid) {
+                                tracing::info!(hold = %hid, reason = %why, "phone hold: kernel token refused");
+                                return Ok(Decision::Denied { approval_id: hid });
+                            }
                             return Ok(Decision::Allow { hold_id: Some(hid) });
                         }
                     }

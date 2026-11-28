@@ -332,10 +332,13 @@ async fn prepare(state: &Arc<AppState>, user: &AuthUser, tool: &CapabilityTool, 
     let row_id = approval_id.clone();
     let text = content.to_string();
     tokio::task::spawn_blocking(move || {
-        db.connect()?.execute(
+        let n = db.connect()?.execute(
             "INSERT INTO cowork_approvals (id, user_id, content, source) VALUES (?1, ?2, ?3, ?4)",
             params![row_id, uid, text, PREPARED_SOURCE],
-        )
+        )?;
+        // Plan step 11a: the prepared task is also a kernel approval request.
+        crate::authority::adapters::cowork::link_row(&db, &row_id);
+        Ok::<_, rusqlite::Error>(n)
     })
     .await
     .map_err(|e| e.to_string())?

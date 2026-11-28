@@ -613,6 +613,9 @@ fn gate_allternit(db: &DbHandle, cx: &Cx, opts: &TurnOpts, corr: &str, text: &st
             |r| r.get(0),
         )?;
         if ok > 0 {
+            // Spend the kernel token before anything is sent (plan step 11a). Enforce refuses
+            // an approval with no live token; shadow logs and sends.
+            crate::authority::adapters::gateway::consume(db, a).map_err(|why| RunErr::new(403, "APPROVAL_TOKEN_REFUSED", why))?;
             return Ok(());
         }
     }
@@ -996,11 +999,18 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         "agent.approval.resolved" => {
             if let Some(rref) = ev["payload"]["approvalId"].as_str() {
                 let st = if ev["payload"]["decision"].as_str() == Some("deny") { "denied" } else { "approved" };
-                db.connect()?.execute(
+                let n = db.connect()?.execute(
                     "UPDATE gateway_approvals SET state = ?1, resolved_at = ?2 WHERE thread_id = ?3 AND remote_ref = ?4 AND state = 'pending'",
                     params![st, now(), cx.thread_id, rref],
                 )?;
-                dismiss_card(db, rref_row_id(db, &cx.thread_id, rref));
+                let row_id = rref_row_id(db, &cx.thread_id, rref);
+                if n > 0 {
+                    // Answered on the vendor's side, not by a person in Allternit: withdraw the kernel row.
+                    if let Some(gid) = &row_id {
+                        crate::authority::adapters::gateway::unlink(db, gid, &format!("resolved on the vendor's side ({st})"));
+                    }
+                }
+                dismiss_card(db, row_id);
             }
         }
         _ => {}
@@ -1076,6 +1086,20 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'pending',?12)",
         params![aid, cx.owner, cx.thread_id, cx.bot_id, cx.generation, authority, action, detail.to_string(), remote_ref, ctx_id, corr, now()],
     )?;
+    // Plan step 11a: every gateway approval is also a kernel approval request.
+    crate::authority::adapters::gateway::link_logged(
+        db,
+        &crate::authority::adapters::gateway::New {
+            id: &aid,
+            owner: &cx.owner,
+            thread_id: &cx.thread_id,
+            bot_id: &cx.bot_id,
+            authority,
+            action,
+            detail: &detail,
+            correlation_id: corr,
+        },
+    );
     // The approval card the app already renders; the authority rides along so
     // the card can show the vendor badge.
     let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor"), "provenance": detail.get("provenance") });
@@ -1126,6 +1150,10 @@ pub fn list_approvals(db: &DbHandle, owner: &str, thread_id: &str, state: Option
 
 /// Resolve an approval. Human actors only, for both authorities. A vendor
 /// approval forwards to the vendor; an Allternit approval never touches one.
+///
+/// `gate` says who is calling (`authority::adapters::gate`): a machine credential is refused,
+/// and the authority kernel resolves the linked `approval_requests` row first (one approve/deny
+/// receipt, plan step 11a), before anything is forwarded or sent.
 pub async fn respond_approval(
     db: &DbHandle,
     tx: &dyn AaiTransport,
@@ -1133,13 +1161,39 @@ pub async fn respond_approval(
     approval_id: &str,
     decision: &str,
     actor: (&str, &str),
+    gate: &crate::authority::adapters::Gate,
 ) -> Result<Value, RunErr> {
     if actor.0 != "user" {
         return Err(RunErr::new(403, "HUMAN_REQUIRED", "approvals can only be answered by a person, never a bot"));
     }
+    if let crate::authority::adapters::Gate::Refuse(why) = gate {
+        return Err(RunErr::new(403, "FORBIDDEN_CALLER", *why));
+    }
     if decision != "approve" && decision != "deny" {
         return Err(RunErr::new(400, "BAD_DECISION", "decision must be approve or deny"));
     }
+    let ap = pending_row(db, owner, approval_id)?;
+    if let Err(e) = crate::authority::adapters::gateway::resolve(db, gate, approval_id, owner, decision == "approve", actor.1).await {
+        let code = crate::authority::adapters::code_str(&e);
+        return Err(if code == "forbidden_caller" {
+            RunErr::new(403, "FORBIDDEN_CALLER", e.message)
+        } else {
+            RunErr::new(409, "KERNEL_REFUSED", format!("{code}: {}", e.message))
+        });
+    }
+    finish_respond(db, tx, owner, approval_id, decision, actor, ap).await
+}
+
+/// The kernel inbox resolved this approval (`authority::adapters::gateway::write_back`): finish
+/// it like [`respond_approval`]. Never calls the kernel, so a kernel decision cannot loop back.
+/// `owner` is the person who resolved it in the kernel (the row's owner).
+pub async fn respond_from_kernel(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, approval_id: &str, approve: bool) -> Result<Value, RunErr> {
+    let ap = pending_row(db, owner, approval_id)?;
+    finish_respond(db, tx, owner, approval_id, if approve { "approve" } else { "deny" }, ("user", owner), ap).await
+}
+
+/// The owner's still-pending row, or 404 / 409.
+fn pending_row(db: &DbHandle, owner: &str, approval_id: &str) -> Result<Value, RunErr> {
     let conn = db.connect()?;
     let ap = one(
         &conn,
@@ -1150,6 +1204,13 @@ pub async fn respond_approval(
     if s(&ap, "state") != "pending" {
         return Err(RunErr::new(409, "ALREADY_RESOLVED", "this approval is already resolved"));
     }
+    Ok(ap)
+}
+
+/// Vendor forward, row update, card, ledger, thread status and held send, shared by
+/// [`respond_approval`] and [`respond_from_kernel`].
+async fn finish_respond(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, approval_id: &str, decision: &str, actor: (&str, &str), ap: Value) -> Result<Value, RunErr> {
+    let conn = db.connect()?;
     let thread_id = s(&ap, "threadId");
     let bot_id = s(&ap, "botId");
     if s(&ap, "authority") == "vendor" {
@@ -1425,11 +1486,24 @@ struct ActorIn {
     id: Option<String>,
 }
 
-async fn respond_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>, Json(b): Json<RespondBody>) -> Response {
+async fn respond_h(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    credential: Option<Extension<crate::enterprise_auth::CredentialContext>>,
+    headers: axum::http::HeaderMap,
+    Path(aid): Path<String>,
+    Json(b): Json<RespondBody>,
+) -> Response {
     let kind = b.actor.as_ref().map(|a| a.kind.clone()).unwrap_or_else(|| "user".into());
     let actor_id = b.actor.as_ref().and_then(|a| a.id.clone()).unwrap_or_else(|| user.user_id.clone());
     // The authenticated caller is the actor of record; a claimed id cannot override it.
     let actor_id = if kind == "user" { user.user_id.clone() } else { actor_id };
+    // Only a person resolves (plan step 11a): agent, run, API-key and service credentials are
+    // refused before anything else, gateway connected or not.
+    let gate = crate::authority::adapters::gate(&state, &headers, &user, credential.is_some()).await;
+    if let crate::authority::adapters::Gate::Refuse(why) = &gate {
+        return RunErr::new(403, "FORBIDDEN_CALLER", *why).into_response();
+    }
     let Some(rt) = RUNTIME.get() else {
         // No transport installed: only the human gate can be checked.
         if kind != "user" {
@@ -1437,7 +1511,7 @@ async fn respond_h(State(state): State<Arc<AppState>>, Extension(user): Extensio
         }
         return RunErr::new(503, "GATEWAY_OFFLINE", "the agent gateway is not connected").into_response();
     };
-    match respond_approval(&state.db, rt.tx.as_ref(), &user.user_id, &aid, &b.decision, (&kind, &actor_id)).await {
+    match respond_approval(&state.db, rt.tx.as_ref(), &user.user_id, &aid, &b.decision, (&kind, &actor_id), &gate).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -1946,7 +2020,7 @@ mod tests {
         sync_thread(&st.db, &f, "user-a", "th-vendor").await.unwrap();
         assert_eq!(list_approvals(&st.db, "user-a", "th-vendor", None).unwrap().len(), 1);
         // A bot cannot answer; nothing is forwarded.
-        let e = respond_approval(&st.db, &f, "user-a", &aid, "approve", ("bot", "bot-vendor")).await.unwrap_err();
+        let e = respond_approval(&st.db, &f, "user-a", &aid, "approve", ("bot", "bot-vendor"), &crate::authority::adapters::Gate::Person).await.unwrap_err();
         assert_eq!((e.status, e.code.as_str()), (403, "HUMAN_REQUIRED"));
         assert_eq!(f.count("agent.approvals"), 0);
         // The route enforces the same rule.
@@ -1965,7 +2039,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         // A human can; it forwards to the vendor and clears needs_you.
-        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a")).await.unwrap();
+        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.unwrap();
         let calls = f.calls.lock().unwrap().clone();
         let fwd = calls.iter().find(|(o, _)| o == "agent.approvals").unwrap();
         assert_eq!(fwd.1["op"], "respond");
@@ -1974,7 +2048,7 @@ mod tests {
         assert_eq!(fwd.1["actor"]["type"], "human");
         assert_eq!(thread_status(&st), "working");
         // Other users cannot see or answer it.
-        assert!(respond_approval(&st.db, &f, "user-b", &aid, "approve", ("user", "user-b")).await.is_err());
+        assert!(respond_approval(&st.db, &f, "user-b", &aid, "approve", ("user", "user-b"), &crate::authority::adapters::Gate::Person).await.is_err());
     }
 
     #[tokio::test]
@@ -1994,7 +2068,7 @@ mod tests {
         // Unapproved id still blocked.
         let o2 = TurnOpts { correlation_id: Some("k1".into()), consequential: true, allternit_approval_id: Some(aid.clone()), ..Default::default() };
         assert_eq!(turn(&st, &f, "s-th-vendor", "wire the money", o2.clone()).await.unwrap_err().code, "APPROVAL_REQUIRED");
-        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a")).await.unwrap();
+        respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.unwrap();
         assert_eq!(f.count("agent.approvals"), 0, "an Allternit approval is never forwarded");
         let all = list_approvals(&st.db, "user-a", "th-vendor", Some("pending")).unwrap();
         assert_eq!(all.len(), 1, "exactly the vendor approval is still pending");
@@ -2186,5 +2260,81 @@ mod tests {
         assert!(f.calls.lock().unwrap().is_empty(), "nothing is sent to the vendor");
         assert_eq!(exec_state(&st), "NEEDS_AUTH");
         assert_eq!(thread_status(&st), "needs_you");
+    }
+
+    // ---- plan step 11a: gateway_approvals through the authority kernel
+
+    const GW_KERNEL_ROWS: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'gateway' AND source_ref = ?1";
+    const GW_KERNEL_APPROVED: &str = "SELECT COUNT(*) FROM approval_requests WHERE source_store = 'gateway' AND source_ref = ?1 AND status = 'approved'";
+    const GW_APPROVE_RECEIPTS: &str = "SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'approval' AND decision = 'approve' AND json_extract(payload, '$.request_id') = (SELECT request_id FROM approval_requests WHERE source_store = 'gateway' AND source_ref = ?1)";
+    const GW_SPENDS: &str = "SELECT COUNT(*) FROM approval_token_spends WHERE request_id = (SELECT request_id FROM approval_requests WHERE source_store = 'gateway' AND source_ref = ?1)";
+
+    fn gw_count(st: &Arc<AppState>, sql: &str, id: &str) -> i64 {
+        st.db.connect().unwrap().query_row(sql, params![id], |r| r.get(0)).unwrap()
+    }
+
+    fn native_cx() -> Cx {
+        Cx { owner: "user-a".into(), thread_id: "th-native".into(), bot_id: "bot-native".into(), generation: 1, session_id: "s-th-native".into(), exec: json!({}) }
+    }
+
+    fn auth(id: &str) -> AuthUser {
+        AuthUser { user_id: id.into(), email: None, name: None, avatar_url: None, tenant_id: None, organization_id: None, organization_role: None, organization_slug: None }
+    }
+
+    /// An outbound message approval: create opens one kernel request (class client_message), the
+    /// person's approve resolves it (one receipt) and keeps the token, the send spends it once.
+    #[tokio::test]
+    async fn gateway_approve_writes_one_kernel_row_and_one_receipt() {
+        let st = setup("kernel-gw").await;
+        let aid = create_approval(&st.db, &native_cx(), "allternit", "post to slack", None, json!({ "text": "hi" }), Some("c-kernel")).unwrap();
+        assert_eq!(gw_count(&st, GW_KERNEL_ROWS, &aid), 1, "create opened one kernel request");
+        let class: String = st.db.connect().unwrap().query_row("SELECT action_class FROM approval_requests WHERE source_ref = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(class, "client_message");
+
+        let f = Fake::default();
+        let out = respond_approval(&st.db, &f, "user-a", &aid, "approve", ("user", "user-a"), &crate::authority::adapters::Gate::Person).await.unwrap();
+        assert_eq!(out["state"], "approved");
+        assert_eq!(gw_count(&st, GW_KERNEL_ROWS, &aid), 1);
+        assert_eq!(gw_count(&st, GW_KERNEL_APPROVED, &aid), 1);
+        assert_eq!(gw_count(&st, GW_APPROVE_RECEIPTS, &aid), 1);
+
+        crate::authority::adapters::gateway::consume(&st.db, &aid).unwrap();
+        assert_eq!(gw_count(&st, GW_SPENDS, &aid), 1, "the send spent the kernel token once");
+        let token: Option<String> = st.db.connect().unwrap().query_row("SELECT kernel_token FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert!(token.is_none(), "a spent token is never kept");
+    }
+
+    /// An agent credential on the old respond route is refused with 403; nothing changes on
+    /// either side.
+    #[tokio::test]
+    async fn gateway_respond_route_refuses_agent_credentials() {
+        let st = setup("kernel-gw-agent").await;
+        let aid = create_approval(&st.db, &native_cx(), "allternit", "post to slack", None, json!({ "text": "hi" }), Some("c-agent")).unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-allternit-agent-id", "agent_1".parse().unwrap());
+        let res = respond_h(State(st.clone()), Extension(auth("user-a")), None, headers, Path(aid.clone()), Json(RespondBody { decision: "approve".into(), actor: None })).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let state: String = st.db.connect().unwrap().query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "pending");
+        assert_eq!(gw_count(&st, GW_KERNEL_APPROVED, &aid), 0);
+        assert_eq!(gw_count(&st, GW_APPROVE_RECEIPTS, &aid), 0);
+    }
+
+    /// Approving in the kernel inbox finishes the gateway row too, with no second receipt.
+    #[tokio::test]
+    async fn kernel_inbox_approve_writes_back_to_the_gateway_row() {
+        let st = setup("kernel-gw-inbox").await;
+        let aid = create_approval(&st.db, &native_cx(), "allternit", "post to slack", None, json!({ "text": "hi" }), Some("c-inbox")).unwrap();
+        let rid = crate::authority::adapters::gateway::request_id(&st.db, &aid).unwrap();
+        let k = crate::authority::adapters::kernel(&st.db, crate::authority::audit::DEFAULT_TENANT).unwrap();
+        let human = allternit_authority::Caller { kind: allternit_authority::CallerKind::Human, principal: "user-a".into() };
+        let body = crate::authority::approvals::ResolveBody { request_id: rid.clone(), decision: crate::authority::approvals::Decision::Approve, note: None };
+        k.resolve(&human, body).unwrap();
+        let f = Fake::default();
+        respond_from_kernel(&st.db, &f, "user-a", &aid, true).await.unwrap();
+        let state: String = st.db.connect().unwrap().query_row("SELECT state FROM gateway_approvals WHERE id = ?1", params![aid], |r| r.get(0)).unwrap();
+        assert_eq!(state, "approved");
+        assert_eq!(gw_count(&st, GW_KERNEL_ROWS, &aid), 1);
+        assert_eq!(gw_count(&st, GW_APPROVE_RECEIPTS, &aid), 1);
     }
 }

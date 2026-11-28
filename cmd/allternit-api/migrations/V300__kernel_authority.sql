@@ -113,3 +113,10 @@ CREATE INDEX IF NOT EXISTS idx_approval_requests_source
 -- factory_approvals (V238) keeps the kernel request id; NULL for rows made before step 11a
 -- (they get one lazily on their first resolve).
 ALTER TABLE factory_approvals ADD COLUMN kernel_request_id TEXT;
+
+-- Plan step 11a, second run: gateway_approvals (V199) keeps the kernel request id and, once a
+-- person approved, the approve token (single use, bound to the request's action hash, spent by
+-- the held send / phone hold / vendor send). NULL for rows made before step 11a. cowork_approvals
+-- and task_grants keep no column: their kernel rows are found by (source_store, source_ref).
+ALTER TABLE gateway_approvals ADD COLUMN kernel_request_id TEXT;
+ALTER TABLE gateway_approvals ADD COLUMN kernel_token TEXT;

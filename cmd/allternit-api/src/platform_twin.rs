@@ -405,7 +405,11 @@ async fn decide_h(State(state): State<Arc<AppState>>, Path((account, approval)):
     let actor = if body.actor.is_empty() { "platform_api".to_string() } else { body.actor.chars().take(128).collect() };
     let tx = crate::gateway_runner::transport(&state);
     // A person pressed approve in the developer's app: the actor is a user, recorded by key.
-    match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &auth.owner, &approval, &body.decision, ("user", &actor)).await {
+    // A Platform API runtime has no Allternit person: the developer's key decided, and cloud-api
+    // keeps that record (`platform_approvals`, moved onto the kernel in step 11b). The kernel row
+    // here is withdrawn with that reason on its receipt instead of approved.
+    let gate = crate::authority::adapters::delegated("Platform API decision relayed from cloud-api (no Allternit person on a Platform runtime)");
+    match crate::gateway_runner::respond_approval(&state.db, tx.as_ref(), &auth.owner, &approval, &body.decision, ("user", &actor), &gate).await {
         Ok(_) => {}
         Err(e) if e.status == 409 => return fail(StatusCode::CONFLICT, "approval_already_resolved", "This approval is already resolved."),
         Err(e) if e.status == 400 => return fail(StatusCode::BAD_REQUEST, "invalid_decision", "decision must be approve or deny."),
