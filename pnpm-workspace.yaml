@@ -62,6 +62,10 @@ packages:
   # OpenNext/Cloudflare build. Managed via plain npm, not pnpm.
   - '!services/mailflare'
   - '!services/mailflare/**'
+  # Box relay Worker (Wisp v1 for the browser computer) — own npm package,
+  # not deployed until Eoj's go-ahead. See services/box-relay/README.md.
+  - '!services/box-relay'
+  - '!services/box-relay/**'
   # Meetings bot spike (step 0.3) — own npm package-lock, not a workspace package.
   - '!services/meeting-bot/spike'
   - '!services/meeting-bot/spike/**'
