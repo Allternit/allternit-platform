@@ -1,0 +1,43 @@
+---
+title: Browser computer
+description: A small Linux computer that runs in your browser tab, what it can do, its limits, and how to reset it.
+---
+A browser computer is a Linux computer that runs inside a browser tab on your device. It is free for signed-in users. Nothing is rented for it: it uses your device's processor and memory, and it stops when you close the tab.
+
+Start it from the chat or the Computers screen on the device you are using. It shows in the Terminal and the console as its own entry, named **Browser computer**.
+
+## What it can do
+
+- **Chat tools with Allternit Cloud models.** When a chat uses an Allternit Cloud model, the model can run commands on the browser computer.
+- **Terminal.** You can open the Terminal and use the computer yourself.
+- **Vendor plan brains get the Terminal only.** A model that runs on a vendor plan cannot run commands. The chat says: "Plan models cannot run commands. Open the Terminal to use your computer yourself."
+
+A chat that already runs on a real computer keeps its real shell. The browser computer is offered where there is no computer.
+
+## Limits
+
+- **One CPU.** The computer embedded in a tab has one CPU. Choose **Open in its own window** to get more CPUs, where your browser supports it.
+- **It runs on your device.** A slow device gives a slow computer.
+- **Files stay in that browser profile.** The disk is stored in your browser, next to this site's data. It is not synced to other devices or other browser profiles. The browser may clear it when the device is low on storage, so keep a copy of anything you cannot lose.
+- **Network is off by default.** You can turn it on for a computer. When it is on, the Allternit network reaches only package sites and GitHub. Other sites are not reachable.
+
+## Reset the disk
+
+Resetting deletes the computer's disk and everything on it. You start again from a clean image. Open Computers, select **In this browser**, choose **Reset disk**, and confirm. It cannot be undone.
+
+## Supported browsers
+
+| Browser | Version |
+| --- | --- |
+| Chrome and Edge | 137 or later |
+| Firefox | 153 or later |
+| Safari on macOS | 27 or later |
+
+Support for the iPhone and Android apps is being checked. Until then, use a supported browser on a computer.
+
+If your browser is not supported, the computer does not start and the screen says so.
+
+## Related links
+
+- [Computers, ACI, and connected tools](/guides/computers-and-apps)
+- [Terminal API](/api/terminal)
