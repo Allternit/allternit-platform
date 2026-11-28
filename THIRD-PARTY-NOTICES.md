@@ -286,3 +286,16 @@ mail triage rules and prompt in
 `build-set.py` and results format in `evals/triage/`, are adapted from its
 `openbot/server/src/openduet/triage.ts` and `evals/triage/`. The licence text
 is `evals/triage/LICENSE-openduet`.
+
+**colibri** (JustVugg/colibri, Apache-2.0; we ship tag v2.2.0 from our fork
+Allternit/colibri, unmodified): the local-engine colibri engine pack
+(`scripts/engine-packs/build-colibri.sh`) bundles colibri's release engine
+binaries and its `c/*.py` gateway files (`openai_server.py` and its modules).
+Each pack carries colibri's `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`
+unchanged at the pack root.
+
+**python-build-standalone and CPython** (astral-sh/python-build-standalone,
+MPL-2.0 for the build scripts; CPython 3.12 under the Python Software
+Foundation License, Copyright (c) 2001 Python Software Foundation): the colibri
+engine pack bundles the `install_only_stripped` build as `python/` to run
+colibri's gateway. The CPython licence text is in the pack as `LICENSE-python`.
