@@ -223,6 +223,9 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // The app's result for a pane_artifact tool call (the document in the
         // session's artifact pane, edited through its editor's tools).
         .route("/pane-artifact/:id/reply", post(reply_pane_artifact))
+        // The app's result for a `shell` tool call (AllternitOS step 13): the
+        // shell executor's ShellCommandV1 result or its ShellStateV1.
+        .route("/shell/:id/reply", post(reply_shell_command))
         // The app's rendered image for a media_generate (native lane) call.
         .route("/pane-render", get(list_pane_renders))
         .route("/pane-render/:id/progress", post(progress_pane_render))
@@ -2116,6 +2119,19 @@ async fn reply_pane_artifact(
     }
 }
 
+async fn reply_shell_command(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/shell/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn list_pane_renders(headers: HeaderMap) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, "/v1/pane-render", None).await {
@@ -3053,6 +3069,16 @@ async fn transform_bus_event(
         // MCP task cards + elicitation forms (gizzi PR #2925).
         "mcp.task" | "mcp.elicitation" | "mcp.elicitation.resolved" => mcp_bus_event(&event_type, &props),
         "pane_browser.requested" => Some(pane_browser_requested_event(&props)),
+        // The `shell` tool (gizzi ShellBridge): the app's shell executor runs the
+        // ShellCommandV1 (or reads its state) and answers POST /api/v1/shell/:id/reply.
+        "shell.command.requested" => Some(json!({
+            "type": "shell_command_requested",
+            "request_id": props.get("id"),
+            "session_id": props.get("sessionID"),
+            "kind": props.get("kind"),
+            "command": props.get("command"),
+            "time": props.get("time"),
+        })),
         // capture_screen_context: the app showing this session answers with
         // its front window (Desktop) or its own view (web, PWA, iOS) through
         // POST /api/v1/screen-context/:id/reply.

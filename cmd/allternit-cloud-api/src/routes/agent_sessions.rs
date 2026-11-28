@@ -89,6 +89,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
             post(reply_screen_context).layer(DefaultBodyLimit::max(PANE_REPLY_BODY_LIMIT)),
         )
         .route("/api/v1/pane-artifact/:id/reply", post(reply_pane_artifact))
+        // The `shell` tool's result (AllternitOS step 13), relayed to the node's runtime.
+        .route("/api/v1/shell/:id/reply", post(reply_shell_command))
         .route("/api/v1/pane-render/:id/reply", post(reply_pane_render))
         .route("/api/v1/agent-sessions/:id/revert", post(revert_session))
         .route(
@@ -252,6 +254,15 @@ async fn reply_screen_context(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/screen-context/{id}/reply"), &body).await
+}
+
+async fn reply_shell_command(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/shell/{id}/reply"), &body).await
 }
 
 async fn reply_pane_artifact(
@@ -523,6 +534,7 @@ mod tests {
             ("POST", "/api/v1/native-sessions/pickup"),
             ("GET", "/api/v1/native-sessions/claude/abc"),
             ("POST", "/api/v1/screen-context/que_1/reply"),
+            ("POST", "/api/v1/shell/que_1/reply"),
             ("POST", "/api/v1/agent-sessions/sess_1/export-native"),
         ] {
             let request = Request::builder()

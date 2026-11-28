@@ -19,6 +19,7 @@ import { BusEvent } from "@/shared/bus/bus-event"
 import { Identifier } from "@/shared/id/id"
 import { Instance } from "@/runtime/context/project/instance"
 import { Log } from "@/shared/util/log"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import DESCRIPTION from "@/runtime/tools/builtins/shell.txt"
 
 /**
@@ -242,20 +243,46 @@ export const ShellTool = Tool.define("shell", {
     }
 
     // app_install class: a person approves every call; always: [] and ALWAYS_ASK mean no earlier answer, mode or task grant covers it.
+    // check_id (CONTRACT 7.1): the id of the permission request the person approved. ctx.ask exposes no
+    // id, so the tool mints it here and hands it to the ask as the request id (PermissionNext.ask takes
+    // `id`), which records it on permission.asked / permission.replied with the decision. It is attached
+    // only when that exact request was answered with an approval: a context with nobody to ask (a
+    // headless worker's no-op ask) resolves without one, and the command is refused instead of sent.
+    let checkID: string | undefined
     if (params.action === "install_app" || params.action === "fork_app") {
       const target = params.action === "install_app" ? params.app_source! : params.fork_of!
-      await ctx.ask({
+      const askID = Identifier.ascending("permission")
+      let approved = false
+      // Replied is published synchronously inside PermissionNext.reply, before the ask resolves.
+      const unsubscribe = Bus.subscribe(PermissionNext.Event.Replied, (event) => {
+        if (event.properties.requestID === askID && event.properties.reply !== "reject") approved = true
+      })
+      // Not an object literal: Tool.Context.ask's type omits `id`, every runtime ask forwards it.
+      const request = {
+        id: askID,
         permission: APP_INSTALL_PERMISSION,
         patterns: [`${params.action}:${target.app_id}`],
-        always: [],
+        always: [] as string[],
         metadata: {
           summary:
             params.action === "install_app"
               ? `Install app ${target.app_id} from ${params.app_source!.source}`
               : `Make your own copy of app ${target.app_id}`,
           shell: { action: params.action, target },
+          check_id: askID,
         },
-      })
+      }
+      try {
+        await ctx.ask(request)
+      } finally {
+        unsubscribe()
+      }
+      if (!approved) {
+        return fail("approval_required", "Installing or copying an app needs a person to approve it, and nobody did.", {
+          action: params.action,
+        })
+      }
+      checkID = askID
     }
 
     const { action: _action, ...fields } = params
@@ -265,6 +292,7 @@ export const ShellTool = Tool.define("shell", {
       command_id: Identifier.ascending("tool"),
       action: params.action,
       ...fields,
+      ...(checkID ? { check_id: checkID } : {}),
     }
     const result = await ShellBridge.request({ sessionID: ctx.sessionID, kind: "command", command }, { abort: ctx.abort })
     if ("ok" in result && result.ok) {
